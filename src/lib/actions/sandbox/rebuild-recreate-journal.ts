@@ -9,6 +9,7 @@ import { describeGatewayOwnerForError, sameGatewayOwner } from "../../onboard/ga
 import {
   GatewayAuthorityError,
   gatewayAuthorityFailureLines,
+  isManagedPackagedServiceMigration,
   resolveGatewayRebuildAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
@@ -126,7 +127,10 @@ export function openRebuildRecreateJournal(
       gatewayPort: target.gatewayPort,
     });
     const expectedAuthority = gatewayOwnerFromCheckpoint(input.expectedGatewayAuthority);
-    if (!sameGatewayOwner(expectedAuthority, authority)) {
+    if (
+      !sameGatewayOwner(expectedAuthority, authority) &&
+      !isManagedPackagedServiceMigration(expectedAuthority, authority)
+    ) {
       throw new GatewayAuthorityError(
         "Gateway lifecycle authority changed after authoritative rebuild preflight " +
           `(${describeGatewayOwnerForError(expectedAuthority)} -> ${describeGatewayOwnerForError(authority)}). ` +

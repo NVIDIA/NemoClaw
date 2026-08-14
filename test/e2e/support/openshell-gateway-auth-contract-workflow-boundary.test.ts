@@ -66,7 +66,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
 
     expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "openshell-gateway-auth-contract must run on main pushes and retain manual selectors",
+        "openshell-gateway-auth-contract must use the trusted execution plan",
         "openshell-gateway-auth-contract must run on ubuntu-latest",
         "openshell-gateway-auth-contract must retain its 20 minute resource budget",
         "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",

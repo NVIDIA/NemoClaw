@@ -248,15 +248,27 @@ network_policies:
       });
     });
 
-    it("does not apply an external preset when the confirmation prompt is declined", () => {
+    it("applies an explicitly named file without prompting when stdin has no terminal", () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-no-"));
       const file = path.join(tmp, "custom-rule.yaml");
       fs.writeFileSync(file, "preset:\n  name: custom-rule\nnetwork_policies: {}\n");
-      const result = runPolicyAddExternal(["--from-file", file], {}, "no");
+      const result = runPolicyAddExternal(
+        ["--from-file", file],
+        { NEMOCLAW_NON_INTERACTIVE: undefined },
+        "no",
+      );
       expect(result.status).toBe(0);
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
-      expect(calls.some((c) => c.type === "prompt")).toBeTruthy();
-      expect(calls.some((c) => c.type === "apply")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "load",
+        path: file,
+      });
+      expect(calls.some((c) => c.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "custom-rule",
+      });
     });
 
     it("errors when --from-file and --from-dir are combined", () => {

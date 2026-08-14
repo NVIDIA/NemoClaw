@@ -38,6 +38,10 @@ The `langchain-deepagents-code` agent manifest declares the expected Deep Agents
 
 </AgentOnly>
 
+## Use the Automatic Upgrade Path
+
+Run the maintained installer to update the host CLI and reconcile registered sandboxes.
+
 <Warning>
 OpenShell 0.0.101 limits a routed sandbox name to 19 characters and rejects consecutive hyphens.
 A NemoClaw sandbox name must contain 1 to 19 characters.
@@ -84,11 +88,23 @@ After the automatic path retires an out-of-range gateway, it forces installation
 This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
 If the forced installation fails, the installer does not stage a gateway service or start sandbox recovery, preserves the backups, and reports how to retry.
 
-For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after you back up every registered sandbox and retire the gateway.
-This environment variable asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+## Resume a Manually Prepared Upgrade
+
+Use this path only after you back up every registered sandbox and retire the gateway.
+Set `NEMOCLAW_GATEWAY_PORT` to the port for the gateway that you retired.
+Set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` on the `bash` side of the install pipeline when you rerun the installer.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+```
+
+You can omit `NEMOCLAW_GATEWAY_PORT` when you prepared the default gateway on port `8080`.
+`NEMOCLAW_OPENSHELL_UPGRADE_PREPARED` asserts that you completed those steps, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
 It reuses the latest backups, forces installation of the OpenShell version pinned by the prepared source, and starts recovery only after that installation succeeds.
-If the forced installation fails, rerun the installer with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` to reuse the prepared state and retry the OpenShell installation.
+If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.
 Outside these forced paths, an in-range source checkout preserves an existing OpenShell installation and installs OpenShell only when it is missing.
+
+## Reconcile Registered Sandboxes
 
 After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` to reconcile the existing sandboxes.
 
@@ -121,7 +137,9 @@ This usually means a prior uninstall removed the gateway and Docker image while 
 
 The installer finishes with `Installation completed with warnings` and tells you to run `$$nemoclaw <name> destroy`, then `$$nemoclaw onboard`, instead of claiming recovery succeeded.
 
-For a manual update flow, create a snapshot first:
+### Use the Manual Update Flow
+
+Create a snapshot before a manual update.
 
 ```bash
 $$nemoclaw <sandbox-name> snapshot create --name pre-upgrade

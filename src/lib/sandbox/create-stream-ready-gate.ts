@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
+export const STARTUP_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
 
 function selectedDrivers(env: NodeJS.ProcessEnv): string[] {
   const raw = env.OPENSHELL_DRIVERS ?? (process.platform === "darwin" ? "vm" : "docker");
@@ -16,12 +16,15 @@ export function getReadyCheckOutputPatterns(
   patterns: readonly RegExp[] | undefined,
 ): readonly RegExp[] {
   if (patterns) return patterns;
-  return selectedDrivers(env).includes("vm") ? VM_READY_DETACH_OUTPUT_PATTERNS : [];
+  return selectedDrivers(env).includes("vm") ? STARTUP_READY_DETACH_OUTPUT_PATTERNS : [];
 }
 
-export function getReadyCheckOutputPatternsForAgent(
-  isTerminalAgent: boolean,
-  env: NodeJS.ProcessEnv,
-): readonly RegExp[] {
-  return isTerminalAgent ? [] : getReadyCheckOutputPatterns(env, undefined);
+export function getReadyCheckOutputPatternsForAgent(input: {
+  readonly isTerminalAgent: boolean;
+  readonly startupRunsDuringCreate: boolean;
+  readonly env: NodeJS.ProcessEnv;
+}): readonly RegExp[] {
+  return input.isTerminalAgent || !input.startupRunsDuringCreate
+    ? []
+    : getReadyCheckOutputPatterns(input.env, STARTUP_READY_DETACH_OUTPUT_PATTERNS);
 }

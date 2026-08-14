@@ -62,11 +62,16 @@ export function parseCheckpointDecision<Value>(
   parseValue: (value: unknown) => Value | null,
 ): CheckpointDecision<Value> | null {
   if (typeof raw !== "object" || raw === null) return null;
-  const kind = (raw as { kind?: unknown }).kind;
-  if (kind === "unset") return decisionUnset();
-  if (kind === "declined") return decisionDeclined();
+  const record = raw as Record<string, unknown>;
+  const kind = record.kind;
+  const keys = Object.keys(record).sort();
+  if (kind === "unset" && keys.length === 1 && keys[0] === "kind") return decisionUnset();
+  if (kind === "declined" && keys.length === 1 && keys[0] === "kind") {
+    return decisionDeclined();
+  }
   if (kind === "selected") {
-    const parsed = parseValue((raw as { value?: unknown }).value);
+    if (keys.length !== 2 || keys[0] !== "kind" || keys[1] !== "value") return null;
+    const parsed = parseValue(record.value);
     return parsed === null ? null : decisionSelected(parsed);
   }
   return null;

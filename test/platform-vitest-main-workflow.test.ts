@@ -12,11 +12,9 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 const WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
-const WSL_E2E_WORKFLOW_PATH = ".github/workflows/wsl-e2e.yaml";
 const WSL_HELPER_PATH = "tools/wsl/ci-helper.ps1";
 const MACOS_REQUIREMENTS_PATH = "ci/platform-vitest-macos-requirements.lock";
 const workflow = readYaml<Workflow>(WORKFLOW_PATH);
-const wslE2eWorkflow = readYaml<Workflow>(WSL_E2E_WORKFLOW_PATH);
 const wslHelperSource = readRepoText(WSL_HELPER_PATH);
 
 function job(name: string): WorkflowJob {
@@ -31,7 +29,7 @@ function step(jobName: string, name: string): WorkflowStep {
   return candidate!;
 }
 
-describe("platform Vitest main workflow", () => {
+describe("platform evidence workflow", () => {
   it("marks the container checkout safe before generating build identity", () => {
     const run = step("ubuntu-2604-contract", "Build CLI").run ?? "";
     expect(run).toContain('git config --global --add safe.directory "$GITHUB_WORKSPACE"');
@@ -70,31 +68,16 @@ describe("platform Vitest main workflow", () => {
       expect(run).not.toMatch(/\bcurl\b[^\n]*\|\s*bash\b/u);
     }
     expect(step("wsl-vitest", "Install Node.js 22 in WSL").run).toContain("Install-WslNode");
-    expect(
-      wslE2eWorkflow.jobs["wsl-e2e"]?.steps?.find(
-        (entry) => entry.name === "Install Node.js 22 in WSL",
-      )?.run,
-    ).toContain("Install-WslNode");
   });
 
   // source-shape-contract: security -- Sparse immutable helper checkouts must precede candidate code before root-capable WSL execution
   it("loads the WSL helper from trusted revisions before candidate execution (#6958)", () => {
     expect(
       (workflow as Workflow & { on?: Record<string, unknown> }).on,
-      "platform main-watch workflow must not execute candidate code on pull requests",
+      "platform evidence workflow must not execute candidate code on pull requests",
     ).not.toHaveProperty("pull_request");
 
-    const cases = [
-      {
-        helperRef: "${{ github.workflow_sha }}",
-        job: job("wsl-vitest"),
-      },
-      {
-        helperRef:
-          "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}",
-        job: wslE2eWorkflow.jobs["wsl-e2e"],
-      },
-    ];
+    const cases = [{ helperRef: "${{ github.workflow_sha }}", job: job("wsl-vitest") }];
 
     for (const workflowCase of cases) {
       expect(workflowCase.job, "missing WSL job").toBeDefined();
@@ -134,9 +117,6 @@ describe("platform Vitest main workflow", () => {
     }
 
     expect(readRepoText(WORKFLOW_PATH)).not.toMatch(/WriteAllText|wslpath|wsl\s+--install/u);
-    expect(readRepoText(WSL_E2E_WORKFLOW_PATH)).not.toMatch(
-      /WriteAllText|wslpath|wsl\s+--install/u,
-    );
   });
 
   // source-shape-contract: compatibility -- macOS must use the same modern shell/tool semantics as the Linux sandbox fixtures
@@ -148,10 +128,17 @@ describe("platform Vitest main workflow", () => {
     const installOpenShell = step("macos-vitest", "Install pinned OpenShell");
     const run = install.run ?? "";
 
-    expect(job("macos-vitest")["timeout-minutes"]).toBe(30);
+    expect(job("macos-vitest")["timeout-minutes"]).toBe("${{ matrix.timeout_minutes }}");
     expect(job("macos-vitest").strategy).toMatchObject({
       "fail-fast": false,
-      matrix: { shard: [1, 2, 3, 4] },
+      matrix: {
+        include: [
+          { shard: 1, timeout_minutes: 60 },
+          { shard: 2, timeout_minutes: 30 },
+          { shard: 3, timeout_minutes: 30 },
+          { shard: 4, timeout_minutes: 30 },
+        ],
+      },
     });
     expect(checkout.with).toMatchObject({
       "fetch-depth": 0,
@@ -190,6 +177,12 @@ describe("platform Vitest main workflow", () => {
     expect(step("macos-vitest", "Run full Vitest suite on macOS").run).toContain(
       '--shard="${{ matrix.shard }}/4"',
     );
+    expect(step("macos-vitest", "Detect Docker availability for macOS E2E").if).toBe(
+      "${{ matrix.shard == 1 }}",
+    );
+    expect(step("macos-vitest", "Run macOS live E2E").run).toContain(
+      "test/e2e/live/full-e2e.test.ts",
+    );
 
     const requirements = readRepoText(MACOS_REQUIREMENTS_PATH);
     expect(requirements).toContain("pyyaml==6.0.3");
@@ -210,10 +203,17 @@ describe("platform Vitest main workflow", () => {
     const fullSuite = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
 
-    expect(job("wsl-vitest")["timeout-minutes"]).toBe(90);
+    expect(job("wsl-vitest")["timeout-minutes"]).toBe("${{ matrix.timeout_minutes }}");
     expect(job("wsl-vitest").strategy).toMatchObject({
       "fail-fast": false,
-      matrix: { shard: [1, 2, 3, 4] },
+      matrix: {
+        include: [
+          { shard: 1, timeout_minutes: 180 },
+          { shard: 2, timeout_minutes: 90 },
+          { shard: 3, timeout_minutes: 90 },
+          { shard: 4, timeout_minutes: 90 },
+        ],
+      },
     });
     expect(checkout.with).toMatchObject({
       "fetch-depth": 0,
@@ -240,5 +240,37 @@ describe("platform Vitest main workflow", () => {
       "keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state",
       "requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched",
     ]);
+    expect(step("wsl-vitest", "Detect Docker availability in WSL").if).toBe(
+      "${{ matrix.shard == 1 }}",
+    );
+    expect(step("wsl-vitest", "Run WSL live E2E").run).toContain(
+      "test/e2e/live/full-e2e.test.ts",
+    );
+  });
+
+  it("limits credentialed platform E2E to the first main-branch shard", () => {
+    const cases = [
+      {
+        job: "macos-vitest",
+        step: "Run macOS live E2E",
+        dockerOutput: "steps.macos_docker.outputs.docker_ok == 'true'",
+      },
+      {
+        job: "wsl-vitest",
+        step: "Run WSL live E2E",
+        dockerOutput: "steps.wsl_docker.outputs.docker_ok == 'true'",
+      },
+    ];
+
+    for (const workflowCase of cases) {
+      const live = step(workflowCase.job, workflowCase.step);
+      expect(live.if).toContain("matrix.shard == 1");
+      expect(live.if).toContain(workflowCase.dockerOutput);
+      expect(live.if).toContain("github.ref == 'refs/heads/main'");
+      expect(live.env).toMatchObject({
+        GITHUB_TOKEN: "${{ github.token }}",
+        NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+      });
+    }
   });
 });

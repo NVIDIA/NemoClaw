@@ -19,6 +19,23 @@ export const whatsappManifest = {
   },
   inputs: [
     {
+      id: "mode",
+      kind: "config",
+      required: false,
+      envKey: "WHATSAPP_MODE",
+      statePath: "whatsappConfig.mode",
+      validValues: ["self-chat", "bot"],
+      // Hermes adapter default. `self-chat` replies only to messages the paired
+      // account sends to itself and reads no allowlist, so a paired sandbox works
+      // with nothing else set. `bot` serves other senders.
+      defaultValue: "self-chat",
+      prompt: {
+        label: "WhatsApp reply mode",
+        help: "self-chat replies only to messages the paired account sends to itself. bot replies to other senders and stops replying to that self-chat: an unknown sender receives a pairing code you approve with `hermes pairing approve whatsapp <code>`, unless you set WHATSAPP_ALLOWED_IDS to a fixed sender list before this command.",
+        emptyValueMessage: "the sandbox replies only in your own self-chat",
+      },
+    },
+    {
       id: "allowedIds",
       kind: "config",
       required: false,
@@ -68,7 +85,8 @@ export const whatsappManifest = {
       target: "~/.hermes/.env",
       lines: [
         "WHATSAPP_ENABLED=true",
-        "WHATSAPP_MODE=bot",
+        "WHATSAPP_MODE={{whatsappConfig.mode}}",
+        "WHATSAPP_DM_POLICY={{whatsappConfig.dmPolicy}}",
         "WHATSAPP_ALLOWED_USERS={{allowedIds.whatsapp.csv}}",
       ],
     },
@@ -121,6 +139,22 @@ export const whatsappManifest = {
     },
   ],
   hooks: [
+    {
+      // Only Hermes reads a reply mode: NemoClaw renders `WHATSAPP_MODE` and
+      // `WHATSAPP_DM_POLICY` into the Hermes env, and the OpenClaw fragment
+      // carries no sender policy, so prompting an OpenClaw operator would
+      // collect an answer nothing consumes.
+      id: "whatsapp-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      agents: ["hermes"],
+      outputs: [
+        {
+          id: "mode",
+          kind: "config",
+        },
+      ],
+    },
     {
       id: "whatsapp-status-health",
       phase: "status",

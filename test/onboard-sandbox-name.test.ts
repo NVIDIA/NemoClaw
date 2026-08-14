@@ -15,6 +15,8 @@ import {
   NAME_ALLOWED_FORMAT,
   suggestNameSlug,
 } from "../src/lib/name-validation.js";
+import { deriveCheckpointFromSession } from "../src/lib/state/onboard-checkpoint-migrate.js";
+import { createSession } from "../src/lib/state/onboard-session.js";
 
 const {
   getDefaultSandboxNameForAgent,
@@ -285,21 +287,18 @@ const hostileName = "bad" + esc + "[31mX" + esc + "[0m";
     try {
       const sessionDir = path.join(tmpDir, ".nemoclaw");
       fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      const session = createSession({
+        sessionId: "null-sandbox-name",
+        status: "in_progress",
+        resumable: true,
+        mode: "interactive",
+        agent: "langchain-deepagents-code",
+        sandboxName: null,
+      });
+      session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
       fs.writeFileSync(
         path.join(sessionDir, "onboard-session.json"),
-        JSON.stringify(
-          {
-            version: 1,
-            sessionId: "null-sandbox-name",
-            status: "in_progress",
-            resumable: true,
-            mode: "interactive",
-            agent: "langchain-deepagents-code",
-            sandboxName: null,
-          },
-          null,
-          2,
-        ),
+        JSON.stringify(session, null, 2),
       );
 
       const result = spawnSync(

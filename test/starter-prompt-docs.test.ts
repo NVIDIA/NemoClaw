@@ -1338,9 +1338,8 @@ describe("starter prompt checkout line endings", () => {
     expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
   });
 
-  // Asserts only the absence of the LF pin. Asserting "unspecified" would also
-  // forbid a repository-wide "* text=auto" rule, which is unrelated policy.
-  it("leaves a file without a byte-exact contract unpinned (#8648)", () => {
-    expect(readCheckoutEol("docs/resources/agent-skills.mdx")).not.toContain("eol: lf");
+  it("checks out a representative tracked text file with LF (#8648)", () => {
+    const relativePath = "docs/resources/agent-skills.mdx";
+    expect(readCheckoutEol(relativePath)).toContain(`${relativePath}: eol: lf`);
   });
 });

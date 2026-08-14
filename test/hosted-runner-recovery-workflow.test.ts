@@ -5,14 +5,9 @@ import { describe, expect, it } from "vitest";
 import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-workflow-contract.ts";
 
 const WORKFLOW_PATH = ".github/workflows/hosted-runner-recovery.yaml";
-const E2E_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
-const WSL_WORKFLOW_PATH = ".github/workflows/wsl-e2e.yaml";
-const MACOS_WORKFLOW_PATH = ".github/workflows/macos-e2e.yaml";
 const PLATFORM_WORKFLOW_PATH = ".github/workflows/platform-vitest-main.yaml";
 const TRUSTED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TRUSTED_SETUP_NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
-const E2E_RUN_NAME =
-  "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || inputs.correlation_id != '' && format('E2E {0} ({1})', github.ref_name, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}";
 
 type RecoveryWorkflow = {
   name: string;
@@ -59,12 +54,12 @@ function collectStrings(value: unknown): string[] {
 }
 
 describe("hosted-runner recovery workflow boundary", () => {
-  it("subscribes only to completed runs from the three platform workflows (#7140)", () => {
+  it("subscribes only to completed platform-evidence runs (#7140)", () => {
     const value = workflow();
     expect(value.name).toBe("Hosted Runner Recovery");
     expect(value.on).toEqual({
       workflow_run: {
-        workflows: ["E2E / WSL", "E2E / macOS", "CI / Platform Vitest Main Watch"],
+        workflows: ["CI / Platform Evidence"],
         types: ["completed"],
       },
     });
@@ -78,28 +73,16 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 
-  // source-shape-contract: security -- Exact source workflow names and run-name expressions keep the write-capable recovery subscription bound to reviewed trusted-main identities
-  it("locks recovery identities to the source workflows' runtime names (#7140)", () => {
-    const e2e = sourceWorkflow(E2E_WORKFLOW_PATH);
-    const wsl = sourceWorkflow(WSL_WORKFLOW_PATH);
-    const macos = sourceWorkflow(MACOS_WORKFLOW_PATH);
+  // source-shape-contract: security -- The exact source workflow name keeps the write-capable recovery subscription bound to the reviewed trusted-main identity
+  it("locks recovery to the platform workflow name (#7140)", () => {
     const platform = sourceWorkflow(PLATFORM_WORKFLOW_PATH);
 
-    expect(e2e).toMatchObject({ name: "E2E", "run-name": E2E_RUN_NAME });
-    expect(E2E_RUN_NAME).toContain("inputs.correlation_id != ''");
-    expect(E2E_RUN_NAME).toContain("format('E2E {0}', github.ref_name)");
-    expect([wsl.name, macos.name, platform.name]).toEqual([
-      "E2E / WSL",
-      "E2E / macOS",
-      "CI / Platform Vitest Main Watch",
-    ]);
-    expect(wsl).not.toHaveProperty("run-name");
-    expect(macos).not.toHaveProperty("run-name");
+    expect(platform.name).toBe("CI / Platform Evidence");
     expect(platform).not.toHaveProperty("run-name");
-    expect(workflow().on.workflow_run.workflows).toEqual([wsl.name, macos.name, platform.name]);
+    expect(workflow().on.workflow_run.workflows).toEqual([platform.name]);
   });
 
-  it("fails closed on controller, source, repository, branch, event, path, and title (#7140)", () => {
+  it("fails closed on controller, source, repository, branch, event, and path (#7140)", () => {
     const guard = workflow().jobs.recover.if ?? "";
     for (const fragment of [
       "github.run_attempt == 1",
@@ -109,8 +92,6 @@ describe("hosted-runner recovery workflow boundary", () => {
       "github.event.workflow_run.conclusion == 'failure'",
       "github.event.workflow_run.head_branch == 'main'",
       "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
-      "github.event.workflow_run.path == '.github/workflows/wsl-e2e.yaml'",
-      "github.event.workflow_run.path == '.github/workflows/macos-e2e.yaml'",
       "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
     ]) {
       expect(guard).toContain(fragment);

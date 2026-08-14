@@ -282,6 +282,8 @@ function seedResumeSession(state, sandboxComplete = true) {
     session.steps[step].status = "complete";
   }
   if (sandboxComplete) session.steps.sandbox.status = "complete";
+  session.checkpoint = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"))})
+    .deriveCheckpointFromSession(session, { profile: "default" });
   onboardSession.saveSession(session);
 }
 

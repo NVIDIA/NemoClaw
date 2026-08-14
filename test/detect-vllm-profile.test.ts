@@ -26,6 +26,18 @@ describe("detectVllmProfile", () => {
     expect(profile!.name).toBe("DGX Spark");
   });
 
+  it("returns a distinct N1x profile with the DGX Spark default model (#8574)", () => {
+    const profile = detectVllmProfile({ platform: "n1x", type: "nvidia" });
+
+    expect(profile).not.toBeNull();
+    expect(profile!.name).toBe("N1x");
+    expect(profile!.platform).toBe("n1x");
+    expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(profile!.image).toBe(
+      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+    );
+  });
+
   it("returns the Station profile when gpu.platform === 'station'", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();

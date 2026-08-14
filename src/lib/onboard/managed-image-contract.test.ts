@@ -3,6 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  CANDIDATE_MANAGED_IMAGE_AGENTS,
+  isCandidateManagedImageAgent,
+  isShippedManagedImageAgent,
+  MANAGED_IMAGE_AGENTS,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -10,10 +14,10 @@ import {
   MANAGED_IMAGE_RUNTIME_IDENTITIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 
 const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
@@ -24,9 +28,10 @@ const DIGESTS = {
   openclaw: `sha256:${"1a".repeat(32)}`,
   hermes: `sha256:${"2b".repeat(32)}`,
   "langchain-deepagents-code": `sha256:${"3c".repeat(32)}`,
-} as const satisfies Record<ShippedManagedImageAgent, `sha256:${string}`>;
+  pi: `sha256:${"4d".repeat(32)}`,
+} as const satisfies Record<ManagedImageAgent, `sha256:${string}`>;
 
-function contractFor(agent: ShippedManagedImageAgent): ManagedImageContractV1 {
+function contractFor(agent: ManagedImageAgent): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   const digest = DIGESTS[agent];
   return {
@@ -57,12 +62,36 @@ describe("managed image contract v1", () => {
     ]);
   });
 
-  it("binds every shipped image to its baked-in non-root runtime identity (#7744)", () => {
+  it("binds every managed image to its baked-in non-root runtime identity (#7744)", () => {
     expect(MANAGED_IMAGE_RUNTIME_IDENTITIES).toEqual({
       openclaw: { uid: 998, gid: 998, workdir: "/sandbox" },
       hermes: { uid: 998, gid: 999, workdir: "/sandbox" },
       "langchain-deepagents-code": { uid: 999, gid: 999, workdir: "/sandbox" },
+      pi: { uid: 999, gid: 999, workdir: "/sandbox" },
     });
+  });
+
+  it("keeps the candidate cohort outside the shipped cohort (#7925)", () => {
+    expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toEqual(["pi"]);
+    expect(MANAGED_IMAGE_AGENTS).toEqual([
+      ...SHIPPED_MANAGED_IMAGE_AGENTS,
+      ...CANDIDATE_MANAGED_IMAGE_AGENTS,
+    ]);
+    for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+      expect(isShippedManagedImageAgent(agent)).toBe(false);
+      expect(isCandidateManagedImageAgent(agent)).toBe(true);
+    }
+    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+      expect(isCandidateManagedImageAgent(agent)).toBe(false);
+    }
+  });
+
+  it("validates a candidate contract without making it selectable (#7925)", () => {
+    const contract = contractFor("pi");
+
+    expect(parseManagedImageContractV1(contract, "pi")).toEqual(contract);
+    expect(contract.image).toBe("ghcr.io/nvidia/nemoclaw/pi-sandbox");
+    expect(isShippedManagedImageAgent(contract.agent)).toBe(false);
   });
 
   it.each(

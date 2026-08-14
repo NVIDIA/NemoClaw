@@ -254,6 +254,12 @@ export type OllamaDeps = CommonDeps & {
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
   };
+  /** Exact provider-owned proof used instead of legacy host warmup/probes. */
+  providerOwnedInferenceProof?: {
+    readonly protocol: "openai-chat-completions";
+    readonly model: string;
+    readonly toolCallingRequired: boolean;
+  };
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
 };
 

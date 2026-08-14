@@ -1,22 +1,34 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-// resolveContextWindowForModel takes injected deps, so these mocks only stop the
-// real inference stack (and ../runner → ./platform) from loading under vitest;
-// the default deps object references them but the tests never exercise it.
+// Most tests inject deps, so these mocks replace the real inference stack under
+// vitest. The default-deps suite below calls through to them.
 vi.mock("./local", () => ({
-  getOllamaWarmupCommand: vi.fn(() => ["curl"]),
+  getOllamaProbeCommand: vi.fn(() => ["curl", "ollama-probe"]),
   resolveOllamaRuntimeContextWindow: vi.fn(() => null),
 }));
 vi.mock("./vllm-runtime-context", () => ({ resolveVllmContextWindowFromModels: vi.fn() }));
 
+import { getOllamaProbeCommand, resolveOllamaRuntimeContextWindow } from "./local";
 import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-window";
+
+// The default dependencies reach ../runner through a lazy CJS require, so swap the
+// export on the loaded module instead of mocking the specifier.
+type CaptureStub = { stdout: string; exitCode: number | null; timedOut: boolean };
+
+const runner = require("../runner") as {
+  runCaptureEx: (cmd: readonly string[]) => CaptureStub;
+};
+
+function captured(timedOut = false): CaptureStub {
+  return { stdout: "", exitCode: 0, timedOut };
+}
 
 function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
   return {
-    warmOllamaModel: vi.fn(),
+    loadOllamaModel: vi.fn(),
     probeOllamaContextWindow: vi.fn(() => 16384),
     probeVllmContextWindow: vi.fn(() => 262144),
     defaultCloudContextWindow: vi.fn(() => 131072),
@@ -25,27 +37,44 @@ function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
 }
 
 describe("resolveContextWindowForModel", () => {
-  it("ollama-local: warms the model, then returns the probed window", () => {
+  it("ollama-local: loads the model, then returns the probed window", () => {
     const deps = makeDeps({ probeOllamaContextWindow: vi.fn(() => 16384) });
 
     expect(resolveContextWindowForModel("ollama-local", "qwen2.5:7b", deps)).toBe(16384);
-    expect(deps.warmOllamaModel).toHaveBeenCalledWith("qwen2.5:7b");
+    expect(deps.loadOllamaModel).toHaveBeenCalledWith("qwen2.5:7b");
     expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
+
+  it("ollama-local: finishes loading the model before probing it (#8974)", () => {
+    const order: string[] = [];
+    const deps = makeDeps({
+      loadOllamaModel: vi.fn(() => {
+        order.push("load");
+      }),
+      probeOllamaContextWindow: vi.fn(() => {
+        order.push("probe");
+        return 16384;
+      }),
+    });
+
+    resolveContextWindowForModel("ollama-local", "qwen2.5:7b", deps);
+
+    expect(order).toEqual(["load", "probe"]);
   });
 
   it("ollama-local: returns null when the probe cannot read a window", () => {
     const deps = makeDeps({ probeOllamaContextWindow: vi.fn(() => null) });
 
     expect(resolveContextWindowForModel("ollama-local", "qwen2.5:7b", deps)).toBeNull();
-    expect(deps.warmOllamaModel).toHaveBeenCalledTimes(1);
+    expect(deps.loadOllamaModel).toHaveBeenCalledTimes(1);
   });
 
-  it("vllm-local: returns the probed max_model_len without warming", () => {
+  it("vllm-local: returns the probed max_model_len without loading", () => {
     const deps = makeDeps({ probeVllmContextWindow: vi.fn(() => 262144) });
 
     expect(resolveContextWindowForModel("vllm-local", "some-model", deps)).toBe(262144);
     expect(deps.probeVllmContextWindow).toHaveBeenCalledWith("some-model");
-    expect(deps.warmOllamaModel).not.toHaveBeenCalled();
+    expect(deps.loadOllamaModel).not.toHaveBeenCalled();
     expect(deps.probeOllamaContextWindow).not.toHaveBeenCalled();
   });
 
@@ -53,16 +82,86 @@ describe("resolveContextWindowForModel", () => {
     const deps = makeDeps({ probeVllmContextWindow: vi.fn(() => null) });
 
     expect(resolveContextWindowForModel("vllm-local", "some-model", deps)).toBeNull();
-    expect(deps.warmOllamaModel).not.toHaveBeenCalled();
+    expect(deps.loadOllamaModel).not.toHaveBeenCalled();
   });
 
-  it("cloud provider: returns the default window without warming or probing", () => {
+  it("cloud provider: returns the default window without loading or probing", () => {
     const deps = makeDeps({ defaultCloudContextWindow: vi.fn(() => 131072) });
 
     expect(
       resolveContextWindowForModel("nvidia-prod", "nvidia/nemotron-3-super-120b-a12b", deps),
     ).toBe(131072);
-    expect(deps.warmOllamaModel).not.toHaveBeenCalled();
+    expect(deps.loadOllamaModel).not.toHaveBeenCalled();
     expect(deps.probeOllamaContextWindow).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveContextWindowForModel default dependencies (#8974)", () => {
+  const originalRunCaptureEx = runner.runCaptureEx;
+
+  afterEach(() => {
+    runner.runCaptureEx = originalRunCaptureEx;
+  });
+
+  it("ollama-local: runs the blocking probe command, not a backgrounded warm-up", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const commands: string[][] = [];
+    runner.runCaptureEx = (cmd) => {
+      commands.push([...cmd]);
+      return captured();
+    };
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
+    vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(16384);
+
+    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
+    expect(getOllamaProbeCommand).toHaveBeenCalledWith("qwen3.5:9b");
+    expect(commands).toEqual([["curl", "ollama-probe"]]);
+    expect(logSpy).toHaveBeenCalledWith("  Priming Ollama model: qwen3.5:9b");
+  });
+
+  it("ollama-local: retries the load at 300 s when the first probe times out", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let attempts = 0;
+    runner.runCaptureEx = () => {
+      attempts += 1;
+      return captured(attempts === 1);
+    };
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
+    vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(16384);
+
+    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
+    expect(attempts).toBe(2);
+    expect(getOllamaProbeCommand).toHaveBeenLastCalledWith("qwen3.5:9b", 300);
+  });
+
+  it("ollama-local: does not retry when the first probe fails without timing out", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let attempts = 0;
+    runner.runCaptureEx = () => {
+      attempts += 1;
+      return captured();
+    };
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
+    vi.mocked(resolveOllamaRuntimeContextWindow).mockReturnValue(null);
+
+    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBeNull();
+    expect(attempts).toBe(1);
+  });
+
+  it("ollama-local: reads the runtime window only after the model load returns", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const order: string[] = [];
+    runner.runCaptureEx = () => {
+      order.push("load");
+      return captured();
+    };
+    vi.mocked(getOllamaProbeCommand).mockReturnValue(["curl", "ollama-probe"]);
+    vi.mocked(resolveOllamaRuntimeContextWindow).mockImplementation(() => {
+      order.push("probe");
+      return 16384;
+    });
+
+    expect(resolveContextWindowForModel("ollama-local", "qwen3.5:9b")).toBe(16384);
+    expect(order).toEqual(["load", "probe"]);
   });
 });

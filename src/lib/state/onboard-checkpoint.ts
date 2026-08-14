@@ -19,8 +19,12 @@ import {
   type CheckpointGatewaySupervisor,
   type CheckpointLoadResult,
   type CheckpointMessagingSelection,
+  type CheckpointOnboardProfile,
+  type CheckpointPortableRuntimeAuthority,
+  type CheckpointProfileDecision,
   type CheckpointProviderBinding,
   type CheckpointResourceProfile,
+  type CheckpointRuntimeAuthorityDecision,
   type CheckpointSandboxIdentity,
   type CheckpointSandboxRecreatePhase,
   type CheckpointSandboxRecreateSourceWorkload,
@@ -45,6 +49,105 @@ const SANDBOX_RECREATE_PHASES = new Set<CheckpointSandboxRecreatePhase>([
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const CHECKPOINT_KEYS = [
+  "schemaVersion",
+  "sessionId",
+  "machineState",
+  "updatedAt",
+  "profile",
+  "runtimeAuthority",
+  "sandboxIdentity",
+  "webSearch",
+  "messaging",
+  "resourceProfile",
+  "gatewayAuthority",
+  "effectGroups",
+  "bindings",
+  "sandboxRecreate",
+] as const;
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function readCanonicalAbsolutePath(value: unknown): string | null {
+  if (typeof value !== "string" || value === "" || /[\0\r\n]/u.test(value)) return null;
+  if (!path.isAbsolute(value) || path.normalize(value) !== value) return null;
+  return value;
+}
+
+function isStrictDescendant(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative !== "" &&
+    !path.isAbsolute(relative) &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`)
+  );
+}
+
+function parseProfile(value: unknown): CheckpointProfileDecision | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["kind", "value"])) return null;
+  if (value.kind !== "selected" || (value.value !== "default" && value.value !== "portable")) {
+    return null;
+  }
+  return { kind: "selected", value: value.value as CheckpointOnboardProfile };
+}
+
+function parsePortableRuntimeAuthority(value: unknown): CheckpointPortableRuntimeAuthority | null {
+  if (
+    !isObjectRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "kind",
+      "ownership",
+      "uid",
+      "homeDir",
+      "configHome",
+      "runtimeDir",
+      "socketPath",
+    ])
+  ) {
+    return null;
+  }
+  if (
+    value.schemaVersion !== 1 ||
+    value.kind !== "podman" ||
+    value.ownership !== "current-user" ||
+    !Number.isSafeInteger(value.uid) ||
+    Number(value.uid) < 0
+  ) {
+    return null;
+  }
+  const homeDir = readCanonicalAbsolutePath(value.homeDir);
+  const configHome = readCanonicalAbsolutePath(value.configHome);
+  const runtimeDir = readCanonicalAbsolutePath(value.runtimeDir);
+  const socketPath = readCanonicalAbsolutePath(value.socketPath);
+  if (!homeDir || !configHome || !runtimeDir || !socketPath) return null;
+  if (configHome !== path.join(homeDir, ".config")) return null;
+  if (runtimeDir !== path.join("/run/user", String(value.uid))) return null;
+  if (!isStrictDescendant(runtimeDir, socketPath)) return null;
+  return {
+    schemaVersion: 1,
+    kind: "podman",
+    ownership: "current-user",
+    uid: Number(value.uid),
+    homeDir,
+    configHome,
+    runtimeDir,
+    socketPath,
+  };
+}
+
+function parseRuntimeAuthority(value: unknown): CheckpointRuntimeAuthorityDecision | null {
+  if (!isObjectRecord(value)) return null;
+  if (hasExactKeys(value, ["kind"]) && value.kind === "unset") return { kind: "unset" };
+  if (!hasExactKeys(value, ["kind", "value"]) || value.kind !== "selected") return null;
+  const authority = parsePortableRuntimeAuthority(value.value);
+  return authority ? { kind: "selected", value: authority } : null;
+}
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -70,7 +173,7 @@ function readCanonicalIsoTimestamp(value: unknown): string | null {
 }
 
 function parseSandboxIdentityValue(value: unknown): CheckpointSandboxIdentity | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["name", "agent"])) return null;
   const name = readString(value.name);
   const agent = readString(value.agent);
   if (name === null || agent === null || agent.length === 0) return null;
@@ -79,19 +182,26 @@ function parseSandboxIdentityValue(value: unknown): CheckpointSandboxIdentity | 
 }
 
 function parseResourceProfileValue(value: unknown): CheckpointResourceProfile | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["cpu", "memory"])) return null;
   const cpu = readString(value.cpu);
   const memory = readString(value.memory);
   return cpu !== null && memory !== null ? { cpu, memory } : null;
 }
 
 function parseWebSearchValue(value: unknown): WebSearchConfig | null {
-  if (!isObjectRecord(value)) return null;
+  if (
+    !isObjectRecord(value) ||
+    (!hasExactKeys(value, ["fetchEnabled"]) && !hasExactKeys(value, ["fetchEnabled", "provider"]))
+  ) {
+    return null;
+  }
   return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
 }
 
 function parseMessagingValue(value: unknown): CheckpointMessagingSelection | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["selectedChannels", "disabledChannels"])) {
+    return null;
+  }
   const selectedChannels = readStringArray(value.selectedChannels);
   const disabledChannels = readStringArray(value.disabledChannels);
   if (selectedChannels === null || disabledChannels === null) return null;
@@ -99,7 +209,9 @@ function parseMessagingValue(value: unknown): CheckpointMessagingSelection | nul
 }
 
 function parseEffectGroupRecord(value: unknown): CheckpointEffectGroupRecord | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["completedAt", "fingerprint"])) {
+    return null;
+  }
   const completedAt = readCanonicalIsoTimestamp(value.completedAt);
   const fingerprint = readString(value.fingerprint);
   if (completedAt === null || fingerprint === null || fingerprint.length === 0) return null;
@@ -110,6 +222,13 @@ function parseEffectGroups(
   value: unknown,
 ): Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> | null {
   if (!isObjectRecord(value)) return null;
+  if (
+    Object.keys(value).some(
+      (name) => !EFFECT_GROUP_NAMES.includes(name as CheckpointEffectGroupName),
+    )
+  ) {
+    return null;
+  }
   const groups: Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> = {};
   for (const name of EFFECT_GROUP_NAMES) {
     const raw = value[name];
@@ -122,7 +241,9 @@ function parseEffectGroups(
 }
 
 function parseProviderBinding(value: unknown): CheckpointProviderBinding | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["name", "type", "credentialEnv"])) {
+    return null;
+  }
   const name = readString(value.name);
   const type = readString(value.type);
   const credentialEnv = readString(value.credentialEnv);
@@ -142,7 +263,9 @@ function parseProviderBindings(value: unknown): CheckpointProviderBinding[] | nu
 }
 
 function parseGatewaySupervisor(value: unknown): CheckpointGatewaySupervisor | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["kind", "serviceName", "execPath"])) {
+    return null;
+  }
   const kind = value.kind;
   const serviceName = readString(value.serviceName);
   const execPath = readString(value.execPath);
@@ -157,7 +280,21 @@ function canonicalGatewayName(gatewayPort: number): string {
 }
 
 function parseGatewayAuthorityValue(value: unknown): CheckpointGatewayAuthority | null {
-  if (!isObjectRecord(value)) return null;
+  if (
+    !isObjectRecord(value) ||
+    !hasExactKeys(value, [
+      "gatewayName",
+      "gatewayPort",
+      "mode",
+      "source",
+      "endpoint",
+      "stateDir",
+      "supervisor",
+      "requiredCapabilities",
+    ])
+  ) {
+    return null;
+  }
   const gatewayName = readString(value.gatewayName);
   const gatewayPort = value.gatewayPort;
   const mode = value.mode;
@@ -243,7 +380,9 @@ function parseGatewayAuthorityValue(value: unknown): CheckpointGatewayAuthority 
 }
 
 function parseBindings(value: unknown): CheckpointBindings | null {
-  if (!isObjectRecord(value)) return null;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["credentialEnvs", "registeredProviders"])) {
+    return null;
+  }
   const credentialEnvs = readStringArray(value.credentialEnvs);
   const registeredProviders = parseProviderBindings(value.registeredProviders);
   if (credentialEnvs === null || registeredProviders === null) return null;
@@ -269,7 +408,9 @@ function parseSandboxRecreateSourceWorkload(
 ): CheckpointSandboxRecreateSourceWorkload | null | undefined {
   // Journals written before the source-workload cleanup receipt remain resumable.
   if (value === undefined || value === null) return null;
-  if (!isObjectRecord(value)) return undefined;
+  if (!isObjectRecord(value) || !hasExactKeys(value, ["openshellDriver", "imageTag", "workload"])) {
+    return undefined;
+  }
   const rawOpenshellDriver = value.openshellDriver;
   const openshellDriver =
     rawOpenshellDriver === null ? null : readBoundedJournalString(rawOpenshellDriver, 128);
@@ -286,6 +427,7 @@ function parseSandboxRecreateSourceWorkload(
   if (rawWorkload === null) return { openshellDriver, imageTag, workload: null };
   if (
     !isObjectRecord(rawWorkload) ||
+    !hasExactKeys(rawWorkload, ["kind", "reference", "shared"]) ||
     rawWorkload.kind !== "legacy-dockerfile" ||
     typeof rawWorkload.shared !== "boolean"
   ) {
@@ -306,7 +448,28 @@ function parseSandboxRecreateSourceWorkload(
 function parseSandboxRecreateTransaction(
   value: unknown,
 ): CheckpointSandboxRecreateTransaction | null {
-  if (!isObjectRecord(value)) return null;
+  if (
+    !isObjectRecord(value) ||
+    !hasExactKeys(value, [
+      "version",
+      "id",
+      "revision",
+      "sandboxName",
+      "gatewayName",
+      "gatewayPort",
+      "sourceRegistryFingerprint",
+      "sourceLiveIdentityFingerprint",
+      "sourceWorkload",
+      "targetIntentFingerprint",
+      "targetGeneration",
+      "targetLiveIdentityFingerprint",
+      "phase",
+      "startedAt",
+      "updatedAt",
+    ])
+  ) {
+    return null;
+  }
   const id = readString(value.id);
   const sandboxName = readString(value.sandboxName);
   const gatewayName = readString(value.gatewayName);
@@ -382,11 +545,22 @@ function parseSchema(
   gatewayAuthorityRaw: unknown,
   sandboxRecreateRaw: unknown,
 ): OnboardCheckpoint | null {
+  if (!hasExactKeys(value, CHECKPOINT_KEYS)) return null;
   const sessionId = readString(value.sessionId);
   const machineState = value.machineState;
   const updatedAt = readCanonicalIsoTimestamp(value.updatedAt);
   if (sessionId === null || updatedAt === null) return null;
   if (typeof machineState !== "string" || !isOnboardMachineState(machineState)) return null;
+
+  const profile = parseProfile(value.profile);
+  const runtimeAuthority = parseRuntimeAuthority(value.runtimeAuthority);
+  if (!profile || !runtimeAuthority) return null;
+  if (
+    (profile.value === "default" && runtimeAuthority.kind !== "unset") ||
+    (profile.value === "portable" && runtimeAuthority.kind !== "selected")
+  ) {
+    return null;
+  }
 
   const sandboxIdentity = requireDecision(value.sandboxIdentity, parseSandboxIdentityValue);
   const webSearch = requireDecision(value.webSearch, parseWebSearchValue);
@@ -418,6 +592,8 @@ function parseSchema(
     sessionId,
     machineState,
     updatedAt,
+    profile,
+    runtimeAuthority,
     sandboxIdentity,
     webSearch,
     messaging,
@@ -444,14 +620,8 @@ export function inspectCheckpoint(raw: unknown): CheckpointLoadResult {
     const checkpoint = parseSchema(raw, raw.gatewayAuthority, raw.sandboxRecreate);
     return checkpoint ? { status: "loaded", checkpoint } : { status: "corrupt" };
   }
-  if (version === 2) {
-    const checkpoint = parseSchema(raw, raw.gatewayAuthority, null);
-    return checkpoint ? { status: "migrated", checkpoint, fromVersion: 2 } : { status: "corrupt" };
-  }
-  if (version === 1) {
-    const checkpoint = parseSchema(raw, { kind: "unset" }, null);
-    return checkpoint ? { status: "migrated", checkpoint, fromVersion: 1 } : { status: "corrupt" };
-  }
+  if (version === 1 || version === 2 || version === 3)
+    return { status: "legacy", foundVersion: version };
   return { status: "corrupt" };
 }
 
@@ -461,6 +631,8 @@ export function serializeCheckpoint(checkpoint: OnboardCheckpoint): Record<strin
     sessionId: checkpoint.sessionId,
     machineState: checkpoint.machineState,
     updatedAt: checkpoint.updatedAt,
+    profile: checkpoint.profile,
+    runtimeAuthority: checkpoint.runtimeAuthority,
     sandboxIdentity: checkpoint.sandboxIdentity,
     webSearch: checkpoint.webSearch,
     messaging: checkpoint.messaging,

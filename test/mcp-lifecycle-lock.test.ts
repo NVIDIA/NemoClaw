@@ -417,9 +417,18 @@ const releasePath = process.argv[3];
       return rename(from, to);
     });
 
+    // Drive the deadline from a stepping clock: on a loaded CI runner the
+    // real 50 ms budget can expire before stale recovery reaches its first
+    // rename, so the replacement is never published and the final assertion
+    // observes the planted stale token (NVIDIA/NemoClaw#8948).
+    let monotonicNow = 0;
     try {
       await expect(
-        lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 50 })),
+        lifecycleLock.withMcpLifecycleLock(
+          "alpha",
+          () => undefined,
+          options({ timeoutMs: 50, monotonicNow: () => monotonicNow++ }),
+        ),
       ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     } finally {
       renameSpy.mockRestore();

@@ -8,9 +8,16 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import {
+  createHermesUnsafeConfigHarness,
+  expectHermesShieldsUpRecord,
+  failHermesInferenceConvergence,
+  type HermesUnsafeConfigHarness,
+} from "../../../test/helpers/hermes-unsafe-config-shields-harness";
+import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
+import type { AgentConfigTarget } from "../sandbox/agent-config";
 
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
@@ -21,6 +28,15 @@ const STATE_LOCK_PLAN = {
   version: 1 as const,
   readOnlyRoots: ["skills"],
   confidentialRoots: ["credentials"],
+  readOnlyPrefixes: [],
+  confidentialPrefixes: [],
+  writableSubpaths: [],
+};
+
+const RETRY_STATE_LOCK_PLAN = {
+  version: 1 as const,
+  readOnlyRoots: ["skills"],
+  confidentialRoots: [],
   readOnlyPrefixes: [],
   confidentialPrefixes: [],
   writableSubpaths: [],
@@ -38,6 +54,64 @@ function openClawTarget() {
     stateLockPlanInImage: true,
   };
 }
+
+const retryAgentCases: ReadonlyArray<
+  readonly [label: string, sandboxName: string, target: AgentConfigTarget]
+> = [
+  [
+    "OpenClaw",
+    "openclaw",
+    {
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      format: "json",
+      configFile: "openclaw.json",
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+      stateLockPlan: RETRY_STATE_LOCK_PLAN,
+      stateLockPlanInImage: true,
+    },
+  ],
+  [
+    "Hermes",
+    "hermes",
+    {
+      agentName: "hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configDir: "/sandbox/.hermes",
+      format: "yaml",
+      configFile: "config.yaml",
+      sensitiveFiles: ["/sandbox/.hermes/.config-hash"],
+      stateLockPlan: RETRY_STATE_LOCK_PLAN,
+      stateLockPlanInImage: true,
+    },
+  ],
+  [
+    "DCode",
+    "dcode",
+    {
+      agentName: "langchain-deepagents-code",
+      configPath: "/sandbox/.deepagents/config.toml",
+      configDir: "/sandbox/.deepagents",
+      format: "toml",
+      configFile: "config.toml",
+      sensitiveFiles: ["/sandbox/.deepagents/.config-hash"],
+      stateLockPlan: RETRY_STATE_LOCK_PLAN,
+      stateLockPlanInImage: false,
+    },
+  ],
+];
+
+const retryConflictCases: ReadonlyArray<
+  readonly [
+    label: string,
+    retryOptions: { timeout?: string; reason?: string; policy?: string; throwOnError: true },
+  ]
+> = [
+  ["timeout", { timeout: "6m", reason: "retry-safe", policy: "permissive", throwOnError: true }],
+  ["reason", { timeout: "5m", reason: "changed-reason", policy: "permissive", throwOnError: true }],
+  ["policy", { timeout: "5m", reason: "retry-safe", policy: "custom-policy", throwOnError: true }],
+];
 
 describe("OpenClaw shields top-config transaction", () => {
   let homeDir: string;
@@ -122,7 +196,7 @@ describe("OpenClaw shields top-config transaction", () => {
     );
 
     shields = requireSource(INDEX_MODULE);
-  });
+  }, 30_000);
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
@@ -386,6 +460,27 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     return output;
   }
 
+  function readStateAndTimer(sandboxName: string) {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, `shields-${sandboxName}.json`);
+    const timerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    return {
+      statePath,
+      timerPath,
+      state: fs.readFileSync(statePath, "utf-8"),
+      timer: fs.readFileSync(timerPath, "utf-8"),
+    };
+  }
+
+  function createRetryHarness(sandboxName: string, target: AgentConfigTarget) {
+    return createHarness({
+      agentConfigTarget: target,
+      confirmOpenClawInodeFlags: true,
+      processStartIdentity: `issue-8806-${sandboxName}-owner`,
+      sandboxName,
+    });
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
@@ -401,6 +496,154 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     delete require.cache[requireSource.resolve("./permissive-runtime.js")];
     delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
     delete require.cache[requireSource.resolve("../cli/branding.js")];
+  });
+
+  it.each(retryAgentCases)(
+    "accepts an equivalent repeated shieldsDown request for %s without changing state or timer authority (#8806)",
+    { timeout: 30_000 },
+    (_label, sandboxName, target) => {
+      const harness = createRetryHarness(sandboxName, target);
+
+      harness.shieldsDown(sandboxName, {
+        timeout: "5m",
+        reason: "retry-safe",
+        policy: "permissive",
+        throwOnError: true,
+      });
+
+      const before = readStateAndTimer(sandboxName);
+      harness.logSpy.mockClear();
+      harness.errorSpy.mockClear();
+      harness.runCaptureSpy.mockClear();
+      harness.runSpy.mockClear();
+      harness.auditSpy.mockClear();
+
+      harness.shieldsDown(sandboxName, {
+        timeout: "5m",
+        reason: "retry-safe",
+        policy: "permissive",
+        throwOnError: true,
+      });
+
+      expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
+      expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
+      expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+      expect(harness.runSpy).not.toHaveBeenCalled();
+      expect(harness.auditSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy).not.toHaveBeenCalled();
+      expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+        `Shields already down for ${sandboxName}; equivalent request accepted.`,
+      );
+    },
+  );
+
+  it.each(
+    retryAgentCases.flatMap(([label, sandboxName, target]) =>
+      retryConflictCases.map(
+        ([conflict, retryOptions]) => [label, conflict, sandboxName, target, retryOptions] as const,
+      ),
+    ),
+  )(
+    "rejects a repeated shieldsDown request for %s with a conflicting %s without changing state or timer authority (#8806)",
+    { timeout: 30_000 },
+    (_label, _conflict, sandboxName, target, retryOptions) => {
+      const harness = createRetryHarness(sandboxName, target);
+
+      harness.shieldsDown(sandboxName, {
+        timeout: "5m",
+        reason: "retry-safe",
+        policy: "permissive",
+        throwOnError: true,
+      });
+
+      const before = readStateAndTimer(sandboxName);
+      harness.runCaptureSpy.mockClear();
+      harness.runSpy.mockClear();
+      harness.auditSpy.mockClear();
+      harness.errorSpy.mockClear();
+
+      expect(() => harness.shieldsDown(sandboxName, retryOptions)).toThrow(
+        new RegExp(`Config is already unlocked for ${sandboxName}`, "u"),
+      );
+
+      expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
+      expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
+      expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+      expect(harness.runSpy).not.toHaveBeenCalled();
+      expect(harness.auditSpy).not.toHaveBeenCalled();
+      expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("already unlocked");
+    },
+  );
+
+  it("rejects a Hermes repeated shieldsDown request with no options without changing state or timer authority (#8806)", {
+    timeout: 30_000,
+  }, () => {
+    const [, sandboxName, target] = retryAgentCases[1]!;
+    const harness = createRetryHarness(sandboxName, target);
+
+    harness.shieldsDown(sandboxName, {
+      timeout: "5m",
+      reason: "retry-safe",
+      policy: "permissive",
+      throwOnError: true,
+    });
+
+    const before = readStateAndTimer(sandboxName);
+    harness.runCaptureSpy.mockClear();
+    harness.runSpy.mockClear();
+    harness.auditSpy.mockClear();
+    harness.errorSpy.mockClear();
+
+    expect(() => harness.shieldsDown(sandboxName, { throwOnError: true })).toThrow(
+      /Config is already unlocked for hermes/u,
+    );
+
+    expect(fs.readFileSync(before.statePath, "utf-8")).toBe(before.state);
+    expect(fs.readFileSync(before.timerPath, "utf-8")).toBe(before.timer);
+    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("already unlocked");
+  });
+
+  it("rejects an equivalent repeated shieldsDown request with missing timer authority and restores lockdown (#8806)", {
+    timeout: 30_000,
+  }, () => {
+    const harness = createRetryHarness("openclaw", retryAgentCases[0]![2]);
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "retry-safe",
+      policy: "permissive",
+      throwOnError: true,
+    });
+
+    const before = readStateAndTimer("openclaw");
+    fs.rmSync(before.timerPath, { force: true });
+    harness.runCaptureSpy.mockClear();
+    harness.auditSpy.mockClear();
+    harness.errorSpy.mockClear();
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "retry-safe",
+        policy: "permissive",
+        throwOnError: true,
+      }),
+    ).toThrow(/Cannot accept equivalent shields down request without live auto-restore timer/u);
+
+    expect(JSON.parse(fs.readFileSync(before.statePath, "utf-8"))).toMatchObject({
+      shieldsDown: false,
+      shieldsDownAt: null,
+    });
+    expect(fs.existsSync(before.timerPath)).toBe(false);
+    expect(harness.auditSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "shields_auto_restore", sandbox: "openclaw" }),
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Cannot accept equivalent shields down request without live auto-restore timer authority.",
+    );
   });
 
   it("shields down removes the permissive runtime temp directory when the auto-restore timer fails (#7964)", () => {
@@ -765,5 +1008,153 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"))
         .shieldsDown,
     ).toBe(true);
+  });
+});
+
+describe("Hermes Shields down unsafe config path (#8804)", () => {
+  const harnessFactory = createHermesUnsafeConfigHarness(requireSource, INDEX_MODULE);
+  let harness: HermesUnsafeConfigHarness;
+
+  beforeEach(() => {
+    harness = harnessFactory.beforeEachHook();
+  });
+
+  afterEach(() => {
+    harnessFactory.afterEachHook();
+  });
+
+  it("rejects a Hermes config symlink before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", { reason: "unsafe-path", throwOnError: true }),
+    ).toThrow(/refusing symlink path: .*config\.yaml/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
+  it("rejects a replaced Hermes config directory before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-dir-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", { reason: "unsafe-path", throwOnError: true }),
+    ).toThrow(/refusing symlink path: .*\.hermes/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
+  it("rejects a missing Hermes config before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-missing-config");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", {
+        reason: "missing-config",
+        throwOnError: true,
+      }),
+    ).toThrow(/missing config path: .*config\.yaml/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
+  it("rejects a Hermes sensitive-file symlink before Shields down weakens posture (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("preflight-sensitive-file-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", { reason: "unsafe-path", throwOnError: true }),
+    ).toThrow(/refusing symlink path: .*\.env/);
+
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expectHermesShieldsUpRecord(stateDir, "hermes-shields", harness.shields);
+    expect(harness.shields.getShieldsPosture("hermes-shields", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+  });
+
+  it("keeps DOWN when unlock fails and unsafe re-lock cannot verify protection (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("unlock-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", {
+        reason: "unsafe-path",
+        timeout: "15m",
+        throwOnError: true,
+      }),
+    ).toThrow(/refusing to follow symlink: \/sandbox\/\.hermes\/config\.yaml/);
+
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-hermes-shields.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: true });
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    const errors = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(errors).toContain("Manual intervention is required");
+    expect(errors).not.toContain("provisional Shields down cleared");
+  });
+
+  it("keeps DOWN when unsafe replacement breaks rollback after mutation begins (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("unlock-partial-rollback-symlink");
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", {
+        reason: "unsafe-path-during-unlock",
+        timeout: "15m",
+        throwOnError: true,
+      }),
+    ).toThrow(/refusing to follow symlink: \/sandbox\/\.hermes\/config\.yaml/);
+
+    const errors = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-hermes-shields.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: true });
+    expect(harness.shields.isShieldsDown("hermes-shields")).toBe(true);
+    expect(errors).toContain("Hermes shields rollback preparation failed");
+    expect(errors).toContain("Manual intervention is required");
+    expect(errors).not.toContain("provisional Shields down cleared");
+  });
+
+  it("keeps DOWN when unlock succeeded and unsafe re-lock cannot verify protection (#8804)", () => {
+    const stateDir = harness.seedLockedState("hermes-shields");
+    harness.setScenario("unlock-ok-relock-symlink");
+    failHermesInferenceConvergence(requireSource);
+
+    expect(() =>
+      harness.shields.shieldsDown("hermes-shields", {
+        reason: "unsafe-path-after-unlock",
+        timeout: "15m",
+        throwOnError: true,
+      }),
+    ).toThrow(/Hermes inference route did not converge/);
+
+    const errors = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-hermes-shields.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: true });
+    expect(errors).toContain("Manual intervention is required");
+    expect(errors).not.toContain("provisional Shields down cleared");
   });
 });

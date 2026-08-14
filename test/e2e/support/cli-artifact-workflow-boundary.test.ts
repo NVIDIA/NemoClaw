@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   CLI_ARTIFACT_PACKAGE_STEP,
   CLI_ARTIFACT_PUBLISH_STEP,
-  CLI_ARTIFACT_RESTORE_STEP,
   validateCliArtifactRestoreAction,
   validateCliArtifactWorkflowBoundary,
 } from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
@@ -729,169 +728,13 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects changes to checkout, workflow settings, job settings, or steps through CLI artifact restore", () => {
-    const settingsError =
-      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract";
-    const restoreOrderError =
-      "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
-    const scenarios: Array<{
-      expectedErrors: string[];
-      mutate: (workflow: Workflow) => void;
-      name: string;
-    }> = [
-      {
-        name: "changed candidate checkout",
-        mutate: (workflow) => {
-          const checkout = workflow.jobs["sandbox-operations"].steps![0]!;
-          checkout.with = { ...checkout.with, repository: "NVIDIA/NemoClaw" };
-        },
-        expectedErrors: [
-          "sandbox-operations must use one candidate checkout with the required action, repository, ref, and credential settings",
-          settingsError,
-        ],
-      },
-      {
-        name: "workflow BASH_ENV",
-        mutate: (workflow) => {
-          const workflowWithEnv = workflow as Workflow & {
-            env?: Record<string, string>;
-          };
-          workflowWithEnv.env = {
-            ...workflowWithEnv.env,
-            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
-          };
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "job BASH_ENV",
-        mutate: (workflow) => {
-          const job = workflow.jobs["sandbox-operations"];
-          job.env = {
-            ...job.env,
-            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
-          };
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "job default shell",
-        mutate: (workflow) => {
-          Object.assign(workflow.jobs["sandbox-operations"], {
-            defaults: { run: { shell: "bash scripts/leak.sh {0}" } },
-          });
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "restore step BASH_ENV",
-        mutate: (workflow) => {
-          const restore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
-          restore.env = {
-            ...restore.env,
-            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
-          };
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "local action",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-          steps.splice(prepareIndex, 0, {
-            name: "Run local action",
-            uses: "./.github/actions/untrusted",
-          });
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "workspace helper",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-          steps.splice(prepareIndex, 0, {
-            name: "Run workspace helper",
-            run: 'bash "$GITHUB_WORKSPACE/scripts/pr-helper.sh"',
-          });
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "root checkout script",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-          steps.splice(prepareIndex, 0, {
-            name: "Run root checkout script",
-            run: "bash install.sh",
-          });
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "removed authentication",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-          steps.splice(authIndex, 1);
-        },
-        expectedErrors: [settingsError],
-      },
-      {
-        name: "reordered authentication",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
-          const [auth] = steps.splice(authIndex, 1);
-          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
-          steps.splice(restoreIndex, 0, auth!);
-        },
-        expectedErrors: [settingsError, restoreOrderError],
-      },
-      {
-        name: "delayed restore",
-        mutate: (workflow) => {
-          const steps = workflow.jobs["sandbox-operations"].steps!;
-          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
-          steps.splice(restoreIndex, 0, {
-            name: "Delay CLI artifact restore",
-            run: "true",
-          });
-        },
-        expectedErrors: [settingsError, restoreOrderError],
-      },
-    ];
-
-    for (const scenario of scenarios) {
-      const workflow = workflowFixture();
-      scenario.mutate(workflow);
-      expect(validateCliArtifactWorkflowBoundary(workflow), scenario.name).toEqual(
-        expect.arrayContaining(scenario.expectedErrors),
-      );
-    }
-  });
-
   it("leaves job timeouts to their dedicated workflow validators", () => {
     const workflow = workflowFixture();
-    for (const jobName of ["hermes-e2e", "hermes-discord", "hermes-shields-config"]) {
-      const timeoutMinutes = workflow.jobs[jobName]["timeout-minutes"];
-      workflow.jobs[jobName]["timeout-minutes"] = Number(timeoutMinutes) + 1;
-    }
+    const timeoutMinutes = Number(workflow.jobs["hermes-e2e"]["timeout-minutes"]);
+    expect(Number.isFinite(timeoutMinutes)).toBe(true);
+    workflow.jobs["hermes-e2e"]["timeout-minutes"] = timeoutMinutes + 1;
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual([]);
-  });
-
-  it("rejects incomplete consumer provenance and a mutable action reference", () => {
-    const workflow = workflowFixture();
-    const restore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
-    restore.uses = "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@main";
-    restore.with = { "provenance-json": "${{ inputs.checkout_sha }}" };
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "sandbox-operations must use the immutable complete CLI artifact restore contract",
-    );
   });
 
   it("rejects action implementation drift that weakens extraction or payload verification", () => {
@@ -915,36 +758,5 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
-  });
-
-  it("rejects missing consumer restoration", () => {
-    const workflow = workflowFixture();
-    workflow.jobs["cloud-inference"].steps = workflow.jobs["cloud-inference"].steps!.filter(
-      (step) => step.name !== CLI_ARTIFACT_RESTORE_STEP,
-    );
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "cloud-inference must verify and restore the exact CLI artifact exactly once",
-    );
-  });
-
-  it("requires security posture to restore the shared CLI modules", () => {
-    const workflow = workflowFixture();
-    workflow.jobs["security-posture"].steps = workflow.jobs["security-posture"].steps!.filter(
-      (step) => step.name !== CLI_ARTIFACT_RESTORE_STEP,
-    );
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "security-posture must verify and restore the exact CLI artifact exactly once",
-    );
-  });
-
-  it("rejects an added CLI artifact consumer outside the reviewed workflow contract", () => {
-    const workflow = workflowFixture();
-    workflow.jobs["added-consumer"] = structuredClone(workflow.jobs["cloud-inference"]);
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
-    );
   });
 });

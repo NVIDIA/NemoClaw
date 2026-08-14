@@ -10,6 +10,10 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  assertHermesHasNoRoutingSidecars,
+  captureHermesRoutingTopology,
+} from "../fixtures/hermes-routing-topology.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertSecurityPosture,
@@ -20,7 +24,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 import { assertHermesSkillLifecycle } from "./hermes-skill-lifecycle.ts";
-import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { runLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
@@ -595,7 +599,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(httpStatusOk(dashboardInternal.stdout)).toBe(true);
   }
 
-  progress.phase("restart Hermes gateway, validate supervision, and launch a turn");
+  progress.phase("restart Hermes gateway, validate supervision, and complete two launch turns");
   // Phase 5: host-mediated Hermes gateway restart. This validates the
   // runtime contract behind #2426 against a real OpenShell/Hermes sandbox:
   // The installed supervision tree controls the gateway process, direct
@@ -608,6 +612,21 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       String.raw`awk '($4 ~ /(^|\/)(hermes|hermes[.]real|python|python3)$/) && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'`,
     ].join(" "),
   );
+  let routingTopologyCaptures = 0;
+  const assertNoStandaloneRoutingSidecars = async (
+    artifactName: string,
+    expectedGatewayPid: number,
+  ): Promise<void> => {
+    const topology = await captureHermesRoutingTopology({
+      artifactName,
+      artifacts,
+      env: commandEnv(),
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+    });
+    assertHermesHasNoRoutingSidecars(topology, expectedGatewayPid);
+    routingTopologyCaptures += 1;
+  };
   const beforeRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
     artifactName: "phase-5-hermes-gateway-process-before-restart",
     env: commandEnv(),
@@ -615,6 +634,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   });
   expect(beforeRestartProcess.exitCode, resultText(beforeRestartProcess)).toBe(0);
   const beforeGateway = parseGatewayProcess(beforeRestartProcess.stdout);
+  await assertNoStandaloneRoutingSidecars(
+    "phase-5-hermes-routing-topology-before-restart",
+    Number(beforeGateway.pid),
+  );
   const rootSupervisorTopology = beforeGateway.owner === "gateway";
   let recoveredGateway: ReturnType<typeof parseGatewayProcess>;
 
@@ -721,6 +744,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     const afterGateway = parseGatewayProcess(afterRestartProcess.stdout);
     expect(afterGateway.owner).toBe("gateway");
     expect(afterGateway.pid).not.toBe(beforeGateway.pid);
+    await assertNoStandaloneRoutingSidecars(
+      "phase-5-hermes-routing-topology-after-root-supervised-restart",
+      Number(afterGateway.pid),
+    );
 
     const afterRestartPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
       artifactName: "phase-5-pid1-after-restart",
@@ -1120,6 +1147,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(restartedManagedGateway.owner).toBe("sandbox");
     expect(restartedManagedGateway.ppid).toBe(supervisor.pid);
     expect(restartedManagedGateway.pid).not.toBe(beforeGateway.pid);
+    await assertNoStandaloneRoutingSidecars(
+      "phase-5-hermes-routing-topology-after-managed-restart",
+      Number(restartedManagedGateway.pid),
+    );
 
     const afterManagedRestartPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
       artifactName: "phase-5-managed-pid1-after-restart",
@@ -1223,8 +1254,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     }
   }
 
+  expect(routingTopologyCaptures).toBe(2);
+
   await (process.platform === "linux"
-    ? runLaunchAgentTurn({
+    ? runLaunchReadinessLeaseTurns({
         artifactName: "phase-5-hermes-launch-turn-after-recovery",
         cliCommand: "nemoclaw",
         env,
@@ -1457,6 +1490,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       hermesSkillInstalled: true,
       hermesSkillDiscovered: true,
       hermesSkillUsedInFreshSession: true,
+      standaloneRoutingSidecarsAbsentBeforeAndAfterRestart: true,
       dashboardChecked: hermesDashboardE2eEnabled(),
       securityPostureChecked: securityPosture !== null,
     },

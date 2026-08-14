@@ -10,6 +10,8 @@
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
+export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;
+
 interface AgentJsonDoc {
   payloads?: Array<{ text?: unknown }>;
   result?: { payloads?: Array<{ text?: unknown }> };
