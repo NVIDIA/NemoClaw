@@ -34,7 +34,6 @@ describe("container curl probe", () => {
     );
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
     const outputPath = path.join(tempDir, "response.json");
-    fs.writeFileSync(outputPath, "");
     const args = ["-sS", "-o", outputPath, "-w", "%{http_code}", "http://example.test/v1"];
 
     try {
@@ -78,7 +77,6 @@ describe("container curl probe", () => {
     const spawn = vi.fn(() => successfulSpawn("{}"));
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
     const outputPath = path.join(tempDir, "response.json");
-    fs.writeFileSync(outputPath, "");
 
     try {
       expect(() =>
@@ -88,7 +86,35 @@ describe("container curl probe", () => {
           { encoding: "utf8" },
         ),
       ).toThrow(/did not return the HTTP status write-out/);
-      expect(fs.readFileSync(outputPath, "utf8")).toBe("");
+      expect(fs.existsSync(outputPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not follow a replacement output symlink (#9116)", () => {
+    const spawn = vi.fn(
+      (_command: string, args: readonly string[]) => {
+        const writeOutIndex = args.indexOf("-w");
+        const writeOut = args[writeOutIndex + 1];
+        return successfulSpawn(`replacement${writeOut.replace("%{http_code}", "200")}`);
+      },
+    );
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-probe-test-"));
+    const targetPath = path.join(tempDir, "target.json");
+    const outputPath = path.join(tempDir, "response.json");
+    fs.writeFileSync(targetPath, "original");
+    fs.symlinkSync(targetPath, outputPath);
+
+    try {
+      expect(() =>
+        createContainerCurlProbeSpawn(spawn)(
+          "curl",
+          ["-sS", "-o", outputPath, "-w", "%{http_code}", "http://example.test/v1"],
+          { encoding: "utf8" },
+        ),
+      ).toThrow();
+      expect(fs.readFileSync(targetPath, "utf8")).toBe("original");
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

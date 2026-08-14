@@ -66,6 +66,15 @@ function splitContainerOutput(
   return { body: stdout.slice(0, markerIndex), httpStatus };
 }
 
+function writeProbeOutput(outputPath: string, body: string): void {
+  const fileDescriptor = fs.openSync(outputPath, "wx", 0o600);
+  try {
+    fs.writeFileSync(fileDescriptor, body, "utf8");
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+}
+
 /** Run a credential-free curl probe from Docker Desktop's network context. */
 export function createContainerCurlProbeSpawn(
   spawnSyncImpl: CurlProbeSpawn = spawnSync,
@@ -93,7 +102,7 @@ export function createContainerCurlProbeSpawn(
     if (result.error || result.status !== 0) return result;
 
     const output = splitContainerOutput(String(result.stdout || ""), prepared.statusMarker);
-    fs.writeFileSync(prepared.outputPath, output.body, "utf8");
+    writeProbeOutput(prepared.outputPath, output.body);
     return { ...result, stdout: output.httpStatus };
   };
 }
