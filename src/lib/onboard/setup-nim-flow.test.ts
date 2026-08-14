@@ -1372,7 +1372,6 @@ describe("createSetupNim", () => {
   });
 
   it("keeps existing Spark providers available when optional managed llama.cpp discovery fails", async () => {
-    const note = vi.fn();
     const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
       (_rawChoice, _defaultIndex, options) => {
         expect(options.map(({ key }) => key)).not.toContain("install-llama-cpp");
@@ -1391,14 +1390,9 @@ describe("createSetupNim", () => {
     );
     const setupNim = createSetupNim(
       makeDeps({
-        note,
         prompt: async () => "1",
         selectFromNumberedMenu,
-        resolveManagedLlamaCppSelection: () => ({
-          kind: "rejected",
-          reason: "managed-inference catalog is unavailable",
-        }),
-        listManagedLlamaCppSelectionChoices: () => {
+        resolveManagedLlamaCppSelection: () => {
           throw new Error("managed-inference catalog is unavailable");
         },
         handleRemoteProviderSelection,
@@ -1408,9 +1402,6 @@ describe("createSetupNim", () => {
     await expect(setupNim({ platform: "spark" } as never, "spark-agent")).resolves.toMatchObject({
       provider: "nvidia-prod",
     });
-    expect(note).toHaveBeenCalledWith(
-      "  Managed llama.cpp profiles unavailable: managed-inference catalog is unavailable",
-    );
   });
 
   it("routes a gated local model profile through its dedicated onboarder", async () => {

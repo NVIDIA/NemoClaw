@@ -101,4 +101,46 @@ describe("managed llama.cpp profile onboarding", () => {
       expect.objectContaining({ sandboxName: "spark-agent" }),
     );
   });
+
+  it("reports optional profile discovery failures while keeping other providers available", async () => {
+    const note = vi.fn();
+    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+      (_rawChoice, _defaultIndex, options) => {
+        expect(options.map(({ key }) => key)).not.toContain("install-llama-cpp");
+        return options.find(({ key }) => key === "build")!;
+      },
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.provider = "nvidia-prod";
+        state.model = "nvidia/nemotron-3-super-120b-a12b";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        note,
+        prompt: async () => "1",
+        selectFromNumberedMenu,
+        resolveManagedLlamaCppSelection: () => ({
+          kind: "rejected",
+          reason: "managed-inference catalog is unavailable",
+        }),
+        listManagedLlamaCppSelectionChoices: () => {
+          throw new Error("managed-inference catalog is unavailable");
+        },
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    await expect(setupNim({ platform: "spark" } as never, "spark-agent")).resolves.toMatchObject({
+      provider: "nvidia-prod",
+    });
+    expect(note).toHaveBeenCalledWith(
+      "  Managed llama.cpp profiles unavailable: managed-inference catalog is unavailable",
+    );
+  });
 });
