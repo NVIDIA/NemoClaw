@@ -321,6 +321,9 @@ prepare_runtime_env() {
     write_export_if_set https_proxy
     write_export_if_set no_proxy
     write_export_if_set SSL_CERT_FILE
+    write_export_if_set CURL_CA_BUNDLE
+    write_export_if_set REQUESTS_CA_BUNDLE
+    write_export_if_set GIT_SSL_CAINFO
     write_export_if_set NODE_EXTRA_CA_CERTS
     write_export_if_set NEMOCLAW_SANDBOX_NAME
   } >"$tmp"

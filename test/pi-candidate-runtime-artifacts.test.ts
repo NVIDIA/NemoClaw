@@ -109,6 +109,34 @@ describe("Pi candidate runtime artifacts", () => {
     });
     expect(failures.some((failure) => failure.includes("lockfile SHA-256 must be"))).toBe(true);
   });
+
+  it("rejects a manifest that omits the supported-architecture declaration", () => {
+    const sources = currentSources();
+    const failures = verifyPiCandidateArtifacts({
+      ...sources,
+      manifest: sources.manifest.replace(/^managed_image:\n(?:^ {2}.*\n)*/mu, ""),
+    });
+    expect(failures).toContain(
+      'agents/pi/manifest.yaml: managed_image.architectures must be ["linux/amd64","linux/arm64"]',
+    );
+    expect(failures).toContain(
+      "agents/pi/manifest.yaml: managed_image.startup_profile_contract_version must be 1",
+    );
+  });
+
+  it("rejects a startup-profile contract version that drifts from the managed-image contract", () => {
+    const sources = currentSources();
+    const failures = verifyPiCandidateArtifacts({
+      ...sources,
+      manifest: sources.manifest.replace(
+        /^  startup_profile_contract_version: 1$/mu,
+        "  startup_profile_contract_version: 2",
+      ),
+    });
+    expect(failures).toContain(
+      "agents/pi/manifest.yaml: managed_image.startup_profile_contract_version must be 1",
+    );
+  });
 });
 
 describe("Pi release cohort separation", () => {
@@ -220,6 +248,24 @@ describe("Pi runtime boundaries", () => {
     expect(startSh.indexOf("merge_corporate_proxy_ca()")).toBeLessThan(
       startSh.indexOf("prepare_runtime_env()"),
     );
+  });
+
+  // source-shape-contract: security -- A merged CA variable that prepare_runtime_env does not persist is unavailable to independent login and exec shells, which read only the persisted runtime-env file
+  it("persists every merged CA variable into the runtime environment file", () => {
+    const startSh = readRepoFile("agents/pi/start.sh");
+    const prepareRuntimeEnv = startSh.slice(
+      startSh.indexOf("prepare_runtime_env()"),
+      startSh.indexOf("\nprepare_runtime_env\n", startSh.indexOf("prepare_runtime_env()")),
+    );
+    for (const name of [
+      "SSL_CERT_FILE",
+      "CURL_CA_BUNDLE",
+      "REQUESTS_CA_BUNDLE",
+      "GIT_SSL_CAINFO",
+      "NODE_EXTRA_CA_CERTS",
+    ]) {
+      expect(prepareRuntimeEnv).toContain(`write_export_if_set ${name}`);
+    }
   });
 });
 

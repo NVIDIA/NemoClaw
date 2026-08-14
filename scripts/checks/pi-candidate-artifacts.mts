@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANAGED_IMAGE_CONTRACT_PATH = "src/lib/onboard/managed-image/contract.ts";
@@ -120,6 +121,12 @@ function readAgentList(source: string, name: string): string[] | null {
   return [...body.matchAll(/"([^"]+)"/gu)].map(([, agent]) => agent);
 }
 
+function readNumberConst(source: string, name: string): number | null {
+  const pattern = new RegExp(`export const ${name} = (\\d+) as const;`, "u");
+  const match = source.match(pattern)?.[1];
+  return match === undefined ? null : Number(match);
+}
+
 function verifyCandidateRegistration(contractSource: string): string[] {
   const failures: string[] = [];
   const candidates = readAgentList(contractSource, "CANDIDATE_MANAGED_IMAGE_AGENTS");
@@ -136,6 +143,39 @@ function verifyCandidateRegistration(contractSource: string): string[] {
   if (!contractSource.includes('pi: "ghcr.io/nvidia/nemoclaw/pi-sandbox"')) {
     failures.push(
       `${MANAGED_IMAGE_CONTRACT_PATH}: pi must publish to ghcr.io/nvidia/nemoclaw/pi-sandbox`,
+    );
+  }
+  return failures;
+}
+
+function verifyManagedImageDeclaration(sources: PiArtifactSources): string[] {
+  const platforms = readAgentList(sources.managedImageContract, "MANAGED_IMAGE_PLATFORMS");
+  const startupProfileContractVersion = readNumberConst(
+    sources.managedImageContract,
+    "MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION",
+  );
+  if (!platforms || startupProfileContractVersion === null) {
+    return [
+      `${MANAGED_IMAGE_CONTRACT_PATH}: MANAGED_IMAGE_PLATFORMS or MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION is not readable`,
+    ];
+  }
+  const manifest = parseYaml(sources.manifest) as {
+    managed_image?: { architectures?: unknown; startup_profile_contract_version?: unknown };
+  };
+  const failures: string[] = [];
+  const architectures = manifest.managed_image?.architectures;
+  const architecturesMatch =
+    Array.isArray(architectures) &&
+    architectures.length === platforms.length &&
+    platforms.every((platform, index) => architectures[index] === platform);
+  if (!architecturesMatch) {
+    failures.push(
+      `agents/pi/manifest.yaml: managed_image.architectures must be ${JSON.stringify(platforms)}`,
+    );
+  }
+  if (manifest.managed_image?.startup_profile_contract_version !== startupProfileContractVersion) {
+    failures.push(
+      `agents/pi/manifest.yaml: managed_image.startup_profile_contract_version must be ${startupProfileContractVersion}`,
     );
   }
   return failures;
@@ -174,6 +214,7 @@ export function verifyPiCandidateArtifacts(sources: PiArtifactSources): string[]
     ...verifyPinnedIdentity(sources),
     ...verifyCandidateRegistration(sources.managedImageContract),
     ...verifyCohortSeparation(sources.managedImagesWorkflow),
+    ...verifyManagedImageDeclaration(sources),
   ];
 }
 

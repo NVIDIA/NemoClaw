@@ -148,7 +148,8 @@ RUN set -eu; \
         exit 1; \
     fi; \
     test -x /usr/local/bin/pi; \
-    installed_version="$(/usr/local/bin/pi --version | tr -d '[:space:]')"; \
+    pi_version="$(/usr/local/bin/pi --version)"; \
+    installed_version="$(printf '%s' "$pi_version" | tr -d '[:space:]')"; \
     [ "$installed_version" = "${PI_VERSION}" ]
 
 COPY agents/pi/generate-config.ts /opt/nemoclaw-pi/generate-config.ts

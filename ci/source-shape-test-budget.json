@@ -422,6 +422,11 @@
       "category": "security"
     },
     {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "persists every merged CA variable into the runtime environment file",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"

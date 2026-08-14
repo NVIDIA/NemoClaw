@@ -1058,6 +1058,74 @@ jobs:
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
             test -x /usr/local/bin/nemoclaw-managed-bootstrap
           '
+      # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
+      # --entrypoint override, so they never prove the entrypoint itself runs
+      # correctly. Start the published digest through its declared entrypoint
+      # with no command, matching a real launch, and prove PID 1 drops to the
+      # sandbox user, hardens its resource limits, and persists the trusted
+      # proxy environment before it holds the sandbox open.
+      - name: Exercise the published Pi candidate digest through its declared entrypoint
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
+            exit 1
+          fi
+          reference="${REPOSITORY}@${DIGEST}"
+          entrypoint_container="$(
+            docker run -d \
+              --network none \
+              --entrypoint /usr/local/bin/nemoclaw-start \
+              "$reference"
+          )"
+          cleanup_entrypoint_container() {
+            docker rm -f "$entrypoint_container" >/dev/null 2>&1 || true
+          }
+          trap cleanup_entrypoint_container EXIT
+          entrypoint_deadline=$(($(date +%s) + 30))
+          while ! docker logs "$entrypoint_container" 2>&1 | grep -q 'Setting up NemoClaw Pi runtime'; do
+            if [ "$(docker inspect --format '{{.State.Running}}' "$entrypoint_container" 2>/dev/null)" != "true" ]; then
+              echo "ERROR: the Pi candidate entrypoint exited before reaching its held state." >&2
+              docker logs "$entrypoint_container" >&2 || true
+              exit 1
+            fi
+            if [ "$(date +%s)" -ge "$entrypoint_deadline" ]; then
+              echo "ERROR: the Pi candidate entrypoint did not reach its held state in time." >&2
+              docker logs "$entrypoint_container" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          pid1_status="$(docker exec "$entrypoint_container" cat /proc/1/status)"
+          pid1_uid="$(printf '%s\n' "$pid1_status" | awk '/^Uid:/ {print $2}')"
+          if [ "$pid1_uid" != "999" ]; then
+            echo "ERROR: the Pi candidate entrypoint did not drop PID 1 to the sandbox uid: $pid1_uid" >&2
+            exit 1
+          fi
+          pid1_limits="$(docker exec "$entrypoint_container" cat /proc/1/limits)"
+          if ! grep -qE '^Max processes +512 +512 ' <<< "$pid1_limits"; then
+            echo "ERROR: the Pi candidate entrypoint did not harden PID 1 nproc to exactly 512." >&2
+            exit 1
+          fi
+          if ! grep -qE '^Max open files +65536 +65536 ' <<< "$pid1_limits"; then
+            echo "ERROR: the Pi candidate entrypoint did not harden PID 1 nofile to exactly 65536." >&2
+            exit 1
+          fi
+          runtime_env="$(docker exec "$entrypoint_container" cat /tmp/nemoclaw-proxy-env.sh)"
+          for expected_export in \
+            'export HTTP_PROXY=http://10.200.0.1:3128' \
+            'export HTTPS_PROXY=http://10.200.0.1:3128' \
+            'export NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1'
+          do
+            if ! grep -qF "$expected_export" <<< "$runtime_env"; then
+              echo "ERROR: the Pi candidate entrypoint did not persist the trusted proxy environment ($expected_export)." >&2
+              exit 1
+            fi
+          done
       - name: Record the exact Pi candidate contract
         if: github.event_name != 'pull_request'
         shell: bash
