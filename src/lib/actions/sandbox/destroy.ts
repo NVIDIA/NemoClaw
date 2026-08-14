@@ -53,7 +53,11 @@ import {
   classifyDestroySandboxPresence,
   isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
-import { prepareSandboxDestroy, stopSandboxInferenceResources } from "./destroy-preflight";
+import {
+  prepareSandboxDestroy,
+  stopModelRouterForDestroyedSandbox,
+  stopSandboxInferenceResources,
+} from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
@@ -660,6 +664,13 @@ async function destroySandboxUnlocked(
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
+  }
+  if (deleteSucceededOrAlreadyGone && removed) {
+    await stopModelRouterForDestroyedSandbox(sandbox, {
+      loadSession: onboardSession.loadSession,
+      updateSession: onboardSession.updateSession,
+      warn: defaultDestroyWarn,
+    });
   }
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

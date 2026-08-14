@@ -69,9 +69,11 @@ type DestroyHarnessOptions = {
   openshellDriver?: string;
   prepareMcpBridgeError?: string;
   promptResponses?: string[];
+  provider?: string;
   registeredSandboxCount?: number;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
+  sessionRouterPid?: number;
   shieldsDown?: boolean;
   shieldsUpError?: Error;
   stopInferenceError?: string;
@@ -178,6 +180,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     ...sandboxEntry,
     imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
     agent: options.agent ?? sandboxEntry.agent,
+    ...(options.provider ? { provider: options.provider } : {}),
     ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
     ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
     ...(options.workload ? { workload: options.workload } : {}),
@@ -215,6 +218,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .mockResolvedValue(true);
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({
     sandboxName: "alpha",
+    ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
   });
   const updateSessionSpy = vi
     .spyOn(onboardSession, "updateSession")
