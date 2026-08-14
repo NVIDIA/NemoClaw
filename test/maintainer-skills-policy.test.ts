@@ -207,7 +207,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("This does not freeze `main` or prevent merges");
     expect(release).toContain("load `nemoclaw-maintainer-e2e` and dispatch one full run");
     expect(release).toContain("include_staging_brev_launchable=true");
-    expect(release).toContain("first run with exactly one completed, successful");
+    expect(release).toContain("first successful run with exactly one completed, successful");
     expect(release).toContain("Before showing the confirmation prompt");
     expect(release).toContain("Run the release script's signing preflight");
     expect(release).not.toContain("release:e2e-evidence");
