@@ -1073,7 +1073,12 @@ function validateFreeStandingJobSelector(
   _explicitOnly = false,
 ): void {
   const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
+  const needsMatrix =
+    job.needs === "generate-matrix" ||
+    (jobName === "mcp-bridge-dev" &&
+      Array.isArray(job.needs) &&
+      job.needs.includes("generate-matrix"));
+  if (!needsMatrix) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
   if (job.if !== selectedJobsCondition(jobName)) {
