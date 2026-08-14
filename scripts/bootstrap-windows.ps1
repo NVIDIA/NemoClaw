@@ -335,7 +335,7 @@ function Test-DockerDesktopUserPath {
     if (-not $script:DockerDesktopUserRoot) {
         return $false
     }
-    $userRootPrefix = $script:DockerDesktopUserRoot.TrimEnd('\\') + '\\'
+    $userRootPrefix = $script:DockerDesktopUserRoot.TrimEnd('\') + '\'
     return $Path.StartsWith($userRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
