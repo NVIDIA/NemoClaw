@@ -41,8 +41,8 @@ function writeSessionRecords(root: string, sessions: SessionRecords, append: boo
   for (const [sessionId, records] of Object.entries(sessions)) {
     const filePath = join(root, `${sessionId}.jsonl`);
     const body = records.length > 0 ? `${records.join("\n")}\n` : "";
-    if (append) appendFileSync(filePath, body);
-    else writeFileSync(filePath, body);
+    const writeRecords = append ? appendFileSync : writeFileSync;
+    writeRecords(filePath, body);
   }
 }
 
@@ -94,12 +94,17 @@ function runBaselineMutationFixture(mutation: "invalid" | "removed" | "rewritten
       ["-e", OPENCLAW_SESSION_EVIDENCE_SCRIPT, "baseline", sessionRoot, baselinePath, ""],
       { encoding: "utf8" },
     );
-    if (mutation === "invalid") writeFileSync(baselinePath, "{}");
-    if (mutation === "removed") rmSync(sessionPath);
-    if (mutation === "rewritten") {
-      writeFileSync(sessionPath, readFileSync(sessionPath, "utf8").replace("nonempty", "changed!"));
-    }
-    if (mutation === "truncated") writeFileSync(sessionPath, "");
+    const applyMutation: Record<typeof mutation, () => void> = {
+      invalid: () => writeFileSync(baselinePath, "{}"),
+      removed: () => rmSync(sessionPath),
+      rewritten: () =>
+        writeFileSync(
+          sessionPath,
+          readFileSync(sessionPath, "utf8").replace("nonempty", "changed!"),
+        ),
+      truncated: () => writeFileSync(sessionPath, ""),
+    };
+    applyMutation[mutation]();
     const qualification = spawnSync(
       process.execPath,
       ["-e", OPENCLAW_SESSION_EVIDENCE_SCRIPT, "qualify", sessionRoot, baselinePath, "1"],
