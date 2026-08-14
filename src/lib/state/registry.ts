@@ -41,6 +41,7 @@ export {
   type SandboxEntryDisplayInference,
   type SandboxEntryInference,
 } from "./registry-entry-view";
+export { cloneSandboxHostLocalInferenceReceipt };
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
 import { cloneSandboxHostMounts, hasUnsafeHostMountTerminalText } from "./registry/host-mount";

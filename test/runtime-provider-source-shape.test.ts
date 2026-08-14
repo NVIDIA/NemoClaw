@@ -175,6 +175,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
+      "src/lib/onboard/runtime-provider/host-local-inference-lifecycle.ts",
       "src/lib/onboard/runtime-provider/host-local-inference-routing.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",

@@ -549,7 +549,7 @@ export function createSetupInference(
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
-            ...(hostLocalInferenceReceipt === null ? {} : { hostLocalInferenceReceipt }),
+            hostLocalInferenceReceipt,
           });
           routeReserved = reserved;
           return reserved;

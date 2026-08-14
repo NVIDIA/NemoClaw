@@ -86,15 +86,21 @@ import {
 } from "./sandbox-gateway-routing";
 import {
   backupSandboxStateWithManagedAuthority,
+  confirmHostLocalInferenceAuthority,
   createSnapshotCloneLifecycle,
-  fingerprintSandboxLiveIdentity,
   confirmSandboxRuntimeRestore,
+  fingerprintSandboxLiveIdentity,
+  type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
+  prepareHostLocalInferenceAuthority,
   prepareManagedSnapshotProfileRestore,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
   prepareSandboxRuntimeRestore,
   readManagedSnapshotProfileAuthority,
   rejectManagedSnapshotCloneUntilRebind,
   requireCurrentSnapshotRuntimeProvider,
+  retirePreparedHostLocalInferenceAuthority,
+  type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
 import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
@@ -578,8 +584,14 @@ function deleteSandboxForRestore(name: string): void {
       );
       snapshotExit(1);
     }
+    let runtimeProvider: RuntimeProviderBundle;
+    let hostLocalInferenceAuthority: PreparedHostLocalInferenceAuthority | null;
     try {
-      requireSandboxDestructiveCleanupAuthority(name, sbMeta);
+      runtimeProvider = requireSandboxDestructiveCleanupAuthority(name, sbMeta).provider;
+      hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
+        runtimeProvider,
+        sbMeta,
+      );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(
@@ -590,10 +602,12 @@ function deleteSandboxForRestore(name: string): void {
       );
       snapshotExit(1);
     }
-    if (sbMeta.nimContainer) {
-      nim.stopNimContainerByName(sbMeta.nimContainer);
-    } else {
-      nim.stopNimContainer(name, { silent: true });
+    if (!hostLocalInferenceAuthority) {
+      if (sbMeta.nimContainer) {
+        nim.stopNimContainerByName(sbMeta.nimContainer);
+      } else {
+        nim.stopNimContainer(name, { silent: true });
+      }
     }
     console.log(`  Deleting existing destination '${name}' before restore...`);
     if (readTimerMarker(name)) {
@@ -614,6 +628,25 @@ function deleteSandboxForRestore(name: string): void {
         `  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`,
       );
       snapshotExit(1);
+    }
+    if (hostLocalInferenceAuthority) {
+      try {
+        const current = registry.getSandbox(name);
+        if (!current) throw new Error(`sandbox '${name}' is no longer registered`);
+        retirePreparedHostLocalInferenceAuthority(
+          runtimeProvider,
+          current,
+          hostLocalInferenceAuthority,
+          registry.listSandboxes().sandboxes,
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(
+          `  Destination '${name}' is gone, but its host-local inference cleanup failed: ${detail}`,
+        );
+        console.error("  Local ownership state was preserved; retry the restore to reconcile it.");
+        snapshotExit(1);
+      }
     }
     // Destination-only cleanup so the recreated sandbox does not inherit stale
     // host-side state or hit provider-name conflicts (Codex #3796 P2):
@@ -1190,6 +1223,7 @@ async function runSnapshotRestoreUnlocked(
   };
   const currentSourceEntry = registry.getSandbox(sandboxName);
   let hasManagedProfileAuthority = false;
+  const hostLocalInferenceReceipt = resolvedSnapshot.hostLocalInferenceReceipt;
   let snapshotRestoreAuthority: sandboxState.SnapshotRestoreAuthority | null = null;
   try {
     const snapshotAuthority = readManagedSnapshotProfileAuthority(snapshotProfileSource);
@@ -1210,7 +1244,21 @@ async function runSnapshotRestoreUnlocked(
     if (isCrossSandboxRestore && hasManagedProfileAuthority) {
       rejectManagedSnapshotCloneUntilRebind(snapshotProfileSource, targetSandbox);
     }
-    if (hasManagedProfileAuthority) {
+    if (typeof hostLocalInferenceReceipt === "string") {
+      if (!currentSourceEntry) {
+        throw new Error("host-local inference snapshot source is no longer registered");
+      }
+      const sourceProvider = requireCurrentSnapshotRuntimeProvider(currentSourceEntry);
+      const preparedSource = prepareHostLocalInferenceAuthority(
+        sourceProvider,
+        currentSourceEntry,
+        hostLocalInferenceReceipt,
+      );
+      if (!preparedSource) {
+        throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+      }
+    }
+    if (hasManagedProfileAuthority || typeof hostLocalInferenceReceipt === "string") {
       snapshotRestoreAuthority = sandboxState.captureSnapshotRestoreAuthority(
         backupPath,
         resolvedSnapshot,
@@ -1221,7 +1269,7 @@ async function runSnapshotRestoreUnlocked(
     }
   } catch (error) {
     console.error(
-      `  Cannot restore managed snapshot authority: ${
+      `  Cannot restore provider snapshot authority: ${
         error instanceof Error ? error.message : String(error)
       }.`,
     );
@@ -1230,6 +1278,7 @@ async function runSnapshotRestoreUnlocked(
   }
 
   let preparedRuntimeRestore: PreparedSandboxRuntimeRestore | null = null;
+  let preparedHostLocalInferenceRestore: PreparedHostLocalInferenceAuthority | null = null;
   if (!isCrossSandboxRestore) {
     // Self-restore: target is `sandboxName`. Cannot auto-create; the
     // source pod is the target, so it must already be live.
@@ -1264,6 +1313,33 @@ async function runSnapshotRestoreUnlocked(
       } catch (error) {
         console.error(
           `  Cannot preflight managed snapshot restore: ${
+            error instanceof Error ? error.message : String(error)
+          }.`,
+        );
+        snapshotExit(1);
+      }
+    }
+    if (typeof hostLocalInferenceReceipt === "string") {
+      const currentTarget = registry.getSandbox(targetSandbox);
+      if (!currentTarget) {
+        console.error(
+          `  Cannot restore host-local inference snapshot '${sandboxName}': target authority is missing.`,
+        );
+        snapshotExit(1);
+      }
+      try {
+        const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+        preparedHostLocalInferenceRestore = prepareHostLocalInferenceAuthority(
+          provider,
+          currentTarget,
+          hostLocalInferenceReceipt,
+        );
+        if (!preparedHostLocalInferenceRestore) {
+          throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+        }
+      } catch (error) {
+        console.error(
+          `  Cannot preflight host-local inference snapshot restore: ${
             error instanceof Error ? error.message : String(error)
           }.`,
         );
@@ -1421,73 +1497,126 @@ async function runSnapshotRestoreUnlocked(
     await withDashboardPortReservationLock(() =>
       withGatewayRouteMutationLock(sourceGatewayName, createAndRegisterClone),
     );
+    if (typeof hostLocalInferenceReceipt === "string") {
+      const currentTarget = registry.getSandbox(targetSandbox);
+      if (!currentTarget) {
+        console.error(
+          `  Clone '${targetSandbox}' was created without durable host-local inference authority.`,
+        );
+        snapshotExit(1);
+      }
+      try {
+        const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+        preparedHostLocalInferenceRestore = prepareHostLocalInferenceAuthority(
+          provider,
+          currentTarget,
+          hostLocalInferenceReceipt,
+        );
+        if (!preparedHostLocalInferenceRestore) {
+          throw new Error("snapshot inference receipt has no B4-E1 lifecycle authority");
+        }
+      } catch (error) {
+        console.error(
+          `  Cannot re-prove clone '${targetSandbox}' against snapshot inference authority: ${
+            error instanceof Error ? error.message : String(error)
+          }.`,
+        );
+        console.error(
+          `  Removing incomplete clone '${targetSandbox}' while its exact provider ownership is still registered.`,
+        );
+        deleteSandboxForRestore(targetSandbox);
+        snapshotExit(1);
+      }
+    }
   }
   withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
     // Serialize filesystem restore, mutable-permission repair, and policy
     // reconciliation under the active timer generation. At the absolute
     // deadline, auto-restore keeps the outer lifecycle gate closed and waits
     // for this exact owner to finish before restoring lockdown.
-    const validateManagedRestoreBeforeMutation = preparedRuntimeRestore
-      ? () => {
-          const currentTarget = registry.getSandbox(targetSandbox);
-          if (!currentTarget) {
-            throw new Error(`target '${targetSandbox}' is no longer registered`);
+    const validateProviderRestoreBeforeMutation =
+      preparedRuntimeRestore || preparedHostLocalInferenceRestore
+        ? () => {
+            const currentTarget = registry.getSandbox(targetSandbox);
+            if (!currentTarget) {
+              throw new Error(`target '${targetSandbox}' is no longer registered`);
+            }
+            const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+            if (preparedRuntimeRestore) {
+              const profileRestore = prepareManagedSnapshotProfileRestore(
+                snapshotProfileSource,
+                currentTarget,
+                provider,
+              );
+              if (!profileRestore) {
+                throw new Error("managed profile restore authority is missing");
+              }
+              const prepared = preparedRuntimeRestore;
+              if (!prepared) throw new Error("managed runtime restore authority is missing");
+              // The state layer invokes this after local tar staging and
+              // immediately before its first remote filesystem mutation.
+              preparedRuntimeRestore = prepareSandboxRuntimeRestore(
+                provider,
+                currentTarget,
+                prepared.source,
+                profileRestore.providerRestoreAuthority,
+              );
+            }
+            if (typeof hostLocalInferenceReceipt === "string") {
+              if (!preparedHostLocalInferenceRestore) {
+                throw new Error("host-local inference restore authority is missing");
+              }
+              confirmHostLocalInferenceAuthority(
+                provider,
+                currentTarget,
+                preparedHostLocalInferenceRestore,
+              );
+            }
           }
-          const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
-          const profileRestore = prepareManagedSnapshotProfileRestore(
-            snapshotProfileSource,
-            currentTarget,
-            provider,
-          );
-          if (!profileRestore) {
-            throw new Error("managed profile restore authority is missing");
-          }
-          const prepared = preparedRuntimeRestore;
-          if (!prepared) throw new Error("managed runtime restore authority is missing");
-          // The state layer invokes this after local tar staging and
-          // immediately before its first remote filesystem mutation.
-          preparedRuntimeRestore = prepareSandboxRuntimeRestore(
-            provider,
-            currentTarget,
-            prepared.source,
-            profileRestore.providerRestoreAuthority,
-          );
-        }
-      : null;
+        : null;
     if (targetSandbox !== sandboxName) {
       console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
     } else {
       console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
-    if (Boolean(snapshotRestoreAuthority) !== Boolean(validateManagedRestoreBeforeMutation)) {
+    if (Boolean(snapshotRestoreAuthority) !== Boolean(validateProviderRestoreBeforeMutation)) {
       console.error(
-        `  Cannot restore managed snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
+        `  Cannot restore provider snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
       );
       console.error(`  Destination '${targetSandbox}' was not changed.`);
       snapshotExit(1);
     }
     const result =
-      snapshotRestoreAuthority && validateManagedRestoreBeforeMutation
+      snapshotRestoreAuthority && validateProviderRestoreBeforeMutation
         ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
             authority: snapshotRestoreAuthority,
-            validateBeforeMutation: validateManagedRestoreBeforeMutation,
+            validateBeforeMutation: validateProviderRestoreBeforeMutation,
           })
         : sandboxState.restoreSandboxState(targetSandbox, backupPath);
     if (result.success) {
-      if (preparedRuntimeRestore) {
+      if (preparedRuntimeRestore || preparedHostLocalInferenceRestore) {
         const currentTarget = registry.getSandbox(targetSandbox);
         if (!currentTarget) {
           console.error(
-            `  Managed snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
+            `  Provider snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
           );
           snapshotExit(1);
         }
         try {
           const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
-          confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
+          if (preparedRuntimeRestore) {
+            confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
+          }
+          if (preparedHostLocalInferenceRestore) {
+            confirmHostLocalInferenceAuthority(
+              provider,
+              currentTarget,
+              preparedHostLocalInferenceRestore,
+            );
+          }
         } catch (error) {
           console.error(
-            `  Managed snapshot state was restored, but provider restore proof failed: ${
+            `  Provider snapshot state was restored, but provider restore proof failed: ${
               error instanceof Error ? error.message : String(error)
             }.`,
           );
