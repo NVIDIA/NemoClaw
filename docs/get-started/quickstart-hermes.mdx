@@ -196,8 +196,20 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Onboarding and Integration Details">
     The wizard asks for an inference provider, model, required credential, and sandbox name before it prints the review summary.
-    After confirmation, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
-    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+    The review offers these actions:
+
+    - **Apply configuration** continues to provider registration.
+    - **Edit inference provider or model** returns to provider and model selection.
+    - **Edit sandbox name** prompts for the sandbox name again.
+    - **Exit onboarding** stops onboarding before provider registration.
+
+    When you edit inference, NemoClaw clears the credential staged for the discarded selection.
+    NemoClaw preserves the sandbox name.
+    When you edit the sandbox name, NemoClaw preserves the inference selection.
+    The sandbox prompt shows the prior name as its default.
+    After you apply the configuration, routine editing ends.
+    If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
+    NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
 
     The default Hermes sandbox name is `hermes`.
     Use a distinct name, such as `my-hermes`, when you run Hermes and OpenClaw sandboxes side by side.
@@ -219,7 +231,7 @@ Use these details when your first-run path needs more control.
     NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
     API-key mode is inference-only and does not enable managed tool gateways.
 
-    After you select a provider and model, review the summary and confirm the build.
+    After you select a provider and model, review the summary and apply the configuration.
     NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.

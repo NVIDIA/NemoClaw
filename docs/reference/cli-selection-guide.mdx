@@ -167,8 +167,8 @@ This section covers common decisions when using the NemoClaw CLI and the OpenShe
 Use `$$nemoclaw onboard`.
 It starts the OpenShell gateway when needed, registers providers, builds the selected agent sandbox image, applies NemoClaw policy choices, and creates the sandbox.
 
-Avoid running `openshell gateway start --recreate` or `openshell sandbox create` directly for NemoClaw-managed sandboxes.
-Those commands do not update NemoClaw's registry, session metadata, workspace-preservation flow, or agent-specific configuration.
+The OpenShell CLI does not provide a command that starts a gateway.
+Avoid running `openshell sandbox create` directly for NemoClaw-managed sandboxes because it does not update NemoClaw's registry, session metadata, workspace-preservation flow, or agent-specific configuration.
 
 ### Connect to the Sandbox
 

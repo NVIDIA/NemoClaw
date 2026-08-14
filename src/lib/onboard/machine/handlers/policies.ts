@@ -61,6 +61,11 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       activeMessagingChannels: string[] | null | undefined,
       disabledChannels: string[] | null | undefined,
     ): string[];
+    detectUnconfiguredMessagingChannels(
+      planChannels: readonly string[],
+      selectedChannels: readonly string[],
+      agent: Agent,
+    ): string[];
     verifyCompatibleEndpointSandboxSmoke(options: {
       sandboxName: string;
       provider: string;
@@ -166,7 +171,21 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const effectivePolicyTier = authoritativePolicyTier ?? activeSandbox?.policyTier ?? null;
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
-  const disabledChannels = getDisabledChannelsFromPlan(activePlan);
+  const planDisabledChannels = getDisabledChannelsFromPlan(activePlan);
+  // A channel the operator stopped configuring never reaches `disabledChannels`,
+  // so without this the reused plan keeps it enabled and every later onboarding
+  // run re-applies its egress preset. Adding it to `disabledChannels` here lets
+  // the existing disabled-channel pruning drop the preset from both the merged
+  // selection and the previously-applied set.
+  const unconfiguredMessagingChannels = deps.detectUnconfiguredMessagingChannels(
+    [...recordedMessagingChannels, ...activeMessagingChannels],
+    selectedMessagingChannels,
+    agent,
+  );
+  const disabledChannels =
+    unconfiguredMessagingChannels.length > 0
+      ? [...new Set([...planDisabledChannels, ...unconfiguredMessagingChannels])]
+      : planDisabledChannels;
   const policyMessagingChannels = deps.mergePolicyMessagingChannels(
     selectedMessagingChannels,
     recordedMessagingChannels,

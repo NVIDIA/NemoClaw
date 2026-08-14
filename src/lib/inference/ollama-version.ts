@@ -18,11 +18,11 @@ export type OllamaVersionRunCapture = (
 
 /**
  * Minimum Ollama version NemoClaw expects when reusing an existing host
- * Ollama. Older Ollama runners crash loading newer starter models because
- * their GGUF parsers predate the model format. Bump this when starter-model
- * recipes adopt a newer GGUF feature.
+ * Ollama. Older Ollama runners can fail to return structured tool calls for
+ * the default Nemotron starter model. Bump this when starter-model recipes
+ * adopt a newer Ollama feature.
  */
-export const MIN_OLLAMA_VERSION = "0.7.0";
+export const MIN_OLLAMA_VERSION = "0.32.9";
 
 export function getInstalledOllamaVersion(runCaptureImpl?: OllamaVersionRunCapture): string | null {
   const capture = runCaptureImpl ?? runCapture;

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import * as policies from "../policy";
 import {
   createOnboardPolicyApplication,
   type OnboardPolicyApplicationDeps,
@@ -75,5 +76,97 @@ describe("onboarding policy application", () => {
       "policy context seeded",
       "lock released",
     ]);
+  });
+
+  describe("non-interactive selection with a previously-applied channel preset", () => {
+    function createApplication(env: Record<string, string>) {
+      vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
+        { name: "npm" },
+        { name: "pypi" },
+        { name: "discord" },
+      ] as ReturnType<typeof policies.listSetupPolicyPresets>);
+      vi.mocked(policies.getAppliedPresets).mockReturnValue(["npm", "pypi", "discord"]);
+      syncPresetSelection.mockImplementation(() => undefined);
+      seedInitialPolicyContext.mockImplementation(() => undefined);
+      return createOnboardPolicyApplication({
+        localInferenceProviders: [],
+        step: vi.fn(),
+        note: vi.fn(),
+        isNonInteractive: vi.fn(() => true),
+        prompt: vi.fn(async () => ""),
+        selectFromNumberedMenuOrExit,
+        makeOnboardCancelExit: (rollback, cleanup) => () => {
+          cleanup();
+          rollback.markCancelled();
+        },
+        sandboxCancelRollback: { markCancelled: vi.fn() },
+        useColor: false,
+        withSandboxMutationLock: async (_sandboxName, action) => await action(),
+        waitForSandboxReady: vi.fn(() => true),
+        waitForSandboxControlPlaneReady: vi.fn(() => true),
+        setPolicyTier: vi.fn(),
+        getRecordedPolicyTier: vi.fn(() => "balanced"),
+        parsePolicyPresetEnv: vi.fn((value: string) =>
+          value.split(",").map((name) => name.trim()).filter(Boolean),
+        ),
+        env,
+      });
+    }
+
+    it("drops the preset when the channel is no longer configured", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_PRESETS: "npm,pypi" });
+
+      await application.setupPoliciesWithSelection("alpha", {
+        selectedPresets: null,
+        enabledChannels: [],
+        disabledChannels: ["discord"],
+        webSearchSupported: false,
+        hermesToolGateways: [],
+      });
+
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["npm", "pypi", "discord"],
+        ["npm", "pypi"],
+      );
+    });
+
+    it("keeps the preset while the channel is still configured", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_PRESETS: "npm,pypi" });
+
+      await application.setupPoliciesWithSelection("alpha", {
+        selectedPresets: null,
+        enabledChannels: ["discord"],
+        disabledChannels: [],
+        webSearchSupported: false,
+        hermesToolGateways: [],
+      });
+
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["npm", "pypi", "discord"],
+        ["npm", "pypi", "discord"],
+      );
+    });
+
+    it("drops the disabled channel preset when policy selection is skipped (#9109)", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: null,
+          enabledChannels: [],
+          disabledChannels: ["discord"],
+          webSearchSupported: false,
+          hermesToolGateways: [],
+        }),
+      ).resolves.toEqual(["npm", "pypi"]);
+
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["npm", "pypi", "discord"],
+        ["npm", "pypi"],
+      );
+    });
   });
 });

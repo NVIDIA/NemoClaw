@@ -84,6 +84,11 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/source-architecture.mts"],
   },
   {
+    name: "onboard-entry-composition",
+    command: TSX,
+    args: ["scripts/checks/onboard-entry-composition.mts"],
+  },
+  {
     name: "no-test-dist-imports",
     command: TSX,
     args: ["scripts/checks/no-test-dist-imports.mts"],

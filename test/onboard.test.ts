@@ -222,12 +222,12 @@ describe("onboard helpers", () => {
   });
 
   it(
-    "prints doctor logs automatically when gateway fails to start (#1605)",
+    "prints owning-deployment guidance when NemoClaw does not launch the gateway (#9120)",
     testTimeoutOptions(20_000),
     () => {
-      // Intentional process-contract coverage: this case verifies the real child exit status and
-      // stdout/stderr handling across the Node -> shell -> OpenShell adapter boundary. The
-      // setupInference cases below are unit-shaped and run directly through typed dependencies.
+      // Intentional process-contract coverage: this case verifies the real
+      // child exit status and stderr guidance across the Node -> OpenShell
+      // adapter boundary.
       const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -235,59 +235,25 @@ describe("onboard helpers", () => {
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      // Fake openshell:
-      //   gateway start  — emits ANSI color codes + \r\n (mirrors real gateway output), exits 1
-      //   doctor logs    — emits ANSI sequences, an OOMKilled message, and a fake nvapi- credential
-      //                    to exercise ANSI stripping and redaction in the doctor-log path
+      // No gateway metadata is available, so the external-launcher branch
+      // prints recovery guidance and exits.
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
-if [[ "$*" == *"doctor"*"logs"* ]]; then
-  printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
-  printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
-  printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
-  exit 0
-fi
-if [[ "$*" == "gateway --help" ]]; then
-  printf "Commands: start destroy\\n"
-  exit 0
-fi
-if [[ "$*" == *"gateway"*"start"* ]]; then
-  printf "\\033[33mDeploying\\033[0m gateway nemoclaw...\\r\\n"
-  printf "\\r\\nWaiting for gateway health...\\r\\n"
-  exit 1
-fi
 exit 1
 `,
         { mode: 0o755 },
       );
 
-      // Script runs in a child process: patching p-retry to be immediate avoids the
-      // 10 s + 30 s minTimeout delays, and NEMOCLAW_HEALTH_POLL_COUNT=0 skips the
-      // health-poll loop so the function throws "Gateway failed to start" on the
-      // first attempt. With exitOnFailure:true the catch block should auto-print
-      // doctor logs to stderr and then call process.exit(1).
+      // FreeBSD selects the external gateway launcher branch in the current
+      // provider plan.
       const script = `
-const mod = require("module");
-const origLoad = mod._load;
-mod._load = function(req, parent, isMain) {
-  if (req === "p-retry") {
-    return async (fn, opts) => {
-      try {
-        return await fn({ attemptNumber: 1, retriesLeft: 0 });
-      } catch (e) {
-        if (opts && opts.onFailedAttempt) {
-          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
-        }
-        throw e;
-      }
-    };
-  }
-  return origLoad.call(this, req, parent, isMain);
-};
 Object.defineProperty(process, "platform", { value: "freebsd" });
 const { startGateway } = require(${onboardPath});
-startGateway(null).catch(() => {});
+startGateway(null).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `;
       fs.writeFileSync(scriptPath, script);
 
@@ -307,48 +273,10 @@ startGateway(null).catch(() => {});
       // The process exits 1 because startGateway calls process.exit(1) on failure.
       assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
 
-      // Fix 3: doctor logs are auto-printed to stderr.
-      assert.ok(
-        result.stderr.includes("Gateway logs:"),
-        `expected "Gateway logs:" header in stderr:\n${result.stderr}`,
-      );
-      assert.ok(
-        result.stderr.includes("OOMKilled"),
-        `expected doctor log output in stderr:\n${result.stderr}`,
-      );
-
-      // ANSI sequences must be stripped from both stdout (gateway start output) and
-      // stderr (doctor logs). A raw \x1b in the output means the regex failed.
-      assert.ok(
-        !result.stdout.includes("\x1b"),
-        `unexpected ANSI escape in stdout:\n${result.stdout}`,
-      );
-      assert.ok(
-        !result.stderr.includes("\x1b"),
-        `unexpected ANSI escape in stderr:\n${result.stderr}`,
-      );
-
-      // Credentials in doctor logs must be redacted, never printed verbatim.
-      assert.ok(
-        !result.stderr.includes("nvapi-fakecredential-9999"),
-        `credential leaked verbatim in stderr:\n${result.stderr}`,
-      );
-
-      // Fix 2: the \r\n -> \naiting rendering artifact must not appear.
-      assert.ok(
-        !result.stdout.includes("\naiting"),
-        `\\naiting artifact present in stdout:\n${result.stdout}`,
-      );
-
-      // Fix 1: gateway start output is printed per-line under the header, not as
-      // one collapsed blob. "Deploying" and "Waiting" must appear on separate lines.
-      const gatewayLines = result.stdout
-        .split("\n")
-        .filter((l) => l.includes("Deploying") || l.includes("Waiting"));
-      assert.ok(
-        gatewayLines.length >= 2,
-        `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
-      );
+      assert.match(result.stderr, /does not start the 'nemoclaw' gateway on this host/u);
+      assert.match(result.stderr, /deployment that owns the gateway process/u);
+      assert.match(result.stderr, /openshell gateway select nemoclaw/u);
+      assert.doesNotMatch(result.stderr, /openshell gateway start/u);
     },
   );
 

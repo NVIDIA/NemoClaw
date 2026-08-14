@@ -318,6 +318,14 @@ If forwarding then fails, onboarding removes the new sandbox and tells you to re
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
+If onboarding preflight resolves the complete listener set for a gateway port conflict, the diagnostic lists every listener.
+Each entry contains the process name and PID, or only the PID when NemoClaw cannot read the process name.
+The stop command targets only listeners that fail ownership verification.
+It does not target a verified managed listener.
+If NemoClaw resolves no listener, the diagnostic provides an `lsof` inspection command.
+Before you run a stop command, confirm that each targeted listener is not part of a second NemoClaw gateway environment.
+Release that environment with `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` instead of stopping its process.
+
 If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process, verify it is safe to stop, and terminate it:
 
 ```bash
@@ -2979,7 +2987,7 @@ When shared gateway cleanup would be unsafe, follow the targeted destroy or gate
 
 ### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
 
-Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
+Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which a GPU-enabled gateway start then auto-selects.
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 Outside Station Express, the standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and can fall back to generating the spec directly with `nvidia-ctk`.
 Station Express never falls back to direct CDI generation.
@@ -3166,6 +3174,18 @@ If it does not request a reboot, register the distro manually or reinstall witho
 wsl --unregister Ubuntu
 wsl --install -d Ubuntu
 ```
+
+### Bootstrap says a Docker executable "is not signed by a trusted publisher"
+
+The bootstrap script runs elevated, so before it launches `Docker Desktop.exe` or uses `docker.exe`, it checks the resolved executable's Authenticode signature and refuses to run one that is not validly signed by Docker.
+The script accepts `Docker Inc` as the certificate subject common name.
+If Docker changes the signer identity, the script refuses the executable until maintainers verify the signer on an official Docker download and update the allowlist.
+For a current-user installation, the administrator child completes the system changes and returns to the original non-elevated PowerShell process before the script starts Docker Desktop or uses its CLI.
+If you started the script from an elevated PowerShell window, rerun it from a normal PowerShell window so it can use the current-user installation without administrator privileges.
+Reinstall Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop/) or `winget install --id Docker.DockerDesktop`, then rerun the bootstrap script.
+If reinstalling does not clear the warning, treat the existing executable as untrusted and do not run it manually either.
+
+The script continues after this warning instead of stopping, so the [`docker info` fails inside WSL](#docker-info-fails-inside-wsl) symptom below can appear a few minutes later even though the real cause is the untrusted executable, not WSL integration.
 
 ### `docker info` fails inside WSL
 

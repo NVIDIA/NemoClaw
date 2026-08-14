@@ -127,7 +127,7 @@ function createDeps() {
     formatSandboxBuildEstimateNote: () => "estimate",
     formatOnboardConfigSummary: ({ provider, model, sandboxName }) =>
       `summary:${provider}/${model}/${sandboxName}`,
-    promptYesNoOrDefault: vi.fn(async () => true),
+    prompt: vi.fn(async () => "1"),
     cliName: () => "nemoclaw",
     log: calls.log,
     error: calls.error,

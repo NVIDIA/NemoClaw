@@ -337,9 +337,10 @@ The host must provide the util-linux `script` command and GNU `timeout` command.
 
 The helper rebuilds the candidate CLI, runs `connect --probe-only`, and then
 runs two `launch` sessions during the same fixed lease.
-Each pseudo-terminal session sends a unique prompt, requires the exact reply,
-sends `/exit`, and requires process exit status `0`.
-The helper uses exact terminal behavior instead of a wall-clock pass threshold.
+Each real pseudo-terminal session sends two distinct messages and `/exit`, then
+requires process exit status `0`. The OpenClaw session store must append two
+nonempty `user` and `assistant` record pairs in one session. The helper does not
+compare message content. Terminal output is a bounded failure diagnostic only.
 Deterministic unit tests separately prove selection of the complete preflight
 and lease paths, stale-producer exclusion, the fixed time-unsafe quarantine,
 refusal to recover when prior evidence cannot be durably fenced, and the named

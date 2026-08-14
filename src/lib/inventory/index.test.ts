@@ -1173,6 +1173,7 @@ describe("inventory commands", () => {
           state: "named_unreachable",
           reason: "host port held or container not running",
         }),
+        getGatewayStartGuidance: () => "Start the gateway with its lifecycle owner.",
         log: (message = "") => lines.push(message),
       });
 
@@ -1181,6 +1182,7 @@ describe("inventory commands", () => {
           l.includes("gateway: down [named_unreachable] (host port held or container not running)"),
         ),
       ).toBe(true);
+      expect(lines).toContain("    Start the gateway with its lifecycle owner.");
       expect(process.exitCode).toBe(1);
     } finally {
       process.exitCode = previousExitCode;

@@ -155,6 +155,57 @@ function telegramPlan(credentialHash: string): SandboxMessagingPlan {
   };
 }
 
+function discordPlan(credentialHash: string): SandboxMessagingPlan {
+  return {
+    ...telegramPlan(credentialHash),
+    channels: [
+      {
+        channelId: "discord",
+        displayName: "Discord",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    credentialBindings: [
+      {
+        channelId: "discord",
+        credentialId: "discordBotToken",
+        sourceInput: "botToken",
+        providerName: "alpha-discord-bridge",
+        providerEnvKey: "DISCORD_BOT_TOKEN",
+        placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash,
+      },
+    ],
+  };
+}
+
+function whatsappPlan(): SandboxMessagingPlan {
+  return {
+    ...telegramPlan(""),
+    channels: [
+      {
+        channelId: "whatsapp",
+        displayName: "WhatsApp",
+        authMode: "in-sandbox-qr",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    credentialBindings: [],
+  };
+}
+
 function slackPlan(
   botCredentialHash: string,
   appCredentialHash?: string,
@@ -286,12 +337,10 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       .mockReturnValue(plans[1] ?? plans[0] ?? null),
     writePlanToEnv: vi.fn(),
     clearPlanEnv: vi.fn(),
-    getRegistrySandboxMessagingAuthority: vi.fn(
-      (): RegistryMessagingAuthority => ({
-        authoritative: false,
-        plan: null,
-      }),
-    ),
+    getRegistrySandboxMessagingAuthority: vi.fn((): RegistryMessagingAuthority => ({
+      authoritative: false,
+      plan: null,
+    })),
     providerMatchesGatewayCredential: vi.fn(() => false),
   };
 }
@@ -365,12 +414,14 @@ describe("reconcileReusedSandboxMessaging", () => {
 
 describe("reconcileSandboxMessaging plan authority", () => {
   it("uses the registry plan before a staged plan for an existing sandbox", async () => {
-    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const registryToken = "123456:registry-token";
+    const registryPlan = telegramPlan(hashCredential(registryToken) ?? "");
     const deps = reconcileDeps([mixedChannelPlan()]);
     deps.getRegistrySandboxMessagingAuthority.mockReturnValueOnce({
       authoritative: true,
       plan: registryPlan,
     });
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", registryToken);
 
     const result = await reconcileSandboxMessaging({
       resume: false,
@@ -385,7 +436,8 @@ describe("reconcileSandboxMessaging plan authority", () => {
   });
 
   it("uses the registry plan without reading an invalid environment plan", async () => {
-    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const registryToken = "123456:registry-token";
+    const registryPlan = telegramPlan(hashCredential(registryToken) ?? "");
     const deps = reconcileDeps([]);
     deps.readMessagingPlanFromEnv.mockImplementation(() => {
       throw new Error("invalid environment plan");
@@ -394,6 +446,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
       authoritative: true,
       plan: registryPlan,
     });
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", registryToken);
 
     const result = await reconcileSandboxMessaging({
       resume: false,
@@ -407,6 +460,69 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(deps.getRecordedMessagingChannelsForResume).not.toHaveBeenCalled();
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("omits a removed host-backed channel from fresh registry re-onboarding (#9109)", async () => {
+    const registryPlan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: [] });
+  });
+
+  it("omits a removed host-backed channel from a completed registry resume (#9109)", async () => {
+    const registryPlan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(registryPlan),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: [] });
+  });
+
+  it("keeps an in-sandbox QR channel in a completed registry resume (#9109)", async () => {
+    const registryPlan = whatsappPlan();
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("WHATSAPP_MODE", "");
+    vi.stubEnv("WHATSAPP_ALLOWED_IDS", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(registryPlan),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["whatsapp"] });
   });
 
   it("uses the staged plan before a matching session plan during resume for a pending target", async () => {

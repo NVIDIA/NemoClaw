@@ -188,6 +188,52 @@ describe("Pi release cohort separation", () => {
     expect(publishJob?.steps).toEqual(candidateJob?.steps);
   });
 
+  it("imports the local base into Buildx for digest-only candidate publication", () => {
+    type WorkflowStep = {
+      id?: string;
+      name?: string;
+      run?: string;
+      with?: Record<string, unknown>;
+    };
+    const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
+      jobs: Record<string, { steps?: WorkflowStep[] }>;
+    };
+    const steps = workflow.jobs["pi-candidate"]?.steps ?? [];
+    const requiredStep = (name: string): WorkflowStep => {
+      const selected = steps.find((step) => step.name === name);
+      expect(selected, `missing workflow step: ${name}`).toBeDefined();
+      return selected ?? {};
+    };
+
+    const buildx = requiredStep("Set up Docker Buildx");
+    expect(buildx.id).toBe("buildx");
+    expect(buildx.with?.["driver"]).not.toBe("docker");
+
+    const baseBuild = requiredStep("Build the exact Pi candidate base").run ?? "";
+    expect(baseBuild).toContain('--output "type=docker,dest=${local_base_archive}"');
+    expect(baseBuild).toContain('--output "type=oci,dest=${local_base_oci_archive}"');
+    expect(baseBuild).toContain('docker load --input "$local_base_archive"');
+    expect(baseBuild).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
+    expect(baseBuild).toContain("if length == 1 then .[0].digest");
+    expect(baseBuild).toContain(
+      'printf \'oci=%s@%s\\n\' "$local_base_oci" "$local_base_oci_digest"',
+    );
+
+    const expectedContext = "nemoclaw-pi-base=oci-layout://${{ steps.base.outputs.oci }}";
+    for (const name of [
+      "Build the Pi candidate managed image",
+      "Publish the Pi candidate image by digest",
+    ]) {
+      const build = requiredStep(name);
+      expect(build.with?.builder).toBe("${{ steps.buildx.outputs.name }}");
+      expect(build.with?.["build-contexts"]).toBe(expectedContext);
+      expect(build.with?.["build-args"]).toContain("BASE_IMAGE=nemoclaw-pi-base");
+    }
+    expect(requiredStep("Publish the Pi candidate image by digest").with?.outputs).toContain(
+      "push-by-digest=true",
+    );
+  });
+
   it("qualifies the published candidate through its declared entrypoint with corporate CA handoff", () => {
     const workflow = readRepoFile(".github/workflows/managed-images.yaml");
     const entrypointStep = workflow.slice(
