@@ -1839,17 +1839,6 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
-      - name: Checkout trusted OpenShell dev tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
-          path: .trusted-openshell-dev-artifact
-          persist-credentials: false
-          sparse-checkout: |
-            scripts/install-openshell.sh
-            tools/e2e/openshell-dev-artifact.mts
-
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
@@ -1861,6 +1850,18 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Checkout trusted OpenShell dev tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/docker-auth-cleanup.sh
+            scripts/install-openshell.sh
+            tools/e2e/openshell-dev-artifact.mts
 
       - name: Restore immutable OpenShell dev artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1881,34 +1882,11 @@ jobs:
           "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
           "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
 
-      - name: Install and verify cloudflared prerequisite
-        # Update posture: keep this dev compatibility lane on the same reviewed
-        # version/SHA256 pair as the stable lane; workflow-contract tests fail
-        # if the pins diverge or installation becomes mutable.
-        env:
-          CLOUDFLARED_VERSION: "2026.6.1"
-          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
-        run: |
-          set -euo pipefail
-          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
-          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
-          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
-          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
-          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
-          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
-          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
-            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
-            exit 1
-          fi
-          sudo dpkg -i "${cloudflared_deb}"
-          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
-
-      - name: Generate MCP test TLS
-        run: bash test/e2e/setup-mcp-test-tls.sh
-
       - name: Revoke Docker auth before OpenShell development tooling
         shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
+        run: >-
+          bash
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/docker-auth-cleanup.sh"
 
       - name: Install immutable OpenShell dev artifact
         env:
@@ -1947,6 +1925,31 @@ jobs:
           chmod 700 "$shim_dir/gh" "$shim_dir/curl"
           PATH="$shim_dir:$PATH" \
             bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
+
+      - name: Install and verify cloudflared prerequisite
+        # Update posture: keep this dev compatibility lane on the same reviewed
+        # version/SHA256 pair as the stable lane; workflow-contract tests fail
+        # if the pins diverge or installation becomes mutable.
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
+      - name: Generate MCP test TLS
+        run: bash test/e2e/setup-mcp-test-tls.sh
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility

@@ -284,6 +284,32 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
+  it("rejects candidate execution inside the trusted OpenShell installation sequence (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const steps = workflow.jobs["mcp-bridge-dev"].steps;
+      const installIndex = steps.findIndex(
+        (step) => step.name === "Install immutable OpenShell dev artifact",
+      );
+      requireFixture(installIndex >= 0, "OpenShell dev installation fixture is missing");
+      steps.splice(installIndex, 0, {
+        name: "Run candidate workspace script",
+        run: "bash test/e2e/setup-mcp-test-tls.sh",
+      });
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must keep trusted checkout, restore, verification, credential revocation, and install contiguous",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects moving or unverified inputs for the OpenShell dev shards (#9051)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

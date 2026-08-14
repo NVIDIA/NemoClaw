@@ -1440,8 +1440,7 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       }
       return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
-    const checkoutIndex =
-      jobName === "mcp-bridge-dev" ? (checkoutIndexes.at(-1) ?? -1) : (checkoutIndexes[0] ?? -1);
+    const checkoutIndex = checkoutIndexes[0] ?? -1;
     const protectedCacheDownloadIndex =
       jobName === "managed-image-protected-runtime"
         ? workflowSteps.findIndex(

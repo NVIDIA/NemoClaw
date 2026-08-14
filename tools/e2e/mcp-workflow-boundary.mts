@@ -24,6 +24,8 @@ const TERMINAL_JOBS = [
 ] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before OpenShell development tooling";
+const DEV_DOCKER_CLEANUP_RUN =
+  'bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/docker-auth-cleanup.sh"';
 const DEV_ARTIFACT_TOOL = "tools/e2e/openshell-dev-artifact.mts";
 const DEV_ARTIFACT_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
@@ -33,6 +35,8 @@ const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooli
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
 const DEV_ARTIFACT_TRUSTED_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
+const DEV_ARTIFACT_SHARD_TRUSTED_PATHS =
+  `.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
 const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
 const DEV_ARTIFACT_SOURCE_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
@@ -309,7 +313,7 @@ function validateJobSecurity(
     errors.push(`${jobName} must use the canonical unconditional Docker auth cleanup`);
   }
   const steps = asSteps(job);
-  const checkoutIndex = Math.max(...checkouts.map((checkout) => steps.indexOf(checkout)));
+  const checkoutIndex = steps.indexOf(checkouts[0] ?? {});
   if (steps.indexOf(login) !== checkoutIndex + 1) {
     errors.push(`${jobName} must authenticate immediately after credential-free checkout`);
   }
@@ -324,7 +328,7 @@ function validateJobSecurity(
         ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
         path: DEV_ARTIFACT_TRUSTED_CHECKOUT,
         "persist-credentials": false,
-        "sparse-checkout": DEV_ARTIFACT_TRUSTED_PATHS,
+        "sparse-checkout": DEV_ARTIFACT_SHARD_TRUSTED_PATHS,
       })
     ) {
       errors.push("mcp-bridge-dev must check out only the trusted OpenShell dev tooling");
@@ -334,7 +338,7 @@ function validateJobSecurity(
     const expectedDevCleanup = {
       name: DEV_DOCKER_CLEANUP_NAME,
       shell: "bash",
-      run: DOCKER_CLEANUP_RUN,
+      run: DEV_DOCKER_CLEANUP_RUN,
     };
     if (JSON.stringify(devCleanup) !== JSON.stringify(expectedDevCleanup)) {
       errors.push("mcp-bridge-dev must revoke Docker auth before OpenShell development tooling");
@@ -421,10 +425,16 @@ function validateJobExecution(
     errors,
     tls.run,
     "bash test/e2e/setup-mcp-test-tls.sh",
-    `${jobName} must generate its HTTPS fixture before installation`,
+    `${jobName} must use the reviewed HTTPS fixture generator`,
   );
-  if (steps.indexOf(tls) < 0 || steps.indexOf(install) <= steps.indexOf(tls)) {
-    errors.push(`${jobName} must generate HTTPS fixtures before installing OpenShell`);
+  if (jobName === "mcp-bridge-dev") {
+    if (steps.indexOf(install) < 0 || steps.indexOf(cloudflared) <= steps.indexOf(install)) {
+      errors.push(
+        "mcp-bridge-dev must install the trusted OpenShell artifact before candidate fixture preparation",
+      );
+    }
+  } else if (steps.indexOf(tls) < 0 || steps.indexOf(install) <= steps.indexOf(tls)) {
+    errors.push("mcp-bridge must generate HTTPS fixtures before installing OpenShell");
   }
   const installEnv = asRecord(install.env);
   if (jobName === "mcp-bridge-dev") {
@@ -463,6 +473,7 @@ function validateJobExecution(
     );
   }
   if (jobName === "mcp-bridge-dev") {
+    const trustedCheckout = namedStep(job, DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME);
     const restoreCli = namedStep(job, "Restore exact-commit CLI artifact");
     const restoreArtifact = namedStep(job, "Restore immutable OpenShell dev artifact");
     const verifyArtifact = namedStep(job, "Verify immutable OpenShell dev artifact");
@@ -524,15 +535,23 @@ function validateJobExecution(
       errors.push("mcp-bridge-dev must not maintain a second OpenShell installer");
     }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
+    const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
+    const trustedInstallSequence = [
+      trustedCheckout,
+      restoreArtifact,
+      verifyArtifact,
+      devCleanup,
+      install,
+    ];
     if (
       steps.indexOf(restoreCli) < 0 ||
-      steps.indexOf(restoreArtifact) <= steps.indexOf(restoreCli) ||
-      steps.indexOf(verifyArtifact) <= steps.indexOf(restoreArtifact) ||
-      steps.indexOf(devCleanup) <= steps.indexOf(verifyArtifact) ||
-      steps.indexOf(install) <= steps.indexOf(devCleanup)
+      trustedCheckoutIndex <= steps.indexOf(restoreCli) ||
+      trustedInstallSequence.some(
+        (step, offset) => steps[trustedCheckoutIndex + offset] !== step,
+      )
     ) {
       errors.push(
-        "mcp-bridge-dev must restore, verify, revoke Docker auth, and install in reviewed order",
+        "mcp-bridge-dev must keep trusted checkout, restore, verification, credential revocation, and install contiguous",
       );
     }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {
