@@ -120,7 +120,7 @@ describe("container curl probe", () => {
     },
   );
 
-  it("does not create the response file after a Docker failure (#9116)", () => {
+  it("returns an unchanged nonzero Docker probe result without creating the response file (#9116)", () => {
     const dockerFailure = successfulSpawn("partial response");
     dockerFailure.status = 7;
     const spawn = vi.fn(() => dockerFailure);
