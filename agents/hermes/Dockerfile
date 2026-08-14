@@ -1156,8 +1156,9 @@ RUN set -eu; \
 # installer. Dockerfile.base separately installs and imports the official
 # Hindsight client. This layer uses a build-only wheel with the same package
 # identity to isolate the lazy-installer and durable-target contract from PyPI.
-# Recreate the target immediately before the install because earlier Python
-# probes can restore its ABI metadata after the base image cleanup.
+# The nested write-denial shell returns success after every prohibited mutation
+# fails. Create the wheel before resetting the target so the sandbox installer
+# is the next Python process to use it.
 RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && /opt/hermes/.venv/bin/python -I -m pip --version \
     && chmod 644 /opt/hermes/.venv/.lock \
@@ -1195,17 +1196,18 @@ RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --defa
             if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi; \
             if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
             if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
-            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi' \
+            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            exit 0' \
     && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
-    && rm -rf /sandbox/.hermes/lazy-packages \
-    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
-    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
-    && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
     && install -d -o root -g root -m 0755 /tmp/nemoclaw-hindsight-probe \
     && /opt/hermes/.venv/bin/python -I -c \
         "import zipfile; entries = {'hindsight_client/__init__.py': 'NEMOCLAW_BUILD_PROBE_FIXTURE = True\n', 'hindsight_client-0.6.1.dist-info/METADATA': 'Metadata-Version: 2.4\nName: hindsight-client\nVersion: 0.6.1\nSummary: NemoClaw offline lazy-installer build probe\n\n', 'hindsight_client-0.6.1.dist-info/WHEEL': 'Wheel-Version: 1.0\nGenerator: NemoClaw build probe\nRoot-Is-Purelib: true\nTag: py3-none-any\n', 'hindsight_client-0.6.1.dist-info/RECORD': 'hindsight_client/__init__.py,,\nhindsight_client-0.6.1.dist-info/METADATA,,\nhindsight_client-0.6.1.dist-info/WHEEL,,\nhindsight_client-0.6.1.dist-info/RECORD,,\n'}; wheel = zipfile.ZipFile('/tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl', 'w', compression=zipfile.ZIP_DEFLATED); [wheel.writestr(name, data) for name, data in entries.items()]; wheel.close()" \
     && chown root:root /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
     && chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
     && HOME=/sandbox \
         PIP_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
         PIP_NO_INDEX=1 \
