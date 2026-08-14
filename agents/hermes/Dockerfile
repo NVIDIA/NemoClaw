@@ -1156,6 +1156,8 @@ RUN set -eu; \
 # installer. Dockerfile.base separately installs and imports the official
 # Hindsight client. This layer uses a build-only wheel with the same package
 # identity to isolate the lazy-installer and durable-target contract from PyPI.
+# Recreate the target immediately before the install because earlier Python
+# probes can restore its ABI metadata after the base image cleanup.
 RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && /opt/hermes/.venv/bin/python -I -m pip --version \
     && chmod 644 /opt/hermes/.venv/.lock \
@@ -1195,6 +1197,8 @@ RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --defa
             if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
             if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi' \
     && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
     && install -d -o root -g root -m 0755 /tmp/nemoclaw-hindsight-probe \

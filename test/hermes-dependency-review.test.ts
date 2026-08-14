@@ -300,6 +300,8 @@ describe("Hermes 0.19.0 dependency review", () => {
       `if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi`,
       `if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
       `test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe`,
+      `rm -rf /sandbox/.hermes/lazy-packages`,
+      `install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages`,
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
       `test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)"`,
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
