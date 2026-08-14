@@ -22,6 +22,7 @@ import {
   ManagedBootstrapRecoveryBlockedError,
 } from "./managed-bootstrap/adapter";
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
+import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/onboard-orchestration";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import type {
@@ -46,17 +47,6 @@ export function resolveAgentCreateInput(
     portableLifecycle:
       isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw",
   };
-}
-
-export function assertPortableManagedBootstrapNotSelected(
-  portableLifecycle: boolean,
-  managedBootstrapSelected: boolean,
-): void {
-  if (portableLifecycle && managedBootstrapSelected) {
-    throw new Error(
-      "Portable OpenClaw onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
-    );
-  }
 }
 
 /*

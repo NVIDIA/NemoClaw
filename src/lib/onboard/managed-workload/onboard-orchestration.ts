@@ -98,6 +98,30 @@ export interface ManagedWorkloadOnboardRuntime {
   ): BuiltManagedStartupOnboardProfile | null;
 }
 
+export function assertPortableManagedBootstrapNotSelected(
+  portableLifecycle: boolean,
+  managedBootstrapSelected: boolean,
+): void {
+  if (portableLifecycle && managedBootstrapSelected) {
+    throw new Error(
+      "Portable OpenClaw onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
+    );
+  }
+}
+
+export async function prepareSandboxWorkloadForPortableLifecycle(
+  runtime: ManagedWorkloadOnboardRuntime,
+  portableLifecycle: boolean,
+): Promise<PreparedSandboxWorkloadSource> {
+  const workload = await runtime.ensurePreparedWorkload();
+  assertPortableManagedBootstrapNotSelected(
+    portableLifecycle,
+    workload.source.kind === "managed-image",
+  );
+  runtime.ensurePreparedProfile(workload);
+  return workload;
+}
+
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
   if (!provider || !provider.bootstrap.supported) {
     throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
