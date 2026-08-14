@@ -290,6 +290,98 @@ function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string
   return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
 }
 
+function resolveManagedLlamaCppSafely(
+  deps: SetupNimFlowDeps,
+  env?: NodeJS.ProcessEnv,
+): ManagedLlamaCppSelectionResult {
+  try {
+    return (deps.resolveManagedLlamaCppSelection ?? resolveManagedLlamaCppSelection)(env);
+  } catch (error) {
+    return {
+      kind: "rejected",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function buildManagedLlamaCppOptions(input: {
+  deps: SetupNimFlowDeps;
+  candidate: boolean;
+  requestedProvider: string | null;
+  resolution: ManagedLlamaCppSelectionResult | null;
+}): ProviderMenuChoice[] {
+  const { deps, candidate, requestedProvider, resolution } = input;
+  if (!candidate) return [];
+
+  let choices: readonly ManagedLlamaCppSelectionChoice[] = [];
+  try {
+    if (deps.listManagedLlamaCppSelectionChoices) {
+      choices = deps.listManagedLlamaCppSelectionChoices();
+    } else if (deps.resolveManagedLlamaCppSelection) {
+      choices =
+        resolution?.kind === "selected" ? [{ priority: 0, selection: resolution.selection }] : [];
+    } else {
+      choices = listManagedLlamaCppSelectionChoices();
+    }
+  } catch {
+    choices = [];
+  }
+
+  const defaultRecipeId =
+    resolution?.kind === "selected" ? resolution.selection.recipe.metadata.id : null;
+  const options = choices.map(({ selection }): ProviderMenuChoice => {
+    const recipeId = selection.recipe.metadata.id;
+    const displayName =
+      selection.preset?.metadata.displayName ?? selection.recipe.metadata.displayName ?? recipeId;
+    return {
+      key: "install-llama-cpp",
+      label: `Managed llama.cpp: ${displayName}${recipeId === defaultRecipeId ? " (recommended)" : ""}`,
+      managedLlamaCppRecipeId: recipeId,
+    };
+  });
+  if (options.length === 0 && requestedProvider === "install-llama-cpp") {
+    options.push({ key: "install-llama-cpp", label: "Managed llama.cpp" });
+  }
+  return options;
+}
+
+function prepareManagedLlamaCppMenu(input: {
+  deps: SetupNimFlowDeps;
+  platform: InferenceProviderHostGpu["platform"] | undefined;
+  requestedProvider: string | null;
+}): {
+  resolution: ManagedLlamaCppSelectionResult | null;
+  options: ProviderMenuChoice[];
+} {
+  const { deps, platform, requestedProvider } = input;
+  const candidate = platform === "spark" || requestedProvider === "install-llama-cpp";
+  const resolution = candidate
+    ? resolveManagedLlamaCppSafely(
+        deps,
+        !deps.isNonInteractive() && !requestedProvider
+          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
+          : undefined,
+      )
+    : null;
+  return {
+    resolution,
+    options: buildManagedLlamaCppOptions({ deps, candidate, requestedProvider, resolution }),
+  };
+}
+
+function resolveSelectedManagedLlamaCpp(input: {
+  deps: SetupNimFlowDeps;
+  selectedFromInteractiveMenu: boolean;
+  selectedRecipeId: string | undefined;
+}): ManagedLlamaCppSelectionResult {
+  const { deps, selectedFromInteractiveMenu, selectedRecipeId } = input;
+  const env =
+    selectedFromInteractiveMenu && selectedRecipeId
+      ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
+      : undefined;
+  return resolveManagedLlamaCppSafely(deps, env);
+}
+
 async function runDedicatedLocalModelProfile(input: {
   deps: SetupNimFlowDeps;
   integration: ReturnType<typeof createLocalModelProfileIntegration>;
@@ -524,60 +616,12 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
-    const managedLlamaCppCandidate =
-      gpu?.platform === "spark" || requestedProvider === "install-llama-cpp";
-    const resolveManagedLlamaCppNow = (env?: NodeJS.ProcessEnv): ManagedLlamaCppSelectionResult => {
-      try {
-        return (deps.resolveManagedLlamaCppSelection ?? resolveManagedLlamaCppSelection)(env);
-      } catch (error) {
-        return {
-          kind: "rejected",
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
-    };
-    let managedLlamaCppResolution: ManagedLlamaCppSelectionResult | null = null;
-    let managedLlamaCppChoices: readonly ManagedLlamaCppSelectionChoice[] = [];
-    if (managedLlamaCppCandidate) {
-      managedLlamaCppResolution = resolveManagedLlamaCppNow(
-        !deps.isNonInteractive() && !requestedProvider
-          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
-          : undefined,
-      );
-      try {
-        managedLlamaCppChoices = deps.listManagedLlamaCppSelectionChoices
-          ? deps.listManagedLlamaCppSelectionChoices()
-          : deps.resolveManagedLlamaCppSelection
-            ? managedLlamaCppResolution.kind === "selected"
-              ? [{ priority: 0, selection: managedLlamaCppResolution.selection }]
-              : []
-            : listManagedLlamaCppSelectionChoices();
-      } catch {
-        managedLlamaCppChoices = [];
-      }
-    }
-
-    const defaultManagedLlamaCppRecipeId =
-      managedLlamaCppResolution?.kind === "selected"
-        ? managedLlamaCppResolution.selection.recipe.metadata.id
-        : null;
-    const managedLlamaCppOptions: ProviderMenuChoice[] = managedLlamaCppChoices.map(
-      ({ selection }) => {
-        const recipeId = selection.recipe.metadata.id;
-        const displayName =
-          selection.preset?.metadata.displayName ??
-          selection.recipe.metadata.displayName ??
-          recipeId;
-        return {
-          key: "install-llama-cpp",
-          label: `Managed llama.cpp: ${displayName}${recipeId === defaultManagedLlamaCppRecipeId ? " (recommended)" : ""}`,
-          managedLlamaCppRecipeId: recipeId,
-        };
-      },
-    );
-    if (managedLlamaCppOptions.length === 0 && requestedProvider === "install-llama-cpp") {
-      managedLlamaCppOptions.push({ key: "install-llama-cpp", label: "Managed llama.cpp" });
-    }
+    const { resolution: managedLlamaCppResolution, options: managedLlamaCppOptions } =
+      prepareManagedLlamaCppMenu({
+        deps,
+        platform: gpu?.platform,
+        requestedProvider,
+      });
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
@@ -747,11 +791,11 @@ export function createSetupNim(
           // inputs immediately before any install effect so a delayed interactive
           // choice cannot activate against stale host state.
           const selectedRecipeId = selected.managedLlamaCppRecipeId;
-          const resolved = resolveManagedLlamaCppNow(
-            selectedFromInteractiveMenu && selectedRecipeId
-              ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
-              : undefined,
-          );
+          const resolved = resolveSelectedManagedLlamaCpp({
+            deps,
+            selectedFromInteractiveMenu,
+            selectedRecipeId,
+          });
           if (resolved.kind === "rejected") {
             deps.error(`  Managed llama.cpp selection failed: ${resolved.reason}`);
             if (deps.isNonInteractive()) deps.abortNonInteractive(resolved.reason);
