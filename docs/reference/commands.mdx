@@ -2293,9 +2293,9 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
-Routed onboarding and Model Router destruction use the same host-wide lifecycle lock for each Model Router port.
-Onboarding holds the lock through sandbox registry publication.
-Destruction holds the lock through the peer check, process stop, and session update.
+Routed onboarding and Model Router destruction acquire the selected gateway route lock first, then the host-wide lifecycle lock for each Model Router port.
+Onboarding holds both locks through sandbox registry publication.
+Destruction holds both locks through the peer check, process stop, and session update.
 When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
 If no same-port peer remains, it stops only a process whose command line still identifies the Model Router on that port.
 It clears matching session recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.

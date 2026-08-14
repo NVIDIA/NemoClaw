@@ -32,8 +32,9 @@ When the log contains readable output from this run, the error includes a redact
 The owner-only log contains unredacted router output.
 Review the log before you share it.
 NemoClaw does not provide log-only cleanup.
-Routed onboarding holds a host-wide lock for the selected Model Router port through router setup and sandbox registry publication.
-Model Router destruction holds the same port lock through its peer check, process stop, and session update.
+Routed onboarding acquires the selected gateway route lock first, then the host-wide lock for the selected Model Router port.
+It holds both locks through router setup and sandbox registry publication.
+Model Router destruction uses the same lock order and holds both locks through its peer check, process stop, and session update.
 When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
 If no same-port peer remains, NemoClaw stops only a process whose command line still identifies the Model Router on that port.
 It clears the matching session recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
