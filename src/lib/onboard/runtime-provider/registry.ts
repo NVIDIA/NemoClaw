@@ -79,6 +79,7 @@ const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperat
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
+  "state-mutation",
   "workload-cleanup",
 ]);
 const HOST_LOCAL_INFERENCE_SERVICES = new Set<HostLocalInferenceService>([

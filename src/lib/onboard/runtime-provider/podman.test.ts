@@ -96,6 +96,11 @@ function realOperationEngines(socketAuthority: PodmanSocketAuthority = REAL_SOCK
       ...common,
       operation: "sandbox-lifecycle",
     }),
+    stateMutation: createPodmanContainerEngine({
+      ...common,
+      operation: "state-mutation",
+      executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+    }),
   };
 }
 
@@ -215,43 +220,44 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
 }
 
 describe("dormant Podman runtime provider", () => {
-  it.each(
-    AGENTS,
-  )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
-    const runtime = providerHarness(agent);
-    const verifyGateway = vi.fn(async () => undefined);
-    const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
-    const stopSandboxChannels = vi.fn();
+  it.each(AGENTS)(
+    "runs basic CPU start and stop for %s through an injected bundle",
+    async (agent) => {
+      const runtime = providerHarness(agent);
+      const verifyGateway = vi.fn(async () => undefined);
+      const restoreStartupState = vi.fn(() => SUCCESSFUL_RECOVERY);
+      const stopSandboxChannels = vi.fn();
 
-    await expect(
-      startSandbox(runtime.sandboxName, {
-        getSandbox: () => runtime.entry,
-        runtimeProviders: runtime.providers,
-        restoreStartupState,
-        verifyGateway,
-        log: vi.fn(),
-      }),
-    ).resolves.toEqual({ exitCode: 0 });
-    expect(
-      stopSandbox(runtime.sandboxName, {
-        getSandbox: () => runtime.entry,
-        runtimeProviders: runtime.providers,
-        stopSandboxChannels,
-        teardownSandboxDashboardForward: vi.fn(),
-        log: vi.fn(),
-      }),
-    ).toEqual({ exitCode: 0 });
+      await expect(
+        startSandbox(runtime.sandboxName, {
+          getSandbox: () => runtime.entry,
+          runtimeProviders: runtime.providers,
+          restoreStartupState,
+          verifyGateway,
+          log: vi.fn(),
+        }),
+      ).resolves.toEqual({ exitCode: 0 });
+      expect(
+        stopSandbox(runtime.sandboxName, {
+          getSandbox: () => runtime.entry,
+          runtimeProviders: runtime.providers,
+          stopSandboxChannels,
+          teardownSandboxDashboardForward: vi.fn(),
+          log: vi.fn(),
+        }),
+      ).toEqual({ exitCode: 0 });
 
-    expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
-    expect(stopSandboxChannels).toHaveBeenCalledWith(
-      runtime.sandboxName,
-      expect.objectContaining({ channelStopTransport: "openshell" }),
-    );
-    expect(
-      JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
-    ).not.toContain("docker");
-  });
+      expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+      expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+      expect(stopSandboxChannels).toHaveBeenCalledWith(
+        runtime.sandboxName,
+        expect.objectContaining({ channelStopTransport: "openshell" }),
+      );
+      expect(
+        JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
+      ).not.toContain("docker");
+    },
+  );
 
   it("reports a failed gateway probe after the exact Podman container starts", async () => {
     const runtime = providerHarness("openclaw");
@@ -364,14 +370,31 @@ describe("dormant Podman runtime provider", () => {
     expect(engines.sandboxLifecycle.endpointAuthorityId).toBe(
       engines.hostLocalInference.endpointAuthorityId,
     );
+    expect(engines.stateMutation.endpointAuthorityId).toBe(
+      engines.hostLocalInference.endpointAuthorityId,
+    );
     expect(engines.hostLocalInference.authorityId).not.toBe(engines.hostDoctor.authorityId);
+    expect(engines.stateMutation.authorityId).not.toBe(engines.hostDoctor.authorityId);
     expect(bundle).toMatchObject({
       capabilities: { hostLocalInference: true },
       hostLocalInference: {
         providerId: "podman",
         supported: true,
       },
+      stateMutation: {
+        providerId: "podman",
+        supported: true,
+      },
     });
+    if (!bundle.containerEngine.supported) {
+      throw new Error("Podman candidate must expose its injected container-engine identities.");
+    }
+    expect(bundle.containerEngine.identities).toContainEqual({
+      operation: "state-mutation",
+      engineId: "podman",
+      displayName: "Podman",
+    });
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
   });
 
   it("rejects real operation engines when one socket endpoint drifts", () => {

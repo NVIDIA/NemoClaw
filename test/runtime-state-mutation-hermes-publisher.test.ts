@@ -36,7 +36,7 @@ installed_plan = {key: value for key, value in installed_value.items() if key !=
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
-def marker(nonce="d" * 64, selectors=None):
+def marker(nonce="d" * 64, selectors=None, provider_id="docker"):
     expected = [
         *["path:" + value for value in (".config-hash", ".env", "config.yaml")],
         *["path:" + value for value in installed_plan["readOnlyRoots"]],
@@ -66,7 +66,7 @@ def marker(nonce="d" * 64, selectors=None):
         "schemaVersion": 1,
         "phase": "fenced",
         "transactionId": "a" * 64,
-        "providerId": "docker",
+        "providerId": provider_id,
         "stateRoot": "/sandbox/.hermes",
         "plan": plan_text,
         "planSha256": hashlib.sha256(plan_text.encode()).hexdigest(),
@@ -139,6 +139,9 @@ with tempfile.TemporaryDirectory() as temporary:
 
     publisher._run_guard = fake_guard
     selected = marker()
+    results["podman_provider"] = publisher._normalize_marker(
+        marker(provider_id="podman"), "locked"
+    )["providerId"]
     first = publisher.apply_plan_posture(selected, "locked")
     results["first"] = first
     first_event_count = len(events)
@@ -296,6 +299,7 @@ describe("Hermes runtime state mutation publisher", () => {
       posture: "locked",
       nonce: "d".repeat(64),
     });
+    expect(result.podman_provider).toBe("podman");
     expect(result.retry).toMatchObject({ posture: "locked" });
     expect(result.rollback).toMatchObject({ posture: "mutable" });
     const expectedStatePlan = JSON.parse(fs.readFileSync(STATE_PLAN, "utf8")) as Record<

@@ -26,7 +26,11 @@ import {
 const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
 
 export interface PodmanContainerEngineOptions {
-  readonly operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle";
+  readonly operation:
+    | "host-doctor"
+    | "host-local-inference"
+    | "sandbox-lifecycle"
+    | "state-mutation";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
   readonly capture?: ContainerEngineCommandCapture;
@@ -40,6 +44,11 @@ export interface PodmanContainerEngineOptions {
 
 export interface PodmanContainerEngine extends ContainerEngine {
   readonly endpointAuthorityId: string;
+}
+
+/** Podman engine whose exact socket and executable authority can be revalidated on demand. */
+export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
+  readonly assertAuthority: () => void;
 }
 
 export function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -97,17 +106,27 @@ function podmanAuthorityId(
  */
 export function createPodmanContainerEngine(
   options: PodmanContainerEngineOptions,
-): PodmanContainerEngine {
+): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
   const executable = options.executable ?? "podman";
-  const executableAuthority =
-    options.operation === "host-local-inference"
-      ? capturePodmanExecutableAuthority(executable, options.executableAuthorityDeps)
-      : undefined;
+  const protectsRuntimeMutation =
+    options.operation === "host-local-inference" || options.operation === "state-mutation";
+  const executableAuthority = protectsRuntimeMutation
+    ? capturePodmanExecutableAuthority(executable, options.executableAuthorityDeps)
+    : undefined;
   let executableCommandCount = 0;
   let hasExecutableAuthorityFailure = false;
   let executableAuthorityFailure: unknown;
   const endpointAuthorityId = podmanAuthorityId(options.socketAuthority);
+  const assertBoundAuthority = (rehashExecutable: boolean): void => {
+    assertAuthority(options.socketAuthority, options.authorityDeps);
+    if (!executableAuthority) return;
+    if (rehashExecutable) {
+      assertPodmanExecutableAuthority(executableAuthority, options.executableAuthorityDeps);
+    } else {
+      assertPodmanExecutableMetadataAuthority(executableAuthority, options.executableAuthorityDeps);
+    }
+  };
   const engine = createContainerEngineCommand({
     operation: options.operation,
     engineId: "podman",
@@ -131,8 +150,7 @@ export function createPodmanContainerEngine(
           try {
             const shouldRehash =
               phase === "before" &&
-              executableCommandCount + 1 ===
-                EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
+              executableCommandCount + 1 === EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL;
             if (shouldRehash) {
               assertPodmanExecutableAuthority(executableAuthority, options.executableAuthorityDeps);
             } else {
@@ -157,12 +175,17 @@ export function createPodmanContainerEngine(
       }
       if (failure !== undefined) throw failure;
     },
-  }) as PodmanContainerEngine;
-  if (options.operation !== "host-local-inference") return engine;
-  return Object.freeze({
+  });
+  const boundEngine = {
     ...engine,
+    endpointAuthorityId,
+    assertAuthority: () => assertBoundAuthority(true),
+  };
+  if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
+  return Object.freeze({
+    ...boundEngine,
     captureHost: () => {
-      throw new Error("Podman host-local inference forbids ambient host command capture.");
+      throw new Error(`Podman ${options.operation} forbids ambient host command capture.`);
     },
   });
 }

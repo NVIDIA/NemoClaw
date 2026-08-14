@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PodmanContainerEngine } from "../../adapters/podman";
+import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -22,11 +22,14 @@ import {
   type PodmanHostPreflightOptions,
   qualifyPodmanHost,
 } from "./podman-preflight";
+import { createPodmanStateMutationSurface } from "./podman-state-mutation";
+import type { PodmanStateMutationSurfaceOptions } from "./podman-state-mutation";
 
 export interface PodmanRuntimeProviderEngines {
   readonly hostDoctor: PodmanContainerEngine;
   readonly hostLocalInference?: PodmanContainerEngine;
   readonly sandboxLifecycle: PodmanContainerEngine;
+  readonly stateMutation?: PodmanBoundContainerEngine;
 }
 
 export interface PodmanHostLocalInferenceOptions {
@@ -40,6 +43,7 @@ export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
   readonly hostLocalInference?: PodmanHostLocalInferenceOptions;
   readonly preflight?: PodmanHostPreflightOptions;
+  readonly stateMutation?: Omit<PodmanStateMutationSurfaceOptions, "engine">;
 }
 
 const DORMANT_WORKLOAD_PROFILE = {
@@ -55,7 +59,7 @@ function unsupported(providerId: string, reason: string) {
 
 function requireEngine(
   engine: PodmanContainerEngine,
-  operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
+  operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle" | "state-mutation",
 ): void {
   if (engine.engineId !== "podman" || engine.operation !== operation) {
     throw new Error(`Podman provider requires a '${operation}' Podman engine.`);
@@ -88,8 +92,14 @@ export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
 ): RuntimeProviderBundle {
   const providerId = "podman";
-  const { hostDoctor, hostLocalInference: inferenceEngine, sandboxLifecycle } = options.engines;
+  const {
+    hostDoctor,
+    hostLocalInference: inferenceEngine,
+    sandboxLifecycle,
+    stateMutation: stateMutationEngine,
+  } = options.engines;
   const inferenceOptions = options.hostLocalInference;
+  const stateMutationOptions = options.stateMutation;
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
   const providerEndpointAuthority = hostDoctor.endpointAuthorityId;
@@ -106,6 +116,15 @@ export function createPodmanRuntimeProviderBundle(
     if (inferenceEngine.endpointAuthorityId !== providerEndpointAuthority) {
       throw new Error("Podman provider engines must bind the same endpoint authority.");
     }
+  }
+  if (stateMutationEngine !== undefined) {
+    requireEngine(stateMutationEngine, "state-mutation");
+    if (stateMutationEngine.endpointAuthorityId !== providerEndpointAuthority) {
+      throw new Error("Podman provider engines must bind the same endpoint authority.");
+    }
+  }
+  if (stateMutationEngine === undefined && stateMutationOptions !== undefined) {
+    throw new Error("Podman provider requires its state-mutation engine with its options.");
   }
   const preflight = options.preflight ?? {};
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
@@ -177,7 +196,16 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       operations: ["start", "stop"],
     },
-    stateMutation: unsupported(providerId, deferred),
+    stateMutation:
+      stateMutationEngine === undefined
+        ? unsupported(
+            providerId,
+            "Podman state mutation remains disabled without injected candidate authority.",
+          )
+        : createPodmanStateMutationSurface({
+            engine: stateMutationEngine,
+            ...(stateMutationOptions ?? {}),
+          }),
     bootstrap: unsupported(providerId, deferred),
     snapshot: unsupported(providerId, deferred),
     recovery: unsupported(providerId, deferred),
@@ -205,6 +233,15 @@ export function createPodmanRuntimeProviderBundle(
           engineId: sandboxLifecycle.engineId,
           displayName: sandboxLifecycle.displayName,
         },
+        ...(stateMutationEngine
+          ? [
+              {
+                operation: "state-mutation" as const,
+                engineId: stateMutationEngine.engineId,
+                displayName: stateMutationEngine.displayName,
+              },
+            ]
+          : []),
       ],
     },
   };
