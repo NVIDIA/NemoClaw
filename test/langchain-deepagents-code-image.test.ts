@@ -1169,11 +1169,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ] as const) {
       const normalizedDistribution = distribution.replaceAll("-", "[-_]");
       const normalizedVersion = version.replaceAll(".", "\\.");
-      expect(review).toMatch(
-        new RegExp(`${normalizedDistribution}\\s+${normalizedVersion}`, "i"),
-      );
+      expect(review).toMatch(new RegExp(`${normalizedDistribution}\\s+${normalizedVersion}`, "i"));
     }
-    expect(review).toMatch(/Complete-lock audit result:.*2 duplicate records.*1 unrelated package/is);
+    expect(review).toMatch(
+      /Complete-lock audit result:.*2 duplicate records.*1 unrelated package/is,
+    );
     expect(review).toContain("`GHSA-cq5v-8q36-5273`");
     expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
     expect(review).toContain("Deep Agents Code `0.1.55`");
