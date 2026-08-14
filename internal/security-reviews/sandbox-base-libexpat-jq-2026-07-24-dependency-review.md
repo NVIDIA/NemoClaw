@@ -3,6 +3,8 @@
 
 # Sandbox base libexpat and jq dependency review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Review date: 2026-07-24
 
 ## Decision

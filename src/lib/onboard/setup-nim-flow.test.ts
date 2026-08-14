@@ -1120,8 +1120,8 @@ describe("createSetupNim", () => {
     expect(result.preferredInferenceApi).toBe("openai-completions");
   });
 
-  it("refuses managed install when an existing vLLM occupies the port", async () => {
-    const profile = { name: "DGX Spark" } as VllmProfile;
+  it("refuses the N1x managed preview when an existing vLLM occupies port 8000 (#8574)", async () => {
+    const profile = { name: "N1x", platform: "n1x" } as VllmProfile;
     const error = vi.fn();
     const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>((message) => {
       throw new Error(message);
@@ -1148,17 +1148,27 @@ describe("createSetupNim", () => {
             vllmRunning: true,
             vllmProfile: profile,
             hasVllmImage: true,
-            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+            vllmEntries: [
+              { key: "install-vllm", label: "Start vLLM (N1x) [Deferred preview]" },
+            ],
           }),
         installVllm,
         handleVllmSelection,
       }),
     );
 
-    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on this host");
+    await expect(
+      setupNim({ type: "nvidia", platform: "n1x" } as ReturnType<
+        typeof import("../inference/nim").detectGpu
+      >),
+    ).rejects.toThrow("The N1x Deferred preview requires managed vLLM");
 
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Select Local vLLM"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("requires managed vLLM"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("localhost:8000"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Stop the existing server"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_PROVIDER=install-vllm"),
+    );
     expect(abortNonInteractive).toHaveBeenCalledOnce();
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();

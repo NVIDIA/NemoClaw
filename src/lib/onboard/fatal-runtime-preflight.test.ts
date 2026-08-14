@@ -11,10 +11,12 @@ vi.mock("./experimental/portable-host-preparation", () => ({
 
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
 import type { GatewayReadinessProjection } from "../readiness/gateway";
+import type { SystemReadinessReport } from "../readiness/types";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import {
   assertOnboardGatewayReadiness,
   assertOnboardHostReadiness,
+  assertOnboardSystemReadiness,
   runFatalOnboardRuntimePreflight,
   runOnboardRuntimeEffectfulPreflightChecks,
   runReadinessGatedRuntimePreflight,
@@ -89,6 +91,61 @@ afterEach(() => {
 });
 
 describe("report-backed runtime readiness (#7411)", () => {
+  it("requires explicit managed-vLLM intent for the Deferred N1x readiness exception (#8574)", () => {
+    const readiness: SystemReadinessReport = {
+      schemaVersion: "1.1.0",
+      status: "incompatible",
+      exitCode: 2,
+      mutated: false,
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "a".repeat(40),
+        observedAt: "2026-08-12T00:00:00.000Z",
+      },
+      observations: [],
+      capabilities: [
+        { id: "host.docker.available", state: "present" },
+        { id: "host.docker.daemon_reachable", state: "present" },
+        { id: "host.docker.runtime_supported", state: "present" },
+        { id: "host.docker.storage_compatible", state: "present" },
+        { id: "host.docker.storage_remediation_available", state: "absent" },
+        { id: "host.gpu.nvidia_available", state: "present" },
+        { id: "host.gpu.container_toolkit_available", state: "present" },
+        { id: "host.gpu.cdi_healthy", state: "present" },
+        { id: "host.platform.supported", state: "absent" },
+        { id: "host.platform.n1x", state: "present" },
+      ],
+      qualifications: [],
+      findings: [
+        {
+          id: "host.platform.n1x_validation_pending",
+          severity: "blocking",
+          summary: "N1x validation is pending.",
+        },
+      ],
+      evidence: [],
+    };
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
+
+    vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+  });
+
   it("rejects ambiguous gateway ownership before the caller can run effects", () => {
     const exit = vi.fn(() => {
       throw new Error("exit");
@@ -668,5 +725,91 @@ describe("readiness-gated runtime preflight", () => {
     expect(collectGatewayReadiness).toHaveBeenCalledTimes(2);
     expect(bridge).not.toHaveBeenCalled();
     expect(gpu).not.toHaveBeenCalled();
+  });
+});
+
+describe("GPU trust-gate rejection reason propagation (#9000)", () => {
+  const gatedContext = (detectGpu: (deps?: DetectGpuDeps) => GpuDetection | null, host: HostAssessment) => ({
+    nonInteractive: true,
+    collectGatewayReadiness: async () => managedGatewayReadiness(),
+    assessHost: () => host,
+    detectGpu,
+    warnIfHostProxyMissesLoopback: vi.fn(),
+    assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+    validateSandboxGpuPreflight: vi.fn(),
+  });
+
+  it("carries the runtime-proof rejection reason when the bounded proof fails (#9000)", async () => {
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64WslDockerDesktopGpu === null;
+      deps?.onTrustGateRejection?.(
+        isObservation
+          ? "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted"
+          : "/proc/driver/nvidia is absent and the bounded CUDA proof failed",
+      );
+      return null;
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      gatedContext(detectGpu, wslDockerDesktopHost()),
+    );
+
+    expect(result.gpu).toBeNull();
+    expect(result.gpuTrustGateRejection).toBe(
+      "/proc/driver/nvidia is absent and the bounded CUDA proof failed",
+    );
+  });
+
+  it("carries the observation rejection reason when no runtime proof is required (#9000)", async () => {
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      deps?.onTrustGateRejection?.(
+        "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+      );
+      return null;
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      gatedContext(detectGpu, {
+        ...hostWithRuntime("docker"),
+        hasNvidiaGpu: true,
+        nvidiaContainerToolkitInstalled: true,
+        dockerCdiSpecDirs: ["/etc/cdi"],
+      }),
+    );
+
+    expect(result.gpu).toBeNull();
+    expect(result.gpuTrustGateRejection).toBe(
+      "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+    );
+  });
+
+  it("omits the rejection reason when the runtime proof passes (#9000)", async () => {
+    const detectGpu = vi.fn((deps?: DetectGpuDeps): GpuDetection | null => {
+      const isObservation = deps?.proveArm64WslDockerDesktopGpu === null;
+      isObservation &&
+        deps?.onTrustGateRejection?.(
+          "/proc/driver/nvidia is absent and the bounded CUDA proof was not attempted",
+        );
+      return isObservation
+        ? null
+        : {
+            type: "nvidia",
+            count: 1,
+            totalMemoryMB: 32_768,
+            perGpuMB: 32_768,
+            nimCapable: true,
+            wslDockerDesktopGpuProofPassed: true,
+          };
+    });
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      gatedContext(detectGpu, wslDockerDesktopHost()),
+    );
+
+    expect(result.gpu).toMatchObject({ wslDockerDesktopGpuProofPassed: true });
+    expect(result.gpuTrustGateRejection).toBeUndefined();
   });
 });

@@ -3,6 +3,8 @@
 
 # OpenClaw 2026.7.1 dependency review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Review date: 2026-07-21
 
 Last updated: 2026-08-11

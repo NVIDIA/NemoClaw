@@ -5,6 +5,8 @@
 
 # Managed base-image Perl 5.44 review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Date: 2026-07-29
 
 ## Scope

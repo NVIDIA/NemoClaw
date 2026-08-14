@@ -1,4 +1,9 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # OpenClaw 2026.6.10 Dependency Review
+
+> Internal engineering evidence. This file is not part of the public documentation set.
 
 Review date: 2026-07-03
 

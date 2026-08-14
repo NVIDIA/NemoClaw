@@ -103,6 +103,9 @@ jobs:
   base-image-publication:
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    outputs:
+      dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract }}
+      dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref }}
     permissions:
       actions: read
       contents: read
@@ -122,7 +125,7 @@ jobs:
               required=1
               ;;
             NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
-              required=0
+              required=1
               ;;
             *)
               echo "::error::base-image publication mode is not trusted" >&2
@@ -145,12 +148,32 @@ jobs:
         with:
           node-version: 22
 
-      - name: Verify applicable base-image publication
+      - id: publication
+        name: Verify applicable base-image publication
         if: ${{ steps.publication_mode.outputs.required == '1' }}
         env:
           EXPECTED_SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+
+      - name: Download immutable Deep Agents Code base contract
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          name: managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code
+          path: ${{ runner.temp }}/dcode-base-contract
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ steps.publication.outputs.run_id }}
+
+      - id: validate_dcode_base
+        name: Validate immutable Deep Agents Code base
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        env:
+          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
 
   generate-matrix:
     needs: base-image-publication
@@ -158,6 +181,8 @@ jobs:
     timeout-minutes: 10
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
+      dcode_base_contract: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
+      dcode_base_ref: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
@@ -770,6 +795,7 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
+      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.dcode_base_ref }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -822,6 +848,26 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Record immutable Deep Agents Code base evidence
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        env:
+          BASE_CONTRACT: ${{ needs.generate-matrix.outputs.dcode_base_contract }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="${E2E_ARTIFACT_DIR}/${TARGET_ID}"
+          install -d -m 0700 "${evidence_dir}"
+          jq -e -n \
+            --arg candidateSha "${CANDIDATE_SHA}" \
+            --argjson baseContract "${BASE_CONTRACT}" \
+            '{contractVersion: 1, candidateSha: $candidateSha, base: $baseContract}
+              | select(
+                (.candidateSha | test("^[0-9a-f]{40}$"))
+                and (.base.reference | test("@sha256:[0-9a-f]{64}$"))
+              )' >"${evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
@@ -942,6 +988,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/environment.result.json
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
+            e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/risk-signal.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
