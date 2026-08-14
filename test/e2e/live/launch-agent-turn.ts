@@ -92,7 +92,7 @@ reply_seen=0
 normalized_response() {
   tail -c "+$((response_start + 1))" "$capture" \
     | sed -E $'s/\x1B][^\x07\x1B]*(\x07|\x1B\\\\)//g' \
-    | sed -E $'s/\x1B\\[[0-?]*[ -\\/]*[@-~]//g' \
+    | sed -E $'s|\x1B\\[[0-?]*[ -/]*[@-~]||g' \
     | tr '\r' '\n' \
     | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177'
 }
