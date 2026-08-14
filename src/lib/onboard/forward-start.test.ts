@@ -32,12 +32,12 @@ const SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC = `Error:   × code: 'The system is n
 `;
 
 function readinessHandoffSpawn(rejections: number) {
-  let attempt = 0;
+  const diagnostics = [
+    ...Array<string>(rejections).fill(SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC),
+    "",
+  ];
   return vi.fn(({ stderr }: { stderr: number }) => {
-    attempt++;
-    if (attempt <= rejections) {
-      fs.writeSync(stderr, SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC);
-    }
+    fs.writeSync(stderr, diagnostics.shift() ?? "");
     return {};
   });
 }
