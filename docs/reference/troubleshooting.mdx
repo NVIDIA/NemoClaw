@@ -3175,6 +3175,18 @@ wsl --unregister Ubuntu
 wsl --install -d Ubuntu
 ```
 
+### Bootstrap says a Docker executable "is not signed by a trusted publisher"
+
+The bootstrap script runs elevated, so before it launches `Docker Desktop.exe` or uses `docker.exe`, it checks the resolved executable's Authenticode signature and refuses to run one that is not validly signed by Docker.
+The script accepts `Docker Inc` as the certificate subject common name.
+If Docker changes the signer identity, the script refuses the executable until maintainers verify the signer on an official Docker download and update the allowlist.
+For a current-user installation, the administrator child completes the system changes and returns to the original non-elevated PowerShell process before the script starts Docker Desktop or uses its CLI.
+If you started the script from an elevated PowerShell window, rerun it from a normal PowerShell window so it can use the current-user installation without administrator privileges.
+Reinstall Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop/) or `winget install --id Docker.DockerDesktop`, then rerun the bootstrap script.
+If reinstalling does not clear the warning, treat the existing executable as untrusted and do not run it manually either.
+
+The script continues after this warning instead of stopping, so the [`docker info` fails inside WSL](#docker-info-fails-inside-wsl) symptom below can appear a few minutes later even though the real cause is the untrusted executable, not WSL integration.
+
 ### `docker info` fails inside WSL
 
 Confirm that Docker Desktop is running and that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration).

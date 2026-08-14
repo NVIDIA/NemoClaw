@@ -266,7 +266,7 @@ describe("managed inference YAML profile contract", () => {
       runtime: {
         architecture: "arm64",
         image:
-          "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
+          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
       },
       execution: {
         materializerRef: "vllm.host-local/v1",

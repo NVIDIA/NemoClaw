@@ -433,7 +433,12 @@ function resolveHostLocalInferenceRoute(
   }
   const operation =
     request.service === "llama-cpp"
-      ? request.adapter.operation
+      ? requireRuntimeProviderHostLocalInferenceOperation(
+          providerBundle,
+          request.service,
+          { env: hostLocalInferenceOperationEnvironment(request.service) },
+          request.adapter.operation,
+        )
       : requireRuntimeProviderHostLocalInferenceOperation(providerBundle, request.service, {
           env: hostLocalInferenceOperationEnvironment(request.service),
           acceleration:

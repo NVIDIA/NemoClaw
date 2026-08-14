@@ -48,9 +48,10 @@ function temporaryHome(): string {
 describe("managed llama.cpp lifecycle adapter", () => {
   it("uses one exact operation and exposes rollback only before publication", () => {
     const homeDir = temporaryHome();
+    const gatewayPort = 8080;
     const harness = engineHarness();
-    createManagedState(homeDir, harness.engine);
-    const receipt = loadManagedLlamaCppReceipt(managedLlamaCppStatePaths(homeDir))!;
+    createManagedState(homeDir, harness.engine, { gatewayPort });
+    const receipt = loadManagedLlamaCppReceipt(managedLlamaCppStatePaths(homeDir, gatewayPort))!;
     const operation: HostLocalInferenceOperation = {
       providerId: "docker",
       engine: harness.engine,
@@ -92,7 +93,7 @@ describe("managed llama.cpp lifecycle adapter", () => {
       runtimeOwnerSandboxName: "spark-agent",
       expectedModel: "llama-cpp-model",
       expectedReceipt: receipt,
-      gatewayPort: 8080,
+      gatewayPort,
       homeDir,
       operation,
       rehydrate: vi.fn(
@@ -130,9 +131,10 @@ describe("managed llama.cpp lifecycle adapter", () => {
 
   it("uses the retained receipt for an idempotent destroy retry after private state is gone", () => {
     const homeDir = temporaryHome();
+    const gatewayPort = 8080;
     const harness = engineHarness();
-    createManagedState(homeDir, harness.engine);
-    const paths = managedLlamaCppStatePaths(homeDir);
+    createManagedState(homeDir, harness.engine, { gatewayPort });
+    const paths = managedLlamaCppStatePaths(homeDir, gatewayPort);
     const receipt = loadManagedLlamaCppReceipt(paths)!;
     fs.rmSync(paths.stateDir, { recursive: true });
     const operation: HostLocalInferenceOperation = {
@@ -159,7 +161,7 @@ describe("managed llama.cpp lifecycle adapter", () => {
       runtimeOwnerSandboxName: "spark-agent",
       expectedModel: "llama-cpp-model",
       expectedReceipt: receipt,
-      gatewayPort: 8080,
+      gatewayPort,
       homeDir,
       operation,
       finalizeCleanup: (owner, expected, options) =>

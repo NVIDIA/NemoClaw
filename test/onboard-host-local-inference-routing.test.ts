@@ -647,6 +647,39 @@ describe("onboard host-local inference routing", () => {
     },
   );
 
+  it("rejects injected llama.cpp engine drift before startup", async () => {
+    const route = llamaFixture("openclaw");
+    const request = route.selection.request as Extract<
+      HostLocalInferenceStartupSelection["request"],
+      { service: "llama-cpp" }
+    >;
+    const selection: HostLocalInferenceStartupSelection = {
+      ...route.selection,
+      request: {
+        ...request,
+        adapter: {
+          ...request.adapter,
+          operation: {
+            ...request.adapter.operation,
+            engine: { ...request.adapter.operation.engine, engineId: "other-engine" },
+          },
+        },
+      },
+    };
+    const harness = createHarness();
+
+    await expect(
+      harness.setupInference(SANDBOX, MODEL, "llama-cpp-local", null, null, null, [], {
+        hostLocalInference: selection,
+      }),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(route.prepareStartup).not.toHaveBeenCalled();
+    expect(route.prepareGatewayMutation).not.toHaveBeenCalled();
+    expect(harness.commands).toEqual([]);
+    expect(harness.errors.join(" ")).toContain("mismatched host-local-inference authority");
+  });
+
   it.each([
     ["nim", 8001],
     ["vllm", 8000],

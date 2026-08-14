@@ -519,15 +519,13 @@ export function rehydrateManagedLlamaCppLifecycle(
   const receipt = loadManagedLlamaCppReceipt(paths);
   if (!receipt) throw new Error("Managed llama.cpp private receipt is unavailable.");
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
-  const operation =
-    options.operation ??
-    requireRuntimeProviderHostLocalInferenceOperation(options.runtimeProvider, "llama-cpp", {
-      env: options.env ?? process.env,
-    });
+  const operation = requireRuntimeProviderHostLocalInferenceOperation(
+    options.runtimeProvider,
+    "llama-cpp",
+    { env: options.env ?? process.env },
+    options.operation,
+  );
   operation.assertAuthority();
-  if (operation.providerId !== options.runtimeProvider.identity.id) {
-    throw new Error("Managed llama.cpp runtime provider changed during lifecycle rehydration.");
-  }
   const current = currentManagedLlamaCppArtifact(selection, homeDir);
   return Object.freeze({
     lifecycle: lifecycleFor({

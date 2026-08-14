@@ -457,6 +457,19 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runtimeProvider.destroy).not.toHaveBeenCalled();
   });
 
+  it("rejects a malformed durable receipt before sandbox deletion", async () => {
+    const runtimeProvider = provider();
+    const entry = sandbox("alpha", receipt(), { hostLocalInferenceReceipt: "not-json" });
+    const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
+      entry,
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(stopInferenceResources).not.toHaveBeenCalled();
+    expect(runtimeProvider.destroy).not.toHaveBeenCalled();
+  });
+
   it("preserves authority when the registry row is missing or reused after deletion", async () => {
     const missingProvider = provider();
     const missing = await runDestroy(missingProvider, { currentAfterDelete: null });

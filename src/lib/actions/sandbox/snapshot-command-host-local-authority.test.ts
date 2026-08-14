@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
@@ -197,12 +197,7 @@ function successfulRestore(
 
 describe("snapshot command host-local inference authority", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     harness.events.length = 0;
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
   });
 
   it("re-proves authority before restore, at the mutation fence, and after success", async () => {

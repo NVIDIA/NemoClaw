@@ -149,7 +149,8 @@ Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
   N1x uses the same image.
-- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` digest `sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25` with a compressed layer size of `10.51 GB` under `vllm/vllm-openai`.
+- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` post-merge vLLM nightly digest `sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204` with a compressed layer size of `9.70 GB` under `vllm/vllm-openai`.
+  The image was built from vLLM commit `ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9`, which contains merged Muse Glimmer support commit `6adad08767583f52eb4d2122111af0bf638ed5e6`.
   It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
 - The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
   It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
@@ -328,15 +329,19 @@ $$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w
 The profile serves `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
 The registered recipe configures a 32,768-token context window, 1 concurrent sequence, a 4,096-token batch limit, and 0.75 GPU-memory utilization.
 It uses `muse_glimmer` for reasoning and tool-call parsing and sets `--generation-config auto`.
-The pinned model and runtime were validated on one physical DGX Spark for a direct chat request, separated reasoning, a required structured tool call, and an OpenClaw TUI chat turn without fallback.
-Vision was not part of that validation.
+The pinned post-merge runtime image was verified on one physical DGX Spark.
+The managed `/v1/models` endpoint reported `muse-glimmer`.
+A direct chat request returned exact text `391`, and a reasoning request returned separated reasoning in `message.reasoning`.
+A required structured tool request returned a named tool call.
+A real OpenClaw TUI turn used one prompt and returned `391` through provider `inference` and model `muse-glimmer`.
+A managed stop and start preserved the exact image digest and managed inference route.
 The fixed profile does not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
 It rejects model and serve-argument overrides so its validated resource boundary remains reproducible.
 
 <Warning title="Experimental Muse Glimmer vLLM Profile">
-This profile uses a candidate runtime image that contains Muse Glimmer changes not yet merged into upstream vLLM.
-Treat it as Experimental until the upstream vLLM support is merged and NemoClaw qualifies a replacement runtime.
-DFlash speculative decoding fails with the pinned runtime and is outside NemoClaw's validated scope, so the registered profile does not enable it.
+This profile pins a post-merge vLLM nightly image and remains Experimental.
+Physical qualification covered only the bounded verification above.
+Vision and DFlash speculative decoding are disabled and outside this profile's scope.
 </Warning>
 
 NemoClaw creates or reuses the Muse Glimmer bearer key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` host file before confirmation.
