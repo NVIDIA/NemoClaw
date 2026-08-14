@@ -10,7 +10,7 @@ import ts from "typescript";
 import YAML from "yaml";
 import { PR_E2E_MANUAL_CONTROLLER_JOB_IDS, RISK_RULES } from "../advisors/risk-plan.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
-import { catalogueTarget } from "./target-catalogue.mts";
+import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -33,7 +33,7 @@ const PUBLICATION_CLASSIFIER_SCRIPT =
     "    required=1",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)",
-    "    required=0",
+    "    required=1",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
@@ -59,6 +59,7 @@ type WorkflowStep = {
   if?: string;
   name?: string;
   run?: string;
+  shell?: string;
   uses?: string;
   with?: Record<string, unknown>;
 };
@@ -70,6 +71,7 @@ type WorkflowJob = {
   if?: string;
   name?: unknown;
   needs?: unknown;
+  outputs?: Record<string, unknown>;
   permissions?: WorkflowPermissions;
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
@@ -399,6 +401,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out trusted Jetson controller" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedOpenShellDevToolingCheckout =
+        ["mcp-bridge-dev", "openshell-dev-artifact"].includes(jobName) &&
+        step.name === "Checkout trusted OpenShell dev tooling" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
+        step.with?.path === ".trusted-openshell-dev-artifact";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -409,7 +417,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
-        trustedJetsonControllerCheckout;
+        trustedJetsonControllerCheckout ||
+        trustedOpenShellDevToolingCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
@@ -434,6 +443,10 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const expectedJob = {
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
+    outputs: {
+      dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
+      dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
+    },
     permissions: {
       actions: "read",
       contents: "read",
@@ -470,6 +483,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         },
       },
       {
+        id: "publication",
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
         env: {
@@ -477,6 +491,29 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
           GITHUB_TOKEN: "${{ github.token }}",
         },
         run: "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+      },
+      {
+        name: "Download immutable Deep Agents Code base contract",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        uses: DOWNLOAD_ARTIFACT_ACTION,
+        with: {
+          "github-token": "${{ github.token }}",
+          name: "managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code",
+          path: "${{ runner.temp }}/dcode-base-contract",
+          repository: "NVIDIA/NemoClaw",
+          "run-id": "${{ steps.publication.outputs.run_id }}",
+        },
+      },
+      {
+        id: "validate_dcode_base",
+        name: "Validate immutable Deep Agents Code base",
+        if: PUBLICATION_REQUIRED_CONDITION,
+        env: {
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
       },
     ],
   };
@@ -489,6 +526,33 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!needs(workflow.jobs["generate-matrix"] ?? {}).includes("base-image-publication")) {
     errors.push("generate-matrix must wait for base-image-publication");
   }
+  const matrixOutputs = workflow.jobs["generate-matrix"]?.outputs ?? {};
+  if (
+    matrixOutputs.dcode_base_contract !==
+      "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
+    matrixOutputs.dcode_base_ref !== "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
+  ) {
+    errors.push("generate-matrix must preserve the immutable Deep Agents Code base outputs");
+  }
+  const live = workflow.jobs.live ?? {};
+  if (
+    live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
+    "${{ needs.generate-matrix.outputs.dcode_base_ref }}"
+  ) {
+    errors.push("live DCode must use the selected immutable base reference");
+  }
+  const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
+  const upload = findStep(live, "Upload E2E artifacts");
+  const liveSteps = live.steps ?? [];
+  if (
+    evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
+    evidence.env?.BASE_CONTRACT !== "${{ needs.generate-matrix.outputs.dcode_base_contract }}" ||
+    !String(evidence.run ?? "").includes("dcode-base-image.json") ||
+    liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
+    !String(upload.with?.path ?? "").includes("dcode-base-image.json")
+  ) {
+    errors.push("live DCode must record its immutable base contract before E2E execution");
+  }
   return errors;
 }
 
@@ -498,7 +562,8 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
     const job = workflow.jobs[jobId];
     if (!job) {
       try {
-        catalogueTarget(jobId);
+        const catalogueId = E2E_TARGET_CATALOGUE.find((target) => target.targetId === jobId)?.id;
+        catalogueTarget(catalogueId ?? jobId);
       } catch {
         errors.push(`Risk-plan job is missing from E2E workflow or catalogue: ${jobId}`);
       }
@@ -609,10 +674,16 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   const steps = job.steps ?? [];
   const checkout = findStep(job, "Check out the qualification evaluator");
   const requireResults = findStep(job, "Require every release E2E result");
+  const recordWaiver = findStep(job, "Record release qualification waiver");
+  const uploadWaiver = findStep(job, "Upload release qualification waiver evidence");
   requirePinnedAction(errors, checkout, "release-qualification checkout");
+  requirePinnedAction(errors, uploadWaiver, "release-qualification waiver upload");
   if (
-    steps.length !== 2 ||
+    steps.length !== 4 ||
     steps[0] !== checkout ||
+    steps[1] !== requireResults ||
+    steps[2] !== recordWaiver ||
+    steps[3] !== uploadWaiver ||
     checkout.with?.ref !== "${{ github.workflow_sha }}" ||
     checkout.with?.["persist-credentials"] !== false ||
     checkout.with?.["sparse-checkout"] !== "tools/e2e/release-qualification.mts" ||
@@ -622,12 +693,42 @@ function validateReleaseQualification(errors: string[], workflow: OperationsWork
   }
   if (
     requireResults.env?.NEEDS_JSON !== "${{ toJSON(needs) }}" ||
+    requireResults.env?.RELEASE_QUALIFICATION_WAIVED_JOBS !==
+      "${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}" ||
     requireResults.env?.RELEASE_REQUIRED_JOBS !==
       "${{ needs.generate-matrix.outputs.release_required_jobs }}" ||
     requireResults.run !==
       "node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts"
   ) {
     errors.push("release-qualification must evaluate planner-selected jobs from needs");
+  }
+  if (
+    recordWaiver.if !== "${{ inputs.release_qualification_waived_jobs != '' }}" ||
+    recordWaiver.shell !== "bash" ||
+    !isDeepStrictEqual(recordWaiver.env, {
+      ACTOR: "${{ github.actor }}",
+      CANDIDATE_SHA: "${{ github.sha }}",
+      NEEDS_JSON: "${{ toJSON(needs) }}",
+      RUN_ATTEMPT: "${{ github.run_attempt }}",
+      RUN_ID: "${{ github.run_id }}",
+      TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
+      WAIVED_JOBS: "${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}",
+      WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
+    }) ||
+    !String(recordWaiver.run ?? "").includes("nemoclaw-release-qualification-waiver-v1") ||
+    !String(recordWaiver.run ?? "").includes("$GITHUB_STEP_SUMMARY") ||
+    uploadWaiver.if !== "${{ inputs.release_qualification_waived_jobs != '' }}" ||
+    !String(uploadWaiver.uses ?? "").startsWith("actions/upload-artifact@") ||
+    !isDeepStrictEqual(uploadWaiver.with, {
+      name: "release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/release-qualification-waiver/waiver.json",
+      "if-no-files-found": "error",
+      "retention-days": 30,
+    })
+  ) {
+    errors.push(
+      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
+    );
   }
 }
 

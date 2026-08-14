@@ -284,6 +284,61 @@ describe("onboard session", () => {
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
   });
 
+  it("clears provider selection authority when a review is rejected", () => {
+    session.saveSession(
+      session.createSession({
+        provider: "ollama-local",
+        model: "qwen3.5:9b",
+        endpointUrl: "http://127.0.0.1:11435/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        sandboxName: "rejected-review",
+        sandboxPromptProgress: {
+          sandboxName: true,
+          webSearch: false,
+          messaging: false,
+          resourceProfile: false,
+        },
+      }),
+    );
+    session.markStepStarted("provider_selection");
+    session.updateSession((current) => {
+      current.checkpoint = {
+        schemaVersion: 4,
+        profile: { kind: "selected", value: "default" },
+        runtimeAuthority: { kind: "unset" },
+        sessionId: current.sessionId,
+        machineState: "init",
+        updatedAt: new Date().toISOString(),
+        sandboxIdentity: decisionSelected({ name: "rejected-review", agent: "openclaw" }),
+        webSearch: { kind: "unset" },
+        messaging: { kind: "unset" },
+        resourceProfile: { kind: "unset" },
+        gatewayAuthority: { kind: "unset" },
+        effectGroups: {},
+        bindings: { credentialEnvs: [], registeredProviders: [] },
+        sandboxRecreate: null,
+      };
+      return current;
+    });
+
+    const rejected = session.markStepRejected("provider_selection");
+
+    expect(rejected).toMatchObject({
+      provider: null,
+      model: null,
+      endpointUrl: null,
+      credentialEnv: null,
+      sandboxName: null,
+      sandboxPromptProgress: { sandboxName: false },
+      lastStepStarted: null,
+      resumable: false,
+      status: "failed",
+      failure: null,
+      steps: { provider_selection: { status: "skipped" } },
+      checkpoint: { sandboxIdentity: { kind: "unset" } },
+    });
+  });
+
   it("can record step boundaries without mutating the machine snapshot", () => {
     const emitted: OnboardMachineEvent[] = [];
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
@@ -1069,6 +1124,31 @@ describe("onboard session", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(session.SESSION_FILE, "not-json");
     expect(session.loadSession()).toBeNull();
+  });
+
+  it("keeps completed legacy checkpoint sessions readable as status evidence", () => {
+    const completed = session.createSession({ sessionId: "legacy-completed" });
+    completed.status = "complete";
+    completed.resumable = false;
+    completed.machine = {
+      version: 1,
+      state: "complete",
+      stateEnteredAt: completed.updatedAt,
+      revision: 8,
+    };
+    const raw = JSON.parse(JSON.stringify(completed)) as Record<string, unknown>;
+    raw.checkpoint = { schemaVersion: 3, sessionId: completed.sessionId };
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(raw, null, 2), { mode: 0o600 });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded).toMatchObject({
+      sessionId: "legacy-completed",
+      status: "complete",
+      resumable: false,
+      machine: { state: "complete", revision: 8 },
+      checkpoint: null,
+    });
   });
 
   it("acquires and releases the onboard lock", () => {

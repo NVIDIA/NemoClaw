@@ -115,6 +115,13 @@ Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port 
 For an externally supervised authority, uninstall preserves the local gateway state used by the running process in both full and gateway-scoped cleanup.
 It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
+Uninstall does not stop an `openshell-gateway` process that another non-root user owns and that this installation did not record.
+It names the owner and process ID, leaves that process running, and continues with the remaining cleanup.
+If no other cleanup fails, uninstall exits with status `0` even though that process can keep its port in use.
+Uninstall still tries to stop a `root`-owned process and the gateway process that this installation recorded.
+If either of those stops fails, uninstall prints `sudo kill -9 <pid>` for the process.
+A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero after that failure.
+A single full uninstall reports the process and continues.
 Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
 The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.

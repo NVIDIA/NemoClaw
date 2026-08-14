@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: pi
+display_name: "Pi"
+description: "Terminal coding agent with read, bash, edit, and write tools, plus session management"
+version_constraint: ">=0.84.1"
+language: nodejs
+license: MIT
+homepage: "https://pi.dev"
+install_method: npm
+binary_path: /usr/local/bin/pi
+version_command: "pi --version"
+expected_version: "0.84.1"
+version_scheme: semver
+runtime:
+  kind: terminal
+  interactive_command: "pi"
+  headless_command: "pi --no-approve --print"
+  smoke_commands:
+    - "pi --version"
+    - "test -s /sandbox/.pi/agent/models.json && echo NEMOCLAW_PI_MODELS_OK"
+    - 'test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600 && echo NEMOCLAW_PI_MODE_OK'
+config:
+  dir: /sandbox/.pi/agent
+  config_file: models.json
+  format: json
+state_lock_plan_in_image: false
+state_dirs:
+  - path: sessions
+    shields: confidential
+  - path: prompts
+    shields: read-only
+  - path: themes
+    shields: read-only
+  - path: tools
+    backup: false
+    shields: read-only
+  - path: bin
+    backup: false
+    shields: read-only
+state_files:
+  - path: settings.json
+    restore:
+      merge: key-allowlist
+      user_keys:
+        - key: theme
+          type: string
+          max_length: 128
+        - key: hideThinkingBlock
+          type: boolean
+        - key: showCacheMissNotices
+          type: boolean
+        - key: quietStartup
+          type: boolean
+        - key: steeringMode
+          type: enum
+          values:
+            - all
+            - one-at-a-time
+        - key: followUpMode
+          type: enum
+          values:
+            - all
+            - one-at-a-time
+        - key: defaultThinkingLevel
+          type: enum
+          values:
+            - off
+            - minimal
+            - low
+            - medium
+            - high
+            - xhigh
+device_pairing: false
+inference:
+  provider_type: openai_compatible
+  default_model: nvidia/nemotron-3-super-120b-a12b
+  base_url_config_key: "providers.openshell.baseUrl"
+  model_config_key: "defaultModel"
+  proxy_support: implicit
+mcp:
+  support: disabled
+package_registry:
+  hosts:
+    - registry.npmjs.org
+  binary: /usr/local/bin/npm

@@ -20,6 +20,7 @@ export const ONBOARD_READINESS_FINDING_IDS = {
   runtimeUnsupported: "host.docker.runtime_unsupported",
   storageIncompatible: "host.docker.storage_incompatible",
   gatewayVersionDrift: "gateway.version.drift",
+  n1xValidationPending: "host.platform.n1x_validation_pending",
 } as const;
 
 export const ONBOARD_REQUIRED_CAPABILITY_IDS = {
@@ -48,6 +49,8 @@ export interface OnboardReadinessAdmissionOptions {
   allowStorageRemediation: boolean;
   /** The explicit portable profile may prepare its rootless runtime before revalidation. */
   allowPortableHostPreparation?: boolean;
+  /** Explicit managed-vLLM intent may exercise the Deferred N1x validation path. */
+  allowDeferredN1xManagedVllm?: boolean;
 }
 
 export type OnboardReadinessAdmissionDecision =
@@ -117,6 +120,13 @@ function canWaiveFinding(
     return true;
   }
   if (managedGateway && finding.id === ONBOARD_READINESS_FINDING_IDS.gatewayVersionDrift) {
+    return true;
+  }
+  if (
+    options.allowDeferredN1xManagedVllm &&
+    finding.id === ONBOARD_READINESS_FINDING_IDS.n1xValidationPending &&
+    capabilityState(capabilities, "host.platform.n1x") === "present"
+  ) {
     return true;
   }
   return (

@@ -68,6 +68,7 @@ on:
       - "scripts/lib/reviewed-npm-audit.mts"
       - "scripts/security/build-native-security-packages.sh"
       - "scripts/security/build-perl-security-packages.sh"
+      - "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch"
       - "scripts/security/patches/libssh2-1.11.1-cve-2026.patch"
       - "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch"
       - "scripts/patch-bundled-npm-brace-expansion.mts"

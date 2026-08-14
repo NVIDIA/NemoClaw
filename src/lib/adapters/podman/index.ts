@@ -31,6 +31,9 @@ export function localPodmanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEn
   delete local.CONTAINER_CONNECTION;
   delete local.CONTAINER_HOST;
   delete local.CONTAINER_SSHKEY;
+  delete local.DOCKER_TLS;
+  delete local.DOCKER_TLS_VERIFY;
+  delete local.DOCKER_CERT_PATH;
   return local;
 }
 

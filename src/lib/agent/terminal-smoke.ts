@@ -58,6 +58,7 @@ export function buildAgentSmokeArgs(
   sandboxName: string,
   agent: AgentDefinition,
   command: string,
+  gatewayName?: string,
 ): string[] {
   if (agent.name === "langchain-deepagents-code") {
     return [
@@ -65,6 +66,7 @@ export function buildAgentSmokeArgs(
       "exec",
       "-n",
       sandboxName,
+      ...(gatewayName ? ["-g", gatewayName] : []),
       "--no-tty",
       "--env",
       "HOME=/usr/local/lib/nemoclaw",
@@ -86,6 +88,7 @@ export function buildAgentSmokeArgs(
     "exec",
     "-n",
     sandboxName,
+    ...(gatewayName ? ["-g", gatewayName] : []),
     "--",
     "sh",
     "-lc",
@@ -99,14 +102,18 @@ export function runAgentSmokeCommands(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: RunCaptureOpenshell,
+  gatewayName?: string,
 ): AgentSmokeCommandResult {
   // smoke_commands are shell-form commands from repository-shipped agents/*/manifest.yaml files.
   // Switch to argv-form commands before accepting custom or user-provided manifests here.
   const commands = agent.runtime?.smoke_commands ?? [];
   for (const command of commands) {
-    const result = runCaptureOpenshell(buildAgentSmokeArgs(sandboxName, agent, command), {
-      ignoreError: true,
-    });
+    const result = runCaptureOpenshell(
+      buildAgentSmokeArgs(sandboxName, agent, command, gatewayName),
+      {
+        ignoreError: true,
+      },
+    );
     const output = typeof result === "string" ? result : (result?.output ?? null);
     const requireManagedBoundary = agent.name === "langchain-deepagents-code";
     const exitCode = getSmokeExitCode(output, requireManagedBoundary);

@@ -491,6 +491,12 @@ describe("vllm model registry", () => {
 });
 
 describe("modelsForPlatform", () => {
+  it("offers only the accepted Qwen3.6 profile on N1x (#8574)", () => {
+    expect(modelsForPlatform("n1x").map((model) => model.envValue)).toEqual([
+      "qwen3.6-35b-a3b-nvfp4",
+    ]);
+  });
+
   it("returns the Spark-runnable subset for DGX Spark", () => {
     const slugs = modelsForPlatform("spark").map((m) => m.envValue);
     expect(slugs).toContain("qwen3.6-35b-a3b-nvfp4");

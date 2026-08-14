@@ -24,6 +24,16 @@ on:
         required: false
         default: false
         type: boolean
+      release_qualification_waived_jobs:
+        description: "Admin-only comma-separated release-required E2E job IDs to waive. Leave empty to require every release E2E job."
+        required: false
+        default: ""
+        type: string
+      release_qualification_waiver_reason:
+        description: "Admin-only reason for release qualification waived jobs. Required when release_qualification_waived_jobs is not empty."
+        required: false
+        default: ""
+        type: string
       inference_mode:
         description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
         required: false
@@ -103,6 +113,9 @@ jobs:
   base-image-publication:
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    outputs:
+      dcode_base_contract: ${{ steps.validate_dcode_base.outputs.contract }}
+      dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref }}
     permissions:
       actions: read
       contents: read
@@ -122,7 +135,7 @@ jobs:
               required=1
               ;;
             NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:controller)
-              required=0
+              required=1
               ;;
             *)
               echo "::error::base-image publication mode is not trusted" >&2
@@ -145,12 +158,32 @@ jobs:
         with:
           node-version: 22
 
-      - name: Verify applicable base-image publication
+      - id: publication
+        name: Verify applicable base-image publication
         if: ${{ steps.publication_mode.outputs.required == '1' }}
         env:
           EXPECTED_SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
+
+      - name: Download immutable Deep Agents Code base contract
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          name: managed-base-${{ steps.publication.outputs.run_id }}-${{ steps.publication.outputs.run_attempt }}-langchain-deepagents-code
+          path: ${{ runner.temp }}/dcode-base-contract
+          repository: NVIDIA/NemoClaw
+          run-id: ${{ steps.publication.outputs.run_id }}
+
+      - id: validate_dcode_base
+        name: Validate immutable Deep Agents Code base
+        if: ${{ steps.publication_mode.outputs.required == '1' }}
+        env:
+          PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
+          PUBLICATION_RUN_ID: ${{ steps.publication.outputs.run_id }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
 
   generate-matrix:
     needs: base-image-publication
@@ -158,16 +191,21 @@ jobs:
     timeout-minutes: 10
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
+      dcode_base_contract: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
+      dcode_base_ref: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
       release_required_jobs: ${{ steps.matrix.outputs.release_required_jobs }}
+      release_qualification_waived_jobs: ${{ steps.matrix.outputs.release_qualification_waived_jobs }}
       selected_jobs: ${{ steps.matrix.outputs.selected_jobs }}
       selected_workflow_jobs: ${{ steps.matrix.outputs.selected_workflow_jobs }}
       catalogue_standard_matrix: ${{ steps.matrix.outputs.catalogue_standard_matrix }}
       catalogue_nvidia_api_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_api_matrix }}
       catalogue_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_nvidia_inference_matrix }}
+      catalogue_github_read_matrix: ${{ steps.matrix.outputs.catalogue_github_read_matrix }}
+      catalogue_brave_nvidia_inference_matrix: ${{ steps.matrix.outputs.catalogue_brave_nvidia_inference_matrix }}
       runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
     steps:
       - id: controller_matrix
@@ -223,7 +261,7 @@ jobs:
             fi
             larger_runner="${LARGER_RUNNER_LABEL}"
           fi
-          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
+          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"common-egress-agent":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger}')"
           printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
       - name: Authenticate manual PR dispatch
@@ -307,9 +345,80 @@ jobs:
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
 
+      - name: Authorize release qualification waiver
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.release_qualification_waived_jobs != '' || inputs.release_qualification_waiver_reason != '') }}
+        env:
+          ACTOR: ${{ github.actor }}
+          ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
+          ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
+          JOBS: ${{ inputs.jobs }}
+          TARGETS: ${{ inputs.targets }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
+          WAIVER_REASON: ${{ inputs.release_qualification_waiver_reason }}
+          WORKFLOW_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          require_admin() {
+            local administrator="$1"
+            if [[ ! "$administrator" =~ ^[A-Za-z0-9-]{1,39}$ || "$administrator" == -* || "$administrator" == *- ]]; then
+              echo "::error::Release qualification waiver actor is invalid" >&2
+              exit 1
+            fi
+
+            local permission_json
+            permission_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${administrator}/permission")"
+            if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$administrator")" ]]; then
+              echo "::error::Release qualification waiver permission response did not match the actor" >&2
+              exit 1
+            fi
+            [[ "$(jq -r '.role_name // ""' <<< "$permission_json")" == "admin" ]] || {
+              echo "::error::Release qualification waiver requires a repository administrator" >&2
+              exit 1
+            }
+          }
+
+          [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || {
+            echo "::error::Release qualification waiver must be dispatched from main" >&2
+            exit 1
+          }
+          [[ -z "$CHECKOUT_SHA" && -z "$JOBS" && -z "$TARGETS" ]] || {
+            echo "::error::Release qualification waiver requires an exact main release run with empty selectors" >&2
+            exit 1
+          }
+          [[ "$INCLUDE_LAUNCHABLE" == "true" && "$ALLOW_JETSON_DISPATCH" == "false" && "$ALLOW_DGX_SPARK_RUNNER_QUEUE" == "false" ]] || {
+            echo "::error::Release qualification waiver conflicts with another release-run override" >&2
+            exit 1
+          }
+          waived_jobs_pattern='^[a-z0-9]+(-[a-z0-9]+)*(,[a-z0-9]+(-[a-z0-9]+)*)*$'
+          [[ "$WAIVED_JOBS" =~ $waived_jobs_pattern ]] || {
+            echo "::error::release_qualification_waived_jobs must contain comma-separated E2E job IDs" >&2
+            exit 1
+          }
+          waiver_reason_pattern="^[A-Za-z0-9][A-Za-z0-9 .,:;/_()'-]*$"
+          [[ ${#WAIVER_REASON} -ge 10 && ${#WAIVER_REASON} -le 500 && "$WAIVER_REASON" =~ $waiver_reason_pattern ]] || {
+            echo "::error::release_qualification_waiver_reason must start with a letter or number and contain 10 to 500 allowed ASCII characters" >&2
+            exit 1
+          }
+
+          require_admin "$ACTOR"
+          if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
+            require_admin "$TRIGGERING_ACTOR"
+          fi
+
       - name: Record trusted E2E dispatch receipt
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
+          ACTOR: ${{ github.actor }}
           ALLOW_DGX_SPARK_RUNNER_QUEUE: ${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}
           ALLOW_JETSON_DISPATCH: ${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}
           ALLOW_JETSON_RUNNER_QUEUE: "false"
@@ -325,12 +434,16 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
+          RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
+          RELEASE_QUALIFICATION_WAIVER_REASON: ${{ inputs.release_qualification_waiver_reason }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
           install -d -m 0700 "$DISPATCH_RECEIPT_DIR"
           jq -n \
+            --arg actor "$ACTOR" \
             --arg baseSha "$BASE_SHA" \
             --arg candidateRepository "$CANDIDATE_REPOSITORY" \
             --arg candidateSha "$CANDIDATE_SHA" \
@@ -338,7 +451,10 @@ jobs:
             --arg jobs "$DISPATCH_JOBS" \
             --arg prNumber "$PR_NUMBER" \
             --arg repository "$REPOSITORY" \
+            --arg releaseQualificationWaivedJobs "$RELEASE_QUALIFICATION_WAIVED_JOBS" \
+            --arg releaseQualificationWaiverReason "$RELEASE_QUALIFICATION_WAIVER_REASON" \
             --arg targets "$DISPATCH_TARGETS" \
+            --arg triggeringActor "$TRIGGERING_ACTOR" \
             --arg workflowRunId "$RUN_ID" \
             --arg workflowSha "$WORKFLOW_SHA" \
             --argjson allowDgxSparkRunnerQueue "$ALLOW_DGX_SPARK_RUNNER_QUEUE" \
@@ -348,6 +464,7 @@ jobs:
             --argjson workflowRunAttempt "$RUN_ATTEMPT" \
             '{
               kind: "nemoclaw-e2e-dispatch-v2",
+              actor: $actor,
               repository: $repository,
               prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end),
               candidateRepository: $candidateRepository,
@@ -363,6 +480,9 @@ jobs:
               allowJetsonDispatch: $allowJetsonDispatch,
               allowJetsonRunnerQueue: $allowJetsonRunnerQueue,
               includeStagingBrevLaunchable: $includeStagingBrevLaunchable,
+              releaseQualificationWaivedJobs: (if $releaseQualificationWaivedJobs == "" then [] else ($releaseQualificationWaivedJobs | split(",")) end),
+              releaseQualificationWaiverReason: (if $releaseQualificationWaiverReason == "" then null else $releaseQualificationWaiverReason end),
+              triggeringActor: $triggeringActor,
               emptySelectors: ($jobs == "" and $targets == "")
             }' >"$DISPATCH_RECEIPT_DIR/dispatch.json"
 
@@ -631,6 +751,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
           CANDIDATE_SHA: ${{ github.sha }}
+          RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
         run: |
           set -euo pipefail
           if [ "${EVENT_NAME:-}" = "push" ]; then
@@ -768,6 +889,7 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
+      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.dcode_base_ref }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -820,6 +942,26 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
         with:
           build-cli: "false"
+
+      - name: Record immutable Deep Agents Code base evidence
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        env:
+          BASE_CONTRACT: ${{ needs.generate-matrix.outputs.dcode_base_contract }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="${E2E_ARTIFACT_DIR}/${TARGET_ID}"
+          install -d -m 0700 "${evidence_dir}"
+          jq -e -n \
+            --arg candidateSha "${CANDIDATE_SHA}" \
+            --argjson baseContract "${BASE_CONTRACT}" \
+            '{contractVersion: 1, candidateSha: $candidateSha, base: $baseContract}
+              | select(
+                (.candidateSha | test("^[0-9a-f]{40}$"))
+                and (.base.reference | test("@sha256:[0-9a-f]{64}$"))
+              )' >"${evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
@@ -940,6 +1082,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/environment.result.json
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
+            e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/risk-signal.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
@@ -1019,14 +1162,24 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       credential_boundary: no provider credential
-      target_id: ${{ matrix.id }}
-      runner: ${{ matrix.runner }}
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
       host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
       trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -1048,14 +1201,24 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       credential_boundary: NVIDIA API key
-      target_id: ${{ matrix.id }}
-      runner: ${{ matrix.runner }}
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
       host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
       trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -1078,18 +1241,109 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       credential_boundary: NVIDIA inference API key
-      target_id: ${{ matrix.id }}
-      runner: ${{ matrix.runner }}
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
       test_file: ${{ matrix.test_file }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
       install_mode: ${{ matrix.install_mode }}
       install_non_interactive: ${{ matrix.install_non_interactive }}
       restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
       host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
       trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+
+  catalogue-github-read:
+    name: ${{ matrix.display_name }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.catalogue_github_read_matrix) }}
+    uses: ./.github/workflows/e2e-standard-profile.yaml
+    with:
+      candidate_repository: ${{ inputs.checkout_repository || github.repository }}
+      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
+      risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
+      cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      credential_boundary: GitHub read token
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
+      test_file: ${{ matrix.test_file }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      install_mode: ${{ matrix.install_mode }}
+      install_non_interactive: ${{ matrix.install_non_interactive }}
+      restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
+      host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: true
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  catalogue-brave-nvidia-inference:
+    name: ${{ matrix.display_name }}
+    needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix) }}
+    uses: ./.github/workflows/e2e-standard-profile.yaml
+    with:
+      candidate_repository: ${{ inputs.checkout_repository || github.repository }}
+      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
+      risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
+      cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+      credential_boundary: Brave and NVIDIA inference API keys
+      target_id: ${{ matrix.target_id }}
+      catalogue_id: ${{ matrix.id }}
+      runner: ${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}
+      checkout_sha: ${{ inputs.checkout_sha }}
+      workflow_sha: ${{ inputs.workflow_sha }}
+      test_file: ${{ matrix.test_file }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      install_mode: ${{ matrix.install_mode }}
+      install_non_interactive: ${{ matrix.install_non_interactive }}
+      restore_cli: ${{ matrix.restore_cli }}
+      cloudflared: ${{ matrix.cloudflared }}
+      host_packages: ${{ matrix.host_packages }}
+      host_preparation: ${{ matrix.host_preparation }}
+      runner_comparison: ${{ matrix.runner_comparison }}
+      compatible_api_key: ${{ matrix.compatible_api_key }}
+      github_token: false
+      shard: ${{ matrix.shard }}
+      artifact_layout: ${{ matrix.artifact_layout }}
+      trusted_main: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
 
   openshell-gateway-auth-contract:
@@ -1610,8 +1864,50 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  mcp-bridge-dev:
+  openshell-dev-artifact:
     needs: generate-matrix
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      artifact_name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name }}
+      source_commit: ${{ steps.resolve_openshell_dev_artifact.outputs.source_commit }}
+      manifest_sha256: ${{ steps.resolve_openshell_dev_artifact.outputs.manifest_sha256 }}
+    steps:
+      - name: Checkout trusted OpenShell dev tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/install-openshell.sh
+            tools/e2e/openshell-dev-artifact.mts
+
+      - name: Set up Node for OpenShell dev artifact resolution
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: resolve_openshell_dev_artifact
+        name: Resolve immutable OpenShell dev artifact
+        run: >-
+          node --experimental-strip-types --no-warnings
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve
+          "${{ runner.temp }}/openshell-dev-artifact"
+
+      - name: Upload OpenShell dev artifact resolution
+        if: ${{ always() }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}
+          path: ${{ runner.temp }}/openshell-dev-artifact/
+
+  mcp-bridge-dev:
+    needs: [generate-matrix, openshell-dev-artifact]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
     permissions:
@@ -1649,6 +1945,81 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
+      - name: Checkout trusted OpenShell dev tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/docker-auth-cleanup.sh
+            scripts/install-openshell.sh
+            tools/e2e/openshell-dev-artifact.mts
+
+      - name: Restore immutable OpenShell dev artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.openshell-dev-artifact.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-dev-artifact
+          digest-mismatch: error
+
+      - name: Verify immutable OpenShell dev artifact
+        env:
+          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
+          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
+          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify
+          "$OPENSHELL_DEV_ARTIFACT_DIR"
+          "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
+          "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
+
+      - name: Revoke Docker auth before OpenShell development tooling
+        shell: bash
+        run: >-
+          bash
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/docker-auth-cleanup.sh"
+
+      - name: Install immutable OpenShell dev artifact
+        env:
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_DEV_ASSET_DIR: ${{ runner.temp }}/openshell-dev-artifact/assets
+        run: |
+          set -euo pipefail
+          shim_dir="$(mktemp -d)"
+          trap 'rm -rf "$shim_dir"' EXIT
+          cat >"$shim_dir/gh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" -ne 10 || "$1" != "release" || "$2" != "download" || "$3" != "dev" || "$4" != "--repo" || "$5" != "NVIDIA/OpenShell" || "$6" != "--pattern" || "$8" != "--dir" || "${10}" != "--clobber" ]]; then
+            printf 'Unsupported gh invocation for retained OpenShell assets.\n' >&2
+            exit 64
+          fi
+          asset="$7"
+          destination="$9"
+          case "$asset" in
+            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
+            *)
+              printf 'Unsupported retained OpenShell asset: %s\n' "$asset" >&2
+              exit 64
+              ;;
+          esac
+          source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"
+          [[ -f "$source_asset" && ! -L "$source_asset" && "$destination" = /* && -d "$destination" && ! -L "$destination" ]]
+          cp -- "$source_asset" "$destination/$asset"
+          EOF
+          cat >"$shim_dir/curl" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'Network fallback is disabled for retained OpenShell assets.\n' >&2
+          exit 1
+          EOF
+          chmod 700 "$shim_dir/gh" "$shim_dir/curl"
+          PATH="$shim_dir:$PATH" \
+            bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
+
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
         # version/SHA256 pair as the stable lane; workflow-contract tests fail
@@ -1673,18 +2044,6 @@ jobs:
 
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
-
-      - name: Revoke Docker auth before unverified dev tooling
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-      - name: Install OpenShell CLI
-        env:
-          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
-          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
-        run: |
-          set -euo pipefail
-          bash scripts/install-openshell.sh
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility
@@ -1729,162 +2088,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Live skill injection and real OpenClaw agent-turn contract.
-  skill-agent:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'skill-agent') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "skill-agent"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/skill-agent
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Install OpenShell CLI
-        # The migrated skill-agent lane invokes helper scripts that call
-        # `openshell` after the repo CLI onboard command has returned. Install
-        # and resolve OpenShell in the workflow parent so PATH/OPENSHELL_BIN is
-        # available to both Vitest and the bash helpers.
-        run: bash scripts/install-openshell.sh
-
-      - name: Run skill-agent live test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/skill-agent.test.ts
-
-      - name: Upload skill-agent artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-skill-agent
-          path: |
-            e2e-artifacts/live/skill-agent/*/artifact-summary.json
-            e2e-artifacts/live/skill-agent/*/cleanup.json
-            e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json
-            e2e-artifacts/live/skill-agent/*/target.json
-            e2e-artifacts/live/skill-agent/*/target-result.json
-            e2e-artifacts/live/skill-agent/*/test-progress.json
-            e2e-artifacts/live/skill-agent/*/shell/*.result.json
-            e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt
-            e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
-
-  # Direct OpenClaw skills CLI contract.
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  inference-routing:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'inference-routing') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "inference-routing"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/inference-routing
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Install and verify cloudflared prerequisite
-        # Keep the public HTTPS routing fixture on the same reviewed binary as
-        # the MCP and tunnel-lifecycle lanes. The checksum and package metadata
-        # checks prevent a mutable package source from entering PR-safe E2E.
-        env:
-          CLOUDFLARED_VERSION: "2026.6.1"
-          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
-        run: |
-          set -euo pipefail
-          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
-          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
-          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
-          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
-          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
-          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
-          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
-            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
-            exit 1
-          fi
-          sudo dpkg -i "${cloudflared_deb}"
-          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
-
-      - name: Run inference routing live test
-        # Direct PR-safe E2E coverage proves invalid-key, unreachable-endpoint,
-        # localhost-compatible routing, namespace-aware HTTPS pinning, DNS
-        # rebinding resistance, private-target redirect rejection, and
-        # credential-bearing URL state rejection without live provider quota.
-        # It also proves generic and Entra-shaped runtime identity through a
-        # deterministic public OAuth refresh, real OpenShell provider
-        # attachment/injection, Graph /v1.0/me policy, rotation, and rollback
-        # without storing a third-party tenant credential in PR CI.
-        # Provider smokes live in inference-routing-provider-smoke.test.ts; any
-        # future secret-bearing lane must run that file from trusted main.
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/inference-routing.test.ts
-
-      - name: Upload inference routing artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Manual PR qualification also requires the exact candidate activation contract.
   managed-image-multiarch-startup:
@@ -2792,275 +2995,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  agent-turn-latency:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'agent-turn-latency') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 110
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "agent-turn-latency"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/agent-turn-latency
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      OPENSHELL_GATEWAY: "nemoclaw"
-      # Selects the shared E2E inference adapter's internal-nvidia mode
-      # (#5745) so this real-latency measurement always runs against a real
-      # hosted endpoint; the adapter defaults to hermetic `mock` otherwise,
-      # which the test now explicitly refuses to measure latency against.
-      NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_PROVIDER: custom
-      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_PREFERRED_API: openai-completions
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-      - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
-      - name: Run agent turn latency live Vitest test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/agent-turn-latency.test.ts
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-      - name: Upload agent turn latency artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  hermes-inference-switch:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-inference-switch') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-inference-switch'] }}
-    permissions:
-      contents: read
-    timeout-minutes: 55
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - mode: anthropic
-            sandbox_name: e2e-hm-inf-switch
-            switch_provider: compatible-anthropic-endpoint
-            switch_model: mock-anthropic-model
-            switch_inference_api: anthropic-messages
-            switch_mock_anthropic: "1"
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-inference-switch"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: "hermes"
-      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
-      NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
-      NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
-      NEMOCLAW_SWITCH_INFERENCE_API: ${{ matrix.switch_inference_api }}
-      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-      - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
-      - name: Run Hermes inference switch live Vitest test
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-inference-switch.test.ts
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-      - name: Upload Hermes inference switch artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-hermes-inference-switch-${{ matrix.mode }}
-          path: e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  brave-search:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'brave-search') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "brave-search"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/brave-search
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-brave-search"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
-
-      - name: Run Brave search live Vitest test
-        env:
-          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/brave-search.test.ts
-
-      - name: Upload Brave search artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-e2e:
     needs: generate-matrix
@@ -3421,546 +3355,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  hermes-discord:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-discord') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}
-    timeout-minutes: 90
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-discord"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-discord
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-discord
-      NEMOCLAW_AGENT: hermes
-      NEMOCLAW_POLICY_TIER: open
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Run Hermes Discord live test
-        # Preserves the
-        # ubuntu-latest Docker/OpenShell/Hermes Discord schema, provider,
-        # placeholder isolation, native gateway rewrite, and rebuild contracts.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          DISCORD_BOT_TOKEN: test-fake-discord-token-hermes-e2e
-          DISCORD_SERVER_IDS: "1491590992753590594"
-          DISCORD_ALLOWED_IDS: "1005536447329222676"
-          DISCORD_REQUIRE_MENTION: "0"
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-discord.test.ts
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload Hermes Discord artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  common-egress-agent:
-    name: Common egress agent (${{ matrix.scenario }})
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'common-egress-agent') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - scenario: openclaw-balanced-weather
-            selector: "^common-egress.+C1.+$"
-          - scenario: openclaw-open-reference
-            selector: "^common-egress.+C2.+$"
-          - scenario: hermes-open-reference
-            selector: "^common-egress.+C3.+$"
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "common-egress-agent"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.scenario == 'hermes-open-reference' }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Install OpenShell
-        # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
-        # so install OpenShell explicitly before onboard and SSH-agent probes.
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run common-egress agent live test
-        # Preserves
-        # OpenClaw balanced/open and Hermes open common-egress agent-turn
-        # coverage against real sandbox policy and live hosted inference.
-        env:
-          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts \
-            --selector "${{ matrix.selector }}"
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload common-egress agent artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-common-egress-agent-${{ matrix.scenario }}
-          path: e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  hermes-shields-config:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-shields-config') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}
-    timeout-minutes: 60
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "hermes-shields-config"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-shields-config
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: hermes
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-shields
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Run Hermes shields-config live regression
-        # This hermetic regression uses a local OpenAI-compatible endpoint and
-        # proves two complete down/up cycles on a fresh non-root Hermes sandbox.
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-shields-config.test.ts
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload Hermes shields-config artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  rebuild-hermes:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'rebuild-hermes') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes'] }}
-    timeout-minutes: 90
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "rebuild-hermes"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/rebuild-hermes
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: hermes
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_PROVIDER: custom
-      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_PREFERRED_API: openai-completions
-      NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Install OpenShell
-        # Full NemoClaw installer coverage remains in hermes-e2e. Rebuild uses
-        # the checked-out CLI and installs only its external runtime dependency.
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run Hermes rebuild live test
-        # Preserves the checked-out CLI, Docker/OpenShell, Hermes base-image
-        # rebuild, registry, messaging-placeholder, and backup hygiene boundaries.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          mkdir -p "$E2E_ARTIFACT_DIR"
-          baseline_file="$E2E_ARTIFACT_DIR/runner-pressure-baseline.jsonl"
-          phase_baselines_file="$E2E_ARTIFACT_DIR/runner-pressure-phase-baselines.jsonl"
-          classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"
-          test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"
-          export DOCKER_OOM_CONTAINER="$NEMOCLAW_SANDBOX_NAME"
-          export E2E_PHASE="rebuild-hermes.workflow"
-          export E2E_RESOURCE_BASELINE_FILE="$baseline_file"
-          export E2E_RESOURCE_PHASE_BASELINES_FILE="$phase_baselines_file"
-          export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"
-          export E2E_TEST_OUTCOME_FILE="$test_outcome_file"
-          npx tsx tools/e2e/runner-pressure.mts snapshot
-          npx tsx tools/e2e/runner-pressure.mts initialize-evidence
-          set +e
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
-          test_status="$?"
-          set -e
-          if [ "$test_status" -ne 0 ]; then
-            npx tsx tools/e2e/runner-pressure.mts classify
-            npx tsx tools/e2e/runner-pressure.mts validate-classification
-          fi
-          exit "$test_status"
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload Hermes rebuild artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  rebuild-hermes-stale-base:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'rebuild-hermes-stale-base') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes-stale-base'] }}
-    timeout-minutes: 90
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "rebuild-hermes-stale-base"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/rebuild-hermes-stale-base
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: hermes
-      NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_PROVIDER: custom
-      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_PREFERRED_API: openai-completions
-      NEMOCLAW_SANDBOX_NAME: e2e-rebuild-base
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Add swap for Hermes image rebuild
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
-          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
-          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
-          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
-          swapon --show
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Install OpenShell
-        # Full NemoClaw installer coverage remains in hermes-e2e. Rebuild uses
-        # the checked-out CLI and installs only its external runtime dependency.
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run Hermes stale-base rebuild live test
-        # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's
-        # stale cached base-image regression boundary.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          mkdir -p "$E2E_ARTIFACT_DIR"
-          baseline_file="$E2E_ARTIFACT_DIR/runner-pressure-baseline.jsonl"
-          phase_baselines_file="$E2E_ARTIFACT_DIR/runner-pressure-phase-baselines.jsonl"
-          classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"
-          test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"
-          export DOCKER_OOM_CONTAINER="$NEMOCLAW_SANDBOX_NAME"
-          export E2E_PHASE="rebuild-hermes-stale-base.workflow"
-          export E2E_RESOURCE_BASELINE_FILE="$baseline_file"
-          export E2E_RESOURCE_PHASE_BASELINES_FILE="$phase_baselines_file"
-          export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"
-          export E2E_TEST_OUTCOME_FILE="$test_outcome_file"
-          npx tsx tools/e2e/runner-pressure.mts snapshot
-          npx tsx tools/e2e/runner-pressure.mts initialize-evidence
-          set +e
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
-          test_status="$?"
-          set -e
-          if [ "$test_status" -ne 0 ]; then
-            npx tsx tools/e2e/runner-pressure.mts classify
-            npx tsx tools/e2e/runner-pressure.mts validate-classification
-          fi
-          exit "$test_status"
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload Hermes stale-base rebuild artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
 
   jetson-nvmap-gpu:
     needs: generate-matrix
@@ -4000,115 +3394,6 @@ jobs:
         with:
           name: e2e-jetson-nvmap-gpu
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
-
-  security-posture:
-    permissions:
-      contents: read
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'security-posture') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('security-posture-{0}', matrix.agent)] }}
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - agent: openclaw
-            sandbox_name: e2e-oc-security
-            test_file: test/e2e/live/full-e2e.test.ts
-          - agent: hermes
-            sandbox_name: e2e-hm-security
-            test_file: test/e2e/live/hermes-e2e.test.ts
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "security-posture"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/security-posture-${{ matrix.agent }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_E2E_EXPECT_OPENSHELL_SPLIT_PROCESS: "1"
-      NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
-      NEMOCLAW_E2E_SECURITY_POSTURE: "1"
-      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
-      OPENSHELL_GATEWAY: nemoclaw
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Install OpenShell CLI
-        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run security posture live Vitest test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path "${{ matrix.test_file }}"
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload security posture artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-security-posture-${{ matrix.agent }}
-          path: e2e-artifacts/live/security-posture-${{ matrix.agent }}/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
 
   cloud-onboard:
     needs: generate-matrix
@@ -4230,181 +3515,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  token-rotation:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'token-rotation') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "token-rotation"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/token-rotation
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
 
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run token rotation live test
-        # Preserve the original runner class: ubuntu-latest with Docker/OpenShell
-        # plus the fake OpenAI-compatible endpoint path and fake
-        # Telegram/Discord/Slack token boundary.
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          TELEGRAM_BOT_TOKEN_A: "test-fake-token-A-rotation-e2e"
-          TELEGRAM_BOT_TOKEN_B: "test-fake-token-B-rotation-e2e"
-          DISCORD_BOT_TOKEN_A: "dc-a-rotation-e2e"
-          DISCORD_BOT_TOKEN_B: "dc-b-rotation-e2e"
-          SLACK_BOT_TOKEN_A: "xoxb-fake-A-rotation-e2e"
-          SLACK_BOT_TOKEN_B: "xoxb-fake-B-rotation-e2e"
-          SLACK_APP_TOKEN_A: "xapp-fake-A-rotation-e2e"
-          SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/token-rotation.test.ts
-
-      - name: Upload token rotation artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  openshell-gateway-upgrade:
-    name: OpenShell gateway upgrade (${{ matrix.id }})
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-gateway-upgrade') }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 70
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: v0.0.36-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-36-x86-64
-            nemoclaw_ref: v0.0.36
-            nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
-            installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
-            openshell_version: 0.0.36
-            openclaw_version: 2026.4.24
-          - id: v0.0.55-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-55-x86-64
-            nemoclaw_ref: v0.0.55
-            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
-            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
-            openshell_version: 0.0.44
-            openclaw_version: 2026.5.22
-          - id: v0.0.55-aarch64
-            runner: ubuntu-24.04-arm
-            shard: v0-0-55-aarch64
-            nemoclaw_ref: v0.0.55
-            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
-            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
-            openshell_version: 0.0.44
-            openclaw_version: 2026.5.22
-          - id: v0.0.74-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-74-x86-64
-            nemoclaw_ref: v0.0.74
-            nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
-            installer_sha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
-            openshell_version: 0.0.72
-            openclaw_version: 2026.5.27
-          - id: v0.0.89-x86_64
-            runner: ubuntu-latest
-            shard: v0-0-89-x86-64
-            nemoclaw_ref: v0.0.89
-            nemoclaw_commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e"
-            installer_sha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1"
-            openshell_version: 0.0.85
-            openclaw_version: 2026.6.10
-            current_openclaw_version: 2026.7.1
-            openclaw_state_upgrade: "1"
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "openshell-gateway-upgrade"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-upgrade
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gw-survivor"
-      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
-      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
-      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
-      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
-      NEMOCLAW_CURRENT_OPENCLAW_VERSION: ${{ matrix.current_openclaw_version }}
-      NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: ${{ matrix.openclaw_state_upgrade }}
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run OpenShell gateway upgrade live Vitest test
-        # Keep the original v0.0.36 fixture on x86_64 and validate the exact
-        # v0.0.55/OpenShell 0.0.44 regression shape on x86_64 and arm64, plus
-        # the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump. The
-        # v0.0.89 row proves OpenClaw 2026.6.10 state survives the 2026.7.1
-        # migration without crossing the OpenShell secret boundary.
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts
-
-      - name: Upload OpenShell gateway upgrade artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-openshell-gateway-upgrade-${{ matrix.id }}
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
 
   messaging-providers:
     needs: generate-matrix
@@ -4463,58 +3574,6 @@ jobs:
       - name: Upload messaging providers artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  bootstrap-install-smoke:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'bootstrap-install-smoke') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "bootstrap-install-smoke"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/bootstrap-install-smoke
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-bootstrap"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_PROVIDER: custom
-      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_PREFERRED_API: openai-completions
-      SKIP_DOCKER_PULL: "1"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Run bootstrap install smoke live test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bootstrap-install-smoke.test.ts
-
-      - name: Upload bootstrap install smoke artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-  # Provider-routed Model Router inference contract.
 
       - name: Clean up Docker auth
         if: always()
@@ -4660,298 +3719,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Bedrock Runtime compatible Anthropic endpoint contract.
-  bedrock-runtime-compatible-anthropic:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'bedrock-runtime-compatible-anthropic') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - agent: openclaw
-            sandbox_name: e2e-oc-bedrock
-          - agent: hermes
-            sandbox_name: e2e-hm-bedrock
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run Bedrock Runtime compatible Anthropic live test
-        # Preserves the fake Bedrock Runtime endpoint, /etc/hosts mapping,
-        # source CLI onboard, OpenShell adapter route, agent runtime probes,
-        # and leak-scan contract.
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts
-
-      - name: Upload Bedrock Runtime compatible Anthropic artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
-          path: e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  channels-stop-start:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'channels-stop-start') }}
-    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('channels-stop-start-{0}', matrix.agent)] }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - agent: openclaw
-            sandbox_name: e2e-oc-ch-cycle
-          - agent: hermes
-            sandbox_name: e2e-hm-ch-cycle
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "channels-stop-start"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_CHANNELS_STOP_START_AGENT: ${{ matrix.agent }}
-      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - id: trusted_hermes_swap
-        name: Provision trusted Hermes E2E swap
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          BASH_ENV: /dev/null
-          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_SHA: ${{ github.sha }}
-          ENV: /dev/null
-          EVENT_NAME: ${{ github.event_name }}
-          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
-          LC_ALL: C
-          REF: ${{ github.ref }}
-          REPOSITORY: ${{ github.repository }}
-          RUNNER_ARCH_KIND: ${{ runner.arch }}
-          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
-          RUNNER_OS_KIND: ${{ runner.os }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: *trusted-hermes-e2e-swap
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Initialize runner comparison telemetry
-        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts initialize
-
-      - name: Install OpenShell
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-        run: |
-          set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
-
-      - name: Run channels stop/start live test
-        # Preserves the
-        # OpenClaw/Hermes messaging channel stop/start, rebuild, provider
-        # reuse, registry, policy-list, and in-sandbox config contracts.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          TELEGRAM_BOT_TOKEN: test-fake-telegram-token-stop-start-${{ matrix.agent }}
-          DISCORD_BOT_TOKEN: test-fake-discord-token-stop-start-${{ matrix.agent }}
-          SLACK_BOT_TOKEN: xoxb-fake-slack-token-stop-start-${{ matrix.agent }}
-          SLACK_APP_TOKEN: xapp-fake-slack-token-stop-start-${{ matrix.agent }}
-          WECHAT_BOT_TOKEN: test-fake-wechat-token-stop-start-${{ matrix.agent }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          if command -v openshell >/dev/null 2>&1; then
-            OPENSHELL_BIN="$(command -v openshell)"
-          elif [ -x "$HOME/.local/bin/openshell" ]; then
-            OPENSHELL_BIN="$HOME/.local/bin/openshell"
-          else
-            echo "::error::OpenShell CLI not found after install"
-            ls -la /usr/local/bin/openshell "$HOME/.local/bin/openshell" 2>&1 || true
-            exit 1
-          fi
-          export OPENSHELL_BIN
-          "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/channels-stop-start.test.ts
-
-      - name: Finalize runner comparison telemetry
-        if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
-        continue-on-error: true
-        shell: bash
-        run: npx tsx tools/e2e/runner-comparison.mts finalize
-
-      - name: Upload channels stop/start artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-        with:
-          name: e2e-channels-stop-start-${{ matrix.agent }}
-          path: e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  tunnel-lifecycle:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'tunnel-lifecycle') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "tunnel-lifecycle"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/tunnel-lifecycle
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-life"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Install and verify cloudflared prerequisite
-        env:
-          CLOUDFLARED_VERSION: "2026.6.1"
-          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
-        run: |
-          set -euo pipefail
-          if command -v cloudflared >/dev/null 2>&1; then
-            if cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}" >/dev/null; then
-              cloudflared --version
-              exit 0
-            fi
-          fi
-
-          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
-          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
-          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
-
-          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
-          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
-          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
-          if [ "${package}" != "cloudflared" ] || [ "${version}" != "${CLOUDFLARED_VERSION}" ] || [ "${architecture}" != "amd64" ]; then
-            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
-            exit 1
-          fi
-
-          sudo dpkg -i "${cloudflared_deb}"
-          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
-
-      - name: Run tunnel lifecycle live test
-        # This preserves the
-        # real Docker/OpenShell onboard, host cloudflared quick-tunnel,
-        # local-dashboard readiness, public tunnel probe, and stop/status
-        # cleanup boundaries under Vitest.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-        run: |
-          set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/tunnel-lifecycle.test.ts
-
-      - name: Upload tunnel lifecycle artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
 
   report-to-pr:
     runs-on: ubuntu-latest
@@ -4970,38 +3737,24 @@ jobs:
         catalogue-standard,
         catalogue-nvidia-api,
         catalogue-nvidia-inference,
+        catalogue-github-read,
+        catalogue-brave-nvidia-inference,
         openshell-gateway-auth-contract,
         mcp-bridge,
         openshell-credential-generation-window,
+        openshell-dev-artifact,
         mcp-bridge-dev,
-        skill-agent,
-        inference-routing,
         managed-image-multiarch-startup,
         llama-cpp-dgx-spark-plan,
         llama-cpp-dgx-spark-qualification,
         managed-image-protected-runtime,
-        agent-turn-latency,
-        hermes-inference-switch,
-        brave-search,
         hermes-e2e,
         hermes-gpu-startup,
-        hermes-discord,
-        common-egress-agent,
-        hermes-shields-config,
-        rebuild-hermes,
-        rebuild-hermes-stale-base,
-        openshell-gateway-upgrade,
-        token-rotation,
         messaging-providers,
-        bootstrap-install-smoke,
         jetson-nvmap-gpu,
-        security-posture,
         cloud-onboard,
         openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
-        bedrock-runtime-compatible-anthropic,
-        tunnel-lifecycle,
-        channels-stop-start,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
@@ -5114,8 +3867,68 @@ jobs:
       - name: Require every release E2E result
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}
           RELEASE_REQUIRED_JOBS: ${{ needs.generate-matrix.outputs.release_required_jobs }}
         run: node --experimental-strip-types --no-warnings tools/e2e/release-qualification.mts
+      - name: Record release qualification waiver
+        if: ${{ inputs.release_qualification_waived_jobs != '' }}
+        env:
+          ACTOR: ${{ github.actor }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WAIVED_JOBS: ${{ needs.generate-matrix.outputs.release_qualification_waived_jobs }}
+          WAIVER_REASON: ${{ inputs.release_qualification_waiver_reason }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="${RUNNER_TEMP}/release-qualification-waiver"
+          install -d -m 0700 "$evidence_dir"
+          jq -n \
+            --arg actor "$ACTOR" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg reason "$WAIVER_REASON" \
+            --arg triggeringActor "$TRIGGERING_ACTOR" \
+            --argjson needs "$NEEDS_JSON" \
+            --argjson waived "$WAIVED_JOBS" \
+            --argjson workflowRunAttempt "$RUN_ATTEMPT" \
+            --argjson workflowRunId "$RUN_ID" \
+            '{
+              schemaVersion: 1,
+              kind: "nemoclaw-release-qualification-waiver-v1",
+              candidateSha: $candidateSha,
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              actor: $actor,
+              triggeringActor: $triggeringActor,
+              reason: $reason,
+              jobs: [$waived[] as $job | {id: $job, result: $needs[$job].result}]
+            }' >"$evidence_dir/waiver.json"
+          {
+            echo "## Release qualification waiver"
+            echo
+            echo "A repository administrator waived release-required E2E jobs."
+            echo
+            printf -- '- Candidate commit: `%s`\n' "$CANDIDATE_SHA"
+            printf -- '- Dispatch actor: `%s`\n' "$ACTOR"
+            printf -- '- Triggering actor: `%s`\n' "$TRIGGERING_ACTOR"
+            printf -- '- Reason: %s\n' "$WAIVER_REASON"
+            echo '- Waived jobs:'
+            jq -r --argjson waived "$WAIVED_JOBS" '
+              . as $needs |
+              $waived[] | "  - `\(.)`: `\($needs[.].result // \"missing\")`"
+            ' <<< "$NEEDS_JSON"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload release qualification waiver evidence
+        if: ${{ inputs.release_qualification_waived_jobs != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-qualification-waiver/waiver.json
+          if-no-files-found: error
+          retention-days: 30
 
   # ── Push/manual scorecard ─────────────────────────────────────────────────
   scorecard:

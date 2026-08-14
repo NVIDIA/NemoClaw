@@ -28,6 +28,9 @@ const DEFAULT_ACTION_PATH = join(
 export const UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE = E2E_ACTION_PROVENANCE.uploadArtifacts;
 
 export const UPLOAD_E2E_ARTIFACTS_ACTION = UPLOAD_E2E_ARTIFACTS_ACTION_PROVENANCE.reference;
+export const OPENSHELL_DEV_ARTIFACT_DIRECTORY = "${{ runner.temp }}/openshell-dev-artifact";
+export const OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME =
+  "${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}";
 
 const CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION = "./.github/actions/upload-e2e-artifacts";
 const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
@@ -38,6 +41,17 @@ const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/";
+const RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload release qualification waiver evidence",
+  if: "${{ inputs.release_qualification_waived_jobs != '' }}",
+  uses: UPLOAD_ARTIFACT_ACTION,
+  with: {
+    name: "release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}",
+    path: "${{ runner.temp }}/release-qualification-waiver/waiver.json",
+    "if-no-files-found": "error",
+    "retention-days": 30,
+  },
+};
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -84,6 +98,16 @@ function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep
     step.uses === UPLOAD_ARTIFACT_ACTION &&
     inputs.name === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME &&
     inputs.path === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH
+  );
+}
+
+function isExactReleaseQualificationWaiverUpload(
+  jobName: string,
+  step: WorkflowStep,
+): boolean {
+  return (
+    jobName === "release-qualification" &&
+    isDeepStrictEqual(step, RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT)
   );
 }
 
@@ -134,6 +158,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/dcode-base-image.json",
         "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/risk-signal.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
@@ -141,31 +166,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/shell/",
         "",
       ].join("\n"),
-    },
-  ],
-  [
-    "skill-agent",
-    {
-      name: "e2e-skill-agent",
-      path: [
-        "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
-        "e2e-artifacts/live/skill-agent/*/cleanup.json",
-        "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
-        "e2e-artifacts/live/skill-agent/*/target.json",
-        "e2e-artifacts/live/skill-agent/*/target-result.json",
-        "e2e-artifacts/live/skill-agent/*/test-progress.json",
-        "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
-        "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
-        "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
-        "",
-      ].join("\n"),
-    },
-  ],
-  [
-    "hermes-inference-switch",
-    {
-      name: "e2e-hermes-inference-switch-${{ matrix.mode }}",
-      path: "e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/",
     },
   ],
   [
@@ -190,13 +190,6 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "common-egress-agent",
-    {
-      name: "e2e-common-egress-agent-${{ matrix.scenario }}",
-      path: "e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/",
-    },
-  ],
-  [
     "hermes-gpu-startup",
     {
       name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
@@ -204,37 +197,10 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
-    "security-posture",
-    {
-      name: "e2e-security-posture-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/security-posture-${{ matrix.agent }}/",
-    },
-  ],
-  [
-    "openshell-gateway-upgrade",
-    {
-      name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
-    },
-  ],
-  [
     "openshell-gateway-auth-contract",
     {
       name: "e2e-openshell-gateway-auth-contract",
       path: "${{ steps.artifact_safety.outputs.approved_path }}",
-    },
-  ],
-  [
-    "bedrock-runtime-compatible-anthropic",
-    {
-      name: "e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/",
-    },
-  ],
-  [
-    "channels-stop-start",
-    {
-      name: "e2e-channels-stop-start-${{ matrix.agent }}",
-      path: "e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/",
     },
   ],
   [
@@ -252,6 +218,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "openshell-dev-artifact",
+    {
+      name: OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
+      path: `${OPENSHELL_DEV_ARTIFACT_DIRECTORY}/`,
+    },
+  ],
+  [
     "openshell-credential-generation-window",
     {
       name: "e2e-openshell-credential-generation-window",
@@ -265,6 +238,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-dev-artifact", "${{ always() }}"],
   ["openshell-credential-generation-window", CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION],
   ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
@@ -395,6 +369,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
+          jobName === "openshell-dev-artifact" ||
           jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
@@ -458,7 +433,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
       if (
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
-        !isExactManagedImageBuildCacheUpload(jobName, step)
+        !isExactManagedImageBuildCacheUpload(jobName, step) &&
+        !isExactReleaseQualificationWaiverUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

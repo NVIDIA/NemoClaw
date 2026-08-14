@@ -48,10 +48,15 @@ import {
 } from "./destroy-execution";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
-import { prepareSandboxDestroy } from "./destroy-preflight";
+import {
+  assertUnambiguousDestroyContainerIdentity,
+  classifyDestroySandboxPresence,
+  isSameDestroyContainerIdentityProof,
+} from "./destroy-presence";
+import { prepareSandboxDestroy, stopSandboxInferenceResources } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
-export { classifyDestroySandboxPresence } from "./destroy-presence";
+export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -465,8 +470,34 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
 
+  const inspectContainerIdentity = () =>
+    assertUnambiguousDestroyContainerIdentity(sandboxName, {
+      cliName: CLI_NAME,
+      providerId: normalizeRuntimeProviderIdentity(
+        registry.getSandbox(sandboxName)?.openshellDriver,
+      ),
+      redact: redactDestroyError,
+    });
+  const initialIdentity = inspectContainerIdentity();
+  if (initialIdentity === false) {
+    process.exit(1);
+  }
+
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
     prepareSandboxDestroy(sandboxName);
+  // Recheck identity after read-only preflight and before local mutation.
+  const preMutationIdentity = inspectContainerIdentity();
+  if (
+    preMutationIdentity === false ||
+    !isSameDestroyContainerIdentityProof(initialIdentity, preMutationIdentity)
+  ) {
+    if (preMutationIdentity !== false) {
+      console.error(
+        `  Refusing to destroy sandbox '${sandboxName}': Container identity changed during preflight. No sandbox resources were removed.`,
+      );
+    }
+    process.exit(1);
+  }
   const priorHttpsPinRouteId = parseHttpsPinRouteId(sandbox?.endpointUrl);
   const destructiveResult = await executeSandboxDestroy({
     cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
@@ -475,6 +506,8 @@ async function destroySandboxUnlocked(
     sandbox,
     sandboxConfirmedAbsent,
     sandboxName,
+    expectedContainerIdentity: initialIdentity.identity,
+    stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
   });
   if (!destructiveResult.ok) {
     if (destructiveResult.deleteOutput) {

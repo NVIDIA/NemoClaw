@@ -13,7 +13,7 @@ import { PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 
-// See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
+// See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
 export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";

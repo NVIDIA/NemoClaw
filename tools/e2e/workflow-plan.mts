@@ -16,6 +16,7 @@ import { JETSON_DISPATCH_TARGET } from "./jetson-dispatch-contract.mts";
 import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
+  catalogueExclusionReason,
   catalogueMatrix,
   catalogueTarget,
   catalogueTargetsForChangedFiles,
@@ -70,6 +71,8 @@ const CATALOGUE_JOB_BY_PROFILE: Record<E2eExecutionProfile, string> = {
   standard: "catalogue-standard",
   "nvidia-api": "catalogue-nvidia-api",
   "nvidia-inference": "catalogue-nvidia-inference",
+  "github-read": "catalogue-github-read",
+  "brave-nvidia-inference": "catalogue-brave-nvidia-inference",
 };
 const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
@@ -170,13 +173,22 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
   return (
     isRecord(value) &&
     hasExactKeys(value, [
+      "artifact_layout",
+      "cloudflared",
+      "compatible_api_key",
       "id",
       "display_name",
+      "host_preparation",
       "host_packages",
       "install_mode",
       "install_non_interactive",
       "restore_cli",
       "runner",
+      "runner_comparison",
+      "runner_key",
+      "runner_pressure",
+      "shard",
+      "target_id",
       "test_file",
       "timeout_minutes",
     ]) &&
@@ -186,6 +198,10 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u.test(value.display_name) &&
     typeof value.runner === "string" &&
     /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
+    typeof value.runner_key === "string" &&
+    /^(?:|[a-z0-9]+(?:-[a-z0-9]+)*)$/u.test(value.runner_key) &&
+    typeof value.target_id === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.target_id) &&
     typeof value.test_file === "string" &&
     /^test\/e2e\/live\/[A-Za-z0-9._-]+[.]test[.]ts$/u.test(value.test_file) &&
     typeof value.timeout_minutes === "number" &&
@@ -194,6 +210,16 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     typeof value.host_packages === "string" &&
     /^(?:|expect|iptables|expect iptables)$/u.test(value.host_packages) &&
     typeof value.install_non_interactive === "boolean" &&
+    typeof value.cloudflared === "boolean" &&
+    typeof value.runner_comparison === "boolean" &&
+    typeof value.runner_pressure === "boolean" &&
+    typeof value.compatible_api_key === "boolean" &&
+    typeof value.shard === "string" &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.shard) &&
+    (value.artifact_layout === "target-shard" || value.artifact_layout === "flat-shard") &&
+    (value.host_preparation === "none" ||
+      value.host_preparation === "hermes-swap" ||
+      value.host_preparation === "rebuild-swap") &&
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
@@ -209,14 +235,23 @@ function isCatalogueMatrixRowForProfile(
   const target = E2E_TARGET_CATALOGUE.find((entry) => entry.id === value.id);
   return (
     target?.profile === profile &&
+    target.targetId === value.target_id &&
     target.displayName === value.display_name &&
     target.runner === value.runner &&
+    target.runnerKey === value.runner_key &&
     target.testFile === value.test_file &&
     target.timeoutMinutes === value.timeout_minutes &&
     target.installMode === value.install_mode &&
     target.installNonInteractive === value.install_non_interactive &&
     target.restoreCli === value.restore_cli &&
-    target.hostPackages.join(" ") === value.host_packages
+    target.cloudflared === value.cloudflared &&
+    target.hostPackages.join(" ") === value.host_packages &&
+    target.hostPreparation === value.host_preparation &&
+    target.runnerComparison === value.runner_comparison &&
+    target.runnerPressure === value.runner_pressure &&
+    target.compatibleApiKey === value.compatible_api_key &&
+    target.shard === value.shard &&
+    target.artifactLayout === value.artifact_layout
   );
 }
 
@@ -235,7 +270,13 @@ function isCatalogueMatrices(
 }
 
 function emptyCatalogueMatrices(): Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]> {
-  return { standard: [], "nvidia-api": [], "nvidia-inference": [] };
+  return {
+    standard: [],
+    "nvidia-api": [],
+    "nvidia-inference": [],
+    "github-read": [],
+    "brave-nvidia-inference": [],
+  };
 }
 
 function catalogueMatrices(
@@ -293,7 +334,7 @@ function mapTrustedControllerJobs(
   const inventory = readFreeStandingJobsInventory();
   const jobs = selectorIds(selectors.jobs, "jobs").map((job) =>
     job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID &&
-    inventory.allowedJobs.includes(BOOTSTRAP_INSTALL_JOB_ID)
+    E2E_TARGET_CATALOGUE.some((target) => target.targetId === BOOTSTRAP_INSTALL_JOB_ID)
       ? BOOTSTRAP_INSTALL_JOB_ID
       : job,
   );
@@ -339,14 +380,16 @@ function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
   };
 }
 
-export function releaseRequiredWorkflowJobs(): string[] {
+export function releaseRequiredWorkflowJobs(options?: {
+  waivedJobs?: readonly string[];
+}): string[] {
   const inventory = readFreeStandingJobsInventory();
   const sharedTestsRun = discoverCredentialFreeTests().length > 0;
   const liveTargetsRun = buildLiveTargetMatrix().length > 0;
   const catalogueJobs = E2E_EXECUTION_PROFILES.filter((profile) =>
     E2E_TARGET_CATALOGUE.some((target) => target.profile === profile && target.releaseRequired),
   ).map((profile) => CATALOGUE_JOB_BY_PROFILE[profile]);
-  return [
+  const requiredJobs = [
     ...new Set([
       ...inventory.workflowJobs,
       ...catalogueJobs,
@@ -357,6 +400,27 @@ export function releaseRequiredWorkflowJobs(): string[] {
     .filter((job) => !inventory.explicitOnlyJobs.includes(job))
     .filter((job) => job !== SHARED_E2E_JOB_ID || sharedTestsRun)
     .sort();
+  const waivedJobs = options?.waivedJobs ?? [];
+  if (new Set(waivedJobs).size !== waivedJobs.length) {
+    throw new Error("Release qualification waived jobs must not contain duplicates");
+  }
+  const requiredJobSet = new Set(requiredJobs);
+  const invalidJobs = waivedJobs.filter((job) => !requiredJobSet.has(job));
+  if (invalidJobs.length > 0) {
+    throw new Error(`Cannot waive non-release E2E jobs: ${invalidJobs.join(", ")}`);
+  }
+  const waivedJobSet = new Set(waivedJobs);
+  return requiredJobs.filter((job) => !waivedJobSet.has(job));
+}
+
+export function parseReleaseQualificationWaivedJobs(value: string | undefined): string[] {
+  if (!value) return [];
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*$/u.test(value)) {
+    throw new Error("Release qualification waived jobs must be comma-separated E2E job IDs");
+  }
+  const waivedJobs = value.split(",");
+  releaseRequiredWorkflowJobs({ waivedJobs });
+  return waivedJobs;
 }
 
 export function selectedWorkflowJobs(plan: E2eWorkflowPlan): string[] {
@@ -378,6 +442,13 @@ export function buildE2eWorkflowPlan(
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
 
+  for (const id of [...jobs, ...targets]) {
+    const reason = catalogueExclusionReason(id);
+    if (reason) {
+      throw new Error(`E2E catalogue target ${id} is not scheduled: ${reason}`);
+    }
+  }
+
   const inventory = readFreeStandingJobsInventory();
   const jetsonDispatchSelected =
     (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
@@ -393,7 +464,9 @@ export function buildE2eWorkflowPlan(
     };
   }
   const credentialFreeTests = discoverCredentialFreeTests();
-  const catalogueIds = new Set(E2E_TARGET_CATALOGUE.map((target) => target.id));
+  const catalogueIds = new Set(
+    E2E_TARGET_CATALOGUE.flatMap((target) => [target.id, target.targetId]),
+  );
 
   if (jobs.length > 0) {
     const allowedJobs = new Set([...inventory.allowedJobs, ...catalogueIds]);
@@ -408,8 +481,8 @@ export function buildE2eWorkflowPlan(
 
   if (jobs.length > 0 || targets.length > 0) {
     const selectedIds = new Set([...jobs, ...targets]);
-    const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter((target) =>
-      selectedIds.has(target.id),
+    const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
+      (target) => selectedIds.has(target.id) || selectedIds.has(target.targetId),
     );
     const registryTargets = targets.filter(
       (target) => !inventory.targetToJob.has(target) && !catalogueIds.has(target),
@@ -478,8 +551,8 @@ export function buildE2eWorkflowPlan(
       ...directlySelectedCatalogueTargets.map((target) => target.id),
       ...riskJobIds,
     ]);
-    const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter((target) =>
-      selectedCatalogueIds.has(target.id),
+    const selectedCatalogueTargets = E2E_TARGET_CATALOGUE.filter(
+      (target) => selectedCatalogueIds.has(target.id) || selectedCatalogueIds.has(target.targetId),
     );
     const riskTargetIds = riskPlan.requiredTargets.map((target) => target.id);
     const registryMatrix = [
@@ -626,6 +699,9 @@ export function writeE2eWorkflowPlanCiOutput(
   const output = environment.GITHUB_OUTPUT;
   const summary = environment.GITHUB_STEP_SUMMARY;
   if (!output || !summary) throw new Error("GitHub output paths are required");
+  const releaseQualificationWaivedJobs = parseReleaseQualificationWaivedJobs(
+    environment.RELEASE_QUALIFICATION_WAIVED_JOBS,
+  );
   appendFileSync(
     output,
     [
@@ -634,11 +710,16 @@ export function writeE2eWorkflowPlanCiOutput(
       `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
       `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
       `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
+      `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
+      `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
       `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
       `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
       `hermes_selected=${plan.hermesSelected}`,
       `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-      `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
+      `release_qualification_waived_jobs=${JSON.stringify(releaseQualificationWaivedJobs)}`,
+      `release_required_jobs=${JSON.stringify(
+        releaseRequiredWorkflowJobs({ waivedJobs: releaseQualificationWaivedJobs }),
+      )}`,
       "",
     ].join("\n"),
   );

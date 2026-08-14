@@ -4754,17 +4754,17 @@ def _is_generated_api_server_key(value: str) -> bool:
 def _placeholder_suffix_matches_env_key(suffix: str, env_key: str) -> bool:
     if suffix == env_key:
         return True
-    revision_match = re.fullmatch(r"v[0-9]+_(.+)", suffix)
+    revision_match = re.fullmatch(r"v[0-9]{1,20}_(.+)", suffix)
     return revision_match is not None and revision_match.group(1) == env_key
 
 
-def _normalize_provider_placeholder_for_env_key(value: str, env_key: str) -> str | None:
+def _provider_placeholder_for_env_key(value: str, env_key: str) -> str | None:
     if not value.startswith(SCOPED_PLACEHOLDER_PREFIX):
         return None
     suffix = value[len(SCOPED_PLACEHOLDER_PREFIX) :]
     if not _placeholder_suffix_matches_env_key(suffix, env_key):
         return None
-    return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
+    return value
 
 
 def _has_env_control_chars(value: str) -> bool:
@@ -4914,7 +4914,12 @@ def _runtime_plan_replacements_and_provider_keys(
             raise UnsafePathError(
                 f"messaging runtime plan env alias regex is invalid: {exc}"
             ) from exc
-        if compiled.search(os.environ.get(env_key, "")):
+        runtime_value = os.environ.get(env_key, "")
+        if runtime_value.startswith(SCOPED_PLACEHOLDER_PREFIX):
+            suffix = runtime_value[len(SCOPED_PLACEHOLDER_PREFIX) :]
+            if not _placeholder_suffix_matches_env_key(suffix, env_key):
+                continue
+        if compiled.search(runtime_value):
             replacements[env_key] = (value, message)
     return replacements, provider_env_keys, True
 
@@ -4971,11 +4976,11 @@ def provider_placeholders(
     for key in allowed_fallback_keys:
         if key in replacements:
             continue
-        normalized = _normalize_provider_placeholder_for_env_key(
+        placeholder = _provider_placeholder_for_env_key(
             os.environ.get(key, ""), key
         )
-        if normalized:
-            replacements[key] = (normalized, "")
+        if placeholder:
+            replacements[key] = (placeholder, "")
     if not replacements:
         return
 

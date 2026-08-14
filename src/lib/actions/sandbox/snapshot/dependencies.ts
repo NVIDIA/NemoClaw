@@ -12,6 +12,7 @@ export type {
   PrepareManagedWorkloadCloneHandoffInput,
 } from "../../../onboard/workload/clone";
 export { backupSandboxStateWithManagedAuthority } from "./backup-authority";
+export { createSnapshotCloneLifecycle, fingerprintSandboxLiveIdentity } from "./clone-lifecycle";
 export type {
   ManagedCloneProviderBinding,
   ManagedCloneProviderCleanupResult,

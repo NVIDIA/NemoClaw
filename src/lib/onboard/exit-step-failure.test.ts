@@ -104,8 +104,8 @@ describe("terminal step failure helper", () => {
     complete = false;
     listeners[0](1);
     errorSpy.mockRestore();
-    expect(errors.join("\n")).toContain("onboard --experimental-profile portable");
-    expect(errors.join("\n")).not.toContain("onboard --resume");
+    expect(errors.join("\n")).toContain("onboard --resume");
+    expect(errors.join("\n")).toContain("onboard --experimental-profile portable --fresh");
 
     const loaded = requireLoadedSession();
     expect(loaded.steps.inference.status).toBe("failed");

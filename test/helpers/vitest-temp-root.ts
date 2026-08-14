@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,68 @@ const KEEP_TEMP_ENV = "NEMOCLAW_TEST_KEEP_TEMP";
 const TEMP_ENV_KEYS = ["TMPDIR", "TMP", "TEMP"] as const;
 
 type TempEnvKey = (typeof TEMP_ENV_KEYS)[number];
+
+type RuntimeAuthorityInstaller = (
+  command: string,
+  args: string[],
+  options: { stdio: "inherit" },
+) => void;
+
+interface GitHubHostedRuntimeAuthorityOptions {
+  platform?: NodeJS.Platform;
+  githubActions?: string;
+  runnerEnvironment?: string;
+  runnerImageOs?: string;
+  uid?: number;
+  gid?: number;
+  install?: RuntimeAuthorityInstaller;
+}
+
+export function prepareGitHubHostedRuntimeAuthority(
+  options: GitHubHostedRuntimeAuthorityOptions = {},
+): void {
+  const hostedRunner =
+    (options.runnerEnvironment ?? process.env.RUNNER_ENVIRONMENT) === "github-hosted" ||
+    /^(?:ubuntu|macos|win)/i.test(options.runnerImageOs ?? process.env.ImageOS ?? "");
+  if (
+    (options.platform ?? process.platform) !== "linux" ||
+    (options.githubActions ?? process.env.GITHUB_ACTIONS) !== "true" ||
+    !hostedRunner
+  ) {
+    return;
+  }
+  const uid = options.uid ?? process.getuid?.();
+  const gid = options.gid ?? process.getgid?.();
+  if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid)) {
+    throw new Error("GitHub-hosted launch-readiness tests require a numeric user identity");
+  }
+  const runtimeRoot = `/run/user/${uid}`;
+  const productRoot = `${runtimeRoot}/nemoclaw`;
+  const authorityRoot = `${productRoot}/launch-readiness`;
+  const install =
+    options.install ??
+    ((command: string, args: string[], execOptions: { stdio: "inherit" }): void => {
+      execFileSync(command, args, execOptions);
+    });
+  install(
+    "sudo",
+    [
+      "--non-interactive",
+      "install",
+      "-d",
+      "-m",
+      "0700",
+      "-o",
+      String(uid),
+      "-g",
+      String(gid),
+      runtimeRoot,
+      productRoot,
+      authorityRoot,
+    ],
+    { stdio: "inherit" },
+  );
+}
 
 function restoreTempEnv(previous: ReadonlyMap<TempEnvKey, string | undefined>): void {
   for (const key of TEMP_ENV_KEYS) {
@@ -71,4 +134,7 @@ export function setupVitestTempRoot(): () => void {
   };
 }
 
-export default setupVitestTempRoot;
+export default function setupVitestEnvironment(): () => void {
+  prepareGitHubHostedRuntimeAuthority();
+  return setupVitestTempRoot();
+}
