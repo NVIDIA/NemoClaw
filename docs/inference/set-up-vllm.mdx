@@ -250,7 +250,7 @@ Pressing **Enter**, entering `n` or `no`, or entering any other response stops b
 
 <Warning>
 `--yes` and `NEMOCLAW_YES=1` do not change managed vLLM storage-warning handling.
-Express installation and other non-interactive setup treat a verified warning that Docker image storage or model-cache storage is insufficient as advisory, so NemoClaw prints the warning and continues the guarded download.
+Express installation and other non-interactive setup stop after a verified warning that Docker image storage or model-cache storage is insufficient, before the guarded download starts.
 Interactive setup still requires you to enter `y` or `yes` for a verified insufficient-capacity warning.
 
 An inconclusive model-cache warning also requires explicit confirmation interactively, and non-interactive setup stops with guidance to rerun interactively.

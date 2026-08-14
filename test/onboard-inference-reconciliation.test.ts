@@ -149,7 +149,7 @@ describe("onboard helpers", () => {
         commands.at(-1)?.command || "",
         /inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
       );
-      expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", endpointSource: "onboard", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw" });
+      expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", endpointSource: "onboard", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw", hostLocalInferenceReceipt: null });
     });
   });
   it("resolves a sandbox name before reconciling Hermes Provider on resume", {

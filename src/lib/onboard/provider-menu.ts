@@ -7,6 +7,7 @@ import { resolveRunningOllamaMenuEntry } from "./ollama-install-menu";
 export interface ProviderMenuChoice {
   key: string;
   label: string;
+  managedLlamaCppRecipeId?: string;
 }
 
 interface RemoteProviderMenuConfig {
@@ -36,7 +37,7 @@ export interface BuildInferenceProviderMenuInput {
   ollamaInstallEntry: ProviderMenuChoice | null;
   vllmEntries: readonly ProviderMenuChoice[];
   routedEnabled: boolean;
-  managedLlamaCppAvailable?: boolean;
+  managedLlamaCppOptions?: readonly ProviderMenuChoice[];
 }
 
 export interface InferenceProviderMenu {
@@ -120,12 +121,7 @@ export function buildInferenceProviderMenu(
     options.push({ key: "routed", label: "Model Router (experimental)" });
   }
 
-  if (input.managedLlamaCppAvailable) {
-    options.push({
-      key: "install-llama-cpp",
-      label: "NVIDIA Nemotron with managed llama.cpp (DGX Spark)",
-    });
-  }
+  options.push(...(input.managedLlamaCppOptions ?? []));
 
   for (const providerKey of input.agentProviderOptions) {
     pushUniqueRemoteProviderOption(options, input.remoteProviderConfig, providerKey);

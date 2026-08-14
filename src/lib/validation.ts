@@ -216,8 +216,8 @@ export function planSandboxCreateRecovery(
 }
 
 /**
- * Classify a non-zero `openshell gateway start` result so the onboard retry
- * loop can short-circuit on unrecoverable failures.
+ * Classify a failed gateway start so the onboard retry loop can short-circuit
+ * on unrecoverable failures.
  *
  * The classifier identifies failures for which callers can select a supported
  * recovery instead of generic retry or health-wait behavior.

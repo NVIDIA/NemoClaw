@@ -172,6 +172,25 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(session.normalizeSession(candidate)).toBeNull();
   });
 
+  it("preserves the Spark Express vLLM selection during provider setup (#9103)", () => {
+    session.saveSession(
+      session.createSession({
+        mode: "non-interactive",
+        stationExpressIntent: { version: 1, kind: "spark", sandboxName: "my-assistant" },
+      }),
+    );
+    session.markStepStarted("provider_selection");
+    session.updateSession((state) => {
+      state.provider = "vllm-local";
+      state.model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
+    });
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      provider: "vllm-local",
+      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    });
+  });
+
   it("clears resume intent only after successful completion", () => {
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     session.saveSession(

@@ -1,14 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { classifyGatewayStartFailure } from "../validation";
-import {
-  createFinalGatewayStartFailureHandler,
-  normalizeGatewayStartError,
-  reportLegacyGatewayStartResultFailure,
-} from "./gateway-start-failure";
+import { normalizeGatewayStartError, printDockerDaemonRecovery } from "./gateway-start-failure";
 
 describe("normalizeGatewayStartError", () => {
   it("preserves the original deadline-aware Error instance (#3768)", () => {
@@ -100,46 +96,31 @@ describe("classifyGatewayStartFailure", () => {
   });
 });
 
-describe("reportLegacyGatewayStartResultFailure", () => {
-  it("classifies Docker-unreachable output after stripping ANSI sequences (#2347)", () => {
-    const log = vi.fn();
-    const output = [
-      "\x1b[31mError: Failed to create Docker client.\x1b[0m",
-      "\x1b[33mSocket not found: /var/run/docker.sock\x1b[0m",
-    ].join("\n");
-
-    expect(reportLegacyGatewayStartResultFailure(output, log)).toEqual({
-      kind: "docker_unreachable",
-    });
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("Gateway start returned before healthy"),
-    );
-    expect(log.mock.calls[0][0]).not.toContain("\x1b");
-  });
-});
-
-describe("createFinalGatewayStartFailureHandler", () => {
-  it("normalizes diagnostics before redacting secrets split by terminal control bytes", () => {
+describe("printDockerDaemonRecovery", () => {
+  it.each([
+    ["darwin", "colima start", "systemctl"],
+    ["linux", "sudo systemctl start docker", "colima start"],
+    ["win32", "Start the Docker daemon", "systemctl"],
+  ] as const)("prints the %s recovery command", (platform, expected, excluded) => {
     const printed: string[] = [];
-    const handleFailure = createFinalGatewayStartFailureHandler({
-      getGatewayName: () => "nemoclaw-test",
-      collectDiagnostics: () => "NVIDIA_API_KEY=ghp_abcde\r\x1b[31mfghijklmno\x1b[0m",
-      cleanupGateway: vi.fn(),
-    });
 
-    expect(() =>
-      handleFailure({
-        retries: 0,
-        printError: (message = "") => printed.push(message),
-        exitProcess: (code): never => {
-          throw new Error(`exit ${code}`);
-        },
-      }),
-    ).toThrow("exit 1");
+    printDockerDaemonRecovery((message = "") => printed.push(message), platform);
 
     const output = printed.join("\n");
-    expect(output).not.toContain("\x1b");
-    expect(output).not.toContain("fghijklmno");
-    expect(output).toMatch(/NVIDIA_API_KEY=ghp_\*+/);
+    expect(output).toContain("Docker daemon is not running");
+    expect(output).toContain(expected);
+    expect(output).not.toContain(excluded);
+  });
+
+  it("prints the rootless Podman resume command for the portable profile (#9035)", () => {
+    const printed: string[] = [];
+
+    printDockerDaemonRecovery((message = "") => printed.push(message), "linux", true);
+
+    const output = printed.join("\n");
+    expect(output).toContain("rootless Podman API service is not reachable");
+    expect(output).toContain("Start Podman");
+    expect(output).toContain("nemoclaw onboard --resume");
+    expect(output).not.toContain("sudo systemctl start docker");
   });
 });

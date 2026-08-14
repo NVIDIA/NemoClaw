@@ -138,10 +138,27 @@ function createDockerLifecycle(
     metadata: {},
   } as const;
   const replacementOptions = dockerReplacementOptions(mode, input);
+  let activatedRuntimeId: string | null = null;
 
   return {
     launchArgv: input.launchArgv,
     patch,
+    inspectNativeRuntime() {
+      if (activatedRuntimeId === null) return undefined;
+      const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(
+        input.sandboxName,
+        {},
+        { expectedContainerId: activatedRuntimeId },
+      );
+      return snapshot.ok
+        ? {
+            imageId: snapshot.imageId,
+            bookkeepingImageRef: snapshot.bookkeepingImageRef,
+            stateError: snapshot.stateError,
+            nativeGpuAttachmentState: snapshot.nativeGpuAttachmentState,
+          }
+        : null;
+    },
     async recoverUnfinished() {
       return recoverManagedBootstrapTransactions(adapter);
     },
@@ -187,6 +204,7 @@ function createDockerLifecycle(
         authorityStore: input.authorityStore,
         timeoutSecs: input.timeoutSecs,
       });
+      activatedRuntimeId = activated.replacement.replacementRuntimeId;
       const launched = launchState.value;
       if (!launched) {
         await finalizeManagedBootstrapSequence(adapter, {

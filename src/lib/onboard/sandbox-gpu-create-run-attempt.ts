@@ -134,12 +134,6 @@ export function createSandboxGpuCreateAttemptRunner(
   const nativeFallbackHasCleanBaseline =
     managedRouting?.nativeFallbackHasCleanBaseline ??
     (nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0);
-  const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {
-    if (managedRouting) return managedRouting.inspectNativeRuntime();
-    const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
-    return snapshot.ok ? snapshot : null;
-  };
-
   const runAttempt = async (route: SelectedDockerGpuRoute) => {
     const compatibility = route === "compatibility";
     if (compatibility && input.initialGpuRoute === "native") {
@@ -187,6 +181,13 @@ export function createSandboxGpuCreateAttemptRunner(
           },
         })
       : null;
+    const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {
+      const lifecycleSnapshot = managedLifecycle?.inspectNativeRuntime?.();
+      if (lifecycleSnapshot !== undefined) return lifecycleSnapshot;
+      if (managedRouting) return managedRouting.inspectNativeRuntime();
+      const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
+      return snapshot.ok ? snapshot : null;
+    };
     const persistRestartSafeStartup =
       input.persistStartupCommand === true &&
       (route !== "native" || !input.terminalAgent || hasRequiredUlimits);

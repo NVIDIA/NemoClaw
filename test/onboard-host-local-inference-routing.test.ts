@@ -11,6 +11,7 @@ import type {
   HostLocalInferenceRuntime,
   HostLocalInferenceService,
 } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
+import { parseHostLocalInferenceReceipt } from "../src/lib/onboard/runtime-provider/host-local-inference.js";
 import type {
   HostLocalInferenceApplication,
   HostLocalInferenceStartupSelection,
@@ -20,6 +21,7 @@ import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setu
 import { createPodmanHostLocalInferenceTestHarness } from "./helpers/podman-host-local-inference-test-harness.js";
 import { createInMemoryRuntimeProviderBundle } from "./helpers/runtime-provider-bundle.js";
 import { createDirectSetupInferenceHarnessFactory } from "./support/setup-inference-test-harness.js";
+import { llamaCppHostLocalInferenceReceipt } from "./helpers/host-local-inference-receipt.js";
 
 const onboard = require("../src/lib/onboard") as {
   createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
@@ -332,7 +334,131 @@ function fixture(
   };
 }
 
+function llamaFixture(application: HostLocalInferenceApplication) {
+  const events: string[] = [];
+  const baseReceipt = llamaCppHostLocalInferenceReceipt("mxc");
+  const value: HostLocalInferenceReceipt = {
+    ...baseReceipt,
+    engineAuthority: {
+      ...baseReceipt.engineAuthority,
+      engineId: "memory",
+      authorityId: AUTHORITY_ID,
+      bindingSha256: "d".repeat(64),
+    },
+  };
+  const providerRuntime: HostLocalInferenceRuntime = {
+    providerId: "mxc",
+    authorityId: AUTHORITY_ID,
+    services: ["llama-cpp"],
+    translateContainerArgs: (args) => args,
+    qualifyOllama: vi.fn(),
+    startManaged: vi.fn(),
+    inspectManaged: vi.fn((current) => ({ running: true, receipt: current })),
+    stopManaged: vi.fn((current) => ({ running: false, receipt: current })),
+    preserveForRebuild: vi.fn((current) => current),
+    prepareDestroy: vi.fn((current) => current),
+    destroy: vi.fn((current) => ({
+      status: "removed" as const,
+      receipt: current,
+    })),
+  };
+  const providerOperation = operation(providerRuntime);
+  const bundle = createInMemoryRuntimeProviderBundle({
+    providerId: "mxc",
+    workloadProfile: {
+      support: null,
+      hostArchitectures: ["x64"],
+      managedImageSelectionPolicy: "prefer-managed",
+      legacyDockerfileBuilds: false,
+    },
+    hostLocalInference: {
+      services: ["llama-cpp"],
+      createOperation: () => providerOperation,
+    },
+  });
+  const prepareStartup = vi.fn(() => {
+    events.push("provider-ready-proof");
+    return prepared(value, events);
+  });
+  const gatewayCommit = vi.fn(() => {
+    events.push("gateway-commit");
+  });
+  const gatewayRollback = vi.fn(() => {
+    events.push("gateway-rollback");
+  });
+  const prepareGatewayMutation = vi.fn(() => {
+    events.push("gateway-snapshot");
+    return { commit: gatewayCommit, rollback: gatewayRollback };
+  });
+  const selection: HostLocalInferenceStartupSelection = {
+    runtimeProviderId: "mxc",
+    request: {
+      application,
+      service: "llama-cpp",
+      adapter: {
+        gatewayPort: 8080,
+        runtimeOwnerSandboxName: SANDBOX,
+        model: MODEL,
+        operation: providerOperation,
+        receipt: value,
+        runtime: providerRuntime,
+        prepareStartup,
+      },
+      requireToolCalling: true,
+      publishedRoute: false,
+    },
+    resolveRuntimeProvider: (sandboxName) => (sandboxName === SANDBOX ? bundle : null),
+    prepareGatewayMutation,
+  };
+  return {
+    events,
+    gatewayCommit,
+    gatewayRollback,
+    prepareGatewayMutation,
+    prepareStartup,
+    selection,
+    value,
+  };
+}
+
 describe("onboard host-local inference routing", () => {
+  it("explicitly clears stale host-local ownership for a remote route", async () => {
+    const harness = createHarness({
+      overrides: {
+        isRoutedInferenceProvider: () => true,
+        reconcileModelRouter: vi.fn(async () => undefined),
+        routedInference: {
+          upsertRoutedProvider: vi.fn(() => ({
+            ok: true,
+            endpointUrl: "https://api.example.test/v1",
+            result: { message: "configured" },
+          })),
+        },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "sandbox-a",
+        "remote-model",
+        "nvidia-router",
+        "https://api.example.test/v1",
+        "REMOTE_API_KEY",
+        null,
+        [],
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(harness.updateSandbox).toHaveBeenCalledWith(
+      "sandbox-a",
+      expect.objectContaining({
+        provider: "nvidia-router",
+        model: "remote-model",
+        hostLocalInferenceReceipt: null,
+      }),
+    );
+  });
+
   it.each(APPLICATIONS)(
     "routes %s through inference.local without legacy host probes",
     async (application) => {
@@ -347,10 +473,15 @@ describe("onboard host-local inference routing", () => {
       const smoke = vi.fn(() => {
         route.events.push("gateway-smoke");
       });
-      const reserve = vi.fn(() => {
+      const reserve = vi.fn(
+        (
+          _sandboxName: string,
+          _reservation: Parameters<SetupInferenceDeps["updateSandbox"]>[1],
+        ) => {
         route.events.push("sandbox-reserve");
         return true;
-      });
+        },
+      );
       const harness = createHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
@@ -373,6 +504,27 @@ describe("onboard host-local inference routing", () => {
           hostLocalInference: route.selection,
         }),
       ).resolves.toEqual({ ok: true });
+
+      const reservation = (
+        reserve.mock.calls.at(-1) as unknown as
+          | [
+              string,
+              {
+                hostLocalInferenceReceipt?: string;
+                hostLocalInferenceProvenance?: unknown;
+              },
+            ]
+          | undefined
+      )?.[1];
+      expect(reservation?.hostLocalInferenceReceipt).toEqual(expect.any(String));
+      expect(reservation?.hostLocalInferenceProvenance).toBeUndefined();
+      expect(
+        parseHostLocalInferenceReceipt(reservation?.hostLocalInferenceReceipt ?? ""),
+      ).toMatchObject({
+        providerId: "mxc",
+        service: "ollama",
+        endpoint: { port: 11434, networkName: "mxc-runtime-network" },
+      });
 
       expect(route.prepareGatewayMutation).toHaveBeenCalledWith({
         gatewayName: "nemoclaw",
@@ -422,6 +574,76 @@ describe("onboard host-local inference routing", () => {
       expect(legacyWarmup).not.toHaveBeenCalled();
       expect(legacyOllamaProof).not.toHaveBeenCalled();
       expect(route.gatewayRollback).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(APPLICATIONS)(
+    "registers explicitly selected llama.cpp for %s with exact private provenance",
+    async (application) => {
+      const route = llamaFixture(application);
+      const legacyRun = vi.fn();
+      const legacyValidate = vi.fn();
+      const reserve = vi.fn(
+        (
+          _sandboxName: string,
+          _reservation: Parameters<SetupInferenceDeps["updateSandbox"]>[1],
+        ) => {
+          route.events.push("sandbox-reserve");
+          return true;
+        },
+      );
+      const harness = createHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+        overrides: {
+          applyLocalInferenceRoute: undefined,
+          run: legacyRun,
+          validateLocalProvider: legacyValidate,
+          hydrateCredentialEnv: vi.fn(() => "test-llama-secret"),
+          updateSandbox: reserve,
+        },
+      });
+
+      const result = await harness.setupInference(
+        SANDBOX,
+        MODEL,
+        "llama-cpp-local",
+        null,
+        "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        null,
+        [],
+        {
+          gatewayName: "nemoclaw",
+          hostLocalInference: route.selection,
+        },
+      );
+      expect(harness.errors).toEqual([]);
+      expect(result).toEqual({ ok: true });
+
+      const reservation = reserve.mock.calls.at(-1)?.[1];
+      expect(reservation).toMatchObject({
+        provider: "llama-cpp-local",
+        model: MODEL,
+        endpointUrl: "https://inference.local/v1",
+        endpointSource: "inference-set",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        openshellDriver: "mxc",
+        hostLocalInferenceProvenance: {
+          runtimeOwnerSandboxName: SANDBOX,
+          transactionId:
+            route.value.runtime.kind === "container"
+              ? route.value.runtime.model?.generation
+              : undefined,
+          receiptSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      });
+      expect(reservation?.hostLocalInferenceReceipt).toEqual(expect.any(String));
+      expect(route.prepareStartup).toHaveBeenCalledOnce();
+      expect(route.gatewayCommit).toHaveBeenCalledOnce();
+      expect(route.gatewayRollback).not.toHaveBeenCalled();
+      expect(legacyRun).not.toHaveBeenCalled();
+      expect(legacyValidate).not.toHaveBeenCalled();
     },
   );
 

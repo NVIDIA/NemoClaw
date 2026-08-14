@@ -21,6 +21,12 @@ const LLAMA_CPP_IMAGE =
   "ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711";
 const LLAMA_CPP_MODEL_DIGEST =
   "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890";
+const MUSE_LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
+const MUSE_LLAMA_CPP_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
+const MUSE_LLAMA_CPP_IMAGE =
+  "ghcr.io/ggml-org/llama.cpp@sha256:6b0bf4974521b2c16a498c7dd0715f4eb077725f1483e0ee0f617679005b1e1f";
+const MUSE_LLAMA_CPP_MODEL_DIGEST =
+  "sha256:4cc57c0f51040a226e5a72cc47b7613f7772950e460a665f7083de89f183f60e";
 const LIGHTNING_PROFILE_ID = "vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4";
 const LIGHTNING_RECIPE_ID = "vllm.nemotron-3.5-lightning-30b-a3b-nvfp4.spark-single.v1";
 const MUSE_PROFILE_ID = "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4";
@@ -92,13 +98,13 @@ describe("managed inference YAML profile contract", () => {
     expect(catalog.presets.some(({ metadata }) => metadata.id === syntheticPresetId)).toBe(true);
   });
 
-  it("compiles the explicit DGX Spark llama.cpp profile from YAML (#8173)", () => {
+  it("compiles the automatic DGX Spark llama.cpp profile from YAML", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(({ metadata }) => metadata.id === LLAMA_CPP_PROFILE_ID);
     const recipe = catalog.recipes.find(({ metadata }) => metadata.id === LLAMA_CPP_RECIPE_ID);
 
     expect(preset?.spec).toMatchObject({
-      selection: "explicit-only",
+      selection: "automatic",
       plan: { backend: "install-llama-cpp", recipeRef: LLAMA_CPP_RECIPE_ID },
     });
     expect(preset?.spec.requirements?.all).toContainEqual({
@@ -141,6 +147,61 @@ describe("managed inference YAML profile contract", () => {
         kvCache: { key: "f16", value: "f16" },
         speculativeDecoding: "disabled",
       },
+    });
+  });
+
+  it("compiles Muse Glimmer as the highest-priority Experimental DGX Spark llama.cpp profile", () => {
+    const catalog = compile(catalogSources());
+    const preset = catalog.presets.find(
+      ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_PROFILE_ID,
+    );
+    const recipe = catalog.recipes.find(
+      ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_RECIPE_ID,
+    );
+
+    expect(preset?.metadata.supportState).toBe("experimental");
+    expect(preset?.spec).toMatchObject({
+      selection: "automatic",
+      priority: 500,
+      plan: { backend: "install-llama-cpp", recipeRef: MUSE_LLAMA_CPP_RECIPE_ID },
+    });
+    expect(recipe?.spec).toMatchObject({
+      backend: "install-llama-cpp",
+      providerId: "llama-cpp-local",
+      server: {
+        technology: "llama.cpp",
+        source: { revision: "8e7f22b67ef4667b4ddd50230771287f328cfb3f" },
+      },
+      model: {
+        id: "meta-models/Muse-Glimmer-30B-GGUF",
+        revision: "43c7eadd41352a299ea8e0a36b3157978dd63596",
+        servedName: "muse-glimmer",
+        files: [
+          {
+            path: "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf",
+            digest: MUSE_LLAMA_CPP_MODEL_DIGEST,
+            sizeBytes: 16756683904,
+          },
+        ],
+      },
+      runtime: {
+        image: MUSE_LLAMA_CPP_IMAGE,
+        imageDownloadSizeBytes: 2523824482,
+        platforms: ["linux/amd64", "linux/arm64"],
+        cuda: {
+          baseImage:
+            "docker.io/nvidia/cuda@sha256:ebef3c171eeef0298e4eb2e4be843105edf3b8b0ac45e0b43acee358e8046867",
+        },
+      },
+      serve: {
+        chatTemplate: "model-embedded-jinja",
+        chatTemplateArguments: { reasoningStrength: "low" },
+        contextSize: 131072,
+        slots: 1,
+        speculativeDecoding: "disabled",
+      },
+      surfaces: { multimodalProjection: "disabled" },
+      capabilities: { toolCalls: true, multimodal: false },
     });
   });
 
@@ -239,7 +300,7 @@ describe("managed inference YAML profile contract", () => {
     expect(warning).not.toContain("qualified for broader support");
   });
 
-  it("keeps vLLM automatic while llama.cpp remains explicit-only (#8173)", () => {
+  it("keeps vLLM and llama.cpp profiles eligible for automatic selection", () => {
     const catalog = compile(catalogSources());
     const vllmPreset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);
     const llamaCppPreset = catalog.presets.find(
@@ -247,7 +308,7 @@ describe("managed inference YAML profile contract", () => {
     );
 
     expect(vllmPreset?.spec.selection).toBe("automatic");
-    expect(llamaCppPreset?.spec.selection).toBe("explicit-only");
+    expect(llamaCppPreset?.spec.selection).toBe("automatic");
   });
 
   it("does not enable arbitrary remote model code in shipped managed recipes (#8129)", () => {

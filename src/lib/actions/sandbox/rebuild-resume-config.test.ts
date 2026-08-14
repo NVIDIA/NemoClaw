@@ -113,10 +113,7 @@ describe("getRebuildEndpointFromRegistry", () => {
 
   it("uses canonical durable custom endpoint metadata from the sandbox registry", () => {
     expect(
-      getRebuildEndpointFromRegistry(
-        "compatible-endpoint",
-        " http://127.0.0.1:19999/v1/?x=1#frag ",
-      ),
+      getRebuildEndpointFromRegistry("compatible-endpoint", " http://127.0.0.1:19999/v1/ "),
     ).toEqual({
       known: true,
       endpointUrl: "http://127.0.0.1:19999/v1",
@@ -132,6 +129,21 @@ describe("getRebuildEndpointFromRegistry", () => {
     });
     expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://u:p@example.test/v1"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1?x=1"),
+    ).toEqual({ known: false });
+    expect(getRebuildEndpointFromRegistry("compatible-endpoint", "http://@example.test/v1")).toEqual(
+      { known: false },
+    );
+    expect(
+      getRebuildEndpointFromRegistry(
+        "compatible-endpoint",
+        "https:user:password@example.test/v1",
+      ),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1#frag"),
     ).toEqual({ known: false });
   });
 });
@@ -236,7 +248,7 @@ describe("prepareRebuildResumeConfig", () => {
       sandboxName: "alpha",
       provider: "compatible-endpoint",
       model: "m",
-      endpointUrl: " http://127.0.0.1:19999/v1/?x=1#frag ",
+      endpointUrl: " http://127.0.0.1:19999/v1/ ",
     });
     const config = prepareRebuildResumeConfig(
       "alpha",
@@ -265,7 +277,7 @@ describe("prepareRebuildResumeConfig", () => {
       entry({
         provider: "compatible-endpoint",
         model: "m",
-        endpointUrl: "https://registry.example.test/v1?x=1#frag",
+        endpointUrl: "https://registry.example.test/v1",
         preferredInferenceApi: "openai-completions",
       }),
       null,
@@ -293,7 +305,7 @@ describe("prepareRebuildResumeConfig", () => {
       sandboxName: "alpha",
       provider: "compatible-endpoint",
       model: "m",
-      endpointUrl: "https://session.example.test/v1?x=1#frag",
+      endpointUrl: "https://session.example.test/v1",
     });
     const restore = snapshotEnv([
       "NEMOCLAW_SANDBOX_NAME",
@@ -406,7 +418,7 @@ describe("prepareRebuildResumeConfig", () => {
     try {
       process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
       process.env.NEMOCLAW_PROVIDER = "custom";
-      process.env.NEMOCLAW_ENDPOINT_URL = " http://127.0.0.1:19999/v1/?x=1#frag ";
+      process.env.NEMOCLAW_ENDPOINT_URL = " http://127.0.0.1:19999/v1/ ";
       process.env.NEMOCLAW_MODEL = "m";
       const config = prepareRebuildResumeConfig(
         "alpha",
@@ -438,7 +450,7 @@ describe("prepareRebuildResumeConfig", () => {
     try {
       process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
       process.env.NEMOCLAW_PROVIDER = "anthropicCompatible";
-      process.env.NEMOCLAW_ENDPOINT_URL = "https://anthropic.example.test/v1?x=1#frag";
+      process.env.NEMOCLAW_ENDPOINT_URL = "https://anthropic.example.test/v1";
       process.env.NEMOCLAW_MODEL = "claude-like";
       const config = prepareRebuildResumeConfig(
         "alpha",
@@ -458,6 +470,33 @@ describe("prepareRebuildResumeConfig", () => {
     }
   });
 
+  it("rejects component-bearing explicit endpoints for the anthropicCompatible alias (#9106)", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    const restore = snapshotEnv([
+      "NEMOCLAW_SANDBOX_NAME",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+    ]);
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+      process.env.NEMOCLAW_PROVIDER = "anthropicCompatible";
+      process.env.NEMOCLAW_ENDPOINT_URL = "https://u:p@anthropic.example.test/v1?x=1#frag";
+      process.env.NEMOCLAW_MODEL = "claude-like";
+      expect(() =>
+        prepareRebuildResumeConfig(
+          "alpha",
+          entry({ provider: "compatible-anthropic-endpoint", model: "claude-like" }),
+          null,
+          noopLog,
+          throwingBail,
+        ),
+      ).toThrow("Cannot determine recreate endpoint");
+    } finally {
+      restore();
+    }
+  });
+
   it("rejects explicit target endpoints that do not exactly match the target boundary", () => {
     const cases = [
       { name: "wrong sandbox", sandboxName: "beta" },
@@ -467,6 +506,8 @@ describe("prepareRebuildResumeConfig", () => {
       { name: "wrong model", model: "other-model" },
       { name: "unsupported url", endpointUrl: "file:///tmp/x" },
       { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },
+      { name: "query url", endpointUrl: "https://example.test/v1?x=1" },
+      { name: "fragment url", endpointUrl: "https://example.test/v1#frag" },
     ];
     for (const testCase of cases) {
       vi.restoreAllMocks();
@@ -663,7 +704,7 @@ describe("prepareRebuildResumeConfig", () => {
       entry({
         provider: "compatible-endpoint",
         model: "m",
-        endpointUrl: " https://example.test/v1?x=1#frag ",
+        endpointUrl: " https://example.test/v1/ ",
         credentialEnv: "COMPATIBLE_API_KEY",
       }),
       null,

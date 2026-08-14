@@ -24,6 +24,7 @@ import {
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 const detectMessagingChannelsFromEnvMock = vi.mocked(detectMessagingChannelsFromEnv);
