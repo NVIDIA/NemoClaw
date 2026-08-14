@@ -419,8 +419,8 @@ Use these details when your first-run path needs more control.
     When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and includes the port in the URL.
     For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and the image build.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
-    If OpenShell reports `sandbox is not ready`, NemoClaw waits 5 seconds and retries the dashboard forward up to three times.
-    These retries preserve the existing sandbox and selected port.
+    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the dashboard forward up to 12 times.
+    The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected port.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The installation transcript does not print the gateway token.

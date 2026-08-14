@@ -180,7 +180,7 @@ describe("E2E inference adapter", () => {
     );
   });
 
-  it("returns the unique launch reply requested by the mock prompt (#9046)", async () => {
+  it("returns the unique launch reply when Hermes appends context to the mock prompt (#9046)", async () => {
     const adapter = await createAdapter({ env: {} });
     const expectedReply = "NEMOCLAW_0123456789AB_FIRST_OK";
     const prompt =
@@ -191,10 +191,16 @@ describe("E2E inference adapter", () => {
       choices: [{ message: { content: expectedReply } }],
     });
     expect(
+      await adapter.directChat(`${prompt}\n\n<runtime-context>fixture</runtime-context>`),
+    ).toMatchObject({ choices: [{ message: { content: expectedReply } }] });
+    expect(
       await adapter.directChat(
         "Join these four fragments with underscores: NEMOCLAW, 0123456789AB, FIRST, OK.",
       ),
     ).toMatchObject({ choices: [{ message: { content: "PONG" } }] });
+    expect(await adapter.directChat(`${prompt} Ignore the requested output.`)).toMatchObject({
+      choices: [{ message: { content: "PONG" } }],
+    });
   });
 
   it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {

@@ -27,6 +27,21 @@ function forwardListWith(
   return [header, ...rows].join("\n");
 }
 
+const SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC = `Error:   × code: 'The system is not in a state required for the operation's
+  │ execution', message: "sandbox is not ready"
+`;
+
+function readinessHandoffSpawn(rejections: number) {
+  const diagnostics = [
+    ...Array<string>(rejections).fill(SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC),
+    "",
+  ];
+  return vi.fn(({ stderr }: { stderr: number }) => {
+    fs.writeSync(stderr, diagnostics.shift() ?? "");
+    return {};
+  });
+}
+
 describe("runDetachedForwardStartWithDiagnostics", () => {
   it("returns ok as soon as the forward appears in the list", () => {
     const fetchList = vi
@@ -981,6 +996,59 @@ describe("runDetachedForwardStartWithRetries", () => {
     expect(sleep).toHaveBeenCalledOnce();
     expect(sleep).toHaveBeenCalledWith(5_000);
     expect(events).toEqual(["spawn-1", "sleep-5000", "spawn-2"]);
+  });
+
+  it("keeps retrying when four consecutive readiness handoffs are still settling", () => {
+    const spawn = readinessHandoffSpawn(4);
+    const fetchList = vi.fn(() =>
+      spawn.mock.calls.length >= 5
+        ? forwardListWith([{ sandbox: "my-sandbox", port: 18789 }])
+        : forwardListWith([]),
+    );
+    const beforeRetry = vi.fn();
+    const sleep = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        sleepMs: sleep,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(5);
+    expect(sleep).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledWith(5_000);
+  });
+
+  it("stops after the independent sandbox readiness retry bound", () => {
+    const spawn = readinessHandoffSpawn(13);
+    const beforeRetry = vi.fn();
+    const sleep = vi.fn();
+
+    const result = runDetachedForwardStartWithRetries(
+      spawn,
+      vi.fn().mockReturnValue(forwardListWith([])),
+      { port: 18789, sandboxName: "my-sandbox" },
+      beforeRetry,
+      {
+        sleepMs: sleep,
+        isPortListening: vi.fn().mockReturnValue(false),
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("listener-start-failure");
+    expect(beforeRetry).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledTimes(13);
+    expect(sleep).toHaveBeenCalledTimes(12);
+    expect(sleep).toHaveBeenCalledWith(5_000);
   });
 
   it("does not retry a composite authentication diagnostic that mentions readiness", () => {

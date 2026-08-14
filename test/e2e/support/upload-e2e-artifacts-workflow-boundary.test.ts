@@ -76,19 +76,19 @@ function validateActionMutation(mutate: (action: MutableAction) => void): string
   });
 }
 
-describe("upload-e2e-artifacts workflow boundary", () => {
-  it("binds one canonical uploader to every E2E execution job", () => {
+describe("E2E artifact uploads", () => {
+  it("uses the shared uploader in every E2E execution job", () => {
     expect(validateUploadE2eArtifactsAction()).toEqual([]);
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);
   });
 
-  it("rejects semantic-neutral action byte drift from the immutable provenance", () => {
+  it("rejects any change to the upload action pinned by the workflow", () => {
     expect(validateActionSourceMutation((source) => `${source}# unreviewed drift\n`)).toEqual([
       "upload-e2e-artifacts content must match the action reviewed at its immutable commit pin",
     ]);
   });
 
-  it("rejects action upload-policy and inner always drift", () => {
+  it("retains E2E artifacts for 14 days", () => {
     const policyErrors = validateActionMutation((action) => {
       action.runs.steps[0].with!["retention-days"] = 7;
     });
@@ -96,13 +96,16 @@ describe("upload-e2e-artifacts workflow boundary", () => {
       "upload-e2e-artifacts must preserve artifact defaults, hidden-file policy, missing-file behavior, and retention",
     );
 
-    const alwaysErrors = validateActionMutation((action) => {
-      action.runs.steps[0].if = "${{ success() }}";
-    });
-    expect(alwaysErrors).toContain("upload-e2e-artifacts inner step must run with always()");
   });
 
-  it("rejects checkout-local, direct, and unreviewed remote upload actions", () => {
+  it("uploads artifacts even when an earlier step fails", () => {
+    const errors = validateActionMutation((action) => {
+      action.runs.steps[0].if = "${{ success() }}";
+    });
+    expect(errors).toContain("upload-e2e-artifacts inner step must run with always()");
+  });
+
+  it("uses the pinned shared action for ordinary E2E result uploads", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs["messaging-providers"]).uses = LOCAL_UPLOAD_ACTION;
     uploadStep(workflow.jobs["openclaw-plugin-runtime-exdev"]).uses = DIRECT_UPLOAD_ACTION;
@@ -121,7 +124,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects reusing the protected build-cache upload exception for another step", () => {
+  it("allows the named protected build-cache step to upload directly", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
     const cacheUpload = job.steps?.find(
@@ -135,7 +138,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects release qualification waiver upload drift", () => {
+  it("retains release waiver evidence for 30 days", () => {
     const workflow = mutableWorkflow();
     const upload = workflow.jobs["release-qualification"].steps?.find(
       (step) => step.name === "Upload release qualification waiver evidence",
@@ -151,7 +154,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
   it.each([
     ["name", "another-cache-artifact"],
     ["path", "another-cache-path/"],
-  ])("rejects protected build-cache upload %s drift", (input, value) => {
+  ])("uses the required protected build-cache upload %s", (input, value) => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
     const cacheUpload = job.steps?.find(
@@ -168,7 +171,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects duplicate exact protected build-cache upload steps", () => {
+  it("allows only one protected build-cache upload step", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
     const cacheUpload = job.steps?.find(
@@ -199,7 +202,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects scorecard push runtime summary drift", () => {
+  it("uploads the scorecard summary from its configured path", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs.scorecard).with!.path = "runtime-summary.json";
 
@@ -208,7 +211,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects default, explicit-exception, caller-key, and caller-if drift", () => {
+  it("requires each caller to use its configured inputs and condition", () => {
     const workflow = mutableWorkflow();
     const defaultJob = workflow.jobs["messaging-providers"];
     uploadStep(defaultJob).with = { name: "e2e-messaging-providers" };

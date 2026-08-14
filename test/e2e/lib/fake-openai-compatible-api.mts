@@ -163,7 +163,7 @@ function requestedLaunchReply(payload: JsonObject): string | null {
   if (!launchReplyFromPrompt) return null;
   const prompt = latestUserPrompt(payload);
   const match = prompt?.match(
-    /^Join these four fragments with underscores and put only the result on its own line: NEMOCLAW, ([0-9A-F]{12}), (FIRST|SECOND), OK\. Do not use tools\.$/u,
+    /^Join these four fragments with underscores and put only the result on its own line: NEMOCLAW, ([0-9A-F]{12}), (FIRST|SECOND), OK\. Do not use tools\.(?:\n\n[\s\S]+)?$/u,
   );
   return match ? `NEMOCLAW_${match[1]}_${match[2]}_OK` : null;
 }
