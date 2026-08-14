@@ -133,16 +133,8 @@ const {
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
-const {
-  createSetupMessagingChannels,
-  detectUnconfiguredMessagingChannels,
-  readMessagingPlanFromEnv,
-  writePlanToEnv,
-  clearPlanEnv,
-  getRegistrySandboxMessagingAuthority,
-  MessagingHostStateApplier,
-} =
-  require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const messagingChannelSetup: typeof import("./onboard/messaging-channel-setup") =
+  require("./onboard/messaging-channel-setup");
 const { applySessionRecovery } =
   require("./onboard/session-recovery") as typeof import("./onboard/session-recovery");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") = require("./onboard/bedrock-runtime");
@@ -2152,7 +2144,7 @@ async function createSandboxWithBaseImageResolution(
   }
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
-  const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const envMessagingState = messagingChannelSetup.MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({ computePlan, managedWorkloadRebuild, tempManagedRuntime, tempManagedRuntimeCatalog, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null), rootDir: ROOT, model, provider, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null, startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env }, note, fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost()) }, { resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig });
@@ -3406,7 +3398,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
   import("./resources-cmd").ResourceProfile
 >({
   channels: MESSAGING_CHANNELS,
-  messagingPreflightDeps: { readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerExistsInGateway, providerMatchesGatewayCredential, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
+  messagingPreflightDeps: { readMessagingPlanFromEnv: messagingChannelSetup.readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerExistsInGateway, providerMatchesGatewayCredential, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
@@ -3441,7 +3433,7 @@ function getRecordedMessagingChannelsForResume(
   });
 }
 
-const setupMessagingChannels = createSetupMessagingChannels({
+const setupMessagingChannels = messagingChannelSetup.createSetupMessagingChannels({
   step,
   note,
   isNonInteractive,
@@ -4087,17 +4079,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
           showMessagingStage: () => step(5, 8, "Messaging channels"),
-          setupMessagingChannels: createSetupMessagingChannels({
+          setupMessagingChannels: messagingChannelSetup.createSetupMessagingChannels({
             step,
             note,
             isNonInteractive,
             prompt,
             googlechatTunnelRuntime: opts.googlechatTunnelRuntime,
           }),
-          readMessagingPlanFromEnv,
-          writePlanToEnv,
-          clearPlanEnv,
-          getRegistrySandboxMessagingAuthority,
+          readMessagingPlanFromEnv: messagingChannelSetup.readMessagingPlanFromEnv,
+          writePlanToEnv: messagingChannelSetup.writePlanToEnv,
+          clearPlanEnv: messagingChannelSetup.clearPlanEnv,
+          getRegistrySandboxMessagingAuthority:
+            messagingChannelSetup.getRegistrySandboxMessagingAuthority,
           providerMatchesGatewayCredential,
           stageSandboxCredentialProviders,
           promptValidatedSandboxName,
@@ -4185,12 +4178,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
-        detectUnconfiguredMessagingChannels: (planChannels, selectedChannels, selectedAgent) =>
-          detectUnconfiguredMessagingChannels(
-            planChannels,
-            selectedChannels,
-            selectedAgent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
-          ),
+        detectUnconfiguredMessagingChannels:
+          messagingChannelSetup.detectUnconfiguredMessagingChannels,
         verifyCompatibleEndpointSandboxSmoke: (options) =>
           verifyCompatibleEndpointSandboxSmoke({
             ...options,
