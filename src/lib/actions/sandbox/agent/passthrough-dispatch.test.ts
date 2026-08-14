@@ -176,6 +176,14 @@ describe("requestedAgentTimeoutSeconds", () => {
     expect(requestedAgentTimeoutSeconds(agent("--timeout=45", "-m", "hi"))).toBe(45);
   });
 
+  it("reads a timeout after documented boolean and equals-form options (#8723)", () => {
+    expect(
+      requestedAgentTimeoutSeconds(
+        agent("--deliver", "--agent=main", "--json=false", "--timeout", "30"),
+      ),
+    ).toBe(30);
+  });
+
   it("requests no deadline when the argv carries no --timeout (#8723)", () => {
     expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "-m", "hi"))).toBeNull();
   });
@@ -190,6 +198,12 @@ describe("requestedAgentTimeoutSeconds", () => {
 
   it("ignores anything past the -- terminator (#8723)", () => {
     expect(requestedAgentTimeoutSeconds(agent("--", "--timeout", "30"))).toBeNull();
+  });
+
+  it("keeps the host unbounded after an unknown option (#8723)", () => {
+    const argv = agent("--unknown", "--timeout", "30");
+    expect(requestedAgentTimeoutSeconds(argv)).toBeNull();
+    expect(agentDispatchDeadlineSeconds(argv)).toBeUndefined();
   });
 
   it("refuses a value that cannot be a deadline (#8723)", () => {

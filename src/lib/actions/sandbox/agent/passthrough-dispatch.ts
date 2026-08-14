@@ -331,7 +331,8 @@ export const AGENT_DISPATCH_DEADLINE_BUFFER_SECONDS = 30;
  * for the same reason.
  */
 export function requestedAgentTimeoutSeconds(argv: readonly string[]): number | null {
-  for (let index = 0; index < argv.length; index += 1) {
+  if (argv[0] !== "openclaw" || argv[1] !== "agent") return null;
+  for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index] as string;
     if (arg === "--") return null;
     if (arg === "--timeout") return parseDeadlineSeconds(argv[index + 1]);
@@ -340,6 +341,22 @@ export function requestedAgentTimeoutSeconds(argv: readonly string[]): number | 
       index += 1;
       continue;
     }
+    const equalsIndex = arg.indexOf("=");
+    if (
+      equalsIndex > 0 &&
+      arg.startsWith("--") &&
+      OPENCLAW_AGENT_VALUE_FLAGS.has(arg.slice(0, equalsIndex))
+    ) {
+      continue;
+    }
+    if (
+      arg === "--json" ||
+      arg.startsWith("--json=") ||
+      OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)
+    ) {
+      continue;
+    }
+    return null;
   }
   return null;
 }

@@ -1073,14 +1073,17 @@ function validateFreeStandingJobSelector(
   _explicitOnly = false,
 ): void {
   const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
+  const expectedNeeds =
+    jobName === "mcp-bridge-dev"
+      ? ["generate-matrix", "openshell-dev-artifact"]
+      : "generate-matrix";
+  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
   if (job.if !== selectedJobsCondition(jobName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
-
 
 function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): void {
   for (const jobName of ["gpu-double-onboard", "gpu-e2e", "llama-cpp-generic-gpu"]) {
@@ -1293,8 +1296,6 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
-
-
 function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
   if (!runScript) return;
   const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
@@ -1430,15 +1431,17 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = workflowSteps.findIndex((step) => {
+    const checkoutIndexes = workflowSteps.flatMap((step, index) => {
       if (jobName === "managed-image-protected-runtime") {
-        return step.name === "Checkout exact protected runtime candidate source";
+        return step.name === "Checkout exact protected runtime candidate source" ? [index] : [];
       }
       if (jobName === "llama-cpp-dgx-spark-qualification") {
-        return step.name === "Checkout exact llama.cpp qualification candidate";
+        return step.name === "Checkout exact llama.cpp qualification candidate" ? [index] : [];
       }
-      return stringValue(step.uses).startsWith("actions/checkout@");
+      return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
+    const checkoutIndex =
+      jobName === "mcp-bridge-dev" ? (checkoutIndexes.at(-1) ?? -1) : (checkoutIndexes[0] ?? -1);
     const protectedCacheDownloadIndex =
       jobName === "managed-image-protected-runtime"
         ? workflowSteps.findIndex(
