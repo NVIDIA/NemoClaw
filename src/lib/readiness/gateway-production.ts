@@ -528,7 +528,7 @@ export function classifyManagedGatewayVersionSource(
 }
 
 export interface GatewayPortOwners {
-  pids: number[];
+  stopPids: number[];
   text: string | null;
 }
 
@@ -536,29 +536,39 @@ export function describeGatewayPortOwners(
   listenerScan: { pids: readonly number[]; unverifiedPids: readonly number[] },
   describeProcess: (pid: number) => string | null,
 ): GatewayPortOwners {
-  const pids =
-    listenerScan.unverifiedPids.length > 0
-      ? [...listenerScan.unverifiedPids]
-      : [...listenerScan.pids];
-  if (pids.length === 0) return { pids, text: null };
-  const text = pids
+  const allPids = [...new Set([...listenerScan.pids, ...listenerScan.unverifiedPids])];
+  const stopPids = [...listenerScan.unverifiedPids];
+  if (allPids.length === 0) return { stopPids, text: null };
+  const text = allPids
     .map((pid) => {
       const name = describeProcess(pid);
       return name ? `${name} (PID ${pid})` : `PID ${pid}`;
     })
     .join(", ");
-  return { pids, text };
+  return { stopPids, text };
 }
 
-function gatewayPortConflictRemediation(gatewayPort: number, ownerPids: readonly number[]): string {
-  if (ownerPids.length === 0) {
+function gatewayPortConflictRemediation(
+  gatewayPort: number,
+  stopPids: readonly number[],
+  hasResolvedOwner: boolean,
+  state: GatewayPortConflictState,
+): string {
+  if (state === "unknown" || !hasResolvedOwner) {
     return `Identify its listener before retrying: sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`;
   }
-  const subject = ownerPids.length === 1 ? "that process is" : "those processes are";
-  const object = ownerPids.length === 1 ? "it" : "them";
+  if (stopPids.length === 0) {
+    return (
+      "Confirm which managed gateway environment owns the verified listener, then release that " +
+      `environment with \`NEMOCLAW_GATEWAY_PORT=${gatewayPort} nemoclaw uninstall\` before retrying.`
+    );
+  }
+  const subject =
+    stopPids.length === 1 ? `PID ${stopPids[0]} is` : `PIDs ${stopPids.join(", ")} are`;
+  const object = stopPids.length === 1 ? "it" : "them";
   return (
     `Confirm ${subject} not another NemoClaw gateway, then stop only ${object} before retrying: ` +
-    `sudo kill ${ownerPids.join(" ")}`
+    `sudo kill ${stopPids.join(" ")}`
   );
 }
 
@@ -566,7 +576,7 @@ export function gatewayPortConflictDetail(
   gatewayPort: number,
   portCheck: Awaited<ReturnType<typeof checkPortAvailable>>,
   state: GatewayPortConflictState,
-  owners: GatewayPortOwners = { pids: [], text: null },
+  owners: GatewayPortOwners = { stopPids: [], text: null },
 ): string | undefined {
   if (state === "none") return undefined;
   const probedOwner =
@@ -582,7 +592,9 @@ export function gatewayPortConflictDetail(
         : `is occupied by ${owner}`;
   const remediation = gatewayPortConflictRemediation(
     gatewayPort,
-    state === "unknown" ? [] : owners.pids,
+    owners.stopPids,
+    owners.text !== null,
+    state,
   );
   return `Gateway port ${gatewayPort} ${condition}. ${remediation}`;
 }
@@ -830,7 +842,7 @@ export function createProductionGatewayReadinessDependencies(
     );
     const portConflictOwners =
       portConflictState === "none"
-        ? { pids: [], text: null }
+        ? { stopPids: [], text: null }
         : describeGatewayPortOwners(listenerScan, (pid) => readProcessName(pid, probeEnv));
     return {
       reuseState,
