@@ -149,7 +149,7 @@ describe("onboard helpers", () => {
         commands.at(-1)?.command || "",
         /inference set -g nemoclaw --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
       );
-      expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", endpointSource: "onboard", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw" });
+      expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", endpointSource: "onboard", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw", hostLocalInferenceReceipt: null });
     });
   });
   it("resolves a sandbox name before reconciling Hermes Provider on resume", {
@@ -165,6 +165,9 @@ describe("onboard helpers", () => {
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sessionPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+    );
+    const checkpointPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
     );
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
@@ -199,6 +202,7 @@ describe("onboard helpers", () => {
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const onboardSession = require(${sessionPath});
+const { deriveCheckpointFromSession } = require(${checkpointPath});
 const credentials = require(${credentialsPath});
 const nim = require(${nimPath});
 const gatewayState = require(${gatewayStatePath});
@@ -327,26 +331,26 @@ const complete = () => ({
   completedAt: new Date().toISOString(),
   error: null,
 });
-onboardSession.saveSession(
-  onboardSession.createSession({
-    mode: "interactive",
-    agent: "hermes",
-    sandboxName: null,
-    provider: "hermes-provider",
-    model: "moonshotai/kimi-k2.6",
-    endpointUrl: "https://8.8.8.8/v1",
-    credentialEnv: "NOUS_API_KEY",
-    hermesAuthMethod: "api_key",
-    hermesToolGateways: [],
-    policyPresets: ["nous-web"],
-    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-    steps: {
-      preflight: complete(),
-      gateway: complete(),
-      provider_selection: complete(),
-    },
-  }),
-);
+const resumeSession = onboardSession.createSession({
+  mode: "interactive",
+  agent: "hermes",
+  sandboxName: null,
+  provider: "hermes-provider",
+  model: "moonshotai/kimi-k2.6",
+  endpointUrl: "https://8.8.8.8/v1",
+  credentialEnv: "NOUS_API_KEY",
+  hermesAuthMethod: "api_key",
+  hermesToolGateways: [],
+  policyPresets: ["nous-web"],
+  metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+  steps: {
+    preflight: complete(),
+    gateway: complete(),
+    provider_selection: complete(),
+  },
+});
+resumeSession.checkpoint = deriveCheckpointFromSession(resumeSession, { profile: "default" });
+onboardSession.saveSession(resumeSession);
 
 const originalMarkStepComplete = onboardSession.markStepComplete;
 onboardSession.markStepComplete = (stepName, updates = {}) => {

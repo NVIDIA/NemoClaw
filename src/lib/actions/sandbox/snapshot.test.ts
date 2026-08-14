@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
+import { createSandboxHostLocalInferenceProvenance } from "../../state/registry/host-local-inference";
 import {
   type DcodeProbeState,
   dcodeProbeOutput,
@@ -742,6 +744,101 @@ describe("runSandboxSnapshot", () => {
       }),
     );
     expect(f.applyPresetMock).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    },
+  );
+
+  it("reserves an explicit llama.cpp clone with the original owner and exact gateway authority", async () => {
+    const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
+    const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+      "alpha",
+      hostLocalInferenceReceipt,
+    );
+    let registeredClone: f.SandboxRecord | null = null;
+    f.registerSandboxMock.mockImplementation(
+      (entry) => (registeredClone = entry as f.SandboxRecord),
+    );
+    const source: f.SandboxRecord = {
+      name: "alpha",
+      agent: "openclaw",
+      imageTag: "nemoclaw-alpha:test",
+      openshellDriver: "docker",
+      provider: "llama-cpp-local",
+      model: "nemotron-llama-cpp",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "alpha-generation-1",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    };
+    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? source : registeredClone));
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
+      agentType: "openclaw",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    f.restoreSandboxStateMock.mockImplementation((_name, _path, options) => {
+      options?.validateBeforeMutation?.();
+      return {
+        success: true,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: [],
+        failedFiles: [],
+      };
+    });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    const dependencies = await import("./snapshot/dependencies");
+    const prepare = vi.spyOn(dependencies, "prepareHostLocalInferenceAuthority").mockImplementation(
+      (_provider, candidate, serializedReceipt) =>
+        ({
+          providerId: "docker",
+          sandboxName: candidate.name,
+          serializedReceipt,
+        }) as never,
+    );
+    const confirm = vi
+      .spyOn(dependencies, "confirmHostLocalInferenceAuthority")
+      .mockImplementation(() => undefined);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+    expect(f.reserveSandboxInferenceRouteMock).toHaveBeenCalledWith("beta", {
+      provider: "llama-cpp-local",
+      model: "nemotron-llama-cpp",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "docker",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    expect(registeredClone).toMatchObject({
+      name: "beta",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    expect(
+      (registeredClone as f.SandboxRecord | null)?.hostLocalInferenceProvenance
+        ?.runtimeOwnerSandboxName,
+    ).toBe("alpha");
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(confirm).toHaveBeenCalledTimes(2);
   });
 
   it.each([

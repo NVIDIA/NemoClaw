@@ -20,9 +20,9 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 //
 // Why subprocess: the validation path drives `curl` via spawnSync with a
 // tight process timeout. Driving the entire scenario set through a fresh
-// source-hooked child mirrors the legacy script (and #5119's
-// onboard-gateway-docker-unreachable.test.ts) and keeps the behavior under
-// test identical to production runtime conditions — bypassing Vitest's
+// source-hooked child mirrors the legacy script and the caller-level
+// onboarding process tests. It keeps the behavior under test identical to
+// production runtime conditions — bypassing Vitest's
 // worker pool, fetch shim, and signal handling, all of which can interfere
 // with the in-process curl subprocess used by validateOpenAiLikeSelection.
 //

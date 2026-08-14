@@ -77,6 +77,60 @@ describe("handlePoliciesState", () => {
     );
   });
 
+  it("drops a no-longer-configured channel from the enabled set so its preset is not re-applied", async () => {
+    const session = createSession({ messagingPlan: makeMessagingPlan({ channels: ["discord"] }) });
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["discord"]),
+    });
+    setSession(session);
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(deps.detectUnconfiguredMessagingChannels).toHaveBeenCalledWith(
+      ["discord", "discord"],
+      [],
+      null,
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: [], disabledChannels: ["discord"] }),
+    );
+  });
+
+  it("keeps a still-configured channel enabled", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: ["discord"] });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: ["discord"], disabledChannels: [] }),
+    );
+  });
+
+  it("reports a no-longer-configured channel to the resume check so resume reconciles instead of skipping", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["discord"]),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(calls.prepareResume).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ disabledChannels: ["discord"], enabledChannels: [] }),
+    );
+  });
+
   it("resumes policies when all recorded presets are already applied", async () => {
     const session = createSession({ policyPresets: ["npm"] });
     const { deps, calls, setSession } = createDeps({
@@ -177,6 +231,136 @@ describe("handlePoliciesState", () => {
       "my-assistant",
       expect.objectContaining({ agent: "openclaw" }),
     );
+  });
+
+  it.each([
+    [null, "openclaw"],
+    [{ name: "hermes" }, "hermes"],
+    [{ name: "langchain-deepagents-code" }, "langchain-deepagents-code"],
+  ] as const)("reconciles stale local-inference policy for %s while retaining the real provider attachment", async (agent, expectedAgent) => {
+    const session = createSession({ policyPresets: ["local-inference", "npm"] });
+    const { deps, calls, setSession } = createDeps({
+      arePolicyPresetsApplied: vi.fn(() => true),
+    });
+    setSession(session);
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      resume: true,
+      provider: "vllm-local",
+      model: "qwen3.5-9b",
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: null,
+      hostLocalInferenceRouteOnly: true,
+      hostLocalInferenceSandboxProofAuthority: {
+        service: "vllm",
+        directHostPort: 8000,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+      agent,
+    });
+
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "vllm-local",
+        endpointUrl: "https://inference.local/v1",
+        agent,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: {
+          service: "vllm",
+          directHostPort: 8000,
+          directHealthPath: "/health",
+          toolCallingRequired: true,
+        },
+      }),
+    );
+    expect(calls.prepareResume).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ recordedPolicyPresets: ["npm"], agent: expectedAgent }),
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        selectedPresets: ["npm"],
+        provider: null,
+        excludedPresets: ["local-inference"],
+        agent: expectedAgent,
+      }),
+    );
+    expect(calls.setupPolicies.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.smoke.mock.invocationCallOrder[0],
+    );
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
+  it("forces route-only reconciliation when only the live sandbox has stale local-inference", async () => {
+    const { deps, calls } = createDeps({
+      arePolicyPresetsApplied: vi.fn((_sandboxName: string, selectedPresets: string[]) =>
+        selectedPresets.includes("local-inference"),
+      ),
+    });
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      resume: true,
+      provider: "ollama-local",
+      model: "qwen3.5-9b",
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: null,
+      hostLocalInferenceRouteOnly: true,
+      hostLocalInferenceSandboxProofAuthority: {
+        service: "ollama",
+        directHostPort: 11434,
+        directHealthPath: "/api/tags",
+        toolCallingRequired: true,
+      },
+    });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+      }),
+    );
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    { name: "hermes" },
+    { name: "langchain-deepagents-code" },
+  ] as const)("keeps the inference step recoverable when the post-policy route proof fails for %s", async (agent) => {
+    const smokeFailure = new Error("exact model route proof failed");
+    const { deps, calls } = createDeps({
+      verifyCompatibleEndpointSandboxSmoke: vi.fn(() => {
+        throw smokeFailure;
+      }),
+    });
+
+    await expect(
+      handlePoliciesState({
+        ...baseOptions(deps),
+        provider: "vllm-local",
+        model: "qwen3.5-9b",
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: null,
+        hostLocalInferenceRouteOnly: true,
+        hostLocalInferenceSandboxProofAuthority: {
+          service: "vllm",
+          directHostPort: 8000,
+          directHealthPath: "/health",
+          toolCallingRequired: true,
+        },
+        agent,
+      }),
+    ).rejects.toBe(smokeFailure);
+
+    expect(calls.setupPolicies).toHaveBeenCalledOnce();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
   });
 
   // Regression for #4621: the sandbox is registered with only create-time/boot

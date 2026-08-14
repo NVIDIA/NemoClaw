@@ -11,6 +11,7 @@ import type { ContainerEngine } from "../../../src/lib/adapters/container-engine
 import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
+  type PodmanContainerEngine,
 } from "../../../src/lib/adapters/podman";
 import { buildDockerDriverGatewayEnv } from "../../../src/lib/onboard/docker-driver-gateway-env";
 import { ensureDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
@@ -67,7 +68,10 @@ const E2E_PHASES = [
 
 type SupportedLifecycle = Extract<RuntimeProviderLifecycleSurface, { supported: true }>;
 
-function engines(): { hostDoctor: ContainerEngine; sandboxLifecycle: ContainerEngine } {
+function engines(): {
+  hostDoctor: PodmanContainerEngine;
+  sandboxLifecycle: PodmanContainerEngine;
+} {
   expect(SOCKET_PATH).toMatch(/^\/run\/user\/[0-9]+\/podman\/podman[.]sock$/u);
   const socketAuthority = capturePodmanSocketAuthority(SOCKET_PATH);
   return {

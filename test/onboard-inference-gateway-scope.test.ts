@@ -104,6 +104,7 @@ describe("onboarding inference gateway scope", () => {
           preferredInferenceApi: null,
           gatewayName: GATEWAY,
           reservationSessionId: undefined,
+          hostLocalInferenceReceipt: null,
         });
         expectCommandsTargetOnly(harness.commands);
       },

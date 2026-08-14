@@ -38,19 +38,19 @@ function namedStep(value: WorkflowRecord, name: string): Record<string, unknown>
   return step as Record<string, unknown>;
 }
 
-describe("protected managed-image runtime workflow boundary", () => {
-  it("accepts the exact activated trusted runtime lane", () => {
+describe("protected managed-image runtime workflow", () => {
+  it("accepts the checked-in protected runtime job", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
   });
 
-  it("accepts the exact hosted-build to protected-runtime cache handoff", () => {
+  it("accepts the hosted build-cache handoff to the protected runtime job", () => {
     const value = workflow();
 
     expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
-  it("binds protected risk evidence to the isolated exact candidate checkout", () => {
+  it("runs protected runtime checks from .candidate-runtime", () => {
     const value = workflow();
     const jobEnv = runtimeJob(value).env as Record<string, unknown>;
     jobEnv.NEMOCLAW_E2E_TESTED_ROOT = "${{ github.workspace }}";
@@ -80,7 +80,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("binds protected candidate identity on ordinary main runs", () => {
+  it("uses github.sha for main pushes", () => {
     const value = workflow();
     const jobEnv = multiarchJob(value).env as Record<string, unknown>;
     jobEnv.NEMOCLAW_PROTECTED_MANAGED_IMAGE_HEAD_SHA = "${{ inputs.checkout_sha }}";
@@ -90,7 +90,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
+  it("lists every supported agent and provider in the activation file (#7744)", () => {
     const activation = JSON.parse(
       fs.readFileSync(
         path.resolve(
@@ -122,7 +122,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects checking candidate source out over trusted qualification code", () => {
+  it("does not replace workflow code with the source under test", () => {
     const value = workflow();
     const candidateCheckout = namedStep(value, "Checkout exact protected runtime candidate source");
     (candidateCheckout.with as Record<string, unknown>).path = ".";
@@ -132,7 +132,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects exposing the NGC credential to candidate-controlled steps", () => {
+  it("passes the NGC credential only to the qualification step", () => {
     const value = workflow();
     namedStep(value, "Validate protected runtime activation contract").env = {
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
@@ -143,7 +143,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects executing candidate checkout paths in the secret-bearing qualification step", () => {
+  it("prevents the credentialed qualification step from executing .candidate-runtime files", () => {
     const value = workflow();
     const qualification = namedStep(
       value,
@@ -156,7 +156,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects removing NIM from the activation contract", () => {
+  it("requires NIM in the activation file", () => {
     const value = workflow();
     const step = namedStep(value, "Validate protected runtime activation contract");
     step.run = String(step.run).replace(
@@ -169,7 +169,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects qualification before exact all-agent image construction", () => {
+  it("runs qualification only after every agent image is built", () => {
     const value = workflow();
     const job = runtimeJob(value);
     const workflowSteps = job.steps as Array<Record<string, unknown>>;
@@ -202,7 +202,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects removing the exact protected runtime cache download", () => {
+  it("requires one protected runtime cache download", () => {
     const value = workflow();
     const job = runtimeJob(value);
     job.steps = (job.steps as Array<Record<string, unknown>>).filter(
@@ -230,7 +230,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   }, 15_000);
 
-  it("rejects a GPU rebuild that omits the exact hosted cache import", () => {
+  it("requires GPU rebuilds to import the hosted build cache", () => {
     const value = workflow();
     const build = namedStep(value, "Build exact all-agent protected runtime images");
     build.run = String(build.run).replace(
@@ -253,7 +253,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     );
   });
 
-  it("rejects removing the exact amd64 build cache publication", () => {
+  it("requires one amd64 build-cache upload", () => {
     const value = workflow();
     const job = multiarchJob(value);
     job.steps = (job.steps as Array<Record<string, unknown>>).filter(

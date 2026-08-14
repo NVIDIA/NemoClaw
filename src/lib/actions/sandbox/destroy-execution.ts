@@ -11,6 +11,12 @@ import {
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "../../onboard/runtime-provider/access";
 import {
+  type HostLocalInferenceLifecycleOptions,
+  type PreparedHostLocalInferenceAuthority,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
+  retirePreparedHostLocalInferenceAuthority,
+} from "../../onboard/runtime-provider/host-local-inference-lifecycle";
+import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
@@ -46,6 +52,8 @@ export function retirePortableLifecycleAuthority(sandboxName: string): void {
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
   force: boolean;
+  getSandbox?: (sandboxName: string) => SandboxEntry | null;
+  listSandboxes?: () => { sandboxes: SandboxEntry[] };
   runOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
@@ -57,6 +65,7 @@ type SandboxDestroyExecutionInput = {
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
+    hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
     readTimerMarker?: typeof readTimerMarker;
     wipeSandboxState?: typeof wipeSandboxState;
   };
@@ -70,15 +79,20 @@ export type SandboxDestroyExecutionResult =
       deleteResult: ReturnType<DestroyRunOpenshell>;
       detachOutcome: DetachSandboxProvidersResult;
       forcedLocalCleanup: boolean;
+      /** Common lifecycle conclusively retired this row's explicit llama.cpp claim. */
+      commonLlamaCppAuthorityRetired?: true;
     }
   | {
       ok: false;
       deleteOutput: string;
       exitCode: number;
       gatewayUnreachable: boolean;
+      hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
       shieldsRelockRequiresGateway: boolean;
+      hostLocalInferenceCleanupFailure?: string;
+      deleteConfirmed?: boolean;
     };
 
 type HardenedDeleteState = {
@@ -259,6 +273,8 @@ async function finalizeMcpDestroy(
 export async function executeSandboxDestroy({
   cleanupShieldsArtifacts,
   force,
+  getSandbox,
+  listSandboxes,
   runOpenshell,
   sandbox,
   sandboxConfirmedAbsent,
@@ -306,6 +322,7 @@ export async function executeSandboxDestroy({
             : `Container identity changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
       exitCode: 1,
       gatewayUnreachable: false,
+      hostLocalInferenceOwnershipRequiresGateway: false,
       mcpOwnershipRequiresGateway: false,
       mcpRecoveryFailure,
       shieldsRelockRequiresGateway: false,
@@ -314,7 +331,13 @@ export async function executeSandboxDestroy({
     if (initialContinuity.status !== "match") {
       return identityRefusalResult("before destroy preparation", initialContinuity);
     }
+    // A receipt alone is not a llama.cpp lifecycle discriminator. Explicit
+    // provenance selects the common coordinator; an unmarked schema-v1 receipt
+    // remains on its established cleanup path.
+    const hasHostLocalInferenceOwnership = typeof sandbox?.hostLocalInferenceReceipt === "string";
     let runtimeProvider: RuntimeProviderBundle | null = null;
+    let hostLocalInferenceAuthority: PreparedHostLocalInferenceAuthority | null = null;
+    let commonLlamaCppAuthorityRetired = false;
     if (sandbox) {
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
@@ -322,12 +345,23 @@ export async function executeSandboxDestroy({
           sandbox,
           runtimeProviders,
         ).provider;
+        hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
+          runtimeProvider,
+          sandbox,
+          deps.hostLocalInferenceLifecycleOptions,
+        );
+        if (hasHostLocalInferenceOwnership && (!getSandbox || !listSandboxes)) {
+          throw new Error(
+            "Exact registry readers are required to retire durable host-local inference authority.",
+          );
+        }
       } catch (error) {
         return {
           ok: false as const,
           deleteOutput: redactDestroyError(error),
           exitCode: 1,
           gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
           mcpOwnershipRequiresGateway: false,
           shieldsRelockRequiresGateway: false,
         };
@@ -343,6 +377,7 @@ export async function executeSandboxDestroy({
           deleteOutput: redactDestroyError(error),
           exitCode: error.exitCode,
           gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
           mcpOwnershipRequiresGateway: false,
           shieldsRelockRequiresGateway: false,
         };
@@ -372,21 +407,24 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
       );
     }
-    try {
-      stopInferenceResources();
-    } catch (error) {
-      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
-      return {
-        ok: false,
-        deleteOutput:
-          `Could not stop managed inference resources before sandbox deletion: ${redactDestroyError(error)}. ` +
-          "No workspace wipe, provider cleanup, or sandbox deletion was attempted.",
-        exitCode: 1,
-        gatewayUnreachable: false,
-        mcpOwnershipRequiresGateway: false,
-        mcpRecoveryFailure,
-        shieldsRelockRequiresGateway: false,
-      };
+    if (!hasHostLocalInferenceOwnership) {
+      try {
+        stopInferenceResources();
+      } catch (error) {
+        const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
+        return {
+          ok: false,
+          deleteOutput:
+            `Could not stop managed inference resources before sandbox deletion: ${redactDestroyError(error)}. ` +
+            "No workspace wipe, provider cleanup, or sandbox deletion was attempted.",
+          exitCode: 1,
+          gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          mcpRecoveryFailure,
+          shieldsRelockRequiresGateway: false,
+        };
+      }
     }
     const postInferenceContinuity = inspectIdentityContinuity();
     if (postInferenceContinuity.status !== "match") {
@@ -445,14 +483,17 @@ export async function executeSandboxDestroy({
     // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
     // only authority that can lock the config again. Discarding the local
     // record here would revoke it for a sandbox the gateway never confirmed
-    // deleting, so --force must not take the local-cleanup shortcut until the
-    // gateway is back and deletion is confirmed.
+    // deleting. The same applies to an exact host-local inference receipt: it
+    // is the only durable authority that can retire the managed runtime. Thus
+    // --force must not take the local-cleanup shortcut until the gateway is
+    // back and deletion is confirmed.
     const forcedLocalCleanup =
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
       force &&
       !hasMcpOwnership &&
+      !hasHostLocalInferenceOwnership &&
       !hardened.hardeningFailed;
 
     if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
@@ -464,6 +505,8 @@ export async function executeSandboxDestroy({
         deleteOutput,
         exitCode: deleteResult.status || 1,
         gatewayUnreachable,
+        hostLocalInferenceOwnershipRequiresGateway:
+          gatewayUnreachable && hasHostLocalInferenceOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
         shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
@@ -471,8 +514,9 @@ export async function executeSandboxDestroy({
     }
 
     // The sandbox is confirmed gone, or --force is discarding only a local
-    // record that has no MCP ownership. Keep this under the lifecycle lock so
-    // stale timer state cannot target a same-name replacement.
+    // record that has no retained exact ownership. Keep this under the
+    // lifecycle lock so stale timer state cannot target a same-name
+    // replacement.
     cleanupShieldsArtifacts(sandboxName);
     if (!forcedLocalCleanup) {
       try {
@@ -484,11 +528,46 @@ export async function executeSandboxDestroy({
             deleteOutput: redactDestroyError(error),
             exitCode: error.exitCode,
             gatewayUnreachable: false,
+            hostLocalInferenceOwnershipRequiresGateway: false,
             mcpOwnershipRequiresGateway: false,
             shieldsRelockRequiresGateway: false,
           };
         }
         throw error;
+      }
+    }
+    if (!forcedLocalCleanup && runtimeProvider && sandbox && hostLocalInferenceAuthority) {
+      // Keep retirement after confirmed sandbox deletion: retiring first could
+      // leave a still-live sandbox without inference when its delete fails.
+      // The registry row is the durable cleanup journal. A retirement failure
+      // returns before that row is removed, and a retry takes the already-gone
+      // path to converge the provider's idempotent exact-runtime teardown.
+      try {
+        const current = getSandbox!(sandboxName);
+        if (!current) {
+          throw new Error(`sandbox '${sandboxName}' is no longer registered`);
+        }
+        retirePreparedHostLocalInferenceAuthority(
+          runtimeProvider,
+          current,
+          hostLocalInferenceAuthority,
+          listSandboxes!().sandboxes,
+          deps.hostLocalInferenceLifecycleOptions,
+        );
+        commonLlamaCppAuthorityRetired =
+          hostLocalInferenceAuthority.receipt.service === "llama-cpp";
+      } catch (error) {
+        return {
+          ok: false as const,
+          deleteOutput,
+          exitCode: 1,
+          gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          shieldsRelockRequiresGateway: false,
+          hostLocalInferenceCleanupFailure: redactDestroyError(error),
+          deleteConfirmed: true,
+        };
       }
     }
     return {
@@ -498,6 +577,7 @@ export async function executeSandboxDestroy({
       deleteResult,
       alreadyGone,
       forcedLocalCleanup,
+      ...(commonLlamaCppAuthorityRetired ? { commonLlamaCppAuthorityRetired: true as const } : {}),
     };
   });
 }

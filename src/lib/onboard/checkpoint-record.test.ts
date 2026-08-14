@@ -21,6 +21,8 @@ function sessionWithProviderReceipts() {
   const session = createSession({ sandboxName: "my-assistant" });
   session.checkpoint = {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: session.sessionId,
     machineState: "sandbox",
     updatedAt: ISO,

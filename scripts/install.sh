@@ -206,10 +206,13 @@ fi
 # ---------------------------------------------------------------------------
 info() { printf "${C_CYAN}[INFO]${C_RESET}  %s\n" "$*"; }
 warn() { printf "${C_YELLOW}[WARN]${C_RESET}  %s\n" "$*"; }
-error() {
+error_with_status() {
+  local status="$1"
+  shift
   printf "${C_RED}[ERROR]${C_RESET} %s\n" "$*" >&2
-  exit 1
+  exit "$status"
 }
+error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 resolve_nemoclaw_gateway_port() {
@@ -3950,6 +3953,14 @@ run_onboard() {
   return "$status"
 }
 
+fail_onboarding() {
+  local status="${1:-1}"
+  if [ "$status" -ne 130 ]; then
+    status=1
+  fi
+  error_with_status "$status" "Onboarding did not complete successfully."
+}
+
 station_express_receipt_retirement_pending() {
   command_exists node || return 1
   local session_file
@@ -6092,13 +6103,13 @@ main() {
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
           info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
-          run_onboard || error "Onboarding did not complete successfully."
+          run_onboard || fail_onboarding "$?"
           ONBOARD_RAN=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
-        run_onboard || error "Onboarding did not complete successfully."
+        run_onboard || fail_onboarding "$?"
         ONBOARD_RAN=true
         restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
       fi

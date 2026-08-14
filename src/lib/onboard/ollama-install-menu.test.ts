@@ -92,8 +92,8 @@ describe("resolveOllamaInstallMenuEntry", () => {
       ollamaRunning: true,
       hasWindowsOllama: false,
       windowsHostOllamaSupported: true,
-      installedOllamaVersion: "0.24.0",
-      runningOllamaVersion: "0.24.0",
+      installedOllamaVersion: "0.32.9",
+      runningOllamaVersion: "0.32.9",
       ...LINUX_NON_WSL,
     });
     expect(result.hasUpgradableOllama).toBe(false);
@@ -107,7 +107,7 @@ describe("resolveOllamaInstallMenuEntry", () => {
       hasWindowsOllama: false,
       windowsHostOllamaSupported: true,
       ollamaHost: "127.0.0.1",
-      installedOllamaVersion: "0.24.0",
+      installedOllamaVersion: "0.32.9",
       runningOllamaVersion: "0.6.2",
       ...LINUX_NON_WSL,
     });
@@ -126,7 +126,7 @@ describe("resolveOllamaInstallMenuEntry", () => {
       windowsHostOllamaSupported: true,
       ollamaHost: "127.0.0.1",
       installedOllamaVersion: "0.6.2",
-      runningOllamaVersion: "0.24.0",
+      runningOllamaVersion: "0.32.9",
       ...LINUX_NON_WSL,
     });
     expect(result.hasUpgradableOllama).toBe(true);
@@ -246,27 +246,27 @@ describe("resolveOllamaInstallMenuEntry", () => {
   it("accepts the upgrade when the running daemon reports a fresh version", () => {
     const capture = (cmd: readonly string[]) => {
       const joined = cmd.join(" ");
-      if (joined.includes("/api/version")) return '{"version":"0.24.0"}';
-      if (joined.includes("ollama --version")) return "ollama version is 0.24.0";
+      if (joined.includes("/api/version")) return '{"version":"0.32.9"}';
+      if (joined.includes("ollama --version")) return "ollama version is 0.32.9";
       return "";
     };
     const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
     expect(result.ok).toBe(true);
-    expect(result.detectedDaemonVersion).toBe("0.24.0");
-    expect(result.detectedBinaryVersion).toBe("0.24.0");
+    expect(result.detectedDaemonVersion).toBe("0.32.9");
+    expect(result.detectedBinaryVersion).toBe("0.32.9");
   });
 
   it("rejects the upgrade when the daemon still serves the stale version even though the binary is fresh", () => {
     const capture = (cmd: readonly string[]) => {
       const joined = cmd.join(" ");
       if (joined.includes("/api/version")) return '{"version":"0.6.2"}';
-      if (joined.includes("ollama --version")) return "ollama version is 0.24.0";
+      if (joined.includes("ollama --version")) return "ollama version is 0.32.9";
       return "";
     };
     const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
     expect(result.ok).toBe(false);
     expect(result.detectedDaemonVersion).toBe("0.6.2");
-    expect(result.detectedBinaryVersion).toBe("0.24.0");
+    expect(result.detectedBinaryVersion).toBe("0.32.9");
     expect(result.message).toContain("0.6.2");
     expect(result.message).toContain(MIN_OLLAMA_VERSION);
   });

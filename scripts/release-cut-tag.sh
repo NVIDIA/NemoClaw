@@ -107,13 +107,13 @@ verify_release_qualification() {
   local run_lines
   if ! run_lines="$(gh api --paginate \
     "repos/NVIDIA/NemoClaw/actions/workflows/e2e.yaml/runs?branch=main&head_sha=${target}&event=workflow_dispatch&status=completed&per_page=100" \
-    --jq ".workflow_runs[] | select(.head_sha == \"${target}\" and .head_branch == \"main\" and .event == \"workflow_dispatch\" and .status == \"completed\" and .conclusion == \"success\") | [.id, .html_url] | @tsv")"; then
+    --jq ".workflow_runs[] | select(.head_sha == \"${target}\" and .head_branch == \"main\" and .event == \"workflow_dispatch\" and .status == \"completed\" and (.conclusion == \"success\" or .conclusion == \"failure\")) | [.id, .html_url, .conclusion, .run_attempt] | @tsv")"; then
     fail "GitHub could not list E2E runs for candidate commit $target"
   fi
 
-  local run_id run_url job_lines match_count job_status job_conclusion job_url
-  while IFS=$'\t' read -r run_id run_url; do
-    [[ "$run_id" =~ ^[1-9][0-9]*$ && "$run_url" == https://github.com/NVIDIA/NemoClaw/actions/runs/* ]] || continue
+  local run_id run_url run_conclusion run_attempt job_lines match_count job_status job_conclusion job_url waiver_dir waiver_path
+  while IFS=$'\t' read -r run_id run_url run_conclusion run_attempt; do
+    [[ "$run_id" =~ ^[1-9][0-9]*$ && "$run_url" == https://github.com/NVIDIA/NemoClaw/actions/runs/* && "$run_conclusion" =~ ^(success|failure)$ && "$run_attempt" =~ ^[1-9][0-9]*$ ]] || continue
     if ! job_lines="$(gh api --paginate \
       "repos/NVIDIA/NemoClaw/actions/runs/${run_id}/jobs?filter=latest&per_page=100" \
       --jq '.jobs[] | select(.name == "Release qualification") | [.status, .conclusion, .html_url] | @tsv')"; then
@@ -123,8 +123,47 @@ verify_release_qualification() {
     [[ "$match_count" == "1" ]] || continue
     IFS=$'\t' read -r job_status job_conclusion job_url <<<"$job_lines"
     if [[ "$job_status" == "completed" && "$job_conclusion" == "success" && "$job_url" == https://github.com/NVIDIA/NemoClaw/actions/runs/* ]]; then
+      if [[ "$run_conclusion" == "failure" ]]; then
+        waiver_dir="$(mktemp -d)"
+        chmod 700 "$waiver_dir"
+        waiver_path="$waiver_dir/waiver.json"
+        if ! gh run download "$run_id" \
+          --repo NVIDIA/NemoClaw \
+          --name "release-qualification-waiver-${run_id}-${run_attempt}" \
+          --dir "$waiver_dir" >/dev/null 2>&1; then
+          rm -rf -- "$waiver_dir"
+          continue
+        fi
+        if ! node -e '
+          const fs = require("node:fs");
+          const [file, candidateSha, runId, runAttempt] = process.argv.slice(1);
+          const evidence = JSON.parse(fs.readFileSync(file, "utf8"));
+          const jobId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+          const actor = /^(?!-)[A-Za-z0-9-]{1,39}(?<!-)$/;
+          const reason = /^[A-Za-z0-9][A-Za-z0-9 .,:;/_()\x27-]{9,499}$/;
+          if (
+            evidence.schemaVersion !== 1 ||
+            evidence.kind !== "nemoclaw-release-qualification-waiver-v1" ||
+            evidence.candidateSha !== candidateSha ||
+            evidence.workflowRunId !== Number(runId) ||
+            evidence.workflowRunAttempt !== Number(runAttempt) ||
+            !actor.test(evidence.actor) ||
+            !actor.test(evidence.triggeringActor) ||
+            !reason.test(evidence.reason) ||
+            !Array.isArray(evidence.jobs) ||
+            evidence.jobs.length === 0 ||
+            new Set(evidence.jobs.map((job) => job.id)).size !== evidence.jobs.length ||
+            evidence.jobs.some((job) => !jobId.test(job.id) || !["failure", "success"].includes(job.result)) ||
+            !evidence.jobs.some((job) => job.result === "failure")
+          ) process.exit(1);
+        ' "$waiver_path" "$target" "$run_id" "$run_attempt"; then
+          rm -rf -- "$waiver_dir"
+          continue
+        fi
+        rm -rf -- "$waiver_dir"
+      fi
       printf 'release-cut-tag: verified Release qualification for %s\n' "$target"
-      printf 'release-cut-tag: workflow evidence: %s\n' "$run_url"
+      printf 'release-cut-tag: workflow evidence: %s (conclusion: %s)\n' "$run_url" "$run_conclusion"
       printf 'release-cut-tag: qualification evidence: %s\n' "$job_url"
       return
     fi

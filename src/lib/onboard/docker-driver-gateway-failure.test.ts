@@ -401,7 +401,7 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
         resolveGatewayStopCommand: () => null,
       });
       const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
-      expect(joined).toContain("nemoclaw onboard --experimental-profile portable");
+      expect(joined).toContain("nemoclaw onboard --experimental-profile portable --fresh");
       expect(joined).not.toContain("nemoclaw onboard --resume");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

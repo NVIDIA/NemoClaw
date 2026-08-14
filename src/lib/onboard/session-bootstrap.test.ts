@@ -124,6 +124,50 @@ describe("prepareOnboardSession", () => {
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
+  it("publishes portable runtime intent in the first atomic session envelope", async () => {
+    const { deps } = createDeps();
+    const authority = {
+      schemaVersion: 1 as const,
+      kind: "podman" as const,
+      ownership: "current-user" as const,
+      uid: 1000,
+      homeDir: "/home/alice",
+      configHome: "/home/alice/.config",
+      runtimeDir: "/run/user/1000",
+      socketPath: "/run/user/1000/podman/podman.sock",
+    };
+
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+        checkpointProfile: "portable",
+        portableRuntimeAuthority: authority,
+      },
+      deps,
+    );
+
+    expect(deps.createSession).toHaveBeenCalledTimes(1);
+    expect(deps.saveSession).toHaveBeenCalledTimes(1);
+    expect(deps.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        checkpoint: expect.objectContaining({
+          schemaVersion: 4,
+          profile: { kind: "selected", value: "portable" },
+          runtimeAuthority: { kind: "selected", value: authority },
+        }),
+      }),
+    );
+    expect(result.session?.checkpoint?.runtimeAuthority).toEqual({
+      kind: "selected",
+      value: authority,
+    });
+  });
+
   it("checkpoints exact serving profile provenance before fresh onboarding effects (#8246)", async () => {
     const { deps } = createDeps();
     const result = await prepareOnboardSession(
@@ -595,6 +639,8 @@ describe("prepareOnboardSession", () => {
     const session = createSession({ agent: "hermes", sandboxName: null });
     const checkpoint: OnboardCheckpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -647,6 +693,8 @@ describe("prepareOnboardSession", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",

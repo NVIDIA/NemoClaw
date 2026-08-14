@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ContainerEngine } from "../../adapters/container-engine";
+import type { PodmanContainerEngine } from "../../adapters/podman";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -9,6 +9,13 @@ import {
   type RuntimeProviderLifecycleResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import type { HostLocalInferenceRouteAuthorityStore } from "./host-local-inference";
+import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
+import {
+  createPodmanHostLocalInferenceOperation,
+  type PodmanInferenceFailureEvidence,
+  type PodmanInferenceRedactor,
+} from "./podman-host-local-inference";
 import { startPodmanSandbox, stopPodmanSandbox } from "./podman-lifecycle";
 import {
   inspectPodmanHost,
@@ -17,12 +24,21 @@ import {
 } from "./podman-preflight";
 
 export interface PodmanRuntimeProviderEngines {
-  readonly hostDoctor: ContainerEngine;
-  readonly sandboxLifecycle: ContainerEngine;
+  readonly hostDoctor: PodmanContainerEngine;
+  readonly hostLocalInference?: PodmanContainerEngine;
+  readonly sandboxLifecycle: PodmanContainerEngine;
+}
+
+export interface PodmanHostLocalInferenceOptions {
+  readonly authorityStore: PersistedEngineAuthorityStore;
+  readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
+  readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
+  readonly redactSensitive: PodmanInferenceRedactor;
 }
 
 export interface PodmanRuntimeProviderOptions {
   readonly engines: PodmanRuntimeProviderEngines;
+  readonly hostLocalInference?: PodmanHostLocalInferenceOptions;
   readonly preflight?: PodmanHostPreflightOptions;
 }
 
@@ -38,8 +54,8 @@ function unsupported(providerId: string, reason: string) {
 }
 
 function requireEngine(
-  engine: ContainerEngine,
-  operation: "host-doctor" | "sandbox-lifecycle",
+  engine: PodmanContainerEngine,
+  operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
 ): void {
   if (engine.engineId !== "podman" || engine.operation !== operation) {
     throw new Error(`Podman provider requires a '${operation}' Podman engine.`);
@@ -48,7 +64,7 @@ function requireEngine(
 
 function preflightLifecycle(
   input: RuntimeProviderLifecycleInput,
-  engine: ContainerEngine,
+  engine: PodmanContainerEngine,
   options: PodmanHostPreflightOptions,
 ): RuntimeProviderLifecycleResult | null {
   try {
@@ -72,11 +88,24 @@ export function createPodmanRuntimeProviderBundle(
   options: PodmanRuntimeProviderOptions,
 ): RuntimeProviderBundle {
   const providerId = "podman";
-  const { hostDoctor, sandboxLifecycle } = options.engines;
+  const { hostDoctor, hostLocalInference: inferenceEngine, sandboxLifecycle } = options.engines;
+  const inferenceOptions = options.hostLocalInference;
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
-  if (hostDoctor.authorityId !== sandboxLifecycle.authorityId) {
+  const providerEndpointAuthority = hostDoctor.endpointAuthorityId;
+  if (providerEndpointAuthority !== sandboxLifecycle.endpointAuthorityId) {
     throw new Error("Podman provider engines must bind the same endpoint authority.");
+  }
+  if ((inferenceEngine === undefined) !== (inferenceOptions === undefined)) {
+    throw new Error(
+      "Podman provider requires its host-local inference engine and stores together.",
+    );
+  }
+  if (inferenceEngine !== undefined) {
+    requireEngine(inferenceEngine, "host-local-inference");
+    if (inferenceEngine.endpointAuthorityId !== providerEndpointAuthority) {
+      throw new Error("Podman provider engines must bind the same endpoint authority.");
+    }
   }
   const preflight = options.preflight ?? {};
   const deferred = "This operation is intentionally deferred to a later Podman slice.";
@@ -91,7 +120,7 @@ export function createPodmanRuntimeProviderBundle(
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: false,
+      hostLocalInference: inferenceEngine !== undefined,
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
@@ -114,10 +143,27 @@ export function createPodmanRuntimeProviderBundle(
       profile: DORMANT_WORKLOAD_PROFILE,
       acceptsReceipt: () => false,
     },
-    hostLocalInference: unsupported(
-      providerId,
-      "Podman does not provide the managed llama.cpp host-local-inference lifecycle.",
-    ),
+    hostLocalInference:
+      inferenceEngine !== undefined && inferenceOptions !== undefined
+        ? {
+            providerId,
+            supported: true,
+            services: ["ollama", "nim", "vllm"],
+            createOperation: ({ env, acceleration }) =>
+              createPodmanHostLocalInferenceOperation({
+                engine: inferenceEngine,
+                env,
+                acceleration,
+                authorityStore: inferenceOptions.authorityStore,
+                routeAuthorityStore: inferenceOptions.routeAuthorityStore,
+                onFailureEvidence: inferenceOptions.onFailureEvidence,
+                redactSensitive: inferenceOptions.redactSensitive,
+              }),
+          }
+        : unsupported(
+            providerId,
+            "Podman host-local inference remains disabled without injected candidate authority.",
+          ),
     lifecycle: {
       providerId,
       supported: true,
@@ -145,6 +191,15 @@ export function createPodmanRuntimeProviderBundle(
           engineId: hostDoctor.engineId,
           displayName: hostDoctor.displayName,
         },
+        ...(inferenceEngine
+          ? [
+              {
+                operation: "host-local-inference" as const,
+                engineId: inferenceEngine.engineId,
+                displayName: inferenceEngine.displayName,
+              },
+            ]
+          : []),
         {
           operation: "sandbox-lifecycle",
           engineId: sandboxLifecycle.engineId,

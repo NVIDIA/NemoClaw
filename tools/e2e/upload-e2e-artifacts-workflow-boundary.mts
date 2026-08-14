@@ -41,6 +41,17 @@ const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/";
+const RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload release qualification waiver evidence",
+  if: "${{ inputs.release_qualification_waived_jobs != '' }}",
+  uses: UPLOAD_ARTIFACT_ACTION,
+  with: {
+    name: "release-qualification-waiver-${{ github.run_id }}-${{ github.run_attempt }}",
+    path: "${{ runner.temp }}/release-qualification-waiver/waiver.json",
+    "if-no-files-found": "error",
+    "retention-days": 30,
+  },
+};
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -87,6 +98,16 @@ function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep
     step.uses === UPLOAD_ARTIFACT_ACTION &&
     inputs.name === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME &&
     inputs.path === MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH
+  );
+}
+
+function isExactReleaseQualificationWaiverUpload(
+  jobName: string,
+  step: WorkflowStep,
+): boolean {
+  return (
+    jobName === "release-qualification" &&
+    isDeepStrictEqual(step, RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT)
   );
 }
 
@@ -412,7 +433,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
       if (
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
-        !isExactManagedImageBuildCacheUpload(jobName, step)
+        !isExactManagedImageBuildCacheUpload(jobName, step) &&
+        !isExactReleaseQualificationWaiverUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

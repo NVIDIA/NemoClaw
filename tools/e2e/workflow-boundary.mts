@@ -1901,6 +1901,109 @@ function validateStagingBrevLaunchableInput(
   }
 }
 
+function validateReleaseQualificationWaiverInputs(
+  errors: string[],
+  dispatchInputs: WorkflowRecord,
+): void {
+  const jobsInput = requireInput(errors, dispatchInputs, "release_qualification_waived_jobs");
+  if (jobsInput.type !== "string" || jobsInput.default !== "") {
+    errors.push(
+      "workflow_dispatch release_qualification_waived_jobs input must be a string and default to empty",
+    );
+  }
+  const jobsDescription = stringValue(jobsInput.description);
+  if (
+    !jobsDescription.includes("Admin-only") ||
+    !jobsDescription.includes("release-required E2E job IDs") ||
+    !jobsDescription.includes("Leave empty")
+  ) {
+    errors.push(
+      "workflow_dispatch release_qualification_waived_jobs input must document its admin-only release scope",
+    );
+  }
+  const reasonInput = requireInput(errors, dispatchInputs, "release_qualification_waiver_reason");
+  if (reasonInput.type !== "string" || reasonInput.default !== "") {
+    errors.push(
+      "workflow_dispatch release_qualification_waiver_reason input must be a string and default to empty",
+    );
+  }
+  const reasonDescription = stringValue(reasonInput.description);
+  if (
+    !reasonDescription.includes("Admin-only") ||
+    !reasonDescription.includes("Required when release_qualification_waived_jobs is not empty")
+  ) {
+    errors.push(
+      "workflow_dispatch release_qualification_waiver_reason input must document its paired admin-only scope",
+    );
+  }
+}
+
+function validateReleaseQualificationWaiverAuthorization(
+  errors: string[],
+  generateSteps: readonly WorkflowStep[],
+): void {
+  const authorization = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Authorize release qualification waiver",
+  );
+  if (
+    authorization?.if !==
+    "${{ github.event_name == 'workflow_dispatch' && (inputs.release_qualification_waived_jobs != '' || inputs.release_qualification_waiver_reason != '') }}"
+  ) {
+    errors.push("release qualification waiver authorization must cover either nonempty input");
+  }
+  if (authorization?.shell !== "bash") {
+    errors.push("release qualification waiver authorization must use bash");
+  }
+  const expectedEnv = {
+    ACTOR: "${{ github.actor }}",
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
+    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    JOBS: "${{ inputs.jobs }}",
+    TARGETS: "${{ inputs.targets }}",
+    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
+    WAIVED_JOBS: "${{ inputs.release_qualification_waived_jobs }}",
+    WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
+    WORKFLOW_REF: "${{ github.ref }}",
+  };
+  if (!isDeepStrictEqual(asRecord(authorization?.env), expectedEnv)) {
+    errors.push(
+      "release qualification waiver authorization must bind only trusted identity and release-run inputs",
+    );
+  }
+  for (const required of [
+    "/collaborators/${administrator}/permission",
+    "'.user.login // \"\"'",
+    "'.role_name // \"\"'",
+    '== "admin"',
+    'require_admin "$ACTOR"',
+    'require_admin "$TRIGGERING_ACTOR"',
+    '[[ -z "$CHECKOUT_SHA" && -z "$JOBS" && -z "$TARGETS" ]]',
+    '[[ "$INCLUDE_LAUNCHABLE" == "true"',
+    '[[ "$WAIVED_JOBS" =~ $waived_jobs_pattern ]]',
+    "${#WAIVER_REASON} -ge 10",
+    "${#WAIVER_REASON} -le 500",
+    "requires a repository administrator",
+  ]) {
+    requireRunContains(errors, authorization, required);
+  }
+  const checkout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  if (
+    authorization &&
+    checkout &&
+    generateSteps.indexOf(authorization) >= generateSteps.indexOf(checkout)
+  ) {
+    errors.push("release qualification waiver authorization must run before candidate checkout");
+  }
+}
+
 function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["retired-selector-compatibility"]);
   if (Object.keys(job).length === 0) {
@@ -1970,6 +2073,7 @@ function validateTrustedE2eDispatchReceipt(
   }
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
   const expectedDispatchReceiptEnv = {
+    ACTOR: "${{ github.actor }}",
     ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "false",
@@ -1986,6 +2090,9 @@ function validateTrustedE2eDispatchReceipt(
     REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
+    RELEASE_QUALIFICATION_WAIVED_JOBS: "${{ inputs.release_qualification_waived_jobs }}",
+    RELEASE_QUALIFICATION_WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
+    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
@@ -1998,6 +2105,7 @@ function validateTrustedE2eDispatchReceipt(
   }
   for (const fragment of [
     'kind: "nemoclaw-e2e-dispatch-v2"',
+    "actor: $actor",
     "repository: $repository",
     'prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end)',
     "candidateRepository: $candidateRepository",
@@ -2013,6 +2121,9 @@ function validateTrustedE2eDispatchReceipt(
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    'releaseQualificationWaivedJobs: (if $releaseQualificationWaivedJobs == "" then [] else ($releaseQualificationWaivedJobs | split(",")) end)',
+    'releaseQualificationWaiverReason: (if $releaseQualificationWaiverReason == "" then null else $releaseQualificationWaiverReason end)',
+    "triggeringActor: $triggeringActor",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
@@ -2036,10 +2147,14 @@ function validateTrustedE2eDispatchReceipt(
   }
 
   const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
+  const waiverAuthorization = namedStep(generateSteps, "Authorize release qualification waiver");
   const candidateCheckout = generateSteps.find((step) =>
     stringValue(step.uses).startsWith("actions/checkout@"),
   );
   const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
+  const waiverAuthorizationIndex = waiverAuthorization
+    ? generateSteps.indexOf(waiverAuthorization)
+    : -1;
   const receiptIndex = dispatchReceipt ? generateSteps.indexOf(dispatchReceipt) : -1;
   const uploadIndex = dispatchUpload ? generateSteps.indexOf(dispatchUpload) : -1;
   const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
@@ -2047,6 +2162,7 @@ function validateTrustedE2eDispatchReceipt(
     "Build trusted controller target matrix",
     "Build trusted larger-runner routing",
     "Authenticate manual PR dispatch",
+    "Authorize release qualification waiver",
     "Record trusted E2E dispatch receipt",
     "Upload trusted E2E dispatch receipt",
   ];
@@ -2056,7 +2172,8 @@ function validateTrustedE2eDispatchReceipt(
       trustedPrefix,
     ) ||
     authenticationIndex < 0 ||
-    receiptIndex !== authenticationIndex + 1 ||
+    waiverAuthorizationIndex !== authenticationIndex + 1 ||
+    receiptIndex !== waiverAuthorizationIndex + 1 ||
     uploadIndex !== receiptIndex + 1 ||
     checkoutIndex <= uploadIndex
   ) {
@@ -2100,6 +2217,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireInput(errors, dispatchInputs, "targets");
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
+  validateReleaseQualificationWaiverInputs(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
@@ -2159,6 +2277,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     generateOutputs.release_required_jobs !== "${{ steps.matrix.outputs.release_required_jobs }}"
   ) {
     errors.push("generate-matrix job must expose release_required_jobs output");
+  }
+  if (
+    generateOutputs.release_qualification_waived_jobs !==
+    "${{ steps.matrix.outputs.release_qualification_waived_jobs }}"
+  ) {
+    errors.push("generate-matrix job must expose release_qualification_waived_jobs output");
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
@@ -2289,6 +2413,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
+  if (
+    generateEnv.RELEASE_QUALIFICATION_WAIVED_JOBS !==
+    "${{ inputs.release_qualification_waived_jobs }}"
+  ) {
+    errors.push("matrix generation step must pass release qualification waived jobs through env");
+  }
   validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "--ci-output");
@@ -2306,6 +2436,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "E2E planner matrix does not match controller-selected targets",
   );
   validateTrustedE2eDispatchReceipt(errors, generateSteps);
+  validateReleaseQualificationWaiverAuthorization(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
