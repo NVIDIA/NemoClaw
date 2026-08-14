@@ -433,9 +433,9 @@ describe("focused staging Brev Launchable lane", () => {
 
   it("reports only final refresh and direct host SSH failures with bounded diagnostic redaction", () => {
     const { calls, env, state, workDir } = fixture({
-      refreshError: `refresh safe detail; api_key=brev-test-secret; endpoint=https://refresh.hidden.internal/path; ${"r".repeat(2_000)}`,
+      refreshError: `refresh safe detail; api_key=brev-test-secret; endpoint=https://refresh.hidden.internal/path; ${"r".repeat(6_000)}`,
       refreshStatus: 35,
-      sshHostError: `ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key; Authorization: Bearer short-token; ${"s".repeat(2_000)}`,
+      sshHostError: `ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key; Authorization: Bearer short-token; ${"s".repeat(6_000)}`,
       sshReadyAfter: Number.MAX_SAFE_INTEGER,
     });
     const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "5" });

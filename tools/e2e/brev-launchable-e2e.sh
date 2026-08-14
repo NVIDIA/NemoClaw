@@ -47,7 +47,11 @@ import os
 import re
 import sys
 
-data = sys.stdin.buffer.read(4096).decode("utf-8", errors="replace")
+retained = bytearray()
+while chunk := sys.stdin.buffer.read(8192):
+    if len(retained) < 4096:
+        retained.extend(chunk[: 4096 - len(retained)])
+data = bytes(retained).decode("utf-8", errors="replace")
 for name in ("BREV_API_KEY", "GH_TOKEN", "NVIDIA_INFERENCE_API_KEY"):
     value = os.environ.get(name, "")
     if value:
@@ -146,7 +150,6 @@ run_bounded_probe() {
   : >"$diagnostic_capture"
   set +e
   timeout "${timeout_seconds}s" "$@" 2>&1 \
-    | tail -c 4096 \
     | sanitize_probe_error >"$diagnostic_capture"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
@@ -299,7 +302,7 @@ for name in WORK_DIR CANDIDATE_SHA CORRELATION_ID GH_TOKEN GITHUB_RUN_ID \
   GITHUB_RUN_ATTEMPT BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
   require "$name"
 done
-for tool in brev gh jq mktemp python3 sed ssh tail timeout; do
+for tool in brev gh jq mktemp python3 sed ssh timeout; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "candidate SHA is not canonical"
