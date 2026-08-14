@@ -2298,7 +2298,8 @@ Onboarding holds both locks through sandbox registry publication.
 Destruction holds both locks through the peer check, process stop, and session update.
 When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
 If no same-port peer remains, it stops only a process whose command line still identifies the Model Router on that port.
-It clears matching session recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
+NemoClaw clears the matching Model Router process and credential recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
+If the onboarding session changes during teardown, NemoClaw does not clear the replacement session's Model Router identity.
 If process inspection is unavailable, the port remains healthy without a verified owner, or the stop fails, destruction still completes and keeps the recovery identity.
 Inspect the current listener process immediately before you stop anything.
 Stop it only if its command line still identifies the Model Router on the named port.
