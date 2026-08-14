@@ -178,9 +178,7 @@ describe("Pi release cohort separation", () => {
     );
     expect(entrypointStep).not.toContain("--entrypoint /usr/local/bin/nemoclaw-start");
     expect(entrypointStep).toContain("openssl req -x509 -newkey rsa:2048");
-    expect(entrypointStep).toContain(
-      "dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly",
-    );
+    expect(entrypointStep).toContain("dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly");
     expect(entrypointStep).toContain("docker exec --user 999:999");
     for (const name of [
       "SSL_CERT_FILE",
