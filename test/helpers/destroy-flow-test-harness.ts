@@ -16,6 +16,7 @@ const destroyModulePath = "./destroy.js";
 export type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
+  compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
@@ -251,6 +252,19 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     sandboxName: "alpha",
     ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
   });
+  const compareAndSwapSessionSpy = vi
+    .spyOn(onboardSession, "compareAndSwapSession")
+    .mockImplementation((matches: unknown, mutator: unknown) => {
+      const session = {
+        sandboxName: "alpha",
+        ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
+      };
+      expect(typeof matches).toBe("function");
+      expect(typeof mutator).toBe("function");
+      if (!(matches as (value: typeof session) => boolean)(session)) return "mismatch";
+      (mutator as (value: typeof session) => void)(session);
+      return "updated";
+    });
   const updateSessionSpy = vi
     .spyOn(onboardSession, "updateSession")
     .mockImplementation((mutator: unknown) => {
@@ -425,6 +439,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   return {
     cleanupGatewaySpy,
     captureOpenshellSpy,
+    compareAndSwapSessionSpy,
     dockerCaptureSpy,
     dockerRunSpy,
     destroySandbox: requireDist(destroyModulePath).destroySandbox,

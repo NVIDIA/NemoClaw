@@ -696,8 +696,8 @@ async function destroySandboxUnlocked(
       // when the competing sandbox belongs to another gateway.
       await withGatewayRouteMutationLock(cleanupGatewayName, () =>
         stopModelRouterForDestroyedSandbox(sandbox, {
+          compareAndSwapSession: onboardSession.compareAndSwapSession,
           loadSession: onboardSession.loadSession,
-          updateSession: onboardSession.updateSession,
           warn: defaultDestroyWarn,
         }),
       );

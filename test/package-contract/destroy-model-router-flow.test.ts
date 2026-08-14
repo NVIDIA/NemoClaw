@@ -90,10 +90,16 @@ describe("destroySandbox model-router teardown (#9098)", () => {
         routerPid: stub.pid,
         routerCredentialHash: "router-credential-hash",
       } as Session;
-      const updateSession = vi.fn((mutator: (current: Session) => Session | void) => {
-        mutator(session);
-        return session;
-      });
+      const compareAndSwapSession = vi.fn(
+        (
+          matches: (current: Session) => boolean,
+          mutator: (current: Session) => Session | void,
+        ) => {
+          if (!matches(session)) return "mismatch" as const;
+          mutator(session);
+          return "updated" as const;
+        },
+      );
 
       await expect(
         stopModelRouterForDestroyedSandbox(
@@ -104,8 +110,8 @@ describe("destroySandbox model-router teardown (#9098)", () => {
           },
           {
             listHostRegistryEntries: () => [],
+            compareAndSwapSession,
             loadSession: () => session,
-            updateSession,
             withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
           },
         ),
@@ -113,7 +119,7 @@ describe("destroySandbox model-router teardown (#9098)", () => {
 
       await vi.waitFor(() => expect(stubExited).toBe(true), { timeout: 8_000, interval: 100 });
       expect(await probeHealthy(port)).toBe(false);
-      expect(updateSession).toHaveBeenCalledOnce();
+      expect(compareAndSwapSession).toHaveBeenCalledOnce();
       expect(session).toEqual(
         expect.objectContaining({ routerPid: null, routerCredentialHash: null }),
       );

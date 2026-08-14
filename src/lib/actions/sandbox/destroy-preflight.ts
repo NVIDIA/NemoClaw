@@ -13,7 +13,7 @@ import {
   stopModelRouterProcess,
 } from "../../onboard/model-router-process";
 import { listHostGatewayRegistryEntries } from "../../state/gateway-registry";
-import type { Session } from "../../state/onboard-session";
+import type { compareAndSwapSession, Session } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
@@ -59,8 +59,8 @@ export function stopSandboxInferenceResources(
 const DEFAULT_MODEL_ROUTER_PORT = 4000;
 
 export type StopModelRouterForDestroyedSandboxDeps = {
+  compareAndSwapSession: typeof compareAndSwapSession;
   loadSession: () => Session | null;
-  updateSession: (mutator: (session: Session) => Session | void) => Session;
   inspectProcessForPort?: typeof inspectModelRouterProcessForPort;
   isHealthy?: typeof isRouterHealthy;
   isRoutedProvider?: typeof isRoutedInferenceProvider;
@@ -186,20 +186,25 @@ export async function stopModelRouterForDestroyedSandbox(
     // is gone. A completed process scan plus an unhealthy port confirms that
     // no router remains when no PID was found.
     if (sessionMatchesSandbox && (recordedPid !== null || recordedCredentialHash !== null)) {
-      deps.updateSession((current: Session) => {
-        if (
-          current.sessionId !== session?.sessionId ||
-          current.sandboxName !== session?.sandboxName ||
-          current.endpointUrl !== session?.endpointUrl ||
-          current.routerPid !== recordedPid ||
-          current.routerCredentialHash !== recordedCredentialHash
-        ) {
+      const result = deps.compareAndSwapSession(
+        (current) =>
+          current.sessionId === session.sessionId &&
+          current.sandboxName === session.sandboxName &&
+          current.endpointUrl === session.endpointUrl &&
+          current.routerPid === recordedPid &&
+          current.routerCredentialHash === recordedCredentialHash,
+        (current) => {
+          current.routerPid = null;
+          current.routerCredentialHash = null;
           return current;
-        }
-        current.routerPid = null;
-        current.routerCredentialHash = null;
-        return current;
-      });
+        },
+        "nemoclaw destroy Model Router session cleanup",
+      );
+      if (result === "busy") {
+        warn(
+          "Another onboarding run owns the session lock. Keeping its Model Router recovery identity.",
+        );
+      }
     }
   });
 }
