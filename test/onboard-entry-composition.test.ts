@@ -120,6 +120,58 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ [declaration]: 1 });
   });
 
+  it.each([
+    [
+      "function default parameter",
+      "function choose(value = enabled ? startGateway() : undefined) {}",
+      "choose",
+    ],
+    [
+      "arrow default parameter",
+      "const choose = (value = enabled ? startGateway() : undefined) => value;",
+      "choose",
+    ],
+    [
+      "exported variable initializer",
+      "export const choice = enabled ? startGateway() : stopGateway();",
+      "choice",
+    ],
+    [
+      "object property initializer",
+      "const entry = { choice: enabled ? startGateway() : stopGateway() };",
+      "entry",
+    ],
+    [
+      "class field initializer",
+      "class Entry { choice = enabled ? startGateway() : stopGateway(); }",
+      "Entry",
+    ],
+    [
+      "class static block",
+      "class Entry { static { if (enabled) startGateway(); } }",
+      "Entry",
+    ],
+    [
+      "computed method name",
+      "class Entry { [enabled ? startGateway() : 'choose']() {} }",
+      "Entry",
+    ],
+    [
+      "decorator expression",
+      "@(enabled ? startGateway() : decorate)\nclass Entry {}",
+      "Entry",
+    ],
+    [
+      "direct default export expression",
+      "export default enabled ? startGateway() : stopGateway();",
+      "defaultExport",
+    ],
+  ])("checks a gateway decision in a top-level %s", (_form, source, declaration) => {
+    const actual = collectOnboardEntryDecisions(source);
+
+    expect(actual.gateway).toEqual({ [declaration]: 1 });
+  });
+
   it("rejects a messaging action selected by a neutral condition", () => {
     const actual = collectOnboardEntryDecisions(
       "function choose(enabled: boolean) { if (enabled) configureMessaging(); }",
@@ -203,6 +255,14 @@ describe("onboarding entry composition boundary", () => {
   it("does not classify Hermes tool selection as a gateway lifecycle decision", () => {
     const actual = collectOnboardEntryDecisions(
       "function choose(enabled: boolean) { if (enabled) normalizeHermesToolGatewaySelections(); }",
+    );
+
+    expect(actual.gateway).toEqual({});
+  });
+
+  it("does not classify recovery helper construction as a recovery decision", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const gatewayRecovery = createGatewayRecoveryOrchestration({});",
     );
 
     expect(actual.gateway).toEqual({});

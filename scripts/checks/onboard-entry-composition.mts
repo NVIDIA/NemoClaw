@@ -29,6 +29,7 @@ const LOGICAL_OPERATORS = new Set([
   ts.SyntaxKind.QuestionQuestionToken,
 ]);
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
+const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
 
 type NamedScope = {
   readonly name: string;
@@ -96,37 +97,21 @@ function declarationOwner(declaration: ts.VariableDeclaration): string {
   return "destructuredBinding";
 }
 
-function topLevelCallableScopes(statement: ts.Statement): NamedScope[] {
+function topLevelScopes(statement: ts.Statement): NamedScope[] {
   if (ts.isVariableStatement(statement)) {
-    return statement.declarationList.declarations.flatMap((declaration) =>
-      callableScopes(declarationOwner(declaration), declaration.initializer ?? declaration),
-    );
+    return statement.declarationList.declarations.map((declaration) => ({
+      name: declarationOwner(declaration),
+      node: declaration,
+    }));
   }
   if (ts.isExportAssignment(statement)) {
-    return callableScopes("defaultExport", statement.expression);
+    return [{ name: "defaultExport", node: statement.expression }];
   }
-  const owner =
+  const name =
     (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name
       ? statement.name.text
       : "<module>";
-  return callableScopes(owner, statement);
-}
-
-function moduleScope(statement: ts.Statement): NamedScope | null {
-  if (
-    ts.isVariableStatement(statement) ||
-    ts.isFunctionDeclaration(statement) ||
-    ts.isClassDeclaration(statement) ||
-    ts.isImportDeclaration(statement) ||
-    ts.isImportEqualsDeclaration(statement) ||
-    ts.isExportDeclaration(statement) ||
-    ts.isExportAssignment(statement) ||
-    ts.isInterfaceDeclaration(statement) ||
-    ts.isTypeAliasDeclaration(statement)
-  ) {
-    return null;
-  }
-  return { name: "<module>", node: statement };
+  return [{ name, node: statement }];
 }
 
 function isGatewayLifecycleIdentifier(identifier: string): boolean {
@@ -186,7 +171,7 @@ function calledName(expression: ts.Expression): string | null {
 function isRecoveryCall(node: ts.Node): node is ts.CallExpression {
   if (!ts.isCallExpression(node)) return false;
   const name = calledName(node.expression);
-  return name !== null && RECOVERY_NAME.test(name);
+  return name !== null && !RECOVERY_FACTORY_NAME.test(name) && RECOVERY_NAME.test(name);
 }
 
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and
@@ -277,7 +262,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
 function decisionCounts(
   name: string,
   scope: ts.Node,
-  skipCallableBodies = false,
+  prunedNodes: ReadonlySet<ts.Node> = new Set(),
 ): Record<OnboardDecisionCategory, Record<string, number>> {
   const nameCategories = identifierCategories(name);
   const counts: Record<OnboardDecisionCategory, Record<string, number>> = {
@@ -288,7 +273,7 @@ function decisionCounts(
   };
 
   function visit(node: ts.Node): void {
-    if (skipCallableBodies && functionBody(node)) return;
+    if (prunedNodes.has(node)) return;
     if (isDecisionNode(node)) {
       const categories = new Set([...nameCategories, ...decisionNodeCategories(node)]);
       for (const category of categories) {
@@ -324,15 +309,20 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
   };
 
   for (const statement of sourceFile.statements) {
-    const scopes = topLevelCallableScopes(statement);
-    const directModuleScope = moduleScope(statement);
-    if (directModuleScope) scopes.push(directModuleScope);
-    for (const { name, node } of scopes) {
-      const skipCallableBodies = name === "<module>" && node === statement;
-      const declarationCounts = decisionCounts(name, node, skipCallableBodies);
-      for (const category of CATEGORIES) {
-        for (const [declaration, count] of Object.entries(declarationCounts[category])) {
-          decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;
+    for (const { name, node } of topLevelScopes(statement)) {
+      const callables = callableScopes(name, node);
+      const callableBodies = new Set(callables.map((scope) => scope.node));
+      const scopes = [{ name, node, prunedNodes: callableBodies }, ...callables];
+      for (const scope of scopes) {
+        const declarationCounts = decisionCounts(
+          scope.name,
+          scope.node,
+          "prunedNodes" in scope ? scope.prunedNodes : undefined,
+        );
+        for (const category of CATEGORIES) {
+          for (const [declaration, count] of Object.entries(declarationCounts[category])) {
+            decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;
+          }
         }
       }
     }
