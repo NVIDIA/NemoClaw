@@ -39,6 +39,7 @@ export type DestroyHarness = {
   setSandboxPresent: (present: boolean) => void;
   shieldsDownSpy: MockInstance;
   stopAllSpy: MockInstance;
+  stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
   updateSessionSpy: MockInstance;
@@ -72,6 +73,7 @@ type DestroyHarnessOptions = {
   promptResponses?: string[];
   provider?: string;
   registeredSandboxCount?: number;
+  removeSandboxResult?: boolean;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
   sessionRouterPid?: number;
@@ -163,6 +165,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
   const destroyExecution = requireDist("./destroy-execution.js");
+  const destroyPreflight = requireDist("./destroy-preflight.js");
   const sandboxSession = requireDist("../../state/sandbox-session.js");
   const shields = requireDist("../../shields/index.js");
   const timerControl = requireDist("../../shields/timer-control.js");
@@ -209,9 +212,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     })),
   }));
   const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockImplementation(() => {
+    if (options.removeSandboxResult === false) return false;
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
     return true;
   });
+  const stopModelRouterForDestroyedSandboxSpy = vi
+    .spyOn(destroyPreflight, "stopModelRouterForDestroyedSandbox")
+    .mockResolvedValue(undefined);
   const retirePortableLifecycleReceiptSpy = vi
     .spyOn(destroyExecution, "retirePortableLifecycleAuthority")
     .mockImplementation(() => undefined);
@@ -432,6 +439,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     },
     shieldsDownSpy,
     stopAllSpy,
+    stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
     updateSessionSpy,
