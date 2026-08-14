@@ -28,10 +28,7 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
-import {
-  POLICY_ADD_EXPECT_SCRIPT,
-  requirePolicyPresetNumber,
-} from "./network-policy-interactive.ts";
+import { runInteractivePolicyAdd } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 import { parseVerifiedActivePolicyPresets } from "./policy-list-state.ts";
@@ -125,30 +122,12 @@ async function applyPresetInteractively(
   host: HostCliClient,
   preset: string,
 ): Promise<ShellProbeResult> {
-  const listResult = await host.command(
-    "bash",
-    [
-      "-lc",
-      'env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add </dev/null',
-    ],
-    {
-      artifactName: `policy-add-${preset}-interactive-list`,
-      env: baseEnv({
-        NEMOCLAW_E2E_CLI: CLI_ENTRYPOINT,
-        NEMOCLAW_E2E_SANDBOX: SANDBOX_NAME,
-      }),
-      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-    },
-  );
-  const presetNumber = requirePolicyPresetNumber(text(listResult), preset);
-
-  const result = await host.command("expect", ["-c", POLICY_ADD_EXPECT_SCRIPT], {
+  const result = await runInteractivePolicyAdd(host, {
     artifactName: `policy-add-${preset}-interactive`,
-    env: baseEnv({
-      NEMOCLAW_E2E_CLI: CLI_ENTRYPOINT,
-      NEMOCLAW_E2E_SANDBOX: SANDBOX_NAME,
-      NEMOCLAW_E2E_PRESET_NUM: presetNumber,
-    }),
+    cliEntrypoint: CLI_ENTRYPOINT,
+    env: baseEnv(),
+    preset,
+    sandboxName: SANDBOX_NAME,
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
   await sleep(POLICY_SETTLE_MS);

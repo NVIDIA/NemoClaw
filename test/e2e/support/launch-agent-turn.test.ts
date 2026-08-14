@@ -51,6 +51,7 @@ exit ${exitStatus}
         NEMOCLAW_LAUNCH_EXIT_COMMAND: closeAfterReply ? "" : "/exit",
         NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
         NEMOCLAW_FIXTURE_REPLY: reply,
+        NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "",
         NEMOCLAW_LAUNCH_PROMPT: "prompt",
         NEMOCLAW_LAUNCH_READY_TEXT: "",
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
@@ -87,6 +88,7 @@ it.runIf(process.platform === "linux")(
       env: {},
       exitCommand: "/exit",
       host: host as never,
+      postReplyReadyText: "connected | idle",
       readyText: "gateway connected | idle",
       redactionValues: [],
       sandboxName: "alpha",
@@ -108,11 +110,18 @@ it.runIf(process.platform === "linux")(
       "/exit",
       "/exit",
     ]);
+    expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_READY_TEXT)).toEqual([
+      "gateway connected | idle",
+      "gateway connected | idle",
+    ]);
+    expect(
+      calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT),
+    ).toEqual(["connected | idle", "connected | idle"]);
   },
 );
 
 it.runIf(process.platform !== "win32")(
-  "waits for OpenClaw idle before the prompt and again before the exit command (#9023)",
+  "waits for 'gateway connected | idle' before the prompt and 'connected | idle' before exit (#9023)",
   () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-ready-"));
     const scriptStub = join(fixtureRoot, "script");
@@ -136,11 +145,12 @@ fi
 printf 'gateway connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' _
 printf 'PONG\n' | tee -a "$capture"
+printf 'gateway connected | idle\n' | tee -a "$capture"
 if IFS= read -r -t 1 -d $'\r' _; then
   echo "exit arrived before post-reply readiness" >&2
   exit 1
 fi
-printf 'gateway connected | idle\n' | tee -a "$capture"
+printf 'connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' exit_command
 [[ "$exit_command" == "/exit" ]]
 exit 0
@@ -161,6 +171,7 @@ exit 0
           NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
           NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
           NEMOCLAW_LAUNCH_PROMPT: "prompt",
+          NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "connected | idle",
           NEMOCLAW_LAUNCH_READY_TEXT: "gateway connected | idle",
           NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
           PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,
