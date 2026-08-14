@@ -29,6 +29,9 @@ const DEV_ARTIFACT_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}";
 const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
+const DEV_ARTIFACT_TRUSTED_TOOL =
+  `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
 const DEV_ARTIFACT_SOURCE_OUTPUT =
   "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
 const DEV_ARTIFACT_MANIFEST_OUTPUT =
@@ -679,8 +682,15 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
   if (!/^actions\/checkout@[a-f0-9]{40}$/u.test(asString(checkout.uses))) {
     errors.push(`${DEV_ARTIFACT_JOB} must use a SHA-pinned checkout`);
   }
-  if (asRecord(checkout.with)["persist-credentials"] !== false) {
-    errors.push(`${DEV_ARTIFACT_JOB} checkout must set persist-credentials:false`);
+  if (
+    !hasExactEntries(asRecord(checkout.with), {
+      repository: "${{ github.repository }}",
+      ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
+      path: DEV_ARTIFACT_TRUSTED_CHECKOUT,
+      "persist-credentials": false,
+    })
+  ) {
+    errors.push(`${DEV_ARTIFACT_JOB} must check out only the trusted workflow revision`);
   }
   const setup = namedStep(job, "Set up Node for OpenShell dev artifact resolution");
   if (!/^actions\/setup-node@[a-f0-9]{40}$/u.test(asString(setup.uses))) {
@@ -696,12 +706,16 @@ function validateDevArtifactJob(errors: string[], job: UnknownRecord): void {
     "resolve_openshell_dev_artifact",
     `${DEV_ARTIFACT_JOB} resolver must expose its canonical step id`,
   );
-  for (const token of [DEV_ARTIFACT_TOOL, " resolve ", OPENSHELL_DEV_ARTIFACT_DIRECTORY]) {
+  for (const token of [
+    `"${DEV_ARTIFACT_TRUSTED_TOOL}"`,
+    " resolve ",
+    OPENSHELL_DEV_ARTIFACT_DIRECTORY,
+  ]) {
     requireContains(
       errors,
       resolve.run,
       token,
-      `${DEV_ARTIFACT_JOB} must run the reviewed immutable resolver`,
+      `${DEV_ARTIFACT_JOB} must run the trusted immutable resolver`,
     );
   }
   const upload = namedStep(job, "Upload OpenShell dev artifact resolution");

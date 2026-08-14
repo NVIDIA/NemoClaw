@@ -1735,10 +1735,12 @@ jobs:
       source_commit: ${{ steps.resolve_openshell_dev_artifact.outputs.source_commit }}
       manifest_sha256: ${{ steps.resolve_openshell_dev_artifact.outputs.manifest_sha256 }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout trusted OpenShell dev artifact resolver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
           persist-credentials: false
 
       - name: Set up Node for OpenShell dev artifact resolution
@@ -1750,7 +1752,7 @@ jobs:
         name: Resolve immutable OpenShell dev artifact
         run: >-
           node --experimental-strip-types --no-warnings
-          tools/e2e/openshell-dev-artifact.mts resolve
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve
           "${{ runner.temp }}/openshell-dev-artifact"
 
       - name: Upload OpenShell dev artifact resolution

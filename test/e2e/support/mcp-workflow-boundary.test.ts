@@ -335,6 +335,58 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
+  it.each([
+    {
+      name: "candidate checkout ref",
+      mutate: (job: { steps: Array<Record<string, unknown>> }) => {
+        const checkout = job.steps.find(
+          (step) => step.name === "Checkout trusted OpenShell dev artifact resolver",
+        );
+        requireFixture(
+          checkout?.with,
+          "trusted OpenShell resolver checkout fixture is missing",
+        );
+        const withValues = checkout.with as Record<string, unknown>;
+        withValues.ref = "${{ inputs.checkout_sha || github.sha }}";
+      },
+      expected: "openshell-dev-artifact must check out only the trusted workflow revision",
+    },
+    {
+      name: "candidate workspace invocation",
+      mutate: (job: { steps: Array<Record<string, unknown>> }) => {
+        const resolve = job.steps.find(
+          (step) => step.name === "Resolve immutable OpenShell dev artifact",
+        );
+        requireFixture(
+          typeof resolve?.run === "string",
+          "trusted OpenShell resolver invocation fixture is missing",
+        );
+        resolve.run = resolve.run.replace(
+          ".trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts",
+          ".candidate-runtime/tools/e2e/openshell-dev-artifact.mts",
+        );
+      },
+      expected: "openshell-dev-artifact must run the trusted immutable resolver",
+    },
+  ])("rejects a $name for OpenShell dev artifact resolution (#9051)", ({
+    expected,
+    mutate,
+  }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      mutate(workflow.jobs["openshell-dev-artifact"]);
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects any additional artifact upload outside the scanned directory", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
