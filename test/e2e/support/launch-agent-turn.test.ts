@@ -250,7 +250,7 @@ it.runIf(process.platform !== "win32")(
 it.runIf(process.platform !== "win32")(
   "accepts an exact reply after a CSI erase-in-line sequence (#9160)",
   () => {
-    const result = runLaunchTurnFixture({ exitStatus: 0, reply: "\u001b[2KPONG" });
+    const result = runLaunchTurnFixture({ exitStatus: 0, reply: "WAIT\u001b[2KPONG" });
 
     expect(result.signal, result.stderr).toBeNull();
     expect(result.status, result.stderr).toBe(0);

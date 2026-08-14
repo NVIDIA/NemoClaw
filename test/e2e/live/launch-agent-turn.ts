@@ -67,9 +67,9 @@ fi
 
 render_terminal() {
   sed -E $'s/\x1B][^\x07\x1B]*(\x07|\x1B\\\\)//g' \
-    | sed -E $'s|\x1B\\[[0-?]*[ -/]*[@-~]||g' \
     | LC_ALL=C awk '
       BEGIN {
+        escape = sprintf("%c", 27)
         carriage_return = sprintf("%c", 13)
         backspace = sprintf("%c", 8)
         cursor = 0
@@ -88,6 +88,25 @@ render_terminal() {
       {
         for (character_index = 1; character_index <= length($0); character_index++) {
           character = substr($0, character_index, 1)
+          if (character == escape && substr($0, character_index + 1, 1) == "[") {
+            csi_end = 0
+            for (csi_index = character_index + 2; csi_index <= length($0); csi_index++) {
+              csi_character = substr($0, csi_index, 1)
+              if (csi_character ~ /[@-~]/) {
+                csi_end = csi_index
+                break
+              }
+            }
+            if (csi_end > 0) {
+              csi_parameters = substr($0, character_index + 2, csi_end - character_index - 2)
+              if (csi_character == "K" && csi_parameters == "2") {
+                rendered_line = ""
+                cursor = 0
+              }
+              character_index = csi_end
+              continue
+            }
+          }
           if (character == carriage_return) {
             cursor = 0
           } else if (character == backspace) {
