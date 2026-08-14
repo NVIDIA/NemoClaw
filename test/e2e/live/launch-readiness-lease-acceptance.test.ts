@@ -20,7 +20,7 @@ test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
       ],
     },
   },
-  async ({ host, progress }) => {
+  async ({ host, progress, secrets }) => {
     progress.phase("verify the existing locked-image sandbox");
     const entry = readRegistrySandboxEntry(SANDBOX_NAME);
     expect(entry.agent).toBe("openclaw");
@@ -38,7 +38,7 @@ test.runIf(process.platform === "linux" && SANDBOX_NAME.length > 0)(
       env: process.env,
       exitCommand: "/exit",
       host,
-      redactionValues: [],
+      redactionValues: secrets.redactionValues(),
       sandboxName: SANDBOX_NAME,
       beforeLaunchTurns: () => {
         progress.phase("complete two PTY launch sessions with structured turn evidence");

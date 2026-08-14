@@ -24,7 +24,12 @@ import {
 } from "../live/launch-agent-turn.ts";
 
 type SessionRecords = Record<string, string[]>;
-type FixtureMode = "invalid-order" | "nonzero" | "valid";
+type FixtureMode =
+  | "cleanup-failure"
+  | "invalid-order"
+  | "nonzero"
+  | "nonzero-cleanup-failure"
+  | "valid";
 
 function message(role: "assistant" | "user", content = "nonempty"): string {
   return JSON.stringify({
@@ -37,10 +42,15 @@ function emptyMessage(role: "assistant" | "user"): string {
   return JSON.stringify({ message: { content: [], role }, type: "message" });
 }
 
-function writeSessionRecords(root: string, sessions: SessionRecords, append: boolean): void {
+function writeSessionRecords(
+  root: string,
+  sessions: SessionRecords,
+  append: boolean,
+  finalNewline = true,
+): void {
   for (const [sessionId, records] of Object.entries(sessions)) {
     const filePath = join(root, `${sessionId}.jsonl`);
-    const body = records.length > 0 ? `${records.join("\n")}\n` : "";
+    const body = records.length > 0 ? `${records.join("\n")}${finalNewline ? "\n" : ""}` : "";
     const writeRecords = append ? appendFileSync : writeFileSync;
     writeRecords(filePath, body);
   }
@@ -48,6 +58,7 @@ function writeSessionRecords(root: string, sessions: SessionRecords, append: boo
 
 function runEvidenceFixture(input: {
   after: SessionRecords;
+  afterFinalNewline?: boolean;
   before?: SessionRecords;
   expectedTurns: number;
 }) {
@@ -62,7 +73,7 @@ function runEvidenceFixture(input: {
       ["-e", OPENCLAW_SESSION_EVIDENCE_SCRIPT, "baseline", sessionRoot, baselinePath, ""],
       { encoding: "utf8" },
     );
-    writeSessionRecords(sessionRoot, input.after, true);
+    writeSessionRecords(sessionRoot, input.after, true, input.afterFinalNewline ?? true);
     const qualification = spawnSync(
       process.execPath,
       [
@@ -162,7 +173,7 @@ const append = (role, content) => fs.appendFileSync(
   const exitCommand = await ask();
   rl.close();
   if (exitCommand !== "/exit") process.exit(65);
-  process.exit(mode === "nonzero" ? 23 : 0);
+  process.exit(mode.includes("nonzero") ? 23 : 0);
 })().catch(() => process.exit(66));
 `,
     );
@@ -170,6 +181,9 @@ const append = (role, content) => fs.appendFileSync(
       fakeOpenshell,
       String.raw`#!/usr/bin/env bash
 set -euo pipefail
+if [[ "$NEMOCLAW_FIXTURE_MODE" == *"cleanup-failure" && " $* " == *" rm -f -- "* ]]; then
+  exit 71
+fi
 while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
 [[ "$#" -gt 0 ]]
 shift
@@ -269,6 +283,25 @@ it("rejects malformed, empty, duplicated, extra, out-of-order, or cross-session 
   }
 });
 
+it("rejects an unterminated appended session record (#9160)", () => {
+  const { baseline, qualification } = runEvidenceFixture({
+    after: {
+      "session-a": [
+        message("user"),
+        message("assistant"),
+        message("user"),
+        message("assistant"),
+        message("user"),
+      ],
+    },
+    afterFinalNewline: false,
+    expectedTurns: 2,
+  });
+
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+});
+
 it("rejects an invalid baseline or a removed, rewritten, or truncated session (#9160)", () => {
   for (const mutation of ["invalid", "removed", "rewritten", "truncated"] as const) {
     const { baseline, qualification } = runBaselineMutationFixture(mutation);
@@ -322,6 +355,36 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
+  "fails when a successful PTY session cannot remove its structured baseline (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "cleanup-failure",
+      "plain",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(false);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "preserves a nonzero PTY exit when structured baseline cleanup also fails (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "nonzero-cleanup-failure",
+      "plain",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(false);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(23);
+  },
+);
+
+it.runIf(process.platform === "linux")(
   "runs the producer then two PTY launch sessions under one lease (#8942, #9023, #9160)",
   async () => {
     const calls: Array<{ command: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
@@ -368,6 +431,10 @@ it.runIf(process.platform === "linux")(
       "openshell",
     ]);
     for (const call of calls.slice(1)) {
+      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_EXPECTED_REPLY");
+      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT");
+      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_PROMPT");
+      expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_READY_TEXT");
       expect(typeof call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT).toBe("string");
       expect(typeof call.env?.NEMOCLAW_LAUNCH_SECOND_INPUT).toBe("string");
       expect(call.env?.NEMOCLAW_LAUNCH_FIRST_INPUT).not.toBe(

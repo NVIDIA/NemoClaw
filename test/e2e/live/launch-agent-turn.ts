@@ -112,6 +112,9 @@ function appendedMessages(fileName, baseline) {
   const { offset, complete, raw } = readCompleteSession(fileName);
   const prior = baseline[fileName];
   const priorOffset = prior ? prior.offset : 0;
+  if (raw.length !== offset) {
+    finish(2, "session_record_incomplete", { sessionId: fileName.slice(0, -6) });
+  }
   if (offset < priorOffset) finish(2, "session_truncated", { sessionId: fileName.slice(0, -6) });
   if (prior && digest(raw.slice(0, priorOffset)) !== prior.digest) {
     finish(2, "session_rewritten", { sessionId: fileName.slice(0, -6) });
@@ -170,8 +173,12 @@ function qualifyTurns() {
   finish(0);
 }
 
-if (mode === "baseline") recordBaseline();
-if (mode === "qualify") qualifyTurns();
+try {
+  if (mode === "baseline") recordBaseline();
+  if (mode === "qualify") qualifyTurns();
+} catch {
+  finish(2, "verifier_failed");
+}
 finish(2, "mode_invalid");
 `;
 
@@ -194,6 +201,9 @@ remove_session_baseline() {
 }
 
 cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  trap - EXIT
   exec 3>&- 2>/dev/null || true
   if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
     kill -TERM "$session_pid" 2>/dev/null || true
@@ -203,8 +213,15 @@ cleanup() {
   if [[ -n "$session_pid" ]]; then
     wait "$session_pid" 2>/dev/null || true
   fi
-  remove_session_baseline >/dev/null 2>&1 || true
+  if ! remove_session_baseline >/dev/null 2>&1; then
+    echo "structured session baseline cleanup failed" >&2
+    cleanup_status=1
+  fi
   rm -rf -- "$session_dir"
+  if [[ "$original_status" != 0 ]]; then
+    exit "$original_status"
+  fi
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 
@@ -323,13 +340,13 @@ else
 fi
 session_pid=""
 
-if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then
-  fail_launch_session "launch could not remove the structured session baseline"
-fi
 if [[ "$launch_status" != 0 ]]; then
   echo "launch exited with status $launch_status" >&2
   terminal_diagnostic
   exit "$launch_status"
+fi
+if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then
+  fail_launch_session "launch could not remove the structured session baseline"
 fi
 `;
 
