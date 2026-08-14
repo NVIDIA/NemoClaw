@@ -38,6 +38,7 @@ export interface HostGatewayProcessDeps {
   commandExists?: (command: string) => boolean;
   isPortFree?: (port: number) => boolean;
   log?: (message: string) => void;
+  readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   warn?: (message: string) => void;
 }
@@ -145,6 +146,7 @@ function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatew
     commandExists: overrides.commandExists ?? ((cmd) => defaultCommandExists(cmd, env)),
     isPortFree: overrides.isPortFree ?? ((port) => isHostPortFree(port)),
     log: overrides.log,
+    readProcessExecutable: overrides.readProcessExecutable,
     readProcessEnvironment: overrides.readProcessEnvironment,
     warn: overrides.warn,
   };
@@ -279,6 +281,60 @@ export function processUsesStateScopedSandboxNamespace(
     }
   }
   return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
+}
+
+function readProcessExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
+  if (deps.readProcessExecutable) return deps.readProcessExecutable(pid);
+  try {
+    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProcessExecutable(value: string): string {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+export function externallySupervisedHostGatewayProcessOwnershipFailure(
+  depsOverrides: Partial<HostGatewayProcessDeps>,
+  options: {
+    gatewayBin: string;
+    gatewayName: string;
+    gatewayPort: number;
+    pid: number;
+    stateDir: string;
+  },
+): string | null {
+  const deps = defaultDeps(depsOverrides);
+  if (!canonicalGatewayTargetMatches(options.gatewayName, options.gatewayPort)) {
+    return "selected gateway name and port are not canonical";
+  }
+  if (!processUsesStateScopedSandboxNamespace(options.pid, options.stateDir, deps)) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  }
+  const executable = readProcessExecutable(options.pid, deps);
+  if (
+    !executable ||
+    normalizeProcessExecutable(executable) !== normalizeProcessExecutable(options.gatewayBin)
+  ) {
+    return "process executable does not match the declared supervisor executable";
+  }
+  if (
+    !hostGatewayCmdlineMatches(
+      processArgs(options.pid, deps),
+      options.gatewayBin,
+      { name: options.gatewayName, port: options.gatewayPort },
+      { requireExpectedFlags: true },
+    )
+  ) {
+    return "process command line does not identify the selected gateway name and port";
+  }
+  return null;
 }
 
 export function hostGatewayCmdlineMatches(

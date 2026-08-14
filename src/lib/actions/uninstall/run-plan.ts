@@ -59,8 +59,8 @@ import {
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
+  externallySupervisedHostGatewayProcessOwnershipFailure,
   hasStateScopedSandboxNamespace,
-  processUsesStateScopedSandboxNamespace,
   scopedHostGatewayProcessOwnershipFailure,
   type StopHostGatewayOptions,
   stopHostGatewayProcesses,
@@ -109,6 +109,7 @@ export interface UninstallRunDeps {
   openRegularFile?: typeof openRegularFileNoFollow;
   platform?: NodeJS.Platform;
   readProcessArgv?: (pid: number) => readonly string[] | null;
+  readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   readLine?: () => string | null;
   requireCompleteGatewayProcessCleanup?: boolean;
@@ -446,6 +447,7 @@ interface UninstallRuntime {
   openRegularFile: typeof openRegularFileNoFollow;
   platform: NodeJS.Platform;
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
+  readProcessExecutable: ((pid: number) => string | null) | undefined;
   readProcessEnvironment: ((pid: number) => Record<string, string> | null) | undefined;
   readLine: () => string | null;
   requireCompleteGatewayProcessCleanup: boolean;
@@ -488,6 +490,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     openRegularFile: deps.openRegularFile ?? openRegularFileNoFollow,
     platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,
+    readProcessExecutable: deps.readProcessExecutable,
     readProcessEnvironment: deps.readProcessEnvironment,
     readLine: deps.readLine ?? readLineFromStdin,
     requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
@@ -1436,10 +1439,28 @@ function canRemoveScopedOpenShellResources(
       if (
         inspected.status === 0 &&
         Number.isSafeInteger(mainPid) &&
-        mainPid > 0 &&
-        processUsesStateScopedSandboxNamespace(mainPid, stateDir, runtime)
+        mainPid > 0
       ) {
-        return true;
+        const reason = externallySupervisedHostGatewayProcessOwnershipFailure(
+          {
+            env: runtime.env,
+            readProcessEnvironment: runtime.readProcessEnvironment,
+            readProcessExecutable: runtime.readProcessExecutable,
+            run: runtime.run,
+          },
+          {
+            gatewayBin: supervisor.execPath,
+            gatewayName: teardownAuthority.gatewayName,
+            gatewayPort: teardownAuthority.gatewayPort,
+            pid: mainPid,
+            stateDir,
+          },
+        );
+        if (reason === null) return true;
+        runtime.warn(
+          `Refusing scoped gateway cleanup because the externally supervised process identity cannot be proven: ${reason}.`,
+        );
+        return false;
       }
     }
     runtime.warn(

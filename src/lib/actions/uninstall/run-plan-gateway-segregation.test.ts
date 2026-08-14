@@ -155,6 +155,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             readProcessEnvironment: () => ({
               NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(externalStateDir),
             }),
+            readProcessExecutable: () => "/usr/local/bin/openshell-gateway",
             rmSync: fs.rmSync,
             run: (command, args) => {
               calls.push({ args, command });
@@ -165,6 +166,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
                 (command === "ps" &&
                   args.includes("uid=") &&
                   ok(`${String(process.getuid?.() ?? -1)}\n`)) ||
+                (command === "ps" &&
+                  args.includes("args=") &&
+                  ok("/usr/local/bin/openshell-gateway --name nemoclaw --port 8080\n")) ||
                 ok()
               );
             },
@@ -202,6 +206,105 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       }
     },
   );
+
+  it.each([
+    {
+      title: "the executable differs from the declared supervisor executable",
+      executable: "/usr/bin/openshell-gateway",
+      commandLine: "/usr/local/bin/openshell-gateway --name nemoclaw --port 8080",
+    },
+    {
+      title: "the command line names another gateway",
+      executable: "/usr/local/bin/openshell-gateway",
+      commandLine: "/usr/local/bin/openshell-gateway --name nemoclaw-8091 --port 8080",
+    },
+    {
+      title: "the command line names another port",
+      executable: "/usr/local/bin/openshell-gateway",
+      commandLine: "/usr/local/bin/openshell-gateway --name nemoclaw --port 8091",
+    },
+  ])("refuses scoped cleanup when $title", ({ executable, commandLine }) => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-external-proof-"));
+    try {
+      const shared = path.join(tmpHome, ".nemoclaw");
+      const gatewayStatePath = writeScopedGatewayState(tmpHome);
+      const externalStateDir = path.dirname(gatewayStatePath);
+      fs.mkdirSync(shared, { recursive: true });
+      fs.writeFileSync(
+        path.join(shared, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "alpha",
+          sandboxes: {
+            alpha: { name: "alpha", gatewayName: "nemoclaw", gatewayPort: 8080 },
+            beta: { name: "beta", gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
+          },
+        }),
+      );
+      const calls: Array<{ args: string[]; command: string }> = [];
+      const warnings: string[] = [];
+      const externalPid = 4242;
+
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: vi.fn(),
+          readProcessEnvironment: () => ({
+            NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE: gatewayIdForStateDir(externalStateDir),
+          }),
+          readProcessExecutable: () => executable,
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "externally-supervised",
+            source: "declared",
+            endpoint: `http://127.0.0.1:${String(gatewayPort)}`,
+            stateDir: externalStateDir,
+            supervisor: {
+              kind: "systemd-system",
+              serviceName: "openshell-gateway.service",
+              execPath: "/usr/local/bin/openshell-gateway",
+            },
+            requiredCapabilities: [],
+          }),
+          rmSync: fs.rmSync,
+          run: (command, args) => {
+            calls.push({ args, command });
+            if (command === "openshell" && args[0] === "gateway" && args[1] === "list") {
+              return ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]));
+            }
+            if (command === "systemctl" && args.includes("--property=MainPID")) {
+              return ok(`${String(externalPid)}\n`);
+            }
+            if (command === "ps" && args.includes("uid=")) {
+              return ok(`${String(process.getuid?.() ?? -1)}\n`);
+            }
+            if (command === "ps" && args.includes("args=")) return ok(`${commandLine}\n`);
+            return ok();
+          },
+          runDocker: () => ok(),
+          error: (message) => warnings.push(message),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(
+        calls.some(
+          ({ command, args }) =>
+            command === "openshell" && args[0] === "sandbox" && args[1] === "delete",
+        ),
+      ).toBe(false);
+      expect(warnings.join("\n")).toContain(
+        "Refusing scoped gateway cleanup because the externally supervised process identity cannot be proven",
+      );
+      expect(fs.existsSync(gatewayStatePath)).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 
   it("does not use legacy gateway destroy when external registration removal is unsupported (#6576)", () => {
     const calls: Array<{ args: string[]; command: string }> = [];

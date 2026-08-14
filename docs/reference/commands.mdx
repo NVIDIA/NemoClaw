@@ -4305,7 +4305,8 @@ A single full uninstall reports the process and continues.
 Before each sandbox deletion during scoped Docker cleanup, NemoClaw proves the selected configuration and running gateway identity again and passes the selected gateway name to OpenShell.
 The configuration and running process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
 For a NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the exact gateway name and port.
-For an externally supervised gateway, NemoClaw proves the configured state, the supervisor's current main process, its owner, and its loaded sandbox namespace.
+For an externally supervised gateway, NemoClaw proves the configured state.
+It binds the supervisor's current main process to its owner, loaded sandbox namespace, declared executable, selected gateway name, and selected port.
 When NemoClaw can prove an owner-private, generated configuration and complete JWT bundle that predate state-root scoping, restart keeps the legacy gateway ID, JWT bundle, and Docker driver's `default` namespace.
 That compatibility keeps the gateway able to find existing containers and keeps their non-expiring sandbox JWT issuer valid.
 NemoClaw regenerates the other gateway settings from the current runtime configuration.
