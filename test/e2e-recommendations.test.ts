@@ -13,6 +13,7 @@ import {
   extractFreeStandingE2eJobs,
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
+  trustedE2eRecommendationInventory,
 } from "../tools/advisors/e2e-recommendations.mts";
 import { isCommandShapedE2eText } from "../tools/advisors/e2e-text.mts";
 
@@ -67,6 +68,55 @@ function metadata(
 }
 
 describe("E2E recommendation normalizer", () => {
+  it("maps changed catalogue tests to their logical advisor selectors", () => {
+    const inventory = trustedE2eRecommendationInventory();
+    const trustedJobIds = new Set([...inventory.allowedJobIds, ...inventory.manualOnlyJobIds]);
+
+    expect([...trustedJobIds]).toEqual(
+      expect.arrayContaining([
+        "bedrock-runtime-compatible-anthropic",
+        "channels-stop-start",
+        "security-posture",
+      ]),
+    );
+
+    const channels = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: ["test/e2e/live/channels-stop-start.test.ts"] }),
+    );
+    expect(channels.required.map(({ id }) => id)).toContain("channels-stop-start");
+    expect(channels.required.map(({ id }) => id)).not.toContain("channels-stop-start-openclaw");
+    expect(channels.required.map(({ id }) => id)).not.toContain("channels-stop-start-hermes");
+
+    const bedrock = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts"] }),
+    );
+    expect(bedrock.required.map(({ id }) => id)).toContain(
+      "bedrock-runtime-compatible-anthropic",
+    );
+    expect(bedrock.required.map(({ id }) => id)).not.toContain(
+      "bedrock-runtime-compatible-anthropic-openclaw",
+    );
+
+    const rejected = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "rebuild-openclaw",
+            workflow: E2E_WORKFLOW,
+            selectorType: "job",
+            reason: "unrelated credentialed selector",
+          },
+        ],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [] }),
+    );
+    expect(rejected.required.map(({ id }) => id)).not.toContain("rebuild-openclaw");
+  });
+
   it("loads the trusted inventory without repository development dependencies", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-recommendations-runtime-"));
     try {
@@ -75,6 +125,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/e2e-text.mts",
         "tools/advisors/json.mts",
         "tools/advisors/risk-plan.mts",
+        "tools/e2e/target-catalogue.mts",
         "scripts/checks/llama-cpp-dgx-spark-qualification-paths.mts",
         "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
@@ -286,7 +337,7 @@ describe("E2E recommendation normalizer", () => {
     expect(JSON.stringify({ coverage, targets })).not.toContain("workflow run");
   });
 
-  it("enforces deterministic risk-plan jobs when the model recommends none", () => {
+  it("does not expose credentialed deterministic jobs as PR selectors", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [],
@@ -297,13 +348,10 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toEqual([
-      "rebuild-openclaw",
-      "state-backup-restore",
-    ]);
-    expect(normalized.required.every((item) => item.required)).toBe(true);
-    expect(normalized.noTargetE2eReason).toBeNull();
-    expect(normalized.confidence).toBe("medium");
+    expect(normalized.required).toEqual([]);
+    expect(normalized.optional).toEqual([]);
+    expect(normalized.noTargetE2eReason).toBe("No trusted E2E selector was selected.");
+    expect(normalized.confidence).toBe("low");
   });
 
   it("does not report an empty coverage decision when optional coverage was selected", () => {
@@ -326,7 +374,7 @@ describe("E2E recommendation normalizer", () => {
     expect(normalized.noE2eReason).toBeNull();
   });
 
-  it("does not let a model downgrade a deterministic risk-plan job", () => {
+  it("rejects a model recommendation for a credentialed catalogue job", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [],
@@ -343,7 +391,7 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toContain("rebuild-openclaw");
+    expect(normalized.required.map((item) => item.id)).not.toContain("rebuild-openclaw");
     expect(normalized.optional.map((item) => item.id)).not.toContain("rebuild-openclaw");
   });
 
@@ -354,7 +402,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "full-e2e",
       "hermes-e2e",
       "onboard-repair",
       "onboard-resume",
@@ -624,7 +671,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -679,7 +725,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -731,7 +776,6 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -786,10 +830,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
-      "full-e2e",
       "hermes-e2e",
       "onboard-repair",
       "onboard-resume",
@@ -819,6 +861,31 @@ jobs:
     ]);
   });
 
+  it("requires exact selected-jobs membership for planned workflow jobs", () => {
+    expect(
+      extractFreeStandingE2eJobs(String.raw`
+jobs:
+  target-a:
+    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'target-a-extra') }}
+    steps:
+      - run: npx vitest run test/e2e/live/target-a.test.ts
+  target-b:
+    # selected_jobs and target-b are unrelated text.
+    steps:
+      - run: npx vitest run test/e2e/live/target-b.test.ts
+  target-c:
+    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'target-c') }}
+    steps:
+      - run: npx vitest run test/e2e/live/target-c.test.ts
+`),
+    ).toEqual([
+      {
+        id: "target-c",
+        liveTestFiles: ["test/e2e/live/target-c.test.ts"],
+      },
+    ]);
+  });
+
   it("prefers a focused free-standing job over fan-out when trusted workflow wiring exists", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
@@ -835,28 +902,31 @@ jobs:
         confidence: "high",
       },
       metadata({
-        changedFiles: [".github/workflows/e2e.yaml", "test/e2e/live/token-rotation.test.ts"],
+        changedFiles: [
+          ".github/workflows/e2e.yaml",
+          "test/e2e/live/managed-image-protected-runtime.test.ts",
+        ],
       }),
       {
         e2eWorkflowText: String.raw`
 jobs:
-  token-rotation:
-    if: \${{ (inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',token-rotation,') }}
+  managed-image-protected-runtime:
+    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/token-rotation.test.ts
+      - run: npx vitest run --project e2e-live test/e2e/live/managed-image-protected-runtime.test.ts
 `,
       },
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
-      ["job", "cloud-inference"],
       ["job", "cloud-onboard"],
+      ["job", "managed-image-multiarch-startup"],
+      ["job", "managed-image-protected-runtime"],
       ["job", "security-posture"],
-      ["job", "token-rotation"],
     ]);
-    expect(normalized.required.find((item) => item.id === "token-rotation")).not.toHaveProperty(
-      "dispatchCommand",
-    );
+    expect(
+      normalized.required.find((item) => item.id === "managed-image-protected-runtime"),
+    ).not.toHaveProperty("dispatchCommand");
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
@@ -865,33 +935,33 @@ jobs:
       {
         required: [
           {
-            id: "token-rotation",
+            id: "managed-image-protected-runtime",
             workflow: E2E_WORKFLOW,
             selectorType: "job",
-            reason: "focused job covers the changed live test",
+            reason: "focused job covers the changed managed-image test",
           },
         ],
         optional: [],
         noTargetE2eReason: null,
         confidence: "high",
       },
-      metadata({ changedFiles: ["test/e2e/live/token-rotation.test.ts"] }),
+      metadata({ changedFiles: ["test/e2e/live/managed-image-protected-runtime.test.ts"] }),
       {
         e2eWorkflowText: String.raw`
 jobs:
-  token-rotation:
-    if: \${{ contains(format(',{0},', inputs.jobs), ',token-rotation,') }}
+  managed-image-protected-runtime:
+    if: \${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'managed-image-protected-runtime') }}
     steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/token-rotation.test.ts
+      - run: npx vitest run --project e2e-live test/e2e/live/managed-image-protected-runtime.test.ts
 `,
       },
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
-      ["job", "cloud-inference"],
       ["job", "cloud-onboard"],
+      ["job", "managed-image-multiarch-startup"],
+      ["job", "managed-image-protected-runtime"],
       ["job", "security-posture"],
-      ["job", "token-rotation"],
     ]);
     expect(normalized.required[0]).not.toHaveProperty("dispatchCommand");
   });
@@ -924,7 +994,6 @@ jobs:
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
@@ -949,7 +1018,6 @@ jobs:
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
-      "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);

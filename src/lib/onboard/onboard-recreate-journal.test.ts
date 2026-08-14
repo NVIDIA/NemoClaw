@@ -20,6 +20,7 @@ vi.mock("./gateway-teardown-authority", () => ({
 import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
+import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import {
   fingerprintOnboardRecreateTargetIntent,
   type OnboardRecreateTargetIntent,
@@ -74,6 +75,8 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
 });
 
 const SANDBOX_ID = "sbx-71c9a4e08b";
+const SANDBOX_FINGERPRINT = fingerprintSandboxRecreateValue(SANDBOX_ID);
+const REPLACEMENT_FINGERPRINT = fingerprintSandboxRecreateValue("sbx-2f80d5a613");
 
 const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
@@ -219,7 +222,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     runtime.confirmDeleted();
     runtime.advance("creating");
     mocks.captureOpenshell.mockReturnValue(livePresentProbe());
-    runtime.recordCreated();
+    runtime.recordCreated({ state: "ready", liveIdentityFingerprint: SANDBOX_FINGERPRINT });
 
     runtime.complete();
 
@@ -233,7 +236,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     first.confirmDeleted();
     first.advance("creating");
     mocks.captureOpenshell.mockReturnValue(replacementProbe());
-    first.recordCreated();
+    first.recordCreated({ state: "ready", liveIdentityFingerprint: REPLACEMENT_FINGERPRINT });
     first.advance("registry_committing");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
@@ -257,7 +260,7 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     first.confirmDeleted();
     first.advance("creating");
     mocks.captureOpenshell.mockReturnValue(replacementProbe());
-    first.recordCreated();
+    first.recordCreated({ state: "ready", liveIdentityFingerprint: REPLACEMENT_FINGERPRINT });
     first.advance("completed");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",

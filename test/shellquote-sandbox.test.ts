@@ -68,7 +68,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     const streamPath = sourceModule("sandbox", "create-stream.ts");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
     fs.writeFileSync(
       scriptPath,
       String.raw`

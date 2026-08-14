@@ -77,14 +77,19 @@ These files live at `/sandbox/.openclaw/workspace/` and are collectively called 
 
 ## File Reference
 
+NemoClaw seeds the six template files below when the default workspace directory exists, is not a symbolic link, and is empty.
+Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace template seeding.
+
 | File | Purpose |
 |---|---|
 | `SOUL.md` | Defines the agent's persona, tone, and communication style. |
 | `USER.md` | Stores information about the human the agent assists. |
 | `IDENTITY.md` | Short identity card with name, language, emoji, and creature type. |
 | `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
-| `MEMORY.md` | Curated long-term memory distilled from daily notes. |
-| `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. |
+| `TOOLS.md` | Records workspace-specific tool guidance and operational notes. |
+| `HEARTBEAT.md` | Defines recurring heartbeat checks when heartbeat processing is enabled. |
+| `MEMORY.md` | Curated long-term memory distilled from daily notes. OpenClaw creates this file when it first stores long-term memory. |
+| `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. OpenClaw creates this directory when it first stores a daily note. |
 
 ## Where They Live
 
@@ -93,11 +98,13 @@ All workspace files reside inside the sandbox filesystem:
 ```text
 /sandbox/.openclaw/workspace/
 ├── AGENTS.md
+├── HEARTBEAT.md
 ├── IDENTITY.md
-├── MEMORY.md
+├── MEMORY.md             # created on first long-term memory use
 ├── SOUL.md
+├── TOOLS.md
 ├── USER.md
-└── memory/
+└── memory/               # created on first daily memory use
     ├── 2026-03-18.md
     └── 2026-03-19.md
 ```
@@ -123,7 +130,10 @@ For example, a Teams-integrated deployment can use a shared `main` agent plus pe
 └── workspace-ops/       # named agent "ops"
 ```
 
-Each per-agent workspace contains the same Markdown file structure as the default workspace: `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, and `memory/`.
+A named workspace does not receive the same seeded Markdown file structure as the default workspace: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, and `HEARTBEAT.md`.
+NemoClaw seeds these files only in the default `workspace/`.
+The sandbox entrypoint provisions each named workspace directory without copying the default templates into it.
+OpenClaw creates `MEMORY.md` and `memory/` separately in each workspace when that agent first uses long-term or daily memory.
 Files are per-agent.
 Changes in `workspace-main/AGENTS.md` are not visible to `workspace-support/`.
 

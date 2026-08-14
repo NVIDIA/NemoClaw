@@ -562,7 +562,7 @@ async function assertRealAdapterToolCall(
   ];
   const command =
     options.agent === "openclaw"
-      ? `nemoclaw-start mcporter call fake.fake_echo --args ${JSON.stringify(JSON.stringify({ challenge: TOOL_CHALLENGE }))} --output json`
+      ? `nemoclaw-start mcporter --root ${shellQuote(OPENCLAW_MCPORTER_ROOT)} call fake.fake_echo --args ${JSON.stringify(JSON.stringify({ challenge: TOOL_CHALLENGE }))} --output json`
       : options.agent === "hermes"
         ? [
             "set -a",

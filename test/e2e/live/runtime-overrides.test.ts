@@ -321,7 +321,6 @@ async function buildImage(
   expect(build.status, spawnResultText(build)).toBe(0);
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "runtime config overrides patch OpenClaw config through the Docker entrypoint",
   {

@@ -298,6 +298,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.platform.wsl_runtime_available",
     "host.platform.wsl_gpu_passthrough",
     "host.platform.dgx_spark",
+    "host.platform.n1x",
     "host.platform.dgx_station",
   ];
   return {

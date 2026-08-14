@@ -38,7 +38,7 @@ const HOSTED_PROVIDER_ENV_NAMES = [
 ] as const;
 const SECRET_REFERENCE_PATTERN = /\bsecrets\.[A-Za-z0-9_]+\b/u;
 const EXPECTED_SELECTOR =
-  "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && ((inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')))) }}";
+  "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -60,7 +60,6 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-// biome-ignore format: Compact declarative shell-proof vocabulary.
 const TOKENS = { "@bash": '/bin/bash "$trusted_fixture" "$@"', "@bin": "/usr/bin", "@daemon": '"$daemon_json"', "@docker": "/etc/docker/daemon.json", "@env": "/usr/bin/sudo -n /usr/bin/env -i", "@fixture": '"$trusted_fixture"', "@gpu": "hermes-gpu-fallback-docker-runtime", "@install": "/usr/bin/sudo /usr/bin/install", "@root": '"$trusted_state_root"', "@run": "run_trusted_fixture", "@sha": '"$TRUSTED_FIXTURE_SHA256"', "@source": '"$trusted_source"', "@state": '"$state_dir"', "@sudo": "/usr/bin/sudo", "@workflow": '"$TRUSTED_WORKFLOW_SHA"' } as const;
 
 function proof(spec: string): string[] {
@@ -108,9 +107,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (job.needs !== "generate-matrix" || job.if !== EXPECTED_SELECTOR) {
-    errors.push(
-      `${JOB_NAME} job must run on main pushes and retain manual selectors behind generate-matrix`,
-    );
+    errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
   }
   if (job["timeout-minutes"] !== 90) {
     errors.push(`${JOB_NAME} requires a 90 minute timeout`);

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import "./nim";
+import { WSL_NVIDIA_SMI_PATH } from "./gpu-trust";
 import { fittableOllamaModelTags, largestFittableOllamaModelTag } from "./ollama-model-registry";
 
 const require = createRequire(import.meta.url);
@@ -109,6 +110,31 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
   });
   afterEach(() => {
     fs.existsSync = savedExistsSync;
+  });
+
+  it("detects a WSL GPU when nvidia-smi is only in the stock driver path (#8794)", () => {
+    const runCapture = vi.fn((cmd: readonly string[]) =>
+      cmd[0] === WSL_NVIDIA_SMI_PATH && cmd.some((arg) => arg.includes("name,memory.total"))
+        ? "NVIDIA RTX 5090, 32607, 32000"
+        : "",
+    );
+    const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+    try {
+      withFirmwareModel("Generic Linux Workstation", () => {
+        expect(nimModule.detectGpu({ isWsl: true })).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA RTX 5090",
+          count: 1,
+          totalMemoryMB: 32607,
+          availableMemoryMB: 32000,
+        });
+      });
+      expect(runCapture.mock.calls[0][0][0]).toBe("nvidia-smi");
+      expect(runCapture.mock.calls[1][0][0]).toBe(WSL_NVIDIA_SMI_PATH);
+    } finally {
+      restore();
+    }
   });
 
   it("marks the proof-passed N1X iGPU computeConstrained", () => {

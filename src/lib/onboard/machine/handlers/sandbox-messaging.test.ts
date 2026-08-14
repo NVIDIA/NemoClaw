@@ -249,6 +249,8 @@ function withMessagingCheckpoint(
 ): Session {
   const checkpoint: OnboardCheckpoint = {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: session.sessionId,
     machineState: session.machine.state,
     updatedAt: "2026-01-01T00:00:00.000Z",

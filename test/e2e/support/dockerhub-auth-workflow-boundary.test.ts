@@ -292,29 +292,29 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects alias, ordering, and no-image exemption drift", () => {
     const errors = validateMutation((workflow) => {
       const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
-      const cloudInferenceSteps = workflow.jobs["cloud-inference"].steps!;
-      const cloudInferenceAuthIndex = cloudInferenceSteps.indexOf(
-        namedStep(workflow.jobs["cloud-inference"], AUTH_STEP_NAME)!,
+      const messagingSteps = workflow.jobs["messaging-providers"].steps!;
+      const messagingAuthIndex = messagingSteps.indexOf(
+        namedStep(workflow.jobs["messaging-providers"], AUTH_STEP_NAME)!,
       );
-      cloudInferenceSteps[cloudInferenceAuthIndex] = {
+      messagingSteps[messagingAuthIndex] = {
         ...canonicalAuth,
         env: { ...canonicalAuth.env },
       };
 
-      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
-      const messagingAuthIndex = messagingSteps.indexOf(
-        namedStep(workflow.jobs["messaging-compatible-endpoint"], AUTH_STEP_NAME)!,
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+      const routingAuthIndex = routingSteps.indexOf(
+        namedStep(workflow.jobs["openclaw-plugin-runtime-exdev"], AUTH_STEP_NAME)!,
       );
-      const [messagingAuth] = messagingSteps.splice(messagingAuthIndex, 1);
-      messagingSteps.splice(messagingSteps.length - 1, 0, messagingAuth);
+      const [routingAuth] = routingSteps.splice(routingAuthIndex, 1);
+      routingSteps.splice(routingSteps.length - 1, 0, routingAuth);
 
       workflow.jobs["shared-e2e"].steps!.push({ ...canonicalAuth });
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "cloud-inference Docker Hub auth must reuse the canonical workflow alias",
-        "messaging-compatible-endpoint Docker Hub auth must run immediately after checkout",
+        "messaging-providers Docker Hub auth must reuse the canonical workflow alias",
+        "openclaw-plugin-runtime-exdev Docker Hub auth must run immediately after checkout",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),
     );
@@ -323,8 +323,8 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it("rejects step-level Docker config overrides outside the canonical auth step", () => {
     const errors = validateMutation((workflow) => {
       const run = namedStep(
-        workflow.jobs["messaging-compatible-endpoint"],
-        "Run messaging compatible endpoint live test",
+        workflow.jobs["openclaw-plugin-runtime-exdev"],
+        "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
       );
       expect(run).toBeDefined();
       run!.env = {
@@ -334,7 +334,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     });
 
     expect(errors).toContain(
-      "messaging-compatible-endpoint step 'Run messaging compatible endpoint live test' env must not include DOCKER_CONFIG",
+      "openclaw-plugin-runtime-exdev step 'Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test' env must not include DOCKER_CONFIG",
     );
   });
 
@@ -357,12 +357,10 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       cleanup!.run = `${String(cleanup!.run)} || true`;
       cleanup!.env = { DOCKER_CONFIG: "${{ github.workspace }}/docker-config" };
 
-      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
-      const messagingCleanupIndex = messagingSteps.findIndex(
-        (step) => step.name === CLEANUP_STEP_NAME,
-      );
-      const [messagingCleanup] = messagingSteps.splice(messagingCleanupIndex, 1);
-      messagingSteps.splice(2, 0, messagingCleanup);
+      const routingSteps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+      const routingCleanupIndex = routingSteps.findIndex((step) => step.name === CLEANUP_STEP_NAME);
+      const [routingCleanup] = routingSteps.splice(routingCleanupIndex, 1);
+      routingSteps.splice(2, 0, routingCleanup);
     });
 
     expect(errors).toEqual(
@@ -373,7 +371,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         "live Docker Hub cleanup step must contain exactly name, if, shell, and run",
         "live Docker Hub cleanup step must always run",
         `live Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
-        "messaging-compatible-endpoint Docker Hub cleanup must be the final job step",
+        "openclaw-plugin-runtime-exdev Docker Hub cleanup must be the final job step",
       ]),
     );
   });

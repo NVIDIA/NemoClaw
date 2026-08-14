@@ -175,10 +175,14 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/host-local-create-journal.ts",
+      "src/lib/onboard/runtime-provider/host-local-inference-routing.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
+      "src/lib/onboard/runtime-provider/podman-gpu.ts",
+      "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
+      "src/lib/onboard/runtime-provider/podman-inference-args.ts",
       "src/lib/onboard/runtime-provider/podman-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-preflight.ts",
       "src/lib/onboard/runtime-provider/podman.ts",
@@ -215,7 +219,7 @@ describe("runtime provider central source boundary", () => {
     expect(installer).toContain("requireRuntimeProviderHostLocalInferenceOperation");
     expect(installer).not.toMatch(/(?:createDocker|docker-llama-cpp)/u);
     expect(hostLocalContract).not.toMatch(/(?:Docker|Podman|createDocker)/u);
-    expect(podman).toMatch(/hostLocalInference:\s*unsupported\(/u);
+    expect(podman).toContain("createPodmanHostLocalInferenceOperation");
     expect(podman).not.toContain("createDockerLlamaCppHostLocalOperation");
     expect(productionComposition).toContain("createDockerLlamaCppManagedLifecycle");
     expect(productionComposition).toContain("docker-llama-cpp-managed-lifecycle");

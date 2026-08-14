@@ -72,8 +72,19 @@ function arrangeSandbox(agent: string | null = null): void {
   getSandboxMock.mockReturnValue({ name: "test-sandbox", agent, policies: ["pypi"] });
 }
 
+let stdinIsTty: PropertyDescriptor | undefined;
+
+function arrangeTerminal(present: boolean): void {
+  Object.defineProperty(process.stdin, "isTTY", {
+    configurable: true,
+    value: present ? true : undefined,
+  });
+}
+
 beforeEach(() => {
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  arrangeTerminal(true);
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -116,6 +127,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
 });
 
 describe("addSandboxPolicy", () => {
@@ -173,6 +187,16 @@ describe("addSandboxPolicy", () => {
     await expect(captureExit(() => addSandboxPolicy("test-sandbox"))).resolves.toBe(1);
 
     expect(printedText()).toContain("Non-interactive mode requires a preset name.");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
+  it("never reaches the picker in a session without a terminal (#8877)", async () => {
+    arrangeTerminal(false);
+
+    await expect(captureExit(() => addSandboxPolicy("test-sandbox"))).resolves.toBe(1);
+
+    expect(selectFromListMock).not.toHaveBeenCalled();
+    expect(printedText()).toContain("No input available on stdin");
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
