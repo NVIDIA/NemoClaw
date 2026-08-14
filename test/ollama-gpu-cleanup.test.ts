@@ -68,6 +68,20 @@ function respondWithLoadedModels(...names: string[]) {
       : ok();
 }
 
+/** The endpoint path and POST body of each unload request, in the order issued. */
+function unloadRequests(calls: readonly SpawnCall[]) {
+  return calls
+    .filter(({ args }) => args.includes("POST"))
+    .map(({ args }) => ({
+      target: new URL(args[args.length - 1]).pathname,
+      body: args[args.indexOf("-d") + 1],
+    }));
+}
+
+function unloadOf(model: string) {
+  return { target: "/api/generate", body: JSON.stringify({ model, keep_alive: 0 }) };
+}
+
 describe("Ollama GPU cleanup", () => {
   it("calls curl synchronously to unload every running model via /api/generate", () => {
     withMockedSpawnSync(
@@ -152,8 +166,7 @@ describe("Ollama GPU cleanup", () => {
 
         const curlCalls = calls.filter(({ command }) => command === "curl");
         expect(curlCalls).toHaveLength(2);
-        expect(curlCalls[1].args).toContain(JSON.stringify({ model: "drop-me:7b", keep_alive: 0 }));
-        expect(curlCalls[1].args[curlCalls[1].args.length - 1]).toMatch(/\/api\/generate$/);
+        expect(unloadRequests(curlCalls)).toEqual([unloadOf("drop-me:7b")]);
       },
     );
   });
@@ -165,7 +178,9 @@ describe("Ollama GPU cleanup", () => {
         const { unloadOllamaModels } = require(modulePath);
         unloadOllamaModels([]);
 
-        expect(calls.filter(({ command }) => command === "curl")).toHaveLength(3);
+        const curlCalls = calls.filter(({ command }) => command === "curl");
+        expect(curlCalls).toHaveLength(3);
+        expect(unloadRequests(curlCalls)).toEqual([unloadOf("one:7b"), unloadOf("two:7b")]);
       },
     );
   });
