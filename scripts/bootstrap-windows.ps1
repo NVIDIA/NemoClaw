@@ -37,6 +37,9 @@
 
 .PARAMETER Resume
     Internal switch used by the one-time RunOnce reboot continuation.
+
+.PARAMETER ElevatedChild
+    Internal switch used by the administrator child process.
 #>
 
 [CmdletBinding()]
@@ -46,7 +49,8 @@ param(
     [string]$InstallerArgs = '',
     [bool]$InstallDockerDesktop = $true,
     [switch]$AutoReboot,
-    [switch]$Resume
+    [switch]$Resume,
+    [switch]$ElevatedChild
 )
 
 Set-StrictMode -Version Latest
@@ -70,6 +74,8 @@ $script:DockerDesktopUserRoot = if ($env:LOCALAPPDATA) {
     $null
 }
 $script:DockerDesktopApprovedSignerNames = @('Docker Inc')
+$script:DeferredDockerSetupExitCode = 82
+$script:CompleteDeferredDockerSetup = $false
 $script:WingetDockerId = 'Docker.DockerDesktop'
 $script:InstallerWindowTitle = "NVIDIA NemoClaw Installer ($PID)"
 $script:InstallDistroAtHandoff = $false
@@ -102,7 +108,10 @@ function ConvertTo-PowerShellLiteral {
 }
 
 function Get-ScriptInvocationArguments {
-    param([switch]$ResumeRun)
+    param(
+        [switch]$ResumeRun,
+        [switch]$ElevatedChildRun
+    )
 
     $args = @(
         '-NoLogo',
@@ -126,6 +135,9 @@ function Get-ScriptInvocationArguments {
     if ($ResumeRun) {
         $args += '-Resume'
     }
+    if ($ElevatedChildRun) {
+        $args += '-ElevatedChild'
+    }
     return $args
 }
 
@@ -141,14 +153,18 @@ function Invoke-SelfElevation {
     }
 
     if ($Resume) {
-        $args = Get-ScriptInvocationArguments -ResumeRun
+        $args = Get-ScriptInvocationArguments -ResumeRun -ElevatedChildRun
     } else {
-        $args = Get-ScriptInvocationArguments
+        $args = Get-ScriptInvocationArguments -ElevatedChildRun
     }
 
     Write-Host 'Requesting Administrator privileges to enable WSL...' -ForegroundColor Yellow
     $argumentLine = ($args | ForEach-Object { ConvertTo-ProcessArgument -Value $_ }) -join ' '
     $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
+    if ($proc.ExitCode -eq $script:DeferredDockerSetupExitCode) {
+        $script:CompleteDeferredDockerSetup = $true
+        return
+    }
     exit $proc.ExitCode
 }
 
@@ -275,10 +291,14 @@ function Format-DockerDesktopCandidatePath {
 }
 
 function Resolve-DockerDesktopPath {
-    param([Parameter(Mandatory)] [ValidateSet('Desktop', 'Cli')] [string]$Component)
+    param(
+        [Parameter(Mandatory)] [ValidateSet('Desktop', 'Cli')] [string]$Component,
+        [switch]$RequireTrusted
+    )
 
     foreach ($candidate in (Get-DockerDesktopCandidatePath -Component $Component)) {
-        if (Test-Path -LiteralPath $candidate) {
+        if ((Test-Path -LiteralPath $candidate) -and
+            (-not $RequireTrusted -or (Test-DockerDesktopExecutableTrusted -Path $candidate))) {
             return $candidate
         }
     }
@@ -307,6 +327,35 @@ function Test-DockerDesktopExecutableTrusted {
         return $false
     }
     return $script:DockerDesktopApprovedSignerNames -contains $signerName
+}
+
+function Test-DockerDesktopUserPath {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (-not $script:DockerDesktopUserRoot) {
+        return $false
+    }
+    $userRootPrefix = $script:DockerDesktopUserRoot.TrimEnd('\\') + '\\'
+    return $Path.StartsWith($userRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-DockerDesktopUserOperationRequired {
+    foreach ($component in @('Desktop', 'Cli')) {
+        $path = Resolve-DockerDesktopPath -Component $component -RequireTrusted
+        if ($path -and (Test-DockerDesktopUserPath -Path $path)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-DockerDesktopExecutionAllowed {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    if (-not (Test-DockerDesktopUserPath -Path $Path)) {
+        return $true
+    }
+    return -not (Test-IsAdministrator)
 }
 
 function Resolve-WslExe {
@@ -505,7 +554,7 @@ function Install-DockerDesktop {
         Write-Status 'InstallDockerDesktop=$false; skipping Docker Desktop install.'
         return
     }
-    if (Resolve-DockerDesktopPath -Component 'Desktop') {
+    if (Resolve-DockerDesktopPath -Component 'Desktop' -RequireTrusted) {
         Write-Status 'Docker Desktop already installed.'
         return
     }
@@ -535,20 +584,25 @@ function Install-DockerDesktop {
         throw "Docker Desktop winget install failed with exit code $LASTEXITCODE"
     }
 
-    if (-not (Resolve-DockerDesktopPath -Component 'Desktop')) {
+    if (-not (Resolve-DockerDesktopPath -Component 'Desktop' -RequireTrusted)) {
         Write-Status -Level WARN "Docker Desktop not found after the winget install. Checked: $(Format-DockerDesktopCandidatePath -Component 'Desktop')."
     }
 }
 
 function Wait-DockerDesktopEngine {
     param([int]$TimeoutSeconds = 120)
-    $dockerCli = Resolve-DockerDesktopPath -Component 'Cli'
+    $dockerCli = Resolve-DockerDesktopPath -Component 'Cli' -RequireTrusted
     if (-not $dockerCli) {
-        Write-Status -Level WARN "Docker CLI not found. The script skips the Docker engine readiness check. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
+        $candidate = Resolve-DockerDesktopPath -Component 'Cli'
+        if ($candidate) {
+            Write-Status -Level ERROR "Docker CLI at $candidate is not signed by a trusted publisher. The script skips the Docker engine readiness check."
+        } else {
+            Write-Status -Level WARN "Docker CLI not found. The script skips the Docker engine readiness check. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
+        }
         return $false
     }
-    if (-not (Test-DockerDesktopExecutableTrusted -Path $dockerCli)) {
-        Write-Status -Level ERROR "Docker CLI at $dockerCli is not signed by a trusted publisher. The script skips the Docker engine readiness check."
+    if (-not (Test-DockerDesktopExecutionAllowed -Path $dockerCli)) {
+        Write-Status -Level ERROR "Docker CLI at $dockerCli is installed for the current user. Refusing to run it from this elevated process. Rerun the bootstrap from a non-elevated PowerShell window."
         return $false
     }
 
@@ -574,13 +628,18 @@ function Start-DockerDesktop {
     if (-not $InstallDockerDesktop) {
         return
     }
-    $dockerDesktopExe = Resolve-DockerDesktopPath -Component 'Desktop'
+    $dockerDesktopExe = Resolve-DockerDesktopPath -Component 'Desktop' -RequireTrusted
     if (-not $dockerDesktopExe) {
-        Write-Status -Level WARN "Docker Desktop not found. The script cannot start it. Checked: $(Format-DockerDesktopCandidatePath -Component 'Desktop')."
+        $candidate = Resolve-DockerDesktopPath -Component 'Desktop'
+        if ($candidate) {
+            Write-Status -Level ERROR "Docker Desktop at $candidate is not signed by a trusted publisher. Refusing to launch it."
+        } else {
+            Write-Status -Level WARN "Docker Desktop not found. The script cannot start it. Checked: $(Format-DockerDesktopCandidatePath -Component 'Desktop')."
+        }
         return
     }
-    if (-not (Test-DockerDesktopExecutableTrusted -Path $dockerDesktopExe)) {
-        Write-Status -Level ERROR "Docker Desktop at $dockerDesktopExe is not signed by a trusted publisher. Refusing to launch it from this elevated process."
+    if (-not (Test-DockerDesktopExecutionAllowed -Path $dockerDesktopExe)) {
+        Write-Status -Level ERROR "Docker Desktop at $dockerDesktopExe is installed for the current user. Refusing to launch it from this elevated process. Rerun the bootstrap from a non-elevated PowerShell window."
         return
     }
 
@@ -591,11 +650,6 @@ function Start-DockerDesktop {
         Write-Status 'Launching Docker Desktop...'
     }
     Start-Process -FilePath $dockerDesktopExe | Out-Null
-
-    if (-not (Resolve-DockerDesktopPath -Component 'Cli')) {
-        Write-Status -Level WARN "Docker CLI not found. The script skips the Docker engine readiness check. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
-        return
-    }
 
     Wait-DockerDesktopEngine -TimeoutSeconds 120 | Out-Null
     if ($wasRunning) {
@@ -608,13 +662,18 @@ function Start-DockerDesktop {
 }
 
 function Restart-DockerDesktop {
-    $dockerCli = Resolve-DockerDesktopPath -Component 'Cli'
+    $dockerCli = Resolve-DockerDesktopPath -Component 'Cli' -RequireTrusted
     if (-not $dockerCli) {
-        Write-Status -Level WARN "Docker CLI not found. The script cannot restart Docker Desktop. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
+        $candidate = Resolve-DockerDesktopPath -Component 'Cli'
+        if ($candidate) {
+            Write-Status -Level ERROR "Docker CLI at $candidate is not signed by a trusted publisher. The script cannot restart Docker Desktop."
+        } else {
+            Write-Status -Level WARN "Docker CLI not found. The script cannot restart Docker Desktop. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
+        }
         return
     }
-    if (-not (Test-DockerDesktopExecutableTrusted -Path $dockerCli)) {
-        Write-Status -Level ERROR "Docker CLI at $dockerCli is not signed by a trusted publisher. The script cannot restart Docker Desktop."
+    if (-not (Test-DockerDesktopExecutionAllowed -Path $dockerCli)) {
+        Write-Status -Level ERROR "Docker CLI at $dockerCli is installed for the current user. Refusing to run it from this elevated process. Rerun the bootstrap from a non-elevated PowerShell window."
         return
     }
 
@@ -1519,7 +1578,8 @@ function Write-WslSubsystemMissingNotice {
 }
 
 function Write-DockerDesktopNotice {
-    if ((Resolve-DockerDesktopPath -Component 'Desktop') -or (Resolve-DockerDesktopPath -Component 'Cli')) {
+    if ((Resolve-DockerDesktopPath -Component 'Desktop' -RequireTrusted) -or
+        (Resolve-DockerDesktopPath -Component 'Cli' -RequireTrusted)) {
         return
     }
     Write-Status -Level WARN "Docker Desktop was not detected. Checked Desktop: $(Format-DockerDesktopCandidatePath -Component 'Desktop'). Checked CLI: $(Format-DockerDesktopCandidatePath -Component 'Cli'). The standard installer/onboard flow will need Docker available from WSL."
@@ -1660,6 +1720,18 @@ function Write-InstallerHandoff {
 function Invoke-Main {
     Invoke-SelfElevation
     Initialize-InstallerWindowTitle
+    if ($script:CompleteDeferredDockerSetup) {
+        Start-DockerDesktop
+        if ($script:InstallDistroAtHandoff) {
+            Write-Status "Skipping Docker-in-WSL verification until $DistroName first-run setup completes."
+        } else {
+            Ensure-DockerWslIntegration
+        }
+        Write-DockerDesktopNotice
+        Write-Status 'Windows preparation completed successfully.'
+        Write-InstallerHandoff
+        return
+    }
     if ($Resume) {
         Unregister-ResumeRunOnce
         Write-Status 'Resuming after reboot...'
@@ -1670,6 +1742,11 @@ function Invoke-Main {
     Ensure-UbuntuWsl
     Install-DockerDesktop
     Enable-DockerDesktopWslIntegration -Name $DistroName
+    if ($ElevatedChild -and (Test-DockerDesktopUserOperationRequired)) {
+        Unregister-ResumeRunOnce
+        Write-Status 'Administrator preparation is complete. Returning to the original PowerShell process to start Docker Desktop.'
+        exit $script:DeferredDockerSetupExitCode
+    }
     Start-DockerDesktop
     if ($script:InstallDistroAtHandoff) {
         Write-Status "Skipping Docker-in-WSL verification until $DistroName first-run setup completes."

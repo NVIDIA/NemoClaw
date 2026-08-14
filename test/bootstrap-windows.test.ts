@@ -56,7 +56,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:events = @()
 
-function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $false }
 function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
@@ -86,7 +86,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:events = @()
 
-function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $true }
 function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
@@ -308,7 +308,7 @@ $ErrorActionPreference = 'Stop'
 $script:messages = @()
 $script:startCalls = @()
 
-function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($RequireTrusted) { return $null } if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
 function Start-Process { param([string]$FilePath) $script:startCalls += $FilePath; return [pscustomobject]@{} }
 function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
@@ -341,7 +341,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:messages = @()
 
-function Resolve-DockerDesktopPath { param([string]$Component) return 'docker.exe' }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($RequireTrusted) { return $null } return 'docker.exe' }
 function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
 function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
 
@@ -373,7 +373,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:messages = @()
 
-function Resolve-DockerDesktopPath { param([string]$Component) return 'docker.exe' }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($RequireTrusted) { return $null } return 'docker.exe' }
 function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
 function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
 
