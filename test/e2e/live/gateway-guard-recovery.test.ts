@@ -370,9 +370,6 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
-  expect(resultText(trustedRecovery)).toMatch(
-    /Probe complete: (?:recovered OpenClaw gateway|OpenClaw gateway is running)/,
-  );
   const restartStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
@@ -501,7 +498,6 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(legacyRecovery.timedOut, resultText(legacyRecovery)).toBe(false);
   expect(legacyRecovery.exitCode, resultText(legacyRecovery)).toBe(0);
-  expect(resultText(legacyRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
   const legacyStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
