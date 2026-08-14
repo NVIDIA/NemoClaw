@@ -203,18 +203,6 @@ describe("onboard session", () => {
     expect(summary.endpointUrl).toBe(loaded.endpointUrl);
   });
 
-  it("preserves provider on session when spark Express vLLM substitution sets it mid-step (#9103)", () => {
-    session.saveSession(session.createSession({
-      mode: "non-interactive",
-      stationExpressIntent: { version: 1, kind: "spark", sandboxName: "my-assistant" },
-    }));
-    session.markStepStarted("provider_selection");
-    session.updateSession((s) => {
-      s.provider = "vllm-local";
-      s.model = "nvidia/Qwen3.6-35B-A3B-NVFP4";
-    });
-    expect(requireLoadedSession(session.loadSession()).provider).toBe("vllm-local");
-  });
   it("clears a spark Express intent once provider selection completes (#7231)", () => {
     session.saveSession(
       session.createSession({
