@@ -4029,7 +4029,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           assessHost,
           formatSandboxBuildEstimateNote,
           formatOnboardConfigSummary,
-          promptYesNoOrDefault,
+          prompt,
           cliName,
           log: (message) => console.log(message),
           error: (message) => console.error(message),

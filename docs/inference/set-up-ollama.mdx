@@ -296,7 +296,8 @@ This retry also applies to tight-VRAM hosts where model warm-up can spill from G
 
 ## Release GPU Memory
 
-When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
+When you destroy an Ollama-backed sandbox or stop host services, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
+When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model, and leaves it loaded when another Ollama-backed sandbox uses the same model.
 This cleanup runs on a best-effort basis and does not delete downloaded model files.
 
 ## Related Topics

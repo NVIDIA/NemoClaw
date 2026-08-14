@@ -372,7 +372,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       "mxc-launch",
       input.createArgv.slice(1),
       input.sandboxEnv,
-      expect.anything(),
+      expect.objectContaining({ readyCheckOutputPatterns: [] }),
     );
     expect(recoverUnfinished.mock.invocationCallOrder[0]).toBeLessThan(
       prepareNetwork.mock.invocationCallOrder[0],
@@ -710,9 +710,43 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
-  it("does not replace a native GPU container solely to persist its startup command", async () => {
+  it("preserves a native non-terminal startup command after create ownership ends", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    const order: string[] = [];
+    input.persistStartupCommand = true;
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      order.push("poll");
+      args[3].onPoll();
+      order.push("create-complete");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    patch.ensureApplied.mockImplementationOnce(() => {
+      order.push("ensure-applied");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ route: "native", persistStartupCommand: true }),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      input.createArgv.slice(1),
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: true }),
+    );
+    expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+    expect(order).toEqual(["poll", "create-complete", "ensure-applied"]);
+  });
+
+  it("keeps a native terminal startup command on the create lifecycle", async () => {
     const input = createInput();
     input.persistStartupCommand = true;
+    input.terminalAgent = true;
 
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "native",
@@ -721,6 +755,33 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
     );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      input.createArgv.slice(1),
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: false }),
+    );
+  });
+
+  it("waits for native non-terminal startup output before detaching the create client", async () => {
+    const input = createInput();
+    input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    const streamOptions = mocks.streamSandboxCreate.mock.calls[0]?.[3];
+    expect(streamOptions).toEqual(
+      expect.objectContaining({
+        readyCheckOutputPatterns: [expect.any(RegExp)],
+      }),
+    );
+    expect(
+      streamOptions?.readyCheckOutputPatterns?.some((pattern: RegExp) =>
+        pattern.test("Setting up NemoClaw (Hermes)..."),
+      ),
+    ).toBe(true);
   });
 
   it("applies exact required limits while preserving the native GPU route", async () => {

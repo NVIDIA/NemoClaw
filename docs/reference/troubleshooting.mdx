@@ -430,6 +430,21 @@ List the gateways the host still has:
 openshell gateway list
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
+If this happened after the deprecated global `$$nemoclaw stop`, read the command's final status line.
+Without a resolved sandbox name, the command releases a gateway only when a valid, explicitly set `NEMOCLAW_GATEWAY_PORT` selects it.
+`Host services stopped; managed gateway not released.` means the command stopped scoped host services but intentionally left the gateway listener running.
+After `openshell gateway list` confirms the exact target port, rerun the deprecated full stop with that scope only when you intend to release that gateway:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw stop
+```
+
+If NemoClaw reports that release was not confirmed, inspect the remaining listener and stop it only after you verify that it belongs to the selected gateway.
+
+</AgentOnly>
+
 If the gateway name and its port-scoped state remain, treat it as a second environment and select that port for cleanup.
 If the gateway is absent but the port still listens, cleanup did not stop the listener; follow the process or service remediation printed by uninstall before you retry.
 If uninstall reported that it kept an `openshell-gateway` process owned by another user running, that process still holds the port.
@@ -963,7 +978,9 @@ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d
 The run is bounded to 3 minutes.
 Set `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` to a positive millisecond value to change that bound.
 Increase the value only when the image pull or GPU workload needs more than 3 minutes.
-A passing workload qualifies the detected GPU for GPU passthrough.
+A passing workload lets onboarding treat the detected GPU as eligible for GPU passthrough during that run.
+For Windows-on-Arm, this proof is a technical detection check and does not change the Unsupported product status or establish platform qualification.
+Refer to [Platform Support and Launch Claims](platform-support#out-of-scope-and-not-supported) for the current support boundary.
 A failed or timed-out workload leaves the GPU unproven and does not enable GPU passthrough.
 The names-only unified-memory fallback does not run this workload and rejects denylisted names.
 WSL hosts that are not Docker Desktop-backed do not run the workload and continue to report the GPU as unavailable.

@@ -56,6 +56,7 @@ const NEEDS_INTERPOLATION = /\$\{\{\s*toJSON\s*\(\s*needs\s*\)\s*\}\}/iu;
 type WorkflowStep = {
   "continue-on-error"?: boolean;
   env?: Record<string, unknown>;
+  id?: string;
   if?: string;
   name?: string;
   run?: string;
@@ -260,15 +261,20 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   );
   const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
+  const credentialAuthorizationIndex = steps.findIndex(
+    (step) => step.name === "Authorize E2E credentials",
+  );
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   if (
     authenticationIndex < 0 ||
     checkoutIndex < 0 ||
     validationIndex < 0 ||
+    credentialAuthorizationIndex < 0 ||
     prepareIndex < 0 ||
     authenticationIndex >= checkoutIndex ||
     checkoutIndex >= validationIndex ||
-    validationIndex >= prepareIndex
+    validationIndex >= credentialAuthorizationIndex ||
+    credentialAuthorizationIndex >= prepareIndex
   ) {
     errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
@@ -350,6 +356,55 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!validationSource.includes(fragment)) {
       errors.push(`Manual PR checkout validation must retain ${fragment}`);
+    }
+  }
+
+  const credentialAuthorization =
+    credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
+  if (
+    matrixJob.outputs?.e2e_credentials_allowed !==
+      "${{ steps.e2e_credentials.outputs.allowed }}" ||
+    credentialAuthorization.id !== "e2e_credentials" ||
+    credentialAuthorization.if !== "${{ inputs.checkout_sha != '' }}" ||
+    credentialAuthorization.shell !== "bash"
+  ) {
+    errors.push("Manual PR credential authorization must expose only the authorization result");
+  }
+  const expectedCredentialAuthorizationEnvironment = {
+    CHECKOUT_REPOSITORY: "${{ inputs.checkout_repository }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    EVENT_NAME: "${{ github.event_name }}",
+    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
+    REF: "${{ github.ref }}",
+    WORKFLOW_REPOSITORY: "${{ github.repository }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
+  };
+  if (
+    !isDeepStrictEqual(
+      credentialAuthorization.env,
+      expectedCredentialAuthorizationEnvironment,
+    )
+  ) {
+    errors.push(
+      "Manual PR credential authorization must bind the workflow and checkout identities",
+    );
+  }
+  const authorizationSource = String(credentialAuthorization.run ?? "");
+  for (const fragment of [
+    '"$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+    '"$CHECKOUT_REPOSITORY" == "$WORKFLOW_REPOSITORY"',
+    '"$EVENT_NAME" == "workflow_dispatch"',
+    '"$REF" == "refs/heads/main"',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+    '"$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$',
+    '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    "credentials_allowed=false",
+    "credentials_allowed=true",
+    'printf \'allowed=%s\\n\' "$credentials_allowed" >> "$GITHUB_OUTPUT"',
+  ]) {
+    if (!authorizationSource.includes(fragment)) {
+      errors.push(`Manual PR credential authorization must retain ${fragment}`);
     }
   }
 

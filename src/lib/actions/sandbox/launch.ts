@@ -82,7 +82,7 @@ export async function launchSandbox(
   while (true) {
     if (decision.kind === "accepted") {
       printInteractiveSessionHints(sandboxName);
-      completeReadinessQualifiedInteractiveSessionSetup(sandboxName, decision.sb);
+      completeReadinessQualifiedInteractiveSessionSetup(sandboxName, decision.agent, decision.sb);
       session = { agent: decision.agent, sb: decision.sb };
       break;
     }

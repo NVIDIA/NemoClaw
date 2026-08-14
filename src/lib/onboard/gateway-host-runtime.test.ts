@@ -178,6 +178,34 @@ describe("gateway host runtime ownership", () => {
     expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
   });
 
+  it("resolves standalone on a non-default gateway port even when the packaged service exists (#9088)", () => {
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        gatewayName: () => "nemoclaw-9443",
+        gatewayPort: () => 9443,
+        hasOpenShellGatewayUserService: () => true,
+      }),
+    );
+
+    expect(runtime.getGatewayOwner()).toMatchObject({
+      gatewayName: "nemoclaw-9443",
+      gatewayPort: 9443,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+    });
+  });
+
+  it("resolves the packaged service on the default gateway port (#9088)", () => {
+    const runtime = createGatewayHostRuntime(
+      createDeps({ hasOpenShellGatewayUserService: () => true }),
+    );
+
+    expect(runtime.getGatewayOwner()).toMatchObject({
+      gatewayPort: 8080,
+      source: "packaged-service",
+    });
+  });
+
   it("adopts only a trusted standalone-to-packaged-service install transition (#7411)", () => {
     let hasPackagedService = false;
     const runtime = createGatewayHostRuntime(

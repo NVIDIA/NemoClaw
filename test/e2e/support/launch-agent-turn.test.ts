@@ -88,7 +88,7 @@ it.runIf(process.platform === "linux")(
       env: {},
       exitCommand: "/exit",
       host: host as never,
-      postReplyReadyText: "connected | idle",
+      postReplyReadyText: "gateway connected | idle",
       readyText: "gateway connected | idle",
       redactionValues: [],
       sandboxName: "alpha",
@@ -116,12 +116,12 @@ it.runIf(process.platform === "linux")(
     ]);
     expect(
       calls.slice(1).map((call) => call.env?.NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT),
-    ).toEqual(["connected | idle", "connected | idle"]);
+    ).toEqual(["gateway connected | idle", "gateway connected | idle"]);
   },
 );
 
 it.runIf(process.platform !== "win32")(
-  "waits for 'gateway connected | idle' before the prompt and 'connected | idle' before exit (#9023)",
+  "requires the exact reply before the post-reply 'gateway connected | idle' line (#9023)",
   () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-ready-"));
     const scriptStub = join(fixtureRoot, "script");
@@ -144,13 +144,18 @@ if IFS= read -r -t 1 -d $'\r' _; then
 fi
 printf 'gateway connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' _
-printf 'PONG\n' | tee -a "$capture"
 printf 'gateway connected | idle\n' | tee -a "$capture"
 if IFS= read -r -t 1 -d $'\r' _; then
-  echo "exit arrived before post-reply readiness" >&2
+  echo "exit command arrived before the exact reply" >&2
   exit 1
 fi
-printf 'connected | idle\n' | tee -a "$capture"
+printf 'PONG\n' | tee -a "$capture"
+printf 'gateway connected | busy\n' | tee -a "$capture"
+if IFS= read -r -t 1 -d $'\r' _; then
+  echo "exit command arrived while the TUI reported 'gateway connected | busy'" >&2
+  exit 1
+fi
+printf 'gateway connected | idle\n' | tee -a "$capture"
 IFS= read -r -d $'\r' exit_command
 [[ "$exit_command" == "/exit" ]]
 exit 0
@@ -171,7 +176,7 @@ exit 0
           NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
           NEMOCLAW_LAUNCH_EXPECTED_REPLY: "PONG",
           NEMOCLAW_LAUNCH_PROMPT: "prompt",
-          NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "connected | idle",
+          NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: "gateway connected | idle",
           NEMOCLAW_LAUNCH_READY_TEXT: "gateway connected | idle",
           NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
           PATH: `${fixtureRoot}:${process.env.PATH ?? ""}`,

@@ -89,6 +89,24 @@ export interface ManagedLlamaCppExactInspectionOptions {
   readonly selection: ResolvedLlamaCppInferenceSelection;
 }
 
+export interface ManagedLlamaCppLifecycleRehydrationOptions {
+  readonly runtimeProvider: RuntimeProviderBundle;
+  readonly runtimeOwnerSandboxName: string;
+  readonly gatewayPort?: number;
+  readonly homeDir?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly operation?: HostLocalInferenceOperation;
+}
+
+export interface ManagedLlamaCppLifecycleRehydration {
+  readonly lifecycle: HostLocalLlamaCppLifecycle;
+  readonly operation: HostLocalInferenceOperation;
+  readonly owner: NonNullable<ReturnType<typeof loadManagedLlamaCppOwner>>;
+  readonly paths: ManagedLlamaCppStatePaths;
+  readonly receipt: HostLocalInferenceReceipt;
+  readonly selection: ResolvedLlamaCppInferenceSelection;
+}
+
 interface DockerNetworkInspection {
   readonly kind: "absent" | "owned";
   readonly id?: string;
@@ -475,6 +493,49 @@ function currentManagedLlamaCppArtifact(
       sizeBytes: source.file.sizeBytes,
     },
   };
+}
+
+/**
+ * Reconstruct the existing private llama.cpp lifecycle without changing its
+ * owner, journal, API key, or receipt. The caller supplies durable explicit
+ * lifecycle provenance before this seam is reached.
+ */
+export function rehydrateManagedLlamaCppLifecycle(
+  options: ManagedLlamaCppLifecycleRehydrationOptions,
+): ManagedLlamaCppLifecycleRehydration {
+  const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
+  const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
+  const owner = loadManagedLlamaCppOwner(paths);
+  if (!owner || owner.sandboxName !== options.runtimeOwnerSandboxName) {
+    throw new Error("Managed llama.cpp private owner differs from lifecycle provenance.");
+  }
+  const receipt = loadManagedLlamaCppReceipt(paths);
+  if (!receipt) throw new Error("Managed llama.cpp private receipt is unavailable.");
+  const selection = resolveManagedLlamaCppOwnerSelection(owner);
+  const operation =
+    options.operation ??
+    requireRuntimeProviderHostLocalInferenceOperation(options.runtimeProvider, "llama-cpp", {
+      env: options.env ?? process.env,
+    });
+  operation.assertAuthority();
+  if (operation.providerId !== options.runtimeProvider.identity.id) {
+    throw new Error("Managed llama.cpp runtime provider changed during lifecycle rehydration.");
+  }
+  const current = currentManagedLlamaCppArtifact(selection, homeDir);
+  return Object.freeze({
+    lifecycle: lifecycleFor({
+      selection,
+      paths,
+      cacheRoot: current.cacheRoot,
+      artifact: current.artifact,
+      operation,
+    }),
+    operation,
+    owner,
+    paths,
+    receipt,
+    selection,
+  });
 }
 
 /** Reconstruct current declarative and filesystem authority, then use the lifecycle's exact inspector. */
