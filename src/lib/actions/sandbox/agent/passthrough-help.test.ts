@@ -7,6 +7,7 @@ import {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
   writeSilentAgentDispatchFailure,
+  writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 
 function collectStderr() {
@@ -153,6 +154,108 @@ describe("writeSilentAgentDispatchFailure", () => {
     const { lines, proc } = collectStderr();
 
     writeSilentAgentDispatchFailure(proc, "my-assistant", turn);
+
+    expect(lines.every((line) => line.endsWith("\n"))).toBe(true);
+  });
+});
+
+describe("writeTimedOutAgentTurnFailure", () => {
+  it("names the sandbox and states that the deadline fired (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant");
+
+    const written = lines.join("");
+    expect(written).toContain("'my-assistant' timed out before producing a result");
+    expect(written).toContain("the deadline fired and no result reached this command");
+  });
+
+  it("names the phase the payload declared (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider");
+
+    expect(lines.join("")).toContain("timed out in the provider phase before producing a result");
+  });
+
+  it("omits a phase label that could forge terminal output (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider\n  forged\u001b[31m");
+
+    const written = lines.join("");
+    expect(written).toContain("'my-assistant' timed out before producing a result");
+    expect(written).not.toContain("forged");
+    expect(written).not.toContain("\u001b");
+  });
+
+  it.each([undefined, "provider"])(
+    "renders a sandbox name safely when the timeout phase is %s (#8723)",
+    (phase) => {
+      const { lines, proc } = collectStderr();
+
+      writeTimedOutAgentTurnFailure(proc, "sandbox\n  forged\u001b[31m", phase);
+
+      const written = lines.join("");
+      expect(written).toContain(String.raw`sandbox\u000a  forged\u001b[31m`);
+      expect(written).not.toContain("sandbox\n  forged");
+      expect(written).not.toContain("\u001b");
+    },
+  );
+
+  it("warns that the partial trace may already have applied side effects (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider");
+
+    const written = lines.join("");
+    expect(written).toContain("partial trace");
+    expect(written).toContain("may have already applied side effects");
+    expect(written).toContain("before retrying");
+  });
+
+  it("offers the documented commands that read the trace and raise a deadline (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant");
+
+    const written = lines.join("");
+    expect(written).toContain("'my-assistant' sessions list");
+    expect(written).toContain("'my-assistant' sessions export <key>");
+    expect(written).toContain(
+      "'my-assistant' config set --key <deadline-key> --value <seconds> --restart",
+    );
+    // Writing the config fails while shields are up, so the order is part of
+    // the guidance rather than a detail the reader has to discover.
+    expect(written.indexOf("shields down")).toBeLessThan(written.indexOf("config set"));
+  });
+
+  it("names both deadlines instead of offering --timeout as the fix (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider");
+
+    const written = lines.join("");
+    expect(written).toContain("agents.defaults.timeoutSeconds bounds the run");
+    expect(written).toContain("models.providers.<id>.timeoutSeconds");
+    expect(written).toContain("no flag overrides it");
+    // A provider-phase timeout does not respond to the flag, so it is never
+    // presented as a runnable recovery command.
+    expect(written).not.toMatch(/^ {4}\S*nemoclaw.* agent --timeout/m);
+  });
+
+  it("shell-quotes a sandbox name that carries shell metacharacters (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "sb; rm -rf /");
+
+    expect(lines.join("")).toContain("'sb; rm -rf /' sessions list");
+  });
+
+  it("terminates every emitted line (#8723)", () => {
+    const { lines, proc } = collectStderr();
+
+    writeTimedOutAgentTurnFailure(proc, "my-assistant", "provider");
 
     expect(lines.every((line) => line.endsWith("\n"))).toBe(true);
   });

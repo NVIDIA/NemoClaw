@@ -3,6 +3,8 @@
 
 # E2E Weather Plugin Fixture Dependency Review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 Review date: 2026-07-12
 
 Scope: `test/e2e/fixtures/plugins/weather/package-lock.json` and the secret-free OpenClaw custom-plugin lifecycle regression lane.

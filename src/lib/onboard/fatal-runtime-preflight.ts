@@ -41,6 +41,7 @@ import {
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
 import type { OnboardOptions } from "./types";
+import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
@@ -150,6 +151,7 @@ export function assertOnboardSystemReadiness(
       isPortableExperimentalProfile() || !isLinuxDockerDriverGatewayEnabled(),
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
+    allowDeferredN1xManagedVllm: process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
   if (admission.admitted) return readinessReport;
   const jetsonRuntimeMissing = admission.findingIds.includes("host.gpu.nvidia_runtime_missing");

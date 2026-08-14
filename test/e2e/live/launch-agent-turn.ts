@@ -110,13 +110,13 @@ has_exact_reply() {
 has_post_reply_ready() {
   normalized_response | awk \
     -v expected="$NEMOCLAW_LAUNCH_EXPECTED_REPLY" \
-    -v ready="$NEMOCLAW_LAUNCH_READY_TEXT" '
+    -v ready="$NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT" '
       {
         line = $0
         sub(/^[[:space:]]+/, "", line)
         sub(/[[:space:]]+$/, "", line)
         if (line == expected) reply = 1
-        if (reply && index(line, ready) != 0) found = 1
+        if (reply && line == ready) found = 1
       }
       END { exit found ? 0 : 1 }
     '
@@ -132,7 +132,7 @@ for _ in {1..180}; do
   sleep 1
 done
 
-if [[ "$reply_seen" = 1 && -n "$NEMOCLAW_LAUNCH_READY_TEXT" ]]; then
+if [[ "$reply_seen" = 1 && -n "$NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT" ]]; then
   post_reply_ready_seen=0
   for _ in {1..60}; do
     if has_post_reply_ready; then
@@ -187,6 +187,7 @@ export interface LaunchAgentTurnOptions {
   env: NodeJS.ProcessEnv;
   exitCommand?: string;
   host: HostCliClient;
+  postReplyReadyText?: string;
   readyText?: string;
   redactionValues: string[];
   sandboxName: string;
@@ -210,6 +211,7 @@ export async function runLaunchAgentTurn(
       NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
       NEMOCLAW_LAUNCH_EXPECTED_REPLY: options.expectedReply ?? EXPECTED_REPLY,
       NEMOCLAW_LAUNCH_PROMPT: options.prompt ?? PROMPT,
+      NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT: options.postReplyReadyText ?? "",
       NEMOCLAW_LAUNCH_READY_TEXT: options.readyText ?? "",
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
       TERM: "xterm-256color",

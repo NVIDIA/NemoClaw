@@ -12,14 +12,14 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-wor
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.6.10-dependency-review.md",
 );
 const ACTIVE_DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
 );
 const MCP_TROUBLESHOOTING = path.join(

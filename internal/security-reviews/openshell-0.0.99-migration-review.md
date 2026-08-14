@@ -3,6 +3,8 @@
 
 # OpenShell 0.0.85 to 0.0.99 Migration Review
 
+> Internal engineering evidence. This file is not part of the public documentation set.
+
 ## Status and Decision
 
 This review covers the complete public source boundary from the previously supported OpenShell
