@@ -12,6 +12,7 @@ import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
+  writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -56,16 +57,17 @@ describe("inference switch retry", () => {
       .fn()
       .mockResolvedValueOnce(result(1, "failed to verify inference endpoint: timeout"))
       .mockResolvedValueOnce(result(0));
-    const evidence = vi.fn();
+    const writeJson = vi.fn().mockResolvedValue("inference-switch-retry-evidence.json");
 
     await runInferenceSetWithRetry({
       attempts: 2,
       delay: async () => {},
       run,
-      onEvidence: evidence,
+      onEvidence: (evidence) => writeInferenceSwitchRetryEvidence({ writeJson }, evidence),
     });
 
-    expect(evidence).toHaveBeenCalledWith(
+    expect(writeJson).toHaveBeenCalledWith(
+      "inference-switch-retry-evidence.json",
       expect.objectContaining({
         outcome: "passed-after-retry",
         attempts: [
@@ -79,14 +81,30 @@ describe("inference switch retry", () => {
   it("keeps exhausted verified attempts failed without bypassing verification", async () => {
     const transient = result(1, "failed to connect to endpoint");
     const run = vi.fn().mockResolvedValueOnce(transient).mockResolvedValueOnce(transient);
+    const writeJson = vi.fn().mockResolvedValue("inference-switch-retry-evidence.json");
 
     await expect(
-      runInferenceSetWithRetry({ attempts: 2, delay: async () => {}, run }),
+      runInferenceSetWithRetry({
+        attempts: 2,
+        delay: async () => {},
+        onEvidence: (evidence) => writeInferenceSwitchRetryEvidence({ writeJson }, evidence),
+        run,
+      }),
     ).resolves.toMatchObject({ exitCode: 1 });
     expect(run.mock.calls).toEqual([
       [1, true],
       [2, true],
     ]);
+    expect(writeJson).toHaveBeenCalledWith(
+      "inference-switch-retry-evidence.json",
+      expect.objectContaining({
+        outcome: "exhausted",
+        attempts: [
+          expect.objectContaining({ failureClass: "transient-external", retryScheduled: true }),
+          expect.objectContaining({ failureClass: "transient-external", retryScheduled: false }),
+        ],
+      }),
+    );
   });
 
   it("keeps the shell helper failed on exhaustion without adding a verification bypass", () => {

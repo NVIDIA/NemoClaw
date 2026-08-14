@@ -376,6 +376,7 @@ describe("Hermes inference switch command shape", () => {
       stderr: "failed to verify inference endpoint: failed to connect",
       stdout: "",
     });
+    const writeJson = vi.fn().mockResolvedValue("inference-switch-retry-evidence.json");
     const compatibleBinding = compatibleAnthropicSwitchBinding(
       "http://host.openshell.internal:18766/v1",
       { COMPATIBLE_ANTHROPIC_API_KEY: "switch-key" },
@@ -386,7 +387,12 @@ describe("Hermes inference switch command shape", () => {
         { command } as unknown as HostCliClient,
         ["hosted-key", compatibleBinding.credentialValue],
         compatibleAnthropicMetadataArgs(compatibleBinding.endpointUrl),
-        { attempts: 1, compatibleBinding, delay: async () => {} },
+        {
+          artifacts: { writeJson },
+          attempts: 1,
+          compatibleBinding,
+          delay: async () => {},
+        },
       ),
     ).resolves.toMatchObject({ exitCode: 1 });
 
@@ -397,5 +403,36 @@ describe("Hermes inference switch command shape", () => {
       redactionValues: ["hosted-key", "switch-key"],
     });
     expect(command.mock.calls[0]?.[2]?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(writeJson).toHaveBeenCalledWith(
+      "inference-switch-retry-evidence.json",
+      expect.objectContaining({ outcome: "exhausted" }),
+    );
+  });
+
+  it("retains recovered route verification evidence", async () => {
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: "failed to verify inference endpoint: timeout",
+        stdout: "",
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "route synced" });
+    const writeJson = vi.fn().mockResolvedValue("inference-switch-retry-evidence.json");
+
+    await expect(
+      runHermesInferenceSetWithRetry(
+        { command } as unknown as HostCliClient,
+        ["hosted-key"],
+        [],
+        { artifacts: { writeJson }, attempts: 2, delay: async () => {} },
+      ),
+    ).resolves.toMatchObject({ exitCode: 0 });
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(writeJson).toHaveBeenCalledWith(
+      "inference-switch-retry-evidence.json",
+      expect.objectContaining({ outcome: "passed-after-retry" }),
+    );
   });
 });

@@ -1,18 +1,19 @@
-# E2E retry inventory
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-This inventory governs operation retries, workflow reruns, and transient skips in
-the E2E suite. Readiness and eventual-consistency polling are observations, not
-operation retries: they do not repeat a mutation and retain their final probe or
-per-attempt artifacts through the existing E2E fixture APIs.
+# E2E Retry Inventory
 
-Only a `transient-external` classification may retry. Authentication,
-authorization, policy denial, malformed input, deterministic product failure,
-and cleanup failure are terminal. An ambiguous mutation must reconcile external
-state before another attempt. Exhaustion remains failed.
+This inventory governs operation retries, workflow reruns, and transient skips in the E2E suite.
+Readiness and eventual-consistency polling are observations, not operation retries: they do not repeat a mutation and retain their final probe or per-attempt artifacts through the existing E2E fixture APIs.
+
+Only a `transient-external` classification may retry.
+Authentication, authorization, policy denial, malformed input, deterministic product failure, and cleanup failure are terminal.
+An ambiguous mutation must reconcile external state before another attempt.
+Exhaustion remains failed.
 
 | ID | Operation and source | Failure signature | Bound and backoff | Idempotence basis | Owner | Result classification | Retained evidence | Disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `workflow-main-observer` | Completed `E2E main` run; `tools/e2e/main-run-retry.mts`, `.github/workflows/e2e-main-retry.yaml` | Any failed job | 0 automatic reruns | Not established at workflow scope | Test owner | `failed-no-retry`, `passed-first-attempt`, or `passed-after-retry` for a manual rerun | Per-attempt jobs, conclusions, duration, source SHA, and owner | Broad rerun removed; operation-level evidence is required |
+| `workflow-main-observer` | Completed `E2E main` run; `tools/e2e/main-run-retry.mts`, `.github/workflows/e2e-main-retry.yaml` | Any failed job | 0 automatic reruns | Not established at workflow scope | Test owner | `failed-no-retry`, `ignored`, `passed-first-attempt`, or `passed-after-retry` for a manual rerun | Failed job names, non-skipped job count, runner minutes, and source SHA for each attempt | Broad rerun removed; operation-level evidence is required |
 | `hosted-runner-recovery` | Confirmed GitHub-hosted runner loss; `tools/e2e/hosted-runner-recovery.mts`, `tools/e2e/hosted-runner-loss*.mts` | Authenticated runner-allocation or internal-runner evidence only | 1 recovery request; controller-defined delay | GitHub reruns a workflow attempt | GitHub Actions | Dedicated runner-loss classifications | Source and recovery run links plus authenticated job evidence | External owner; governed by #7146, not this policy |
 | `pr-rerun-reconciliation` | PR E2E dispatch reconciliation; `tools/e2e/pr-e2e-dispatch-reconciliation.mts`, `tools/e2e/pr-e2e-retry-receipt.mts` | Trusted dispatch receipt state | Contract-defined single reconciliation | Reconciles workflow and commit identity before action | GitHub Actions | Receipt-specific terminal states | Signed workflow identity and receipt | External scope; governed by #7206 |
 | `github-publication-read` | GitHub API reads; `tools/e2e/base-image-publication.mts` | Fetch error, 408, rate limit, or 5xx | 3 attempts; Retry-After/rate-limit reset or linear delay capped at 10s | Read-only | GitHub API | Returned parsed selection on success; thrown terminal HTTP/fetch error on failure or exhaustion | Caller artifact records the returned publication selection; terminal errors identify exhausted fetch or HTTP status without response content | Eligible bounded read; existing implementation retained |
@@ -35,19 +36,15 @@ state before another attempt. Exhaustion remains failed.
 | `eventual-consistency-polling` | Generic readiness observation; `test/e2e/fixtures/polling.ts` and callers | Caller-defined expected not-ready state | Helper requires a finite `attempts` or `deadlineMs`; caller supplies explicit `delayMs` | Read-only observation | Component named by caller | Passed before bound, terminal observation, aborted, or exhausted | Last attempt and deterministic per-attempt artifact name | Not an operation retry; each caller owns and inventories its concrete bound |
 | `filesystem-cleanup` | Node `fs.rmSync` retry options; `tools/e2e/openshell-gateway-auth-artifact-safety.mts` | OS-level transient remove failure | 4 total filesystem attempts; 50ms | Idempotent removal of quarantined local artifacts | Host filesystem | Cleanup failure remains terminal | Quarantine path state without artifact content | Bounded cleanup; credentials are never serialized |
 
-## Evidence contract
+## Evidence Contract
 
-`test/e2e/fixtures/retry-policy.ts` emits schema version 1. The aggregate
-`outcome` is exactly one of `passed-first-attempt`, `passed-after-retry`,
-`failed-no-retry`, or `exhausted`. Cleanup failures use `failed-no-retry` with a
-final attempt whose `failureClass` is `cleanup`. Each attempt also records its
-number, failure class, reconciliation result when applicable, and whether
-another attempt was scheduled. The record deliberately excludes command output,
-errors, request bodies, headers, and environment values. Callers retain their
-normal redacted artifacts separately and may write the aggregate record through
-`onEvidence`.
+`test/e2e/fixtures/retry-policy.ts` emits schema version 1.
+The aggregate `outcome` is exactly one of `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `exhausted`.
+Cleanup failures use `failed-no-retry` with a final attempt whose `failureClass` is `cleanup`.
+Each attempt also records its number, failure class, reconciliation result when applicable, and whether another attempt was scheduled.
+The record deliberately excludes command output, errors, request bodies, headers, and environment values.
+Callers retain their normal redacted artifacts separately and may write the aggregate record through `onEvidence`.
+The TypeScript inference-switch targets write the aggregate record to `inference-switch-retry-evidence.json` through each target's redacting artifact sink.
 
-Adding or changing a retry, rerun, transient skip, or polling family requires an
-inventory update in the same pull request. A path is not eligible merely because
-it sometimes passes later; it needs a narrow transient signature and a stated
-idempotence or reconciliation basis.
+Adding or changing a retry, rerun, transient skip, or polling family requires an inventory update in the same pull request.
+A path is not eligible merely because it sometimes passes later; it needs a narrow transient signature and a stated idempotence or reconciliation basis.

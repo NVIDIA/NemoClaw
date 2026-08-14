@@ -7,6 +7,17 @@ import { runBoundedRetry, type RetryEvidence } from "./retry-policy.ts";
 const TRANSIENT_INFERENCE_SET_FAILURE =
   /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b50[234]\b/iu;
 
+export interface InferenceSwitchRetryArtifactSink {
+  writeJson(path: string, value: unknown): Promise<string>;
+}
+
+export async function writeInferenceSwitchRetryEvidence(
+  artifacts: InferenceSwitchRetryArtifactSink,
+  evidence: RetryEvidence,
+): Promise<void> {
+  await artifacts.writeJson("inference-switch-retry-evidence.json", evidence);
+}
+
 export function inferenceSetAttemptCount(raw: string | undefined, fallback = 3): number {
   if (raw === undefined) return fallback;
   const parsed = Number(raw);

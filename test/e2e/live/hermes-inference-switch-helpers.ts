@@ -36,7 +36,9 @@ import {
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
+  type InferenceSwitchRetryArtifactSink,
   runInferenceSetWithRetry,
+  writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -593,6 +595,7 @@ export async function runHermesInferenceSetWithRetry(
   compatibleMetadataArgs: string[],
   options: {
     attempts?: number;
+    artifacts?: InferenceSwitchRetryArtifactSink;
     compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
     delay?: (milliseconds: number) => Promise<void>;
   } = {},
@@ -607,10 +610,14 @@ export async function runHermesInferenceSetWithRetry(
     SWITCH_MODEL,
     ...compatibleMetadataArgs,
   ];
+  const evidenceArtifacts = options.artifacts;
   return runInferenceSetWithRetry({
     attempts:
       options.attempts ?? inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS),
     delay: options.delay,
+    onEvidence: evidenceArtifacts
+      ? (evidence) => writeInferenceSwitchRetryEvidence(evidenceArtifacts, evidence)
+      : undefined,
     run: (attempt, verify) =>
       host.command("node", verify ? args : [...args, "--no-verify"], {
         artifactName: verify

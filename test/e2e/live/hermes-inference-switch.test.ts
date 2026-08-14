@@ -193,6 +193,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   const compatibleMetadataArgs = compatibleAnthropicMetadataArgs(switchEndpointUrl);
   const switchInference = () =>
     runHermesInferenceSetWithRetry(host, redactionValues, compatibleMetadataArgs, {
+      artifacts,
       compatibleBinding: switchBinding,
     });
   const switched =

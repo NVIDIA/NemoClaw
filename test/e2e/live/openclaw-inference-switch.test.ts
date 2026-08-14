@@ -41,6 +41,7 @@ import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
+  writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -867,6 +868,7 @@ async function runOpenClawInferenceSetWithRetry(
   home: string,
   redactionValues: string[],
   switchBinding: CompatibleAnthropicSwitchBinding | null,
+  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
 ): Promise<ShellProbeResult> {
   const attempts = inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS);
   const compatibleCredentialEnv = (() => {
@@ -903,6 +905,7 @@ async function runOpenClawInferenceSetWithRetry(
 
   return runInferenceSetWithRetry({
     attempts,
+    onEvidence: (evidence) => writeInferenceSwitchRetryEvidence(artifacts, evidence),
     run: (attempt, verify) =>
       runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
         artifactName: verify
@@ -1085,7 +1088,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
   );
   const pidBefore = await openclawGatewayPid(sandbox, home);
   const switchInference = () =>
-    runOpenClawInferenceSetWithRetry(host, home, redactionValues, switchBinding);
+    runOpenClawInferenceSetWithRetry(host, home, redactionValues, switchBinding, artifacts);
   const switchResult = mockProvider
     ? await withHostVerificationLoopbackAlias(host, cleanup, switchInference)
     : await switchInference();
