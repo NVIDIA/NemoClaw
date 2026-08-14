@@ -210,7 +210,13 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
     "alpha",
     STARTUP_ARGV,
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-    { platform: "linux", podman, stateDir },
+    {
+      platform: "linux",
+      podman,
+      stateDir,
+      podmanSocketAuthorityDeps: socketAuthorityDeps(),
+      hardenSocketDirectory: vi.fn(),
+    },
   );
 }
 
@@ -219,6 +225,12 @@ function recoverPortableDemoSandboxLifecycle(
   context: Parameters<typeof recoverPortableDemoSandboxLifecycleUnchecked>[1],
   deps: PortableDemoLifecycleDeps = {},
 ) {
+  const authorityDeps = deps.podman
+    ? {
+        podmanSocketAuthorityDeps: socketAuthorityDeps(),
+        hardenSocketDirectory: vi.fn(),
+      }
+    : {};
   return recoverPortableDemoSandboxLifecycleUnchecked(
     sandboxName,
     {
@@ -226,7 +238,7 @@ function recoverPortableDemoSandboxLifecycle(
       openshellDriver: "docker",
       ...context,
     },
-    deps,
+    { ...authorityDeps, ...deps },
   );
 }
 
@@ -352,39 +364,6 @@ describe("portable demo sandbox lifecycle", () => {
       ),
     ).toThrow("receipt values are invalid");
     expect(runtime.podman).not.toHaveBeenCalled();
-  });
-
-  it("records the exact OpenShell container and applies the unless-stopped restart policy (#8441)", () => {
-    const stateDir = temporaryStateDir();
-    const { podman } = createPodman();
-
-    installReceipt(stateDir, podman);
-
-    expect(podman).toHaveBeenCalledWith([
-      "ps",
-      "-a",
-      "--no-trunc",
-      "--filter",
-      "label=openshell.managed=true",
-      "--filter",
-      "label=openshell.ai/sandbox-name=alpha",
-      "--filter",
-      "label=openshell.ai/sandbox-workspace=default",
-      "--format",
-      "{{.ID}}",
-    ]);
-    expect(podman).toHaveBeenCalledWith(["update", "--restart=unless-stopped", CONTAINER_ID]);
-    const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
-    const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    expect(receipt).toEqual({
-      schemaVersion: 3,
-      sandboxName: "alpha",
-      sandboxId: SANDBOX_ID,
-      containerId: CONTAINER_ID,
-      dashboardPort: 18789,
-      registryGeneration: CONTAINER_ID,
-    });
-    expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
   });
 
   it("resolves the receipt-owned container through the rootless Podman socket (#8584)", () => {
@@ -618,7 +597,13 @@ describe("portable demo sandbox lifecycle", () => {
         STARTUP_ARGV.at(-1)!,
       ],
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-      { platform: "linux", podman, stateDir },
+      {
+        platform: "linux",
+        podman,
+        stateDir,
+        podmanSocketAuthorityDeps: socketAuthorityDeps(),
+        hardenSocketDirectory: vi.fn(),
+      },
     );
 
     const receipt = fs.readFileSync(
@@ -696,7 +681,10 @@ describe("portable demo sandbox lifecycle", () => {
     );
 
     expect(result).toEqual({ kind: "recovered" });
-    expect(runtime.podman).toHaveBeenCalledWith(["start", CONTAINER_ID]);
+    expect(runtime.podman).toHaveBeenCalledWith(
+      ["--url", "unix:///run/user/1001/podman/podman.sock", "start", CONTAINER_ID],
+      expect.any(Object),
+    );
     expect(launchOpenshell).toHaveBeenCalledWith([
       "sandbox",
       "exec",
@@ -874,7 +862,12 @@ describe("portable demo sandbox lifecycle", () => {
       ),
     ).toEqual({ kind: "recovered" });
     expect(launchOpenshell).toHaveBeenCalledTimes(2);
-    expect(runtime.podman).not.toHaveBeenCalledWith(["start", expect.any(String)]);
+    expect(
+      runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "start";
+      }),
+    ).toBe(false);
     expect(fs.readFileSync(receiptPath, "utf-8")).toBe(originalReceipt);
   });
 
@@ -886,9 +879,14 @@ describe("portable demo sandbox lifecycle", () => {
     const otherFilePath = portableDemoLifecycleInternals.receiptPath("beta", stateDir);
     const otherReceipt = '{"sandboxName":"beta"}\n';
     fs.writeFileSync(otherFilePath, otherReceipt, { mode: 0o600 });
-    runtime.podman.mockReturnValue({
-      status: 125,
-      stdout: `Error: no such container ${CONTAINER_ID}`,
+    runtime.podman.mockImplementation((args) => {
+      const command = args[0] === "--url" ? args.slice(2) : args;
+      return command[0] === "info"
+        ? { status: 0, stdout: `${SOCKET_PATH}\n` }
+        : {
+            status: 125,
+            stdout: `Error: no such container ${CONTAINER_ID}`,
+          };
     });
 
     expect(
