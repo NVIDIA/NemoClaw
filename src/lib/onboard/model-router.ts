@@ -37,8 +37,8 @@ import {
 } from "./model-router-command";
 import {
   doesModelRouterProcessOwnPort,
-  findModelRouterPidForPort,
   getRouterHealthSnapshot,
+  inspectModelRouterProcessForPort,
   isRouterHealthy,
   ROUTER_HEALTH_TIMEOUT_MS as ROUTER_HEALTH_REQUEST_TIMEOUT_MS,
   type RouterHealthSnapshot,
@@ -577,6 +577,10 @@ function getRoutedProfile(): BlueprintInferenceProfile {
   return bp;
 }
 
+export function resolveModelRouterPort(): number {
+  return getRoutedProfile().router?.port || 4000;
+}
+
 export function isRoutedInferenceProvider(provider: string | null | undefined): boolean {
   if (!provider) return false;
   if (provider === "nvidia-router") return true;
@@ -615,7 +619,7 @@ async function verifyModelRouterSandboxReachability(routerPort: number): Promise
 
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
-  const routerPort = bp.router.port || 4000;
+  const routerPort = resolveModelRouterPort();
   const routerCredentialEnv =
     bp.router.credential_env || bp.credential_env || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
   const routerCredential =
@@ -653,13 +657,15 @@ export async function reconcileModelRouter(): Promise<void> {
       // requiring a manual stop-and-retry. Only stop it if the cmdline
       // confirms it is actually model-router proxy — never kill an unrelated
       // service that happens to occupy the port. See issue #5169.
-      const orphanPid = findModelRouterPidForPort(routerPort);
-      if (orphanPid !== null) {
-        console.log(`  Stopping orphaned model router (PID ${orphanPid})...`);
-        await stopModelRouterProcess(orphanPid, routerPort);
+      const orphan = inspectModelRouterProcessForPort(routerPort);
+      if (orphan.status === "found") {
+        console.log(`  Stopping orphaned model router (PID ${orphan.pid})...`);
+        await stopModelRouterProcess(orphan.pid, routerPort);
       } else {
+        const inventoryDetail =
+          orphan.status === "unavailable" ? " The host process inventory is unavailable." : "";
         throw new Error(
-          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
+          `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown.${inventoryDetail} Stop the existing model-router process and rerun onboarding.`,
         );
       }
     }

@@ -45,6 +45,7 @@ export type DestroyHarness = {
   updateSessionSpy: MockInstance;
   warnSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
+  withModelRouterPortLifecycleLockSpy: MockInstance;
 };
 
 type DestroyHarnessOptions = {
@@ -160,9 +161,11 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
   const gatewayRouteMutationLock = requireDist("../../inference/gateway-route-mutation-lock.js");
+  const modelRouterProcess = requireDist("../../onboard/model-router-process.js");
   const httpsPinRuntimeAdapter = requireDist("../../inference/https-pin-runtime-adapter.js");
   const tunnelServices = requireDist("../../tunnel/services.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
+  const gatewayRegistry = requireDist("../../state/gateway-registry.js");
   const registry = requireDist("../../state/registry.js");
   const destroyExecution = requireDist("./destroy-execution.js");
   const destroyPreflight = requireDist("./destroy-preflight.js");
@@ -232,6 +235,17 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     .mockImplementation(async (_gatewayName: unknown, operation: unknown) =>
       (operation as () => Promise<unknown>)(),
     );
+  const withModelRouterPortLifecycleLockSpy = vi
+    .spyOn(gatewayRouteMutationLock, "withModelRouterPortLifecycleLock")
+    .mockImplementation(async (_port: unknown, operation: unknown) =>
+      (operation as () => Promise<unknown>)(),
+    );
+  vi.spyOn(gatewayRegistry, "listHostGatewayRegistryEntries").mockReturnValue([]);
+  vi.spyOn(modelRouterProcess, "doesModelRouterProcessOwnPort").mockReturnValue(false);
+  vi.spyOn(modelRouterProcess, "inspectModelRouterProcessForPort").mockReturnValue({
+    status: "absent",
+  });
+  vi.spyOn(modelRouterProcess, "isRouterHealthy").mockResolvedValue(false);
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({
     sandboxName: "alpha",
     ...(options.sessionRouterPid ? { routerPid: options.sessionRouterPid } : {}),
@@ -302,10 +316,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     }
     identityProbeCall += 1;
     options.onDockerRun?.(identityProbeCall);
-    const result =
-      options.dockerRunResultSequence?.[identityProbeCall - 1] ??
-      options.dockerRunResult ??
-      { status: 0 };
+    const result = options.dockerRunResultSequence?.[identityProbeCall - 1] ??
+      options.dockerRunResult ?? { status: 0 };
     return result as ReturnType<typeof dockerRun.dockerRun>;
   });
   const selectGatewaySpy = vi
@@ -321,13 +333,11 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
   );
-  const stopNimByNameSpy = vi
-    .spyOn(nim, "stopNimContainerByName")
-    .mockImplementation(() => {
-      if (options.stopInferenceError !== undefined) {
-        throw new Error(options.stopInferenceError);
-      }
-    });
+  const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
+    if (options.stopInferenceError !== undefined) {
+      throw new Error(options.stopInferenceError);
+    }
+  });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   const killStaleProxySpy = vi
     .spyOn(ollamaProxy, "killStaleProxy")
@@ -445,5 +455,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     updateSessionSpy,
     warnSpy,
     withGatewayRouteMutationLockSpy,
+    withModelRouterPortLifecycleLockSpy,
   };
 }

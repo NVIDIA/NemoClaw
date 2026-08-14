@@ -2293,7 +2293,16 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
-When `destroy` removes the last registered Model Router sandbox that uses a host port, it also stops the host Model Router process on a best-effort basis and frees that port.
+Routed onboarding and Model Router destruction use the same host-wide lifecycle lock for each Model Router port.
+Onboarding holds the lock through sandbox registry publication.
+Destruction holds the lock through the peer check, process stop, and session update.
+When `destroy` removes a Model Router sandbox, it checks the bounded set of NemoClaw gateway registries under the host state directory for a same-port peer.
+If no same-port peer remains, it stops only a process whose command line still identifies the Model Router on that port.
+It clears matching session recovery identity only after the stop succeeds or a complete process scan and health probe confirm that the router is absent.
+If process inspection is unavailable, the port remains healthy without a verified owner, or the stop fails, destruction still completes and keeps the recovery identity.
+Inspect the current listener process immediately before you stop anything.
+Stop it only if its command line still identifies the Model Router on the named port.
+Do not stop a previously reported process ID when its command line no longer matches.
 
 <Warning>
 This command attempts to wipe the manifest-defined agent state while its persistent volume is mounted, then removes the sandbox.

@@ -2781,6 +2781,8 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
     checkGatewayRouteCompatibility,
     withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
+    withModelRouterPortLifecycleLock: gatewayRouteMutationLock.withModelRouterPortLifecycleLock,
+    getModelRouterPort: modelRouter.resolveModelRouterPort,
     withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
     step,
     getGatewayName: () => GATEWAY_NAME,

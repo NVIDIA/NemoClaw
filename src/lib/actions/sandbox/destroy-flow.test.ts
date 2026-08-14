@@ -64,6 +64,20 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("runs routed teardown under the gateway and host router-port locks (#9098)", async () => {
+    const harness = createDestroyHarness({ provider: "nvidia-router" });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
+    expect(harness.withModelRouterPortLifecycleLockSpy).toHaveBeenCalledWith(
+      4000,
+      expect.any(Function),
+    );
+  });
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
     const routeId = "a".repeat(64);
     const harness = createDestroyHarness({

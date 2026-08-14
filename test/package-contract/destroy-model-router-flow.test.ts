@@ -103,9 +103,10 @@ describe("destroySandbox model-router teardown (#9098)", () => {
             endpointUrl: session.endpointUrl,
           },
           {
-            listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+            listHostRegistryEntries: () => [],
             loadSession: () => session,
             updateSession,
+            withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
           },
         ),
       ).resolves.toBeUndefined();

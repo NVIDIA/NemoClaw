@@ -690,10 +690,10 @@ async function destroySandboxUnlocked(
   }
   if (deleteSucceededOrAlreadyGone && removed) {
     try {
-      // The routed-peer scan and router stop are one critical section with
-      // routed onboarding's route registration, which runs under the same
-      // gateway route lock. Otherwise concurrent onboarding can register a
-      // routed sandbox after the scan and then lose its shared router.
+      // The gateway route lock nests the host-global router-port lock inside
+      // stopModelRouterForDestroyedSandbox. Routed onboarding takes the same
+      // lock order and holds both through registry publication, including
+      // when the competing sandbox belongs to another gateway.
       await withGatewayRouteMutationLock(cleanupGatewayName, () =>
         stopModelRouterForDestroyedSandbox(sandbox, {
           loadSession: onboardSession.loadSession,
@@ -705,7 +705,8 @@ async function destroySandboxUnlocked(
       const detail = error instanceof Error ? error.message : String(error);
       defaultDestroyWarn(
         `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
-          `Stop the Model Router process manually before the next Model Router onboarding.`,
+          `Inspect the listener before the next Model Router onboarding and stop only a process ` +
+          `that still owns the matching port and model-router command line.`,
       );
     }
   }
