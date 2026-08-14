@@ -30,12 +30,17 @@ describe("onboarding entry composition boundary", () => {
 
     expect(evaluateOnboardEntryComposition(actual, budget)).toEqual([]);
     expect(actual).toEqual({
-      gateway: {},
+      gateway: {
+        preflight: 1,
+        preflightAuthoritativeRebuildTarget: 1,
+        runOnboard: 1,
+      },
       messaging: { createSandboxWithBaseImageResolution: 9, runOnboard: 2 },
       policy: {
         "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
         createSandboxWithBaseImageResolution: 7,
-        runOnboard: 5,
+        preflightAuthoritativeRebuildTarget: 1,
+        runOnboard: 6,
         "sandboxCreateIntentResolver.getAgentPolicyPath": 1,
       },
       provider: {
@@ -44,6 +49,7 @@ describe("onboarding entry composition boundary", () => {
         handleRemoteProviderSelection: 76,
         handleRoutedSelection: 15,
         "handleVllmSelection.queryVllmModels": 1,
+        preflightAuthoritativeRebuildTarget: 1,
         runOnboard: 8,
         selectAndValidateOllamaModel: 18,
       },
@@ -314,6 +320,12 @@ describe("onboarding entry composition boundary", () => {
   it.each([
     "if (enabled) schedule(startGateway);",
     "if (enabled) schedule(() => startGateway());",
+    "if (enabled) schedule(startGateway());",
+    "if (enabled) schedule(startGateway.bind(null));",
+    "if (enabled) schedule([startGateway]);",
+    "if (enabled) schedule({ run: startGateway });",
+    "if (enabled) schedule({ ...{ run: startGateway } });",
+    "if (enabled) scheduleNested(schedule(startGateway));",
   ])("checks a gateway action passed as an argument: %s", (decision) => {
     const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
 
@@ -324,6 +336,19 @@ describe("onboarding entry composition boundary", () => {
     const actual = collectOnboardEntryDecisions(
       `function choose() { enabled ${operator} startGateway(); }`,
     );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each([
+    "recoverGateway!()",
+    "(recoverGateway as Callable)()",
+    "(recoverGateway satisfies Callable)()",
+    "(gatewayRecovery.execute as Callable)()",
+    'if (enabled) gateway[("startGateway")]()',
+    "(recoverGateway as Callable)`now`",
+  ])("checks the wrapped static gateway invocation %s", (decision) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${decision}; }`);
 
     expect(actual.gateway).toEqual({ choose: 1 });
   });
@@ -362,6 +387,24 @@ describe("onboarding entry composition boundary", () => {
       expect(actual.gateway).toEqual({ choose: 1 });
     },
   );
+
+  it.each([
+    "createGatewayRecoveryAndStart",
+    "buildGatewayRepairAndRun",
+    "makeGatewayRollbackAndExecute",
+  ])("classifies the reversed compound gateway action %s", (action) => {
+    const actual = collectOnboardEntryDecisions(`function choose() { ${action}(); }`);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it("checks a nested gateway action in a for-loop incrementor", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose() { for (; enabled; schedule(startGateway())) {} }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
 
   it("rejects a decision added within an allowed declaration", () => {
     const actual = collectOnboardEntryDecisions(

@@ -1,6 +1,10 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Policy decisions remain until #9172. The budget permits no gateway decisions.",
-  "gateway": {},
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Gateway and policy decisions remain until #9172.",
+  "gateway": {
+    "preflight": 1,
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 1
+  },
   "messaging": {
     "createSandboxWithBaseImageResolution": 9,
     "runOnboard": 2
@@ -8,7 +12,8 @@
   "policy": {
     "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
     "createSandboxWithBaseImageResolution": 7,
-    "runOnboard": 5,
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 6,
     "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
@@ -17,6 +22,7 @@
     "handleRemoteProviderSelection": 76,
     "handleRoutedSelection": 15,
     "handleVllmSelection.queryVllmModels": 1,
+    "preflightAuthoritativeRebuildTarget": 1,
     "runOnboard": 8,
     "selectAndValidateOllamaModel": 18
   }

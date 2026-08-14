@@ -33,7 +33,8 @@ const LOGICAL_OPERATORS = new Set([
 ]);
 const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
 const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
-const RECOVERY_COMPOUND_ACTION = /(?:And|Or)(?:Fallback|Recover|Repair|Restore|Retry|Rollback)/i;
+const RECOVERY_COMPOUND_ACTION =
+  /(?:And|Or)(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)|(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)(?:And|Or)(?:Apply|Execute|Perform|Run|Start)/i;
 const RECOVERY_ACTION_METHOD = /^(?:apply|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
 
 type NamedScope = {
@@ -160,19 +161,29 @@ function isLogicalDecision(node: ts.Node): node is ts.BinaryExpression {
 }
 
 function staticElementName(expression: ts.ElementAccessExpression): string | null {
-  const argument = expression.argumentExpression;
+  const argument = expression.argumentExpression
+    ? unwrapTransparentExpression(expression.argumentExpression)
+    : undefined;
   if (argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))) {
     return argument.text;
   }
   return null;
 }
 
-function unwrapCallee(expression: ts.Expression): ts.Expression {
-  return ts.isParenthesizedExpression(expression) ? unwrapCallee(expression.expression) : expression;
+function unwrapTransparentExpression(expression: ts.Expression): ts.Expression {
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    return unwrapTransparentExpression(expression.expression);
+  }
+  return expression;
 }
 
 function calledName(expression: ts.Expression): string | null {
-  const callee = unwrapCallee(expression);
+  const callee = unwrapTransparentExpression(expression);
   if (ts.isIdentifier(callee)) return callee.text;
   if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
   if (ts.isElementAccessExpression(callee)) return staticElementName(callee);
@@ -180,7 +191,7 @@ function calledName(expression: ts.Expression): string | null {
 }
 
 function calledReceiver(expression: ts.Expression): ts.Expression | null {
-  const callee = unwrapCallee(expression);
+  const callee = unwrapTransparentExpression(expression);
   if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
     return callee.expression;
   }
@@ -248,18 +259,27 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
     ts.forEachChild(candidate, (child) => scanCondition(child, false));
   }
 
-  function scanActionArgument(candidate: ts.Expression): void {
+  function scanActionArgument(candidate: ts.Node): void {
     const body = functionBody(candidate);
     if (body) {
       scanActions(body, true);
       return;
     }
-    if (
-      ts.isIdentifier(candidate) ||
-      ts.isPrivateIdentifier(candidate) ||
-      ts.isPropertyAccessExpression(candidate) ||
-      ts.isElementAccessExpression(candidate)
-    ) {
+    if (ts.isIdentifier(candidate) || ts.isPrivateIdentifier(candidate)) {
+      addIdentifiers(candidate);
+      return;
+    }
+    if (ts.isCallExpression(candidate) || ts.isNewExpression(candidate)) {
+      addIdentifiers(candidate.expression);
+      for (const argument of candidate.arguments ?? []) scanActionArgument(argument);
+      return;
+    }
+    if (ts.isTaggedTemplateExpression(candidate)) {
+      addIdentifiers(candidate.tag);
+      scanActionArgument(candidate.template);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) {
       addIdentifiers(candidate);
       return;
     }
@@ -270,7 +290,21 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
       ts.isNonNullExpression(candidate)
     ) {
       scanActionArgument(candidate.expression);
+      return;
     }
+    if (ts.isSpreadElement(candidate) || ts.isSpreadAssignment(candidate)) {
+      scanActionArgument(candidate.expression);
+      return;
+    }
+    if (ts.isPropertyAssignment(candidate)) {
+      scanActionArgument(candidate.initializer);
+      return;
+    }
+    if (ts.isShorthandPropertyAssignment(candidate)) {
+      addIdentifiers(candidate.name);
+      return;
+    }
+    ts.forEachChild(candidate, scanActionArgument);
   }
 
   function scanActions(candidate: ts.Node, root: boolean): void {
@@ -281,9 +315,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
     }
     if (ts.isCallExpression(candidate) || ts.isNewExpression(candidate)) {
       addIdentifiers(candidate.expression);
-      for (const argument of candidate.arguments ?? []) {
-        if (!ts.isSpreadElement(argument)) scanActionArgument(argument);
-      }
+      for (const argument of candidate.arguments ?? []) scanActionArgument(argument);
       return;
     }
     if (ts.isTaggedTemplateExpression(candidate)) {
