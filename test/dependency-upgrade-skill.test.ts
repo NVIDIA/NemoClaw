@@ -342,7 +342,14 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("Do not write release ledgers");
     expect(skill).toContain("under `docs/`");
     expect(skill).toContain("internal/security-reviews/");
+    expect(skill).toContain("For Fern, do not create a dependency review document");
+    expect(skill).toContain("executable configuration and publishing tests");
     expect(skill).toContain("link to it from public documentation");
+    expect(
+      fs
+        .readdirSync(path.join(repoRoot, "internal", "security-reviews"))
+        .filter((filename) => /^fern-.*review/u.test(filename)),
+    ).toEqual([]);
     expect(discovery).toContain("Use the current checkout as the source of truth");
     expect(discovery).toContain("Record discovered specifics in task or PR evidence");
     expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");
