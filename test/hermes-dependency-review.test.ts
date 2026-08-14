@@ -274,6 +274,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       "'bin/python -> /usr/bin/python3'",
       "'bin/python3 -> python'",
       "'bin/python3.13 -> python'",
+      `"lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE"`,
       "'lib64 -> lib'",
       `test "$venv_links" = "$expected_venv_links"`,
       `test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13"`,
@@ -283,11 +284,11 @@ describe("Hermes 0.19.0 dependency review", () => {
       "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
       "sh -eu -c",
       "/opt/hermes/.venv/bin/python -I -m pip --version >/dev/null",
-      `if printf '' >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi`,
-      `if printf '' >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi`,
-      `if printf '' >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi`,
-      `if printf '' >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
-      `if printf '' > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi`,
       `if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
       `test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe`,
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
@@ -304,6 +305,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     }
     expect(layer).toContain("-perm /022");
     expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
+    expect(layer).not.toContain(`printf ''`);
 
     const activeUser = instructions
       .filter(
