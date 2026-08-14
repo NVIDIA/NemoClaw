@@ -219,9 +219,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
     return true;
   });
-  const stopModelRouterForDestroyedSandboxSpy = vi
-    .spyOn(destroyPreflight, "stopModelRouterForDestroyedSandbox")
-    .mockResolvedValue(undefined);
+  const stopModelRouterForDestroyedSandboxSpy = vi.spyOn(
+    destroyPreflight,
+    "stopModelRouterForDestroyedSandbox",
+  );
   const retirePortableLifecycleReceiptSpy = vi
     .spyOn(destroyExecution, "retirePortableLifecycleAuthority")
     .mockImplementation(() => undefined);
