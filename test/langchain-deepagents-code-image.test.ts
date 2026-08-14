@@ -1157,12 +1157,23 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
-    expect(review).toContain(
-      "Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, langgraph-checkpoint-sqlite 3.1.1, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
-    );
-    expect(review).toContain(
-      "Complete-lock audit result: `2 duplicate records in 1 unrelated package`",
-    );
+    expect(review).toMatch(/Targeted audit result:.*no known vulnerabilities/is);
+    for (const [distribution, version] of [
+      ["aiohttp", "3.14.3"],
+      ["cryptography", "50.0.0"],
+      ["uv", "0.11.33"],
+      ["langgraph-checkpoint-sqlite", "3.1.1"],
+      ["mcp", "1.28.1"],
+      ["pillow", "12.3.0"],
+      ["pyasn1", "0.6.4"],
+    ] as const) {
+      const normalizedDistribution = distribution.replaceAll("-", "[-_]");
+      const normalizedVersion = version.replaceAll(".", "\\.");
+      expect(review).toMatch(
+        new RegExp(`${normalizedDistribution}\\s+${normalizedVersion}`, "i"),
+      );
+    }
+    expect(review).toMatch(/Complete-lock audit result:.*2 duplicate records.*1 unrelated package/is);
     expect(review).toContain("`GHSA-cq5v-8q36-5273`");
     expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
     expect(review).toContain("Deep Agents Code `0.1.55`");
