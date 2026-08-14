@@ -51,9 +51,8 @@ async function parseJson(response: Response, label: string): Promise<unknown> {
 }
 
 async function probePayload(model: string): Promise<Record<string, unknown>> {
-  const { getChatCompletionsProbePayload } = await import(
-    "../../../src/lib/inference/openai-probe-models"
-  );
+  const { getChatCompletionsProbePayload } =
+    await import("../../../src/lib/inference/openai-probe-models");
   return getChatCompletionsProbePayload(model);
 }
 
