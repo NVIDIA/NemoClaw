@@ -48,6 +48,17 @@ export function resolveAgentCreateInput(
   };
 }
 
+export function assertPortableManagedBootstrapNotSelected(
+  portableLifecycle: boolean,
+  managedBootstrapSelected: boolean,
+): void {
+  if (portableLifecycle && managedBootstrapSelected) {
+    throw new Error(
+      "Portable OpenClaw onboarding cannot use managed-image bootstrap because that path requires Docker lifecycle operations.",
+    );
+  }
+}
+
 /*
  * Keep recovery rendering at this public command boundary. Providers own the
  * detail and remediation; central orchestration only renders their bounded,
@@ -158,6 +169,10 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  assertPortableManagedBootstrapNotSelected(
+    input.portableLifecycle === true,
+    input.managedBootstrap != null,
+  );
   let registryImageRef: string | null = input.prebuild.imageRef;
   const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
   const gpuCreateOutcome = await sandboxGpuCreateAttempt

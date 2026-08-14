@@ -1093,6 +1093,31 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
   });
 
+  it("rejects managed bootstrap before portable Docker lifecycle access (#9068)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+    const createOnboardRouting = vi.fn();
+    const createLifecycle = vi.fn();
+    input.managedBootstrap = {
+      runtimeProvider: {
+        bootstrap: { createOnboardRouting, createLifecycle },
+      },
+    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
+      "Portable OpenClaw onboarding cannot use managed-image bootstrap",
+    );
+
+    expect(createOnboardRouting).not.toHaveBeenCalled();
+    expect(createLifecycle).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
+  });
+
   it("preserves an unready portable sandbox without lifecycle mutation (#9068)", async () => {
     const input = createInput();
     input.gpuRoutePlan = "native-only";
