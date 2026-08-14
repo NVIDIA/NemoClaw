@@ -164,6 +164,10 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfile).toContain(
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
     );
+    expect(dockerfileBase).toContain(
+      "HERMES_LAZY_INSTALL_TARGET=/tmp/nemoclaw-hindsight-client-probe",
+    );
+    expect(dockerfileBase).toContain("import hindsight_client, importlib.metadata as m");
     expect(dockerfile).toContain("state-dir-guard.py lock");
     expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
     expect(dockerfile).toContain("gateway can modify locked Hermes lazy packages");
@@ -243,7 +247,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("exact uv `0.11.33`");
   });
 
-  it("seeds root-owned pip before the sandbox user installs a lazy dependency", () => {
+  it("keeps the sandbox lazy-installer probe offline", () => {
     const instructions = dockerfileInstructions(dockerfile);
     const lazyInstallLayer = instructions.find(
       (instruction) =>
@@ -292,6 +296,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       `if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
       `test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe`,
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
+      `test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)"`,
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
     ];
     let previousIndex = -1;
@@ -304,6 +309,12 @@ describe("Hermes 0.19.0 dependency review", () => {
       previousIndex = contractIndex;
     }
     expect(layer).toContain("-perm /022");
+    expect(layer).toContain("--network=none");
+    expect(layer).toContain("PIP_NO_INDEX=1");
+    expect(layer).toContain("UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe");
+    expect(layer).toContain("UV_OFFLINE=1");
+    expect(layer).toContain("NEMOCLAW_BUILD_PROBE_FIXTURE");
+    expect(layer).not.toContain("https://");
     expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
     expect(layer).not.toContain(`printf ''`);
 

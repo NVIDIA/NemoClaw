@@ -555,6 +555,25 @@ RUN printf '%s\n' \
         "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
     && rm -rf /root/.cache/uv
 
+# Keep official-package compatibility separate from the final image's offline
+# lazy-installer contract. Install the reviewed Hindsight client into a
+# temporary durable target, import it against the exact base environment, and
+# remove the probe before publishing the base image.
+RUN install -d -o sandbox -g sandbox -m 0750 \
+        /tmp/nemoclaw-hindsight-client-probe \
+        /tmp/nemoclaw-hindsight-client-cache \
+    && HOME=/sandbox \
+        UV_CACHE_DIR=/tmp/nemoclaw-hindsight-client-cache \
+        UV_NO_CACHE=1 \
+        HERMES_HOME=/sandbox/.hermes \
+        HERMES_LAZY_INSTALL_TARGET=/tmp/nemoclaw-hindsight-client-probe \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/tmp/nemoclaw-hindsight-client-probe').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
+    && rm -rf \
+        /tmp/nemoclaw-hindsight-client-probe \
+        /tmp/nemoclaw-hindsight-client-cache
+
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
