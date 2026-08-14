@@ -168,6 +168,11 @@ describe("SILENT_AGENT_DISPATCH_EXIT_CODE", () => {
 describe("requestedAgentTimeoutSeconds", () => {
   const agent = (...args: string[]) => ["openclaw", "agent", ...args];
 
+  it("rejects timeout flags outside the exact OpenClaw agent prefix (#8723)", () => {
+    expect(requestedAgentTimeoutSeconds(["other", "agent", "--timeout", "30"])).toBeNull();
+    expect(requestedAgentTimeoutSeconds(["openclaw", "exec", "--timeout", "30"])).toBeNull();
+  });
+
   it("reads a separated --timeout value (#8723)", () => {
     expect(requestedAgentTimeoutSeconds(agent("--agent", "main", "--timeout", "30"))).toBe(30);
   });

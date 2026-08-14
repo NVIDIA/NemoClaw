@@ -3328,6 +3328,57 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+
+# Check whether sudo can run without prompting. If it cannot, validate the
+# user's credentials through a terminal. Print the non-prompting sudo invocation
+# that the caller must use.
+#
+# `sudo -v` validates the user's credentials rather than a specific command, so
+# on hosts whose sudoers mix a password-based entry (Ubuntu's %sudo group) with
+# a NOPASSWD drop-in it still demands a password even though `sudo <command>`
+# runs passwordless. Callers with no terminal to answer that prompt — the deploy
+# notebook, CI — stall there instead of repairing the spec (NVBug 6570793).
+#
+# A successful `sudo -n true` probe proves only that sudo can run `true` without
+# prompting at that moment. It does not establish that the later systemctl,
+# mkdir, or nvidia-ctk commands can run without prompting. Every later command
+# therefore uses `sudo -n` and establishes its own authorization without
+# another prompt. After an answered `sudo -v`, the credential timestamp lets
+# those exact commands run noninteractively. If sudoers does not retain the
+# timestamp, the command fails instead of prompting again.
+#
+# Terminal availability follows the installer's existing model — stdin when it
+# is a TTY, else /dev/tty when it can be opened — so the documented
+# `curl … | bash` install still prompts instead of skipping the repair.
+# The printed invocation is this function's only stdout; anything else it emits
+# must go to stderr or the caller would run it as a command.
+authorize_sudo() {
+  if sudo -n true >/dev/null 2>&1; then
+    printf 'sudo -n'
+    return 0
+  fi
+  if installer_non_interactive \
+    && [ "${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" != "prompt" ]; then
+    return 1
+  fi
+  if [ -t 0 ]; then
+    sudo -v >&2 || return 1
+    printf 'sudo -n'
+    return 0
+  fi
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; validating sudo credentials through /dev/tty..." >&2
+    if ! sudo -v <&3 >&2; then
+      exec 3<&-
+      return 1
+    fi
+    exec 3<&-
+    printf 'sudo -n'
+    return 0
+  fi
+  return 1
+}
+
 repair_installer_stale_nvidia_cdi_spec() {
   local flagged_file="${1:-}"
   local service_spec_path="/var/run/cdi/nvidia.yaml"
@@ -3345,13 +3396,14 @@ repair_installer_stale_nvidia_cdi_spec() {
     return 0
   fi
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
   if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
     && "${sudo_cmd[@]}" systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1; then
@@ -3428,13 +3480,14 @@ repair_installer_nvidia_cdi_spec() {
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
 
   local cdi_list_output=""
