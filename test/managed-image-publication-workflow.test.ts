@@ -486,6 +486,7 @@ describe("complete managed-image publication workflow", () => {
       steps.indexOf(step(prBuilder, "Checkout")),
     );
     expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
+    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(registryBaseBuild));
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
