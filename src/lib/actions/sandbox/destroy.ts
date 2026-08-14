@@ -53,7 +53,11 @@ import {
   classifyDestroySandboxPresence,
   isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
-import { prepareSandboxDestroy, stopSandboxInferenceResources } from "./destroy-preflight";
+import {
+  prepareSandboxDestroy,
+  stopModelRouterForDestroyedSandbox,
+  stopSandboxInferenceResources,
+} from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
@@ -683,6 +687,27 @@ async function destroySandboxUnlocked(
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
+  }
+  if (deleteSucceededOrAlreadyGone && removed) {
+    try {
+      // The routed-peer scan and router stop are one critical section with
+      // routed onboarding's route registration, which runs under the same
+      // gateway route lock. Otherwise concurrent onboarding can register a
+      // routed sandbox after the scan and then lose its shared router.
+      await withGatewayRouteMutationLock(cleanupGatewayName, () =>
+        stopModelRouterForDestroyedSandbox(sandbox, {
+          loadSession: onboardSession.loadSession,
+          updateSession: onboardSession.updateSession,
+          warn: defaultDestroyWarn,
+        }),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      defaultDestroyWarn(
+        `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
+          `Stop the Model Router process manually before the next Model Router onboarding.`,
+      );
+    }
   }
   const session = onboardSession.loadSession();
   if (session && session.sandboxName === sandboxName) {

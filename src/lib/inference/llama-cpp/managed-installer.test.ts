@@ -772,6 +772,20 @@ describe("managed llama.cpp installer", () => {
     const createLifecycle = vi.fn(() => lifecycle);
     const operation = managedOperation(harness.engine, createLifecycle);
     const runtimeProvider = managedRuntimeProvider(harness.engine, createLifecycle);
+    const mismatchedOperation = managedOperation(
+      { ...harness.engine, engineId: "other-engine" },
+      createLifecycle,
+    );
+
+    expect(() =>
+      rehydrateManagedLlamaCppLifecycle({
+        runtimeProvider,
+        runtimeOwnerSandboxName: "spark-agent",
+        homeDir,
+        operation: mismatchedOperation,
+      }),
+    ).toThrow("returned mismatched host-local-inference authority");
+    expect(createLifecycle).not.toHaveBeenCalled();
 
     const rehydrated = rehydrateManagedLlamaCppLifecycle({
       runtimeProvider,
@@ -800,7 +814,23 @@ describe("managed llama.cpp installer", () => {
   });
 
   it("reuses YAML-pinned images, the shared Hugging Face cache, and the durable lifecycle", async () => {
-    const selected = selection();
+    const baseSelection = selection();
+    const selected = {
+      ...baseSelection,
+      recipe: {
+        ...baseSelection.recipe,
+        spec: {
+          ...baseSelection.recipe.spec,
+          serve: {
+            ...baseSelection.recipe.spec.serve,
+            chatTemplate: "container-jinja-file",
+            chatTemplateFile:
+              "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
+            reasoning: { format: "deepseek", mode: "auto" },
+          },
+        },
+      },
+    } satisfies ResolvedLlamaCppInferenceSelection;
     const homeDir = temporaryHome();
     const modelPath = path.join(homeDir, "model.gguf");
     fs.writeFileSync(modelPath, "fixture", { mode: 0o600 });
@@ -878,8 +908,12 @@ describe("managed llama.cpp installer", () => {
           runtime: expect.objectContaining({ restartPolicy: "unless-stopped" }),
           serve: expect.objectContaining({
             batchSize: selected.recipe.spec.serve.batchSize,
+            chatTemplate: "container-jinja-file",
+            chatTemplateFile:
+              "/usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja",
             contextSize: selected.recipe.spec.serve.contextSize,
             port: selected.recipe.spec.serve.port,
+            reasoning: { format: "deepseek", mode: "auto" },
           }),
         }),
         probeImageReference: selected.recipe.spec.readiness.probeImage,

@@ -315,9 +315,9 @@ describe("vLLM profile detection", () => {
     expect(muse).toBeDefined();
     const runtime = resolveVllmRuntimeProfile(profile!, muse!);
     expect(runtime.image).toBe(
-      "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
+      "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
     );
-    expect(runtime.imageDownloadSizeBytes).toBe(10_507_991_780);
+    expect(runtime.imageDownloadSizeBytes).toBe(9_699_710_136);
     expect(runtime.modelDownloadSizeBytes).toBe(25_447_097_878);
 
     const apiKey = "a".repeat(64);

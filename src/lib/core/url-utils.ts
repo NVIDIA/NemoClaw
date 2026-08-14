@@ -48,6 +48,31 @@ export function normalizeProviderBaseUrl(
   }
 }
 
+/** True when an endpoint input carries userinfo, query, or fragment components. */
+export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | undefined): boolean {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  try {
+    const url = new URL(raw);
+    // A scheme-less input such as user:pass@host/v1 parses with scheme
+    // "user:" and empty userinfo; classify it from the raw string instead.
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return /[?#@]/.test(raw);
+    }
+    // Parsed fields catch every userinfo form the WHATWG parser accepts,
+    // including special-scheme URLs without canonical `//`. Test the raw
+    // authority as well so an empty userinfo delimiter (empty url.username)
+    // remains visible before parsing normalizes it away.
+    return (
+      Boolean(url.username || url.password) ||
+      /^https?:[\\/]*[^/?#\\]*@/i.test(raw) ||
+      /[?#]/.test(raw)
+    );
+  } catch {
+    return /[?#@]/.test(raw);
+  }
+}
+
 /** Return the bounded canonical form of a credential-free HTTP(S) provider endpoint. */
 export function canonicalEndpoint(
   value: string | null | undefined,
