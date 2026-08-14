@@ -1173,6 +1173,20 @@ jobs:
               exit 1
             fi
           done
+          docker exec --user 999:999 "$entrypoint_container" node -e '
+            const fs = require("node:fs");
+            const { X509Certificate } = require("node:crypto");
+            const mounted = new X509Certificate(
+              fs.readFileSync("/usr/local/share/nemoclaw/corporate-ca.pem"),
+            );
+            const bundle = fs.readFileSync(process.argv[1], "utf8");
+            const blocks = bundle.match(
+              /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g,
+            );
+            if (!blocks?.some((block) =>
+              new X509Certificate(block).fingerprint256 === mounted.fingerprint256
+            )) process.exit(1);
+          ' "$merged_ca"
           docker exec --user 999:999 "$entrypoint_container" /bin/bash -ceu '
             unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS
             source /tmp/nemoclaw-proxy-env.sh

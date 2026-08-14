@@ -263,6 +263,12 @@ describe("Pi release cohort separation", () => {
     }
     expect(entrypointStep).toContain("source /tmp/nemoclaw-proxy-env.sh");
     expect(entrypointStep).toContain("merged_ca=/tmp/nemoclaw-ca-bundle.pem");
+    expect(entrypointStep).toContain(
+      'fs.readFileSync("/usr/local/share/nemoclaw/corporate-ca.pem")',
+    );
+    expect(entrypointStep).toContain('fs.readFileSync(process.argv[1], "utf8")');
+    expect(entrypointStep).toContain("new X509Certificate(block).fingerprint256");
+    expect(entrypointStep).toContain("mounted.fingerprint256");
   });
 
   // source-shape-contract: compatibility -- The accepted Pi launch matrix requires candidate qualification on both supported Linux architectures
