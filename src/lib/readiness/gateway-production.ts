@@ -17,6 +17,7 @@ import {
   parseVersionFromText,
   stripAnsi,
 } from "../adapters/openshell/gateway-drift";
+import { cliName as resolveCliName } from "../onboard/branding";
 import {
   getConfiguredGatewayPort,
   getDockerDriverGatewayEndpoint,
@@ -558,9 +559,10 @@ function gatewayPortConflictRemediation(
     return `Identify its listener before retrying: sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`;
   }
   if (stopPids.length === 0) {
+    const cliName = resolveCliName();
     return (
       "Confirm which managed gateway environment owns the verified listener, then release that " +
-      `environment with \`NEMOCLAW_GATEWAY_PORT=${gatewayPort} nemoclaw uninstall\` before retrying.`
+      `environment with \`NEMOCLAW_GATEWAY_PORT=${gatewayPort} ${cliName} uninstall\` before retrying.`
     );
   }
   const subject =

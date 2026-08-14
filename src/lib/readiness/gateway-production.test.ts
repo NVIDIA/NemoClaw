@@ -582,4 +582,22 @@ describe("managed gateway port readiness (#7411)", () => {
     expect(detail).toContain("NEMOCLAW_GATEWAY_PORT=8080 nemoclaw uninstall");
     expect(detail).not.toContain("sudo kill");
   });
+
+  it("uses the invoked CLI name in verified gateway release guidance (#9118)", () => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
+    const owners = describeGatewayPortOwners(
+      { pids: [100], unverifiedPids: [] },
+      () => "openshell-gateway",
+    );
+
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "owner-mismatch",
+      owners,
+    );
+
+    expect(detail).toContain("NEMOCLAW_GATEWAY_PORT=8080 nemohermes uninstall");
+    expect(detail).not.toContain("nemoclaw uninstall");
+  });
 });
