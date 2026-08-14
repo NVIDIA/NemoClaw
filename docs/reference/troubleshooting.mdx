@@ -318,7 +318,8 @@ If forwarding then fails, onboarding removes the new sandbox and tells you to re
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `$$nemoclaw onboard --fresh`, `$$nemoclaw <name> destroy` (when destroying the last sandbox), and `$$nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
-If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process and verify it is safe to stop:
+If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process.
+Stop it only when its command line names the application you intend to stop, you own the process or administer its service, and the application has no active work:
 
 ```bash
 sudo lsof -i :18789 -sTCP:LISTEN -P -n
@@ -1070,7 +1071,8 @@ Re-running onboard then fails preflight with `Port 18789 is not available.
 Blocked by: ssh`.
 
 Current NemoClaw detects this case and kills the orphaned SSH process automatically before retrying the port check.
-If you see the error on an older release, identify the SSH process and verify that it is safe to stop:
+If you see the error on an older release, identify the SSH process.
+Stop it only after fresh listener output confirms that your user owns the process, its command line is the stale SSH port forward for local port `18789`, and it has no active terminal or file transfer:
 
 ```bash
 sudo lsof -i :18789 -sTCP:LISTEN -P -n

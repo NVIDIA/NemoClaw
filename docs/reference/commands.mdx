@@ -4322,7 +4322,7 @@ Keep that state intact.
 For an already scoped gateway with stale runtime evidence, restore it through the supported install or onboarding recovery flow, verify the generated identity, and retry.
 A proven legacy gateway is not silently converted by onboarding.
 To retire one, first remove sibling gateways through their own proven scoped cleanup, verify that only the legacy gateway remains, and then use the full single-gateway uninstall path.
-For an ambiguous or incomplete identity, stop the gateway and restore the exact generated `openshell-gateway.toml` and complete `jwt/` directory from a trusted host-level backup.
+For an ambiguous or incomplete identity, stop the gateway and restore the exact generated `openshell-gateway.toml` and complete `jwt/` directory from a host-level backup captured from that gateway's exact state directory before the failure and kept under the owning user's exclusive access.
 The default gateway stores them under `~/.local/state/nemoclaw/openshell-docker-gateway/`; a non-default gateway uses `~/.local/state/nemoclaw/openshell-docker-gateway-<port>/`.
 Restore them as the owning user.
 Keep the gateway state root and its `jwt/` directory at mode `0700`, and do not grant group or other access to the configuration or JWT files.
