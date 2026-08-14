@@ -62,7 +62,7 @@ Each active preset includes a `verification` value:
 | `verified` | The registry lists the preset, and the gateway confirms enforcement. |
 | `registry-only` | The registry lists the preset, but the gateway does not enforce it. Treat the allowed hosts as unverified. |
 | `gateway-only` | The gateway enforces a preset that the registry does not list. |
-| `agent-base` | The gateway enforces this preset because it belongs to the agent's own base policy (`agents/<agent>/policy-additions.yaml`), not because the operator applied it. It is active, not drift. Do not reconcile it with `policy add`, which would replace the tighter base rule with the broader catalog preset. |
+| `agent-base` | The gateway enforces this preset because it belongs to the agent's own base policy (`agents/<agent>/policy-additions.yaml`), not because the operator applied it. It is active, not drift. `policy add` is unnecessary and would record the preset as operator-applied. |
 | `gateway-unavailable` | NemoClaw could not probe the gateway. Treat the report as advisory until the gateway is reachable. |
 
 ## Classify a Failed Request

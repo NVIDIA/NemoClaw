@@ -185,10 +185,11 @@ function partitionPresets(
     // A gateway-only catalog preset whose name collides with an agent
     // base-policy addition (e.g. Hermes `pypi`) is enforced by the agent's own
     // base policy, not registry drift. Classify it as `agent-base` so it is not
-    // reported as drift and operators are not steered toward `policy add`, which
-    // would replace the tighter base rule with the broader catalog preset
-    // (#9079). Sibling base additions with no catalog entry are never iterated
-    // here, so this only corrects the incidental name-collision case.
+    // reported as drift or steers operators toward an unnecessary `policy add`.
+    // The apply path already prefers the agent-specific policy content, but it
+    // would record the preset as operator-applied (#9079). Sibling base additions
+    // with no catalog entry are never iterated here, so this only corrects the
+    // incidental name-collision case.
     if (!isApplied && verification === "gateway-only" && isAgentBasePreset(sandboxName, info.name)) {
       verification = "agent-base";
     }
@@ -399,7 +400,7 @@ function verificationTag(verification: PolicyContextPresetVerification): string 
     case "gateway-only":
       return "gateway-only (not in local registry)";
     case "agent-base":
-      return "agent-base (enforced by the agent's base policy; not user-applied; do not `policy add`)";
+      return "agent-base (enforced by the agent's base policy; not user-applied; `policy add` is unnecessary)";
     case "gateway-unavailable":
       return "gateway-unavailable";
   }
@@ -523,7 +524,7 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
   );
   lines.push("");
   lines.push(
-    "Preset status reflects registry and gateway agreement. `verified`, `gateway-only`, and `agent-base` mean the gateway confirms enforcement. `agent-base` identifies a preset from the agent's base policy rather than a user-applied preset. It is active, not drift, and must not be reconciled with `policy add`. Treat `registry-only` and `gateway-unavailable` as advisory because the gateway has not confirmed the listed hosts.",
+    "Preset status reflects registry and gateway agreement. `verified`, `gateway-only`, and `agent-base` mean the gateway confirms enforcement. `agent-base` identifies a preset from the agent's base policy rather than a user-applied preset. It is active, not drift, and does not need `policy add`. Treat `registry-only` and `gateway-unavailable` as advisory because the gateway has not confirmed the listed hosts.",
   );
   lines.push("");
   lines.push(`Generated at ${ctx.generatedAt}.`);
