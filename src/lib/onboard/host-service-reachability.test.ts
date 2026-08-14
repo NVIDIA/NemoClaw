@@ -86,7 +86,7 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(capturedArgs).toContain("4000");
   });
 
-  it("routes portable profile probes through the runtime host gateway", async () => {
+  it("routes portable profile probes through the sandbox host gateway", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     let capturedArgs: readonly string[] = [];
@@ -105,7 +105,8 @@ describe("probeHostServiceSandboxReachability", () => {
     });
 
     expect(result).toMatchObject({ ok: true, reason: "ok" });
-    expect(capturedArgs).toContain("host.openshell.internal:host-gateway");
+    expect(capturedArgs).toContain("host.openshell.internal:169.254.1.2");
+    expect(capturedArgs).not.toContain("host.openshell.internal:host-gateway");
     expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
   });
 

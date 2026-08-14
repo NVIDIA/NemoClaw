@@ -19,7 +19,10 @@
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { cliName } from "./branding";
-import { isPortableExperimentalProfile } from "./experimental/portable-profile";
+import {
+  isPortableExperimentalProfile,
+  PORTABLE_HOST_GATEWAY_IP,
+} from "./experimental/portable-profile";
 
 export const DEFAULT_PROBE_NETWORK = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -93,11 +96,10 @@ function defaultInspectNetwork(
   return parseNetworkIpamConfig(raw);
 }
 
-// Portable Podman, Docker Desktop, and VM-backed Docker use the runtime's
-// host-gateway alias instead of the inspected bridge IP. These routes do not
-// support native Docker bridge UFW remediation.
+// Docker Desktop and VM-backed Docker use the runtime's host-gateway alias
+// instead of the inspected bridge IP. These routes do not support native
+// Docker bridge UFW remediation.
 function defaultUsesHostGatewayRoute(): boolean {
-  if (isPortableExperimentalProfile()) return true;
   if (process.platform !== "linux") return true;
   const info = dockerCapture(
     ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
@@ -157,9 +159,10 @@ export async function probeHostServiceSandboxReachability(
   }
 
   const portableProfile = isPortableExperimentalProfile();
-  const isHostGateway = usesHostGatewayRoute();
+  const isHostGateway = portableProfile ? false : usesHostGatewayRoute();
+  const usesNonBridgeRoute = portableProfile || isHostGateway;
 
-  if (!isHostGateway && !network.gatewayIp) {
+  if (!usesNonBridgeRoute && !network.gatewayIp) {
     return {
       ok: false,
       reason: "probe_unavailable",
@@ -170,7 +173,11 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
-  const hostInternalTarget = isHostGateway ? "host-gateway" : (network.gatewayIp as string);
+  const hostInternalTarget = portableProfile
+    ? PORTABLE_HOST_GATEWAY_IP
+    : isHostGateway
+      ? "host-gateway"
+      : (network.gatewayIp as string);
 
   const probeArgs = [
     "run",
@@ -211,7 +218,7 @@ export async function probeHostServiceSandboxReachability(
 
   // Non-nc failures, DNS failures, and host-gateway routes do not prove that
   // a native Docker bridge UFW rule blocked the connection.
-  if (result.status !== 1 || isNameResolutionFailure(detail) || isHostGateway) {
+  if (result.status !== 1 || isNameResolutionFailure(detail) || usesNonBridgeRoute) {
     return {
       ok: false,
       reason: "probe_unavailable",
@@ -219,10 +226,9 @@ export async function probeHostServiceSandboxReachability(
       networkName,
       subnet: network.subnet,
       gatewayIp: network.gatewayIp,
-      detail:
-        portableProfile && isHostGateway
-          ? "portable host-gateway probe did not connect"
-          : detail || "probe did not complete",
+      detail: portableProfile
+        ? "portable host-gateway probe did not connect"
+        : detail || "probe did not complete",
     };
   }
 
