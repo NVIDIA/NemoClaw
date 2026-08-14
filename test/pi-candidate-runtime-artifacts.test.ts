@@ -168,6 +168,7 @@ describe("Pi release cohort separation", () => {
     ).toBe(false);
   });
 
+  // source-shape-contract: security -- Pull-request candidate builds must not inherit package-write authority from the trusted publication job
   it("does not grant package write permission to pull request candidate builds", () => {
     const workflow = YAML.parse(readRepoFile(".github/workflows/managed-images.yaml")) as {
       jobs: Record<
@@ -234,8 +235,10 @@ describe("Pi release cohort separation", () => {
     );
   });
 
+  // source-shape-contract: security -- Published-digest qualification must bind the declared OCI entrypoint and empty command to the held-state contract
   it("qualifies the published candidate through its declared entrypoint with corporate CA handoff", () => {
     const workflow = readRepoFile(".github/workflows/managed-images.yaml");
+    const dockerfile = readRepoFile("agents/pi/Dockerfile");
     const entrypointStep = workflow.slice(
       workflow.indexOf(
         "- name: Exercise the published Pi candidate digest through its declared entrypoint",
@@ -243,6 +246,9 @@ describe("Pi release cohort separation", () => {
       workflow.indexOf("- name: Record the exact Pi candidate contract"),
     );
     expect(entrypointStep).not.toContain("--entrypoint /usr/local/bin/nemoclaw-start");
+    expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]');
+    expect(dockerfile).toContain("CMD []");
+    expect(dockerfile).not.toContain('CMD ["/bin/bash"]');
     expect(entrypointStep).toContain("openssl req -x509 -newkey rsa:2048");
     expect(entrypointStep).toContain("dst=/usr/local/share/nemoclaw/corporate-ca.pem,readonly");
     expect(entrypointStep).toContain("docker exec --user 999:999");
