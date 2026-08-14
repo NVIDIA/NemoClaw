@@ -1237,11 +1237,14 @@ function unloadOllamaModels(onlyModels?: readonly string[]) {
 
     const parsed = JSON.parse(psResult.stdout || "{}");
     const models = Array.isArray(parsed.models) ? parsed.models : [];
-    const selected = onlyModels?.length ? new Set(onlyModels) : null;
+    // Compare with Ollama's implicit `latest` tag semantics: a sandbox
+    // recorded as `llama3` must still match the `llama3:latest` that
+    // /api/ps reports, otherwise the scoped unload silently does nothing.
+    const selected = onlyModels?.length ? onlyModels : null;
 
     for (const entry of models) {
       if (!entry?.name) continue;
-      if (selected && !selected.has(entry.name)) continue;
+      if (selected && !selected.some((model) => ollamaModelRefsMatch(model, entry.name))) continue;
       // `-sS` deliberately swallows HTTP 4xx/5xx; this path is best-effort
       // and `--fail` would only surface orphaned-GPU-memory failures into
       // unrelated CLI exit codes during destroy. If we ever want explicit

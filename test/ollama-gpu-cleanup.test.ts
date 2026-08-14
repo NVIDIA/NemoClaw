@@ -171,6 +171,18 @@ describe("Ollama GPU cleanup", () => {
     );
   });
 
+  it.each([
+    ["an untagged filter against a tagged daemon entry", "llama3", "llama3:latest"],
+    ["a tagged filter against an untagged daemon entry", "llama3:latest", "llama3"],
+  ])("matches %s (#9110)", (_label, filterRef, loadedRef) => {
+    withMockedSpawnSync(respondWithLoadedModels(loadedRef), (calls) => {
+      const { unloadOllamaModels } = require(modulePath);
+      unloadOllamaModels([filterRef]);
+
+      expect(unloadRequests(calls)).toEqual([unloadOf(loadedRef)]);
+    });
+  });
+
   it("unloads every loaded model when the filter is empty (#9110)", () => {
     withMockedSpawnSync(
       respondWithLoadedModels("one:7b", "two:7b"),
