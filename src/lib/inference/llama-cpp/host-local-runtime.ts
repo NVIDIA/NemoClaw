@@ -55,8 +55,14 @@ export interface LlamaCppHostLocalLaunchContract {
   readonly serve: {
     readonly authentication: "bearer";
     readonly batchSize: number;
-    readonly chatTemplate: "nemotron-v3-embedded" | "container-jinja-file";
+    readonly chatTemplate:
+      | "nemotron-v3-embedded"
+      | "container-jinja-file"
+      | "model-embedded-jinja";
     readonly chatTemplateFile?: string;
+    readonly chatTemplateArguments?: {
+      readonly reasoningStrength: "low" | "medium" | "high" | "xhigh";
+    };
     readonly reasoning?: {
       readonly format: "deepseek";
       readonly mode: "auto";
@@ -219,15 +225,30 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   ) {
     throw new Error("llama.cpp host-local serving or disabled-surface contract is invalid");
   }
-  const { chatTemplate, chatTemplateFile, reasoning } = contract.serve;
+  const { chatTemplate, chatTemplateFile, chatTemplateArguments, reasoning } = contract.serve;
+  const reasoningStrength = chatTemplateArguments?.reasoningStrength;
+  const chatTemplateArgumentsAreExact =
+    chatTemplateArguments !== undefined &&
+    Object.keys(chatTemplateArguments).length === 1 &&
+    ["low", "medium", "high", "xhigh"].includes(reasoningStrength ?? "");
   if (
     (chatTemplate === "nemotron-v3-embedded" &&
-      (chatTemplateFile !== undefined || reasoning !== undefined)) ||
+      (chatTemplateFile !== undefined ||
+        chatTemplateArguments !== undefined ||
+        reasoning !== undefined)) ||
     (chatTemplate === "container-jinja-file" &&
       (chatTemplateFile === undefined ||
+        chatTemplateArguments !== undefined ||
         !CONTAINER_CHAT_TEMPLATE_FILE.test(chatTemplateFile) ||
         path.posix.normalize(chatTemplateFile) !== chatTemplateFile)) ||
-    (chatTemplate !== "nemotron-v3-embedded" && chatTemplate !== "container-jinja-file") ||
+    (chatTemplate === "model-embedded-jinja" &&
+      (chatTemplateFile !== undefined ||
+        reasoning !== undefined ||
+        chatTemplateArguments === undefined ||
+        !chatTemplateArgumentsAreExact)) ||
+    (chatTemplate !== "nemotron-v3-embedded" &&
+      chatTemplate !== "container-jinja-file" &&
+      chatTemplate !== "model-embedded-jinja") ||
     (reasoning !== undefined && (reasoning.format !== "deepseek" || reasoning.mode !== "auto"))
   ) {
     throw new Error("llama.cpp chat-template or reasoning contract is invalid");
@@ -535,7 +556,13 @@ function buildLlamaCppHostLocalServerArgvForAddress(
     String(serve.limits.requestTimeoutSeconds),
     ...(serve.chatTemplate === "container-jinja-file"
       ? ["--jinja", "--chat-template-file", serve.chatTemplateFile!]
-      : []),
+      : serve.chatTemplate === "model-embedded-jinja"
+        ? [
+            "--jinja",
+            "--chat-template-kwargs",
+            JSON.stringify({ reasoning_strength: serve.chatTemplateArguments!.reasoningStrength }),
+          ]
+        : []),
     ...(serve.reasoning
       ? ["--reasoning-format", serve.reasoning.format, "--reasoning", serve.reasoning.mode]
       : []),

@@ -286,6 +286,9 @@ function launchContract(
       ...(recipe.spec.serve.chatTemplateFile
         ? { chatTemplateFile: recipe.spec.serve.chatTemplateFile }
         : {}),
+      ...(recipe.spec.serve.chatTemplateArguments
+        ? { chatTemplateArguments: recipe.spec.serve.chatTemplateArguments }
+        : {}),
       ...(recipe.spec.serve.reasoning ? { reasoning: recipe.spec.serve.reasoning } : {}),
       contextSize: recipe.spec.serve.contextSize,
       flashAttention: recipe.spec.serve.flashAttention,

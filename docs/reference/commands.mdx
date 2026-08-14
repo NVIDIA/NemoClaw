@@ -584,15 +584,18 @@ The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` in
 
 On a qualified DGX Spark, the provider menu lists compatible experimental managed llama.cpp profiles in descending YAML priority order.
 When `NEMOCLAW_LLAMACPP_RECIPE` is unset and the highest-priority compatible profile is unique, the menu marks it as `(recommended)`.
-The shipped profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
+The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
+The NVIDIA Nemotron profile appears next without the recommendation marker.
 Select the same path non-interactively with the repository-owned recipe:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
-NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.muse-glimmer-30b.spark-single.v1 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
+
+Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
 
 Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path.
 For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on DGX Spark](../inference/local-inference/choose-local-inference-server#install-managed-llamacpp-on-dgx-spark).

@@ -662,6 +662,18 @@ describe("managed inference serving catalog compiler", () => {
     expect(() => compile([recipe, llamaCppPresetSource()])).not.toThrow();
   });
 
+  it("accepts a model-embedded Jinja template with typed reasoning strength", () => {
+    const recipe = replaceSource(
+      llamaCppRecipeSource(),
+      "    chatTemplate: nemotron-v3-embedded",
+      `    chatTemplate: model-embedded-jinja
+    chatTemplateArguments:
+      reasoningStrength: low`,
+    );
+
+    expect(() => compile([recipe, llamaCppPresetSource()])).not.toThrow();
+  });
+
   it.each([
     ["a missing template file", "    chatTemplate: container-jinja-file"],
     [
@@ -685,6 +697,19 @@ describe("managed inference serving catalog compiler", () => {
     reasoning:
       format: deepseek
       mode: auto`,
+    ],
+    ["missing arguments for embedded Jinja", "    chatTemplate: model-embedded-jinja"],
+    [
+      "an unsupported embedded-Jinja reasoning strength",
+      `    chatTemplate: model-embedded-jinja
+    chatTemplateArguments:
+      reasoningStrength: maximum`,
+    ],
+    [
+      "embedded-Jinja arguments on the Nemotron template",
+      `    chatTemplate: nemotron-v3-embedded
+    chatTemplateArguments:
+      reasoningStrength: low`,
     ],
   ])("rejects %s", (_case, replacement) => {
     const recipe = replaceSource(

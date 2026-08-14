@@ -15,6 +15,8 @@ import {
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const GENERIC_PRESET_ID = "llama-cpp.linux-amd64-nvidia.single.nemotron-3-nano-30b-a3b";
 const SPARK_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
+const MUSE_RECIPE_ID = "llama-cpp.muse-glimmer-30b.spark-single.v1";
+const MUSE_PRESET_ID = "llama-cpp.dgx-spark-gb10.single.muse-glimmer-30b";
 
 function readinessReport(
   preset: ManagedInferenceServingPreset,
@@ -154,7 +156,7 @@ describe("managed llama.cpp selection", () => {
     expect(resolveManagedLlamaCppSelection({}, catalog, report).kind).toBe("selected");
   });
 
-  it("selects the one shipped declarative recipe by default", () => {
+  it("selects Muse Glimmer as the highest-priority qualified DGX Spark recipe by default", () => {
     const { catalog, report } = fixture();
 
     const resolved = resolveManagedLlamaCppSelection({}, catalog, report);
@@ -163,15 +165,18 @@ describe("managed llama.cpp selection", () => {
       kind: "selected",
       selection: {
         selection: "automatic",
-        recipe: { metadata: { id: RECIPE_ID } },
-        preset: { spec: { plan: { backend: "install-llama-cpp" } } },
+        recipe: { metadata: { id: MUSE_RECIPE_ID } },
+        preset: {
+          metadata: { id: MUSE_PRESET_ID },
+          spec: { plan: { backend: "install-llama-cpp" } },
+        },
       },
     });
   });
 
   it("selects the highest-priority compatible managed llama.cpp recipe", () => {
     const { catalog, report } = fixture();
-    const synthetic = withSyntheticRecipe(catalog, 500);
+    const synthetic = withSyntheticRecipe(catalog, 550);
 
     const resolved = resolveManagedLlamaCppSelection({}, synthetic.catalog, report);
 
@@ -188,24 +193,25 @@ describe("managed llama.cpp selection", () => {
         ({ priority, selection }) => [priority, selection.recipe.metadata.id],
       ),
     ).toEqual([
-      [500, synthetic.recipeId],
+      [550, synthetic.recipeId],
+      [500, MUSE_RECIPE_ID],
       [450, RECIPE_ID],
     ]);
   });
 
   it("rejects equal-priority automatic recipes instead of choosing by catalog order", () => {
     const { catalog, report } = fixture();
-    const synthetic = withSyntheticRecipe(catalog, 450);
+    const synthetic = withSyntheticRecipe(catalog, 500);
 
     expect(resolveManagedLlamaCppSelection({}, synthetic.catalog, report)).toEqual({
       kind: "rejected",
-      reason: `Automatic managed llama.cpp selection is ambiguous at priority 450: ${SPARK_PRESET_ID}, ${synthetic.presetId}.`,
+      reason: `Automatic managed llama.cpp selection is ambiguous at priority 500: ${MUSE_PRESET_ID}, ${synthetic.presetId}.`,
     });
   });
 
   it("allows an explicit recipe to override automatic priority", () => {
     const { catalog, report } = fixture();
-    const synthetic = withSyntheticRecipe(catalog, 500);
+    const synthetic = withSyntheticRecipe(catalog, 550);
 
     const resolved = resolveManagedLlamaCppSelection(
       { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },

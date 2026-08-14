@@ -168,9 +168,10 @@ After a successful full uninstall, `docker container inspect nemoclaw-vllm` must
 
 ## Choose llama.cpp
 
-Choose llama.cpp when you already operate an authenticated server or want NemoClaw to materialize the experimental NVIDIA Nemotron recipe on DGX Spark.
+Choose llama.cpp when you already operate an authenticated server or want NemoClaw to materialize an experimental managed profile on DGX Spark.
 The existing-server path owns only provider registration and routing.
 The managed path owns the exact YAML-selected model, launch, Docker lifecycle, diagnostics, and cleanup.
+Muse Glimmer is the recommended managed profile, and NVIDIA Nemotron remains available as the next lower-priority choice.
 
 Refer to [Set Up llama.cpp](set-up-llama-cpp).
 

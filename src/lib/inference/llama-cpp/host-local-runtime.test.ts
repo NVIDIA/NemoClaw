@@ -224,6 +224,30 @@ describe("llama.cpp host-local runtime materializer", () => {
     }
   });
 
+  it("materializes a model-embedded Jinja template with typed Muse reasoning strength", () => {
+    const input = contract();
+    const templated = {
+      ...input,
+      serve: {
+        ...input.serve,
+        chatTemplate: "model-embedded-jinja",
+        chatTemplateArguments: { reasoningStrength: "low" },
+      },
+    } satisfies LlamaCppHostLocalLaunchContract;
+
+    for (const argv of [
+      buildLlamaCppHostLocalDockerArgv(templated, bindings()),
+      buildLlamaCppRequestGuardDockerArgv(templated, bindings()),
+    ]) {
+      expect(argv).toContain("--jinja");
+      expect(valuesAfter(argv, "--chat-template-kwargs")).toEqual([
+        '{"reasoning_strength":"low"}',
+      ]);
+      expect(argv).not.toContain("--chat-template-file");
+      expect(argv).not.toContain("--reasoning-format");
+    }
+  });
+
   it.each([
     ["a missing container template file", { chatTemplate: "container-jinja-file" }],
     [
@@ -251,6 +275,24 @@ describe("llama.cpp host-local runtime materializer", () => {
       {
         chatTemplate: "nemotron-v3-embedded",
         reasoning: { format: "deepseek", mode: "auto" },
+      },
+    ],
+    [
+      "missing arguments on the model-embedded Jinja contract",
+      { chatTemplate: "model-embedded-jinja" },
+    ],
+    [
+      "an unsupported reasoning strength",
+      {
+        chatTemplate: "model-embedded-jinja",
+        chatTemplateArguments: { reasoningStrength: "maximum" },
+      },
+    ],
+    [
+      "extra model-embedded Jinja arguments",
+      {
+        chatTemplate: "model-embedded-jinja",
+        chatTemplateArguments: { reasoningStrength: "low", untrusted: "value" },
       },
     ],
   ])("rejects %s", (_case, serveOverrides) => {
