@@ -143,6 +143,8 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
+  /** Render lifecycle-aware recovery guidance after an unhealthy gateway probe. */
+  getGatewayStartGuidance?: () => string;
   /** Last authority durably selected by onboarding, with secret-free identity fields. */
   getGatewayAuthority?: () => GatewayOwnerDescription | null;
   checkMessagingBridgeHealth?: (
@@ -591,7 +593,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       log("");
       const detail = health.reason ? ` (${health.reason})` : "";
       log(`  gateway: down [${health.state}]${detail}`);
-      log(`    ${gatewayStartGuidance()}`);
+      log(`    ${(deps.getGatewayStartGuidance ?? gatewayStartGuidance)()}`);
       process.exitCode = 1;
     }
   }
