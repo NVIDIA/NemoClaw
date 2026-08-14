@@ -69,9 +69,6 @@ Model validation can fail with these messages:
 - `Gemini model catalog pagination exceeded <count> pages`
   The catalog exhausted the 25-page `GEMINI_MODEL_CATALOG_MAX_PAGES` limit.
   Retry the request, then inspect the Google service or proxy response if the error continues.
-- `Unexpected model catalog response: expected a top-level data array`
-  The OpenAI-compatible endpoint returned JSON with the wrong shape.
-  Retry the request, then inspect the endpoint or proxy response if the error continues.
 - `Onboard inference smoke check failed.`
   The validation request failed.
   The output shows the provider, model, and API base URL.
