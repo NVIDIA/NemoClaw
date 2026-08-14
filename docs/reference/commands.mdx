@@ -1310,6 +1310,7 @@ These leave the OpenShell wait unbounded:
 - `--timeout 0`.
 - A value NemoClaw cannot read as a positive whole number of seconds.
 - An argv without `--timeout`.
+- An unrecognized option before `--timeout`, because NemoClaw does not infer a host deadline outside the documented OpenClaw option grammar.
 - A `--timeout` after the `--` argv terminator, which OpenClaw reads as payload rather than as its own flag.
 
 When the captured output reports that the turn's deadline fired, the wrapper replays the partial output and writes deadline guidance to `stderr`.

@@ -138,9 +138,12 @@ const sourceSandbox = {
   },
 };
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + _sandboxId + "\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + _sandboxId].join(String.fromCharCode(10));
@@ -269,9 +272,12 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  events.push({ kind: "run", cmd: _n(command) });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  events.push({ kind: "run", cmd });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
@@ -420,9 +426,12 @@ const { EventEmitter } = require("node:events");
 
 const events = [];
 runner.run = (command) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  events.push({ kind: "run", cmd: _n(command) });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  events.push({ kind: "run", cmd });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
@@ -546,11 +555,13 @@ const { EventEmitter } = require("node:events");
 const events = [];
 let sandboxDeleted = false;
 runner.run = (command) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
   const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
   events.push({ kind: "run", cmd });
   if (cmd.includes("sandbox delete")) sandboxDeleted = true;
-  return { status: 0 };
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
@@ -694,9 +705,12 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
@@ -818,9 +832,10 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
-  if (_n(command).includes("sandbox download")) {
+  if (cmd.includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
     const downloadDir = Array.isArray(command)
       ? String(command[command.length - 1] || "")
@@ -835,8 +850,10 @@ runner.run = (command, opts = {}) => {
       );
     }
   }
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ type: "runFile", command: _n([file, ...args]), file, args, env: opts.env || null });
@@ -951,9 +968,10 @@ const path = require("node:path");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
-  if (_n(command).includes("sandbox download")) {
+  if (cmd.includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
     const downloadDir = Array.isArray(command)
       ? String(command[command.length - 1] || "")
@@ -968,8 +986,10 @@ runner.run = (command, opts = {}) => {
       );
     }
   }
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ type: "runFile", command: _n([file, ...args]), file, args, env: opts.env || null });
@@ -1096,10 +1116,13 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 let sandboxDeleted = false;
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  if (_n(command).includes("sandbox delete")) sandboxDeleted = true;
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("sandbox delete")) sandboxDeleted = true;
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   // Existing sandbox that is NOT ready initially, becomes Ready after recreation
@@ -1252,9 +1275,12 @@ let sandboxCreated = false;
 let registeredSandbox = null;
 const keepAlive = setInterval(() => {}, 1000);
 runner.run = (command, opts = {}) => {
-  _deleted = _deleted || _n(command).includes("sandbox delete");
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const cmd = _n(command);
+  _deleted = _deleted || cmd.includes("sandbox delete");
+  commands.push({ command: cmd, env: opts.env || null });
+  return cmd.includes("sandbox get") && cmd.includes("my-assistant") && sandboxCreated
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-fresh-create\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") || _n(command).includes("sandbox list")) {

@@ -1770,8 +1770,50 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  mcp-bridge-dev:
+  openshell-dev-artifact:
     needs: generate-matrix
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      artifact_name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name }}
+      source_commit: ${{ steps.resolve_openshell_dev_artifact.outputs.source_commit }}
+      manifest_sha256: ${{ steps.resolve_openshell_dev_artifact.outputs.manifest_sha256 }}
+    steps:
+      - name: Checkout trusted OpenShell dev tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/install-openshell.sh
+            tools/e2e/openshell-dev-artifact.mts
+
+      - name: Set up Node for OpenShell dev artifact resolution
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: resolve_openshell_dev_artifact
+        name: Resolve immutable OpenShell dev artifact
+        run: >-
+          node --experimental-strip-types --no-warnings
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" resolve
+          "${{ runner.temp }}/openshell-dev-artifact"
+
+      - name: Upload OpenShell dev artifact resolution
+        if: ${{ always() }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}
+          path: ${{ runner.temp }}/openshell-dev-artifact/
+
+  mcp-bridge-dev:
+    needs: [generate-matrix, openshell-dev-artifact]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge-dev') }}
     runs-on: ubuntu-latest
     permissions:
@@ -1797,6 +1839,17 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - name: Checkout trusted OpenShell dev tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha || github.workflow_sha }}
+          path: .trusted-openshell-dev-artifact
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/install-openshell.sh
+            tools/e2e/openshell-dev-artifact.mts
+
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
@@ -1808,6 +1861,25 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Restore immutable OpenShell dev artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.openshell-dev-artifact.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-dev-artifact
+          digest-mismatch: error
+
+      - name: Verify immutable OpenShell dev artifact
+        env:
+          OPENSHELL_DEV_ARTIFACT_DIR: ${{ runner.temp }}/openshell-dev-artifact
+          OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: ${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}
+          OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: ${{ needs.openshell-dev-artifact.outputs.source_commit }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          "${{ github.workspace }}/.trusted-openshell-dev-artifact/tools/e2e/openshell-dev-artifact.mts" verify
+          "$OPENSHELL_DEV_ARTIFACT_DIR"
+          "$OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT"
+          "$OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256"
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -1834,17 +1906,47 @@ jobs:
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
 
-      - name: Revoke Docker auth before unverified dev tooling
+      - name: Revoke Docker auth before OpenShell development tooling
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-      - name: Install OpenShell CLI
+      - name: Install immutable OpenShell dev artifact
         env:
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_DEV_ASSET_DIR: ${{ runner.temp }}/openshell-dev-artifact/assets
         run: |
           set -euo pipefail
-          bash scripts/install-openshell.sh
+          shim_dir="$(mktemp -d)"
+          trap 'rm -rf "$shim_dir"' EXIT
+          cat >"$shim_dir/gh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" -ne 10 || "$1" != "release" || "$2" != "download" || "$3" != "dev" || "$4" != "--repo" || "$5" != "NVIDIA/OpenShell" || "$6" != "--pattern" || "$8" != "--dir" || "${10}" != "--clobber" ]]; then
+            printf 'Unsupported gh invocation for retained OpenShell assets.\n' >&2
+            exit 64
+          fi
+          asset="$7"
+          destination="$9"
+          case "$asset" in
+            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
+            *)
+              printf 'Unsupported retained OpenShell asset: %s\n' "$asset" >&2
+              exit 64
+              ;;
+          esac
+          source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"
+          [[ -f "$source_asset" && ! -L "$source_asset" && "$destination" = /* && -d "$destination" && ! -L "$destination" ]]
+          cp -- "$source_asset" "$destination/$asset"
+          EOF
+          cat >"$shim_dir/curl" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'Network fallback is disabled for retained OpenShell assets.\n' >&2
+          exit 1
+          EOF
+          chmod 700 "$shim_dir/gh" "$shim_dir/curl"
+          PATH="$shim_dir:$PATH" \
+            bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility
@@ -3543,6 +3645,7 @@ jobs:
         openshell-gateway-auth-contract,
         mcp-bridge,
         openshell-credential-generation-window,
+        openshell-dev-artifact,
         mcp-bridge-dev,
         managed-image-multiarch-startup,
         llama-cpp-dgx-spark-plan,
