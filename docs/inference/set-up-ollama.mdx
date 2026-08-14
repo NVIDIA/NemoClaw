@@ -301,6 +301,8 @@ This retry also applies to tight-VRAM hosts where model warm-up can spill from G
 
 When you destroy an Ollama-backed sandbox or stop host services, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
 When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model, and leaves it loaded when another Ollama-backed sandbox uses the same model.
+When you re-onboard an existing Ollama-backed sandbox onto a different model, NemoClaw unloads the model it replaced, with the same sibling protection.
+A re-onboard that keeps the same model leaves it loaded, because the new route can still be served by the same Ollama daemon.
 This cleanup runs on a best-effort basis and does not delete downloaded model files.
 
 ## Related Topics

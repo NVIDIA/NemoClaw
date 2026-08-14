@@ -17,9 +17,14 @@ import {
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
 import {
+  type OllamaModelHolder,
+  supersededOllamaModel,
+} from "../inference/ollama/model-ownership";
+import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
+  withOllamaModelOwnershipLock,
 } from "../inference/ollama/proxy";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
@@ -196,6 +201,12 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   providerExistsInGateway: (name: string, gatewayName: string) => boolean;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
+  // #9110 optional GPU-release seams; omitted by test literals that build deps
+  // by hand, so every read below must stay optional-chained.
+  getSandbox?: typeof import("../state/registry").getSandbox;
+  listSandboxes?: typeof import("../state/registry").listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
   getManagedVllmProviderBinding?: () => {
@@ -441,6 +452,38 @@ export type SetupInference = (
   hermesToolGateways?: string[],
   options?: ProviderInferenceSetupOptions,
 ) => Promise<SetupInferenceResult>;
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox held before this onboarding
+ * moved it to a different model (#9110).
+ *
+ * Runs after the route mutation, so the new route is already proven by
+ * `verifyOnboardInferenceSmoke` before the old memory is freed. Best-effort:
+ * the route is committed by this point, so GPU cleanup must never change the
+ * result or the exit code.
+ */
+function releaseSupersededOllamaModel(
+  previous: OllamaModelHolder | null,
+  nextModel: string,
+  result: SetupInferenceResult,
+  deps: SetupInferenceDeps,
+): void {
+  // A reselection retry left the recorded route untouched, so the sandbox
+  // still owns its model.
+  if (!previous || result.retry) return;
+  try {
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    withOwnershipLock(() => {
+      const peers = deps.listSandboxes?.().sandboxes ?? [];
+      const superseded = supersededOllamaModel(previous, nextModel, peers);
+      if (!superseded) return;
+      deps.unloadOllamaModels?.([superseded]);
+    });
+  } catch {
+    /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
+  }
+}
 
 export function createSetupInference(
   defaults: SetupInferenceDeps,
@@ -961,8 +1004,26 @@ export function createSetupInference(
           return deps.exitProcess(error instanceof HostLocalInferenceBranchExit ? error.code : 1);
         }
       });
+    // Both the prior-route read and the GPU release stay inside the sandbox
+    // mutation lock: the read happens before `reserveRoute` rewrites the row
+    // (after which the previous selection is unrecoverable), and the release
+    // happens before the lock opens, so a serialized re-onboard can neither
+    // replace the row under the read nor select the captured model before
+    // this cleanup runs.
+    const mutateGatewayRouteAndReleaseSupersededModel =
+      async (): Promise<SetupInferenceResult> => {
+        let previousSandbox: OllamaModelHolder | null = null;
+        try {
+          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+        } catch {
+          /* An unreadable registry skips GPU release; it must not fail onboarding. */
+        }
+        const result = await mutateGatewayRoute();
+        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
+        return result;
+      };
     return sandboxName
-      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRoute)
-      : mutateGatewayRoute();
+      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
+      : mutateGatewayRouteAndReleaseSupersededModel();
   };
 }

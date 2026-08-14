@@ -228,7 +228,7 @@ const {
   persistAndProbeOllamaProxy,
   prepareOllamaModel,
   printOllamaExposureWarning,
-  promptOllamaModel,
+  promptOllamaModel, unloadOllamaModels,
 } = require("./inference/ollama/proxy");
 const {
   installOllamaOnWindowsHost,
@@ -3163,7 +3163,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
     isNonInteractive,
-    updateSandbox: registry.reserveSandboxInferenceRoute,
+    updateSandbox: registry.reserveSandboxInferenceRoute, getSandbox: registry.getSandbox, listSandboxes: registry.listSandboxes, unloadOllamaModels,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
     providerExistsInGateway,

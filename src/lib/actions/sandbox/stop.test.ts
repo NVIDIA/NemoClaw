@@ -72,6 +72,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     teardownSandboxDashboardForward,
     log,
     warn,
+    withOllamaModelOwnershipLock: (operation) => operation(),
     ...actionOverrides,
   };
   return {
@@ -484,6 +485,33 @@ describe("stopSandbox Ollama GPU release", () => {
 
     expect(result.exitCode).toBe(0);
     expect(unloadOllamaModels).toHaveBeenCalledWith(["qwen2.5:7b"]);
+  });
+
+  it("holds the shared ownership lock across the peer scan and unload (#9110)", () => {
+    const events: string[] = [];
+    const h = harness({
+      listSandboxes: () => {
+        events.push("peer-scan");
+        return { sandboxes: [ollamaSandbox], defaultSandbox: null };
+      },
+      unloadOllamaModels: () => events.push("unload"),
+      withOllamaModelOwnershipLock: (operation) => {
+        events.push("ownership-lock-enter");
+        const result = operation();
+        events.push("ownership-lock-exit");
+        return result;
+      },
+    });
+    h.getSandbox.mockReturnValue(ollamaSandbox);
+
+    stopSandbox("my-sandbox", h.deps);
+
+    expect(events).toEqual([
+      "ownership-lock-enter",
+      "peer-scan",
+      "unload",
+      "ownership-lock-exit",
+    ]);
   });
 
   it("releases GPU memory on an already-stopped sandbox too (#9110)", () => {
