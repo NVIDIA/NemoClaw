@@ -1206,6 +1206,7 @@ RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --defa
     && chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
     && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
     && HOME=/sandbox \
@@ -1248,7 +1249,9 @@ RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --defa
     && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && rm -rf /sandbox/.cache \
     && chown sandbox:sandbox /sandbox/.hermes \
     && chmod 3770 /sandbox/.hermes \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"

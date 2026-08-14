@@ -304,6 +304,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       `chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl`,
       `rm -rf /sandbox/.hermes/lazy-packages`,
       `install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages`,
+      `chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages`,
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
       `test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)"`,
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
@@ -323,6 +324,12 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(layer).toContain("UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe");
     expect(layer).toContain("UV_OFFLINE=1");
     expect(layer).toContain("NEMOCLAW_BUILD_PROBE_FIXTURE");
+    expect(
+      layer.match(/chmod u=rwx,g=rx,o=,g-s \/sandbox\/\.hermes\/lazy-packages/g),
+    ).toHaveLength(2);
+    expect(layer.lastIndexOf("rm -rf /sandbox/.cache")).toBeGreaterThan(
+      layer.indexOf("from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)"),
+    );
     expect(layer).not.toContain("https://");
     expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
     expect(layer).not.toContain(`printf ''`);
