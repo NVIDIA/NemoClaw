@@ -1079,12 +1079,14 @@ Blocked by: ssh`.
 
 Current NemoClaw detects this case and kills the orphaned SSH process automatically before retrying the port check.
 If you see the error on an older release, identify the SSH process.
-Stop it only after fresh listener output confirms that your user owns the process, its command line is the stale SSH port forward for local port `18789`, and it has no active terminal or file transfer:
+Use fresh listener output to confirm that your user owns the process and that it still listens on local port `18789`:
 
 ```bash
 sudo lsof -i :18789 -sTCP:LISTEN -P -n
 ```
 
+Inspect the process separately with `ps -p <PID> -o user=,args=`.
+Stop it only when the owner is your user, the command line is the stale SSH port forward for local port `18789`, and no active terminal or file-transfer session uses that process.
 Repeat the listener check immediately before you signal only the PID from that fresh result.
 Then re-run `$$nemoclaw onboard`.
 
@@ -2970,7 +2972,7 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Remove the gateway registration, then rerun setup.
+Remove the gateway registration, then resume onboarding.
 If a privileged host gateway remains, do not use a host-wide process match.
 Verify its live owner, exact gateway name and port, command line, PID file, runtime marker, and loaded sandbox namespace immediately before you stop it.
 
