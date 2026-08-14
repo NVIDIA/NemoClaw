@@ -440,6 +440,21 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("rejects candidate execution before trusted development installation (#9051)", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
+    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
+    const prepareIndex = steps.indexOf(prepare);
+    steps.splice(prepareIndex, 0, {
+      name: "Execute candidate CLI before trusted installation",
+      run: "node bin/nemoclaw.js --version",
+    });
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must contain only reviewed steps between workspace preparation and CLI artifact restore",
+    );
+  });
+
   it("reports both an unreadable action and a missing producer", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-missing-action-"));
     try {

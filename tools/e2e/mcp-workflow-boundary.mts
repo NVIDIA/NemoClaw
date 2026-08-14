@@ -535,6 +535,10 @@ function validateJobExecution(
       errors.push("mcp-bridge-dev must not maintain a second OpenShell installer");
     }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
+    const dockerAuth = namedStep(job, "Authenticate to Docker Hub");
+    const prepare = namedStep(job, "Prepare E2E workspace");
+    const dockerAuthIndex = steps.indexOf(dockerAuth);
+    const prepareIndex = steps.indexOf(prepare);
     const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
     const restoreCliIndex = steps.indexOf(restoreCli);
     const trustedInstallSequence = [
@@ -545,13 +549,15 @@ function validateJobExecution(
       install,
     ];
     if (
+      prepareIndex !== dockerAuthIndex + 1 ||
+      trustedCheckoutIndex !== prepareIndex + 1 ||
       restoreCliIndex !== trustedCheckoutIndex + trustedInstallSequence.length ||
       trustedInstallSequence.some(
         (step, offset) => steps[trustedCheckoutIndex + offset] !== step,
       )
     ) {
       errors.push(
-        "mcp-bridge-dev must keep trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
       );
     }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {

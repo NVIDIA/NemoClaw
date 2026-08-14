@@ -303,7 +303,31 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must keep trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects candidate execution before workspace preparation (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const steps = workflow.jobs["mcp-bridge-dev"].steps;
+      const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+      requireFixture(prepareIndex >= 0, "workspace preparation fixture is missing");
+      steps.splice(prepareIndex, 0, {
+        name: "Execute candidate CLI before trusted installation",
+        run: "node bin/nemoclaw.js --version",
+      });
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -331,7 +355,7 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must keep trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

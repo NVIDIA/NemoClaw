@@ -402,6 +402,8 @@ function validateConsumer(
       ? ["Record immutable Deep Agents Code base evidence"]
       : jobName === "mcp-bridge-dev"
         ? [
+            "Authenticate to Docker Hub",
+            "Prepare E2E workspace",
             "Checkout trusted OpenShell dev tooling",
             "Restore immutable OpenShell dev artifact",
             "Verify immutable OpenShell dev artifact",
@@ -409,8 +411,10 @@ function validateConsumer(
             "Install immutable OpenShell dev artifact",
           ]
         : [];
+  const reviewedStepsStart =
+    jobName === "mcp-bridge-dev" ? candidateCheckoutIndex + 1 : prepareIndex + 1;
   const stepsBeforeRestore = jobSteps
-    .slice(prepareIndex + 1, restoreIndex)
+    .slice(reviewedStepsStart, restoreIndex)
     .map((step) => step.name);
   if (
     prepareIndex >= 0 &&
