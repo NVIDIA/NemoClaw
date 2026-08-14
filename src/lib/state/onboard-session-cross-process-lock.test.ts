@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 describe("cross-process onboard lock", () => {
-  it("rejects a concurrent CLI process before gateway creation", async () => {
+  it("reports the holder without acquiring a competing lock", async () => {
     const childScript = `
       const fs = require("node:fs");
       const path = require("node:path");

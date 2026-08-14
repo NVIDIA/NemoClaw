@@ -623,7 +623,7 @@ When NemoClaw prints the state move, run the exact commands it prints:
 3. Move the selected state directory into the archive as `gateway-state`.
 4. Run the printed onboarding command only after the stop, the archive, and the move succeed.
    Standard onboarding prints `$$nemoclaw onboard --resume`.
-   The portable experimental profile prints its required fresh-onboarding command because it does not support resume.
+   The portable experimental profile prints its required fresh-onboarding command for this gateway-state recovery.
 
 The archive remains beside the selected state directory and retains the previous gateway records and credentials.
 Keep it owner-only until onboarding completes and every required sandbox and provider registration is restored.
@@ -1174,6 +1174,33 @@ This is only useful if the original failure was transient, for example a network
 
 ```bash
 $$nemoclaw onboard --resume
+```
+
+For a checkpoint schema 4 portable session, the plain command restores the portable profile from the checkpoint.
+You can also state the matching profile explicitly:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable --resume
+```
+
+Portable resume does not trust ambient Docker or Podman runtime selectors.
+It derives and verifies the recorded current-user rootless Podman authority before it continues onboarding.
+If NemoClaw reports unsafe ownership, type, or mode, correct that filesystem condition and retry.
+Portable onboarding always uses the `.config` directory beneath the canonical home reported by the operating system; changing `HOME` or `XDG_CONFIG_HOME` does not select another location.
+For a recorded alternate configuration root or other user ID, home, runtime root, endpoint, runtime kind, or ownership drift, do not edit the checkpoint; run fresh onboarding.
+
+If NemoClaw reports that an active checkpoint uses schema 1, 2, or 3, the older checkpoint did not record enough profile and runtime authority for resume.
+NemoClaw preserves the session and exits before portable configuration, socket activation, or resource changes.
+Discard that active session and start fresh onboarding:
+
+```bash
+$$nemoclaw onboard --fresh
+```
+
+If you intend to use the portable experimental profile, select it again for fresh onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable --fresh
 ```
 
 <AgentOnly variant="openclaw">
@@ -3293,6 +3320,12 @@ Then rerun portable onboarding:
 
 ```bash
 $$nemoclaw onboard --experimental-profile portable
+```
+
+If the failed run has a checkpoint schema 4 resumable session, resume it without exporting Docker or Podman runtime selectors:
+
+```bash
+$$nemoclaw onboard --resume
 ```
 
 Continue only when onboarding no longer reports that the Podman service or OpenShell Podman host gateway is unreachable.

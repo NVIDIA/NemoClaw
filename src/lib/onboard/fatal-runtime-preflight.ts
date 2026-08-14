@@ -24,7 +24,6 @@ import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
-import { preparePortableExperimentalHost } from "./experimental/portable-host-preparation";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import { assessHost, type HostAssessment, planHostAdvisories } from "./preflight";
 import {
@@ -63,7 +62,6 @@ export interface FatalRuntimePreflightContext {
    * override so the bounded Docker proof can run when needed.
    */
   detectGpu?: typeof detectGpu;
-  preparePortableExperimentalHost?: typeof preparePortableExperimentalHost;
   warnIfHostProxyMissesLoopback?: typeof warnIfHostProxyMissesLoopback;
   assertDockerBridgeAndContainerDnsHealthy?: typeof assertDockerBridgeAndContainerDnsHealthy;
   validateSandboxGpuPreflight?: typeof validateSandboxGpuPreflight;
@@ -443,8 +441,6 @@ export function runFatalOnboardRuntimePreflight(
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   const assess = context.assessHost ?? assessHost;
   const detect = context.detectGpu ?? detectGpu;
-  const preparePortable =
-    context.preparePortableExperimentalHost ?? preparePortableExperimentalHost;
   const now = context.now ?? (() => new Date());
   let observedAt = now().toISOString();
   let host = assess();
@@ -456,29 +452,6 @@ export function runFatalOnboardRuntimePreflight(
   let explicitlyOptedOutGpuPassthrough =
     sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true;
 
-  if (isPortableExperimentalProfile()) {
-    // Portable setup is an explicit remediation. Admit only its narrow,
-    // pre-mutation exception set, apply it, then replace every observation
-    // with a fresh canonical host report before continuing.
-    assertOnboardHostReadiness(host, gpu, {
-      explicitlyOptedOutGpuPassthrough,
-      resuming: context.resuming,
-      allowPortableHostPreparation: true,
-      exitProcess,
-      observedAt,
-      now,
-    });
-    preparePortable(process.env);
-    observedAt = now().toISOString();
-    host = assess();
-    gpu = detect({ proveArm64WslDockerDesktopGpu: null });
-    sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-      flag: resolveSandboxGpuFlagFromOptions(options),
-      device: options.sandboxGpuDevice ?? null,
-    });
-    explicitlyOptedOutGpuPassthrough =
-      sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true;
-  }
   const readinessReport = assertOnboardHostReadiness(host, gpu, {
     explicitlyOptedOutGpuPassthrough,
     resuming: context.resuming,

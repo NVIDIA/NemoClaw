@@ -5,6 +5,7 @@ import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
 import { type OnboardCommandOptions, runOnboardCommand } from "../onboard/command";
 import { type OnboardFlags, readAgentRegistryNames } from "../onboard/command-support";
+import { resolveOnboardResumeIntent } from "../onboard/session-bootstrap";
 import { loadServingProfileResumeSession } from "../onboard/sandbox-registration";
 import type { OnboardOptions } from "../onboard/types";
 
@@ -32,6 +33,7 @@ function buildOnboardCommandDeps(flags: OnboardFlags, runtimeDeps: OnboardAction
     listAgents: () => [...readAgentRegistryNames()],
     loadServingCatalog,
     loadSession: loadServingProfileResumeSession,
+    resolveResumeIntent: resolveOnboardResumeIntent,
     log: console.log,
     error: console.error,
     exit: (code: number) => process.exit(code),
