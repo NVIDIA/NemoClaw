@@ -38,6 +38,12 @@ const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
+const MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
+  "052c49d5e8688266dbf38fa911733132d33e4470a29a61deb6e7a11067737559";
+const MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256 =
+  "9f9983804a29816d7e1b35e9e791f453f4e9e83f4ec41b906953e976d372353e";
+const MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
+  "4ad626279c1d6dddf91b3cd89272fa9f919213e231bf4a58b4858bc0c89012b9";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -340,6 +346,16 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
+  if (jobName === "mcp-bridge-dev") {
+    const { steps: _jobSteps, ...jobExecutionContext } = job;
+    if (
+      workflowContentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256
+    ) {
+      errors.push(
+        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      );
+    }
+  }
   const expectedNeeds =
     jobName === "mcp-bridge-dev"
       ? [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"]
@@ -397,6 +413,16 @@ function validateConsumer(
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
   }
+  if (
+    jobName === "mcp-bridge-dev" &&
+    restoreIndex >= 0 &&
+    workflowContentSha256(jobSteps.slice(0, restoreIndex + 1)) !==
+      MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+  ) {
+    errors.push(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+    );
+  }
   const reviewedStepsBeforeRestore =
     jobName === "live"
       ? ["Record immutable Deep Agents Code base evidence"]
@@ -432,6 +458,14 @@ export function validateCliArtifactWorkflowBoundary(
 ): string[] {
   const errors = validateCliArtifactRestoreAction(actionPath);
   const workflowEnv = record(workflow.env);
+  if (
+    workflowContentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
+    MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
+  ) {
+    errors.push(
+      "workflow must preserve the reviewed execution environment before candidate activation",
+    );
+  }
   if (hasUnsafeShellHook(workflowEnv)) {
     errors.push("workflow must not set shell startup hooks before CLI artifact restore");
   }

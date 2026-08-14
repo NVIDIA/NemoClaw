@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import YAML from "yaml";
@@ -46,6 +47,12 @@ const DEV_ARTIFACT_ENV = {
   OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: DEV_ARTIFACT_MANIFEST_OUTPUT,
   OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: DEV_ARTIFACT_SOURCE_OUTPUT,
 } as const;
+const DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
+  "052c49d5e8688266dbf38fa911733132d33e4470a29a61deb6e7a11067737559";
+const DEV_JOB_EXECUTION_CONTEXT_SHA256 =
+  "9f9983804a29816d7e1b35e9e791f453f4e9e83f4ec41b906953e976d372353e";
+const DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
+  "4ad626279c1d6dddf91b3cd89272fa9f919213e231bf4a58b4858bc0c89012b9";
 const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-checksums-sha256.txt",
@@ -115,6 +122,12 @@ function asString(value: unknown): string {
 function asSteps(job: UnknownRecord): UnknownRecord[] {
   const steps = job.steps;
   return Array.isArray(steps) ? steps.map(asRecord) : [];
+}
+
+function contentSha256(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(value) ?? "")
+    .digest("hex");
 }
 
 function namedStep(job: UnknownRecord, name: string): UnknownRecord {
@@ -272,6 +285,14 @@ function validateJobSecurity(
   job: UnknownRecord,
   canonicalDockerAuth: UnknownRecord,
 ): void {
+  if (jobName === "mcp-bridge-dev") {
+    const { steps: _jobSteps, ...jobExecutionContext } = job;
+    if (contentSha256(jobExecutionContext) !== DEV_JOB_EXECUTION_CONTEXT_SHA256) {
+      errors.push(
+        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      );
+    }
+  }
   const permissions = asRecord(job.permissions);
   if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
     errors.push(`${jobName} must use only contents:read permissions`);
@@ -558,6 +579,15 @@ function validateJobExecution(
     ) {
       errors.push(
         "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+      );
+    }
+    if (
+      restoreCliIndex >= 0 &&
+      contentSha256(steps.slice(0, restoreCliIndex + 1)) !==
+        DEV_TRUSTED_PREFIX_CONTENT_SHA256
+    ) {
+      errors.push(
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
       );
     }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {
@@ -1010,6 +1040,15 @@ export function validateMcpOpenShellWorkflowBoundary(
   const canonicalDockerAuth = namedStep(asRecord(jobs.live), "Authenticate to Docker Hub");
   const inputs = asRecord(asRecord(asRecord(workflow.on).workflow_dispatch).inputs);
   const globalEnv = asRecord(workflow.env);
+
+  if (
+    contentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
+    DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
+  ) {
+    errors.push(
+      "workflow must preserve the reviewed execution environment before candidate activation",
+    );
+  }
 
   if (Object.hasOwn(inputs, "openshell_channel")) {
     errors.push("the unified workflow must not expose a fan-out-wide OpenShell channel input");

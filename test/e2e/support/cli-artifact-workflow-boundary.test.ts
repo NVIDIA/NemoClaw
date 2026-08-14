@@ -455,6 +455,60 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
+  it("rejects candidate execution embedded in the trusted development installer (#9051)", () => {
+    const workflow = workflowFixture();
+    const install = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Install immutable OpenShell dev artifact",
+    );
+    install.run = `bash test/e2e/setup-mcp-test-tls.sh\n${install.run ?? ""}`;
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+    );
+  });
+
+  it("rejects candidate-controlled process hooks in the trusted development job (#9051)", () => {
+    const workflow = workflowFixture();
+    const job = workflow.jobs["mcp-bridge-dev"];
+    expect(job).toBeDefined();
+    job!.env = {
+      ...job!.env,
+      NODE_OPTIONS: "--require=./candidate-preload.cjs",
+    };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+    );
+  });
+
+  it("rejects candidate-controlled process hooks in the workflow environment (#9051)", () => {
+    const workflow = workflowFixture() as Workflow & { env?: Record<string, string> };
+    workflow.env = {
+      ...workflow.env,
+      NODE_OPTIONS: "--require=./candidate-preload.cjs",
+    };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "workflow must preserve the reviewed execution environment before candidate activation",
+    );
+  });
+
+  it("rejects skipping the trusted development installer (#9051)", () => {
+    const workflow = workflowFixture();
+    const install = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Install immutable OpenShell dev artifact",
+    );
+    install.if = "${{ false }}";
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+    );
+  });
+
   it("reports both an unreadable action and a missing producer", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-missing-action-"));
     try {
