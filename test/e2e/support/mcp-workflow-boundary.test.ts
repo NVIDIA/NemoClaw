@@ -303,7 +303,60 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must complete trusted Node setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects dependency caching before trusted installation (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const setupNode = workflow.jobs["mcp-bridge-dev"].steps.find(
+        (step) => step.name === "Set up Node for trusted OpenShell verification",
+      );
+      requireFixture(setupNode, "trusted Node setup fixture is missing");
+      setupNode.with = {
+        ...(setupNode.with as Record<string, unknown>),
+        "package-manager-cache": true,
+      };
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects package manager probes after candidate checkout (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const steps = workflow.jobs["mcp-bridge-dev"].steps;
+      const setupNodeIndex = steps.findIndex(
+        (step) => step.name === "Set up Node for trusted OpenShell verification",
+      );
+      const candidateCheckoutIndex = steps.findIndex((step) =>
+        String(step.uses ?? "").startsWith("actions/checkout@"),
+      );
+      requireFixture(setupNodeIndex >= 0, "trusted Node setup fixture is missing");
+      requireFixture(candidateCheckoutIndex >= 0, "candidate checkout fixture is missing");
+      const [setupNode] = steps.splice(setupNodeIndex, 1);
+      steps.splice(candidateCheckoutIndex, 0, setupNode);
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -325,7 +378,7 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -383,14 +436,36 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
 
-  it("rejects candidate execution before workspace preparation (#9051)", () => {
+  it("rejects skipping post-install dependency preparation (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const prepare = workflow.jobs["mcp-bridge-dev"].steps.find(
+        (step) => step.name === "Prepare E2E workspace",
+      );
+      requireFixture(prepare, "post-install dependency preparation fixture is missing");
+      prepare.if = "${{ false }}";
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects candidate execution before trusted OpenShell installation (#9051)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {
@@ -398,16 +473,18 @@ describe("MCP workflow artifact boundary", () => {
         jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
       };
       const steps = workflow.jobs["mcp-bridge-dev"].steps;
-      const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-      requireFixture(prepareIndex >= 0, "workspace preparation fixture is missing");
-      steps.splice(prepareIndex, 0, {
+      const candidateCheckoutIndex = steps.findIndex((step) =>
+        String(step.uses ?? "").startsWith("actions/checkout@"),
+      );
+      requireFixture(candidateCheckoutIndex >= 0, "candidate checkout fixture is missing");
+      steps.splice(candidateCheckoutIndex + 1, 0, {
         name: "Execute candidate CLI before trusted installation",
         run: "node bin/nemoclaw.js --version",
       });
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -435,7 +512,7 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must complete trusted Node setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

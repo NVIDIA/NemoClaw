@@ -440,18 +440,52 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("rejects dependency caching before trusted installation (#9051)", () => {
+    const workflow = workflowFixture();
+    const setupNode = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Set up Node for trusted OpenShell verification",
+    );
+    setupNode.with = { ...setupNode.with, "package-manager-cache": true };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+    );
+  });
+
+  it("rejects package manager probes after candidate checkout (#9051)", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
+    const setupNode = requireStep(
+      workflow,
+      "mcp-bridge-dev",
+      "Set up Node for trusted OpenShell verification",
+    );
+    const [movedSetupNode] = steps.splice(steps.indexOf(setupNode), 1);
+    const candidateCheckoutIndex = steps.findIndex((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    steps.splice(candidateCheckoutIndex + 1, 0, movedSetupNode!);
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+    );
+  });
+
   it("rejects candidate execution before trusted development installation (#9051)", () => {
     const workflow = workflowFixture();
     const steps = workflow.jobs["mcp-bridge-dev"].steps!;
-    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
-    const prepareIndex = steps.indexOf(prepare);
-    steps.splice(prepareIndex, 0, {
+    const candidateCheckoutIndex = steps.findIndex((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    steps.splice(candidateCheckoutIndex + 1, 0, {
       name: "Execute candidate CLI before trusted installation",
       run: "node bin/nemoclaw.js --version",
     });
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must contain only reviewed steps between workspace preparation and CLI artifact restore",
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
     );
   });
 
@@ -465,7 +499,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     install.run = `bash test/e2e/setup-mcp-test-tls.sh\n${install.run ?? ""}`;
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
     );
   });
 
@@ -505,7 +539,40 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     install.if = "${{ false }}";
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+    );
+  });
+
+  it("rejects skipping post-install dependency preparation (#9051)", () => {
+    const workflow = workflowFixture();
+    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
+    prepare.if = "${{ false }}";
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
+    );
+  });
+
+  it("rejects removing post-install dependency preparation and candidate CLI restore (#9051)", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
+    workflow.jobs["mcp-bridge-dev"].steps = steps.filter(
+      (step) =>
+        step.name !== "Prepare E2E workspace" &&
+        step.name !== "Restore exact-commit CLI artifact",
+    );
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "mcp-bridge-dev must verify and restore the exact CLI artifact exactly once",
+    );
+  });
+
+  it("rejects removing the trusted development consumer job (#9051)", () => {
+    const workflow = workflowFixture();
+    delete workflow.jobs["mcp-bridge-dev"];
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "workflow is missing required CLI artifact consumer mcp-bridge-dev",
     );
   });
 

@@ -51,8 +51,13 @@ const DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
   "052c49d5e8688266dbf38fa911733132d33e4470a29a61deb6e7a11067737559";
 const DEV_JOB_EXECUTION_CONTEXT_SHA256 =
   "9f9983804a29816d7e1b35e9e791f453f4e9e83f4ec41b906953e976d372353e";
+const DEV_TRUSTED_NODE_SETUP_NAME = "Set up Node for trusted OpenShell verification";
+const DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 =
+  "de1d00d57a7d2f45717d88ef19b05f9e93db1929af1d4ae847aa6b1ece1ab0f6";
 const DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
-  "4ad626279c1d6dddf91b3cd89272fa9f919213e231bf4a58b4858bc0c89012b9";
+  "bc50da3bba4625943d61187c87e8ba62eb8dbc62216c404b63a70c37b9650d7a";
+const DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256 =
+  "62cf2ee01ac7192f41fc7b2b071de729da8bacec1e4f693da1ec6f0b1f4723c0";
 const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-checksums-sha256.txt",
@@ -335,6 +340,17 @@ function validateJobSecurity(
   }
   const steps = asSteps(job);
   const checkoutIndex = steps.indexOf(checkouts[0] ?? {});
+  const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
+  const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
+  if (
+    jobName === "mcp-bridge-dev" &&
+    (contentSha256(trustedNodeSetup) !== DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
+      trustedNodeSetupIndex !== checkoutIndex - 1)
+  ) {
+    errors.push(
+      "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+    );
+  }
   if (steps.indexOf(login) !== checkoutIndex + 1) {
     errors.push(`${jobName} must authenticate immediately after credential-free checkout`);
   }
@@ -558,9 +574,12 @@ function validateJobExecution(
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const dockerAuth = namedStep(job, "Authenticate to Docker Hub");
     const prepare = namedStep(job, "Prepare E2E workspace");
+    const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
+    const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
     const dockerAuthIndex = steps.indexOf(dockerAuth);
     const prepareIndex = steps.indexOf(prepare);
     const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
+    const installIndex = steps.indexOf(install);
     const restoreCliIndex = steps.indexOf(restoreCli);
     const trustedInstallSequence = [
       trustedCheckout,
@@ -570,24 +589,34 @@ function validateJobExecution(
       install,
     ];
     if (
-      prepareIndex !== dockerAuthIndex + 1 ||
-      trustedCheckoutIndex !== prepareIndex + 1 ||
-      restoreCliIndex !== trustedCheckoutIndex + trustedInstallSequence.length ||
+      dockerAuthIndex !== trustedNodeSetupIndex + 2 ||
+      trustedCheckoutIndex !== dockerAuthIndex + 1 ||
+      prepareIndex !== installIndex + 1 ||
+      restoreCliIndex !== prepareIndex + 1 ||
       trustedInstallSequence.some(
         (step, offset) => steps[trustedCheckoutIndex + offset] !== step,
       )
     ) {
       errors.push(
-        "mcp-bridge-dev must keep Docker auth, workspace preparation, trusted checkout, artifact restore, verification, credential revocation, and install contiguous before restoring the candidate CLI",
+        "mcp-bridge-dev must complete trusted Node setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
       );
     }
     if (
-      restoreCliIndex >= 0 &&
-      contentSha256(steps.slice(0, restoreCliIndex + 1)) !==
-        DEV_TRUSTED_PREFIX_CONTENT_SHA256
+      installIndex >= 0 &&
+      contentSha256(steps.slice(0, installIndex + 1)) !== DEV_TRUSTED_PREFIX_CONTENT_SHA256
     ) {
       errors.push(
-        "mcp-bridge-dev must preserve every reviewed step through trusted installation and candidate CLI restore",
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+      );
+    }
+    if (
+      prepareIndex >= 0 &&
+      restoreCliIndex >= prepareIndex &&
+      contentSha256(steps.slice(prepareIndex, restoreCliIndex + 1)) !==
+        DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
+    ) {
+      errors.push(
+        "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
       );
     }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {
