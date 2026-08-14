@@ -61,8 +61,8 @@ export function resolveGatewayLauncher(
 /**
  * Name the component that starts the gateway again. The OpenShell CLI has no
  * command that starts a gateway, so naming one sends the operator to a
- * remediation that cannot run. The launcher the runtime provider records
- * selects the branch. `nemoclaw` means NemoClaw starts the gateway process.
+ * remediation that cannot run. The resolved launcher and lifecycle authority
+ * select the branch. `nemoclaw` means NemoClaw starts the gateway process.
  * `openshell` means the deployment that created the gateway process still owns
  * starting it. Callers that know which gateway failed pass its name so the
  * printed selection command is copyable. Other callers print a template that
