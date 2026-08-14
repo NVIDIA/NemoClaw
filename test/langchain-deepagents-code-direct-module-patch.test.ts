@@ -87,7 +87,6 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       expect(main).toContain(expected);
     }
   });
-
   it.each([
     ["entrypoint", "__main__.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["main", "main.py", 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
@@ -117,17 +116,14 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const target = path.join(tempDir, "deepagents_code", relativePath);
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # corrupt`);
     fs.writeFileSync(target, corrupted, "utf8");
-
     const result = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`Managed package ${boundary} patch is incomplete`);
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-
   it.each([
     ['os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'],
     ["def managed_auto_approval_enabled() -> bool:"],
@@ -137,23 +133,19 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const target = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
     const corrupted = fs.readFileSync(target, "utf8").replace(anchor, `${anchor}  # stale`);
     fs.writeFileSync(target, corrupted, "utf8");
-
     const result = spawnSync("python3", [patcher], {
       env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
       encoding: "utf8",
     });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Managed package patch is partial: helper is missing or stale");
     expect(fs.readFileSync(target, "utf8")).toBe(corrupted);
   });
-
   it("preserves upstream MCP JSON diagnostics around the managed descriptor loader", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const invalidConfig = path.join(tempDir, "invalid-mcp.json");
     fs.writeFileSync(invalidConfig, '{"mcpServers": }\n', "utf8");
-
     const result = spawnSync(
       "python3",
       [
