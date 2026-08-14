@@ -44,6 +44,20 @@ NemoClaw validates the selected provider and model before creating the sandbox.
 NemoClaw validates Gemini inference through its OpenAI-compatible Chat Completions path.
 When you enter a custom Gemini model ID, NemoClaw checks Google's native model catalog and accepts IDs with or without the `models/` prefix.
 It skips the Responses API probe because Gemini does not support `/v1/responses`.
+When NemoClaw reads the native Google model catalog, it keeps only models that support `generateContent`.
+Embedding-only models are filtered out of the catalog, so they do not appear as onboarding choices.
+
+## Troubleshooting
+
+Model validation can fail with these messages:
+
+- `Could not validate model against https://generativelanguage.googleapis.com/v1beta/models: <reason>`: NemoClaw could not read the Google model catalog. The `<reason>` value shows the cause, such as an authentication or network failure. Make sure that `GEMINI_API_KEY` is valid and that the host can reach `generativelanguage.googleapis.com`.
+- `Model '<model>' is not available from Google Gemini. Checked https://generativelanguage.googleapis.com/v1beta/models.`: The catalog did not contain the model ID. Check the ID for typing errors. Custom IDs are accepted with or without the `models/` prefix. Embedding-only models do not appear in the catalog because they are filtered out.
+- `Unexpected Gemini model catalog response: expected a top-level models array`: The Google model catalog did not return the expected data. Make sure that `GEMINI_API_KEY` is set and that the host can reach `generativelanguage.googleapis.com`.
+- `Gemini model catalog pagination repeated page token '<token>'`: The catalog returned the same page token twice, so NemoClaw stopped reading the catalog. Run the onboarding wizard again.
+- `Gemini model catalog pagination exceeded <count> pages`: The catalog search reached its page limit (`GEMINI_MODEL_CATALOG_MAX_PAGES`) before it found the model. Run the wizard again, or select one of the curated models.
+- `Unexpected model catalog response: expected a top-level data array`: The OpenAI-compatible endpoint did not return the expected data. Check the provider configuration.
+- `Onboard inference smoke check failed.`: The post-selection probe failed. The output shows the provider, model, and API base URL. Compare these values with your configuration.
 
 ## Related Topics
 
