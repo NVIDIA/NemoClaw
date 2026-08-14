@@ -105,7 +105,10 @@ export function fixtureTarRunner(args: string[]) {
   return fixtureTarRunnerWithSize(1)(args);
 }
 
-export function fixtureTarRunnerWithSize(declaredSize: number) {
+export function fixtureTarRunnerWithSize(
+  declaredSize: number,
+  onExtract: (args: string[]) => void = () => {},
+) {
   return (args: string[]) => {
     const members = new Map([
       ["openshell-x86_64-unknown-linux-musl.tar.gz", "openshell"],
@@ -124,6 +127,7 @@ export function fixtureTarRunnerWithSize(declaredSize: number) {
       };
     }
     if (args[0] === "-xzf") {
+      onExtract(args);
       const outputDirectory = args[args.indexOf("-C") + 1];
       fs.writeFileSync(path.join(outputDirectory, member), member);
       return { status: 0, stdout: "", stderr: "" };

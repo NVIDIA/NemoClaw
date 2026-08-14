@@ -205,6 +205,7 @@ describe("OpenShell dev artifact resolver", () => {
       const resolution = await resolveOpenShellDevArtifact(directory, fixtureFetch());
       const manifestSha256 = resolution.manifestSha256;
       requireFixture(manifestSha256, "fixture resolution omitted manifest digest");
+      const extractionAttempts: string[][] = [];
 
       expect(() =>
         prepareOpenShellDevBinaries(
@@ -212,9 +213,12 @@ describe("OpenShell dev artifact resolver", () => {
           binaryDirectory,
           SOURCE_COMMIT,
           manifestSha256,
-          fixtureTarRunnerWithSize(MAX_OPENSHELL_DEV_BINARY_BYTES + 1),
+          fixtureTarRunnerWithSize(MAX_OPENSHELL_DEV_BINARY_BYTES + 1, (args) =>
+            extractionAttempts.push(args),
+          ),
         ),
       ).toThrow(/exceeds the .* binary limit/);
+      expect(extractionAttempts).toEqual([]);
       expect(fs.existsSync(binaryDirectory)).toBe(false);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
