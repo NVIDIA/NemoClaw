@@ -469,15 +469,15 @@ then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
 
 The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify
-that same artifact with the trusted workflow revision. They pass its asset
-directory to the same trusted `scripts/install-openshell.sh` path used for
-normal installs through the E2E-only
-`NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR` input. A
-missing, replaced, or corrupt upstream asset fails the resolver as an
-infrastructure failure. The job error reports the failed identifier and source
-URL, and `resolution.json` records them when the artifact directory remains
-writable. The three product shards do not start in that case, so the run cannot
-report a product failure before reaching product assertions.
+that same artifact with the trusted workflow revision. A step-local download
+shim presents only those retained files to the unchanged trusted
+`scripts/install-openshell.sh` path and blocks its network fallback. The
+installer still checks the release checksums and archive structure before
+installation. A missing, replaced, or corrupt upstream asset fails the resolver
+as an infrastructure failure. The job error reports the failed identifier and
+source URL, and `resolution.json` records them when the artifact directory
+remains writable. The three product shards do not start in that case, so the run
+cannot report a product failure before reaching product assertions.
 
 ## Larger-runner routing
 

@@ -42,6 +42,14 @@ const DEV_ARTIFACT_ENV = {
   OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: DEV_ARTIFACT_MANIFEST_OUTPUT,
   OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: DEV_ARTIFACT_SOURCE_OUTPUT,
 } as const;
+const DEV_ARTIFACT_INSTALL_ASSETS = [
+  "openshell-x86_64-unknown-linux-musl.tar.gz",
+  "openshell-checksums-sha256.txt",
+  "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-gateway-checksums-sha256.txt",
+  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-checksums-sha256.txt",
+] as const;
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
 const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
@@ -422,8 +430,9 @@ function validateJobExecution(
   if (jobName === "mcp-bridge-dev") {
     if (
       !hasExactEntries(installEnv, {
-        NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR: `${OPENSHELL_DEV_ARTIFACT_DIRECTORY}/assets`,
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
+        OPENSHELL_DEV_ASSET_DIR: `${OPENSHELL_DEV_ARTIFACT_DIRECTORY}/assets`,
       })
     ) {
       errors.push(
@@ -491,12 +500,24 @@ function validateJobExecution(
         "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
       );
     }
-    for (const token of [`bash "${DEV_ARTIFACT_TRUSTED_INSTALLER}"`]) {
+    for (const token of [
+      ...DEV_ARTIFACT_INSTALL_ASSETS,
+      'cat >"$shim_dir/gh"',
+      'source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"',
+      '! -L "$source_asset"',
+      '"$destination" = /*',
+      '! -L "$destination"',
+      'cp -- "$source_asset" "$destination/$asset"',
+      'cat >"$shim_dir/curl"',
+      "Network fallback is disabled for retained OpenShell assets.",
+      'PATH="$shim_dir:$PATH"',
+      `bash "${DEV_ARTIFACT_TRUSTED_INSTALLER}"`,
+    ]) {
       requireContains(
         errors,
         install.run,
         token,
-        "mcp-bridge-dev must install the retained assets through the trusted release installer",
+        "mcp-bridge-dev must install retained assets through the trusted no-network release path",
       );
     }
     if (asString(install.run).includes("tools/e2e/openshell-dev-artifact.mts prepare")) {

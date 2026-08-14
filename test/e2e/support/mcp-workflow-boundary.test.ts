@@ -331,7 +331,7 @@ describe("MCP workflow artifact boundary", () => {
           "mcp-bridge-dev must restore exactly the resolver's content-addressed artifact",
           "mcp-bridge-dev must verify the immutable OpenShell artifact before installation",
           "mcp-bridge-dev installer must receive only the retained OpenShell asset directory",
-          "mcp-bridge-dev must install the retained assets through the trusted release installer",
+          "mcp-bridge-dev must install retained assets through the trusted no-network release path",
         ]),
       );
     } finally {

@@ -1912,11 +1912,41 @@ jobs:
 
       - name: Install immutable OpenShell dev artifact
         env:
-          NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR: ${{ runner.temp }}/openshell-dev-artifact/assets
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
           NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          OPENSHELL_DEV_ASSET_DIR: ${{ runner.temp }}/openshell-dev-artifact/assets
         run: |
           set -euo pipefail
-          bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
+          shim_dir="$(mktemp -d)"
+          trap 'rm -rf "$shim_dir"' EXIT
+          cat >"$shim_dir/gh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" -ne 10 || "$1" != "release" || "$2" != "download" || "$3" != "dev" || "$4" != "--repo" || "$5" != "NVIDIA/OpenShell" || "$6" != "--pattern" || "$8" != "--dir" || "${10}" != "--clobber" ]]; then
+            printf 'Unsupported gh invocation for retained OpenShell assets.\n' >&2
+            exit 64
+          fi
+          asset="$7"
+          destination="$9"
+          case "$asset" in
+            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
+            *)
+              printf 'Unsupported retained OpenShell asset: %s\n' "$asset" >&2
+              exit 64
+              ;;
+          esac
+          source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"
+          [[ -f "$source_asset" && ! -L "$source_asset" && "$destination" = /* && -d "$destination" && ! -L "$destination" ]]
+          cp -- "$source_asset" "$destination/$asset"
+          EOF
+          cat >"$shim_dir/curl" <<'EOF'
+          #!/usr/bin/env bash
+          printf 'Network fallback is disabled for retained OpenShell assets.\n' >&2
+          exit 1
+          EOF
+          chmod 700 "$shim_dir/gh" "$shim_dir/curl"
+          PATH="$shim_dir:$PATH" \
+            bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
 
       - id: mcp_runtime_compatibility
         name: Classify OpenShell credential-boundary compatibility

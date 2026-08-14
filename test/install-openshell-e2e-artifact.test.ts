@@ -8,8 +8,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
-const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+const INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+const WORKFLOW = path.join(import.meta.dirname, "..", ".github", "workflows", "e2e.yaml");
 const FEATURE_MARKERS =
   "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 
@@ -22,7 +24,6 @@ function createFixture() {
   const assetDirectory = path.join(root, "assets");
   const fakeBin = path.join(root, "bin");
   const source = path.join(root, "source");
-  const networkLog = path.join(root, "network.log");
   fs.mkdirSync(assetDirectory);
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(source);
@@ -59,49 +60,78 @@ function createFixture() {
     path.join(fakeBin, "openshell"),
     `#!/usr/bin/env bash\nif [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi\nexit 99`,
   );
-  for (const command of ["gh", "curl"]) {
-    writeExecutable(
-      path.join(fakeBin, command),
-      `#!/usr/bin/env bash\nprintf '%s\\n' '${command}' >> ${JSON.stringify(networkLog)}\nexit 91`,
-    );
-  }
-  return { assetDirectory, fakeBin, networkLog, root };
+  return { assetDirectory, fakeBin, root };
 }
 
-function runInstaller(fixture: ReturnType<typeof createFixture>, e2eJob: boolean) {
-  return spawnSync("bash", [SCRIPT], {
+function installStepRun(): string {
+  const workflow = YAML.parse(fs.readFileSync(WORKFLOW, "utf8")) as {
+    jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+  };
+  const run = workflow.jobs["mcp-bridge-dev"].steps.find(
+    (step) => step.name === "Install immutable OpenShell dev artifact",
+  )?.run;
+  expect(run).toBeTypeOf("string");
+  return String(run).replace(
+    "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh",
+    INSTALLER,
+  );
+}
+
+function runInstallStep(fixture: ReturnType<typeof createFixture>) {
+  return spawnSync("bash", ["-c", installStepRun()], {
     env: {
       ...process.env,
-      XDG_BIN_HOME: path.join(fixture.root, "local-bin"),
-      ...(e2eJob ? { E2E_JOB: "1" } : {}),
-      NEMOCLAW_E2E_OPENSHELL_RELEASE_ASSET_DIR: fixture.assetDirectory,
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
+      OPENSHELL_DEV_ASSET_DIR: fixture.assetDirectory,
       PATH: `${fixture.fakeBin}:/usr/bin:/bin`,
+      XDG_BIN_HOME: path.join(fixture.root, "local-bin"),
     },
     encoding: "utf8",
   });
 }
 
-describe("OpenShell same-run E2E artifact installation", () => {
-  it("rejects the internal artifact directory outside E2E (#9051)", () => {
+describe("OpenShell retained E2E artifact installation", () => {
+  it("runs retained assets through the trusted installer without network fallback (#9051)", () => {
     const fixture = createFixture();
     try {
-      const result = runInstaller(fixture, false);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("restricted to E2E jobs");
+      const result = runInstallStep(fixture);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("Verifying SHA-256 checksum");
+      expect(result.stderr).not.toContain("Network fallback is disabled");
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }
   });
 
-  it("installs retained assets without a network fallback (#9051)", () => {
+  it("rejects retained bytes that do not match their release checksum (#9051)", () => {
     const fixture = createFixture();
     try {
-      const result = runInstaller(fixture, true);
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("Using the same-run verified OpenShell dev artifact");
-      expect(fs.existsSync(fixture.networkLog)).toBe(false);
+      fs.appendFileSync(
+        path.join(fixture.assetDirectory, "openshell-x86_64-unknown-linux-musl.tar.gz"),
+        "tampered",
+      );
+      const result = runInstallStep(fixture);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("SHA-256 checksum verification failed");
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("blocks network fallback when a retained asset is a symbolic link (#9051)", () => {
+    const fixture = createFixture();
+    try {
+      const archive = path.join(
+        fixture.assetDirectory,
+        "openshell-x86_64-unknown-linux-musl.tar.gz",
+      );
+      fs.rmSync(archive);
+      fs.symlinkSync(path.join(fixture.root, "source", "openshell"), archive);
+      const result = runInstallStep(fixture);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Network fallback is disabled for retained OpenShell assets");
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }
