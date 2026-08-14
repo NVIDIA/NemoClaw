@@ -3,6 +3,7 @@
 
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
+import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
@@ -11,6 +12,7 @@ import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
+import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import {
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
@@ -82,6 +84,7 @@ export interface SandboxGpuCreateFlowInput {
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
+  portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
@@ -262,9 +265,11 @@ export async function runSandboxGpuCreateFlow(
         process.env,
         {
           ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+          runtimeAuthority: input.portableRuntimeAuthority ?? null,
         },
       ) ?? null;
   } catch (error) {
+    if (input.portableRuntimeAuthority || isPortableExperimentalProfile(process.env)) throw error;
     const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
     console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
   }

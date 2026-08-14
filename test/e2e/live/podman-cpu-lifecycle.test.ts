@@ -253,6 +253,8 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
 
     const openclawSandbox = AGENTS[0].sandboxName;
     const portableStateDir = path.join(root, "portable-lifecycle");
+    const uid = process.getuid?.();
+    if (uid === undefined) throw new Error("Portable lifecycle evidence requires a Linux UID");
     installPortableDemoSandboxLifecycle(
       openclawSandbox,
       [
@@ -270,6 +272,20 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         platform: "linux",
         podman: (args) => runtimeEngines.sandboxLifecycle.capture(args),
         stateDir: portableStateDir,
+        runtimeAuthority: {
+          schemaVersion: 1,
+          kind: "podman",
+          ownership: "current-user",
+          uid,
+          homeDir: os.homedir(),
+          configHome: path.join(os.homedir(), ".config"),
+          runtimeDir: path.join("/run/user", String(uid)),
+          socketPath: SOCKET_PATH,
+        },
+        runtimeReadiness: {
+          podmanCapture: (_executable, args, timeoutMs) =>
+            runtimeEngines.sandboxLifecycle.capture(args.slice(2), timeoutMs),
+        },
       },
     );
     const portableReceipt = JSON.parse(
@@ -277,11 +293,17 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         portableDemoLifecycleInternals.receiptPath(openclawSandbox, portableStateDir),
         "utf-8",
       ),
-    ) as { containerId: string; sandboxName: string; schemaVersion: number };
+    ) as {
+      containerId: string;
+      runtimeAuthority: { socketPath: string };
+      sandboxName: string;
+      schemaVersion: number;
+    };
     expect(portableReceipt).toMatchObject({
       containerId: exactContainerId(runtimeEngines.sandboxLifecycle, openclawSandbox),
       sandboxName: openclawSandbox,
-      schemaVersion: 3,
+      runtimeAuthority: { socketPath: SOCKET_PATH },
+      schemaVersion: 4,
     });
 
     progress.phase("exercise exact-container stop and start");

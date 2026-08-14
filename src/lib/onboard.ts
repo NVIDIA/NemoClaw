@@ -1523,6 +1523,7 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
 
 async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
+  portableRuntimeAuthority: import("./state/onboard-checkpoint-types").CheckpointPortableRuntimeAuthority | null,
   computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
   managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   tempManagedRuntime: boolean,
@@ -1946,6 +1947,7 @@ async function createSandboxWithBaseImageResolution(
       sandboxEnv,
       sandboxStartupCommand,
       lifecycleGeneration: createdSandboxLifecycle.generation,
+      portableRuntimeAuthority,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -3559,6 +3561,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             withSandboxPortReservationScope((dashboardPortReservationScope) =>
               createSandboxWithBaseImageResolution(
                 baseImageResolutionContext,
+                lockedRuntime.preparedPortableAuthority,
                 onboardingComputePlan,
                 opts.managedWorkloadRebuild ?? null,
                 opts.tempManagedRuntime === true,
