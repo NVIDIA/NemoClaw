@@ -370,15 +370,12 @@ describe("Hermes inference switch command shape", () => {
     });
   });
 
-  it("falls back to no-verify only after transient route verification fails", async () => {
-    const command = vi
-      .fn()
-      .mockResolvedValueOnce({
-        exitCode: 1,
-        stderr: "failed to verify inference endpoint: failed to connect",
-        stdout: "",
-      })
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
+  it("keeps a transient route verification exhaustion failed", async () => {
+    const command = vi.fn().mockResolvedValueOnce({
+      exitCode: 1,
+      stderr: "failed to verify inference endpoint: failed to connect",
+      stdout: "",
+    });
     const compatibleBinding = compatibleAnthropicSwitchBinding(
       "http://host.openshell.internal:18766/v1",
       { COMPATIBLE_ANTHROPIC_API_KEY: "switch-key" },
@@ -391,10 +388,10 @@ describe("Hermes inference switch command shape", () => {
         compatibleAnthropicMetadataArgs(compatibleBinding.endpointUrl),
         { attempts: 1, compatibleBinding, delay: async () => {} },
       ),
-    ).resolves.toMatchObject({ exitCode: 0 });
+    ).resolves.toMatchObject({ exitCode: 1 });
 
     expect(command.mock.calls[0]?.[1]).not.toContain("--no-verify");
-    expect(command.mock.calls[1]?.[1]).toContain("--no-verify");
+    expect(command).toHaveBeenCalledOnce();
     expect(command.mock.calls[0]?.[2]).toMatchObject({
       env: { COMPATIBLE_ANTHROPIC_API_KEY: "switch-key" },
       redactionValues: ["hosted-key", "switch-key"],

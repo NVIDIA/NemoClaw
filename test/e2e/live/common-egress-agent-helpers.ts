@@ -94,6 +94,17 @@ export function agentReplyContainsToken(reply: string, expected: string): boolea
   return compactExpected.length > 0 && compactAgentReply(reply).includes(compactExpected);
 }
 
+/** Recognize transport/provider failures without retrying a successful product response. */
+export function isHermesTransientAgentFailure(httpStatus: string, output: string): boolean {
+  if (httpStatus === "200") return false;
+  return (
+    /^(408|429|5[0-9]{2})$/u.test(httpStatus) ||
+    /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|gateway unavailable|network connection error|DNS error|fetch failed|inference service unavailable/iu.test(
+      output,
+    )
+  );
+}
+
 export function classifyPreContractProviderValidationSkip(
   result: Pick<ShellProbeResult, "stdout" | "stderr">,
 ): CommonEgressProviderValidationSkip {

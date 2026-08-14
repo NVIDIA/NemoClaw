@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentReplyContainsToken,
   classifyPreContractProviderValidationSkip,
+  isHermesTransientAgentFailure,
   parseChatContent,
   parseOpenClawAgentText,
 } from "../live/common-egress-agent-helpers.ts";
@@ -44,6 +45,14 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(
       agentReplyContainsToken("HERMES_REFERENCE\n_AGENT_OK", "HERMES_REFERENCE_AGENT_OK"),
     ).toBe(true);
+  });
+
+  it("retries Hermes agent turns only for explicit transient failures", () => {
+    expect(isHermesTransientAgentFailure("503", "service unavailable")).toBe(true);
+    expect(isHermesTransientAgentFailure("000", "request failed: ECONNRESET")).toBe(true);
+    expect(isHermesTransientAgentFailure("401", "unauthorized")).toBe(false);
+    expect(isHermesTransientAgentFailure("200", "wrong deterministic answer")).toBe(false);
+    expect(isHermesTransientAgentFailure("200", "reply mentions fetch failed")).toBe(false);
   });
 
   it("classifies pre-contract provider validation skips", () => {

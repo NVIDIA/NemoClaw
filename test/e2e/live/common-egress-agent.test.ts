@@ -30,6 +30,7 @@ import {
   agentReplyContainsToken,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
+  isHermesTransientAgentFailure,
   parseChatContent,
   parseOpenClawAgentText,
 } from "./common-egress-agent-helpers.ts";
@@ -495,11 +496,12 @@ async function runOpenClawAgentAssertion(
     )}' stderr='${agent.stderr.slice(0, 240)}'`;
 
     if (attempt < OPENCLAW_AGENT_ATTEMPTS && isOpenClawScopeUpgradePending(combined)) {
-      await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
+      const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
         artifactName: `${args.label}-recover-after-attempt-${attempt}`,
         env: commandEnv(),
         timeoutMs: 120_000,
       });
+      if (recover.exitCode !== 0) break;
       await sleep(attempt * 15_000);
       continue;
     }
@@ -509,7 +511,7 @@ async function runOpenClawAgentAssertion(
       continue;
     }
 
-    if (attempt < OPENCLAW_AGENT_ATTEMPTS) await sleep(5_000);
+    break;
   }
 
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
@@ -588,7 +590,11 @@ async function runHermesAgentAssertion(
       0,
       240,
     )}' body='${body.slice(0, 240)}'`;
-    if (attempt < HERMES_AGENT_ATTEMPTS) await sleep(5_000);
+    if (attempt < HERMES_AGENT_ATTEMPTS && isHermesTransientAgentFailure(httpStatus, response)) {
+      await sleep(attempt * 5_000);
+      continue;
+    }
+    break;
   }
 
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);

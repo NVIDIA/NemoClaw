@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resultText } from "../fixtures/clients/command.ts";
+import type { RetryFailureClass } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -11,6 +12,9 @@ const RATE_LIMIT_OR_SANITIZED_EXTERNAL_RE =
   /HTTP 429|\b429\b|rate[- ]?limit|too many requests|quota|temporar|timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b(redacted|sanitized)\b/i;
 const CREDENTIAL_OR_AUTH_RE =
   /invalid.*(api[_-]?key|credential)|unauthorized|forbidden|HTTP 40[13]\b|\b40[13]\b/i;
+const TRANSIENT_CHAT_FAILURE =
+  /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|rate[- ]?limit/iu;
+const CLOUD_CHAT_HTTP_STATUS_MARKER = "__NEMOCLAW_HTTP_STATUS__:";
 
 export const PRE_CONTRACT_EXTERNAL_PROVIDER_SKIP_REASON =
   "external-provider-validation-unavailable-before-legacy-contract";
@@ -37,6 +41,36 @@ export interface PreContractExternalProviderSkipEvidence {
   artifacts: ShellProbeResult["artifacts"];
   sourceBoundary: typeof PRE_CONTRACT_EXTERNAL_PROVIDER_SOURCE_BOUNDARY;
   removalCondition: typeof PRE_CONTRACT_EXTERNAL_PROVIDER_REMOVAL_CONDITION;
+}
+
+/** Classify a cloud chat failure without retaining provider output in evidence. */
+export function classifyCloudChatFailure(
+  httpStatus: string,
+  transportOutput: string,
+  failure: string,
+  error: unknown,
+): RetryFailureClass {
+  const thrownDetail = error instanceof Error ? error.message : "";
+  if (httpStatus === "429" || /^5\d{2}$/u.test(httpStatus)) return "transient-external";
+  if (TRANSIENT_CHAT_FAILURE.test(`${transportOutput}\n${thrownDetail}`)) {
+    return "transient-external";
+  }
+  return failure === "response was not parseable JSON" ? "malformed-input" : "deterministic";
+}
+
+/** Separate curl's transport-status trailer from the provider response body. */
+export function parseCloudChatResponse(stdout: string): { body: string; httpStatus: string } {
+  const marker = `\n${CLOUD_CHAT_HTTP_STATUS_MARKER}`;
+  const markerIndex = stdout.lastIndexOf(marker);
+  if (markerIndex < 0) return { body: stdout, httpStatus: "" };
+  return {
+    body: stdout.slice(0, markerIndex),
+    httpStatus: stdout.slice(markerIndex + marker.length).trim(),
+  };
+}
+
+export function cloudChatWriteOutArg(): string {
+  return `\n${CLOUD_CHAT_HTTP_STATUS_MARKER}%{http_code}\n`;
 }
 
 function tailForEvidence(text: string, maxLength = 1600): string {

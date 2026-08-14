@@ -36,13 +36,19 @@ export const HERMES_SANDBOX =
 validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
 export const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS, 300);
-const INSTALL_ATTEMPTS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
+const INSTALL_ATTEMPTS = boundedAttempts(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
 
 type AgentTurnProgress = Pick<TestProgress, "activity" | "event" | "onOutput">;
 
 function positiveInt(value: string | undefined, fallback: number): number {
   return value && /^[1-9][0-9]*$/u.test(value) ? Number.parseInt(value, 10) : fallback;
+}
+
+function boundedAttempts(value: string | undefined, fallback: number): number {
+  const attempts = positiveInt(value, fallback);
+  if (attempts > 10) throw new Error("install attempts must be between 1 and 10");
+  return attempts;
 }
 
 export function env(
