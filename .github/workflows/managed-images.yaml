@@ -1160,6 +1160,11 @@ jobs:
             fi
           done
           merged_ca=/tmp/nemoclaw-ca-bundle.pem
+          merged_ca_status="$(docker exec "$entrypoint_container" stat -c '%u:%g:%a' "$merged_ca")"
+          if [ "$merged_ca_status" != "0:0:444" ]; then
+            echo "ERROR: the Pi candidate merged CA bundle is not protected: $merged_ca_status" >&2
+            exit 1
+          fi
           for ca_variable in \
             SSL_CERT_FILE \
             CURL_CA_BUNDLE \

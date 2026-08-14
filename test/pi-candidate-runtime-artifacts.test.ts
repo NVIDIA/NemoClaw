@@ -87,6 +87,23 @@ describe("Pi candidate runtime artifacts", () => {
     );
   });
 
+  it("rejects a resolved archive without canonical SHA-512 integrity", () => {
+    const sources = currentSources();
+    const lock = JSON.parse(sources.lock) as {
+      packages: Record<string, { integrity?: string }>;
+    };
+    const location =
+      "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core";
+    delete lock.packages[location]?.integrity;
+    const failures = verifyPiCandidateArtifacts({
+      ...sources,
+      lock: `${JSON.stringify(lock, null, 2)}\n`,
+    });
+    expect(failures).toContain(
+      `agents/pi/pi-runtime/package-lock.json: resolved archives must use committed SHA-512 integrity: ${location}`,
+    );
+  });
+
   it("rejects an install that re-enables package lifecycle scripts", () => {
     const sources = currentSources();
     const failures = verifyPiCandidateArtifacts({
@@ -264,6 +281,8 @@ describe("Pi release cohort separation", () => {
     }
     expect(entrypointStep).toContain("source /tmp/nemoclaw-proxy-env.sh");
     expect(entrypointStep).toContain("merged_ca=/tmp/nemoclaw-ca-bundle.pem");
+    expect(entrypointStep).toContain("merged_ca_status");
+    expect(entrypointStep).toContain('!= "0:0:444"');
     expect(entrypointStep).toContain(
       'fs.readFileSync("/usr/local/share/nemoclaw/corporate-ca.pem")',
     );
@@ -352,6 +371,10 @@ describe("Pi runtime boundaries", () => {
     expect(startSh.indexOf("merge_corporate_proxy_ca()")).toBeLessThan(
       startSh.indexOf("prepare_runtime_env()"),
     );
+    expect(startSh.indexOf("\nmerge_corporate_proxy_ca\n")).toBeLessThan(
+      startSh.indexOf("exec /usr/bin/setpriv"),
+    );
+    expect(startSh).toContain('!= "0:0:444"');
   });
 
   // source-shape-contract: security -- A merged CA variable that prepare_runtime_env does not persist is unavailable to independent login and exec shells, which read only the persisted runtime-env file

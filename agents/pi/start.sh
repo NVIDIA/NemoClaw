@@ -51,8 +51,10 @@ unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
 # The published managed image uses uid 0 as its OCI entry user so every start
-# can repair the protected workspace boundary before dropping to the sandbox
-# user. A sandbox-user image verifies the image-baked boundary instead.
+# can repair the protected workspace boundary and create the protected merged
+# CA bundle before dropping to the sandbox user. A sandbox-user image verifies
+# the image-baked boundary instead.
+_NEMOCLAW_PI_DROP_PRIVILEGES=0
 if [ "$(id -u)" -eq 0 ]; then
   if ! verify_pi_shell_init; then
     printf '%s\n' '[SECURITY] Managed Pi shell initialization files are missing or unsafe.' >&2
@@ -61,10 +63,8 @@ if [ "$(id -u)" -eq 0 ]; then
   chown root:sandbox /sandbox
   chmod 1775 /sandbox
   install -d -o sandbox -g sandbox -m 0700 "$NEMOCLAW_PI_STATE_DIR"
-  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-    /usr/local/bin/nemoclaw-start "$@"
-fi
-if ! verify_pi_shell_init; then
+  _NEMOCLAW_PI_DROP_PRIVILEGES=1
+elif ! verify_pi_shell_init; then
   printf '%s\n' '[SECURITY] Pi shell initialization files are not protected; rebuild this sandbox.' >&2
   exit 1
 fi
@@ -72,10 +72,10 @@ fi
 export PI_OFFLINE=1
 export PI_TELEMETRY=0
 
-# Harden RLIMITs (nproc + nofile) for the long-running Pi process tree. Like the
-# Deep Agents Code entrypoint this runs as the non-root sandbox user, which can
-# still lower the inherited limits. Connect and exec shells are hardened
-# independently by the system-wide profile hooks.
+# Harden RLIMITs (nproc + nofile) for the long-running Pi process tree. The
+# initial root pass lowers the inherited limits before the privilege transition;
+# the sandbox-user pass verifies the same exact values. Connect and exec shells
+# are hardened independently by the system-wide profile hooks.
 _NEMOCLAW_SANDBOX_RLIMITS="/usr/local/lib/nemoclaw/sandbox-rlimits.sh"
 if [ ! -f "$_NEMOCLAW_SANDBOX_RLIMITS" ]; then
   _NEMOCLAW_SANDBOX_RLIMITS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-rlimits.sh"
@@ -171,6 +171,7 @@ export no_proxy="$_NO_PROXY_VAL"
 # stays intact) — and repoint the CA env vars at the merged bundle so
 # curl/python/git/node all trust both roots.
 _NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
+readonly _NEMOCLAW_MERGED_CA_FILE="/tmp/nemoclaw-ca-bundle.pem"
 # Concise, secret-free warning when a baked corporate CA fails to merge at
 # runtime. Names the failed step + target path only (never certificate bytes)
 # so an operator can distinguish "no CA was baked" from "runtime merge failed".
@@ -178,6 +179,33 @@ _nemoclaw_ca_merge_warn() {
   echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
 }
 merge_corporate_proxy_ca() {
+  if [ "${_NEMOCLAW_CORPORATE_CA_ROOT_PHASE:-}" = "1" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      echo "[nemoclaw] refusing an externally supplied corporate CA root-phase marker" >&2
+      exit 1
+    fi
+    [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ] || return 0
+    for _ca_variable in \
+      SSL_CERT_FILE \
+      CURL_CA_BUNDLE \
+      REQUESTS_CA_BUNDLE \
+      GIT_SSL_CAINFO \
+      NODE_EXTRA_CA_CERTS; do
+      if [ "${!_ca_variable:-}" != "$_NEMOCLAW_MERGED_CA_FILE" ]; then
+        echo "[nemoclaw] refusing an invalid root-to-sandbox corporate CA environment handoff" >&2
+        exit 1
+      fi
+    done
+    if [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MERGED_CA_FILE" 2>/dev/null || true)" != "0:0:444" ]; then
+      echo "[nemoclaw] refusing an invalid root-to-sandbox corporate CA handoff" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ]; then
+    echo "[nemoclaw] refusing an unpaired corporate CA merge marker" >&2
+    exit 1
+  fi
   # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
   # symlink makes the merge below read the link target instead, adding
   # attacker-selected bytes to the trust bundle that curl, python, git, and node
@@ -196,14 +224,14 @@ merge_corporate_proxy_ca() {
   elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
     _base_bundle="/etc/ssl/certs/ca-certificates.crt"
   fi
-  _merged="/tmp/nemoclaw-ca-bundle.pem"
-  # Trust-anchor path safety (#6210): in the normal container start this
-  # entrypoint runs as root (the step-down prefix wraps only the later agent
-  # commands, not this top-level merge), so the merged bundle is written
-  # root-owned 0444 — the non-root sandbox user that the agent later runs as
-  # inherits SSL_CERT_FILE but cannot rewrite it. The predictable /tmp path is
-  # still handled safely: it is built in a fresh mktemp sibling and atomically
-  # renamed into place; a pre-planted symlink at the target is dropped first
+  _merged="$_NEMOCLAW_MERGED_CA_FILE"
+  # Trust-anchor path safety (#6210): in the normal container start the initial
+  # entrypoint phase runs as root through this merge, so the merged bundle is
+  # written root-owned 0444 before the process drops privileges. The non-root
+  # sandbox user inherits SSL_CERT_FILE but cannot rewrite it. The predictable
+  # /tmp path is still handled safely: it is built in a fresh mktemp sibling and
+  # atomically renamed into place; a pre-planted symlink at the target is
+  # dropped first
   # (below); and rename(2) replaces the target link/file rather than writing
   # through it, so a pre-planted symlink or file cannot redirect the write. On a
   # non-root start the whole entrypoint (and the agent) is the same sandbox user,
@@ -293,6 +321,18 @@ PY_APPEND_CORPORATE_CA
   echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
 }
 merge_corporate_proxy_ca
+
+if [ "$_NEMOCLAW_PI_DROP_PRIVILEGES" -eq 1 ]; then
+  if [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ] \
+    && [ "$(stat -c '%u:%g:%a' "$_NEMOCLAW_MERGED_CA_FILE" 2>/dev/null || true)" != "0:0:444" ]; then
+    printf '%s\n' '[SECURITY] Merged corporate CA bundle is not protected; refusing to drop privileges.' >&2
+    exit 1
+  fi
+  export _NEMOCLAW_CORPORATE_CA_ROOT_PHASE=1
+  exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+    /usr/local/bin/nemoclaw-start "$@"
+fi
+unset _NEMOCLAW_PI_DROP_PRIVILEGES
 
 write_export_if_set() {
   local name="$1"

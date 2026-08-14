@@ -60,10 +60,23 @@ function readManifestField(source: string, name: string): string | null {
 
 function lockedPiRelease(lock: string): { version: string | null; integrity: string | null } {
   const parsed = JSON.parse(lock) as {
-    packages?: Record<string, { integrity?: string; version?: string }>;
+    packages?: Record<string, { integrity?: string; resolved?: string; version?: string }>;
   };
   const entry = parsed.packages?.[`node_modules/${PI_PACKAGE}`];
   return { version: entry?.version ?? null, integrity: entry?.integrity ?? null };
+}
+
+function resolvedArchivesWithoutIntegrity(lock: string): string[] {
+  const parsed = JSON.parse(lock) as {
+    packages?: Record<string, { integrity?: string; resolved?: string }>;
+  };
+  return Object.entries(parsed.packages ?? {})
+    .filter(
+      ([, entry]) =>
+        typeof entry.resolved === "string" &&
+        !/^sha512-[A-Za-z0-9+/]{86}==$/u.test(entry.integrity ?? ""),
+    )
+    .map(([location]) => location);
 }
 
 function declaredPiDependency(packageJson: string): string | null {
@@ -78,6 +91,12 @@ function verifyPinnedIdentity(sources: PiArtifactSources): string[] {
   const manifestVersion = readManifestField(sources.manifest, "expected_version");
   if (!locked.version || !locked.integrity) {
     return [`agents/pi/pi-runtime/package-lock.json: ${PI_PACKAGE} is not locked`];
+  }
+  const archivesWithoutIntegrity = resolvedArchivesWithoutIntegrity(sources.lock);
+  if (archivesWithoutIntegrity.length > 0) {
+    failures.push(
+      `agents/pi/pi-runtime/package-lock.json: resolved archives must use committed SHA-512 integrity: ${archivesWithoutIntegrity.join(", ")}`,
+    );
   }
   if (declared !== locked.version) {
     failures.push(

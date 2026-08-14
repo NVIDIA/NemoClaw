@@ -10,7 +10,7 @@ Update it whenever `agents/pi/pi-runtime/package-lock.json` changes.
 - npm integrity: `sha512-ncAqFrG+iybuPGOhMiZoEHkEzTpJgz3guYD32pD+M7ucc0WeHmauP6wa7qwP8V/KWvsZDVNa5XGsdZ7fkC7w7A==`
 - npm SHA-1: `e098cada629fdeeb9df6e77c6d480d43e1b2c553`
 - Lockfile: `agents/pi/pi-runtime/package-lock.json`
-- Lockfile SHA-256: `cb3b55f3885a5cf421f8cbfe569eab6b5f173b23506387779663598398fae723`
+- Lockfile SHA-256: `6267ec58e69fc6cd53d3c753f28b0e25c00f4befdcae63e8e4924bee2abf0712`
 - Locked packages: 144
 - Audit command: `npm --prefix agents/pi/pi-runtime audit --omit=dev`
 - Audit date: August 14, 2026
@@ -20,10 +20,10 @@ Update it whenever `agents/pi/pi-runtime/package-lock.json` changes.
 The package and integrity values match the accepted decision record for the Pi 0.84.1 candidate.
 The image build asserts the version against `package.json` and the integrity value against the lockfile before installing, so an edited pin fails the build instead of shipping.
 
-The base image installs the graph with `npm ci --omit=dev --ignore-scripts`, so npm verifies every resolved tarball against its locked integrity value and no install lifecycle script runs during the build.
-The published package declares `hasShrinkwrap`, so its own transitive resolution is fixed by the upstream shrinkwrap rather than re-resolved per build.
+The base image installs the graph with `npm ci --omit=dev --ignore-scripts`, so npm verifies all 144 resolved tarballs against committed SHA-512 integrity values and no install lifecycle script runs during the build.
+The published package declares `hasShrinkwrap`, so its own transitive resolution is fixed by the upstream shrinkwrap rather than re-resolved per build. The upstream shrinkwrap omitted integrity for six nested `@earendil-works` archives; the committed NemoClaw lockfile supplies the registry-published SHA-512 values, independently confirmed against the downloaded tarball bytes on August 14, 2026.
 The install is pinned to one exact version: a later Pi release requires a new dependency review, new integrity values, and new image digests.
 
 The base image, the final image, and the startup entrypoint each set `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 NemoClaw does not check what the Pi runtime does with those values; the deny-by-default network policy in `agents/pi/policy-additions.yaml` is the enforced control, and it allows only the managed inference route.
-The installed tree is owned by root and carries no group or other write bit, so the sandbox user cannot replace the runtime it executes.
+The installed tree is owned by root and carries no group or other write bits, so the sandbox user cannot replace the runtime it executes.
