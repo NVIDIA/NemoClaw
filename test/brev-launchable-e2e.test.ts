@@ -247,7 +247,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_SCHEMA_VERSION: String(options.schemaVersion ?? 1),
     FAKE_SSH_ATTEMPTS: sshAttempts,
     FAKE_SSH_DEFAULT_ERROR:
-      "default SSH safe detail; password=default-secret; host=default.hidden.internal",
+      "default SSH safe detail; kex_exchange_identification; password=default-secret; host=default.hidden.internal",
     FAKE_SSH_DEFAULT_STATUS: String(options.sshDefaultStatus ?? 33),
     FAKE_SSH_HOST_ERROR:
       options.sshHostError ??
@@ -457,6 +457,10 @@ describe("focused staging Brev Launchable lane", () => {
     );
     expect(output).toContain("Readiness direct host SSH last failure: status 34; error:");
     expect(output).toContain("host SSH safe detail");
+    expect(output).toContain(
+      "Readiness initial default Brev container probe: status 33; error: default SSH safe detail",
+    );
+    expect(output).toContain("kex_exchange_identification");
     expect(output).toContain(
       "Readiness classification: initial default Brev container probe failed; direct host SSH did not succeed before deadline",
     );

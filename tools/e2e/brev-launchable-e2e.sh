@@ -85,7 +85,21 @@ data = re.sub(
 )
 data = re.sub(r"(?i)(connect to host|resolve hostname)\s+\S+", r"\1 [REDACTED HOST]", data)
 data = re.sub(r"(?i)\b(?:nvapi-|gh[pousr]_)[A-Za-z0-9_-]+", "[REDACTED]", data)
-data = re.sub(r"(?<![A-Za-z0-9])[A-Za-z0-9_./+=-]{20,}(?![A-Za-z0-9])", "[REDACTED]", data)
+def redact_generic_token(match):
+    value = match.group(0)
+    if value in {
+        "client_loop_send_disconnect",
+        "kex_exchange_identification",
+        "ssh_exchange_identification",
+    }:
+        return value
+    return "[REDACTED]"
+
+data = re.sub(
+    r"(?<![A-Za-z0-9])[A-Za-z0-9_./+=-]{20,}(?![A-Za-z0-9])",
+    redact_generic_token,
+    data,
+)
 data = re.sub(r"https?://[^/\s]+", "[REDACTED ADDRESS]", data)
 data = re.sub(r"(?<![\w])(?:\d{1,3}\.){3}\d{1,3}(?![\w])", "[REDACTED ADDRESS]", data)
 data = re.sub(
@@ -155,7 +169,7 @@ wait_for_host_ssh() {
   local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
   local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
-  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error
+  local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error container_error
   local container_probed=0 container_status=1 attempts=0
   local refresh_status=1 ssh_status=1
   local last_refresh_error="" last_refresh_failure_status=""
@@ -174,7 +188,7 @@ wait_for_host_ssh() {
   remaining=$((deadline - SECONDS))
   if [ "$remaining" -gt 0 ]; then
     ssh_timeout=$((remaining < 15 ? remaining : 15))
-    run_bounded_probe "$ssh_timeout" "" container_status \
+    run_bounded_probe "$ssh_timeout" container_error container_status \
       ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
     container_probed=1
   fi
@@ -219,6 +233,11 @@ wait_for_host_ssh() {
     log "Readiness direct host SSH last failure: status $last_ssh_failure_status; error: $last_ssh_error"
   else
     log "Readiness direct host SSH last failure: none"
+  fi
+  if [ "$container_probed" -eq 0 ]; then
+    log "Readiness initial default Brev container probe: not probed"
+  else
+    log "Readiness initial default Brev container probe: status $container_status; error: $container_error"
   fi
   if [ "$container_probed" -eq 0 ]; then
     log "Readiness classification: default Brev container and direct host SSH were not probed before deadline"
