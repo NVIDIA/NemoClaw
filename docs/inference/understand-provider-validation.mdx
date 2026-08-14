@@ -16,6 +16,9 @@ The exact request depends on the provider API that the agent uses.
 
 When credential validation fails, the onboarding wizard lets you re-enter the API key, choose another provider, retry, or exit.
 NemoClaw retries transient upstream failures before it reports a provider failure.
+After a fatal provider or inference-validation failure before sandbox creation, NemoClaw attempts to release an unowned NemoClaw-managed OpenShell gateway and remove its registration so provider credentials do not remain in a live process.
+It preserves a gateway that another registered sandbox uses, an external supervisor owns, or whose teardown authority cannot be proven.
+If listener release cannot be confirmed, NemoClaw keeps the gateway registration for recovery and reports the remaining listener.
 
 The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 OpenRouter keys must be non-empty and begin with `sk-or-`.
