@@ -14,7 +14,7 @@ import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-describe("standard E2E execution profile boundary", () => {
+describe("standard E2E execution profile", () => {
   it("accepts the catalogue callers and reusable profile", () => {
     expect(validateStandardProfileWorkflowBoundary(readWorkflow())).toEqual([]);
   });
@@ -54,7 +54,19 @@ describe("standard E2E execution profile boundary", () => {
     );
   });
 
-  it("rejects catalogue callers without dispatch-bound manual PR risk-signal identity", () => {
+  it("rejects catalogue callers that bypass E2E credential authorization (#9047)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { with: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-brave-nvidia-inference"]!.with.trusted_main =
+      "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-brave-nvidia-inference must pass trusted_main from the catalogue matrix",
+    );
+  });
+
+  it("passes checkout_sha and the correlation ID from the catalogue matrix", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { with: Record<string, string> }>;
     };
@@ -71,22 +83,29 @@ describe("standard E2E execution profile boundary", () => {
     );
   });
 
-  it("rejects target display-name and credential-boundary drift", () => {
+  it("uses the planned target display name", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { name: string; with: Record<string, string> }>;
     };
     workflow.jobs["catalogue-standard"]!.name = "${{ matrix.id }}";
-    workflow.jobs["catalogue-nvidia-api"]!.with.credential_boundary = "NVIDIA inference API key";
 
-    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
-      expect.arrayContaining([
-        "catalogue-standard must use the planned outcome-first display name",
-        "catalogue-nvidia-api must pass credential_boundary from the catalogue matrix",
-      ]),
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-standard must use the planned outcome-first display name",
     );
   });
 
-  it("rejects shared host, telemetry, secret, and artifact drift", () => {
+  it("passes each profile's credential description from the catalogue matrix", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { with: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-nvidia-api"]!.with.credential_boundary = "NVIDIA inference API key";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
+      "catalogue-nvidia-api must pass credential_boundary from the catalogue matrix",
+    );
+  });
+
+  it("rejects changes to shared setup, credentials, telemetry, and artifact paths", () => {
     const profile = YAML.parse(
       fs.readFileSync(
         path.join(REPO_ROOT, ".github", "workflows", "e2e-standard-profile.yaml"),
@@ -272,7 +291,7 @@ describe("standard E2E execution profile boundary", () => {
     }
   });
 
-  it("rejects checkout, credential guard, target execution, and cleanup drift", () => {
+  it("keeps checkout, credential cleanup, target execution, and artifact upload in order", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-standard-profile-"));
     const profilePath = path.join(tmp, "profile.yaml");
     const profile = YAML.parse(
@@ -336,7 +355,7 @@ describe("standard E2E execution profile boundary", () => {
       expect(validateStandardProfileWorkflowBoundary(readWorkflow(), profilePath)).toEqual(
         expect.arrayContaining([
           "standard E2E profile checkout action must use a full commit SHA",
-          "standard E2E profile must check out the exact candidate without credentials",
+          "standard E2E profile must check out checkout_sha without credentials",
           "standard E2E profile Docker Hub auth-required must be guarded by trusted_main",
           "standard E2E profile must install only the planned host packages with the reviewed action",
           "standard E2E profile must install host dependencies before workspace prep",

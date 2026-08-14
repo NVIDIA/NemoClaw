@@ -222,6 +222,7 @@ function installReleaseGateStubs(
   fixture: Fixture,
   qualification: "failed-unwaived" | "missing" | "success" | "waived" | "waived-invalid",
   originRemote: string,
+  waiverEvidenceJson?: string,
 ): string {
   const binDir = path.join(fixture.root, `release-gate-bin-${qualification}`);
   fs.mkdirSync(binDir);
@@ -244,11 +245,14 @@ exec ${shellQuote(realGit)} "$@"
   );
   const waiverDownload =
     qualification === "waived"
-      ? `destination="\${!#}"
+      ? waiverEvidenceJson === undefined
+        ? `destination="\${!#}"
 candidate="$(${shellQuote(realGit)} rev-parse origin/main)"
 cat >"\${destination}/waiver.json" <<JSON
 {"schemaVersion":1,"kind":"nemoclaw-release-qualification-waiver-v1","candidateSha":"\${candidate}","workflowRunId":123,"workflowRunAttempt":1,"actor":"release-admin","triggeringActor":"release-admin","reason":"Brev credential expired","jobs":[{"id":"staging-brev-launchable","result":"failure"}]}
 JSON`
+        : `destination="\${!#}"
+printf '%s\n' ${shellQuote(waiverEvidenceJson)} >"\${destination}/waiver.json"`
       : "exit 1";
   fs.writeFileSync(
     path.join(binDir, "gh"),
@@ -272,6 +276,72 @@ esac
   fs.chmodSync(path.join(binDir, "gh"), 0o755);
   return binDir;
 }
+
+type WaiverEvidence = {
+  schemaVersion: number;
+  kind: string;
+  candidateSha: string;
+  workflowRunId: number;
+  workflowRunAttempt: number;
+  actor: string;
+  triggeringActor: string;
+  reason: string;
+  jobs: Array<{ id: string; result: string }>;
+};
+
+function validWaiverEvidence(candidateSha: string): WaiverEvidence {
+  return {
+    schemaVersion: 1,
+    kind: "nemoclaw-release-qualification-waiver-v1",
+    candidateSha,
+    workflowRunId: 123,
+    workflowRunAttempt: 1,
+    actor: "release-admin",
+    triggeringActor: "release-admin",
+    reason: "Brev credential expired",
+    jobs: [{ id: "staging-brev-launchable", result: "failure" }],
+  };
+}
+
+const INVALID_WAIVER_EVIDENCE_CASES: Array<
+  [string, (evidence: WaiverEvidence) => Record<string, unknown>]
+> = [
+  ["schema version", (evidence) => ({ ...evidence, schemaVersion: 2 })],
+  ["kind", (evidence) => ({ ...evidence, kind: "untrusted-waiver" })],
+  ["candidate commit", (evidence) => ({ ...evidence, candidateSha: "0".repeat(40) })],
+  ["workflow run ID", (evidence) => ({ ...evidence, workflowRunId: 124 })],
+  ["workflow run attempt", (evidence) => ({ ...evidence, workflowRunAttempt: 2 })],
+  ["dispatch actor", (evidence) => ({ ...evidence, actor: "-invalid" })],
+  ["triggering actor", (evidence) => ({ ...evidence, triggeringActor: "invalid-" })],
+  ["reason", (evidence) => ({ ...evidence, reason: "short" })],
+  ["jobs type", (evidence) => ({ ...evidence, jobs: "not-an-array" })],
+  ["empty jobs", (evidence) => ({ ...evidence, jobs: [] })],
+  [
+    "duplicate job IDs",
+    (evidence) => ({
+      ...evidence,
+      jobs: [evidence.jobs[0], { ...evidence.jobs[0], result: "success" }],
+    }),
+  ],
+  [
+    "job ID",
+    (evidence) => ({ ...evidence, jobs: [{ id: "Invalid Job", result: "failure" }] }),
+  ],
+  [
+    "job result",
+    (evidence) => ({
+      ...evidence,
+      jobs: [{ id: "staging-brev-launchable", result: "cancelled" }],
+    }),
+  ],
+  [
+    "failed-job presence",
+    (evidence) => ({
+      ...evidence,
+      jobs: [{ id: "staging-brev-launchable", result: "success" }],
+    }),
+  ],
+];
 
 function createPlan(
   fixture: Fixture,
@@ -669,6 +739,37 @@ describe("release-latest-tag.sh", () => {
       "workflow evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/123 (conclusion: failure)",
     );
   });
+
+  it.each(INVALID_WAIVER_EVIDENCE_CASES)(
+    "rejects a failed workflow whose waiver artifact has an invalid %s",
+    (_field, invalidEvidence) => {
+      const fixture = createFixture();
+      pushTag(fixture, "v0.0.1", fixture.firstCommit);
+      const releaseCommit = commit(fixture, "planned release commit");
+      const planPath = path.join(fixture.root, "release", "plan.json");
+      createPlan(fixture, planPath, releaseCommit);
+      const originRemote = "git@github.com:NVIDIA/NemoClaw";
+      rewritePlanOrigin(planPath, originRemote);
+      const evidence = invalidEvidence(validWaiverEvidence(releaseCommit));
+      const binDir = installReleaseGateStubs(
+        fixture,
+        "waived",
+        originRemote,
+        JSON.stringify(evidence),
+      );
+
+      const result = runScript(
+        fixture.work,
+        ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+        { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
+      );
+    },
+  );
 
   it("rejects a failed workflow run when Release qualification also fails", () => {
     const fixture = createFixture();

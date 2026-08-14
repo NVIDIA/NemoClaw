@@ -3,14 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Set Up llama.cpp"
 sidebar-title: "Set Up llama.cpp"
-description: "Attach an existing llama.cpp server or use the experimental managed NVIDIA Nemotron recipe on DGX Spark."
-description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or the experimental declarative managed recipe on DGX Spark."
-keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "nemotron gguf"]
+description: "Attach an existing llama.cpp server or select an experimental managed llama.cpp profile."
+description-agent: "Sets up llama.cpp for NemoClaw. Use for an authenticated existing server or an experimental declarative managed profile."
+keywords: ["nemoclaw llama.cpp", "llama.cpp dgx spark", "managed llama.cpp", "muse glimmer gguf", "nemotron gguf"]
 content:
   type: "how_to"
 ---
 NemoClaw provides two first-class llama.cpp paths.
-You can attach an authenticated server that you operate, or let NemoClaw materialize one repository-owned recipe on DGX Spark.
+You can attach an authenticated server that you operate, or let NemoClaw select and materialize a compatible repository-owned profile.
 Both paths are experimental and use OpenAI Chat Completions through `https://inference.local/v1`.
 
 ## Choose a llama.cpp Path
@@ -18,11 +18,11 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
 | Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed DGX Spark | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The qualified Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental NVIDIA Nemotron recipe without managing llama-server directly. |
+| Managed DGX Spark | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The qualified Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental Muse Glimmer or NVIDIA Nemotron profile without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
-Managed llama.cpp instead runs one exact GGUF recipe with one request slot and no general launch-flag overrides.
+Managed llama.cpp instead runs an exact repository-owned GGUF recipe with one request slot and no general launch-flag overrides.
 Refer to [Choose a Local Inference Server](choose-local-inference-server) for the complete comparison.
 
 ## Attach an Existing llama.cpp Server
@@ -78,7 +78,8 @@ That path supports operator-selected endpoints and ports without claiming llama.
 ## Install Managed llama.cpp on DGX Spark
 
 Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
-The default recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+The recommended recipe serves Meta Muse Glimmer 30B through the OpenAI Chat Completions API.
+The NVIDIA Nemotron 3 Nano 30B-A3B recipe remains available as a lower-priority profile.
 
 <Note>
 This path is an experimental implementation.
@@ -86,6 +87,7 @@ It does not establish a supported agent, model, and runtime tuple until the prot
 The protected qualification runner requires Docker Engine `28.3.3` or newer and the trusted daemon's default protected NAT and firewall behavior; it re-queries the live daemon and consumes a fresh single-use authority immediately before each temporary loopback publication.
 That requirement supersedes older Docker 27 qualification evidence.
 Ordinary managed onboarding does not publish a Docker port: it retains its no-publication container contract and uses the host-owned private bridge, so this runner-specific version floor does not apply to onboarding.
+The Muse Glimmer profile remains Experimental after bounded physical DGX Spark qualification of text, separated reasoning, and one structured tool call.
 </Note>
 
 Before you start, confirm these prerequisites:
@@ -110,30 +112,71 @@ It creates an owner-only API key, a host-loopback listener on port `8081`, and a
 Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
-Run interactive onboarding on the DGX Spark and select **NVIDIA Nemotron with managed llama.cpp (DGX Spark)**:
+Run interactive onboarding on the DGX Spark:
 
 ```bash
 $$nemoclaw onboard
 ```
 
+NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priority` order.
+During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
+The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
+The NVIDIA Nemotron profile appears next without the recommendation marker.
+Select any listed profile to install its exact repository-owned recipe.
+The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
+
 For non-interactive onboarding, select the repository-owned recipe explicitly:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
-NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.muse-glimmer-30b.spark-single.v1 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-When `NEMOCLAW_LLAMACPP_RECIPE` is unset, NemoClaw selects the one shipped managed llama.cpp recipe.
-Set the variable explicitly in automation so the selected recipe is visible in the invocation.
+Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
+
+For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
+If more than one compatible automatic profile has the highest priority, automatic non-interactive selection stops instead of selecting by catalog order.
+Interactive onboarding lists the tied profiles without a recommendation so you can select an exact recipe.
+For non-interactive onboarding or an explicit provider request, set `NEMOCLAW_LLAMACPP_RECIPE` to an exact recipe ID to select a compatible lower-priority profile or make the selection visible in automation.
+An unknown recipe, an incompatible host, or more than one compatible profile for the requested recipe stops onboarding before installation effects.
 Do not set `NEMOCLAW_MODEL` for this path.
 The repository YAML recipe is authoritative for the exact model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.
 NemoClaw does not provide hidden model, port, image, or launch-flag overrides for the managed path.
 
+The shipped NVIDIA Nemotron recipe continues to use the `nemotron-v3-embedded` chat template.
+A repository recipe that uses an image-owned Jinja template must declare this typed contract:
+
+```yaml
+serve:
+  chatTemplate: container-jinja-file
+  chatTemplateFile: /usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja
+  reasoning:
+    format: deepseek
+    mode: auto
+```
+
+The template path must stay directly under `/usr/local/share/nemoclaw/llama-cpp/chat-templates/`.
+Its base name must start with an alphanumeric character and contain at most 128 alphanumeric, `.`, `_`, or `-` characters before the `.jinja` suffix.
+Subdirectories, path traversal, and host paths are invalid.
+The optional `reasoning` declaration supports only `format: deepseek` with `mode: auto`.
+The `nemotron-v3-embedded` contract rejects both `chatTemplateFile` and `reasoning`; recipes cannot supply arbitrary template or reasoning flags.
+
+The Muse Glimmer recipe uses the Jinja chat template embedded in its GGUF file and pins low reasoning strength:
+
+```yaml
+serve:
+  chatTemplate: model-embedded-jinja
+  chatTemplateArguments:
+    reasoningStrength: low
+```
+
+The typed contract accepts `low`, `medium`, `high`, or `xhigh`, but the selected recipe fixes the value and does not expose an onboarding override.
+
 Onboarding performs these actions:
 
-- Resolves the recipe against a fresh DGX Spark readiness report.
+- Resolves the selected recipe and profile against a fresh host readiness report.
 - Reuses locally present pinned downloader, runtime, and probe images, and pulls only the missing digest-pinned images declared by the recipe.
 - Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
@@ -144,6 +187,9 @@ Onboarding performs these actions:
 The runtime cannot download a model and has no egress on its internal Docker network.
 The recipe disables the Web UI, slot inspection, server tools, agent mode, Model Context Protocol proxy, router, and multimodal projection.
 The API key enters the container through an owner-only read-only file, not a process argument.
+
+The Muse Glimmer profile enables text responses, reasoning, and structured tool calls.
+It does not load a multimodal projector or a DFlash draft model because multimodal projection and speculative decoding remain disabled.
 
 Podman and Kubernetes do not provide the required host-local-inference capability for this path.
 Selecting either runtime fails before model acquisition or runtime mutation and never falls back to Docker.

@@ -356,24 +356,23 @@ describe("runFatalOnboardRuntimePreflight", () => {
     expect(result.sandboxGpuConfig.mode).toBe("0");
   });
 
-  it("admits the read-only host report before portable preparation effects", () => {
+  it("does not duplicate locked portable preparation inside runtime preflight", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
-    mocks.preparePortableExperimentalHost.mockImplementationOnce(() => {
-      throw new Error("portable host prepared");
-    });
     const assess = vi.fn(() => hostWithRuntime("docker"));
 
-    expect(() =>
-      runFatalOnboardRuntimePreflight(
-        {},
-        { nonInteractive: true, assessHost: assess, detectGpu: () => null },
-      ),
-    ).toThrow("portable host prepared");
-    expect(assess).toHaveBeenCalledOnce();
-    expect(mocks.preparePortableExperimentalHost).toHaveBeenCalledWith(process.env);
-    expect(assess.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.preparePortableExperimentalHost.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    runFatalOnboardRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        assessHost: assess,
+        detectGpu: () => null,
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+      },
     );
+    expect(assess).toHaveBeenCalledOnce();
+    expect(mocks.preparePortableExperimentalHost).not.toHaveBeenCalled();
   });
 
   it("defers image and container checks until the caller explicitly runs them", () => {
@@ -642,12 +641,9 @@ describe("readiness-gated runtime preflight", () => {
     expect(calls).toEqual(["gateway", "host", "gateway", "host", "gpu", "bridge"]);
   });
 
-  it("replaces portable host and gateway facts before runtime probe effects", async () => {
+  it("uses the already-qualified portable host facts for runtime probe effects", async () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const calls: string[] = [];
-    mocks.preparePortableExperimentalHost.mockImplementationOnce(() => {
-      calls.push("portable");
-    });
 
     await runReadinessGatedRuntimePreflight(
       {},
@@ -668,16 +664,8 @@ describe("readiness-gated runtime preflight", () => {
       },
     );
 
-    expect(calls).toEqual([
-      "gateway",
-      "host",
-      "portable",
-      "host",
-      "gateway",
-      "host",
-      "gpu",
-      "bridge",
-    ]);
+    expect(calls).toEqual(["gateway", "host", "gateway", "host", "gpu", "bridge"]);
+    expect(mocks.preparePortableExperimentalHost).not.toHaveBeenCalled();
   });
 
   it("does not run image or container checks when refreshed gateway facts block", async () => {

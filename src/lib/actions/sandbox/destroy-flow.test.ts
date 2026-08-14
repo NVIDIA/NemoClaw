@@ -78,6 +78,41 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("stops the routed sandbox proxy after registry removal under the gateway route lock (#9098)", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
+    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.withGatewayRouteMutationLockSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.withGatewayRouteMutationLockSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.stopModelRouterForDestroyedSandboxSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not stop the routed sandbox proxy when registry removal does not complete (#9098)", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      removeSandboxResult: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["--yes", "darwin", { yes: true }, "", true],
     ["NEMOCLAW_NON_INTERACTIVE=1", "darwin", {}, "1", true],
@@ -115,6 +150,8 @@ describe("destroySandbox flow", () => {
 
     expectFailedDeletePreservesHostState(harness, exitSpy);
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("refuses before destructive work when Docker identity cannot be inspected", async () => {

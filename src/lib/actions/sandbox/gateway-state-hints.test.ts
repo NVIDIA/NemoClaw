@@ -100,7 +100,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
 
     const combined = lines.join("\n");
     expect(combined).not.toContain("sandbox has no spec");
-    expect(combined).toContain("openshell gateway start");
+    expect(combined).toContain("no longer configured or its metadata/runtime has been lost");
+    expect(combined).toContain("Start the gateway again with `nemoclaw onboard`.");
   });
 
   it.each([
@@ -381,6 +382,33 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const output = lines.join("\n");
     expect(output).toContain("gateway is still refusing connections after restart");
     expect(output).toContain("If the gateway never becomes healthy");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("names a command that exists when a sandbox-scoped command observes a stopped gateway", async () => {
+    captureOpenshellSpy.mockReturnValue({
+      status: 1,
+      output: "transport error\ntcp connect error\nConnection refused (os error 61)",
+    });
+    const lines: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(
+      gatewayState.ensureLiveSandboxOrExit("instance-a", { gatewayRecovery: "observe" }),
+    ).rejects.toThrow("process.exit(1)");
+
+    const output = lines.join("\n");
+    expect(output).toContain("This sandbox-scoped command will not restart the shared host gateway");
+    expect(output).toContain("Start the gateway again with `nemoclaw onboard`.");
+    expect(output).not.toContain("openshell gateway start");
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
     errorSpy.mockRestore();
     exitSpy.mockRestore();

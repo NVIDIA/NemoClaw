@@ -27,6 +27,42 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
+function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
+  const { unloadOllamaModels } = require("../../inference/ollama/proxy") as {
+    unloadOllamaModels: (onlyModels?: readonly string[]) => void;
+  };
+  unloadOllamaModels(onlyModels);
+}
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox left resident (#9110).
+ *
+ * `stopAll()` and `destroySandbox()` already unload; a plain stop did not, so
+ * the model stayed loaded until Ollama's own idle TTL expired. Best-effort:
+ * the sandbox is already stopped by this point, so GPU cleanup must never
+ * change the exit code.
+ */
+function unloadOllamaModelsBestEffort(
+  sandbox: registry.SandboxEntry,
+  deps: SandboxStopDeps,
+): void {
+  if (!sandbox.provider?.includes("ollama")) return;
+  try {
+    const ownership = require("../../inference/ollama/model-ownership") as typeof import("../../inference/ollama/model-ownership");
+    const proxy = require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy");
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ?? proxy.withOllamaModelOwnershipLock;
+    withOwnershipLock(() => {
+      const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
+      const model = ownership.exclusivelyHeldOllamaModel(sandbox, sandboxes);
+      if (!model) return;
+      (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
+    });
+  } catch {
+    /* Best-effort: a failed unload must not fail the stop. */
+  }
+}
+
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
 export interface SandboxStopDeps {
@@ -35,6 +71,9 @@ export interface SandboxStopDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
+  listSandboxes?: typeof registry.listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -85,6 +124,8 @@ export function stopSandbox(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+
+  unloadOllamaModelsBestEffort(resolved.sandbox, deps);
 
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);

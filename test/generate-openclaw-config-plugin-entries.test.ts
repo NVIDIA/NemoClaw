@@ -89,7 +89,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 
-  it("retains managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
+  it("retains existing plugin allowlist and managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
     const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-union-"));
     const originalEnvironment = { ...process.env };
     const configPath = path.join(tempDirectory, ".openclaw", "openclaw.json");

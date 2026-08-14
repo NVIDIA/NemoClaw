@@ -1178,8 +1178,14 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
     expect(reloaded?.stationExpressIntent).toEqual(sparkIntent);
     // A spark Express run is inherently non-interactive.
     expect(normalizeSession({ ...base, mode: "interactive" } as never)).toBeNull();
-    // provider/model must stay null until provider_selection completes.
+    // Provider and model must remain complete and use the Spark Express provider.
     expect(normalizeSession({ ...base, provider: "vllm-local" } as never)).toBeNull();
+    expect(normalizeSession({ ...base, model: "llama3.1" } as never)).toBeNull();
+    expect(
+      normalizeSession({ ...base, provider: "ollama-local", model: "llama3.1" } as never),
+    ).toBeNull();
+    expect(normalizeSession({ ...base, provider: "vllm-local", model: "" } as never)).toBeNull();
+    expect(normalizeSession({ ...base, provider: "vllm-local", model: "   " } as never)).toBeNull();
   });
 
   it("carries the intent through capture, reload normalization, and resume restore", async () => {

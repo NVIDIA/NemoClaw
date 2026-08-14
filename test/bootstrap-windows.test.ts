@@ -54,12 +54,11 @@ describe("Windows bootstrap WSL distro preflight", () => {
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$script:DockerDesktopExe = 'Docker Desktop.exe'
-$script:DockerCli = 'docker.exe'
 $script:events = @()
 
-function Test-Path { param([string]$LiteralPath) return $true }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $false }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
 function Restart-DockerDesktop { $script:events += 'restart' }
 function Minimize-DockerDesktopWindow { $script:events += 'minimize' }
@@ -85,12 +84,11 @@ $script:events | ConvertTo-Json -Compress
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$script:DockerDesktopExe = 'Docker Desktop.exe'
-$script:DockerCli = 'docker.exe'
 $script:events = @()
 
-function Test-Path { param([string]$LiteralPath) return $true }
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $true }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
 function Restart-DockerDesktop { $script:events += 'restart' }
 function Minimize-DockerDesktopWindow { $script:events += 'minimize' }
@@ -107,6 +105,293 @@ $script:events | ConvertTo-Json -Compress
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
       expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "restart"]);
+    },
+  );
+
+  itPowerShell(
+    "resolves the per-user Docker Desktop path when no machine-wide install exists (#9087)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Program Files'
+$env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$machineExe = 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe'
+$userExe = 'C:\\Users\\tester\\AppData\\Local\\Programs\\DockerDesktop\\Docker Desktop.exe'
+
+function Test-Path { param([string]$LiteralPath) return $LiteralPath -eq $userExe }
+
+[pscustomobject]@{
+    matchesUserInstall = ((Resolve-DockerDesktopPath -Component 'Desktop') -eq $userExe)
+    machineCheckedFirst = ((Get-DockerDesktopCandidatePath -Component 'Desktop')[0] -eq $machineExe)
+    candidateCount = @(Get-DockerDesktopCandidatePath -Component 'Desktop').Count
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed).toEqual({
+        matchesUserInstall: true,
+        machineCheckedFirst: true,
+        candidateCount: 2,
+      });
+    },
+  );
+
+  itPowerShell(
+    "returns the machine-wide Docker Desktop path when both locations contain an install (#9087)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Program Files'
+$env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$machineCli = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
+
+function Test-Path { param([string]$LiteralPath) return $true }
+
+[pscustomobject]@{
+    matchesMachineInstall = ((Resolve-DockerDesktopPath -Component 'Cli') -eq $machineCli)
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed).toEqual({ matchesMachineInstall: true });
+    },
+  );
+
+  itPowerShell(
+    "ignores a caller-provided ProgramFiles path for privileged Docker discovery (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Users\\tester\\attacker-controlled'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+[pscustomobject]@{
+    machineRoot = $script:DockerDesktopMachineRoot
+    usesCallerPath = $script:DockerDesktopMachineRoot.StartsWith($env:ProgramFiles, [System.StringComparison]::OrdinalIgnoreCase)
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.usesCallerPath).toBe(false);
+      expect(parsed.machineRoot).toBe("C:\\Program Files\\Docker\\Docker");
+    },
+  );
+
+  itPowerShell(
+    "names every checked location when no Docker Desktop install is found (#9087)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Program Files'
+$env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+
+function Test-Path { param([string]$LiteralPath) return $false }
+function Test-DockerDesktopRunning { return $true }
+function Start-Process { param([string]$FilePath) $script:messages += "start-$FilePath"; return [pscustomobject]@{} }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += $Message }
+
+Start-DockerDesktop
+
+[pscustomobject]@{
+    output = ($script:messages -join '||')
+    startCount = @($script:messages | Where-Object { $_ -like 'start-*' }).Count
+    candidates = @(Get-DockerDesktopCandidatePath -Component 'Desktop')
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.startCount).toBe(0);
+      expect(parsed.output).toContain("Docker Desktop not found");
+      expect(parsed.candidates).toHaveLength(2);
+      for (const candidate of parsed.candidates as string[]) {
+        expect(parsed.output).toContain(candidate);
+      }
+    },
+  );
+
+  itPowerShell(
+    "treats an unsigned executable as untrusted (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$path = Join-Path $env:TEMP ('untrusted-' + [guid]::NewGuid().ToString('N') + '.exe')
+Set-Content -LiteralPath $path -Value 'not a real executable' -Encoding UTF8
+try {
+    $trusted = Test-DockerDesktopExecutableTrusted -Path $path
+} finally {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+}
+[pscustomobject]@{ trusted = $trusted } | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.trusted).toBe(false);
+    },
+  );
+
+  itPowerShell(
+    "rejects a valid signature from a signer whose name contains Docker (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:signer = [pscustomobject]@{}
+$script:signer | Add-Member -MemberType ScriptMethod -Name GetNameInfo -Value {
+    param($NameType, $ForIssuer)
+    return 'Acme Docker Tools'
+}
+function Get-AuthenticodeSignature {
+    param([string]$LiteralPath)
+    return [pscustomobject]@{ Status = 'Valid'; SignerCertificate = $script:signer }
+}
+
+[pscustomobject]@{
+    trusted = Test-DockerDesktopExecutableTrusted -Path 'Docker Desktop.exe'
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.trusted).toBe(false);
+    },
+  );
+
+  itPowerShell(
+    "accepts a valid signature from the approved Docker signer (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:signer = [pscustomobject]@{}
+$script:signer | Add-Member -MemberType ScriptMethod -Name GetNameInfo -Value {
+    param($NameType, $ForIssuer)
+    return 'Docker Inc'
+}
+function Get-AuthenticodeSignature {
+    param([string]$LiteralPath)
+    return [pscustomobject]@{ Status = 'Valid'; SignerCertificate = $script:signer }
+}
+
+[pscustomobject]@{
+    trusted = Test-DockerDesktopExecutableTrusted -Path 'Docker Desktop.exe'
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.trusted).toBe(true);
+    },
+  );
+
+  itPowerShell(
+    "refuses to launch an untrusted Docker Desktop executable (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+$script:startCalls = @()
+
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($RequireTrusted) { return $null } if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
+function Start-Process { param([string]$FilePath) $script:startCalls += $FilePath; return [pscustomobject]@{} }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
+
+Start-DockerDesktop
+
+[pscustomobject]@{
+    messages = $script:messages
+    startCalls = $script:startCalls
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.startCalls).toEqual([]);
+      expect(
+        (parsed.messages as string[]).some(
+          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  itPowerShell(
+    "skips the Docker engine readiness check for an untrusted Docker CLI (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($RequireTrusted) { return $null } return 'docker.exe' }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
+
+$engineReady = Wait-DockerDesktopEngine -TimeoutSeconds 1
+
+[pscustomobject]@{
+    engineReady = $engineReady
+    messages = $script:messages
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.engineReady).toBe(false);
+      expect(
+        (parsed.messages as string[]).some(
+          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  itPowerShell(
+    "does not restart Docker Desktop through an untrusted Docker CLI (#9114)",
+    `
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+
+function Resolve-DockerDesktopPath { param([string]$Component, [switch]$RequireTrusted) if ($RequireTrusted) { return $null } return 'docker.exe' }
+function Test-DockerDesktopExecutableTrusted { param([string]$Path) return $false }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += "$Level|$Message" }
+
+Restart-DockerDesktop
+
+[pscustomobject]@{
+    messages = $script:messages
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(
+        (parsed.messages as string[]).some(
+          (message) => message.startsWith("ERROR|") && message.includes("not signed by a trusted publisher"),
+        ),
+      ).toBe(true);
     },
   );
 

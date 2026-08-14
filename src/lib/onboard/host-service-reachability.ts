@@ -19,6 +19,10 @@
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { cliName } from "./branding";
+import {
+  isPortableExperimentalProfile,
+  PORTABLE_HOST_GATEWAY_IP,
+} from "./experimental/portable-profile";
 
 export const DEFAULT_PROBE_NETWORK = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -92,9 +96,9 @@ function defaultInspectNetwork(
   return parseNetworkIpamConfig(raw);
 }
 
-// Docker Desktop and VM-backed Docker use a special host-gateway alias rather
-// than a specific bridge IP. UFW is not relevant on those platforms, so we
-// classify probes from those environments as probe_unavailable.
+// Docker Desktop and VM-backed Docker use the runtime's host-gateway alias
+// instead of the inspected bridge IP. These routes do not support native
+// Docker bridge UFW remediation.
 function defaultUsesHostGatewayRoute(): boolean {
   if (process.platform !== "linux") return true;
   const info = dockerCapture(
@@ -154,9 +158,11 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
-  const isHostGateway = usesHostGatewayRoute();
+  const portableProfile = isPortableExperimentalProfile();
+  const isHostGateway = portableProfile ? false : usesHostGatewayRoute();
+  const usesNonBridgeRoute = portableProfile || isHostGateway;
 
-  if (!isHostGateway && !network.gatewayIp) {
+  if (!usesNonBridgeRoute && !network.gatewayIp) {
     return {
       ok: false,
       reason: "probe_unavailable",
@@ -167,7 +173,11 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
-  const hostInternalTarget = isHostGateway ? "host-gateway" : (network.gatewayIp as string);
+  const hostInternalTarget = portableProfile
+    ? PORTABLE_HOST_GATEWAY_IP
+    : isHostGateway
+      ? "host-gateway"
+      : (network.gatewayIp as string);
 
   const probeArgs = [
     "run",
@@ -206,9 +216,9 @@ export async function probeHostServiceSandboxReachability(
     .filter((s): s is string => Boolean(s))
     .join(" | ");
 
-  // Classify as probe_unavailable for: non-nc exit codes, DNS failures,
-  // or host-gateway mode (Docker Desktop / macOS — no UFW concern there).
-  if (result.status !== 1 || isNameResolutionFailure(detail) || isHostGateway) {
+  // Non-nc failures, DNS failures, and host-gateway routes do not prove that
+  // a native Docker bridge UFW rule blocked the connection.
+  if (result.status !== 1 || isNameResolutionFailure(detail) || usesNonBridgeRoute) {
     return {
       ok: false,
       reason: "probe_unavailable",
@@ -216,7 +226,9 @@ export async function probeHostServiceSandboxReachability(
       networkName,
       subnet: network.subnet,
       gatewayIp: network.gatewayIp,
-      detail: detail || "probe did not complete",
+      detail: portableProfile
+        ? "portable host-gateway probe did not connect"
+        : detail || "probe did not complete",
     };
   }
 
