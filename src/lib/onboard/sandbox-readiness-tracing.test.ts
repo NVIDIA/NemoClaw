@@ -86,6 +86,64 @@ describe("createSandboxReadyWaiter", () => {
 });
 
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
+  it("waits for the exact recreated sandbox to become executable before accepting stable Ready (#9050)", () => {
+    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+    const checkReadyIdentity = vi.fn().mockReturnValueOnce("not_ready").mockReturnValue("ready");
+
+    expect(
+      waitForCreatedSandboxReadyWithTrace({
+        sandboxName: NAME,
+        timeoutSecs: 30,
+        runCaptureOpenshell,
+        isSandboxReady,
+        stableReadyPolls: 2,
+        checkReadyIdentity,
+        sleep,
+      }),
+    ).toEqual({ ready: true, reason: "ready", failurePhase: null });
+    expect(checkReadyIdentity).toHaveBeenCalledTimes(3);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops when the recreated sandbox identity changes (#9050)", () => {
+    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+
+    expect(
+      waitForCreatedSandboxReadyWithTrace({
+        sandboxName: NAME,
+        timeoutSecs: 30,
+        runCaptureOpenshell,
+        isSandboxReady,
+        checkReadyIdentity: () => "identity_changed",
+        sleep,
+      }),
+    ).toEqual({ ready: false, reason: "identity_changed", failurePhase: null });
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("stops after an unknown recreated-runtime probe failure (#9050)", () => {
+    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+
+    expect(
+      waitForCreatedSandboxReadyWithTrace({
+        sandboxName: NAME,
+        timeoutSecs: 30,
+        runCaptureOpenshell,
+        isSandboxReady,
+        checkReadyIdentity: () => "probe_failed",
+        sleep,
+      }),
+    ).toEqual({
+      ready: false,
+      reason: "identity_probe_failed",
+      failurePhase: null,
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("does not probe when the readiness deadline is zero (#3768)", () => {
     const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
 

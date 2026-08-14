@@ -206,10 +206,13 @@ fi
 # ---------------------------------------------------------------------------
 info() { printf "${C_CYAN}[INFO]${C_RESET}  %s\n" "$*"; }
 warn() { printf "${C_YELLOW}[WARN]${C_RESET}  %s\n" "$*"; }
-error() {
+error_with_status() {
+  local status="$1"
+  shift
   printf "${C_RED}[ERROR]${C_RESET} %s\n" "$*" >&2
-  exit 1
+  exit "$status"
 }
+error() { error_with_status 1 "$@"; }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
 resolve_nemoclaw_gateway_port() {
@@ -462,14 +465,60 @@ resolve_onboarded_agent() {
   fi
 }
 
+# Read the API port the named sandbox was registered with. Each Hermes sandbox
+# allocates its own, so the forward must target this sandbox's port rather than
+# the default a sibling sandbox may already hold.
+resolve_hermes_api_port() {
+  local registry_file
+  registry_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [[ ! -f "$registry_file" ]] || ! command_exists node; then
+    return 1
+  fi
+  node -e '
+    const fs = require("fs");
+    try {
+      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const sandboxes = data.sandboxes;
+      const name = process.argv[2];
+      if (
+        !sandboxes ||
+        typeof sandboxes !== "object" ||
+        Array.isArray(sandboxes) ||
+        !Object.prototype.hasOwnProperty.call(sandboxes, name)
+      ) {
+        throw new Error("sandbox state is unavailable");
+      }
+      const entry = sandboxes[name];
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error("sandbox state is malformed");
+      }
+      if (!Object.prototype.hasOwnProperty.call(entry, "hermesApiPort")) {
+        process.stdout.write("8642");
+      } else {
+        const port = entry.hermesApiPort;
+        if (!Number.isInteger(port) || port < 8642 || port > 8652) {
+          throw new Error("Hermes API port is malformed");
+        }
+        process.stdout.write(String(port));
+      }
+    } catch {
+      process.exitCode = 1;
+    }
+  ' "$registry_file" "$1" 2>/dev/null
+}
+
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
+  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
 
   case "$agent_name" in
-    hermes) port=8642 ;;
+    hermes)
+      if ! port="$(resolve_hermes_api_port "$sandbox_name")"; then
+        error "Could not restore the Hermes forward because the registered API port for sandbox '$sandbox_name' is unavailable or invalid."
+      fi
+      ;;
     *) return 0 ;;
   esac
 
@@ -511,6 +560,37 @@ restore_onboard_forward_after_post_checks() {
     rm -f "$pid_file"
   fi
 
+  redact_forward_start_diagnostic() {
+    local redactor
+    redactor="$(resolve_repo_root)/dist/lib/security/redact.js"
+    if command_exists node && [[ -f "$redactor" ]] \
+      && node -e '
+        const fs = require("fs");
+        const { redactFull } = require(process.argv[1]);
+        process.stdout.write(redactFull(fs.readFileSync(0, "utf8")));
+      ' "$redactor" 2>/dev/null; then
+      return 0
+    fi
+    printf "<REDACTED>"
+  }
+
+  sanitize_forward_start_diagnostic() {
+    if command_exists node && node -e '
+      const fs = require("fs");
+      const encoded = fs.readFileSync(0).toString("latin1")
+        .replace(/\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/g, "")
+        .replace(/\x9D[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/g, "")
+        .replace(/(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/g, "")
+        .replace(/\x1B[@-_]/g, "");
+      const diagnostic = Buffer.from(encoded, "latin1").toString("utf8")
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
+      process.stdout.write(diagnostic);
+    ' 2>/dev/null; then
+      return 0
+    fi
+    printf "<REDACTED>"
+  }
+
   stop_agent_forward_if_owned() {
     local forward_list owner status
     "$openshell_bin" forward stop "$port" "$sandbox_name" >/dev/null 2>&1 && return 0
@@ -532,12 +612,36 @@ restore_onboard_forward_after_post_checks() {
     fi
   }
 
+  start_diagnostic=""
+  diagnostic_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-forward-start-XXXXXX" 2>/dev/null)" \
+    || diagnostic_file=""
+
   for attempt in 1 2 3; do
     stop_agent_forward_if_owned
     if [ "$attempt" -gt 1 ]; then
       sleep 2
     fi
-    "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    if [[ -n "$diagnostic_file" ]]; then
+      "$openshell_bin" forward start --background "$port" "$sandbox_name" \
+        >"$diagnostic_file" 2>&1 || true
+      start_diagnostic="$(sanitize_forward_start_diagnostic <"$diagnostic_file" | awk '
+        {
+          gsub(/[[:space:]]+/, " ")
+          sub(/^ /, "")
+          sub(/ $/, "")
+          if ($0 != "") joined = (joined == "" ? $0 : joined "; " $0)
+        }
+        END { printf "%s", joined }
+      ' 2>/dev/null || true)"
+      start_diagnostic="$(
+        printf "%s" "$start_diagnostic" | redact_forward_start_diagnostic
+      )"
+      if [[ "${#start_diagnostic}" -gt 300 ]]; then
+        start_diagnostic="${start_diagnostic:0:300} [truncated]"
+      fi
+    else
+      "$openshell_bin" forward start --background "$port" "$sandbox_name" >/dev/null 2>&1 || true
+    fi
     watcher_pid=""
     if [[ "${NEMOCLAW_SKIP_FORWARD_WATCHER:-}" != "1" ]] && command_exists node; then
       watcher_script="${pid_file}.js"
@@ -552,10 +656,27 @@ function healthy() {
     stdio: "ignore",
   }).status === 0;
 }
+function listedStatus() {
+  const listed = spawnSync(openshellBin, ["forward", "list"], { encoding: "utf-8" });
+  if (listed.status !== 0 || typeof listed.stdout !== "string") return null;
+  for (const line of listed.stdout.split("\n")) {
+    const columns = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim().split(/\s+/);
+    if (columns[0] === sandboxName && columns[2] === port) {
+      return (columns[4] || "").toLowerCase();
+    }
+  }
+  return "";
+}
 function tick() {
   if (healthy()) return;
-  run(["forward", "stop", port, sandboxName]);
-  run(["forward", "start", "--background", port, sandboxName]);
+  const status = listedStatus();
+  if (status === null) return;
+  if (status === "dead") {
+    run(["forward", "stop", port, sandboxName]);
+    run(["forward", "start", "--background", port, sandboxName]);
+    return;
+  }
+  if (status === "") run(["forward", "start", "--background", port, sandboxName]);
 }
 tick();
 setInterval(tick, 10_000);
@@ -576,10 +697,12 @@ NODE
     sleep 4
     if command_exists curl \
       && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
       return 0
     fi
     watcher_pid="$(cat "$pid_file" 2>/dev/null || true)"
     if ! command_exists curl && [[ -n "$watcher_pid" ]] && kill -0 "$watcher_pid" >/dev/null 2>&1; then
+      [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
       return 0
     fi
     if [[ -n "$watcher_pid" ]]; then
@@ -587,8 +710,12 @@ NODE
     fi
     rm -f "$pid_file"
   done
+  [[ -n "$diagnostic_file" ]] && rm -f "$diagnostic_file"
 
   warn "Could not restore ${agent_display} host forward on port ${port}."
+  if [[ -n "$start_diagnostic" ]]; then
+    warn "OpenShell reported: ${start_diagnostic}"
+  fi
   warn "Run: openshell forward start --background ${port} ${sandbox_name}"
   return 1
 }
@@ -803,7 +930,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
-  printf "    NEMOCLAW_NO_EXPRESS=1         Skip express install prompt on supported platforms\n"
+  printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    HF_TOKEN                      Optional Hugging Face read token for managed-vLLM downloads\n"
   printf "                                  Create one at https://huggingface.co/settings/tokens and export it before curl | bash.\n"
@@ -1320,6 +1447,8 @@ prefer_user_local_openshell() {
 NEMOCLAW_GATEWAY_SERVICE_MARKER="NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1"
 NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
 NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
+UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
+UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
 
 upstream_openshell_gateway_user_service_installed() {
   [[ "$(uname -s)" == "Linux" ]] || return 1
@@ -1342,8 +1471,7 @@ resolve_openshell_gateway_bin_for_user_service() {
   done < <(
     printf '%s\n' "$exec_start" \
       | grep -oE 'path=[^ ;}]+' \
-      | sed 's/^path=//' \
-      | sort -u
+      | sed 's/^path=//'
   )
   [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
   gateway_bin="${gateway_bins[0]}"
@@ -1351,8 +1479,127 @@ resolve_openshell_gateway_bin_for_user_service() {
   printf '%s\n' "$gateway_bin"
 }
 
+systemd_user_manager_unavailable_diagnostic() {
+  local diagnostic="${1:-}" line recognized=0
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "") ;;
+      "Failed to connect to bus: No medium found" | \
+        "Failed to connect to bus: Host is down" | \
+        "Failed to connect to bus: No such file or directory" | \
+        "System has not been booted with systemd as init system (PID 1). Can't operate." | \
+        "XDG_RUNTIME_DIR is not set in the environment." | \
+        "Failed to connect to bus: \$DBUS_SESSION_BUS_ADDRESS and \$XDG_RUNTIME_DIR not defined (consider using --machine=<user>@.host --user to connect to bus of other user)")
+        recognized=1
+        ;;
+      *) return 1 ;;
+    esac
+  done <<<"$diagnostic"
+  [[ "$recognized" -eq 1 ]]
+}
+
+trusted_upstream_openshell_gateway_unit_for_service() {
+  case "${1:-}" in
+    /usr/local/lib/systemd/user/openshell-gateway.service | \
+      /usr/lib/systemd/user/openshell-gateway.service | \
+      /lib/systemd/user/openshell-gateway.service)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+trusted_upstream_openshell_gateway_bin_for_service() {
+  case "${1:-}" in
+    /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+inspect_upstream_openshell_gateway_user_service() {
+  local service_output service_status line fragment_path="" exec_start="" gateway_bin
+  local fragment_count=0 exec_start_count=0
+  local -a gateway_bins=()
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN=""
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR=""
+
+  if service_output="$(LC_ALL=C systemctl --user show openshell-gateway.service \
+    --property=FragmentPath --property=ExecStart 2>&1)"; then
+    :
+  else
+    service_status=$?
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="systemctl --user show openshell-gateway.service failed: ${service_output:-exit ${service_status}}"
+    if systemd_user_manager_unavailable_diagnostic "$service_output"; then
+      return 2
+    fi
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      FragmentPath=*)
+        fragment_path="${line#FragmentPath=}"
+        fragment_count=$((fragment_count + 1))
+        ;;
+      ExecStart=*)
+        exec_start="${line#ExecStart=}"
+        exec_start_count=$((exec_start_count + 1))
+        ;;
+      "") ;;
+      *)
+        UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service returned unexpected metadata."
+        return 1
+        ;;
+    esac
+  done <<<"$service_output"
+
+  if [[ "$fragment_count" -ne 1 || "$exec_start_count" -ne 1 ]]; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one FragmentPath and one ExecStart value."
+    return 1
+  fi
+  if ! trusted_upstream_openshell_gateway_unit_for_service "$fragment_path"; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway unit path is not trusted: ${fragment_path:-<empty>}"
+    return 1
+  fi
+
+  while IFS= read -r gateway_bin; do
+    gateway_bins+=("$gateway_bin")
+  done < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE 'path=[^ ;}]+' \
+      | sed 's/^path=//'
+  )
+  if [[ "${#gateway_bins[@]}" -ne 1 ]]; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway service did not return one executable path."
+    return 1
+  fi
+  gateway_bin="${gateway_bins[0]}"
+  if ! trusted_upstream_openshell_gateway_bin_for_service "$gateway_bin"; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway executable path is not trusted: $gateway_bin"
+    return 1
+  fi
+  if [[ ! -x "$gateway_bin" ]]; then
+    UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR="The effective upstream OpenShell gateway executable is unavailable: $gateway_bin"
+    return 1
+  fi
+
+  UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN="$gateway_bin"
+}
+
 resolve_upstream_openshell_gateway_bin_for_service() {
-  resolve_openshell_gateway_bin_for_user_service openshell-gateway.service
+  if inspect_upstream_openshell_gateway_user_service; then
+    printf '%s\n' "$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN"
+  else
+    return $?
+  fi
 }
 
 openshell_binary_version() {
@@ -1363,14 +1610,21 @@ openshell_binary_version() {
 }
 
 require_compatible_upstream_openshell_gateway_service() {
-  local nemoclaw_gateway_bin upstream_gateway_bin nemoclaw_version upstream_version
+  local nemoclaw_gateway_bin upstream_gateway_bin nemoclaw_version upstream_version inspect_status
+  if inspect_upstream_openshell_gateway_user_service; then
+    upstream_gateway_bin="$UPSTREAM_OPENSHELL_GATEWAY_SERVICE_BIN"
+  else
+    inspect_status=$?
+    if [[ "$inspect_status" -eq 2 ]]; then
+      return 2
+    fi
+    error "Could not inspect the effective upstream OpenShell gateway user service. ${UPSTREAM_OPENSHELL_GATEWAY_SERVICE_ERROR} Repair that OpenShell installation, then rerun the installer."
+  fi
   nemoclaw_gateway_bin="$(resolve_openshell_gateway_bin_for_service)" \
     || error "Could not locate the NemoClaw OpenShell gateway binary before checking the existing upstream service."
   if ! trusted_openshell_gateway_bin_for_service "$nemoclaw_gateway_bin"; then
     error "OpenShell gateway user service binary path is not a trusted install path: $nemoclaw_gateway_bin"
   fi
-  upstream_gateway_bin="$(resolve_upstream_openshell_gateway_bin_for_service)" \
-    || error "Could not locate the gateway binary used by the existing upstream OpenShell user service. Remove or repair that OpenShell installation, then rerun the installer."
   nemoclaw_version="$(openshell_binary_version "$nemoclaw_gateway_bin")" \
     || error "Could not determine the NemoClaw OpenShell gateway version at $nemoclaw_gateway_bin."
   upstream_version="$(openshell_binary_version "$upstream_gateway_bin")" \
@@ -1431,6 +1685,85 @@ openshell_user_config_home() {
   fi
 }
 
+enabled_openshell_gateway_user_service_activation_path() {
+  local user_config_home user_data_home runtime_dir unit_root activation_dir service_name activation_path
+  local config_dirs data_dirs directory
+  local -a unit_roots=()
+  if [[ -n "${SYSTEMD_UNIT_PATH:-}" ]]; then
+    printf 'SYSTEMD_UNIT_PATH=%q\n' "$SYSTEMD_UNIT_PATH"
+    return 2
+  fi
+  user_config_home="$(openshell_user_config_home)"
+  user_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+  if [[ "$user_data_home" != /* ]]; then
+    printf '%s\n' "$user_data_home"
+    return 2
+  fi
+  unit_roots+=(
+    "${user_config_home}/systemd/user"
+    "${user_config_home}/systemd/user.control"
+    "${user_data_home%/}/systemd/user"
+    "/etc/systemd/user"
+    "/run/systemd/user"
+    "/usr/local/lib/systemd/user"
+    "/usr/lib/systemd/user"
+    "/lib/systemd/user"
+  )
+  config_dirs="${XDG_CONFIG_DIRS:-/etc/xdg}"
+  data_dirs="${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  local IFS=:
+  for directory in $config_dirs $data_dirs; do
+    [[ -n "$directory" ]] || continue
+    if [[ "$directory" != /* ]]; then
+      printf '%s\n' "$directory"
+      return 2
+    fi
+    unit_roots+=("${directory%/}/systemd/user")
+  done
+  runtime_dir="${XDG_RUNTIME_DIR:-}"
+  if [[ "$runtime_dir" != /* && "${UID:-}" =~ ^[0-9]+$ ]]; then
+    runtime_dir="/run/user/${UID}"
+  fi
+  if [[ "$runtime_dir" == /* ]]; then
+    unit_roots+=(
+      "${runtime_dir%/}/systemd/user.control"
+      "${runtime_dir%/}/systemd/transient"
+      "${runtime_dir%/}/systemd/generator.early"
+      "${runtime_dir%/}/systemd/user"
+      "${runtime_dir%/}/systemd/generator"
+      "${runtime_dir%/}/systemd/generator.late"
+    )
+  fi
+
+  for unit_root in "${unit_roots[@]}"; do
+    if [[ -e "$unit_root" || -L "$unit_root" ]]; then
+      if [[ ! -d "$unit_root" || ! -r "$unit_root" || ! -x "$unit_root" ]]; then
+        printf '%s\n' "$unit_root"
+        return 2
+      fi
+    fi
+    for activation_dir in "$unit_root"/*.wants "$unit_root"/*.requires "$unit_root"/*.upholds; do
+      if [[ -L "$activation_dir" && ! -d "$activation_dir" ]]; then
+        printf '%s\n' "$activation_dir"
+        return 2
+      fi
+      [[ -d "$activation_dir" ]] || continue
+      if [[ ! -r "$activation_dir" || ! -x "$activation_dir" ]]; then
+        printf '%s\n' "$activation_dir"
+        return 2
+      fi
+      for service_name in openshell-gateway "${NEMOCLAW_GATEWAY_SERVICE_NAME}"; do
+        activation_path="${activation_dir}/${service_name}.service"
+        if [[ -e "$activation_path" || -L "$activation_path" ]]; then
+          printf '%s\n' "$activation_path"
+          return 0
+        fi
+      done
+    done
+  done
+  return 1
+}
+
 install_nemoclaw_openshell_gateway_user_service() {
   [[ "$(uname -s)" == "Linux" ]] || return 0
   [[ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]] || return 0
@@ -1448,8 +1781,25 @@ install_nemoclaw_openshell_gateway_user_service() {
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
-    require_compatible_upstream_openshell_gateway_service
-    info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+    local compatibility_status activation_path activation_status
+    if require_compatible_upstream_openshell_gateway_service; then
+      info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+      return 0
+    else
+      compatibility_status=$?
+    fi
+    if [[ "$compatibility_status" -ne 2 ]]; then
+      error "Could not determine whether the effective upstream OpenShell gateway user service is compatible."
+    fi
+    if activation_path="$(enabled_openshell_gateway_user_service_activation_path)"; then
+      error "The systemd user manager is unavailable, but $activation_path can activate a gateway user service that can later claim port 8080. Restore the systemd user manager and inspect or disable that service before rerunning NemoClaw. The installer did not change the unit or activation path."
+    else
+      activation_status=$?
+      if [[ "$activation_status" -eq 2 ]]; then
+        error "The systemd user manager is unavailable, and the installer could not inspect OpenShell gateway activation configuration at $activation_path. Restore the default unit search path or access to that location, then rerun NemoClaw."
+      fi
+    fi
+    warn "The systemd user manager is unavailable. No enabled OpenShell gateway user service activation path was found, so onboarding will keep the existing standalone gateway on port 8080."
     return 0
   fi
 
@@ -2110,7 +2460,12 @@ finish_nemoclaw_install() {
       [[ "$defer_was_exported" == true ]] && export NEMOCLAW_DEFER_OPENSHELL_INSTALL
     fi
     if [[ "$openshell_install_status" -ne 0 ]]; then
-      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
+      local retry_gateway_port retry_gateway_port_env=""
+      retry_gateway_port="$(resolve_nemoclaw_gateway_port)"
+      if [ "$retry_gateway_port" -ne 8080 ]; then
+        retry_gateway_port_env="NEMOCLAW_GATEWAY_PORT=${retry_gateway_port} "
+      fi
+      error "Could not install the OpenShell version pinned by the prepared source after retiring the gateway. The installer preserved the sandbox backups and did not start recovery. Rerun the installer with ${retry_gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 to reuse the prepared upgrade state and retry the OpenShell install."
     fi
     _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
   else
@@ -2976,6 +3331,57 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+
+# Check whether sudo can run without prompting. If it cannot, validate the
+# user's credentials through a terminal. Print the non-prompting sudo invocation
+# that the caller must use.
+#
+# `sudo -v` validates the user's credentials rather than a specific command, so
+# on hosts whose sudoers mix a password-based entry (Ubuntu's %sudo group) with
+# a NOPASSWD drop-in it still demands a password even though `sudo <command>`
+# runs passwordless. Callers with no terminal to answer that prompt — the deploy
+# notebook, CI — stall there instead of repairing the spec (NVBug 6570793).
+#
+# A successful `sudo -n true` probe proves only that sudo can run `true` without
+# prompting at that moment. It does not establish that the later systemctl,
+# mkdir, or nvidia-ctk commands can run without prompting. Every later command
+# therefore uses `sudo -n` and establishes its own authorization without
+# another prompt. After an answered `sudo -v`, the credential timestamp lets
+# those exact commands run noninteractively. If sudoers does not retain the
+# timestamp, the command fails instead of prompting again.
+#
+# Terminal availability follows the installer's existing model — stdin when it
+# is a TTY, else /dev/tty when it can be opened — so the documented
+# `curl … | bash` install still prompts instead of skipping the repair.
+# The printed invocation is this function's only stdout; anything else it emits
+# must go to stderr or the caller would run it as a command.
+authorize_sudo() {
+  if sudo -n true >/dev/null 2>&1; then
+    printf 'sudo -n'
+    return 0
+  fi
+  if installer_non_interactive \
+    && [ "${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" != "prompt" ]; then
+    return 1
+  fi
+  if [ -t 0 ]; then
+    sudo -v >&2 || return 1
+    printf 'sudo -n'
+    return 0
+  fi
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; validating sudo credentials through /dev/tty..." >&2
+    if ! sudo -v <&3 >&2; then
+      exec 3<&-
+      return 1
+    fi
+    exec 3<&-
+    printf 'sudo -n'
+    return 0
+  fi
+  return 1
+}
+
 repair_installer_stale_nvidia_cdi_spec() {
   local flagged_file="${1:-}"
   local service_spec_path="/var/run/cdi/nvidia.yaml"
@@ -2993,13 +3399,14 @@ repair_installer_stale_nvidia_cdi_spec() {
     return 0
   fi
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
   if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
     && "${sudo_cmd[@]}" systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1; then
@@ -3076,13 +3483,14 @@ repair_installer_nvidia_cdi_spec() {
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
-    sudo_cmd=(sudo)
+    local authorized_sudo=""
     info "You may be asked for your password to authorize these host-level admin changes."
     info "NemoClaw does not store your password."
-    if ! sudo -v; then
+    if ! authorized_sudo="$(authorize_sudo)"; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
     fi
+    read -r -a sudo_cmd <<<"$authorized_sudo"
   fi
 
   local cdi_list_output=""
@@ -3121,6 +3529,7 @@ repair_installer_nvidia_cdi_spec() {
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   local gateway_management_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/gateway-management.js"
+  local portable_profile_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/experimental/portable-profile.js"
   local host_readiness_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/host.js"
   local onboard_admission_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/readiness/onboard-admission.js"
   if ! command_exists node \
@@ -3141,6 +3550,16 @@ run_installer_host_preflight() {
       const hostReadinessPath = process.argv[2];
       const onboardAdmissionPath = process.argv[3];
       const gatewayManagementPath = process.argv[4];
+      const portableProfilePath = process.argv[5];
+      let explicitlySelectedPortableProfile = false;
+      try {
+        const portableProfile = require(portableProfilePath);
+        if (typeof portableProfile.isPortableExperimentalProfile === "function") {
+          explicitlySelectedPortableProfile = Boolean(
+            portableProfile.isPortableExperimentalProfile()
+          );
+        }
+      } catch {}
       try {
         const { assessHost, planHostAdvisories } = require(preflightPath);
         const { createHostReadinessReport } = require(hostReadinessPath);
@@ -3165,7 +3584,7 @@ run_installer_host_preflight() {
         );
         const admission = evaluateOnboardReadinessAdmission(readiness, {
           explicitlyOptedOutGpuPassthrough: false,
-          allowUnsupportedRuntime: false,
+          allowUnsupportedRuntime: explicitlySelectedPortableProfile,
           // The installer starts a NemoClaw-managed onboarding flow. Let the
           // authoritative onboarding gate apply supported storage remediation,
           // but only when the gateway declaration confirms NemoClaw ownership.
@@ -3237,7 +3656,7 @@ run_installer_host_preflight() {
       } catch {
         process.exit(0);
       }
-    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module"
+    ' "$preflight_module" "$host_readiness_module" "$onboard_admission_module" "$gateway_management_module" "$portable_profile_module"
   )"; then
     status=0
   else
@@ -3534,6 +3953,14 @@ run_onboard() {
   return "$status"
 }
 
+fail_onboarding() {
+  local status="${1:-1}"
+  if [ "$status" -ne 130 ]; then
+    status=1
+  fi
+  error_with_status "$status" "Onboarding did not complete successfully."
+}
+
 station_express_receipt_retirement_pending() {
   command_exists node || return 1
   local session_file
@@ -3756,10 +4183,10 @@ is_wsl_host() {
   return 1
 }
 
-# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback)
-# and Windows WSL from the host environment. Echoes "DGX Spark",
-# "DGX Station", "Windows WSL", or empty. Used to gate the express install
-# prompt; only platforms with a known sensible default are offered.
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback),
+# N1x from its protected FastOS and PCI identity, and Windows WSL from the host
+# environment. Used to gate the express install prompt; only platforms with an
+# accepted default are offered.
 is_station_gb300_product() {
   local product=${1:-}
   [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
@@ -3770,6 +4197,138 @@ classify_dgx_station_release() {
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   bash "$helper" --classify-dgx-release
+}
+
+N1X_FASTOS_RELEASE_MAX_BYTES=4096
+
+n1x_fastos_release_path() {
+  printf "/etc/fastos-release"
+}
+
+n1x_pci_devices_path() {
+  printf "/sys/bus/pci/devices"
+}
+
+n1x_fastos_release_metadata_is_trusted() {
+  local metadata=${1:-}
+  local file_mode_hex="" uid="" gid="" mode="" size="" device="" inode=""
+  IFS=: read -r file_mode_hex uid gid mode size device inode <<<"$metadata"
+  [[ "$file_mode_hex" =~ ^[0-9a-fA-F]+$ ]] || return 1
+  (((16#$file_mode_hex & 16#f000) == 16#8000)) || return 1
+  [[ "$uid" = "0" && "$gid" = "0" ]] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ && "$size" =~ ^[0-9]+$ ]] || return 1
+  ((10#$size > 0 && 10#$size <= N1X_FASTOS_RELEASE_MAX_BYTES)) || return 1
+  ((8#$mode & 022)) && return 1
+  [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ ]]
+}
+
+n1x_fastos_release_contents_are_valid() {
+  local contents=${1:-}
+  local line="" name_count=0
+  [[ "$contents" != *$'\r'* ]] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      'NAME="N1x FASTOS"') ((name_count += 1)) ;;
+      NAME=*) return 1 ;;
+    esac
+  done <<<"$contents"
+  [ "$name_count" -eq 1 ]
+}
+
+n1x_opened_fastos_release_has_nul() {
+  local bytes=""
+  command -v od >/dev/null 2>&1 || return 2
+  bytes="$(LC_ALL=C od -An -v -tx1 -N $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)" \
+    || return 2
+  case " $bytes " in
+    *" 00 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+n1x_fastos_release_is_trusted() {
+  local marker="" before="" opened="" after="" contents=""
+  marker="$(n1x_fastos_release_path)"
+  [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
+  before="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || return 1
+  n1x_fastos_release_metadata_is_trusted "$before" || return 1
+  exec 9<"$marker" || return 1
+  opened="$(stat -Lc '%f:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  after="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  if [ "$before" != "$opened" ] || [ "$before" != "$after" ]; then
+    exec 9<&-
+    return 1
+  fi
+  if n1x_opened_fastos_release_has_nul; then
+    exec 9<&-
+    return 1
+  elif [ "$?" -ne 1 ]; then
+    exec 9<&-
+    return 1
+  fi
+  exec 9<&-
+  exec 9<"$marker" || return 1
+  opened="$(stat -Lc '%f:%u:%g:%a:%s:%d:%i' /proc/self/fd/9 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  after="$(stat -c '%f:%u:%g:%a:%s:%d:%i' "$marker" 2>/dev/null)" || {
+    exec 9<&-
+    return 1
+  }
+  if [ "$before" != "$opened" ] || [ "$before" != "$after" ]; then
+    exec 9<&-
+    return 1
+  fi
+  contents="$(head -c $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)"
+  exec 9<&-
+  [ "${#contents}" -le "$N1X_FASTOS_RELEASE_MAX_BYTES" ] || return 1
+  n1x_fastos_release_contents_are_valid "$contents"
+}
+
+n1x_pci_identity_is_valid() {
+  local vendor="" device="" pci_class=""
+  vendor="$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  device="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
+  pci_class="$(printf "%s" "${3:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$vendor" = "0x10de" && "$device" = "0x2e2a" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
+}
+
+n1x_has_pci_gpu() {
+  local pci_root="" pci_device="" vendor="" device="" pci_class="" scanned=0
+  pci_root="$(n1x_pci_devices_path)"
+  [ -d "$pci_root" ] || return 1
+  for pci_device in "$pci_root"/*; do
+    [ -d "$pci_device" ] || continue
+    ((scanned += 1))
+    [ "$scanned" -le 256 ] || return 1
+    vendor="$(head -c 65 "$pci_device/vendor" 2>/dev/null)" || continue
+    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
+    pci_class="$(head -c 65 "$pci_device/class" 2>/dev/null)" || continue
+    if [ "${#vendor}" -gt 64 ] || [ "${#device}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
+      continue
+    fi
+    vendor="${vendor//[[:space:]]/}"
+    device="${device//[[:space:]]/}"
+    pci_class="${pci_class//[[:space:]]/}"
+    n1x_pci_identity_is_valid "$vendor" "$device" "$pci_class" && return 0
+  done
+  return 1
+}
+
+is_n1x_host() {
+  [ "$(uname -s 2>/dev/null)" = "Linux" ] || return 1
+  case "$(uname -m 2>/dev/null)" in
+    arm64 | aarch64) ;;
+    *) return 1 ;;
+  esac
+  n1x_fastos_release_is_trusted && n1x_has_pci_gpu
 }
 
 detect_express_platform() {
@@ -3804,6 +4363,10 @@ detect_express_platform() {
         fi
         ;;
     esac
+    return
+  fi
+  if is_n1x_host; then
+    printf "N1x"
     return
   fi
   case "$model" in
@@ -4620,6 +5183,11 @@ activate_express_install() {
         fi
       fi
       ;;
+    "N1x")
+      export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      unset NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE NEMOCLAW_LOCAL_MODEL_RUNTIME
+      export NEMOCLAW_PROVIDER=install-vllm
+      ;;
     "DGX Station")
       export NEMOCLAW_STATION_EXPRESS=1
       if [ -n "${_STATION_EXPRESS_RESUME_GENERATION:-}" ]; then
@@ -5038,8 +5606,8 @@ prepare_installer_host() {
   ensure_openshell_build_deps
 }
 
-# Prompt the user to opt into express install on supported platforms. Sets the
-# non-interactive + provider/model env vars when accepted. Skipped when
+# Prompt the user to opt into express install on qualified platforms or the
+# Deferred N1x preview. Sets non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
 # no TTY.
 describe_express_install() {
@@ -5066,6 +5634,11 @@ describe_express_install() {
         inference_summary="managed vLLM with automatic DGX Spark serving-profile selection"
         inference_disclosure="With no explicit inference intent or related runtime, one exactly qualified pretrusted managed cluster topology selects a matching pinned distributed profile. An ordinary no-match keeps the existing single-host DGX Spark profile; any related or ambiguous setup remains untouched and stops installation. Managed vLLM pulls the selected image/model and runs only its dedicated containers. The selected distributed profile is experimental pending physical end-to-end validation."
       fi
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      ;;
+    "N1x")
+      inference_summary="managed local vLLM with Qwen3.6 35B-A3B NVFP4"
+      inference_disclosure="N1x Express is a Deferred preview pending a physical NemoClaw Express E2E run; accepting this prompt is explicit preview intent, not a supported-platform claim. The N1x profile uses one host and does not activate DGX Spark cluster discovery or fixed catalog behavior. Managed vLLM pulls the pinned image and model only after the existing CUDA and CDI readiness checks pass."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
@@ -5146,7 +5719,11 @@ describe_express_install() {
       ;;
   esac
 
-  printf "  Express install will configure %s.\n" "$inference_summary"
+  if [ "$platform" = "N1x" ]; then
+    printf "  The Deferred N1x preview will configure %s.\n" "$inference_summary"
+  else
+    printf "  Express install will configure %s.\n" "$inference_summary"
+  fi
   if [ -n "$inference_disclosure" ]; then
     printf "  %s\n" "$inference_disclosure"
   fi
@@ -5203,9 +5780,12 @@ maybe_offer_express_install() {
   if [ -z "$platform" ]; then
     return 0
   fi
-  # On a supported platform but a skip condition applies — explain why so
+  # On a detected Express platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    if [ "$platform" = "N1x" ] && [ "${NEMOCLAW_PROVIDER:-}" != "install-vllm" ]; then
+      error "N1x onboarding currently requires explicit Deferred managed-vLLM preview intent. Remove NEMOCLAW_NO_EXPRESS=1 and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+    fi
     if [ "$platform" = "DGX Station" ]; then
       station_dual_pair_resume_pending \
         && error "A dual-DGX Station pair resume is pending; finish exact pair revalidation before disabling Station setup."
@@ -5215,6 +5795,9 @@ maybe_offer_express_install() {
     return 0
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    if [ "$platform" = "N1x" ] && [ "$NEMOCLAW_PROVIDER" != "install-vllm" ]; then
+      error "N1x onboarding currently accepts only the Deferred managed-vLLM preview. Set NEMOCLAW_PROVIDER=install-vllm or use another host for provider ${NEMOCLAW_PROVIDER}."
+    fi
     if [ "$platform" = "DGX Station" ] && [ "$NEMOCLAW_PROVIDER" = "install-vllm" ]; then
       # An explicit managed-vLLM provider selects the same Station host/pair
       # preparation boundary without forcing the rest of the express policy.
@@ -5250,7 +5833,11 @@ maybe_offer_express_install() {
       return 0
     fi
     describe_express_install "$platform"
-    printf "  Run express install with these settings? [Y/n]: "
+    if [ "$platform" = "N1x" ]; then
+      printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    else
+      printf "  Run express install with these settings? [Y/n]: "
+    fi
     if ! IFS= read -r reply; then
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
         fail_force_station_terminal_required
@@ -5268,7 +5855,11 @@ maybe_offer_express_install() {
       return 0
     fi
     describe_express_install "$platform"
-    printf "  Run express install with these settings? [Y/n]: "
+    if [ "$platform" = "N1x" ]; then
+      printf "  Run the Deferred N1x preview with these settings? [Y/n]: "
+    else
+      printf "  Run express install with these settings? [Y/n]: "
+    fi
     if ! IFS= read -r reply <&3; then
       exec 3<&-
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
@@ -5287,10 +5878,17 @@ maybe_offer_express_install() {
   reply="$(printf "%s" "$reply" | tr '[:upper:]' '[:lower:]')"
   case "$reply" in
     "" | y | yes)
-      info "Using express install for ${platform}."
+      if [ "$platform" = "N1x" ]; then
+        info "Using the Deferred N1x preview."
+      else
+        info "Using express install for ${platform}."
+      fi
       activate_express_install "$platform"
       ;;
     *)
+      if [ "$platform" = "N1x" ]; then
+        error "N1x onboarding currently requires the Deferred managed-vLLM preview. Re-run the installer and accept the preview, or set NEMOCLAW_PROVIDER=install-vllm."
+      fi
       info "Skipping express install. Continuing with interactive flow."
       ;;
   esac
@@ -5441,7 +6039,7 @@ main() {
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
 
-  # Offer express install on supported platforms (DGX Spark / Station / WSL).
+  # Offer express install on accepted platforms (DGX Spark / Station / N1x / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
   # license before opting into the unattended path. Express only sets the
   # provider/model/policy + non-interactive vars; license acceptance is
@@ -5505,13 +6103,13 @@ main() {
           || [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
           || station_express_receipt_retirement_pending; then
           info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
-          run_onboard || error "Onboarding did not complete successfully."
+          run_onboard || fail_onboarding "$?"
           ONBOARD_RAN=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
       else
-        run_onboard || error "Onboarding did not complete successfully."
+        run_onboard || fail_onboarding "$?"
         ONBOARD_RAN=true
         restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
       fi

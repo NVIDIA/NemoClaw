@@ -16,6 +16,7 @@ import { resolveMessagingPlanAuthority } from "../messaging/plan-authority";
 import * as registry from "../state/registry";
 import {
   detectMessagingChannelsFromEnv,
+  detectUnconfiguredMessagingChannels,
   getRegistrySandboxMessagingAuthority,
   setupMessagingChannels,
   setupSelectedMessagingChannels,
@@ -431,7 +432,11 @@ describe("setupSelectedMessagingChannels", () => {
       { agent: { name: "hermes" } },
     );
 
-    expect(prompt).not.toHaveBeenCalled();
+    // The reply mode is a config question. Pairing still happens in-sandbox by
+    // QR, so nothing asks for a token and no provider is bound (#8312).
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      "  WhatsApp reply mode [self-chat/bot; default: self-chat]: ",
+    );
     expect(getCredential).not.toHaveBeenCalled();
     expect(plan?.credentialBindings).toEqual([]);
     expect(plan?.channels[0]).toMatchObject({
@@ -750,6 +755,12 @@ describe("setupMessagingChannels", () => {
           channelId: "whatsapp",
           active: true,
           inputs: [
+            // Seeded from the manifest default: onboarding never asks for the
+            // mode, and self-chat is the one that needs no allowlist (#8312).
+            {
+              inputId: "mode",
+              value: "self-chat",
+            },
             {
               inputId: "allowedIds",
               value: "15551234567,15557654321",
@@ -978,5 +989,56 @@ describe("detectMessagingChannelsFromEnv", () => {
     process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
 
     expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
+  });
+});
+
+describe("detectUnconfiguredMessagingChannels", () => {
+  function clearMessagingEnv(): void {
+    const envKeys = manifestRegistry
+      .listAvailable({ agent: "openclaw", supportedChannelIds: null })
+      .flatMap((manifest) => manifest.inputs)
+      .map((input) => input.envKey)
+      .filter((envKey): envKey is string => Boolean(envKey));
+    for (const envKey of envKeys) delete process.env[envKey];
+  }
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.clearAllMocks();
+    vi.mocked(getCredential).mockReturnValue(null);
+    clearMessagingEnv();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it("reports a plan channel whose inputs are gone from the environment", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram"], [], null)).toEqual(["telegram"]);
+  });
+
+  it("keeps a plan channel whose inputs are still present", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectUnconfiguredMessagingChannels(["telegram"], [], null)).toEqual([]);
+  });
+
+  it("keeps a plan channel that the current selection still requests", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram"], ["telegram"], null)).toEqual([]);
+  });
+
+  it("keeps an in-sandbox QR-paired channel that the host environment cannot rediscover", () => {
+    expect(detectUnconfiguredMessagingChannels(["whatsapp"], [], null)).toEqual([]);
+  });
+
+  it("reports each channel once when the plan repeats it", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram", "telegram"], [], null)).toEqual([
+      "telegram",
+    ]);
+  });
+
+  it("ignores channel names with no available manifest", () => {
+    expect(detectUnconfiguredMessagingChannels(["not-a-channel"], [], null)).toEqual([]);
   });
 });

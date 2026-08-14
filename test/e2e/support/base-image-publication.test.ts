@@ -22,6 +22,7 @@ import {
   validatePublisherJobs,
   validateWorkflow,
   waitForBaseImagePublication,
+  writePublicationRunOutputs,
 } from "../../../tools/e2e/base-image-publication.mts";
 
 const EXPECTED_SHA = "a".repeat(40);
@@ -166,13 +167,12 @@ describe("base-image publication evidence", () => {
     expect(isBaseImagePublicationEvent(eventName)).toBe(true);
   });
 
-  it.each([
-    "schedule",
-    "pull_request",
-    undefined,
-  ])("rejects unsupported %s publication preflight events", (eventName) => {
-    expect(isBaseImagePublicationEvent(eventName)).toBe(false);
-  });
+  it.each(["schedule", "pull_request", undefined])(
+    "rejects unsupported %s publication preflight events",
+    (eventName) => {
+      expect(isBaseImagePublicationEvent(eventName)).toBe(false);
+    },
+  );
 
   it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
     const source = fs.readFileSync(
@@ -474,14 +474,14 @@ describe("base-image publication evidence", () => {
     ).toMatchObject({ state: "pending", run: { status: "in_progress" } });
   });
 
-  it.each([
-    "failure",
-    "cancelled",
-  ] as const)("fails closed when publication concludes %s (#7372)", (conclusion) => {
-    expect(() =>
-      selectPublicationRun(runsPayload([workflowRun({ conclusion })]), history(), WORKFLOW_ID),
-    ).toThrow(`base-image workflow for ${RELEVANT_SHA} concluded ${conclusion}; ${RUN_URL}`);
-  });
+  it.each(["failure", "cancelled"] as const)(
+    "fails closed when publication concludes %s (#7372)",
+    (conclusion) => {
+      expect(() =>
+        selectPublicationRun(runsPayload([workflowRun({ conclusion })]), history(), WORKFLOW_ID),
+      ).toThrow(`base-image workflow for ${RELEVANT_SHA} concluded ${conclusion}; ${RUN_URL}`);
+    },
+  );
 
   it("fails closed on ambiguous or malformed runs (#7372)", () => {
     expect(() =>
@@ -536,6 +536,22 @@ describe("base-image publication evidence", () => {
     expect(() =>
       validateBoundRun(workflowRun({ status: "in_progress", conclusion: null }), selectedRun()),
     ).toThrow(/changed while evidence was verified/u);
+  });
+
+  it("exports the selected immutable publication identity for downstream qualification (#9049)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publication-output-"));
+    const output = path.join(directory, "github-output");
+    try {
+      writePublicationRunOutputs(output, selectedRun());
+      expect(fs.readFileSync(output, "utf8")).toBe(
+        `run_id=${RUN_ID}\nrun_attempt=1\nhead_sha=${RELEVANT_SHA}\n`,
+      );
+      expect(() => writePublicationRunOutputs("bad\npath", selectedRun())).toThrow(
+        /single-line path/u,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

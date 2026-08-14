@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { MIN_OLLAMA_VERSION } from "../inference/ollama-version";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
   type DetectInferenceProviderHostStateDeps,
@@ -54,8 +55,8 @@ function detectWithDeps(
     platform: "linux",
     env,
     log: () => {},
-    installedOllamaVersion: "0.24.0",
-    runningOllamaVersion: "0.24.0",
+    installedOllamaVersion: MIN_OLLAMA_VERSION,
+    runningOllamaVersion: MIN_OLLAMA_VERSION,
     deps,
   });
 }
@@ -208,8 +209,8 @@ describe("detectInferenceProviderHostState", () => {
       platform: "linux",
       env: {},
       log: (message = "") => logs.push(message),
-      installedOllamaVersion: "0.24.0",
-      runningOllamaVersion: "0.24.0",
+      installedOllamaVersion: MIN_OLLAMA_VERSION,
+      runningOllamaVersion: MIN_OLLAMA_VERSION,
       deps,
     });
 
@@ -284,8 +285,8 @@ describe("detectInferenceProviderHostState", () => {
       platform: "linux",
       env,
       log: () => {},
-      installedOllamaVersion: "0.24.0",
-      runningOllamaVersion: "0.24.0",
+      installedOllamaVersion: MIN_OLLAMA_VERSION,
+      runningOllamaVersion: MIN_OLLAMA_VERSION,
       deps,
     });
 
@@ -317,8 +318,8 @@ describe("detectInferenceProviderHostState", () => {
       platform: "linux",
       env: {},
       log: (message = "") => logs.push(message),
-      installedOllamaVersion: "0.24.0",
-      runningOllamaVersion: "0.24.0",
+      installedOllamaVersion: MIN_OLLAMA_VERSION,
+      runningOllamaVersion: MIN_OLLAMA_VERSION,
       deps,
     });
 

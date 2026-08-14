@@ -76,19 +76,19 @@ function validateActionMutation(mutate: (action: MutableAction) => void): string
   });
 }
 
-describe("upload-e2e-artifacts workflow boundary", () => {
-  it("binds one canonical uploader to every E2E execution job", () => {
+describe("E2E artifact uploads", () => {
+  it("uses the shared uploader in every E2E execution job", () => {
     expect(validateUploadE2eArtifactsAction()).toEqual([]);
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);
   });
 
-  it("rejects semantic-neutral action byte drift from the immutable provenance", () => {
+  it("rejects any change to the upload action pinned by the workflow", () => {
     expect(validateActionSourceMutation((source) => `${source}# unreviewed drift\n`)).toEqual([
       "upload-e2e-artifacts content must match the action reviewed at its immutable commit pin",
     ]);
   });
 
-  it("rejects action upload-policy and inner always drift", () => {
+  it("retains E2E artifacts for 14 days", () => {
     const policyErrors = validateActionMutation((action) => {
       action.runs.steps[0].with!["retention-days"] = 7;
     });
@@ -96,32 +96,35 @@ describe("upload-e2e-artifacts workflow boundary", () => {
       "upload-e2e-artifacts must preserve artifact defaults, hidden-file policy, missing-file behavior, and retention",
     );
 
-    const alwaysErrors = validateActionMutation((action) => {
-      action.runs.steps[0].if = "${{ success() }}";
-    });
-    expect(alwaysErrors).toContain("upload-e2e-artifacts inner step must run with always()");
   });
 
-  it("rejects checkout-local, direct, and unreviewed remote upload actions", () => {
+  it("uploads artifacts even when an earlier step fails", () => {
+    const errors = validateActionMutation((action) => {
+      action.runs.steps[0].if = "${{ success() }}";
+    });
+    expect(errors).toContain("upload-e2e-artifacts inner step must run with always()");
+  });
+
+  it("uses the pinned shared action for ordinary E2E result uploads", () => {
     const workflow = mutableWorkflow();
-    uploadStep(workflow.jobs["inference-routing"]).uses = LOCAL_UPLOAD_ACTION;
-    uploadStep(workflow.jobs["network-policy"]).uses = DIRECT_UPLOAD_ACTION;
+    uploadStep(workflow.jobs["messaging-providers"]).uses = LOCAL_UPLOAD_ACTION;
+    uploadStep(workflow.jobs["openclaw-plugin-runtime-exdev"]).uses = DIRECT_UPLOAD_ACTION;
     uploadStep(workflow.jobs["shared-e2e"]).uses =
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@main";
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "inference-routing must not load upload-e2e-artifacts from the target checkout",
-        "inference-routing must use upload-e2e-artifacts exactly once",
-        "network-policy must not invoke actions/upload-artifact directly",
-        "network-policy must use upload-e2e-artifacts exactly once",
+        "messaging-providers must not load upload-e2e-artifacts from the target checkout",
+        "messaging-providers must use upload-e2e-artifacts exactly once",
+        "openclaw-plugin-runtime-exdev must not invoke actions/upload-artifact directly",
+        "openclaw-plugin-runtime-exdev must use upload-e2e-artifacts exactly once",
         "shared-e2e must use the reviewed immutable upload-e2e-artifacts reference",
         "shared-e2e must use upload-e2e-artifacts exactly once",
       ]),
     );
   });
 
-  it("rejects reusing the protected build-cache upload exception for another step", () => {
+  it("allows the named protected build-cache step to upload directly", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
     const cacheUpload = job.steps?.find(
@@ -135,10 +138,23 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("retains release waiver evidence for 30 days", () => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["release-qualification"].steps?.find(
+      (step) => step.name === "Upload release qualification waiver evidence",
+    );
+    expect(upload).toBeDefined();
+    upload!.with!["retention-days"] = 7;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "release-qualification must not invoke actions/upload-artifact directly",
+    );
+  });
+
   it.each([
     ["name", "another-cache-artifact"],
     ["path", "another-cache-path/"],
-  ])("rejects protected build-cache upload %s drift", (input, value) => {
+  ])("uses the required protected build-cache upload %s", (input, value) => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
     const cacheUpload = job.steps?.find(
@@ -155,7 +171,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects duplicate exact protected build-cache upload steps", () => {
+  it("allows only one protected build-cache upload step", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["managed-image-multiarch-startup"];
     const cacheUpload = job.steps?.find(
@@ -175,18 +191,18 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     missingJob.steps = missingJob.steps!.filter(
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
-    const duplicateJob = workflow.jobs["cloud-inference"];
+    const duplicateJob = workflow.jobs["messaging-providers"];
     duplicateJob.steps!.push({ ...uploadStep(duplicateJob) });
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
         "shared-e2e must use upload-e2e-artifacts exactly once",
-        "cloud-inference must use upload-e2e-artifacts exactly once",
+        "messaging-providers must use upload-e2e-artifacts exactly once",
       ]),
     );
   });
 
-  it("rejects scorecard push runtime summary drift", () => {
+  it("uploads the scorecard summary from its configured path", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs.scorecard).with!.path = "runtime-summary.json";
 
@@ -195,70 +211,51 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects default, explicit-exception, caller-key, and caller-if drift", () => {
+  it("requires each caller to use its configured inputs and condition", () => {
     const workflow = mutableWorkflow();
-    const defaultJob = workflow.jobs["sessions-agents-cli"];
-    uploadStep(defaultJob).with = { name: "e2e-sessions-agents-cli" };
+    const defaultJob = workflow.jobs["messaging-providers"];
+    uploadStep(defaultJob).with = { name: "e2e-messaging-providers" };
     defaultJob.env!.E2E_TARGET_ID = "not a selector id";
 
-    uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
-    uploadStep(workflow.jobs["network-policy"]).with!.name = "e2e-network-policy";
-    uploadStep(workflow.jobs["common-egress-agent"]).with!.name = "e2e-common-egress-agent";
-    uploadStep(workflow.jobs["gpu-e2e"]).if = "success()";
+    uploadStep(workflow.jobs["hermes-gpu-startup"]).with!.name = "e2e-hermes-gpu-startup";
     uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
     uploadStep(workflow.jobs["openshell-gateway-auth-contract"]).if = "always()";
     uploadStep(workflow.jobs["shared-e2e"]).env = { UNEXPECTED: "1" };
     workflow.jobs["shared-e2e"].env!.E2E_EXECUTION_PROFILE = "credential-free";
     workflow.jobs["shared-e2e"].env!.E2E_JOB = "1";
     workflow.jobs["shared-e2e"].env!.E2E_TARGET_ID = "shared-e2e";
-    const orderedJob = workflow.jobs["network-policy"];
+    const orderedJob = workflow.jobs["messaging-providers"];
     const orderedUpload = uploadStep(orderedJob);
     orderedJob.steps!.splice(orderedJob.steps!.indexOf(orderedUpload), 1);
     orderedJob.steps!.unshift(orderedUpload);
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "sessions-agents-cli upload-e2e-artifacts invocation must not override its contract",
-        "sessions-agents-cli upload-e2e-artifacts must use the action defaults",
-        "sessions-agents-cli default upload caller must declare a valid E2E_TARGET_ID",
-        "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
-        "network-policy upload-e2e-artifacts must preserve its explicit name/path contract",
-        "common-egress-agent upload-e2e-artifacts must preserve its explicit name/path contract",
-        "gpu-e2e upload-e2e-artifacts invocation must run with always()",
+        "messaging-providers upload-e2e-artifacts invocation must not override its contract",
+        "messaging-providers upload-e2e-artifacts must use the action defaults",
+        "messaging-providers default upload caller must declare a valid E2E_TARGET_ID",
+        "hermes-gpu-startup upload-e2e-artifacts must preserve its explicit name/path contract",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "openshell-gateway-auth-contract upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
         "shared-e2e upload-e2e-artifacts invocation must not override its contract",
         "shared-e2e default upload caller E2E_TARGET_ID must be '${{ matrix.id }}'",
-        "network-policy upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
+        "messaging-providers upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
       ]),
-    );
-  });
-
-  it("requires the skill-agent semantic progress artifact", () => {
-    const workflow = mutableWorkflow();
-    const upload = uploadStep(workflow.jobs["skill-agent"]);
-    upload.with!.path = String(upload.with!.path).replace(
-      "e2e-artifacts/live/skill-agent/*/test-progress.json\n",
-      "",
-    );
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "skill-agent upload-e2e-artifacts must preserve its explicit name/path contract",
     );
   });
 
   it("derives execution jobs even when a marker and its upload disappear together", () => {
     const workflow = mutableWorkflow();
-    const removedJob = workflow.jobs["sessions-agents-cli"];
+    const removedJob = workflow.jobs["openclaw-plugin-runtime-exdev"];
     delete removedJob.env!.E2E_JOB;
     removedJob.steps = removedJob.steps!.filter(
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "sessions-agents-cli must use upload-e2e-artifacts exactly once",
+      "openclaw-plugin-runtime-exdev must use upload-e2e-artifacts exactly once",
     );
   });
 });

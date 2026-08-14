@@ -53,6 +53,38 @@ export interface PromptHelperDeps {
   prompt(question: string): Promise<string>;
 }
 
+export type OnboardConfigurationReviewAction =
+  | "apply"
+  | "edit-inference"
+  | "edit-sandbox"
+  | "exit";
+
+export interface OnboardConfigurationReviewDeps {
+  prompt(question: string): Promise<string>;
+  log(message?: string): void;
+}
+
+export async function promptOnboardConfigurationReview(
+  deps: OnboardConfigurationReviewDeps,
+): Promise<OnboardConfigurationReviewAction> {
+  while (true) {
+    deps.log("  Choose an action:");
+    deps.log("    1) Apply configuration");
+    deps.log("    2) Edit inference provider or model");
+    deps.log("    3) Edit sandbox name");
+    deps.log("    4) Exit onboarding");
+
+    const answer = (await deps.prompt("  Choose [1]: ")).trim().toLowerCase();
+    if (!answer || answer === "1" || answer === "apply") return "apply";
+    if (answer === "2" || answer === "inference" || answer === "provider" || answer === "model") {
+      return "edit-inference";
+    }
+    if (answer === "3" || answer === "sandbox" || answer === "name") return "edit-sandbox";
+    if (answer === "4" || answer === "exit" || answer === "quit") return "exit";
+    deps.log("  Choose Apply, Edit inference, Edit sandbox name, or Exit onboarding.");
+  }
+}
+
 // Prompt wrapper: returns env var value or default in non-interactive mode,
 // otherwise prompts the user interactively.
 export async function promptOrDefault(

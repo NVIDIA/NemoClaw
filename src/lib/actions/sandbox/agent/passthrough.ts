@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
-
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
 // The wrapper enforces three host-side mirrors of upstream contracts, one
@@ -15,7 +13,7 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 //      Forwarding to `openclaw agent` against a non-OpenClaw sandbox triggers
 //      an in-sandbox binary that does not exist (or exists with incompatible
 //      flags), and would silently bypass the host-side guard intended to
-//      redirect Hermes callers to the OpenAI-compatible API on port 8642.
+//      redirect Hermes callers to the sandbox's OpenAI-compatible API port.
 //    - Source boundary: the registry and agent manifest allowlist are
 //      NemoClaw-owned. The in-sandbox invocation, its argv contract, and its
 //      streaming behaviour are owned by the selected upstream agent command.
@@ -83,19 +81,18 @@ import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:ch
 // 6. Dispatch delivery contract and stdin posture. Both captured transports
 //    fail loud when the exec returns success with no bytes on either stream,
 //    and neither hands an interactive terminal to the non-interactive
-//    dispatch. Both transports also pin the sandbox's owning gateway with an
-//    explicit `-g`, restoring the per-subprocess authority #7113 established
-//    for `execSandbox`; PR #8191 dropped it here when it moved this path off
-//    `execSandbox`, and the JSON path never had it. The source-boundary
-//    analysis and the classifier live in `passthrough-dispatch.ts`; the
-//    operator-facing failure text lives beside the help copy in
-//    `passthrough-help.ts`.
+//    dispatch. Both transports pin the sandbox's owning gateway and use the
+//    shared asynchronous exec supervisor, which forwards host termination to
+//    OpenShell before returning the signal-derived exit status. The complete
+//    source-boundary analysis and classifier live in
+//    `passthrough-dispatch.ts`; the operator-facing failure text lives beside
+//    the help copy in `passthrough-help.ts`.
 //
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
-// forwarded argv, the registry-miss fallback to OpenClaw, registry and
-// manifest-resolution fail-closed paths, quoted manifest command rejection,
-// the enforced `--no-tty` argv shape, the non-Ready phase recovery path, the
-// unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
+// forwarded argv, SIGTERM exit status, the registry-miss fallback to OpenClaw,
+// registry and manifest-resolution fail-closed paths, quoted manifest command
+// rejection, the enforced `--no-tty` argv shape, the non-Ready phase recovery
+// path, the unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
 // machine-readable stdout. The focused shields and Ollama modules own their
@@ -120,6 +117,7 @@ import { isStdinTty } from "../../../core/stdin";
 import { requireCuaLifecycleReadiness } from "../../../cua/lifecycle-readiness";
 import { resolveSandboxGatewayName } from "../../../gateway-runtime-action";
 import { withGatewayRouteMutationLock } from "../../../inference/gateway-route-mutation-lock";
+import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import { withMcpLifecycleLock as withSandboxMutationLock } from "../../../state/mcp-lifecycle-lock-acquisition";
@@ -128,19 +126,26 @@ import {
   buildOpenshellExecArgs,
   computeExitCode,
   execSandbox,
-  wrapExecCommandWithRuntimeEnv,
+  wrapOpenClawAgentCommandWithRuntimeEnv,
 } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
-  agentDispatchStdio,
+  type AgentDispatchRunner,
+  agentDispatchDeadlineSeconds,
   isSilentAgentDispatch,
+  isTimedOutAgentDispatch,
+  OPENCLAW_AGENT_BOOLEAN_FLAGS,
+  OPENCLAW_AGENT_VALUE_FLAGS,
+  runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
+  TIMED_OUT_AGENT_TURN_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
   writeSilentAgentDispatchFailure,
+  writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
 import {
   type AgentJsonPassthroughProcess,
@@ -150,27 +155,7 @@ import {
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
-export {
-  hasAgentPassthroughHelpToken,
-  printAgentPassthroughHelp,
-} from "./passthrough-help";
-
-const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
-  "-a",
-  "--agent",
-  "-m",
-  "--message",
-  "--model",
-  "--provider",
-  "--reply-channel",
-  "--session-id",
-  "--session-key",
-  "--thinking",
-  "--timeout",
-  "--to",
-]);
-
-const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
+export { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 
 // OpenClaw can exit zero after running in embedded-fallback mode and does not
 // expose a stable machine-readable transport discriminator. These patterns mirror
@@ -181,48 +166,33 @@ const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 const OPENCLAW_EMBEDDED_FALLBACK_PATTERN =
   /EMBEDDED FALLBACK|\[agent\/embedded\]|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
 
-const AGENT_NON_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-
-function nonJsonAsText(value: string | Buffer | null | undefined): string {
-  if (Buffer.isBuffer(value)) return value.toString("utf-8");
-  return typeof value === "string" ? value : "";
-}
-
 export type AgentNonJsonPassthroughDeps = {
   getOpenshellBinary?: () => string;
   getGatewayName?: (sandboxName: string) => string | null;
+  runDispatch?: AgentDispatchRunner;
   stdinIsTty?: () => boolean;
-  spawnSync?: (
-    command: string,
-    args: readonly string[],
-    options: SpawnSyncOptions,
-  ) => SpawnSyncReturns<string | Buffer>;
 };
 
-export function runAgentNonJsonPassthrough(
+export async function runAgentNonJsonPassthrough(
   sandboxName: string,
   command: readonly string[],
   proc: NonNullable<AgentPassthroughDeps["process"]>,
   deps: AgentNonJsonPassthroughDeps = {},
-): never {
+): Promise<never> {
   const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const spawnSyncImpl = deps.spawnSync ?? spawnSync;
-  const result = spawnSyncImpl(
+  const result = await (deps.runDispatch ?? runAgentDispatch)(
     binary,
     buildOpenshellExecArgs(
       sandboxName,
-      wrapExecCommandWithRuntimeEnv(command),
-      { tty: false },
+      wrapOpenClawAgentCommandWithRuntimeEnv(command),
+      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
     {
-      encoding: "utf-8",
-      maxBuffer: AGENT_NON_JSON_MAX_BUFFER_BYTES,
-      stdio: agentDispatchStdio((deps.stdinIsTty ?? isStdinTty)()),
+      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
     },
   );
-  const stdout = nonJsonAsText(result.stdout);
-  const stderr = nonJsonAsText(result.stderr);
+  const { stderr, stdout } = result;
 
   if (isSilentAgentDispatch(result, stdout, stderr)) {
     writeSilentAgentDispatchFailure(proc, sandboxName, command);
@@ -252,6 +222,14 @@ export function runAgentNonJsonPassthrough(
   if (errorMessage) {
     proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
     proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
+  }
+
+  // Last, so the partial trace is already on the wire: a turn whose deadline
+  // fired must not exit 0 just because the transport did. An upstream non-zero
+  // code is preserved as-is.
+  if (code === 0 && isTimedOutAgentDispatch(stdout, stderr)) {
+    writeTimedOutAgentTurnFailure(proc, sandboxName);
+    return proc.exit(TIMED_OUT_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);
 }
@@ -323,11 +301,14 @@ function rejectNonOpenclawAgent(
   proc.stderr.write(
     `  The \`sandbox agent\` wrapper cannot dispatch to sandbox '${sandboxName}' because it runs '${agent}'.\n`,
   );
-  proc.stderr.write("  Hermes exposes an OpenAI-compatible API on port 8642 inside the sandbox;\n");
+  const apiPort = resolveSandboxHermesApiPort(registry.getSandbox(sandboxName) ?? {});
   proc.stderr.write(
-    `  forward it with 'openshell forward start --background 8642 ${sandboxName}'\n`,
+    `  Hermes exposes an OpenAI-compatible API on port ${apiPort} inside the sandbox;\n`,
   );
-  proc.stderr.write("  and POST to http://127.0.0.1:8642/v1/chat/completions instead.\n");
+  proc.stderr.write(
+    `  forward it with 'openshell forward start --background ${apiPort} ${sandboxName}'\n`,
+  );
+  proc.stderr.write(`  and POST to http://127.0.0.1:${apiPort}/v1/chat/completions instead.\n`);
   return proc.exit(2);
 }
 
@@ -645,7 +626,7 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;
-    execJson(sandboxName, command, {
+    await execJson(sandboxName, command, {
       exit: proc.exit.bind(proc),
       stdout: proc.stdout ?? process.stdout,
       stderr: proc.stderr,
@@ -654,7 +635,7 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command)) {
     const execNonJson = deps.execNonJson ?? runAgentNonJsonPassthrough;
-    execNonJson(sandboxName, command, proc);
+    await execNonJson(sandboxName, command, proc);
     return;
   }
   const exec = deps.exec ?? execSandbox;

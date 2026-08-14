@@ -35,6 +35,36 @@ const MODEL = "nemoclaw-managed-activation-model";
 const GATEWAY = "nemoclaw";
 const AGENT_TIMEOUT_MS = 3 * 60_000;
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
+const ONBOARD_FAILURE_STARTUP_SIGNALS = {
+  environmentWrapperMissing: "[SECURITY] Required entrypoint env-wrapper normalizer is missing.",
+  foreignPidOneBoundary: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+  hermesApiPortRejected: "[SECURITY] Invalid NEMOCLAW_HERMES_API_PORT=",
+  hermesRuntimeDirRefused: "[SECURITY] Refusing Hermes startup because /run/nemoclaw",
+  hermesRuntimeMarkerRefused: "could not be published atomically",
+  runtimeMutationCheckpointRefused:
+    "[SECURITY] Runtime state mutation startup checkpoint was refused; holding startup.",
+  runtimeMutationGateFailed: "[SECURITY] Runtime state mutation startup gate failed.",
+  runtimeMutationGateUnavailable:
+    "[SECURITY] Required runtime state mutation startup gate is unavailable.",
+  runtimeMutationReleaseUnauthenticated:
+    "[SECURITY] Runtime state mutation release receipt was not authenticated; holding startup.",
+  runtimeMutationRetryUnauthenticated:
+    "[SECURITY] Runtime state mutation retry was not authenticated; holding startup.",
+  setupStarted: "Setting up NemoClaw",
+} as const;
+type OnboardFailureStartupSignal = keyof typeof ONBOARD_FAILURE_STARTUP_SIGNALS;
+
+export function summarizeOnboardFailureStartupSignals(
+  output: string,
+): Record<OnboardFailureStartupSignal, boolean> {
+  return Object.fromEntries(
+    Object.entries(ONBOARD_FAILURE_STARTUP_SIGNALS).map(([signal, marker]) => [
+      signal,
+      output.includes(marker),
+    ]),
+  ) as Record<OnboardFailureStartupSignal, boolean>;
+}
+
 const SANDBOX_NAMES: Record<ShippedManagedImageAgent, string> = {
   openclaw: "mi-act-openclaw",
   hermes: "mi-act-hermes",
@@ -327,6 +357,79 @@ function enterCleanupPhase(progress: TestProgress, agent: ShippedManagedImageAge
   }
 }
 
+async function collectOnboardFailureDockerDiagnostics(
+  artifacts: ArtifactSink,
+  host: HostCliClient,
+  agent: ShippedManagedImageAgent,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  try {
+    const inventory = await host.command(
+      "docker",
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        "label=openshell.ai/managed-by=openshell",
+        "--filter",
+        `label=openshell.ai/sandbox-name=${sandboxName}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
+      ],
+      {
+        artifactName: `managed-activation-onboard-failure-${agent}-container-inventory`,
+        env,
+        redactionValues: [API_KEY],
+        timeoutMs: 30_000,
+      },
+    );
+    const containerIds = inventory.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim().split(/\s+/u)[0] ?? "")
+      .filter((containerId) => /^[a-f0-9]{12,64}$/u.test(containerId));
+    await Promise.allSettled(
+      containerIds.map((containerId, index) =>
+        host.command(
+          "docker",
+          [
+            "inspect",
+            "--format",
+            "{{.State.Status}}\t{{.State.Running}}\t{{.State.Restarting}}\t{{.State.OOMKilled}}\t{{.State.Dead}}\t{{.State.ExitCode}}\t{{.State.StartedAt}}\t{{.State.FinishedAt}}",
+            containerId,
+          ],
+          {
+            artifactName: `managed-activation-onboard-failure-${agent}-container-${index + 1}-state`,
+            env,
+            redactionValues: [API_KEY],
+            timeoutMs: 30_000,
+          },
+        ),
+      ),
+    );
+    await Promise.allSettled(
+      containerIds.map(async (containerId, index) => {
+        const logs = await host.command("docker", ["logs", "--tail", "1000", containerId], {
+          captureLimitBytes: 2 * 1024 * 1024,
+          env,
+          persistArtifacts: false,
+          redactionValues: [API_KEY],
+          timeoutMs: 30_000,
+        });
+        if (logs.exitCode !== 0) return;
+        const output = `${logs.stdout}\n${logs.stderr}`;
+        await artifacts.writeJson(
+          `managed-activation-onboard-failure-${agent}-container-${index + 1}-startup-signals.json`,
+          summarizeOnboardFailureStartupSignals(output),
+        );
+      }),
+    );
+  } catch {
+    // Preserve the onboarding failure as the primary error when diagnostics are unavailable.
+  }
+}
+
 async function qualifyAgent(
   fixtures: RuntimeFixtures,
   guard: DockerGuard,
@@ -335,7 +438,7 @@ async function qualifyAgent(
   agent: ShippedManagedImageAgent,
   contract: ManagedImageContractV1,
 ): Promise<void> {
-  const { cleanup, host, lifecycle, progress, sandbox } = fixtures;
+  const { artifacts, cleanup, host, lifecycle, progress, sandbox } = fixtures;
   const sandboxName = SANDBOX_NAMES[agent];
   const env = commandEnv(guard, catalogPath, endpointUrl);
   cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
@@ -368,6 +471,9 @@ async function qualifyAgent(
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
+  if (onboard.exitCode !== 0) {
+    await collectOnboardFailureDockerDiagnostics(artifacts, host, agent, sandboxName, env);
+  }
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
   expectManagedReceipt(sandboxName, contract);
   await host.expectListed(sandboxName, { env });

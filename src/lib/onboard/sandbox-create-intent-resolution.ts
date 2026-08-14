@@ -22,6 +22,7 @@ import {
 export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   sandboxName: string;
   inferenceProvider?: string | null;
+  hostLocalInferenceRouteOnly?: boolean;
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
@@ -44,7 +45,7 @@ export interface SandboxCreateIntentResolverDeps<Agent, ResourceProfile> {
   filterEnabledChannelsByAgent(enabledChannels: string[] | null, agent: Agent): string[] | null;
   defaultPolicyPath: string;
   getAgentPolicyPath(agent: Agent): string | null;
-  resolveGpuPlan(config: SandboxGpuCreateConfig): {
+  resolveGpuPlan(config: SandboxGpuCreateConfig, agent: Agent): {
     gpuRoutePlan: DockerGpuRoutePlan;
     logMessage: string | null;
   };
@@ -115,6 +116,7 @@ export function createSandboxCreateIntentResolver<
     const messaging = await prepareMessagingCapabilities(input);
     const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } = deps.resolveGpuPlan(
       input.sandboxGpuConfig,
+      input.agent,
     );
     const resourceCreateArgs: string[] = [];
     deps.appendResourceCreateArgs(resourceCreateArgs, input.resourceProfile);
@@ -122,6 +124,7 @@ export function createSandboxCreateIntentResolver<
       basePolicyPath: deps.getAgentPolicyPath(input.agent) || deps.defaultPolicyPath,
       sandboxName: input.sandboxName,
       inferenceProvider: input.inferenceProvider,
+      hostLocalInferenceRouteOnly: input.hostLocalInferenceRouteOnly === true,
       channels: deps.channels,
       enabledChannels: filterEnabledChannels(input.enabledChannels, input.agent),
       disabledChannelNames: messaging.disabledChannelNames,

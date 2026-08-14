@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 
@@ -72,6 +72,7 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -166,6 +167,10 @@ FROM hermes-managed-teams-${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION}-wheels AS h
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+# Keep the stock-image lazy dependency target when a published base image lags
+# Dockerfile.base. The final stage also creates and verifies the directory.
+ENV HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages
+
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
 # here; the RUN below decodes it to a root-owned file that the entrypoint
@@ -198,20 +203,43 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
     fi
 
-# Use the decoded CA for Node.js package operations in this final stage. Node.js
-# ignores the path when no CA was baked. At runtime, nemoclaw-start replaces it
-# with the merged OpenShell and corporate bundle.
-ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
+# Use the decoded CA for Node.js package operations in this final stage only
+# when onboarding supplied it. At runtime, nemoclaw-start builds the merged
+# OpenShell and corporate bundle.
 
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
+
+# A published base can lag the source patch in Dockerfile.base. Apply only the
+# two Hindsight compatibility hunks when needed, then verify the final source
+# contract. This remains idempotent once the published base contains them.
+RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/memory_setup.py \
+            /scripts/hermes-security-dependencies.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/memory_setup.py \
+            /scripts/hermes-security-dependencies.patch; \
+    fi \
+    && if ! grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml; then \
+        git -C /opt/hermes apply --check \
+            --include=plugins/memory/hindsight/plugin.yaml \
+            /scripts/hermes-security-dependencies.patch; \
+        git -C /opt/hermes apply \
+            --include=plugins/memory/hindsight/plugin.yaml \
+            /scripts/hermes-security-dependencies.patch; \
+    fi \
+    && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
+    && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
+    && rm /scripts/hermes-security-dependencies.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix here. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+      export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
     node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm
@@ -222,6 +250,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+      export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
     node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
       --npm-root /usr/local/lib/node_modules/npm
@@ -231,6 +260,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+      export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
     node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
       --npm-root /usr/local/lib/node_modules/npm
@@ -265,6 +295,10 @@ RUN chmod -R a+rX /opt/hermes/.venv \
 # the sandbox user account. Remove this fallback after all supported base image
 # tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
 RUN set -eu; \
+    if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+        export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+        export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
     hermes_web_dist=/opt/hermes/hermes_cli/web_dist; \
     hermes_web_dir=/opt/hermes/web; \
     if [ ! -d "$hermes_web_dist" ]; then \
@@ -628,7 +662,7 @@ RUN node --experimental-strip-types \
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=f4276e9833638b7a620176c88bd329d6b6d4948538a3227b727a1397146a0e0e
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=b355d1365fb1d15475e327f312ceb854ae96f9ebed28cf96bc8817f550df2688
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
 # hadolint ignore=DL4006
@@ -1034,6 +1068,7 @@ RUN set -eu; \
         "$config_dir/weixin" \
         "$config_dir/weixin/accounts" \
         "$config_dir/runtime" \
+        "$config_dir/lazy-packages" \
         "$config_dir/profiles/dashboard-home"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
@@ -1088,6 +1123,7 @@ RUN set -eu; \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
         /sandbox/.hermes/profiles/dashboard-home \
+    && chmod 750 /sandbox/.hermes/lazy-packages \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \
@@ -1108,6 +1144,96 @@ RUN set -eu; \
     && : > /sandbox/.hermes/.hermes_history \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
+
+# Exercise the real reviewed lazy installer under the sandbox identity, then
+# perform the same read-only state-guard transition used by Shields Up. The
+# gateway must retain import access after the lock while both runtime identities
+# remain unable to mutate the dependency tree. Remove the probe install so the
+# published image still performs installation only when Hindsight is selected.
+# uv creates the Hermes virtual environment without pip. Seed pip from Python's
+# bundled ensurepip payload while this layer is still root, then verify the
+# sandbox can read but cannot modify the virtual environment used by the lazy
+# installer. The Hermes lazy installer still installs the approved dependency
+# as the sandbox user.
+RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
+    && /opt/hermes/.venv/bin/python -I -m pip --version \
+    && chmod 644 /opt/hermes/.venv/.lock \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644" \
+    && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755" \
+    && venv_violation="$(find -P /opt/hermes/.venv ! -type l \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)" \
+    && test -z "$venv_violation" \
+    && venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l \( ! -user root -o ! -group root \) -print -quit)" \
+    && test -z "$venv_link_owner_violation" \
+    && venv_links_file="$(mktemp)" \
+    && find -P /opt/hermes/.venv -type l -printf '%P -> %l\n' > "$venv_links_file" \
+    && LC_ALL=C sort -o "$venv_links_file" "$venv_links_file" \
+    && venv_links="$(cat "$venv_links_file")" \
+    && rm -f "$venv_links_file" \
+    && expected_venv_links="$(printf '%s\n' \
+        'bin/python -> /usr/bin/python3' \
+        'bin/python3 -> python' \
+        'bin/python3.13 -> python' \
+        "lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE" \
+        'lib64 -> lib')" \
+    && test "$venv_links" = "$expected_venv_links" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/bin/python3.13)" = "/usr/bin/python3.13" \
+    && test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python3.13)" = "root:root 755 regular file" \
+    && test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -eu -c '\
+            /opt/hermes/.venv/bin/python -I -m pip --version >/dev/null; \
+            if printf "" >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi; \
+            if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
+            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi' \
+    && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && HOME=/sandbox \
+        UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
+        UV_NO_CACHE=1 \
+        HERMES_HOME=/sandbox/.hermes \
+        HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
+    && HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import importlib.metadata as m; assert m.version('hindsight-client') == '0.6.1'" \
+    && lazy_plan='{"version":1,"readOnlyRoots":["lazy-packages"],"confidentialRoots":[],"readOnlyPrefixes":[],"confidentialPrefixes":[],"writableSubpaths":[]}' \
+    && /usr/local/lib/nemoclaw/state-dir-guard.py lock \
+        --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
+    && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+        env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client" \
+    && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
+        echo "ERROR: gateway can modify locked Hermes lazy packages" >&2; exit 1; \
+    fi \
+    && if /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.python-abi' 2>/dev/null; then \
+        echo "ERROR: sandbox can modify locked Hermes lazy packages" >&2; exit 1; \
+    fi \
+    && test ! -e /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe \
+    && /usr/local/lib/nemoclaw/state-dir-guard.py unlock \
+        --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe' \
+    && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && chown sandbox:sandbox /sandbox/.hermes \
+    && chmod 3770 /sandbox/.hermes \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"
 
 # Prove the cron execution ledger contract across the real image identities.
 # Hermes' gateway-side scheduler creates the live WAL-backed database in the
@@ -1197,6 +1323,8 @@ RUN chown root:root /sandbox/.nemoclaw \
 RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod -R a+rwX /sandbox/.hermes; \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        find /sandbox/.hermes/lazy-packages -type d -exec chmod 750 {} +; \
+        find /sandbox/.hermes/lazy-packages -type f -exec chmod 640 {} +; \
         for p in /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging; do \
             chmod a+rwx "$p"; \
         done; \
@@ -1278,9 +1406,9 @@ RUN set -eu; \
         "libonig5=6.9.9-1+b1" \
         "libjq1=1.8.2-1" \
         "jq=1.8.2-1" \
-        "vim-common=2:9.2.0782-1" \
-        "vim-tiny=2:9.2.0782-1" \
-        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
+        "vim-common=2:9.2.0858-1" \
+        "vim-tiny=2:9.2.0858-1" \
+        "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
@@ -1289,9 +1417,9 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1"; \
     test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1"; \
     test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0782-1"; \
-    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0782-1"; \
-    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw1"; \
+    test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
+    test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
+    test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \
@@ -1307,6 +1435,7 @@ RUN set -eu; \
     python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')"; \
     python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')"; \
     vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 '; \
+    vim.tiny --version | grep -Fx 'Included patches: 1-858'; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 

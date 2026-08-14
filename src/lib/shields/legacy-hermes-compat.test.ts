@@ -896,7 +896,7 @@ describe("legacy Hermes shields compatibility", () => {
         events.push("audit");
       });
 
-      shields.shieldsDown(sandbox.name, { throwOnError: true });
+      shields.shieldsDown(sandbox.name, { timeout: "not-a-duration", throwOnError: true });
 
       expect(
         transitionSpy.mock.calls.map(([input]) => ({
@@ -914,6 +914,16 @@ describe("legacy Hermes shields compatibility", () => {
       expect(
         JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
       ).toMatchObject({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath });
+      for (const event of [
+        "provider:mutable/locked",
+        "verified-mutable",
+        "policy",
+        "provider:locked/locked",
+        "route",
+        "audit",
+      ]) {
+        expect(events).toContain(event);
+      }
       expect(events.indexOf("provider:mutable/locked")).toBeLessThan(
         events.indexOf("verified-mutable"),
       );

@@ -156,7 +156,9 @@ export function materializeSandboxCreatePlan({
     {
       directGpu: intent.policy.options.directGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,
-      additionalPresets: [...intent.policy.options.additionalPresets],
+      additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
+        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
+        : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
       policyTier: intent.policy.options.policyTier,
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({

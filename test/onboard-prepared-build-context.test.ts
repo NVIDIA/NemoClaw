@@ -34,9 +34,11 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(preparedBuildCtx, { recursive: true });
-  fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    path.join(fakeBin, "openshell"),
+    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-prepared-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
     ["FROM scratch", `ARG NEMOCLAW_BUILD_ID=${buildId}`, 'CMD ["/bin/true"]', ""].join("\n"),
@@ -132,8 +134,11 @@ imageTag.resolveSandboxImageTagFromCreateOutput = (output, receivedBuildId, warn
 const normalize = (command) =>
   (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 runner.run = (command) => {
-  commands.push(normalize(command));
-  return { status: 0 };
+  const normalized = normalize(command);
+  commands.push(normalized);
+  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
+    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = []) => {
   commands.push(normalize([file, ...args]));

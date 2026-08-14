@@ -6,12 +6,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { dockerfileInstructions } from "./helpers/dockerfile-run-commands";
 
 const root = path.join(import.meta.dirname, "..");
 const dockerfileBase = fs.readFileSync(
   path.join(root, "agents", "hermes", "Dockerfile.base"),
   "utf8",
 );
+const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const config = fs.readFileSync(
   path.join(root, "agents", "hermes", "config", "managed-policy.ts"),
   "utf8",
@@ -21,7 +23,7 @@ const cliAdapter = JSON.parse(
   fs.readFileSync(path.join(root, "agents", "hermes", "hermes-cli-adapter-v1.json"), "utf8"),
 );
 const review = fs.readFileSync(
-  path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
+  path.join(root, "internal", "security-reviews", "hermes-0.19.0-dependency-review.md"),
   "utf8",
 );
 const securityDependenciesPatch = fs.readFileSync(
@@ -144,12 +146,42 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(dockerfileBase).toContain(
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
     );
+    expect(dockerfile).toContain(
+      "COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch",
+    );
+    expect(dockerfile).toContain("/scripts/hermes-security-dependencies.patch");
     expect(dockerfileBase).toContain(
       "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
+    );
+    expect(dockerfile).toContain("--include=hermes_cli/memory_setup.py");
+    expect(dockerfile).toContain("--include=plugins/memory/hindsight/plugin.yaml");
+    expect(dockerfile).toContain(
+      "grep -Fq 'ensure(\"memory.hindsight\", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py",
+    );
+    expect(dockerfile).toContain(
+      "grep -Fqx '  - \"hindsight-client==0.6.1\"' /opt/hermes/plugins/memory/hindsight/plugin.yaml",
+    );
+    expect(dockerfile).toContain(
+      "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+    );
+    expect(dockerfile).toContain("state-dir-guard.py lock");
+    expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
+    expect(dockerfile).toContain("gateway can modify locked Hermes lazy packages");
+    expect(dockerfile).toContain("sandbox can modify locked Hermes lazy packages");
+    expect(dockerfile).toContain(
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
+    );
+    expect(dockerfile).toContain(
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"`,
     );
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
+    expect(securityDependenciesPatch).toContain('hindsight = ["hindsight-client==0.6.1"]');
+    expect(securityDependenciesPatch).not.toContain("hindsight-client==0.8.");
+    expect(securityDependenciesPatch).toContain('ensure("memory.hindsight", prompt=False)');
+    expect(securityDependenciesPatch).toContain('-  - "hindsight-client>=0.6.1"');
+    expect(securityDependenciesPatch).toContain('+  - "hindsight-client==0.6.1"');
     for (const selection of [
       '"aiohttp==3.14.3"',
       '"cryptography==50.0.0"',
@@ -209,5 +241,79 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`tornado==6.5.7`");
     expect(review).toContain("checksum-pinned Node.js `24.18.1`");
     expect(review).toContain("exact uv `0.11.33`");
+  });
+
+  it("seeds root-owned pip before the sandbox user installs a lazy dependency", () => {
+    const instructions = dockerfileInstructions(dockerfile);
+    const lazyInstallLayer = instructions.find(
+      (instruction) =>
+        instruction.keyword === "RUN" &&
+        instruction.body.includes(
+          "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+        ),
+    );
+    expect(lazyInstallLayer).toBeDefined();
+
+    const layer = lazyInstallLayer?.body ?? "";
+    const orderedContracts = [
+      "/opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip",
+      "/opt/hermes/.venv/bin/python -I -m pip --version",
+      "chmod 644 /opt/hermes/.venv/.lock",
+      `test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644"`,
+      `test "$(stat -c '%U:%G %a' /opt/hermes/.venv/bin/pip)" = "root:root 755"`,
+      `venv_violation="$(find -P /opt/hermes/.venv ! -type l`,
+      `test -z "$venv_violation"`,
+      `venv_link_owner_violation="$(find -P /opt/hermes/.venv -type l`,
+      `test -z "$venv_link_owner_violation"`,
+      `venv_links_file="$(mktemp)"`,
+      `find -P /opt/hermes/.venv -type l -printf '%P -> %l\\n' > "$venv_links_file"`,
+      `LC_ALL=C sort -o "$venv_links_file" "$venv_links_file"`,
+      `venv_links="$(cat "$venv_links_file")"`,
+      `rm -f "$venv_links_file"`,
+      `expected_venv_links="$(printf '%s\\n'`,
+      "'bin/python -> /usr/bin/python3'",
+      "'bin/python3 -> python'",
+      "'bin/python3.13 -> python'",
+      `"lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE"`,
+      "'lib64 -> lib'",
+      `test "$venv_links" = "$expected_venv_links"`,
+      `test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13"`,
+      `test "$(readlink -e /opt/hermes/.venv/lib64)" = "/opt/hermes/.venv/lib"`,
+      `test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/bin/python)" = "root:root 755 regular file"`,
+      `test "$(stat -Lc '%U:%G %a %F' /opt/hermes/.venv/lib64)" = "root:root 755 directory"`,
+      "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups --",
+      "sh -eu -c",
+      "/opt/hermes/.venv/bin/python -I -m pip --version >/dev/null",
+      `if printf "" >> /opt/hermes/.venv/.lock 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/bin/pip 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi`,
+      `if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi`,
+      `if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi`,
+      `test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe`,
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
+      "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+    ];
+    let previousIndex = -1;
+    for (const contract of orderedContracts) {
+      const contractIndex = layer.indexOf(contract);
+      expect(
+        contractIndex,
+        `Missing or misordered lazy-install contract: ${contract}`,
+      ).toBeGreaterThan(previousIndex);
+      previousIndex = contractIndex;
+    }
+    expect(layer).toContain("-perm /022");
+    expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
+    expect(layer).not.toContain(`printf ''`);
+
+    const activeUser = instructions
+      .filter(
+        (instruction) =>
+          instruction.keyword === "USER" &&
+          instruction.start < (lazyInstallLayer?.start ?? Number.POSITIVE_INFINITY),
+      )
+      .at(-1);
+    expect(activeUser?.body.trim()).toBe("root");
   });
 });

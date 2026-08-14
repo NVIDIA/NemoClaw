@@ -222,12 +222,12 @@ describe("onboard helpers", () => {
   });
 
   it(
-    "prints doctor logs automatically when gateway fails to start (#1605)",
+    "prints owning-deployment guidance when NemoClaw does not launch the gateway (#9120)",
     testTimeoutOptions(20_000),
     () => {
-      // Intentional process-contract coverage: this case verifies the real child exit status and
-      // stdout/stderr handling across the Node -> shell -> OpenShell adapter boundary. The
-      // setupInference cases below are unit-shaped and run directly through typed dependencies.
+      // Intentional process-contract coverage: this case verifies the real
+      // child exit status and stderr guidance across the Node -> OpenShell
+      // adapter boundary.
       const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -235,59 +235,25 @@ describe("onboard helpers", () => {
       const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      // Fake openshell:
-      //   gateway start  — emits ANSI color codes + \r\n (mirrors real gateway output), exits 1
-      //   doctor logs    — emits ANSI sequences, an OOMKilled message, and a fake nvapi- credential
-      //                    to exercise ANSI stripping and redaction in the doctor-log path
+      // No gateway metadata is available, so the external-launcher branch
+      // prints recovery guidance and exits.
       fs.writeFileSync(
         path.join(fakeBin, "openshell"),
         `#!/usr/bin/env bash
-if [[ "$*" == *"doctor"*"logs"* ]]; then
-  printf "\\033[31mERROR\\033[0m k3s cluster crashed: OOMKilled\\r\\n"
-  printf "  Container nemoclaw_k3s ran out of memory\\r\\n"
-  printf "  Gateway auth token: nvapi-fakecredential-9999\\r\\n"
-  exit 0
-fi
-if [[ "$*" == "gateway --help" ]]; then
-  printf "Commands: start destroy\\n"
-  exit 0
-fi
-if [[ "$*" == *"gateway"*"start"* ]]; then
-  printf "\\033[33mDeploying\\033[0m gateway nemoclaw...\\r\\n"
-  printf "\\r\\nWaiting for gateway health...\\r\\n"
-  exit 1
-fi
 exit 1
 `,
         { mode: 0o755 },
       );
 
-      // Script runs in a child process: patching p-retry to be immediate avoids the
-      // 10 s + 30 s minTimeout delays, and NEMOCLAW_HEALTH_POLL_COUNT=0 skips the
-      // health-poll loop so the function throws "Gateway failed to start" on the
-      // first attempt. With exitOnFailure:true the catch block should auto-print
-      // doctor logs to stderr and then call process.exit(1).
+      // FreeBSD selects the external gateway launcher branch in the current
+      // provider plan.
       const script = `
-const mod = require("module");
-const origLoad = mod._load;
-mod._load = function(req, parent, isMain) {
-  if (req === "p-retry") {
-    return async (fn, opts) => {
-      try {
-        return await fn({ attemptNumber: 1, retriesLeft: 0 });
-      } catch (e) {
-        if (opts && opts.onFailedAttempt) {
-          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
-        }
-        throw e;
-      }
-    };
-  }
-  return origLoad.call(this, req, parent, isMain);
-};
 Object.defineProperty(process, "platform", { value: "freebsd" });
 const { startGateway } = require(${onboardPath});
-startGateway(null).catch(() => {});
+startGateway(null).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 `;
       fs.writeFileSync(scriptPath, script);
 
@@ -307,48 +273,10 @@ startGateway(null).catch(() => {});
       // The process exits 1 because startGateway calls process.exit(1) on failure.
       assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
 
-      // Fix 3: doctor logs are auto-printed to stderr.
-      assert.ok(
-        result.stderr.includes("Gateway logs:"),
-        `expected "Gateway logs:" header in stderr:\n${result.stderr}`,
-      );
-      assert.ok(
-        result.stderr.includes("OOMKilled"),
-        `expected doctor log output in stderr:\n${result.stderr}`,
-      );
-
-      // ANSI sequences must be stripped from both stdout (gateway start output) and
-      // stderr (doctor logs). A raw \x1b in the output means the regex failed.
-      assert.ok(
-        !result.stdout.includes("\x1b"),
-        `unexpected ANSI escape in stdout:\n${result.stdout}`,
-      );
-      assert.ok(
-        !result.stderr.includes("\x1b"),
-        `unexpected ANSI escape in stderr:\n${result.stderr}`,
-      );
-
-      // Credentials in doctor logs must be redacted, never printed verbatim.
-      assert.ok(
-        !result.stderr.includes("nvapi-fakecredential-9999"),
-        `credential leaked verbatim in stderr:\n${result.stderr}`,
-      );
-
-      // Fix 2: the \r\n -> \naiting rendering artifact must not appear.
-      assert.ok(
-        !result.stdout.includes("\naiting"),
-        `\\naiting artifact present in stdout:\n${result.stdout}`,
-      );
-
-      // Fix 1: gateway start output is printed per-line under the header, not as
-      // one collapsed blob. "Deploying" and "Waiting" must appear on separate lines.
-      const gatewayLines = result.stdout
-        .split("\n")
-        .filter((l) => l.includes("Deploying") || l.includes("Waiting"));
-      assert.ok(
-        gatewayLines.length >= 2,
-        `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
-      );
+      assert.match(result.stderr, /does not start the 'nemoclaw' gateway on this host/u);
+      assert.match(result.stderr, /deployment that owns the gateway process/u);
+      assert.match(result.stderr, /openshell gateway select nemoclaw/u);
+      assert.doesNotMatch(result.stderr, /openshell gateway start/u);
     },
   );
 
@@ -1002,5 +930,186 @@ const { createSandbox } = require(${onboardPath});
       /\bsandbox\s+(?:delete|create|rebuild)\b|\bprovider\s+(?:delete|create|update)\b/.test(c),
     );
     expect(destructive).toEqual([]);
+  });
+
+  it("rejects portable managed bootstrap before recreate state mutation (#9068)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-managed-recreate-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "portable-managed-recreate.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const catalogPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "managed-image", "catalog.ts"),
+    );
+    const contractPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "managed-image", "contract.ts"),
+    );
+    const protectionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "sandbox-recreate-protection.ts"),
+    );
+    const journalPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "onboard-recreate-journal.ts"),
+    );
+    const scriptMocksPath = JSON.stringify(
+      path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOkOpenshell(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const events = [];
+const normalize = (command) =>
+  (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
+
+const contract = require(${contractPath});
+const catalog = require(${catalogPath});
+catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
+  Object.fromEntries(contract.SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+    const image = contract.MANAGED_IMAGE_REPOSITORIES[agent];
+    const digest = "sha256:" + String(index + 1).repeat(64);
+    return [agent, {
+      contractVersion: contract.MANAGED_IMAGE_CONTRACT_VERSION,
+      agent,
+      platform,
+      image,
+      digest,
+      reference: image + "@" + digest,
+      source: {
+        repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
+        revision: "a".repeat(40),
+        release,
+        cohort: "ghrun-9068-1",
+      },
+      startupProfileContractVersion: contract.MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+      capabilityContractVersion: contract.MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
+    }];
+  }));
+
+const protectionModule = require(${protectionPath});
+const createProtection = protectionModule.createSandboxRecreateProtection;
+protectionModule.createSandboxRecreateProtection = (...args) => {
+  const protection = createProtection(...args);
+  return {
+    ...protection,
+    backup: () => {
+      events.push({ kind: "backup" });
+      return { ok: true, backup: null, failureKind: "none" };
+    },
+  };
+};
+
+const journalModule = require(${journalPath});
+const openJournal = journalModule.openOnboardRecreateJournal;
+journalModule.openOnboardRecreateJournal = (...args) => {
+  events.push({ kind: "openJournal" });
+  return openJournal(...args);
+};
+
+const registry = require(${registryPath});
+const sourceSandbox = {
+  name: "my-assistant",
+  agent: null,
+  gpuEnabled: true,
+  openshellDriver: "docker",
+  imageTag: "openshell/sandbox-from:source",
+  workload: {
+    schemaVersion: 1,
+    kind: "legacy-dockerfile",
+    reference: "openshell/sandbox-from:source",
+    shared: false,
+  },
+};
+registry.getSandbox = () => sourceSandbox;
+registry.registerSandbox = () => { events.push({ kind: "registerSandbox" }); return true; };
+registry.updateSandbox = () => { events.push({ kind: "updateSandbox" }); return true; };
+registry.removeSandbox = () => { events.push({ kind: "removeSandbox" }); return true; };
+
+runner.run = (command) => {
+  const value = normalize(command);
+  events.push({ kind: "run", command: value });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const value = normalize(command);
+  if (value.includes("sandbox get") && value.includes("my-assistant")) {
+    return "Name: my-assistant\nId: sbx-portable-source\n";
+  }
+  if (value.includes("sandbox list")) return "my-assistant Ready";
+  if (value.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  return require(${scriptMocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" }) || "";
+};
+
+const childProcess = require("node:child_process");
+childProcess.spawn = () => {
+  events.push({ kind: "spawn" });
+  throw new Error("unexpected sandbox create");
+};
+
+const { createSandboxWithTemporaryManagedRuntime } = require(${onboardPath});
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  try {
+    await createSandboxWithTemporaryManagedRuntime(
+      null,
+      "gpt-5.4",
+      "nvidia-prod",
+      null,
+      "my-assistant",
+    );
+    console.log(JSON.stringify({ error: "guard did not reject", events }));
+  } catch (error) {
+    console.log(JSON.stringify({ error: error instanceof Error ? error.message : String(error), events }));
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_RECREATE_SANDBOX: "1",
+    };
+    delete env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+    delete env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK;
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      error: string;
+      events: Array<{ kind: string; command?: string }>;
+    }>(result.stdout);
+    expect(payload.error).toContain(
+      "Portable OpenClaw onboarding cannot use managed-image bootstrap",
+    );
+    expect(
+      payload.events.filter(
+        (event) =>
+          event.kind === "backup" ||
+          event.kind === "openJournal" ||
+          event.kind === "removeSandbox" ||
+          event.kind === "registerSandbox" ||
+          event.kind === "updateSandbox" ||
+          event.kind === "spawn" ||
+          /\bsandbox\s+(?:delete|create|rebuild)\b|\bprovider\s+(?:delete|create|update)\b/.test(
+            event.command || "",
+          ),
+      ),
+    ).toEqual([]);
   });
 });

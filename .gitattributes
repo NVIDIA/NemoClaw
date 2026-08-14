@@ -1,16 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# test/starter-prompt-docs.test.ts asserts the exact working-tree bytes of these
-# files: the starter-prompt generator rejects a carriage return, the prompt
-# assets are byte-compared against their pinned Git blobs, and
-# local-credential-form.html is compared against the SHA-256 that users verify
-# before they run the local credential helper. A core.autocrlf checkout would
-# rewrite them and break those contracts, so pin the line endings here.
-/docs/resources/starter-prompt.md text eol=lf
-/docs/resources/prompt-assets/*.md text eol=lf
-/docs/resources/local-credential-form.html text eol=lf
-/tools/e2e/contracts/v1/jetson-dispatch.json text eol=lf
+# Repository checks and tests compare tracked files byte-for-byte against
+# pinned digests. The starter-prompt generator rejects a carriage return. A
+# Windows checkout with core.autocrlf=true rewrites those files to CRLF. The
+# checks then fail before a contributor changes a file.
+# text=auto keeps Git's binary detection, so Git does not convert a binary file.
+* text=auto eol=lf
 
 /skills/nemoclaw/** linguist-generated=true
 /skills/nemoclaw/**/*.md diff=markdown

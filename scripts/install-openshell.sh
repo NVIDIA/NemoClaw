@@ -4,6 +4,90 @@
 
 set -euo pipefail
 
+# Exit codes consumed by the TypeScript lifecycle adapter. Keep these stable:
+# they are the machine-readable contract between formula presence, repair, and
+# the temporary Homebrew trust boundary. Raw Homebrew diagnostics never
+# authorize standalone startup while a formula or installed keg can retain
+# gateway lifecycle authority.
+readonly OPENSHELL_HOMEBREW_FORMULA_ABSENT=65
+readonly OPENSHELL_HOMEBREW_FORMULA_REPAIR=66
+readonly OPENSHELL_HOMEBREW_TRUST_FAILED=67
+readonly OPENSHELL_HOMEBREW_UNTRUST_FAILED=68
+readonly OPENSHELL_HOMEBREW_OPERATION_FAILED=69
+
+run_trusted_openshell_homebrew_operation() {
+  local expected_sha256="$1"
+  shift
+  [ "${1:-}" = "--" ] || return 64
+  shift
+  [ "${1:-}" = "brew" ] || return 64
+  [ "$#" -gt 1 ] || return 64
+
+  (
+    local actual_sha256 cellar formula_file formula_ref status tap_repo trust_active
+    formula_ref="nvidia/openshell/openshell"
+    trust_active=0
+
+    tap_repo="$(brew --repository nvidia/openshell 2>/dev/null || true)"
+    formula_file="${tap_repo}/Formula/openshell.rb"
+    if [ -z "$tap_repo" ] || [ ! -f "$formula_file" ]; then
+      cellar="$(brew --cellar 2>/dev/null || true)"
+      if [ -n "$cellar" ] && [ -d "${cellar}/openshell" ]; then
+        exit "$OPENSHELL_HOMEBREW_FORMULA_REPAIR"
+      fi
+      exit "$OPENSHELL_HOMEBREW_FORMULA_ABSENT"
+    fi
+    [ ! -L "$formula_file" ] || exit "$OPENSHELL_HOMEBREW_FORMULA_REPAIR"
+
+    if [ "$expected_sha256" != "unverified-dev" ]; then
+      [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]] \
+        || exit "$OPENSHELL_HOMEBREW_FORMULA_REPAIR"
+      if command -v sha256sum >/dev/null 2>&1; then
+        actual_sha256="$(sha256sum "$formula_file" | awk '{print $1}')"
+      elif command -v shasum >/dev/null 2>&1; then
+        actual_sha256="$(shasum -a 256 "$formula_file" | awk '{print $1}')"
+      else
+        exit "$OPENSHELL_HOMEBREW_FORMULA_REPAIR"
+      fi
+      [ "$actual_sha256" = "$expected_sha256" ] \
+        || exit "$OPENSHELL_HOMEBREW_FORMULA_REPAIR"
+    fi
+
+    # shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap below.
+    cleanup_openshell_homebrew_formula_trust() {
+      status=$?
+      trap - EXIT
+      if [ "$trust_active" = "1" ] && ! brew untrust --formula "$formula_ref" >/dev/null 2>&1; then
+        exit "$OPENSHELL_HOMEBREW_UNTRUST_FAILED"
+      fi
+      exit "$status"
+    }
+    trap cleanup_openshell_homebrew_formula_trust EXIT
+    trap 'exit 70' HUP INT TERM
+
+    brew help trust >/dev/null 2>&1 \
+      || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    brew help untrust >/dev/null 2>&1 \
+      || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    brew untrust --formula "$formula_ref" >/dev/null 2>&1 \
+      || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    trust_active=1
+    if [ "$expected_sha256" != "unverified-dev" ]; then
+      brew trust --formula "$formula_ref" >/dev/null 2>&1 \
+        || exit "$OPENSHELL_HOMEBREW_TRUST_FAILED"
+    fi
+
+    "$@" || exit "$OPENSHELL_HOMEBREW_OPERATION_FAILED"
+  )
+}
+
+if [ "${1:-}" = "--homebrew-formula-operation" ]; then
+  shift
+  [ "$#" -ge 4 ] || exit 64
+  run_trusted_openshell_homebrew_operation "$@"
+  exit $?
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -667,12 +751,6 @@ homebrew_formula_path() {
 cleanup_macos_homebrew_formula() {
   local status=$?
   trap - EXIT
-  if [ -n "${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF:-}" ]; then
-    if ! brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null; then
-      warn "Homebrew could not remove temporary trust for ${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
-      exit 1
-    fi
-  fi
   if ! rm -rf "${OPENSHELL_HOMEBREW_FORMULA_TMPDIR:-}"; then
     warn "Could not remove temporary OpenShell Homebrew formula files"
     status=1
@@ -682,14 +760,13 @@ cleanup_macos_homebrew_formula() {
 
 install_macos_homebrew_formula() {
   local tmpdir formula_file tap_formula_file formula_ref expected_sha actual_sha brew_prefix openshell_bin
-  local formula_checksum_verified=0 homebrew_trust_supported=0
+  local formula_operation_pin homebrew_operation_status install_action
   [ "$OS" = "Darwin" ] || return 1
   [ "$ARCH_LABEL" = "aarch64" ] || fail "OpenShell ${PIN_VERSION} supports the Homebrew gateway service only on Apple Silicon macOS."
   command -v brew >/dev/null 2>&1 || fail "Homebrew is required to install the OpenShell macOS gateway service. Install Homebrew and retry."
 
   tmpdir="$(mktemp -d)"
   OPENSHELL_HOMEBREW_FORMULA_TMPDIR="$tmpdir"
-  OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF=""
   trap cleanup_macos_homebrew_formula EXIT
   formula_file="${tmpdir}/openshell.rb"
 
@@ -705,43 +782,36 @@ install_macos_homebrew_formula() {
       || fail "No SHA-256 tool available (sha256sum/shasum)"
     [ "$actual_sha" = "$expected_sha" ] \
       || fail "OpenShell Homebrew formula checksum does not match NemoClaw-pinned $RELEASE_TAG digest"
-    formula_checksum_verified=1
+    formula_operation_pin="$expected_sha"
+  else
+    formula_operation_pin="unverified-dev"
   fi
 
   formula_ref="${HOMEBREW_TAP}/${HOMEBREW_FORMULA_NAME}"
   tap_formula_file="$(homebrew_formula_path "$HOMEBREW_TAP" "$HOMEBREW_FORMULA_NAME")"
-  if brew help trust >/dev/null 2>&1; then
-    homebrew_trust_supported=1
-  fi
-  if [ "$formula_checksum_verified" = "0" ] && [ "$homebrew_trust_supported" = "1" ]; then
-    brew help untrust >/dev/null 2>&1 \
-      || fail "Homebrew supports formula trust but not the required untrust cleanup"
-    brew untrust --formula "$formula_ref" >/dev/null \
-      || fail "Homebrew refused to remove inherited trust for the unverified OpenShell dev formula ${formula_ref}"
-    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF="$formula_ref"
-  fi
-
   info "staging Homebrew formula in tap ${HOMEBREW_TAP}..."
   cp "$formula_file" "$tap_formula_file"
   chmod 0644 "$tap_formula_file"
 
-  if [ "$formula_checksum_verified" = "1" ] && [ "$homebrew_trust_supported" = "1" ]; then
-    brew trust --formula "$formula_ref" \
-      || fail "Homebrew refused to trust the checksum-verified OpenShell formula ${formula_ref}"
-    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF="$formula_ref"
-  fi
-  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then
+  homebrew_operation_status=0
+  run_trusted_openshell_homebrew_operation "$formula_operation_pin" -- \
+    brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1 \
+    || homebrew_operation_status=$?
+  if [ "$homebrew_operation_status" = "0" ]; then
+    install_action="reinstall"
     info "reinstalling OpenShell with Homebrew..."
-    brew reinstall --formula "$formula_ref"
-  else
+  elif [ "$homebrew_operation_status" = "$OPENSHELL_HOMEBREW_OPERATION_FAILED" ]; then
+    install_action="install"
     info "installing OpenShell with Homebrew..."
-    brew install --formula "$formula_ref"
+  else
+    fail "OpenShell Homebrew formula verification or temporary trust setup failed (status ${homebrew_operation_status}); rerun the pinned NemoClaw installer."
   fi
-  if [ -n "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" ]; then
-    brew untrust --formula "$OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF" >/dev/null \
-      || fail "Homebrew refused to remove temporary trust for OpenShell formula ${OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF}"
-    OPENSHELL_HOMEBREW_UNTRUST_FORMULA_REF=""
-  fi
+  homebrew_operation_status=0
+  run_trusted_openshell_homebrew_operation "$formula_operation_pin" -- \
+    brew "$install_action" --formula "$formula_ref" \
+    || homebrew_operation_status=$?
+  [ "$homebrew_operation_status" = "0" ] \
+    || fail "OpenShell Homebrew ${install_action} failed inside the temporary formula trust boundary (status ${homebrew_operation_status})."
 
   brew_prefix="$(brew --prefix 2>/dev/null || true)"
   openshell_bin="${brew_prefix}/bin/openshell"

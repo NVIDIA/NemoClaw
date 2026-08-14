@@ -15,6 +15,7 @@ import os from "node:os";
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { failLine, warnLine } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
+import { parseDockerDaemonObservation } from "../domain/docker-host";
 import { cliDisplayName, cliName } from "./branding";
 import {
   isPortableExperimentalProfile,
@@ -94,7 +95,7 @@ export interface SandboxBridgeReachabilityOptions {
   inspectNetworkImpl?: (networkName: string) => DockerBridgeNetworkInfo | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
 
-  runtimeProbeImpl?: () => SandboxBridgeProbeRunResult;
+  runtimeProbeImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   /** Inject a precomputed image-cache result; bypasses real pre-pull. */
   ensureImageCachedOverride?: import("./preflight").EnsureProbeImageCachedResult;
 }
@@ -205,11 +206,27 @@ function buildOpenShellDockerRoute(
   };
 }
 
-function outputTail(value: unknown): string | undefined {
+function outputText(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
   const text = raw.trim();
-  return text ? text.slice(-400) : undefined;
+  return text || undefined;
+}
+
+function outputTail(value: unknown): string | undefined {
+  return outputText(value)?.slice(-400);
+}
+
+function isReachableRuntimeInfo(result: SandboxBridgeProbeRunResult): boolean {
+  if (result.status !== 0) return false;
+  const stdout = outputText(result.stdout);
+  if (!stdout) return false;
+  try {
+    JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+  return parseDockerDaemonObservation(stdout).reachable;
 }
 
 function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
@@ -221,6 +238,22 @@ function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
     result.status !== null ? `exit ${result.status}` : undefined,
   ].filter((item): item is string => Boolean(item));
   return details.length > 0 ? details.join(" | ") : "docker run did not complete the probe";
+}
+
+function summarizeRuntimeInfoProbeResult(result: SandboxBridgeProbeRunResult): string {
+  if (isProbeTimeout(result)) {
+    return "Docker-compatible runtime info probe timed out";
+  }
+  if (result.status === 0) {
+    return "Docker-compatible runtime info did not contain a recognized daemon version";
+  }
+  if (result.signal) {
+    return `Docker-compatible runtime info probe ended with signal ${result.signal}`;
+  }
+  if (result.status !== null) {
+    return `Docker-compatible runtime info probe exited with status ${result.status}`;
+  }
+  return "Docker-compatible runtime info probe did not complete";
 }
 
 function isNameResolutionFailure(detail: string): boolean {
@@ -286,13 +319,7 @@ export async function isSandboxBridgeGatewayReachable(
   const runImpl = opts.runImpl ?? defaultRunImpl;
 
   const portableProfile = isPortableExperimentalProfile();
-  const runtimeProbe =
-    opts.runtimeProbeImpl ??
-    (() =>
-      defaultRunImpl(
-        ["info", "--format", "{{.ServerVersion}}"],
-        timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
-      ));
+  const runtimeProbe = opts.runtimeProbeImpl ?? defaultRunImpl;
 
   const network = inspectNetwork(networkName);
   const route = buildOpenShellDockerRoute(
@@ -303,13 +330,16 @@ export async function isSandboxBridgeGatewayReachable(
   );
   if (!route) {
     if (portableProfile) {
-      const runtimeResult = runtimeProbe();
-      if (runtimeResult.status !== 0) {
+      const runtimeResult = runtimeProbe(
+        ["info", "--format", "{{json .}}"],
+        timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
+      );
+      if (!isReachableRuntimeInfo(runtimeResult)) {
         return {
           ok: false,
           reason: "docker_daemon_unreachable",
           networkName,
-          detail: summarizeProbeResult(runtimeResult),
+          detail: summarizeRuntimeInfoProbeResult(runtimeResult),
         };
       }
     }

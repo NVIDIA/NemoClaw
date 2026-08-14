@@ -18,7 +18,6 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import type { RegistryMessagingAuthority } from "../../../messaging/plan-authority";
 import {
   decisionValue,
   isDecisionSelected,
@@ -108,9 +107,11 @@ import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
   hasMessagingCredentialDrift,
+  type RegistryMessagingAuthority,
   reconcileReusedSandboxMessaging,
   reconcileSandboxMessaging,
   resolveMessagingPlanAuthority,
+  sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
   decideSandboxResume,
@@ -205,6 +206,7 @@ export interface SandboxStateOptions<
   sandboxName: string | null;
   model: string;
   provider: string;
+  hostLocalInferenceRouteOnly?: boolean;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -317,6 +319,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
@@ -1070,12 +1073,7 @@ class SandboxStateFlow<
     expectedAuthority: RegistryMessagingAuthority,
   ): void {
     const currentAuthority = this.deps.getRegistrySandboxMessagingAuthority(sandboxName);
-    if (
-      fingerprintSandboxRecreateValue(currentAuthority) ===
-      fingerprintSandboxRecreateValue(expectedAuthority)
-    ) {
-      return;
-    }
+    if (sameRegistryMessagingAuthority(currentAuthority, expectedAuthority)) return;
     this.deps.error(
       `  Messaging channel state for sandbox '${sandboxName}' changed while onboarding was in progress.`,
     );
@@ -1558,6 +1556,7 @@ class SandboxStateFlow<
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
       inferenceProvider: this.options.provider,
+      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
       agent: this.options.agent,

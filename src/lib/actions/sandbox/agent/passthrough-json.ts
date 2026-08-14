@@ -1,27 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
-
 import { isStdinTty } from "../../../core/stdin";
 import {
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
 } from "../../../openclaw/agent-json-provenance";
-import { buildOpenshellExecArgs, computeExitCode, wrapExecCommandWithRuntimeEnv } from "../exec";
+import {
+  buildOpenshellExecArgs,
+  computeExitCode,
+  wrapOpenClawAgentCommandWithRuntimeEnv,
+} from "../exec";
 import { getKnownSandboxTargetGatewayName } from "../gateway-target";
 import {
-  agentDispatchStdio,
+  type AgentDispatchRunner,
+  agentDispatchDeadlineSeconds,
   isSilentAgentDispatch,
+  runAgentDispatch,
   SILENT_AGENT_DISPATCH_EXIT_CODE,
 } from "./passthrough-dispatch";
 import {
   writeIncompleteAgentTurnFailure,
   writeSilentAgentDispatchFailure,
+  writeTimedOutAgentTurnFailure,
 } from "./passthrough-help";
-
-const AGENT_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 /** Exit code for a turn the payload itself marks incomplete or abandoned. */
 export const INCOMPLETE_AGENT_TURN_EXIT_CODE = 1;
@@ -38,17 +41,8 @@ export type AgentJsonPassthroughDeps = {
   stdinIsTty?: () => boolean;
   provenanceLines?: (raw: string) => string[];
   incompleteTurnSignal?: (raw: string) => OpenClawIncompleteTurnSignal | null;
-  spawnSync?: (
-    command: string,
-    args: readonly string[],
-    options: SpawnSyncOptions,
-  ) => SpawnSyncReturns<string | Buffer>;
+  runDispatch?: AgentDispatchRunner;
 };
-
-function text(value: string | Buffer | null | undefined): string {
-  if (Buffer.isBuffer(value)) return value.toString("utf-8");
-  return typeof value === "string" ? value : "";
-}
 
 export function defaultGetOpenshellBinary(): string {
   // Lazy require keeps this module unit-testable under Vitest's TS loader; the
@@ -68,30 +62,26 @@ function writeProvenanceBlock(
   proc.stderr.write(`${stderr && !stderr.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
 }
 
-export function runAgentJsonPassthrough(
+export async function runAgentJsonPassthrough(
   sandboxName: string,
   command: readonly string[],
   proc: AgentJsonPassthroughProcess = process,
   deps: AgentJsonPassthroughDeps = {},
-): never {
+): Promise<never> {
   const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
-  const spawnSyncImpl = deps.spawnSync ?? spawnSync;
-  const result = spawnSyncImpl(
+  const result = await (deps.runDispatch ?? runAgentDispatch)(
     binary,
     buildOpenshellExecArgs(
       sandboxName,
-      wrapExecCommandWithRuntimeEnv(command),
-      { tty: false },
+      wrapOpenClawAgentCommandWithRuntimeEnv(command),
+      { tty: false, timeoutSeconds: agentDispatchDeadlineSeconds(command) },
       (deps.getGatewayName ?? getKnownSandboxTargetGatewayName)(sandboxName) ?? undefined,
     ),
     {
-      encoding: "utf-8",
-      maxBuffer: AGENT_JSON_MAX_BUFFER_BYTES,
-      stdio: agentDispatchStdio((deps.stdinIsTty ?? isStdinTty)()),
+      stdinIsTty: (deps.stdinIsTty ?? isStdinTty)(),
     },
   );
-  const stdout = text(result.stdout);
-  const stderr = text(result.stderr);
+  const { stderr, stdout } = result;
 
   // Ahead of the stdout write so machine-readable stdout stays byte-empty and
   // no provenance line is appended for a turn that never ran.
@@ -123,10 +113,17 @@ export function runAgentJsonPassthrough(
 
   // Last, so the partial trace and its provenance are already on the wire: a
   // turn the payload marks incomplete must not exit 0 just because the envelope
-  // reported success. An upstream non-zero code is preserved as-is.
+  // reported success. An upstream non-zero code is preserved as-is. A payload
+  // that declares a timeout phase gets the deadline-specific guidance instead
+  // of the generic incomplete-turn text; both are the same failure to the
+  // caller and share one exit code.
   const incompleteTurn = (deps.incompleteTurnSignal ?? openClawAgentIncompleteTurnSignal)(stdout);
   if (incompleteTurn && code === 0) {
-    writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
+    if (incompleteTurn.timeoutPhase) {
+      writeTimedOutAgentTurnFailure(proc, sandboxName, incompleteTurn.timeoutPhase);
+    } else {
+      writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
+    }
     return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);

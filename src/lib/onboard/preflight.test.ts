@@ -509,7 +509,7 @@ describe("assessHost", () => {
   //
   // The fixtures here explicitly pin `release` and override `readFileImpl`
   // for /proc/version so the underlying `detectWsl` heuristic does not
-  // pick up the test runner's actual environment (e.g. the wsl-e2e job
+  // pick up the test runner's actual environment (e.g. the platform WSL job
   // running on real WSL would otherwise see kernel 5.15.x-microsoft-WSL
   // and flip isWsl true, gating off the conflict).
   it("flags Docker 26+ containerd-snapshotter overlayfs as a nested overlay conflict", () => {

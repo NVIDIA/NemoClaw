@@ -4,7 +4,7 @@
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { getBuildIdentity } from "../../lib/core/version";
 import {
-  createPublicReadinessReport,
+  createPublicHostProbeReadinessReport,
   createSystemReadinessReport,
   renderReadinessReport,
 } from "../../lib/readiness";
@@ -33,7 +33,7 @@ export default class HostProbeCommand extends NemoClawCommand {
 
   public async run(): Promise<unknown> {
     await this.parse(HostProbeCommand);
-    const report = createPublicReadinessReport(
+    const report = createPublicHostProbeReadinessReport(
       await createSystemReadinessReport(getBuildIdentity(), {
         gateway: createProductionGatewayReadinessDependencies(),
       }),

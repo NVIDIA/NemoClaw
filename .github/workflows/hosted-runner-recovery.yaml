@@ -8,9 +8,7 @@ run-name: Hosted runner recovery for source run ${{ github.event.workflow_run.id
 on:
   workflow_run:
     workflows:
-      - E2E / WSL
-      - E2E / macOS
-      - CI / Platform Vitest Main Watch
+      - CI / Platform Evidence
     types:
       - completed
 
@@ -28,11 +26,7 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw' &&
       github.event.workflow_run.event == 'push' &&
-      (
-      github.event.workflow_run.path == '.github/workflows/wsl-e2e.yaml' ||
-      github.event.workflow_run.path == '.github/workflows/macos-e2e.yaml' ||
       github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'
-      )
       }}
     concurrency:
       group: hosted-runner-recovery-${{ github.event.workflow_run.workflow_id }}

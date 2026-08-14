@@ -3,6 +3,7 @@
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { D, R } from "../../cli/terminal-style";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { isTerminalSandboxPhase } from "../../state/gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
@@ -170,7 +171,7 @@ async function printGatewayUnreachableAfterRestartLookupStatus({
     console.log(lookup.output);
   }
   console.log(
-    `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
+    `  ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Check that \`openshell status\` reports the gateway healthy before reconnecting.`,
   );
   console.log(
     "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -191,9 +192,7 @@ async function printGatewayMissingAfterRestartLookupStatus({
   if (lookup.output) {
     console.log(lookup.output);
   }
-  console.log(
-    `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
-  );
+  console.log(`  ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
   console.log(
     "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
   );
@@ -225,6 +224,13 @@ function printNonReadySandboxPhaseGuidance({
   dockerRuntime: ReturnType<typeof getSandboxDockerRuntime> | null;
 }): void {
   if (!phase || phase === "Ready") return;
+  if (dockerRuntime?.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
+    console.log("");
+    console.log(`  Sandbox '${sandboxName}' is stopped.`);
+    console.log("  Workspace state is preserved.");
+    console.log(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
+    return;
+  }
   // A non-ready, non-terminal phase can mean two very different things. If
   // the Docker daemon is down, OpenShell can still return a present-but-
   // Provisioning sandbox (cached/transitional state); steering the user

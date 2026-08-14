@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 import { shellQuote } from "../../../core/shell-quote";
+import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { redactFull } from "../../../security/redact";
 
 /** Stderr sink for the passthrough's operator-facing failure text. */
@@ -83,6 +84,62 @@ export function writeIncompleteAgentTurnFailure(
   );
 }
 
+/**
+ * Report a turn whose deadline fired before it produced a result (#8723). The
+ * partial output has already been written verbatim, so this adds the verdict,
+ * the phase when the payload declares one, and where the deadline that fired
+ * actually lives. Retrying blind can re-apply side effects the timed-out turn
+ * already made.
+ *
+ * `--timeout` is described rather than offered as a recovery command because a
+ * measured provider-phase timeout does not respond to it: `--timeout N` sets the
+ * embedded run deadline (`embedded run timeout timeoutMs=N000`), while the
+ * provider request keeps the deadline from `models.providers.<id>.timeoutSeconds`
+ * (`[model-fetch] start ... timeoutMs=60000` was unchanged by `--timeout 150`).
+ */
+export function writeTimedOutAgentTurnFailure(
+  proc: AgentPassthroughDiagnosticProcess,
+  sandboxName: string,
+  timeoutPhase?: string,
+): void {
+  const sandboxDisplay = sanitizeReadinessText(sandboxName, 200);
+  const target = shellQuote(sandboxDisplay);
+  const diagnosticPhase =
+    timeoutPhase && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(timeoutPhase) ? timeoutPhase : undefined;
+  proc.stderr.write(
+    diagnosticPhase
+      ? `  The agent turn in sandbox '${sandboxDisplay}' timed out in the ${diagnosticPhase} phase before producing a result.\n`
+      : `  The agent turn in sandbox '${sandboxDisplay}' timed out before producing a result.\n`,
+  );
+  proc.stderr.write(
+    "  Reporting this as a failure: the deadline fired and no result reached this command.\n",
+  );
+  proc.stderr.write(
+    "  The output above is a partial trace. Tool calls in it may have already applied side effects.\n",
+  );
+  proc.stderr.write("  Documented recovery paths:\n");
+  proc.stderr.write(
+    `    ${CLI_NAME} ${target} sessions list          — locate the session key\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${target} sessions export <key>  — export the partial transcript\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${target} shields down           — unlock configuration writes\n`,
+  );
+  proc.stderr.write(
+    `    ${CLI_NAME} ${target} config set --key <deadline-key> --value <seconds> --restart  — raise the deadline\n`,
+  );
+  proc.stderr.write(
+    "  Two keys carry a deadline. agents.defaults.timeoutSeconds bounds the run, and\n",
+  );
+  proc.stderr.write(
+    "  `agent --timeout <seconds>` overrides it for a single run. models.providers.<id>.timeoutSeconds\n",
+  );
+  proc.stderr.write("  bounds the provider request, and no flag overrides it.\n");
+  proc.stderr.write("  Inspect the partial output and affected resources before retrying.\n");
+}
+
 export function hasAgentPassthroughHelpToken(args: readonly string[]): boolean {
   for (const arg of args) {
     if (arg === "--") break;
@@ -118,6 +175,8 @@ export function printAgentPassthroughHelp(): void {
   console.log("  upstream command help from inside the sandbox.");
   console.log("");
   console.log("  Hermes sandboxes are rejected with a");
-  console.log("  redirect to the OpenAI-compatible API on port 8642 inside the sandbox.");
+  console.log("  redirect to the OpenAI-compatible API inside the sandbox.");
+  console.log("  The rejection message names the sandbox's API port.");
+  console.log("  Run `openshell forward list` to read its host bind.");
   console.log("");
 }

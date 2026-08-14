@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
+import { gatewayIdForStateDir } from "./docker-driver-gateway-config";
 import {
   createDockerDriverGatewayRuntimeHelpers,
   type DockerDriverGatewayRuntimeDeps,
@@ -221,6 +222,86 @@ describe("docker-driver gateway runtime helpers", () => {
         });
         expect(fs.existsSync(pidFile)).toBe(false);
         expect(fs.existsSync(markerPath)).toBe(false);
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("finds a service-manager replacement that uses the selected gateway state (#8797)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    const recordedPid = 98_760;
+    const replacementPid = 98_761;
+    const gatewayBin = path.join(stateDir, "openshell-gateway");
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const namespace = gatewayIdForStateDir(stateDir);
+        const runCapture = vi.fn((args: string[]) =>
+          args.join(" ") === `ps -p ${String(replacementPid)} -o args=` ? gatewayBin : "",
+        );
+        const { helpers } = makeHelpers({
+          getCachedOpenshellBinary: () => path.join(stateDir, "openshell"),
+          runCapture,
+          runCaptureEx: vi.fn(() => ({
+            stdout: `${String(replacementPid)}\n`,
+            exitCode: 0,
+            timedOut: false,
+          })),
+        });
+        helpers.rememberDockerDriverGatewayPid(recordedPid);
+        vi.spyOn(process, "kill").mockImplementation(((pid) =>
+          pid === replacementPid
+            ? true
+            : (() => {
+                const gone = new Error("ESRCH") as NodeJS.ErrnoException;
+                gone.code = "ESRCH";
+                throw gone;
+              })()
+        ) as typeof process.kill);
+        const originalExistsSync = fs.existsSync.bind(fs);
+        const originalReadFileSync = fs.readFileSync.bind(fs);
+        const replacementCmdline = `/proc/${String(replacementPid)}/cmdline`;
+        const replacementEnvironment = `/proc/${String(replacementPid)}/environ`;
+        vi.spyOn(fs, "existsSync").mockImplementation(((candidate) =>
+          candidate === gatewayBin || candidate === replacementCmdline
+            ? true
+            : originalExistsSync(candidate)
+        ) as typeof fs.existsSync);
+        vi.spyOn(fs, "readFileSync").mockImplementation(((candidate, options) =>
+          candidate === replacementCmdline
+            ? `${gatewayBin}\0`
+            : candidate === replacementEnvironment
+              ? `NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE=${namespace}\0`
+              : originalReadFileSync(candidate, options as never)
+        ) as typeof fs.readFileSync);
+
+        expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when replacement-process discovery is unavailable (#8797)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const { helpers } = makeHelpers();
+        expect(helpers.isDockerDriverGatewayStateInUse()).toBe(true);
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("confirms the selected gateway state is unused after a complete empty scan (#8797)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const { helpers } = makeHelpers({
+          runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false })),
+        });
+        expect(helpers.isDockerDriverGatewayStateInUse()).toBe(false);
       });
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });

@@ -22,13 +22,13 @@ function recordDeepAgentsRuntimeCall(
     return probeOutput;
   }
   if (command.includes("dcode --version")) {
-    return `dcode ${smokeVersion}\nNEMOCLAW_AGENT_SMOKE_EXIT:0`;
+    return `NEMOCLAW_AGENT_SMOKE_BEGIN\ndcode ${smokeVersion}\nNEMOCLAW_AGENT_SMOKE_EXIT:0`;
   }
   if (command.includes("NEMOCLAW_DCODE_EMPTY_PROMPT_OK")) {
-    return "NEMOCLAW_DCODE_EMPTY_PROMPT_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+    return "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_DCODE_EMPTY_PROMPT_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
   }
   if (command.includes("/sandbox/.deepagents/config.toml")) {
-    return "NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+    return "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
   }
   return "";
 }
@@ -62,5 +62,5 @@ export function recordFailingDeepAgentsSmokeCall(args: string[]): string {
   const command = args.slice(args.indexOf("--") + 1).at(-1) ?? "";
   return command.includes("NEMOCLAW_AGENT_BINARY_CHECK")
     ? "NEMOCLAW_AGENT_BINARY_CHECK:ok"
-    : "dcode provider route failed\nNEMOCLAW_AGENT_SMOKE_EXIT:42";
+    : "NEMOCLAW_AGENT_SMOKE_BEGIN\ndcode provider route failed\nNEMOCLAW_AGENT_SMOKE_EXIT:42";
 }

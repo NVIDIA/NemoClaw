@@ -465,8 +465,8 @@ describe("vllm model registry", () => {
       managedBearerAuth: true,
       runtime: {
         image:
-          "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
-        imageDownloadSizeBytes: 10_507_991_780,
+          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+        imageDownloadSizeBytes: 9_699_710_136,
         modelDownloadSizeBytes: 25_447_097_878,
       },
     });
@@ -491,6 +491,12 @@ describe("vllm model registry", () => {
 });
 
 describe("modelsForPlatform", () => {
+  it("offers only the accepted Qwen3.6 profile on N1x (#8574)", () => {
+    expect(modelsForPlatform("n1x").map((model) => model.envValue)).toEqual([
+      "qwen3.6-35b-a3b-nvfp4",
+    ]);
+  });
+
   it("returns the Spark-runnable subset for DGX Spark", () => {
     const slugs = modelsForPlatform("spark").map((m) => m.envValue);
     expect(slugs).toContain("qwen3.6-35b-a3b-nvfp4");

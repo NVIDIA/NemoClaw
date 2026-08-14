@@ -69,6 +69,7 @@ tiers:
       - { name: outlook, access: read-write }
       - { name: claude-code, access: read-write }
       - { name: local-inference, access: read-write }
+      - { name: local-memory, access: read-write }
       - { name: openclaw-pricing, access: read-write }
       - { name: openclaw-diagnostics-otel-local, access: read-write }
       - { name: observability-otlp-local, access: read-write }

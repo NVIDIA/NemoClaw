@@ -43,7 +43,10 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(
+    path.join(fakeBin, "openshell"),
+    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-terminal-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
+  );
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -89,8 +92,11 @@ agentOnboard.createAgentSandbox = () => {
 };
 
 runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
+    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });

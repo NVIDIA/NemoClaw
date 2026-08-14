@@ -481,7 +481,7 @@ describe("agent base image provisioning", () => {
           ],
           validateImage: expect.any(Function),
           validationDescription:
-            "deepagents-code==0.1.55 and the immutable security package inventory",
+            "deepagents-code==0.1.55, dos2unix, and the immutable security package inventory",
         }),
       );
     });

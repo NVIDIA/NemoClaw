@@ -88,10 +88,17 @@ Do not load a platform asset for any other computer.
 
 ## Runtime and Provider Selection
 
-If no platform asset applies, or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
+If the readiness check confirms N1x, do not show the generic provider menu.
+Offer only the Deferred managed-vLLM preview with `NEMOCLAW_PROVIDER=install-vllm`.
+Explain that N1x remains outside the supported-platform set pending complete physical NemoClaw Express E2E validation, accepting this path is explicit preview intent, and the preview uses one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+Do not offer or reuse an existing vLLM server on N1x.
+If port `8000` is occupied, stop and ask the user to stop that server before trying the Deferred preview again.
+If the user declines the preview, stop before installation.
+
+For a computer other than N1x, if no platform asset applies or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
-1. Existing vLLM, only when a ready server is detected on `localhost:8000`.
+1. Existing vLLM, only when the computer is not N1x and a ready server is detected on `localhost:8000`.
 2. Managed vLLM, optimized local inference with a large download.
 3. Local Ollama, only when the selected agent and platform support it.
 4. NVIDIA Endpoints, which requires an NVIDIA API key.
@@ -183,8 +190,8 @@ Use this provider mapping for non-interactive setup:
 - OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
-- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`.
-- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; use an approved optional model override only when the selected platform supports it.
+- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`; unavailable on N1x.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; this is the only admitted N1x provider and requires explicit Deferred preview intent there. Use an approved optional model override only when the selected platform supports it.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
 

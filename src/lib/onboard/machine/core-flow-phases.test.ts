@@ -143,6 +143,7 @@ function createPhases(
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
+      resolveHostLocalInferenceStartupSelection: vi.fn(() => null),
       startRecordedStep: vi.fn(async () => undefined),
       recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
         sessionWithUpdates(updates),
@@ -190,7 +191,7 @@ function createPhases(
       assessHost: () => ({ memoryGb: 64 }),
       formatSandboxBuildEstimateNote: () => null,
       formatOnboardConfigSummary: () => "summary",
-      promptYesNoOrDefault: vi.fn(async () => true),
+      prompt: vi.fn(async () => "1"),
       cliName: () => "nemoclaw",
       log: vi.fn(),
       error: vi.fn(),

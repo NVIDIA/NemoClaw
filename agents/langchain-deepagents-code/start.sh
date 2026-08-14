@@ -10,6 +10,41 @@ unset BASH_ENV ENV
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+readonly NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE="/usr/local/lib/nemoclaw/dcode-login-profile.sh"
+
+verify_dcode_login_profile() {
+  [ -d /sandbox ] \
+    && [ ! -L /sandbox ] \
+    && [ -f "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
+    && [ ! -L "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
+    && [ "$(stat -c '%U:%G:%a' "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" 2>/dev/null || true)" = "root:root:444" ] \
+    && [ ! -L /sandbox/.bash_profile ] \
+    && [ "$(stat -c '%U:%G:%a' /sandbox 2>/dev/null || true)" = "root:sandbox:1775" ] \
+    && [ "$(stat -c '%U:%G:%a' /sandbox/.bash_profile 2>/dev/null || true)" = "root:root:444" ] \
+    && cmp -s "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" /sandbox/.bash_profile
+}
+
+protect_dcode_login_profile() {
+  local source_metadata
+  source_metadata="$(stat -c '%U:%G:%a' "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" 2>/dev/null || true)"
+  if [ ! -f "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
+    || [ -L "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" ] \
+    || [ "$source_metadata" != "root:root:444" ]; then
+    printf '%s\n' '[SECURITY] Managed DCode login profile is missing or unsafe.' >&2
+    exit 1
+  fi
+
+  chown root:sandbox /sandbox
+  chmod 1775 /sandbox
+  rm -f -- /sandbox/.bash_profile
+  install -o root -g root -m 0444 \
+    "$NEMOCLAW_DCODE_LOGIN_PROFILE_SOURCE" /sandbox/.bash_profile
+  if ! verify_dcode_login_profile; then
+    printf '%s\n' '[SECURITY] Could not protect the managed DCode login profile.' >&2
+    exit 1
+  fi
+}
+
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
 if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
@@ -34,12 +69,18 @@ unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
 unset -f nemoclaw_normalize_entrypoint_env_wrapper
 # managed-entrypoint-env-wrapper end
 
-# The published managed image uses uid 0 as its OCI entry user so it can accept
-# a future profile. Without one, drop immediately and execute the byte-for-byte
-# legacy sandbox-user path. Ordinary non-managed builds still start as sandbox.
+# The published managed image uses uid 0 as its OCI entry user so every start
+# can repair the protected login-profile boundary before immediately dropping
+# to the legacy sandbox-user path. A sandbox-user image still verifies the
+# image-baked boundary before continuing.
 if [ "$(id -u)" -eq 0 ]; then
+  protect_dcode_login_profile
   exec /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
     /usr/local/bin/nemoclaw-start "$@"
+fi
+if ! verify_dcode_login_profile; then
+  printf '%s\n' '[SECURITY] DCode login profile is not protected; rebuild this sandbox.' >&2
+  exit 1
 fi
 
 while IFS= read -r _nemoclaw_auto_approval_env; do

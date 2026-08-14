@@ -85,10 +85,10 @@ describe("connectSandbox route lifecycle", () => {
   });
 
   it("repairs a WSL Ollama route without requiring an auth proxy token", async () => {
-    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     const harness = createConnectHarness({
       inferenceGetOutput: "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3:0.6b\n",
       inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200", "OK 200"],
+      isWsl: true,
       registryEntry: {
         model: "qwen3:0.6b",
         provider: "ollama-local",
