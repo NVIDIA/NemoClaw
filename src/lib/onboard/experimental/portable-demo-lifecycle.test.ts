@@ -1392,6 +1392,7 @@ describe("portable demo sandbox lifecycle", () => {
         mode: 0o600,
       },
     );
+    runtime.podman.mockClear();
     expect(() =>
       recoverPortableDemoSandboxLifecycle(
         "alpha",
@@ -1399,7 +1400,7 @@ describe("portable demo sandbox lifecycle", () => {
         { platform: "linux", stateDir, podman: runtime.podman },
       ),
     ).toThrow("predates recorded portable Podman authority");
-    expect(runtime.podman).not.toHaveBeenCalledWith(["start", CONTAINER_ID]);
+    expect(runtime.podman).not.toHaveBeenCalled();
   });
 
   it("fails closed for a schema-1 receipt when the gateway is healthy without its managed startup process (#8441)", () => {

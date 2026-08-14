@@ -41,11 +41,11 @@ function capture(status: number, stdout = ""): ReturnType<ContainerEngineCommand
 function harness(
   options: {
     active?: boolean;
-    captureSocket?: () => PodmanSocketAuthority;
-    hardenSocket?: () => void;
+    captureSocket?: (socketPath: string) => PodmanSocketAuthority;
+    hardenSocket?: (socketPath: string, uid: number) => void;
     podmanCapture?: ContainerEngineCommandCapture;
     startStatus?: number;
-    assertSocket?: () => void;
+    assertSocket?: (authority: PodmanSocketAuthority) => void;
     env?: NodeJS.ProcessEnv;
   } = {},
 ) {
@@ -108,6 +108,51 @@ describe("portable Podman activation readiness", () => {
       59_900,
     );
     expect(hardenSocket).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps polling after the socket directory is hardened (#9070)", () => {
+    const captureSocket = vi
+      .fn<() => PodmanSocketAuthority>()
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      })
+      .mockReturnValue(SOCKET_AUTHORITY);
+    const hardenSocket = vi.fn();
+    const h = harness({ active: false, captureSocket, hardenSocket });
+
+    const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);
+
+    expect(result).toMatchObject({
+      ok: true,
+      serverVersion: "5.6.1",
+      timing: { mode: "cold", apiMs: 100, totalMs: 100 },
+    });
+    expect(hardenSocket).toHaveBeenCalledTimes(1);
+    expect(captureSocket).toHaveBeenCalledTimes(2);
+  });
+
+  it("recaptures a socket replaced during cold activation (#9070)", () => {
+    const replacementAuthority = { ...SOCKET_AUTHORITY, inode: "3" };
+    const captureSocket = vi
+      .fn<() => PodmanSocketAuthority>()
+      .mockReturnValueOnce(SOCKET_AUTHORITY)
+      .mockReturnValue(replacementAuthority);
+    const assertSocket = vi.fn((authority: PodmanSocketAuthority) => {
+      if (authority.inode === SOCKET_AUTHORITY.inode) {
+        throw new Error("replaced");
+      }
+    });
+    const h = harness({ active: false, captureSocket, assertSocket });
+
+    const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);
+
+    expect(result).toMatchObject({
+      ok: true,
+      authority: replacementAuthority,
+      timing: { mode: "cold", apiMs: 100, totalMs: 100 },
+    });
+    expect(captureSocket).toHaveBeenCalledTimes(2);
+    expect(h.podmanCapture).toHaveBeenCalledOnce();
   });
 
   it("uses the shorter steady-state deadline only for an active service (#9070)", () => {

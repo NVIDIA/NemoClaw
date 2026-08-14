@@ -289,7 +289,7 @@ export function inspectPortablePodmanReadiness(
         }
         socketSeen = true;
       } catch (error) {
-        if (mode === "cold" && !socketHardened && isMissingSocket(error)) {
+        if (mode === "cold" && isMissingSocket(error)) {
           (deps.sleep ?? sleep)(
             Math.min(POLL_INTERVAL_MS, Math.max(0, deadlineMs - elapsed(now, startedAt))),
           );
@@ -307,11 +307,19 @@ export function inspectPortablePodmanReadiness(
       }
     }
 
+    let authorityChanged = false;
     const provider = createPodmanContainerEngine({
       operation: "host-doctor",
       socketAuthority,
       authorityDeps,
-      assertAuthority: assert,
+      assertAuthority: (authority, deps) => {
+        try {
+          assert(authority, deps);
+        } catch (error) {
+          authorityChanged = true;
+          throw error;
+        }
+      },
       ...(deps.podmanCapture ? { capture: deps.podmanCapture } : {}),
     });
     const remainingMs = Math.max(1, deadlineMs - elapsed(now, budgetStartedAt));
@@ -328,6 +336,13 @@ export function inspectPortablePodmanReadiness(
         };
       }
     } catch {
+      if (mode === "cold" && authorityChanged && elapsed(now, budgetStartedAt) < deadlineMs) {
+        socketAuthority = null;
+        (deps.sleep ?? sleep)(
+          Math.min(POLL_INTERVAL_MS, Math.max(0, deadlineMs - elapsed(now, budgetStartedAt))),
+        );
+        continue;
+      }
       return failure(
         "socket authority",
         "The recorded portable Podman socket changed while its API was being verified.",

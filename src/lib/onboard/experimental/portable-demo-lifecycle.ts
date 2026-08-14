@@ -103,7 +103,7 @@ export interface PortableDemoLifecycleDeps {
   podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
   runtimeAuthority?: CheckpointPortableRuntimeAuthority | null;
   runtimeReadiness?: PortablePodmanReadinessDeps;
-  hardenSocketDirectory?: (socketPath: string) => void;
+  hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   registryGeneration?: string;
   backfillRegistryGeneration?: (registryGeneration: string) => boolean;
   captureOpenshell?: (args: readonly string[], timeoutMs: number) => CommandResult;
@@ -512,31 +512,6 @@ function requireReceiptOwnedInspection(
   }
 }
 
-function backfillLegacyReceiptGeneration(
-  receipt: PortableDemoLifecycleReceipt,
-  stateDir: string,
-  backfillRequired: boolean,
-  deps: PortableDemoLifecycleDeps,
-): PortableDemoLifecycleReceipt {
-  if (receipt.schemaVersion >= 3) return receipt;
-  if (
-    backfillRequired &&
-    (!deps.backfillRegistryGeneration || !deps.backfillRegistryGeneration(receipt.containerId))
-  ) {
-    throw new Error(
-      `Portable demo lifecycle receipt for sandbox '${receipt.sandboxName}' could not claim the current registry generation`,
-    );
-  }
-  if (receipt.schemaVersion === 1) return receipt;
-  const migrated: PortableDemoLifecycleReceipt = {
-    ...receipt,
-    schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-    registryGeneration: receipt.containerId,
-  };
-  writeReceipt(migrated, stateDir);
-  return migrated;
-}
-
 function inspectReceiptRuntimeReadiness(
   receipt: PortableDemoLifecycleReceipt,
   commandEnv: NodeJS.ProcessEnv,
@@ -585,7 +560,7 @@ export function resolvePortableDemoPrivilegedExecTarget(
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-  const backfillRequired = requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
+  requireCurrentRegistryGeneration(receipt, deps.registryGeneration);
   const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
   const inspection = discoverPodmanContainer(sandboxName, authority.podman);
   requireReceiptOwnedInspection(receipt, inspection);
@@ -593,7 +568,6 @@ export function resolvePortableDemoPrivilegedExecTarget(
     throw new Error(`Portable sandbox '${sandboxName}' is not running`);
   }
   authority.assertRuntimeAuthority();
-  backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
   return {
     assertRuntimeAuthority: authority.assertRuntimeAuthority,
     containerId: inspection.containerId,
@@ -935,19 +909,13 @@ export function recoverPortableDemoSandboxLifecycle(
   if (context.openshellDriver !== "docker") return { kind: "not-installed" };
   const commandEnv = deps.env ?? process.env;
   const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
-  let receipt = loadReceipt(sandboxName, stateDir);
+  const receipt = loadReceipt(sandboxName, stateDir);
   if (!receipt) return { kind: "not-installed" };
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("Portable demo lifecycle receipt is only valid on Linux");
   }
-  const backfillRequired = requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+  requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
   const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
-  if (backfillRequired || receipt.schemaVersion === 2) {
-    const migrationInspection = discoverPodmanContainer(sandboxName, authority.podman);
-    requireReceiptOwnedInspection(receipt, migrationInspection);
-    authority.assertRuntimeAuthority();
-    receipt = backfillLegacyReceiptGeneration(receipt, stateDir, backfillRequired, deps);
-  }
   const podman = authority.podman;
   const initialInspection = podman(["inspect", receipt.containerId]);
   if (isMissingPodmanContainer(initialInspection)) {
@@ -1059,16 +1027,6 @@ export function recoverPortableDemoSandboxLifecycle(
   if (!recovered) {
     throw new Error(
       `Portable sandbox '${sandboxName}' startup did not start its agent gateway; inspect /tmp/nemoclaw-start.log inside the sandbox`,
-    );
-  }
-  if (refreshStartup) {
-    writeReceipt(
-      {
-        ...receipt,
-        schemaVersion: CURRENT_RECEIPT_SCHEMA_VERSION,
-        registryGeneration: context.lifecycleGeneration ?? receipt.containerId,
-      },
-      deps.stateDir ?? defaultStateDir(commandEnv),
     );
   }
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);

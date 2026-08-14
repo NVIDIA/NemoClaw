@@ -103,9 +103,9 @@ describe("preparePortableExperimentalHost", () => {
   it("prepares the rootless socket and managed loopback registry deterministically", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
-    const systemctl = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
-      result(),
-    );
+    const systemctl = vi.fn<
+      (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult
+    >(() => result());
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result()) // --version probe: docker-compatible CLI present
@@ -159,6 +159,7 @@ describe("preparePortableExperimentalHost", () => {
       ["--user", "try-restart", "podman.service"],
       ["--user", "is-active", "--quiet", "podman.service"],
     ]);
+    expect(systemctl.mock.calls[2]?.[2]).toBe(10_000);
     expect(podman).not.toHaveBeenCalled();
     for (const [, commandEnv] of docker.mock.calls) {
       expect(commandEnv).not.toHaveProperty("CONTAINER_CONNECTION");
@@ -196,6 +197,47 @@ describe("preparePortableExperimentalHost", () => {
     );
     expect(fs.readFileSync(containersConf, "utf-8")).toContain('env = ["NETAVARK_FW=iptables"]');
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
+  });
+
+  it("forwards readiness deadlines to injected host command adapters (#9070)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn<
+      (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult
+    >(() => result());
+    const podman = vi.fn((_args: readonly string[], _env: NodeJS.ProcessEnv, _timeoutMs?: number) =>
+      result(0, JSON.stringify({ Server: { Version: "5.6.1" } })),
+    );
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result());
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl,
+        podman,
+        docker,
+        captureSocketAuthority: (socketPath) => socketAuthority(socketPath),
+        validateConfigAuthority: vi.fn(),
+        runtimeReadiness: {
+          uid: 1001,
+          home,
+          hardenSocketDirectory: vi.fn(),
+          captureSocketAuthority: (socketPath) => socketAuthority(socketPath),
+          assertSocketAuthority: vi.fn(),
+        },
+      },
+      runtimeAuthority(home),
+    );
+
+    expect(systemctl.mock.calls[2]?.[2]).toBe(10_000);
+    expect(podman.mock.calls[0]?.[2]).toBe(10_000);
   });
 
   it("keeps the portable firewall driver in the Podman default search path (#8441)", () => {

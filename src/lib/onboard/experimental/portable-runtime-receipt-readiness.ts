@@ -38,7 +38,7 @@ export interface PortableRuntimeReceiptReadinessDeps {
   readonly podman?: (args: readonly string[], env?: NodeJS.ProcessEnv) => CommandResult;
   readonly podmanSocketAuthorityDeps?: PodmanSocketAuthorityDeps;
   readonly runtimeReadiness?: PortablePodmanReadinessDeps;
-  readonly hardenSocketDirectory?: (socketPath: string) => void;
+  readonly hardenSocketDirectory?: (socketPath: string, uid: number) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

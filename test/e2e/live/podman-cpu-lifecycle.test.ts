@@ -254,7 +254,9 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
     const openclawSandbox = AGENTS[0].sandboxName;
     const portableStateDir = path.join(root, "portable-lifecycle");
     const uid = process.getuid?.() ?? -1;
-    expect(uid, "Portable lifecycle evidence requires a Linux UID").toBeGreaterThanOrEqual(0);
+    expect(uid, "Rootless portable lifecycle evidence requires a non-root Linux UID").toBeGreaterThan(
+      0,
+    );
     installPortableDemoSandboxLifecycle(
       openclawSandbox,
       [

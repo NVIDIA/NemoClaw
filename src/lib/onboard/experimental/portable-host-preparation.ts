@@ -53,8 +53,16 @@ export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
-  systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
-  podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  systemctl?: (
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+    timeoutMs?: number,
+  ) => SpawnResult;
+  podman?: (
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+    timeoutMs?: number,
+  ) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
@@ -396,11 +404,11 @@ export function preparePortableExperimentalHost(
 
   const podman =
     deps.podman ??
-    ((args, childEnv) =>
+    ((args, childEnv, timeoutMs = HOST_COMMAND_TIMEOUT_MS) =>
       spawnSync("podman", [...args], {
         encoding: "utf-8",
         env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
       }));
   const admissionSocketPath = expectedSocketPath ?? path.join(runtimeDir, "podman", "podman.sock");
   assertSocketInsideRuntime(runtimeDir, admissionSocketPath);
@@ -424,11 +432,11 @@ export function preparePortableExperimentalHost(
 
   const systemctl =
     deps.systemctl ??
-    ((args, childEnv) =>
+    ((args, childEnv, timeoutMs = HOST_COMMAND_TIMEOUT_MS) =>
       spawnSync("systemctl", [...args], {
         encoding: "utf-8",
         env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
       }));
   requireCommand(
     systemctl(
@@ -453,7 +461,7 @@ export function preparePortableExperimentalHost(
     uid: Number(uid),
     home,
     env,
-    systemctl: (args, childEnv) => systemctl(args, childEnv),
+    systemctl: (args, childEnv, timeoutMs) => systemctl(args, childEnv, timeoutMs),
     hardenSocketDirectory:
       deps.hardenSocketDirectory ??
       deps.runtimeReadiness?.hardenSocketDirectory ??
@@ -468,8 +476,8 @@ export function preparePortableExperimentalHost(
     podmanCapture: deps.runtimeReadiness?.podmanCapture
       ? deps.runtimeReadiness.podmanCapture
       : deps.podman
-        ? (_executable, args) => {
-            const result = podman(args, podmanEnv);
+        ? (_executable, args, timeoutMs) => {
+            const result = podman(args, podmanEnv, timeoutMs);
             return {
               status: result.status ?? 1,
               stdout: String(result.stdout ?? ""),
