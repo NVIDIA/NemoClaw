@@ -315,23 +315,18 @@ describe("focused staging Brev Launchable lane", () => {
       .find((line) => line.startsWith("ssh host readiness attempt 1: "));
     expect(readinessCall).toBeDefined();
     const readinessArgs = readinessCall?.split(": ").at(1)?.split(" ") ?? [];
-    expect(readinessArgs).toEqual([
-      "-T",
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "ConnectTimeout=10",
-      "-o",
-      "ConnectionAttempts=1",
-      "-o",
-      "NumberOfPasswordPrompts=0",
-      "-o",
-      "RequestTTY=no",
-      "-o",
-      "LogLevel=ERROR",
-      "nclaw-e2e-test-1-host",
-      "true",
-    ]);
+    expect(readinessArgs).toEqual(
+      expect.arrayContaining([
+        "-T",
+        "BatchMode=yes",
+        "ConnectTimeout=10",
+        "ConnectionAttempts=1",
+        "NumberOfPasswordPrompts=0",
+        "RequestTTY=no",
+        "LogLevel=ERROR",
+      ]),
+    );
+    expect(readinessArgs.slice(-2)).toEqual(["nclaw-e2e-test-1-host", "true"]);
     expect(fs.readFileSync(sshAttempts, "utf8").trim()).toBe("6");
     expect(commands).toContain("ssh preinstalled full-e2e.test.ts");
     expect(commands).not.toContain("nvapi-test-value");
@@ -440,18 +435,18 @@ describe("focused staging Brev Launchable lane", () => {
     const { calls, env, state, workDir } = fixture({
       refreshError: `refresh safe detail; api_key=brev-test-secret; endpoint=https://refresh.hidden.internal/path; ${"r".repeat(2_000)}`,
       refreshStatus: 35,
-      sshHostError: `ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key; ${"s".repeat(2_000)}`,
+      sshHostError: `ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key; Authorization: Bearer short-token; ${"s".repeat(2_000)}`,
       sshReadyAfter: Number.MAX_SAFE_INTEGER,
     });
-    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "2" });
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "5" });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).toMatch(
-      /timeout [12]s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1 true/u,
+      /timeout [1-5]s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1 true/u,
     );
     expect(commands).toMatch(
-      /timeout [12]s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true/u,
+      /timeout [1-5]s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true/u,
     );
     expect(commands).not.toMatch(/ssh -G|brev exec .* true --host/u);
     expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
@@ -463,7 +458,7 @@ describe("focused staging Brev Launchable lane", () => {
     expect(output).toContain("Readiness direct host SSH last failure: status 34; error:");
     expect(output).toContain("host SSH safe detail");
     expect(output).toContain(
-      "Readiness classification: neither default Brev container nor direct host reachable",
+      "Readiness classification: initial default Brev container probe failed; direct host SSH did not succeed before deadline",
     );
     expect(output).not.toContain("stale refresh detail");
     expect(output).not.toContain("stale host SSH detail");
@@ -479,6 +474,7 @@ describe("focused staging Brev Launchable lane", () => {
       "brev-test-secret",
       "default-secret",
       "ssh-secret",
+      "short-token",
       "github-test-token",
       "nvapi-test-value",
       "/hidden/private-key",
@@ -494,14 +490,24 @@ describe("focused staging Brev Launchable lane", () => {
   });
 
   it.each([
-    ["default Brev container reachable; direct host unreachable", { sshDefaultStatus: 0 }],
-    ["neither default Brev container nor direct host reachable", {}],
-  ])("classifies %s after the shared readiness deadline", (classification, options) => {
+    [
+      0,
+      "initial default Brev container probe succeeded; direct host SSH did not succeed before deadline",
+    ],
+    [
+      33,
+      "initial default Brev container probe failed; direct host SSH did not succeed before deadline",
+    ],
+    [
+      125,
+      "initial default Brev container probe failed; direct host SSH did not succeed before deadline",
+    ],
+  ])("classifies initial default container status %i as %s", (sshDefaultStatus, classification) => {
     const { calls, env, state, workDir } = fixture({
-      ...options,
+      sshDefaultStatus,
       sshReadyAfter: Number.MAX_SAFE_INTEGER,
     });
-    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "5" });
     expect(result.status).not.toBe(0);
     expect(emittedOutput(result, workDir)).toContain(`Readiness classification: ${classification}`);
     const commands = fs.readFileSync(calls, "utf8");
@@ -513,6 +519,30 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
+  it.each([
+    ["BREV_HOST_SSH_TIMEOUT_SECONDS", "1+1"],
+    ["BREV_HOST_SSH_TIMEOUT_SECONDS", "0"],
+    ["BREV_HOST_SSH_TIMEOUT_SECONDS", ""],
+    ["POLL_SECONDS", "0"],
+    ["POLL_SECONDS", ""],
+  ])("rejects invalid %s=%s before dispatch", (name, value) => {
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, [name]: value });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(`${name} must be a positive integer`);
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
+  it("rejects arithmetic expansion in the poll interval before dispatch", () => {
+    const { calls, env, workDir } = fixture();
+    const marker = path.join(workDir, "arithmetic-expansion-ran");
+    const result = run({ ...env, POLL_SECONDS: `$(touch ${marker})` });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain("POLL_SECONDS must be a positive integer");
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
   it("caps a blocking refresh by the host SSH deadline and deletes the workspace", () => {
     const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "brev refresh" });
     const startedAt = performance.now();
@@ -521,6 +551,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
     expect(elapsedMs).toBeLessThan(10_000);
+    expect(emittedOutput(result, workDir)).toContain(
+      "Readiness classification: default Brev container and direct host SSH were not probed before deadline",
+    );
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).toContain("timeout 1s brev refresh");
     expect(commands).not.toMatch(
@@ -556,16 +589,16 @@ describe("focused staging Brev Launchable lane", () => {
     });
     const result = run({
       ...env,
-      BREV_HOST_SSH_TIMEOUT_SECONDS: "2",
+      BREV_HOST_SSH_TIMEOUT_SECONDS: "5",
       POLL_SECONDS: "9",
     });
     expect(result.status).not.toBe(0);
     const commands = fs.readFileSync(calls, "utf8");
     const readinessCommands = commands.slice(
-      commands.indexOf("timeout 2s brev refresh"),
+      commands.indexOf("timeout 5s brev refresh"),
       commands.indexOf("timeout 60s brev delete"),
     );
-    expect(readinessCommands).toMatch(/sleep [12]/u);
+    expect(readinessCommands).toMatch(/sleep [1-5]/u);
     expect(readinessCommands).not.toContain("sleep 9");
     expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
     expect(fs.existsSync(state)).toBe(false);

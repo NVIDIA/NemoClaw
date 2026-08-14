@@ -63,6 +63,11 @@ data = re.sub(
     flags=re.DOTALL,
 )
 data = re.sub(
+    r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+",
+    r"\1\2[REDACTED]",
+    data,
+)
+data = re.sub(
     r"(?i)\b(api[_ -]?key|token|password|secret|credential|authorization)\b"
     r"(\s*[:=]\s*)(\"[^\"]*\"|\x27[^\x27]*\x27|\S+)",
     r"\1\2[REDACTED]",
@@ -110,7 +115,7 @@ for raw_line in data.splitlines():
     lines.append(re.sub(r"(?i)load key \S+", "SSH private key load failed", line))
 
 result = " | ".join(dict.fromkeys(lines))
-sys.stdout.write(result.encode("utf-8")[-512:].decode("utf-8", errors="ignore"))
+sys.stdout.write(result.encode("utf-8")[:512].decode("utf-8", errors="ignore"))
 '
 }
 
@@ -148,9 +153,10 @@ run_bounded_probe() {
 
 wait_for_host_ssh() {
   local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
+  local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
   local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error
-  local container_status=125 attempts=0
+  local container_probed=0 container_status=1 attempts=0
   local refresh_status=1 ssh_status=1
   local last_refresh_error="" last_refresh_failure_status=""
   local last_ssh_error="" last_ssh_failure_status=""
@@ -170,6 +176,7 @@ wait_for_host_ssh() {
     ssh_timeout=$((remaining < 15 ? remaining : 15))
     run_bounded_probe "$ssh_timeout" "" container_status \
       ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
+    container_probed=1
   fi
 
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -199,7 +206,7 @@ wait_for_host_ssh() {
 
     remaining=$((deadline - SECONDS))
     [ "$remaining" -gt 0 ] || break
-    sleep_seconds="${POLL_SECONDS:-5}"
+    sleep_seconds="$poll_seconds"
     sleep "$((sleep_seconds < remaining ? sleep_seconds : remaining))"
   done
 
@@ -213,12 +220,18 @@ wait_for_host_ssh() {
   else
     log "Readiness direct host SSH last failure: none"
   fi
-  if [ "$container_status" -eq 0 ]; then
-    log "Readiness classification: default Brev container reachable; direct host unreachable"
-  elif [ "$container_status" -eq 125 ]; then
-    log "Readiness classification: default Brev container not probed before the deadline; direct host unreachable"
+  if [ "$container_probed" -eq 0 ]; then
+    log "Readiness classification: default Brev container and direct host SSH were not probed before deadline"
+  elif [ -n "$last_ssh_failure_status" ]; then
+    if [ "$container_status" -eq 0 ]; then
+      log "Readiness classification: initial default Brev container probe succeeded; direct host SSH did not succeed before deadline"
+    else
+      log "Readiness classification: initial default Brev container probe failed; direct host SSH did not succeed before deadline"
+    fi
+  elif [ "$container_status" -eq 0 ]; then
+    log "Readiness classification: initial default Brev container probe succeeded; direct host SSH was not probed before deadline"
   else
-    log "Readiness classification: neither default Brev container nor direct host reachable"
+    log "Readiness classification: initial default Brev container probe failed; direct host SSH was not probed before deadline"
   fi
   die "host SSH readiness timed out"
 }
@@ -275,6 +288,13 @@ done
   || die "correlation ID is not a UUIDv4"
 [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
 [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
+if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
+  && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+fi
+if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  die "POLL_SECONDS must be a positive integer"
+fi
 : >"$WORK_DIR/lane.log"
 log "Candidate $CANDIDATE_SHA"
 
