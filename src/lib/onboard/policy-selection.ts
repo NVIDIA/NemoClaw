@@ -515,7 +515,7 @@ async function setupPoliciesWithSelectionInner(
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       deps.note("  [non-interactive] Skipping policy presets.");
       const retainedPresets = excludePresets(pruneUnavailablePresets(currentAppliedPresets));
-      if (excludedPresets.size > 0 || retainedPresets.length < currentAppliedPresets.length) {
+      if (retainedPresets.length < currentAppliedPresets.length) {
         if (onSelection) onSelection(retainedPresets);
         requireSandboxReady(deps, sandboxName, "before");
         deps.note("  [non-interactive] Removing excluded or unavailable policy presets.");
