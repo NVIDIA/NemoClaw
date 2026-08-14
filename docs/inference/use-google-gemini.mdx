@@ -45,7 +45,11 @@ NemoClaw validates Gemini inference through its OpenAI-compatible Chat Completio
 When you enter a custom Gemini model ID, NemoClaw checks Google's native model catalog and accepts IDs with or without the `models/` prefix.
 It skips the Responses API probe because Gemini does not support `/v1/responses`.
 
+Google's native model catalog also lists embedding-only models, which do not support chat completions.
+NemoClaw filters these out of the catalog before matching your selection, so embedding-only models are never offered during onboarding and always fail validation if entered manually.
+
 ## Related Topics
 
 - [Choose a Model](../learn-and-choose/choose-model) compares the curated Gemini models by task fit.
 - [Understand Provider Validation](../validate-inference/understand-provider-validation) describes provider validation behavior.
+- [Troubleshooting](../reference/troubleshooting#google-gemini-rejects-a-curated-or-custom-model) lists the error messages produced when a Gemini model fails validation.

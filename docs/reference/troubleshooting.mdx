@@ -1254,6 +1254,29 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+### Google Gemini rejects a curated or custom model
+
+NemoClaw validates a selected Google Gemini model against Google's native model catalog (`https://generativelanguage.googleapis.com/v1beta/models`) before it creates the sandbox.
+That catalog includes embedding-only models, which do not support chat completions.
+NemoClaw filters out any model whose `supportedGenerationMethods` does not include `generateContent`, so embedding-only models never appear as selectable and always fail validation if entered manually.
+
+If the catalog request itself fails (invalid API key, network error, rate limit, or an outage), onboarding reports:
+
+```text
+Could not validate model against https://generativelanguage.googleapis.com/v1beta/models: {reason}
+```
+
+Check that `GEMINI_API_KEY` is set and valid, and that the host can reach `generativelanguage.googleapis.com`, then retry onboarding.
+
+If the catalog request succeeds but the selected model is not present in the filtered results, onboarding reports:
+
+```text
+Model '{model}' is not available from Google Gemini. Checked https://generativelanguage.googleapis.com/v1beta/models.
+```
+
+This means the model ID is either misspelled, not available to your API key or account tier, or is an embedding-only model (for example, an `embedding-*` or `text-embedding-*` model) that Google's catalog does not list under `generateContent`.
+NemoClaw accepts the model ID with or without the `models/` prefix, so re-check the ID against the [curated Gemini models](../inference/use-google-gemini#model-choices) or Google's published model list rather than the prefix form.
+
 ## Runtime
 
 <AgentOnly variant="openclaw">
