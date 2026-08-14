@@ -229,6 +229,8 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   const reasoningStrength = chatTemplateArguments?.reasoningStrength;
   const chatTemplateArgumentsAreExact =
     chatTemplateArguments !== undefined &&
+    chatTemplateArguments !== null &&
+    typeof chatTemplateArguments === "object" &&
     Object.keys(chatTemplateArguments).length === 1 &&
     ["low", "medium", "high", "xhigh"].includes(reasoningStrength ?? "");
   if (

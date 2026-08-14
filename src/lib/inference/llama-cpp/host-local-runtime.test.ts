@@ -282,6 +282,10 @@ describe("llama.cpp host-local runtime materializer", () => {
       { chatTemplate: "model-embedded-jinja" },
     ],
     [
+      "null arguments on the model-embedded Jinja contract",
+      { chatTemplate: "model-embedded-jinja", chatTemplateArguments: null },
+    ],
+    [
       "an unsupported reasoning strength",
       {
         chatTemplate: "model-embedded-jinja",
