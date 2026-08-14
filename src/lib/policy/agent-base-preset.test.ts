@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -12,8 +13,8 @@ import { isAgentBasePreset } from "./index";
 
 const tempAgentDirs: string[] = [];
 
-function createAgentFixture(): string {
-  const agentName = `agent-base-preset-${String(Date.now())}`;
+function createAgentFixture(policyAdditions?: string): string {
+  const agentName = `agent-base-preset-${randomUUID()}`;
   const agentDir = path.join(AGENTS_DIR, agentName);
   tempAgentDirs.push(agentDir);
   fs.mkdirSync(agentDir, { recursive: true });
@@ -23,7 +24,8 @@ function createAgentFixture(): string {
   );
   fs.writeFileSync(
     path.join(agentDir, "policy-additions.yaml"),
-    `version: 1
+    policyAdditions ??
+      `version: 1
 network_policies:
   github:
     name: github
@@ -52,5 +54,16 @@ describe("agent base preset detection", () => {
 
     expect(isAgentBasePreset("alpha", "github")).toBe(true);
     expect(isAgentBasePreset("alpha", "slack")).toBe(false);
+  });
+
+  it("recognizes the Hermes base policy when its preset name also exists in the catalog (#9079)", () => {
+    const hermesPolicy = fs.readFileSync(
+      path.join(AGENTS_DIR, "hermes", "policy-additions.yaml"),
+      "utf8",
+    );
+    const agent = createAgentFixture(hermesPolicy);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "hermes", agent } as never);
+
+    expect(isAgentBasePreset("hermes", "pypi")).toBe(true);
   });
 });
