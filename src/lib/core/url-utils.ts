@@ -59,9 +59,11 @@ export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | und
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return /[?#@]/.test(raw);
     }
-    return Boolean(url.username || url.password || url.search || url.hash);
+    // Test the raw string for the delimiters so a bare trailing "?" or "#"
+    // (empty url.search and url.hash) is still classified.
+    return Boolean(url.username || url.password) || /[?#]/.test(raw);
   } catch {
-    return /[?#]/.test(raw);
+    return /[?#@]/.test(raw);
   }
 }
 

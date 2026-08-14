@@ -152,6 +152,7 @@ setupNim(null).then(
         ),
       );
       assert.ok(payload.lines.every((line: string) => !line.includes("param=value")));
+      assert.ok(payload.lines.every((line: string) => !line.includes("#frag")));
       assert.equal(
         payload.messages.filter((message: string) => /OpenAI-compatible base URL/.test(message))
           .length,
