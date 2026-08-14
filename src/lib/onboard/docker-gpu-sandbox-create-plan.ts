@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type DockerGpuRoutePlan, resolveDockerGpuRoutePlan } from "./docker-gpu-route";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
 
 type DockerGpuSandboxConfig = {
@@ -29,6 +30,22 @@ export function isDockerDesktopWslRuntime(): boolean {
 
 export function resetIsDockerDesktopWslRuntimeCache(): void {
   cachedDockerDesktopWslRuntime = null;
+}
+
+export function resolveAgentPlan(
+  config: DockerGpuSandboxConfig,
+  agent: { name?: string | null } | null,
+  dockerDriverGateway: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): DockerGpuSandboxCreatePlan {
+  return resolveDockerGpuSandboxCreatePlan(config, {
+    dockerDriverGateway,
+    portableLifecycle:
+      isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw",
+    env,
+    platform,
+  });
 }
 
 /**

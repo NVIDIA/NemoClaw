@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { AgentDefinition } from "../agent/defs";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
@@ -10,7 +11,9 @@ import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types"
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAgentIdentity,
@@ -32,6 +35,18 @@ import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+
+export function resolveAgentCreateInput(
+  agent: AgentDefinition | null,
+  dockerDriverGateway: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return {
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
+    portableLifecycle:
+      isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw",
+  };
+}
 
 /*
  * Keep recovery rendering at this public command boundary. Providers own the

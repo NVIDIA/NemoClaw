@@ -52,6 +52,7 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
+import type { AgentDefinition } from "../agent/defs";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   createGpuFlowDeps as createDeps,
@@ -79,6 +80,7 @@ import type {
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
+  resolveAgentCreateInput,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
@@ -186,6 +188,23 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
+
+describe("resolveAgentCreateInput", () => {
+  it("selects portable lifecycle ownership only for OpenClaw (#9068)", () => {
+    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+
+    expect(resolveAgentCreateInput(null, true, env)).toMatchObject({
+      persistStartupCommand: true,
+      portableLifecycle: true,
+    });
+    expect(
+      resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env),
+    ).toMatchObject({
+      persistStartupCommand: true,
+      portableLifecycle: false,
+    });
+  });
+});
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {

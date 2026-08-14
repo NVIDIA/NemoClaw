@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type DockerGpuRoutePlan,
+  resolveAgentPlan,
   resolveDockerGpuSandboxCreatePlan,
 } from "./docker-gpu-sandbox-create";
 
@@ -171,5 +172,25 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     );
 
     expect(result.gpuRoutePlan).toBe("compatibility-only");
+  });
+
+  it("selects the portable lifecycle route only for OpenClaw (#9068)", () => {
+    const env = {
+      NEMOCLAW_DOCKER_GPU_PATCH: "1",
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    };
+
+    expect(resolveAgentPlan({ sandboxGpuEnabled: true }, null, true, env, "linux").gpuRoutePlan).toBe(
+      "native-only",
+    );
+    expect(
+      resolveAgentPlan(
+        { sandboxGpuEnabled: true },
+        { name: "hermes" },
+        true,
+        env,
+        "linux",
+      ).gpuRoutePlan,
+    ).toBe("compatibility-only");
   });
 });
