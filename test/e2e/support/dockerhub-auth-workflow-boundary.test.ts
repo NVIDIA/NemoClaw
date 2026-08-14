@@ -422,13 +422,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       }
     });
 
-    for (const jobName of requiredJobs) {
-      if (jobName === "mcp-bridge-dev") {
-        expect(errors).toContain(
-          "mcp-bridge-dev Docker Hub cleanup step must contain exactly name, if, and uses",
-        );
-        continue;
-      }
+    for (const jobName of requiredJobs.filter((name) => name !== "mcp-bridge-dev")) {
       expect(errors).toContain(
         `${jobName} Docker Hub cleanup step must contain exactly name, if, shell, and run`,
       );
@@ -436,6 +430,9 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         `${jobName} Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
       );
     }
+    expect(errors).toContain(
+      "mcp-bridge-dev Docker Hub cleanup step must contain exactly name, if, and uses",
+    );
   });
 
   it("treats every new E2E job as image-consuming unless it is explicitly exempt", () => {
