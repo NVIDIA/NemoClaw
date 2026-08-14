@@ -466,7 +466,7 @@ export function explainStaleCdiReason(mismatch: string | undefined): string {
   const isLeftover = flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH;
   return (
     `An NVIDIA CDI device node no longer matches the live device (${detail}). ` +
-    "OpenShell's `gateway start --gpu` injects devices from the CDI spec, so a stale " +
+    "A GPU-enabled gateway injects devices from the CDI spec, so a stale " +
     "device number points the container at the wrong device and CUDA init fails " +
     "(`CUDA unknown error`). The nvidia-cdi-refresh service keeps " +
     `${NVIDIA_CDI_REFRESH_SPEC_PATH} current on driver/toolkit changes` +
@@ -503,7 +503,7 @@ export function explainNvidiaCdiRepairReason(assessment: NvidiaCdiRepairAssessme
     );
   }
   reasons.push(
-    "OpenShell's `gateway start --gpu` can fail until the CDI spec is refreshed and verified.",
+    "A GPU-enabled gateway start can fail until the CDI spec is refreshed and verified.",
   );
   return reasons.join(" ");
 }

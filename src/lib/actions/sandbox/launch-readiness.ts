@@ -47,6 +47,10 @@ import {
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
 } from "./launch-readiness/health";
+import {
+  observeOpenClawPairingQualification,
+  OpenClawPairingQualificationError,
+} from "./launch-readiness/openclaw-pairing-qualification";
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
@@ -94,6 +98,7 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   readLease?: typeof readLaunchReadinessLease;
   fenceLease?: typeof fenceLaunchReadinessLease;
   publishLease?: typeof publishLaunchReadinessLease;
+  observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
   storeOptions?: LaunchReadinessStoreOptions;
   withSandboxLock?: typeof withSandboxMutationLock;
   withGatewayLock?: typeof withGatewayRouteMutationLock;
@@ -692,6 +697,28 @@ async function captureLaunchIdentity(
     deps,
   );
 
+  let session: LaunchReadinessIdentity["session"] = null;
+  if (agentName === "openclaw") {
+    const openclawVersion = normalizedString(entry.agentVersion);
+    const stateDirectory = normalizedString(agent.config?.dir);
+    // Pairing qualification requires a versioned trusted definition. The
+    // receipt binds the sandbox's recorded version, including supported stale
+    // versions that the normal launch warning permits.
+    if (!openclawVersion || !normalizedString(agent.expected_version) || !stateDirectory) {
+      throw new OpenClawPairingQualificationError();
+    }
+    try {
+      session = (deps.observeOpenClawPairingQualification ?? observeOpenClawPairingQualification)(
+        sandboxName,
+        gatewayName,
+        openclawVersion,
+        stateDirectory,
+      );
+    } catch {
+      throw new OpenClawPairingQualificationError();
+    }
+  }
+
   return {
     identity: {
       registry: launchReadinessDigest(projection),
@@ -706,22 +733,29 @@ async function captureLaunchIdentity(
       gatewayName,
       lifecycleGeneration,
       liveIdentityFingerprint: recordedFingerprint,
+      session,
     },
     agent,
     sb: entry,
   };
 }
 
-function identityMatches(left: LaunchReadinessIdentity, right: LaunchReadinessIdentity): boolean {
-  return (
+function compareIdentity(
+  left: LaunchReadinessIdentity,
+  right: LaunchReadinessIdentity,
+): "exact" | "config" | "session" {
+  const baseMatches =
     left.registry === right.registry &&
     left.agent === right.agent &&
     left.livePolicy === right.livePolicy &&
     left.liveInference === right.liveInference &&
     left.gatewayName === right.gatewayName &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
-    left.liveIdentityFingerprint === right.liveIdentityFingerprint
-  );
+    left.liveIdentityFingerprint === right.liveIdentityFingerprint;
+  if (!baseMatches) return "config";
+  return launchReadinessDigest(left.session) === launchReadinessDigest(right.session)
+    ? "exact"
+    : "session";
 }
 
 function debugDecision(category: LaunchReadinessDecisionCategory): void {
@@ -803,7 +837,8 @@ export async function inspectLaunchReadiness(
         const validationStartedAt = performance.now();
         try {
           const captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
-          if (identityMatches(read.lease.identity, captured.identity)) {
+          const comparison = compareIdentity(read.lease.identity, captured.identity);
+          if (comparison === "exact") {
             debugDecision("accepted");
             return {
               kind: "accepted",
@@ -812,9 +847,14 @@ export async function inspectLaunchReadiness(
               sb: captured.sb,
             };
           }
-          category = "config";
+          category = comparison;
         } catch (error) {
-          category = error instanceof ObservationError ? error.category : "unsafe";
+          category =
+            error instanceof ObservationError
+              ? error.category
+              : error instanceof OpenClawPairingQualificationError
+                ? "session"
+                : "unsafe";
         } finally {
           recordPerformanceStage("live-validation", validationStartedAt);
         }

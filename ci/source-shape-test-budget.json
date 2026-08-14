@@ -102,6 +102,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+      "test": "retains immutable base contracts for later qualification (#9049)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
       "test": "binds the cleanup action and helper content to the pinned commit",
       "category": "security"
@@ -258,7 +263,7 @@
     },
     {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
-      "test": "locks recovery identities to the source workflows' runtime names (#7140)",
+      "test": "locks recovery to the platform workflow name (#7140)",
       "category": "security"
     },
     {
@@ -274,6 +279,16 @@
     {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "binds the selected runtime to its reviewed publisher, manifest, platform, and source",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "rejects %s",
       "category": "security"
     },
     {

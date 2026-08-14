@@ -71,4 +71,4 @@ runs:
         name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.agent }}
         path: ${{ runner.temp }}/managed-base-contract/contract.json
         if-no-files-found: error
-        retention-days: 1
+        retention-days: 90

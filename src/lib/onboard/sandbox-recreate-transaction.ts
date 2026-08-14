@@ -193,6 +193,8 @@ const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
   "endpointSource",
   "credentialEnv",
   "preferredInferenceApi",
+  "hostLocalInferenceReceipt",
+  "hostLocalInferenceProvenance",
   "gatewayName",
   "gatewayPort",
 ];

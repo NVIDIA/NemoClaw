@@ -111,7 +111,7 @@ export interface SandboxGpuCreateFlowDeps {
   /** Production callers configure the hidden portable lifecycle through the default implementation. */
   installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
   /** Production callers omit this factory and use the runtime provider's adapter. */
-  createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
+  createManagedBootstrapAdapter?: (stateRoot: string) => ManagedBootstrapAdapter;
 }
 
 export interface SandboxGpuCreateFlowResult {

@@ -11,6 +11,8 @@ import SetupCliCommand from "../../src/commands/setup";
 import SetupSparkCliCommand from "../../src/commands/setup-spark";
 import { runOnboardAction } from "../../src/lib/actions/global";
 import { emitOnboardMachineEvent } from "../../src/lib/onboard/machine/events";
+import { deriveCheckpointFromSession } from "../../src/lib/state/onboard-checkpoint-migrate";
+import { createSession } from "../../src/lib/state/onboard-session";
 
 import { PARSER_EXIT_CODE, run, runWithEnv } from "./helpers";
 
@@ -46,45 +48,31 @@ function writeOpenShellVersionStub(localBin: string): void {
 }
 
 function writeIncompleteResumeSession(nemoclawDir: string): void {
+  const session = createSession({
+    sessionId: "session-1",
+    mode: "interactive",
+    provider: "nvidia-prod",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    lastStepStarted: "inference",
+    lastCompletedStep: "inference",
+    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+    steps: {
+      preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+      gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+      provider_selection: {
+        status: "complete",
+        startedAt: null,
+        completedAt: null,
+        error: null,
+      },
+      inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+      sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
+    },
+  });
+  session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
   fs.writeFileSync(
     path.join(nemoclawDir, "onboard-session.json"),
-    JSON.stringify(
-      {
-        version: 1,
-        sessionId: "session-1",
-        resumable: true,
-        status: "in_progress",
-        mode: "interactive",
-        startedAt: "2026-05-03T00:00:00.000Z",
-        updatedAt: "2026-05-03T00:00:00.000Z",
-        lastStepStarted: "inference",
-        lastCompletedStep: "inference",
-        failure: null,
-        sandboxName: null,
-        provider: "nvidia-prod",
-        model: "nvidia/nemotron-3-super-120b-a12b",
-        endpointUrl: null,
-        credentialEnv: null,
-        preferredInferenceApi: null,
-        nimContainer: null,
-        policyPresets: null,
-        metadata: { gatewayName: "nemoclaw" },
-        steps: {
-          preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
-          gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
-          provider_selection: {
-            status: "complete",
-            startedAt: null,
-            completedAt: null,
-            error: null,
-          },
-          inference: { status: "complete", startedAt: null, completedAt: null, error: null },
-          sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
-        },
-      },
-      null,
-      2,
-    ),
+    JSON.stringify(session, null, 2),
     { mode: 0o600 },
   );
 }
@@ -290,16 +278,11 @@ describe("CLI onboard compatibility", () => {
     );
   });
 
-  it("resume rejection clarifies --resume semantics and points to onboard (#2281)", () => {
+  it("resume rejection reports the missing session without choosing an agent CLI (#9035)", () => {
     // Keep the real executable/runtime exit contract for the user-facing diagnostic.
     const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
-    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
-    expect(r.out.includes("--resume only continues an interrupted onboarding run")).toBeTruthy();
-    expect(
-      r.out.includes("To change configuration on an existing sandbox, rebuild it"),
-    ).toBeTruthy();
-    expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
+    expect(r.out.trim()).toBe("No resumable onboarding session was found.");
   });
 
   it("does not let whitespace-only NEMOCLAW_SANDBOX_NAME satisfy the resume guard (#2753)", () => {

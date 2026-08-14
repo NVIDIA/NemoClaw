@@ -20,6 +20,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
@@ -382,11 +383,8 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error(
-    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
-  );
-  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
-  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
+  console.error(`    2. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
 }
 
@@ -1217,10 +1215,25 @@ export function printInteractiveSessionHints(sandboxName: string): void {
 export function completeInteractiveSessionSetup(
   sandboxName: string,
   sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
 ): void {
   maybeEnsureHermesToolGatewayBroker(sb);
   const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
-  runConnectAutoPairApprovalPass(sandboxName, gatewayName);
+  runApprovalPass(sandboxName, gatewayName);
+}
+
+/** Preserve session setup after launch readiness accepts a trusted agent identity. */
+export function completeReadinessQualifiedInteractiveSessionSetup(
+  sandboxName: string,
+  agent: AgentDefinition,
+  sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
+  resolveFallbackGateway = getSandboxTargetGatewayName,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  if (sb && agent.name === "openclaw") return;
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveFallbackGateway(sandboxName);
+  runApprovalPass(sandboxName, gatewayName);
 }
 
 /**

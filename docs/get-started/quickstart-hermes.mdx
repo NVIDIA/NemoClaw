@@ -39,27 +39,28 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer.
 
     ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=my-hermes bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    Select **Hermes Agent** when the installer prompts you to choose an agent.
+    The explicit `NEMOCLAW_AGENT=hermes` setting keeps Hermes selected through interactive or Express setup.
 
     <Note>
-      On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
       Press Enter to use the recommended express install mode for that platform.
       This mode applies preset settings and runs the remaining onboarding non-interactively.
-      Express install mode installs OpenClaw by default.
-      If you accept, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
-      Enter `n` if you want to select Hermes, a sandbox name, an inference provider, and a model interactively.
+      Express install mode preserves the explicit Hermes selection in the install command.
+      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
 
-    When prompted for the sandbox name, enter `my-hermes` or press Enter to accept the suggested `hermes` name.
-    If you accept the suggested name, use `hermes` instead of `my-hermes` in the commands that follow.
-    Choose an inference provider and model, then provide its credential when prompted.
-    For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+    The install command creates the `my-hermes` sandbox used in the commands that follow.
+    If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
+    For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -178,10 +179,16 @@ Use these details when your first-run path needs more control.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows Subsystem for Linux (WSL) can offer the recommended express install mode after the third-party software notice.
+    DGX Spark, qualifying DGX Station, and Windows Subsystem for Linux (WSL) hosts can offer the recommended express install mode after the third-party software notice.
+    N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
+    N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
-    Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
+    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
+    Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
     The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
+    The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
     Refer to [Platform Support](../reference/platform-support) for current validation status.
@@ -189,8 +196,20 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Onboarding and Integration Details">
     The wizard asks for an inference provider, model, required credential, and sandbox name before it prints the review summary.
-    After confirmation, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
-    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+    The review offers these actions:
+
+    - **Apply configuration** continues to provider registration.
+    - **Edit inference provider or model** returns to provider and model selection.
+    - **Edit sandbox name** prompts for the sandbox name again.
+    - **Exit onboarding** stops onboarding before provider registration.
+
+    When you edit inference, NemoClaw clears the credential staged for the discarded selection.
+    NemoClaw preserves the sandbox name.
+    When you edit the sandbox name, NemoClaw preserves the inference selection.
+    The sandbox prompt shows the prior name as its default.
+    After you apply the configuration, routine editing ends.
+    If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
+    NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
 
     The default Hermes sandbox name is `hermes`.
     Use a distinct name, such as `my-hermes`, when you run Hermes and OpenClaw sandboxes side by side.
@@ -212,7 +231,7 @@ Use these details when your first-run path needs more control.
     NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
     API-key mode is inference-only and does not enable managed tool gateways.
 
-    After you select a provider and model, review the summary and confirm the build.
+    After you select a provider and model, review the summary and apply the configuration.
     NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
@@ -279,8 +298,8 @@ Use these details when your first-run path needs more control.
     The onboard flow starts both port forwards automatically.
     For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and the image build.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
-    If OpenShell reports `sandbox is not ready`, NemoClaw waits 5 seconds and retries the affected forward up to three times.
-    These retries preserve the existing sandbox and selected host port.
+    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
+    The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected host port.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.

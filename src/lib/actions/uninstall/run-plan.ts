@@ -30,6 +30,8 @@ import {
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import {
   cleanupManagedLlamaCppRuntimeForSandbox,
+  HOST_LOCAL_VLLM_CONTAINER_NAME,
+  HOST_LOCAL_VLLM_MANAGED_LABEL,
   type ManagedLlamaCppCleanupTarget,
   resolveManagedLlamaCppCleanupTarget,
 } from "../../inference/local-model-profile/cleanup";
@@ -1595,6 +1597,9 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
     DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   ].some((name) => runtime.existsSync(path.join(sharedRoot, name)));
   if (!hasLlamaState && (!hasManagedKey || hasDistributedReceipt)) {
+    if (!hasManagedKey && !hasDistributedReceipt && !removeOrphanedManagedHostLocalVllm(runtime)) {
+      return false;
+    }
     return true;
   }
   const result = runtime.runLocalModelRuntimeCleanup({
@@ -1604,6 +1609,34 @@ function removeHostLocalModelRuntimes(paths: UninstallPaths, runtime: UninstallR
   if (result.status === 0) return true;
   runtime.error(
     "Host-local model runtime cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported ownership or Docker error and retry uninstall.",
+  );
+  return false;
+}
+
+function removeOrphanedManagedHostLocalVllm(runtime: UninstallRuntime): boolean {
+  if (!runtime.commandExists("docker")) return true;
+  const inspection = runtime.runDocker(
+    [
+      "container",
+      "inspect",
+      "--format",
+      `{{.Id}} {{index .Config.Labels ${JSON.stringify(HOST_LOCAL_VLLM_MANAGED_LABEL)}}}`,
+      HOST_LOCAL_VLLM_CONTAINER_NAME,
+    ],
+    { env: runtime.env, timeout: 10_000 },
+  );
+  if (inspection.status !== 0 || !inspection.stdout.trim()) return true;
+  const [containerId, managedLabel, ...extra] = inspection.stdout.trim().split(/\s+/);
+  if (!/^[0-9a-f]{64}$/u.test(containerId ?? "") || managedLabel !== "true" || extra.length > 0) {
+    return true;
+  }
+  const removal = runtime.runDocker(["rm", "-f", containerId], {
+    env: runtime.env,
+    timeout: 10_000,
+  });
+  if (removal.status === 0) return true;
+  runtime.error(
+    `Could not remove orphaned managed inference container '${HOST_LOCAL_VLLM_CONTAINER_NAME}'. NemoClaw did not start the remaining uninstall steps.`,
   );
   return false;
 }

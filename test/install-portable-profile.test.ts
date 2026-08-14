@@ -51,31 +51,37 @@ describe("installer portable profile runtime override", () => {
 
   it("rejects an unknown experimental profile before install effects (#9007)", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-profile-"));
-    const marker = path.join(fixture, "existing-state");
-    fs.writeFileSync(marker, "unchanged\n");
-    const stateBefore = fs.readdirSync(fixture);
+    const processTemp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-profile-tmp-"));
+    try {
+      const marker = path.join(fixture, "existing-state");
+      fs.writeFileSync(marker, "unchanged\n");
+      const stateBefore = fs.readdirSync(fixture);
 
-    const result = spawnSync(
-      "bash",
-      [INSTALLER_PAYLOAD, "--experimental-profile", "not-portable"],
-      {
-        cwd: fixture,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: fixture,
-          NEMOCLAW_EXPERIMENTAL_PROFILE: "",
-          TMPDIR: fixture,
-          XDG_CONFIG_HOME: path.join(fixture, "config"),
+      const result = spawnSync(
+        "bash",
+        [INSTALLER_PAYLOAD, "--experimental-profile", "not-portable"],
+        {
+          cwd: fixture,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: fixture,
+            NEMOCLAW_EXPERIMENTAL_PROFILE: "",
+            TMPDIR: processTemp,
+            XDG_CONFIG_HOME: path.join(fixture, "config"),
+          },
         },
-      },
-    );
+      );
 
-    expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      "Unknown experimental profile: not-portable (expected: portable).",
-    );
-    expect(fs.readdirSync(fixture)).toEqual(stateBefore);
-    expect(fs.readFileSync(marker, "utf-8")).toBe("unchanged\n");
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "Unknown experimental profile: not-portable (expected: portable).",
+      );
+      expect(fs.readdirSync(fixture)).toEqual(stateBefore);
+      expect(fs.readFileSync(marker, "utf-8")).toBe("unchanged\n");
+    } finally {
+      fs.rmSync(processTemp, { force: true, recursive: true });
+      fs.rmSync(fixture, { force: true, recursive: true });
+    }
   });
 });

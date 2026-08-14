@@ -73,7 +73,9 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);

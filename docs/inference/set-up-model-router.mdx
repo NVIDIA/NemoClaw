@@ -32,6 +32,9 @@ When the log contains readable output from this run, the error includes a redact
 The owner-only log contains unredacted router output.
 Review the log before you share it.
 NemoClaw does not provide log-only cleanup.
+When `destroy` removes the last registered Model Router sandbox that uses a host port, it also stops the Model Router process and frees that port.
+If the stop fails, destroy still completes and prints a warning with the manual stop command.
+While another registered Model Router sandbox uses the same host port, destroying one Model Router sandbox keeps that Model Router process running.
 A successful [uninstall](../../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) stops the selected Model Router and removes its log with the selected gateway's operational state.
 Review the uninstall scope before you use it for log removal.
 

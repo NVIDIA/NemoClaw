@@ -86,6 +86,11 @@ const DOCKER_COMMAND_ENV_NAMES = new Set([
   "GIT_SSL_CAPATH",
   "CURL_CA_BUNDLE",
 ]);
+const DOCKER_COMMAND_ENV_EXCLUDED_NAMES = new Set([
+  "XDG_SESSION_CLASS",
+  "XDG_SESSION_ID",
+  "XDG_SESSION_TYPE",
+]);
 const DOCKER_COMMAND_ENV_PREFIXES = ["LC_", "XDG_"] as const;
 const DOCKER_STREAMED_CREDENTIAL_ENV_NAMES = new Set(["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"]);
 const MAX_DOCKER_OUTPUT_BYTES = 1024 * 1024;
@@ -173,6 +178,7 @@ function fixedDockerCommandEnvironment(env: NodeJS.ProcessEnv): Readonly<NodeJS.
     .filter(
       ([name, value]) =>
         value !== undefined &&
+        !DOCKER_COMMAND_ENV_EXCLUDED_NAMES.has(name) &&
         (DOCKER_COMMAND_ENV_NAMES.has(name) ||
           DOCKER_COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))),
     )

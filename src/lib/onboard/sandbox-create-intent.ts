@@ -131,6 +131,7 @@ export function resolveSandboxCreateIntent({
   basePolicyPath,
   sandboxName,
   inferenceProvider,
+  hostLocalInferenceRouteOnly = false,
   channels,
   enabledChannels,
   disabledChannelNames,
@@ -191,6 +192,7 @@ export function resolveSandboxCreateIntent({
           ? { hostGpuAvailable: sandboxGpuConfig.hostGpuDetected }
           : {}),
         additionalPresets: [...hermesToolGateways],
+        ...(hostLocalInferenceRouteOnly ? { hostLocalInferenceRouteOnly: true as const } : {}),
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
         baselineExclusions: [...baselineExclusions].map((exclusion) => ({ ...exclusion })),

@@ -24,6 +24,8 @@ const ISO = "2026-01-01T00:00:00.000Z";
 function checkpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    profile: { kind: "selected", value: "default" },
+    runtimeAuthority: { kind: "unset" },
     sessionId: "s1",
     machineState: "sandbox",
     updatedAt: ISO,

@@ -89,6 +89,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -182,6 +184,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -259,6 +263,8 @@ describe("handleSandboxState provider effect replay", () => {
     const session = createSession({ sandboxName: "my-assistant" });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -328,6 +334,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -422,6 +430,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -574,6 +584,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -642,6 +654,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -761,6 +775,8 @@ describe("handleSandboxState provider effect replay", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",

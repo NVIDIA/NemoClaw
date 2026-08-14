@@ -82,7 +82,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so messaging providers are created fresh
   if (_n(command).includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -524,7 +524,7 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw my-assistant-slack-bridge")) return { status: 0, stdout: "Name: my-assistant-slack-bridge\nType: generic\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get -g nemoclaw my-assistant-slack-app")) return { status: 0, stdout: "Name: my-assistant-slack-app\nType: generic\nCredential keys: SLACK_APP_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -682,7 +682,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -830,7 +830,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -985,7 +985,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -1300,7 +1300,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   // provider-get returns not-found so messaging providers are created fresh
   if (_n(command).includes("provider get")) return { status: 1 };
-  return { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
@@ -1429,7 +1429,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
