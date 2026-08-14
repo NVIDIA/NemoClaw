@@ -19,6 +19,7 @@
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { cliName } from "./branding";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 
 export const DEFAULT_PROBE_NETWORK = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -92,10 +93,11 @@ function defaultInspectNetwork(
   return parseNetworkIpamConfig(raw);
 }
 
-// Docker Desktop and VM-backed Docker use a special host-gateway alias rather
-// than a specific bridge IP. UFW is not relevant on those platforms, so we
-// classify probes from those environments as probe_unavailable.
+// Portable Podman, Docker Desktop, and VM-backed Docker use the runtime's
+// host-gateway alias instead of the inspected bridge IP. These routes do not
+// support native Docker bridge UFW remediation.
 function defaultUsesHostGatewayRoute(): boolean {
+  if (isPortableExperimentalProfile()) return true;
   if (process.platform !== "linux") return true;
   const info = dockerCapture(
     ["info", "--format", "{{.OperatingSystem}}\n{{range .Labels}}{{.}}\n{{end}}"],
@@ -154,6 +156,7 @@ export async function probeHostServiceSandboxReachability(
     };
   }
 
+  const portableProfile = isPortableExperimentalProfile();
   const isHostGateway = usesHostGatewayRoute();
 
   if (!isHostGateway && !network.gatewayIp) {
@@ -206,8 +209,8 @@ export async function probeHostServiceSandboxReachability(
     .filter((s): s is string => Boolean(s))
     .join(" | ");
 
-  // Classify as probe_unavailable for: non-nc exit codes, DNS failures,
-  // or host-gateway mode (Docker Desktop / macOS — no UFW concern there).
+  // Non-nc failures, DNS failures, and host-gateway routes do not prove that
+  // a native Docker bridge UFW rule blocked the connection.
   if (result.status !== 1 || isNameResolutionFailure(detail) || isHostGateway) {
     return {
       ok: false,
@@ -216,7 +219,10 @@ export async function probeHostServiceSandboxReachability(
       networkName,
       subnet: network.subnet,
       gatewayIp: network.gatewayIp,
-      detail: detail || "probe did not complete",
+      detail:
+        portableProfile && isHostGateway
+          ? "portable host-gateway probe did not connect"
+          : detail || "probe did not complete",
     };
   }
 
