@@ -403,6 +403,16 @@
     },
     {
       "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "does not grant package write permission to pull request candidate builds",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "qualifies the published candidate through its declared entrypoint with corporate CA handoff",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
       "test": "builds and validates the candidate image for linux/amd64 and linux/arm64",
       "category": "compatibility"
     },

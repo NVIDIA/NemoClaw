@@ -312,4 +312,4 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
     && command -v setpriv >/dev/null 2>&1
 USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
-CMD ["/bin/bash"]
+CMD []
