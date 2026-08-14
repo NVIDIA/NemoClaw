@@ -431,7 +431,7 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("reports only the final sanitized refresh and direct host SSH failures", () => {
+  it("reports only final refresh and direct host SSH failures with bounded diagnostic redaction", () => {
     const { calls, env, state, workDir } = fixture({
       refreshError: `refresh safe detail; api_key=brev-test-secret; endpoint=https://refresh.hidden.internal/path; ${"r".repeat(2_000)}`,
       refreshStatus: 35,
