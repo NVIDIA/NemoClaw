@@ -17,8 +17,12 @@ import { reportSandboxCreateFailure } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
-import type { ManagedBootstrapRuntimeSnapshot } from "./managed-bootstrap/runtime-create";
+import type {
+  ManagedBootstrapRuntimePatch,
+  ManagedBootstrapRuntimeSnapshot,
+} from "./managed-bootstrap/runtime-create";
 import {
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
@@ -41,6 +45,7 @@ export type SandboxGpuCreateAttemptState = {
   compatibilityArgv: string[] | null;
   allowUnbuiltCompatibilitySource: boolean;
   nativeRuntimeSnapshot: NativeRuntimeSnapshot | null;
+  portableLifecycleGeneration: string | null;
 };
 
 // A runtime-managed container replacement can briefly observe the original
@@ -53,6 +58,43 @@ const OPENSHELL_SANDBOX_NOT_READY =
   /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/iu;
 
 type OpenShellCommandResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
+
+function createPortableRuntimePatch(
+  input: SandboxGpuCreateFlowInput,
+  deps: SandboxGpuCreateFlowDeps,
+  recordLifecycleGeneration: (generation: string) => void,
+): ManagedBootstrapRuntimePatch {
+  let applied = false;
+  return {
+    maybeApplyDuringCreate() {},
+    createFailureMessage: () => null,
+    exitOnPatchError() {},
+    rollbackManagedStartupAfterCreateFailure() {},
+    ensureApplied() {
+      if (applied) return;
+      const generation = (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+        input.sandboxName,
+        input.sandboxStartupCommand,
+        input.hostEnv ?? process.env,
+        {
+          ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+        },
+      );
+      if (!generation) {
+        throw new Error(`Portable lifecycle setup did not record sandbox '${input.sandboxName}'.`);
+      }
+      recordLifecycleGeneration(generation);
+      applied = true;
+    },
+    waitForSupervisorReconnectIfNeeded() {},
+    commitAfterReady() {},
+    selectedMode: () => null,
+    printReadinessFailureIfEnabled() {},
+    async verifyGpuOrExit(verifyDirectSandboxGpu) {
+      return verifyDirectSandboxGpu(input.sandboxName);
+    },
+  };
+}
 
 function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
   return `${String(result.stderr ?? "")}\n${String(result.stdout ?? "")}`
@@ -113,11 +155,23 @@ export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ) {
+  const portableLifecycle = input.portableLifecycle === true;
+  if (
+    portableLifecycle &&
+    (input.gpuRoutePlan === "compatibility-only" ||
+      input.gpuRoutePlan === "native-with-fallback" ||
+      input.initialGpuRoute === "compatibility")
+  ) {
+    throw new Error(
+      "Portable sandbox creation requires native OpenShell GPU injection; Docker GPU compatibility is unavailable.",
+    );
+  }
   const state: SandboxGpuCreateAttemptState = {
     firstCreateOutput: "",
     compatibilityArgv: null,
     allowUnbuiltCompatibilitySource: false,
     nativeRuntimeSnapshot: null,
+    portableLifecycleGeneration: null,
   };
   const managedRouting = input.managedBootstrap?.runtimeProvider.bootstrap.createOnboardRouting({
     sandboxName: input.sandboxName,
@@ -127,6 +181,7 @@ export function createSandboxGpuCreateAttemptRunner(
   });
   const nativeFallbackBaseline =
     !managedRouting &&
+    !portableLifecycle &&
     input.initialGpuRoute === "native" &&
     input.gpuRoutePlan === "native-with-fallback"
       ? queryOpenShellDockerSandboxContainers(input.sandboxName)
@@ -192,25 +247,32 @@ export function createSandboxGpuCreateAttemptRunner(
       input.persistStartupCommand === true &&
       (route !== "native" || !input.terminalAgent || hasRequiredUlimits);
     const deferRestartSafeCutover =
-      !managedLifecycle && !compatibility && persistRestartSafeStartup;
+      !managedLifecycle && !portableLifecycle && !compatibility && persistRestartSafeStartup;
+    const portableRuntimePatch = portableLifecycle
+      ? createPortableRuntimePatch(input, deps, (generation) => {
+          state.portableLifecycleGeneration = generation;
+        })
+      : null;
     const runtimePatch =
       managedLifecycle?.patch ??
-      createDockerGpuSandboxCreatePatch({
-        route,
-        // The startup clone preserves native CDI devices, so non-terminal agents
-        // keep their selected command and DCode can apply its exact required limits
-        // without replacing the native GPU envelope. Native terminal agents without
-        // required limits retain their create-time command.
-        persistStartupCommand: persistRestartSafeStartup,
-        externalRecreation: false,
-        sandboxName: input.sandboxName,
-        gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
-        openshellSandboxCommand: input.sandboxStartupCommand,
-        requiredUlimits: input.requiredUlimits,
-        timeoutSecs: input.sandboxReadyTimeoutSecs,
-        backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-        deps,
-      });
+      (portableRuntimePatch
+        ? portableRuntimePatch
+        : createDockerGpuSandboxCreatePatch({
+            route,
+            // The startup clone preserves native CDI devices, so non-terminal agents
+            // keep their selected command and DCode can apply its exact required limits
+            // without replacing the native GPU envelope. Native terminal agents without
+            // required limits retain their create-time command.
+            persistStartupCommand: persistRestartSafeStartup,
+            externalRecreation: false,
+            sandboxName: input.sandboxName,
+            gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
+            openshellSandboxCommand: input.sandboxStartupCommand,
+            requiredUlimits: input.requiredUlimits,
+            timeoutSecs: input.sandboxReadyTimeoutSecs,
+            backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
+            deps,
+          }));
     const recovery = await managedLifecycle?.recoverUnfinished();
     if (recovery) {
       enforceManagedBootstrapRecoveryForSandbox(recovery, input.sandboxName, (message) =>
@@ -412,7 +474,7 @@ export function createSandboxGpuCreateAttemptRunner(
       });
       process.exit(createResult.status === 0 ? 1 : createResult.status);
     }
-    await runtimePatch.ensureApplied();
+    if (!portableLifecycle || managedLifecycle) await runtimePatch.ensureApplied();
     await runtimePatch.waitForSupervisorReconnectIfNeeded();
     console.log("  Waiting for sandbox to become ready...");
     const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
@@ -476,6 +538,10 @@ export function createSandboxGpuCreateAttemptRunner(
       else if (expectedRecreatedSandboxId) {
         console.error(
           "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for inspection and recovery.",
+        );
+      } else if (portableLifecycle) {
+        console.error(
+          "  NemoClaw left the portable sandbox in place because it could not verify the exact runtime identity.",
         );
       } else {
         const deletion = deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
@@ -552,6 +618,7 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error("Sandbox GPU proof returned failed status.");
       }
     }
+    if (portableRuntimePatch) await portableRuntimePatch.ensureApplied();
     // GPU-enabled cutover stays reversible until the caller also proves the
     // configured host-local inference path. Non-GPU workloads have completed
     // their final authoritative Ready gate here.

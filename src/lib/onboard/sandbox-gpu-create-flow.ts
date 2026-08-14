@@ -79,6 +79,9 @@ export interface SandboxGpuCreateFlowInput {
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
+  /** Host-side runtime environment used only by the selected lifecycle provider. */
+  hostEnv?: NodeJS.ProcessEnv;
+  portableLifecycle?: boolean;
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
   lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
@@ -253,20 +256,25 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
-  let portableLifecycleGeneration: string | null = null;
-  try {
-    portableLifecycleGeneration =
-      (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
-        input.sandboxName,
-        input.sandboxStartupCommand,
-        process.env,
-        {
-          ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
-        },
-      ) ?? null;
-  } catch (error) {
-    const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(0, 500);
-    console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+  let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
+  if (!input.portableLifecycle && !portableLifecycleGeneration) {
+    try {
+      portableLifecycleGeneration =
+        (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+          input.sandboxName,
+          input.sandboxStartupCommand,
+          process.env,
+          {
+            ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+          },
+        ) ?? null;
+    } catch (error) {
+      const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(
+        0,
+        500,
+      );
+      console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+    }
   }
 
   return {

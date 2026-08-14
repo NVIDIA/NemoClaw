@@ -1895,6 +1895,13 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
+function usesPortableOpenClawLifecycle(agent: AgentDefinition | null): boolean {
+  return (
+    dockerDriverPlatform.isPortableExperimentalProfile() &&
+    (agent?.name ?? "openclaw") === "openclaw"
+  );
+}
+
 async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
   computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
@@ -2317,6 +2324,8 @@ async function createSandboxWithBaseImageResolution(
       gatewayPort: GATEWAY_PORT,
       sandboxReadyTimeoutSecs,
       createArgv,
+      hostEnv: process.env,
+      portableLifecycle: usesPortableOpenClawLifecycle(agent),
       sandboxEnv,
       sandboxStartupCommand,
       lifecycleGeneration: createdSandboxLifecycle.generation,
@@ -3246,9 +3255,10 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
-  resolveGpuPlan: (config) =>
+  resolveGpuPlan: (config, agent) =>
     dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(config, {
       dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      portableLifecycle: usesPortableOpenClawLifecycle(agent),
     }),
   appendResourceCreateArgs: (args, resourceProfile) =>
     appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {

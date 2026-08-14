@@ -47,16 +47,24 @@ export function resolveDockerGpuSandboxCreatePlan(
     dockerDesktopWsl?: boolean;
     detectDockerDesktopWsl?: () => boolean;
     env?: NodeJS.ProcessEnv;
+    portableLifecycle?: boolean;
     platform?: NodeJS.Platform;
     log?: (message: string) => void;
   },
 ): DockerGpuSandboxCreatePlan {
+  const env = options.env ?? process.env;
+  const portableLifecycle = options.portableLifecycle === true;
   const dockerDesktopWsl =
-    options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)();
+    portableLifecycle
+      ? false
+      : (options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)());
   const gpuRoutePlan = resolveDockerGpuRoutePlan(config, {
-    dockerDriverGateway: options.dockerDriverGateway,
+    // The hidden portable profile reaches OpenShell through its Docker-compatible
+    // endpoint, but rootless Podman owns sandbox lifecycle. Keep Docker-only
+    // container substitution out of that lifecycle path.
+    dockerDriverGateway: options.dockerDriverGateway && !portableLifecycle,
     dockerDesktopWsl,
-    env: options.env,
+    env,
     platform: options.platform,
     log: options.log,
   });

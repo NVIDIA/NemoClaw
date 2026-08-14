@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import {
   installPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
@@ -14,6 +15,7 @@ import {
 
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
+const SOCKET_PATH = "/run/user/1001/podman/podman.sock";
 const STARTUP_ARGV = [
   "env",
   "CHAT_UI_URL=http://127.0.0.1:18789",
@@ -25,6 +27,26 @@ const STARTUP_ARGV = [
   "/usr/local/bin/nemoclaw-start",
 ];
 const temporaryDirectories: string[] = [];
+
+function socketAuthorityDeps(): PodmanSocketAuthorityDeps {
+  const directoryInodes = new Map<string, bigint>();
+  return {
+    uid: 1001,
+    lstat: (filePath) => {
+      const socket = filePath === SOCKET_PATH;
+      const directoryInode = directoryInodes.get(filePath) ?? BigInt(7000 + directoryInodes.size);
+      directoryInodes.set(filePath, directoryInode);
+      return {
+        dev: 8n,
+        ino: socket ? 9001n : directoryInode,
+        mode: socket ? 0o660n : filePath === path.dirname(SOCKET_PATH) ? 0o700n : 0o755n,
+        uid: socket ? 1001n : filePath.startsWith("/run/user/1001") ? 1001n : 0n,
+        isDirectory: () => !socket,
+        isSocket: () => socket,
+      };
+    },
+  };
+}
 
 function temporaryStateDir(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-identity-"));
@@ -101,7 +123,13 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
     "alpha",
     STARTUP_ARGV,
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-    { platform: "linux", podman, stateDir },
+    {
+      platform: "linux",
+      podman,
+      stateDir,
+      podmanSocketAuthorityDeps: socketAuthorityDeps(),
+      hardenSocketDirectory: vi.fn(),
+    },
   );
 }
 
@@ -122,6 +150,8 @@ function recoverPortableDemoSandboxLifecycle(
       platform: "linux",
       stateDir,
       podman: runtime.podman,
+      podmanSocketAuthorityDeps: socketAuthorityDeps(),
+      hardenSocketDirectory: vi.fn(),
       launchOpenshell,
     } satisfies PortableDemoLifecycleDeps,
   );
