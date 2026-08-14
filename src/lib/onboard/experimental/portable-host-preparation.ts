@@ -116,6 +116,18 @@ function resolvePodmanDockerHost(result: SpawnResult): string {
   );
 }
 
+function assertSocketInsideRuntime(runtimeDir: string, socketPath: string): void {
+  const relativeSocket = path.relative(runtimeDir, socketPath);
+  if (
+    relativeSocket === "" ||
+    path.isAbsolute(relativeSocket) ||
+    relativeSocket === ".." ||
+    relativeSocket.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error("Portable Podman socket is outside the current user runtime directory.");
+  }
+}
+
 function writePrivateConfig(filePath: string, value: string): void {
   ensureConfigDir(path.dirname(filePath));
   let file;
@@ -377,6 +389,25 @@ export function preparePortableExperimentalHost(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
+
+  const podman =
+    deps.podman ??
+    ((args, childEnv) =>
+      spawnSync("podman", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
+  const discoverSocket = (childEnv: NodeJS.ProcessEnv): string =>
+    resolvePodmanDockerHost(
+      podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], childEnv),
+    ).slice("unix://".length);
+  const admissionSocketPath = discoverSocket(localPodmanEnvironment(env));
+  assertSocketInsideRuntime(runtimeDir, admissionSocketPath);
+  if (expectedAuthority && admissionSocketPath !== expectedAuthority.socketPath) {
+    throw new Error("Portable Podman socket path does not match the onboarding checkpoint.");
+  }
+
   env.NETAVARK_FW = "iptables";
   env.CONTAINERS_CONF = writePortableRuntimeConfig(configHome);
 
@@ -409,31 +440,13 @@ export function preparePortableExperimentalHost(
     "Starting the rootless container socket",
   );
 
-  const podman =
-    deps.podman ??
-    ((args, childEnv) =>
-      spawnSync("podman", [...args], {
-        encoding: "utf-8",
-        env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
-      }));
   const podmanEnv = localPodmanEnvironment(env);
-  const dockerHost = resolvePodmanDockerHost(
-    podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], podmanEnv),
-  );
-  const socketPath = dockerHost.slice("unix://".length);
+  const socketPath = discoverSocket(podmanEnv);
+  const dockerHost = `unix://${socketPath}`;
   if (expectedAuthority && socketPath !== expectedAuthority.socketPath) {
     throw new Error("Portable Podman socket path does not match the onboarding checkpoint.");
   }
-  const relativeSocket = path.relative(runtimeDir, socketPath);
-  if (
-    relativeSocket === "" ||
-    path.isAbsolute(relativeSocket) ||
-    relativeSocket === ".." ||
-    relativeSocket.startsWith(`..${path.sep}`)
-  ) {
-    throw new Error("Portable Podman socket is outside the current user runtime directory.");
-  }
+  assertSocketInsideRuntime(runtimeDir, socketPath);
   (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
   const socketAuthority = deps.captureSocketAuthority
     ? deps.captureSocketAuthority(socketPath, Number(uid))
