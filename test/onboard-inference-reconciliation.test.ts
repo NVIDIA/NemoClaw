@@ -1062,6 +1062,48 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(unloadOllamaModels).not.toHaveBeenCalled();
   });
 
+  it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {
+    const events: string[] = [];
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
+      events.push("unload");
+    });
+    const getSandbox = vi.fn(() => {
+      events.push("read-prior-route");
+      return priorEntry;
+    });
+    const harness = createDirectSetupInferenceHarness({
+      runOpenshell: (args) =>
+        args.slice(0, 2).join(" ") === "provider get"
+          ? { status: 1, stdout: "", stderr: "" }
+          : undefined,
+      overrides: {
+        shouldFrontOllamaWithProxy: () => true,
+        ensureOllamaAuthProxy: () => {},
+        isProxyHealthy: () => true,
+        getOllamaProxyToken: () => "proxy-token",
+        persistAndProbeOllamaProxy: async () => {},
+        getSandbox,
+        listSandboxes: () => ({ sandboxes: [priorEntry], defaultSandbox: null }),
+        unloadOllamaModels,
+        withSandboxMutationLock: async <T,>(_name: string, operation: () => Promise<T> | T) => {
+          events.push("lock-enter");
+          const value = await operation();
+          events.push("lock-exit");
+          return value;
+        },
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    // A serialized re-onboard can neither replace the row under the read nor
+    // select the captured model before this cleanup runs.
+    expect(events).toEqual(["lock-enter", "read-prior-route", "unload", "lock-exit"]);
+  });
+
   it("skips the release when the route returns to selection (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
     const harness = releaseHarness({

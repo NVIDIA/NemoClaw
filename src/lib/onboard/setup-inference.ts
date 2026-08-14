@@ -965,18 +965,26 @@ export function createSetupInference(
           return deps.exitProcess(error instanceof HostLocalInferenceBranchExit ? error.code : 1);
         }
       });
-    // Read before delegating: `reserveRoute` rewrites this row inside
-    // `mutateGatewayRoute`, so the previous selection is unrecoverable after.
-    let previousSandbox: OllamaModelHolder | null = null;
-    try {
-      previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
-    } catch {
-      /* An unreadable registry skips GPU release; it must not fail onboarding. */
-    }
-    const result = await (sandboxName
-      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRoute)
-      : mutateGatewayRoute());
-    releaseSupersededOllamaModel(previousSandbox, model, result, deps);
-    return result;
+    // Both the prior-route read and the GPU release stay inside the sandbox
+    // mutation lock: the read happens before `reserveRoute` rewrites the row
+    // (after which the previous selection is unrecoverable), and the release
+    // happens before the lock opens, so a serialized re-onboard can neither
+    // replace the row under the read nor select the captured model before
+    // this cleanup runs.
+    const mutateGatewayRouteAndReleaseSupersededModel =
+      async (): Promise<SetupInferenceResult> => {
+        let previousSandbox: OllamaModelHolder | null = null;
+        try {
+          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+        } catch {
+          /* An unreadable registry skips GPU release; it must not fail onboarding. */
+        }
+        const result = await mutateGatewayRoute();
+        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
+        return result;
+      };
+    return sandboxName
+      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
+      : mutateGatewayRouteAndReleaseSupersededModel();
   };
 }
