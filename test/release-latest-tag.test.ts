@@ -220,7 +220,7 @@ function rewritePlanOrigin(planPath: string, originRemote: string): void {
 
 function installReleaseGateStubs(
   fixture: Fixture,
-  qualification: "missing" | "success",
+  qualification: "failed-unwaived" | "missing" | "success" | "waived" | "waived-invalid",
   originRemote: string,
 ): string {
   const binDir = path.join(fixture.root, `release-gate-bin-${qualification}`);
@@ -242,16 +242,27 @@ fi
 exec ${shellQuote(realGit)} "$@"
 `,
   );
+  const waiverDownload =
+    qualification === "waived"
+      ? `destination="\${!#}"
+candidate="$(${shellQuote(realGit)} rev-parse origin/main)"
+cat >"\${destination}/waiver.json" <<JSON
+{"schemaVersion":1,"kind":"nemoclaw-release-qualification-waiver-v1","candidateSha":"\${candidate}","workflowRunId":123,"workflowRunAttempt":1,"actor":"release-admin","triggeringActor":"release-admin","reason":"Brev credential expired","jobs":[{"id":"staging-brev-launchable","result":"failure"}]}
+JSON`
+      : "exit 1";
   fs.writeFileSync(
     path.join(binDir, "gh"),
     `#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
   *'/actions/workflows/e2e.yaml/runs?'*)
-    ${qualification === "success" ? "printf '%s\\t%s\\n' 123 https://github.com/NVIDIA/NemoClaw/actions/runs/123" : ":"}
+    ${qualification === "missing" ? ":" : `printf '%s\\t%s\\t%s\\t%s\\n' 123 https://github.com/NVIDIA/NemoClaw/actions/runs/123 ${qualification.startsWith("waived") || qualification === "failed-unwaived" ? "failure" : "success"} 1`}
     ;;
   *'/actions/runs/123/jobs?'*)
-    printf '%s\\t%s\\t%s\\n' completed success https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456
+    printf '%s\\t%s\\t%s\\n' completed ${qualification === "waived-invalid" ? "failure" : "success"} https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456
+    ;;
+  'run download 123 --repo NVIDIA/NemoClaw --name release-qualification-waiver-123-1 --dir '*)
+    ${waiverDownload}
     ;;
   *) exit 2 ;;
 esac
@@ -636,17 +647,38 @@ describe("release-latest-tag.sh", () => {
     );
   });
 
-  it.each([
-    "git@github.com:NVIDIA/NemoClaw",
-    "https://contributor@github.com/NVIDIA/NemoClaw.git",
-  ])("rejects signing preflight without exact-commit qualification for %s", (originRemote) => {
+  it("accepts a failed workflow with successful qualification and trusted failed-job waiver evidence", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
     createPlan(fixture, planPath, releaseCommit);
+    const originRemote = "git@github.com:NVIDIA/NemoClaw";
     rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "missing", originRemote);
+    const binDir = installReleaseGateStubs(fixture, "waived", originRemote);
+
+    const result = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`verified Release qualification for ${releaseCommit}`);
+    expect(result.stdout).toContain(
+      "workflow evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/123 (conclusion: failure)",
+    );
+  });
+
+  it("rejects a failed workflow run when Release qualification also fails", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    const originRemote = "git@github.com:NVIDIA/NemoClaw";
+    rewritePlanOrigin(planPath, originRemote);
+    const binDir = installReleaseGateStubs(fixture, "waived-invalid", originRemote);
 
     const result = runScript(
       fixture.work,
@@ -658,8 +690,54 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain(
       `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
     );
-    expect(localTagObject(fixture, "v0.0.2")).toBe("");
   });
+
+  it("rejects a failed unwaived workflow when Release qualification succeeds", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    const originRemote = "git@github.com:NVIDIA/NemoClaw";
+    rewritePlanOrigin(planPath, originRemote);
+    const binDir = installReleaseGateStubs(fixture, "failed-unwaived", originRemote);
+
+    const result = runScript(
+      fixture.work,
+      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
+    );
+  });
+
+  it.each(["git@github.com:NVIDIA/NemoClaw", "https://contributor@github.com/NVIDIA/NemoClaw.git"])(
+    "rejects signing preflight without exact-commit qualification for %s",
+    (originRemote) => {
+      const fixture = createFixture();
+      pushTag(fixture, "v0.0.1", fixture.firstCommit);
+      const releaseCommit = commit(fixture, "planned release commit");
+      const planPath = path.join(fixture.root, "release", "plan.json");
+      createPlan(fixture, planPath, releaseCommit);
+      rewritePlanOrigin(planPath, originRemote);
+      const binDir = installReleaseGateStubs(fixture, "missing", originRemote);
+
+      const result = runScript(
+        fixture.work,
+        ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
+        { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        `No completed successful Release qualification check exists for candidate commit ${releaseCommit}`,
+      );
+      expect(localTagObject(fixture, "v0.0.2")).toBe("");
+    },
+  );
 
   it("does not let the noncanonical test override bypass a canonical remote", () => {
     const fixture = createFixture();

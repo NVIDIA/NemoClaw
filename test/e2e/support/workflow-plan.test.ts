@@ -21,6 +21,7 @@ import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-bound
 import {
   buildE2eWorkflowPlan,
   releaseRequiredWorkflowJobs,
+  parseReleaseQualificationWaivedJobs,
   renderE2eWorkflowPlanSummary,
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
@@ -58,6 +59,7 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
     `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
     `hermes_selected=${plan.hermesSelected}`,
     `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+    "release_qualification_waived_jobs=[]",
     `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
     "",
   ].join("\n");
@@ -89,6 +91,23 @@ describe("E2E workflow plan", () => {
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+  });
+
+  it("waives only named release-required E2E jobs", () => {
+    const defaultJobs = releaseRequiredWorkflowJobs();
+    const requestedWaivers = ["live", "staging-brev-launchable"];
+    const requiredJobs = releaseRequiredWorkflowJobs({ waivedJobs: requestedWaivers });
+
+    expect(requiredJobs).toEqual(defaultJobs.filter((job) => !requestedWaivers.includes(job)));
+    expect(parseReleaseQualificationWaivedJobs(requestedWaivers.join(","))).toEqual(
+      requestedWaivers,
+    );
+    expect(() => releaseRequiredWorkflowJobs({ waivedJobs: ["generate-matrix"] })).toThrow(
+      "Cannot waive non-release E2E jobs: generate-matrix",
+    );
+    expect(() => releaseRequiredWorkflowJobs({ waivedJobs: ["live", "live"] })).toThrow(
+      "Release qualification waived jobs must not contain duplicates",
+    );
   });
 
   it("validates jobs and selects only matching credential-free tests", () => {
@@ -292,9 +311,9 @@ describe("E2E workflow plan", () => {
 
   it("rejects unreviewed catalogue execution metadata", () => {
     const target = catalogueTarget("network-policy");
-    expect(() =>
-      validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }]),
-    ).toThrow("invalid runner routing key");
+    expect(() => validateE2eTargetCatalogue([{ ...target, runnerKey: "unknown-runner" }])).toThrow(
+      "invalid runner routing key",
+    );
     expect(() =>
       validateE2eTargetCatalogue([{ ...target, hostPackages: ["curl"] as never }]),
     ).toThrow("invalid or duplicate host packages");
