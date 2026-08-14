@@ -425,6 +425,7 @@ jobs:
               --tag "$LOCAL_BASE_REFERENCE" \
               .
             printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
+            printf 'local=true\n' >> "$GITHUB_OUTPUT"
             printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
               "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
               >> "$GITHUB_STEP_SUMMARY"
@@ -467,6 +468,7 @@ jobs:
             exit 1
           fi
           printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+          printf 'local=false\n' >> "$GITHUB_OUTPUT"
           printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -483,7 +485,8 @@ jobs:
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
 
-      - name: Build PR managed image locally
+      - name: Build PR managed image from local base
+        if: steps.base.outputs.local == 'true'
         shell: bash
         env:
           BASE_IMAGE: ${{ steps.base.outputs.ref }}
@@ -511,6 +514,33 @@ jobs:
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
             .
+
+      - name: Build PR managed image from registry base
+        if: steps.base.outputs.local != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+            io.nvidia.nemoclaw.agent=${{ matrix.agent }}
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          provenance: false
+          sbom: false
 
       - name: Validate exact PR managed image contract
         id: contract

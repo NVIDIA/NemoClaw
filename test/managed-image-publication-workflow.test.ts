@@ -408,7 +408,8 @@ describe("complete managed-image publication workflow", () => {
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
     const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
-    const build = step(prBuilder, "Build PR managed image locally");
+    const localBaseBuild = step(prBuilder, "Build PR managed image from local base");
+    const registryBaseBuild = step(prBuilder, "Build PR managed image from registry base");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
 
     expect(workflow.on?.pull_request?.paths).toEqual(
@@ -484,7 +485,7 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
-    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(build));
+    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
@@ -503,12 +504,19 @@ describe("complete managed-image publication workflow", () => {
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    const localBuild = required(build.run, "PR managed image local build is missing");
+    expect(localBaseBuild.if).toBe("steps.base.outputs.local == 'true'");
+    expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
+    const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
     expect(localBuild).toContain("docker build");
     expect(localBuild).toContain("--platform linux/amd64");
     expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
     expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
     expect(localBuild).not.toContain("docker buildx build");
+    expect(registryBaseBuild.with).toMatchObject({
+      platforms: "linux/amd64",
+      load: true,
+      push: false,
+    });
     const contractSource = required(contract.run, "PR managed image contract is missing");
     expect(contractSource).toContain(
       'docker run --rm --platform "$PLATFORM" --entrypoint /bin/sh "$image_id"',

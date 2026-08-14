@@ -90,7 +90,9 @@ exit 90
       env: environment,
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(output, "utf8")).toBe("ref=nemoclaw-managed-pr/openclaw-base:test\n");
+    expect(fs.readFileSync(output, "utf8")).toBe(
+      "ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\n",
+    );
     expect(fs.readFileSync(dockerLog, "utf8")).toContain(
       "buildx build --platform linux/amd64 --load --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test .",
     );
