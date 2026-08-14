@@ -78,6 +78,7 @@ describe("destroySandbox flow", () => {
       expect.any(Function),
     );
   });
+
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
     const routeId = "a".repeat(64);
     const harness = createDestroyHarness({

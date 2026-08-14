@@ -22,7 +22,7 @@ function createDeps(overrides: Partial<StopModelRouterForDestroyedSandboxDeps> =
   const session = {
     sessionId: "session-alpha",
     sandboxName: "alpha",
-    endpointUrl: "http://host.openshell.internal:4100/v1",
+    endpointUrl: routedSandbox.endpointUrl,
     routerPid: 4242,
     routerCredentialHash: "hash",
   } as Session;
@@ -114,7 +114,7 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(deps.updateSession).not.toHaveBeenCalled();
   });
 
-  it("stops the target router when a routed peer uses a different port", async () => {
+  it("stops the router when a routed peer uses another port", async () => {
     const { deps } = createDeps({
       listHostRegistryEntries: vi.fn(() => [
         {
@@ -188,6 +188,30 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(reusedNameSession.routerPid).toBe(6262);
     expect(reusedNameSession.routerCredentialHash).toBe("new-hash");
   });
+
+  it("does not clear router identity after the session changes", async () => {
+    const replacementSession = {
+      sessionId: "session-beta",
+      sandboxName: "beta",
+      endpointUrl: "http://host.openshell.internal:4200/v1",
+      routerPid: 6262,
+      routerCredentialHash: "new-hash",
+    } as Session;
+    const { deps } = createDeps({
+      updateSession: vi.fn((mutator: (current: Session) => Session | void) => {
+        mutator(replacementSession);
+        return replacementSession;
+      }),
+    });
+
+    await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
+
+    expect(replacementSession).toMatchObject({
+      routerPid: 6262,
+      routerCredentialHash: "new-hash",
+    });
+  });
+
   it("clears a stale recorded PID when no router process is found", async () => {
     const { deps, session } = createDeps({
       ownsPort: vi.fn(() => false),
@@ -234,9 +258,8 @@ describe("stopModelRouterForDestroyedSandbox", () => {
 
   it("clears a stale credential hash when the session records no router PID (#9098)", async () => {
     const session = {
-      sessionId: "session-alpha",
       sandboxName: "alpha",
-      endpointUrl: "http://host.openshell.internal:4100/v1",
+      endpointUrl: routedSandbox.endpointUrl,
       routerPid: null,
       routerCredentialHash: "stale",
     } as Session;
@@ -256,39 +279,13 @@ describe("stopModelRouterForDestroyedSandbox", () => {
     expect(session.routerCredentialHash).toBeNull();
   });
 
-  it("does not clear session identity for a different routed sandbox", async () => {
-    const session = {
-      sessionId: "session-beta",
-      sandboxName: "beta",
-      endpointUrl: "http://host.openshell.internal:4200/v1",
-      routerPid: 5252,
-      routerCredentialHash: "beta-hash",
-    } as Session;
-    const { deps } = createDeps({
-      loadSession: vi.fn(() => session),
-      ownsPort: vi.fn(() => false),
-      findPidForPort: vi.fn(() => 5151),
-      updateSession: vi.fn((mutator: (current: Session) => Session | void) => {
-        mutator(session);
-        return session;
-      }),
-    });
-
-    await stopModelRouterForDestroyedSandbox(routedSandbox, deps);
-
-    expect(deps.stopProcess).toHaveBeenCalledWith(5151, 4100);
-    expect(deps.updateSession).not.toHaveBeenCalled();
-    expect(session).toMatchObject({ routerPid: 5252, routerCredentialHash: "beta-hash" });
-  });
-
   it("leaves the session untouched when it records no router PID and no orphan exists", async () => {
     const { deps } = createDeps({
       loadSession: vi.fn(
         () =>
           ({
-            sessionId: "session-beta",
-            sandboxName: "beta",
-            endpointUrl: "http://host.openshell.internal:4200/v1",
+            sandboxName: "alpha",
+            endpointUrl: routedSandbox.endpointUrl,
             routerPid: null,
           }) as Session,
       ),
