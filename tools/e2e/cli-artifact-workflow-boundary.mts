@@ -340,8 +340,11 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
-  const dependencies = Array.isArray(job.needs) ? job.needs : [job.needs];
-  if (!dependencies.includes(CLI_ARTIFACT_PRODUCER_JOB)) {
+  const expectedNeeds =
+    jobName === "mcp-bridge-dev"
+      ? [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"]
+      : CLI_ARTIFACT_PRODUCER_JOB;
+  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
   const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>

@@ -403,7 +403,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         ["mcp-bridge-dev", "openshell-dev-artifact"].includes(jobName) &&
         step.name === "Checkout trusted OpenShell dev tooling" &&
         step.with?.repository === "${{ github.repository }}" &&
-        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}";
+        step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
+        step.with?.path === ".trusted-openshell-dev-artifact";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||

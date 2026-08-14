@@ -1076,9 +1076,8 @@ function validateFreeStandingJobSelector(
   const expectedNeeds =
     jobName === "mcp-bridge-dev"
       ? ["generate-matrix", "openshell-dev-artifact"]
-      : ["generate-matrix"];
-  const actualNeeds = Array.isArray(job.needs) ? job.needs : [job.needs];
-  if (JSON.stringify(actualNeeds) !== JSON.stringify(expectedNeeds)) {
+      : "generate-matrix";
+  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
   if (job.if !== selectedJobsCondition(jobName)) {
