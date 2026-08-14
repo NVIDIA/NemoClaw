@@ -58,8 +58,16 @@ if (-not $env:SystemRoot) {
 
 $script:RunOnceKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
 $script:RunOnceValueName = 'NVIDIA.NemoClaw.WindowsBootstrap'
-$script:DockerDesktopExe = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
-$script:DockerCli = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+$script:DockerDesktopMachineRoot = if ($env:ProgramFiles) {
+    "$env:ProgramFiles\Docker\Docker"
+} else {
+    'C:\Program Files\Docker\Docker'
+}
+$script:DockerDesktopUserRoot = if ($env:LOCALAPPDATA) {
+    "$env:LOCALAPPDATA\Programs\DockerDesktop"
+} else {
+    $null
+}
 $script:WingetDockerId = 'Docker.DockerDesktop'
 $script:InstallerWindowTitle = "NVIDIA NemoClaw Installer ($PID)"
 $script:InstallDistroAtHandoff = $false
@@ -248,6 +256,31 @@ function Test-DockerDesktopRunning {
     } catch {
         return $false
     }
+}
+
+function Get-DockerDesktopCandidatePath {
+    param([Parameter(Mandatory)] [ValidateSet('Desktop', 'Cli')] [string]$Component)
+
+    $relativePath = if ($Component -eq 'Desktop') { 'Docker Desktop.exe' } else { 'resources\bin\docker.exe' }
+    $roots = @($script:DockerDesktopMachineRoot, $script:DockerDesktopUserRoot) | Where-Object { $_ }
+    return @($roots | ForEach-Object { "$_\$relativePath" })
+}
+
+function Format-DockerDesktopCandidatePath {
+    param([Parameter(Mandatory)] [ValidateSet('Desktop', 'Cli')] [string]$Component)
+
+    return ((Get-DockerDesktopCandidatePath -Component $Component) -join '; ')
+}
+
+function Resolve-DockerDesktopPath {
+    param([Parameter(Mandatory)] [ValidateSet('Desktop', 'Cli')] [string]$Component)
+
+    foreach ($candidate in (Get-DockerDesktopCandidatePath -Component $Component)) {
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+    return $null
 }
 
 function Resolve-WslExe {
@@ -446,7 +479,7 @@ function Install-DockerDesktop {
         Write-Status 'InstallDockerDesktop=$false; skipping Docker Desktop install.'
         return
     }
-    if (Test-Path -LiteralPath $script:DockerDesktopExe) {
+    if (Resolve-DockerDesktopPath -Component 'Desktop') {
         Write-Status 'Docker Desktop already installed.'
         return
     }
@@ -476,22 +509,23 @@ function Install-DockerDesktop {
         throw "Docker Desktop winget install failed with exit code $LASTEXITCODE"
     }
 
-    if (-not (Test-Path -LiteralPath $script:DockerDesktopExe)) {
-        Write-Status -Level WARN "Docker Desktop binary not found at $script:DockerDesktopExe after winget install."
+    if (-not (Resolve-DockerDesktopPath -Component 'Desktop')) {
+        Write-Status -Level WARN "Docker Desktop not found after the winget install. Checked: $(Format-DockerDesktopCandidatePath -Component 'Desktop')."
     }
 }
 
 function Wait-DockerDesktopEngine {
     param([int]$TimeoutSeconds = 120)
-    if (-not (Test-Path -LiteralPath $script:DockerCli)) {
-        Write-Status -Level WARN "Docker CLI not found at $script:DockerCli; skipping Docker readiness wait."
+    $dockerCli = Resolve-DockerDesktopPath -Component 'Cli'
+    if (-not $dockerCli) {
+        Write-Status -Level WARN "Docker CLI not found. The script skips the Docker engine readiness check. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
         return $false
     }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         try {
-            & $script:DockerCli info *> $null
+            & $dockerCli info *> $null
             if ($LASTEXITCODE -eq 0) {
                 Write-Status 'Docker engine is responsive.'
                 return $true
@@ -510,8 +544,9 @@ function Start-DockerDesktop {
     if (-not $InstallDockerDesktop) {
         return
     }
-    if (-not (Test-Path -LiteralPath $script:DockerDesktopExe)) {
-        Write-Status -Level WARN 'Docker Desktop is not installed; cannot start it.'
+    $dockerDesktopExe = Resolve-DockerDesktopPath -Component 'Desktop'
+    if (-not $dockerDesktopExe) {
+        Write-Status -Level WARN "Docker Desktop not found. The script cannot start it. Checked: $(Format-DockerDesktopCandidatePath -Component 'Desktop')."
         return
     }
 
@@ -521,10 +556,10 @@ function Start-DockerDesktop {
     } else {
         Write-Status 'Launching Docker Desktop...'
     }
-    Start-Process -FilePath $script:DockerDesktopExe | Out-Null
+    Start-Process -FilePath $dockerDesktopExe | Out-Null
 
-    if (-not (Test-Path -LiteralPath $script:DockerCli)) {
-        Write-Status -Level WARN "Docker CLI not found at $script:DockerCli; skipping Docker readiness wait."
+    if (-not (Resolve-DockerDesktopPath -Component 'Cli')) {
+        Write-Status -Level WARN "Docker CLI not found. The script skips the Docker engine readiness check. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
         return
     }
 
@@ -539,14 +574,15 @@ function Start-DockerDesktop {
 }
 
 function Restart-DockerDesktop {
-    if (-not (Test-Path -LiteralPath $script:DockerCli)) {
-        Write-Status -Level WARN "Docker CLI not found at $script:DockerCli; cannot restart Docker Desktop."
+    $dockerCli = Resolve-DockerDesktopPath -Component 'Cli'
+    if (-not $dockerCli) {
+        Write-Status -Level WARN "Docker CLI not found. The script cannot restart Docker Desktop. Checked: $(Format-DockerDesktopCandidatePath -Component 'Cli')."
         return
     }
 
     Write-Status 'Restarting Docker Desktop...'
     try {
-        & $script:DockerCli desktop restart *> $null
+        & $dockerCli desktop restart *> $null
         if ($LASTEXITCODE -ne 0) {
             Write-Status -Level WARN "docker desktop restart exited with code $LASTEXITCODE."
         }
@@ -1445,7 +1481,7 @@ function Write-WslSubsystemMissingNotice {
 }
 
 function Write-DockerDesktopNotice {
-    if ((Test-Path -LiteralPath $script:DockerDesktopExe) -or (Test-Path -LiteralPath $script:DockerCli)) {
+    if ((Resolve-DockerDesktopPath -Component 'Desktop') -or (Resolve-DockerDesktopPath -Component 'Cli')) {
         return
     }
     Write-Status -Level WARN 'Docker Desktop was not detected. The standard installer/onboard flow will need Docker available from WSL.'

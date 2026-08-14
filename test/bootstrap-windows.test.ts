@@ -54,11 +54,9 @@ describe("Windows bootstrap WSL distro preflight", () => {
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$script:DockerDesktopExe = 'Docker Desktop.exe'
-$script:DockerCli = 'docker.exe'
 $script:events = @()
 
-function Test-Path { param([string]$LiteralPath) return $true }
+function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $false }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
 function Restart-DockerDesktop { $script:events += 'restart' }
@@ -85,11 +83,9 @@ $script:events | ConvertTo-Json -Compress
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$script:DockerDesktopExe = 'Docker Desktop.exe'
-$script:DockerCli = 'docker.exe'
 $script:events = @()
 
-function Test-Path { param([string]$LiteralPath) return $true }
+function Resolve-DockerDesktopPath { param([string]$Component) if ($Component -eq 'Desktop') { return 'Docker Desktop.exe' } return 'docker.exe' }
 function Test-DockerDesktopRunning { return $true }
 function Wait-DockerDesktopEngine { param([int]$TimeoutSeconds) $script:events += 'wait-ready'; return $true }
 function Restart-DockerDesktop { $script:events += 'restart' }
@@ -107,6 +103,97 @@ $script:events | ConvertTo-Json -Compress
       expect(result.stderr).toBe("");
       const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
       expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "restart"]);
+    },
+  );
+
+  itPowerShell(
+    "resolves the per-user Docker Desktop path when no machine-wide install exists (#9087)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Program Files'
+$env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$machineExe = 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe'
+$userExe = 'C:\\Users\\tester\\AppData\\Local\\Programs\\DockerDesktop\\Docker Desktop.exe'
+
+function Test-Path { param([string]$LiteralPath) return $LiteralPath -eq $userExe }
+
+[pscustomobject]@{
+    matchesUserInstall = ((Resolve-DockerDesktopPath -Component 'Desktop') -eq $userExe)
+    machineCheckedFirst = ((Get-DockerDesktopCandidatePath -Component 'Desktop')[0] -eq $machineExe)
+    candidateCount = @(Get-DockerDesktopCandidatePath -Component 'Desktop').Count
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed).toEqual({
+        matchesUserInstall: true,
+        machineCheckedFirst: true,
+        candidateCount: 2,
+      });
+    },
+  );
+
+  itPowerShell(
+    "returns the machine-wide Docker Desktop path when both locations contain an install (#9087)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Program Files'
+$env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$machineCli = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
+
+function Test-Path { param([string]$LiteralPath) return $true }
+
+[pscustomobject]@{
+    matchesMachineInstall = ((Resolve-DockerDesktopPath -Component 'Cli') -eq $machineCli)
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed).toEqual({ matchesMachineInstall: true });
+    },
+  );
+
+  itPowerShell(
+    "names every checked location when no Docker Desktop install is found (#9087)",
+    `
+$ErrorActionPreference = 'Stop'
+$env:ProgramFiles = 'C:\\Program Files'
+$env:LOCALAPPDATA = 'C:\\Users\\tester\\AppData\\Local'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:messages = @()
+
+function Test-Path { param([string]$LiteralPath) return $false }
+function Test-DockerDesktopRunning { return $true }
+function Start-Process { param([string]$FilePath) $script:messages += "start-$FilePath"; return [pscustomobject]@{} }
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:messages += $Message }
+
+Start-DockerDesktop
+
+[pscustomobject]@{
+    output = ($script:messages -join '||')
+    startCount = @($script:messages | Where-Object { $_ -like 'start-*' }).Count
+    candidates = @(Get-DockerDesktopCandidatePath -Component 'Desktop')
+} | ConvertTo-Json -Compress
+`,
+    (result) => {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.startCount).toBe(0);
+      expect(parsed.output).toContain("Docker Desktop not found");
+      expect(parsed.candidates).toHaveLength(2);
+      for (const candidate of parsed.candidates as string[]) {
+        expect(parsed.output).toContain(candidate);
+      }
     },
   );
 
