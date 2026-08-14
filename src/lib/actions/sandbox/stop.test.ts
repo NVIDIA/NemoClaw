@@ -467,3 +467,70 @@ describe("stopSandbox", () => {
     ]);
   });
 });
+
+describe("stopSandbox Ollama GPU release", () => {
+  it("unloads Ollama models so a stop frees GPU memory (#9110)", () => {
+    const unloadOllamaModels = vi.fn();
+    const h = harness({ unloadOllamaModels });
+    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(unloadOllamaModels).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases GPU memory on an already-stopped sandbox too (#9110)", () => {
+    const unloadOllamaModels = vi.fn();
+    const h = harness({
+      findLabeledSandboxContainers: () => [container("openshell-my-sandbox", false)],
+      unloadOllamaModels,
+    });
+    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(unloadOllamaModels).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["nvidia-prod", sandbox({ provider: "nvidia-prod" })],
+    ["vllm-local", sandbox({ provider: "vllm-local" })],
+    ["an unrecorded provider", sandbox()],
+  ])("leaves %s sandboxes untouched (#9110)", (_label, entry) => {
+    const unloadOllamaModels = vi.fn();
+    const h = harness({ unloadOllamaModels });
+    h.getSandbox.mockReturnValue(entry);
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stop successful and quiet when the unload throws (#9110)", () => {
+    const unloadOllamaModels = vi.fn(() => {
+      throw new Error("curl: command not found");
+    });
+    const h = harness({ unloadOllamaModels });
+    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.warn).not.toHaveBeenCalled();
+  });
+
+  it("skips the unload when the stop itself failed (#9110)", () => {
+    const unloadOllamaModels = vi.fn();
+    const h = harness({ unloadOllamaModels });
+    h.getSandbox.mockReturnValue(sandbox({ provider: "ollama-local" }));
+    h.dockerStop.mockReturnValue({ status: 125 });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+});

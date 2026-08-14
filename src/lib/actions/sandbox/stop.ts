@@ -27,6 +27,33 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
+function defaultUnloadOllamaModels(): void {
+  const { unloadOllamaModels } = require("../../inference/ollama/proxy") as {
+    unloadOllamaModels: () => void;
+  };
+  unloadOllamaModels();
+}
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox left resident (#9110).
+ *
+ * `stopAll()` and `destroySandbox()` already unload; a plain stop did not, so
+ * the model stayed loaded until Ollama's own idle TTL expired. Best-effort:
+ * the sandbox is already stopped by this point, so GPU cleanup must never
+ * change the exit code.
+ */
+function unloadOllamaModelsBestEffort(
+  sandbox: registry.SandboxEntry,
+  unload: (() => void) | undefined,
+): void {
+  if (!sandbox.provider?.includes("ollama")) return;
+  try {
+    (unload ?? defaultUnloadOllamaModels)();
+  } catch {
+    /* Best-effort: a failed unload must not fail the stop. */
+  }
+}
+
 export type { SandboxLifecycleResult } from "./runtime/lifecycle-runtime";
 
 export interface SandboxStopDeps {
@@ -35,6 +62,7 @@ export interface SandboxStopDeps {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
+  unloadOllamaModels?: () => void;
   log?: (message: string) => void;
   warn?: (message: string) => void;
 }
@@ -85,6 +113,8 @@ export function stopSandbox(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
+
+  unloadOllamaModelsBestEffort(resolved.sandbox, deps.unloadOllamaModels);
 
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);
