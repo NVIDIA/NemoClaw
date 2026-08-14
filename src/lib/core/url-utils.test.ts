@@ -121,6 +121,8 @@ describe("endpointUrlHasUserinfoQueryOrFragment", () => {
     ["fragment", "https://proxy.example.com/v1#fragment", true],
     ["userinfo", "https://user:password@proxy.example.com/v1", true],
     ["username only", "https://user@proxy.example.com/v1", true],
+    ["empty userinfo delimiter", "http://@example.test/v1", true],
+    ["at sign in the path", "https://example.com/v1/@user", false],
     ["scheme-less userinfo", "user:password@proxy.example.com/v1", true],
     ["scheme-less userinfo with query", "user:password@proxy.example.com/v1?x=1", true],
     ["userinfo in an unparseable URL", "https://user:password@proxy example.com/v1", true],
