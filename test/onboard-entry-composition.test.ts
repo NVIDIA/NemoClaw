@@ -83,14 +83,14 @@ describe("onboarding entry composition boundary", () => {
 
   it("uses a stable neutral name for a computed method", () => {
     const compact = collectOnboardEntryDecisions(
-      "class Entry { [gatewayKey]() { if (ready) run(); } }",
+      "class Entry { [gatewayKey]() { if (enabled) startGateway(); } }",
     );
     const spaced = collectOnboardEntryDecisions(
-      "class Entry { [ gatewayKey ]() { if (ready) run(); } }",
+      "class Entry { [ gatewayKey ]() { if (enabled) startGateway(); } }",
     );
 
     expect(compact).toEqual(spaced);
-    expect(compact.gateway).toEqual({});
+    expect(compact.gateway).toEqual({ "Entry.[computed]": 1 });
   });
 
   it("uses a stable static owner for a destructured call initializer", () => {
@@ -387,6 +387,14 @@ describe("onboarding entry composition boundary", () => {
     },
   );
 
+  it("ignores a factory name with a lowercase compound-like sequence", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose() { createProviderSupervisorRestoreHint(); }",
+    );
+
+    expect(actual.provider).toEqual({});
+  });
+
   it.each([
     "createGatewayRecoveryAndStart",
     "buildGatewayRepairAndRun",
@@ -627,9 +635,11 @@ describe("onboarding entry composition boundary", () => {
     expect(() =>
       resolveCompositionMergeBase((args) => {
         calls.push([...args]);
-        return { status: 128, stdout: "" };
-      }, undefined),
-    ).toThrow("could not resolve the composition merge base against origin/main");
+        return { status: 128, stdout: "", error: "spawn git ENOENT" };
+      }, ""),
+    ).toThrow(
+      "could not resolve the composition merge base against origin/main; fetch the base ref with sufficient history (spawn git ENOENT)",
+    );
     expect(calls).toEqual([["merge-base", "HEAD", "origin/main"]]);
   });
 });

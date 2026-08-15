@@ -46,6 +46,7 @@ export type OnboardEntryCompositionBudgetExpansion =
 export type CompositionGitResult = Readonly<{
   status: number | null;
   stdout: string;
+  error?: string | null;
 }>;
 export type CompositionGitRunner = (args: readonly string[]) => CompositionGitResult;
 
@@ -126,7 +127,6 @@ const RECOVERY_NAME = new RegExp(alternation(RECOVERY_NAMES), "i");
 const RECOVERY_FACTORY_NAME = new RegExp(`^(?:${alternation(RECOVERY_FACTORY_NAMES)})`, "i");
 const RECOVERY_COMPOUND_ACTION = new RegExp(
   `(?:And|Or)(?:${alternation(titleCase(RECOVERY_NAMES))})|(?:${alternation(titleCase(RECOVERY_NAMES))})[A-Za-z0-9]*(?:And|Or)(?:${alternation(titleCase(COMPOUND_ACTION_NAMES))})`,
-  "i",
 );
 const RECOVERY_ACTION_METHOD = new RegExp(
   `^(?:${alternation(RECOVERY_ACTION_METHOD_NAMES)})$`,
@@ -737,7 +737,11 @@ function runGit(args: readonly string[]): CompositionGitResult {
     encoding: "utf8",
     timeout: 5_000,
   });
-  return { status: result.status, stdout: result.stdout };
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    error: result.error?.message ?? null,
+  };
 }
 
 export function resolveCompositionMergeBase(
@@ -747,7 +751,10 @@ export function resolveCompositionMergeBase(
   const baseRef = baseBranch ? `origin/${baseBranch}` : "origin/main";
   const mergeBase = git(["merge-base", "HEAD", baseRef]);
   if (mergeBase.status !== 0 || !mergeBase.stdout.trim()) {
-    throw new Error(`could not resolve the composition merge base against ${baseRef}`);
+    const detail = mergeBase.error ? ` (${mergeBase.error})` : "";
+    throw new Error(
+      `could not resolve the composition merge base against ${baseRef}; fetch the base ref with sufficient history${detail}`,
+    );
   }
   return mergeBase.stdout.trim();
 }
