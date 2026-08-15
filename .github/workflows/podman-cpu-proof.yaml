@@ -15,6 +15,8 @@ on:
       - "src/lib/onboard/docker-driver-gateway-*.ts"
       - "src/lib/onboard/managed-bootstrap/podman-*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
+      - "src/lib/onboard/experimental/portable-runtime-*.ts"
+      - "src/lib/actions/uninstall/portable-runtime-cleanup.ts"
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
@@ -23,6 +25,7 @@ on:
       - "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
       - "test/e2e/live/podman-cpu-lifecycle-policy.yaml"
       - "test/e2e/live/podman-cpu-lifecycle.test.ts"
+      - "test/e2e/live/podman-portable-uninstall.test.ts"
       - "test/e2e/registry/native-runtime-qualification.ts"
       - "test/e2e/support/native-runtime-qualification.test.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.test.ts"
@@ -65,8 +68,11 @@ jobs:
       - name: Install locked test dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build shared sandbox-name contract
-        run: npm run build:policy-boundary
+      - name: Build and link candidate CLI
+        run: |
+          npm run build:cli
+          npm link --ignore-scripts
+          nemoclaw --version
 
       - name: Install pinned OpenShell runtime
         shell: bash
@@ -257,7 +263,10 @@ jobs:
           } >>"$GITHUB_ENV"
 
       - name: Prove pinned OpenShell activation and registered-agent Podman CPU lifecycle
-        run: npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts
+        run: |
+          npx vitest run --project e2e-live \
+            test/e2e/live/podman-cpu-lifecycle.test.ts \
+            test/e2e/live/podman-portable-uninstall.test.ts
 
       - name: Verify Docker stayed unavailable
         if: always()

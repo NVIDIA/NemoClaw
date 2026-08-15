@@ -97,6 +97,7 @@ If the sweep cannot enumerate the gateway state roots safely, it exits before un
 The sweep cannot select an unidentified environment until its gateway port can be determined.
 If one port fails to uninstall, the sweep reports that port, continues with the remaining ports, and exits nonzero.
 The failed port still counts as a live environment, so the final pass keeps the shared host resources instead of removing state that the surviving environment needs.
+For the portable experimental profile, this preservation includes the shared Podman resources, current-user selectors, portable configuration, and lifecycle receipts.
 The sweep does not roll back cleanup that completed before a failure.
 Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the reported per-port command.
 Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
@@ -125,7 +126,20 @@ A single full uninstall reports the process and continues.
 Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
 The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
-Full single-gateway Podman uninstall continues to use normal graceful teardown.
+A full uninstall for the portable experimental profile detects ownership only from durable lifecycle state.
+Before it deletes portable configuration or lifecycle receipts, NemoClaw revalidates the current user's local Podman socket authority and lifecycle generation.
+It also revalidates the exact receipt-owned sandbox containers, their expected OpenShell labels and current running state, and the managed portable registry container.
+NemoClaw uses the pinned local Podman socket to remove only those exact containers.
+After it verifies their removal, it unsets a current-user systemd manager selector only when its current value matches NemoClaw's recorded or derived portable projection.
+This check covers `CONTAINERS_CONF`, `NETAVARK_FW`, `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY`.
+NemoClaw preserves unrelated or changed selector values.
+It does not remove the user's Podman installation, storage, images, networks, or unrelated containers.
+It does not disable a user-managed socket.
+NemoClaw then retires the portable lifecycle receipts and removes the portable configuration.
+If NemoClaw cannot prove the required portable authority or complete cleanup, uninstall exits nonzero.
+It preserves the portable receipts, configuration, gateway state, and other retry evidence, even with `--destroy-user-data`.
+Resolve the reported authority or cleanup error, keep the preserved state intact, and rerun the same full uninstall command.
+This cleanup does not change Docker uninstall, externally supervised gateways, `--keep-openshell`, scoped sibling-gateway cleanup, or non-portable profiles.
 For Docker, if either proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.

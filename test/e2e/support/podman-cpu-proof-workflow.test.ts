@@ -47,6 +47,12 @@ describe("native Podman CPU proof workflow", () => {
       "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
     );
     expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/experimental/portable-runtime-*.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/actions/uninstall/portable-runtime-cleanup.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
       "src/lib/onboard/runtime-provider/container-state-mutation.ts",
     );
     expect(parsed.on.pull_request.paths).toContain(
@@ -61,6 +67,9 @@ describe("native Podman CPU proof workflow", () => {
       "test/e2e/live/podman-cpu-lifecycle-policy.yaml",
     );
     expect(parsed.on.pull_request.paths).toContain(
+      "test/e2e/live/podman-portable-uninstall.test.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
       "test/e2e/registry/native-runtime-qualification.ts",
     );
     expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
@@ -73,9 +82,10 @@ describe("native Podman CPU proof workflow", () => {
     expect(namedStep("Checkout").with).toMatchObject({
       ref: "${{ github.event.pull_request.head.sha }}",
     });
-    expect(namedStep("Build shared sandbox-name contract").run).toBe(
-      "npm run build:policy-boundary",
-    );
+    const buildCandidate = namedStep("Build and link candidate CLI").run ?? "";
+    expect(buildCandidate).toContain("npm run build:cli");
+    expect(buildCandidate).toContain("npm link --ignore-scripts");
+    expect(buildCandidate).toContain("nemoclaw --version");
     const installPodman = namedStep("Install Podman 5 runtime").run ?? "";
     expect(installPodman).toContain("apt-get install --yes");
     expect(installPodman).toContain("passt");
@@ -132,9 +142,18 @@ describe("native Podman CPU proof workflow", () => {
       .steps?.map((step) => step.run ?? "")
       .join("\n");
 
-    expect(proof.run).toBe(
-      "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
+    expect(proof.run).toContain(
+      "npx vitest run --project e2e-live \\\n  test/e2e/live/podman-cpu-lifecycle.test.ts \\",
     );
+    expect(proof.run).toContain("test/e2e/live/podman-portable-uninstall.test.ts");
+    const uninstallSource = readRepoText("test/e2e/live/podman-portable-uninstall.test.ts");
+    expect(uninstallSource).toContain('executableOnPath("nemoclaw")');
+    expect(uninstallSource).toContain('"--all-gateway-ports"');
+    expect(uninstallSource).toContain('"--delete-models"');
+    expect(uninstallSource).toContain('"--destroy-user-data"');
+    expect(uninstallSource).toContain('"--yes"');
+    expect(uninstallSource).toContain("systemctl --user restart podman.socket");
+    expect(uninstallSource).toContain("prepare_portable_experimental_runtime_override");
     const liveSource = readRepoText("test/e2e/live/podman-cpu-lifecycle.test.ts");
     const authorityIndex = liveSource.indexOf("expect(candidateAuthority())");
     const enginesIndex = liveSource.indexOf("let runtimeEngines = engines()");
