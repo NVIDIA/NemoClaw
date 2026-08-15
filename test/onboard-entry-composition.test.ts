@@ -670,4 +670,17 @@ describe("onboarding entry composition boundary", () => {
       `could not read ${missingPath} from composition merge base ${revision}`,
     );
   });
+
+  it("reports a Git execution failure while reading a composition merge-base file", () => {
+    const revision = "base-revision";
+    const relativePath = "ci/onboard-entry-composition-budget.json";
+    const git = (args: readonly string[]) =>
+      args[0] === "merge-base"
+        ? { status: 0, stdout: revision }
+        : { status: null, stdout: "", error: "spawnSync git ETIMEDOUT" };
+
+    expect(() => mergeBaseCompositionCeiling(git, "")).toThrow(
+      `could not run git to read ${relativePath} from composition merge base ${revision} (spawnSync git ETIMEDOUT)`,
+    );
+  });
 });
