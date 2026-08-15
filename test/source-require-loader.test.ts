@@ -116,6 +116,10 @@ function waitForFile(filename: string, timeoutMs = 2_000): void {
 }
 
 describe("source require loader", () => {
+  it("keeps TypeScript specifiers intact for direct source loading", () => {
+    expect(compilerOptions.rewriteRelativeImportExtensions).toBe(false);
+  });
+
   it("emits opt-in cache statistics and reuses a cross-process cache entry (#6237)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-require-"));
     roots.push(root);

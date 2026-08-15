@@ -36,6 +36,7 @@ export function loadSourceRequireCompilerOptions(repoRoot: string): ts.CompilerO
     inlineSources: true,
     noEmit: false,
     outDir: undefined,
+    rewriteRelativeImportExtensions: false,
     rootDir: undefined,
     sourceMap: false,
   };
