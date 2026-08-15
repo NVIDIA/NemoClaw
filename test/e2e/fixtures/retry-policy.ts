@@ -176,7 +176,12 @@ export async function runBoundedRetry<T>(
       continue;
     }
 
-    const outcome = isTransient && !hasBudget ? "exhausted" : "failed-no-retry";
+    const exhaustedCleanup =
+      classification.failureClass === "cleanup" &&
+      !hasBudget &&
+      attempts.some((previous) => previous.retryScheduled);
+    const outcome =
+      (isTransient && !hasBudget) || exhaustedCleanup ? "exhausted" : "failed-no-retry";
     const evidence = finalEvidence(options, attempts, outcome);
     await emit(options, evidence);
     if (error !== undefined) {

@@ -43,7 +43,8 @@ Exhaustion remains failed.
 
 `test/e2e/fixtures/retry-policy.ts` emits schema version 1.
 The aggregate `outcome` is exactly one of `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `exhausted`.
-Cleanup failures use `failed-no-retry` with a final attempt whose `failureClass` is `cleanup`.
+A cleanup failure uses `failed-no-retry` when no earlier failure scheduled a retry.
+When a bounded retry reaches its final attempt and that attempt fails during cleanup, the aggregate outcome is `exhausted` and the final attempt uses `failureClass: cleanup`.
 Each attempt also records its number, failure class, reconciliation result when applicable, and whether another attempt was scheduled.
 The record deliberately excludes command output, errors, request bodies, headers, and environment values.
 Callers retain their normal redacted artifacts separately and may write the aggregate record through `onEvidence`.

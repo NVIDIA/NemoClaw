@@ -183,6 +183,41 @@ describe("bounded E2E operation retry policy", () => {
     expect(JSON.stringify(caught?.evidence)).not.toContain(secret);
   });
 
+  it("preserves exhaustion when a bounded retry ends in cleanup failure", async () => {
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary transport failure"))
+      .mockRejectedValueOnce(new Error("cleanup failed"));
+    let caught: RetryPolicyError | undefined;
+    try {
+      await runBoundedRetry({
+        operation: "sandbox.cleanup",
+        owner: "nemoclaw",
+        idempotence: "idempotent",
+        maxAttempts: 2,
+        run,
+        classify: (_value, error) => ({
+          outcome: "failed",
+          failureClass:
+            error instanceof Error && error.message === "temporary transport failure"
+              ? "transient-external"
+              : "cleanup",
+        }),
+      });
+    } catch (error) {
+      caught = error as RetryPolicyError;
+    }
+
+    expect(caught).toBeInstanceOf(RetryPolicyError);
+    expect(caught?.evidence).toMatchObject({
+      outcome: "exhausted",
+      attempts: [
+        { failureClass: "transient-external", retryScheduled: true },
+        { failureClass: "cleanup", retryScheduled: false },
+      ],
+    });
+  });
+
   it("rejects malformed policy bounds before running", async () => {
     const run = vi.fn();
     await expect(
