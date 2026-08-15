@@ -629,7 +629,7 @@ describe("onboarding entry composition boundary", () => {
     ]);
   });
 
-  it("fails closed when the composition merge base is unavailable", () => {
+  it("reports a Git execution failure while resolving the composition merge base", () => {
     const calls: string[][] = [];
 
     expect(() =>
@@ -638,8 +638,14 @@ describe("onboarding entry composition boundary", () => {
         return { status: 128, stdout: "", error: "spawn git ENOENT" };
       }, ""),
     ).toThrow(
-      "could not resolve the composition merge base against origin/main; fetch the base ref with sufficient history (spawn git ENOENT)",
+      "could not run git to resolve the composition merge base against origin/main (spawn git ENOENT)",
     );
     expect(calls).toEqual([["merge-base", "HEAD", "origin/main"]]);
+  });
+
+  it("fails closed when the composition merge-base history is unavailable", () => {
+    expect(() => resolveCompositionMergeBase(() => ({ status: 128, stdout: "" }), "")).toThrow(
+      "could not resolve the composition merge base against origin/main; fetch the base ref with sufficient history",
+    );
   });
 });

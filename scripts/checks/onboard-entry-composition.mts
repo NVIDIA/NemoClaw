@@ -750,10 +750,14 @@ export function resolveCompositionMergeBase(
 ): string {
   const baseRef = baseBranch ? `origin/${baseBranch}` : "origin/main";
   const mergeBase = git(["merge-base", "HEAD", baseRef]);
-  if (mergeBase.status !== 0 || !mergeBase.stdout.trim()) {
-    const detail = mergeBase.error ? ` (${mergeBase.error})` : "";
+  if (mergeBase.error) {
     throw new Error(
-      `could not resolve the composition merge base against ${baseRef}; fetch the base ref with sufficient history${detail}`,
+      `could not run git to resolve the composition merge base against ${baseRef} (${mergeBase.error})`,
+    );
+  }
+  if (mergeBase.status !== 0 || !mergeBase.stdout.trim()) {
+    throw new Error(
+      `could not resolve the composition merge base against ${baseRef}; fetch the base ref with sufficient history`,
     );
   }
   return mergeBase.stdout.trim();
