@@ -186,7 +186,7 @@ function portableLaunchProvisionStep(): WorkflowStep {
 
 describe("portable profile systemctl fixture", () => {
   it(
-    "installs a mode-0700 shim that keeps the socket cold until the first client and preserves active status across try-restart (#9006)",
+    "installs a mode-0700 shim that preserves socket identity from cold activation through try-restart (#9006)",
     { timeout: 30_000 },
     async () => {
       const scope = createFixture();
@@ -206,10 +206,15 @@ describe("portable profile systemctl fixture", () => {
 
         const activation = systemctl(scope, ["--user", "start", "podman.socket"]);
         expect(activation.status, String(activation.stderr)).toBe(0);
-        expect(fs.statSync(scope.socketPath).isSocket()).toBe(true);
+        const socketAuthority = fs.statSync(scope.socketPath);
+        expect(socketAuthority.isSocket()).toBe(true);
         expect(serviceStatus(scope)).toBe(3);
-        expect(await activateThroughSocket(scope.socketPath)).toBe("");
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
         await waitForServiceStatus(scope, 0);
+        expect(fs.statSync(scope.socketPath)).toMatchObject({
+          dev: socketAuthority.dev,
+          ino: socketAuthority.ino,
+        });
         expect(serviceStatus(scope)).toBe(0);
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
 
@@ -220,6 +225,10 @@ describe("portable profile systemctl fixture", () => {
         expect(serviceStatus(scope)).toBe(0);
         expect(fs.readFileSync(servicePidFile, "utf8").trim()).not.toBe(firstPid);
         expect(pidIsActive(Number(firstPid))).toBe(false);
+        expect(fs.statSync(scope.socketPath)).toMatchObject({
+          dev: socketAuthority.dev,
+          ino: socketAuthority.ino,
+        });
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
       } finally {
         await cleanFixture(scope);
@@ -236,7 +245,8 @@ describe("portable profile systemctl fixture", () => {
         const installer = runInstallerOverride(scope);
         expect(installer.status, String(installer.stderr)).toBe(0);
         expect(installer.stdout).toContain(`DOCKER_HOST=unix://${scope.socketPath}`);
-        expect(fs.statSync(scope.socketPath).isSocket()).toBe(true);
+        const socketAuthority = fs.statSync(scope.socketPath);
+        expect(socketAuthority.isSocket()).toBe(true);
         expect(serviceStatus(scope)).toBe(3);
 
         expect(
@@ -251,8 +261,12 @@ describe("portable profile systemctl fixture", () => {
         expect(serviceStatus(scope)).toBe(3);
         expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
         expect(serviceStatus(scope)).toBe(3);
-        expect(await activateThroughSocket(scope.socketPath)).toBe("");
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
         await waitForServiceStatus(scope, 0);
+        expect(fs.statSync(scope.socketPath)).toMatchObject({
+          dev: socketAuthority.dev,
+          ino: socketAuthority.ino,
+        });
         expect(serviceStatus(scope)).toBe(0);
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
       } finally {
