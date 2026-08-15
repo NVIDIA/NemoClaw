@@ -3416,14 +3416,23 @@ for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
 done
 
 sudo install -d -o root -g root -m 0755 -- "$(dirname "$delegation_drop_in")" &&
-  sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")" &&
-  printf '%s\n' '[Service]' 'Delegate=cpu memory pids' \
-    | sudo tee "$delegation_drop_in" >/dev/null &&
-  sudo chown root:root "$delegation_drop_in" &&
-  sudo chmod 0644 "$delegation_drop_in" &&
-  printf '%s\n' '[Slice]' 'CPUWeight=100' | sudo tee "$app_slice_drop_in" >/dev/null &&
-  sudo chown root:root "$app_slice_drop_in" &&
-  sudo chmod 0644 "$app_slice_drop_in"
+  sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")"
+
+create_drop_in() {
+  drop_in="$1"
+  shift
+
+  if ! printf '%s\n' "$@" | sudo dd of="$drop_in" oflag=excl status=none; then
+    printf 'Refusing to replace existing file: %s\n' "$drop_in" >&2
+    return 1
+  fi
+
+  sudo chown root:root -- "$drop_in" &&
+    sudo chmod 0644 -- "$drop_in"
+}
+
+create_drop_in "$delegation_drop_in" '[Service]' 'Delegate=cpu memory pids' &&
+  create_drop_in "$app_slice_drop_in" '[Slice]' 'CPUWeight=100'
 ```
 
 If a creation command fails, do not reload systemd.
