@@ -2,42 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-
-import { test } from "../fixtures/e2e-test.ts";
+import { execFileSync } from "node:child_process";
 
 import {
   inspectPortableCpuDelegation,
   type CpuDelegationPreflight,
 } from "../../../src/lib/onboard/experimental/portable-cpu-delegation-preflight.ts";
 import { preparePortableExperimentalHost } from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import { test } from "../fixtures/e2e-test.ts";
 
 type ExpectedState = "missing" | "delegated";
 
 function expectedState(value: string | undefined): ExpectedState {
   if (value === "missing" || value === "delegated") return value;
-  throw new Error("E2E_CPU_DELEGATION_STATE must be missing or delegated.");
-}
-
-function expectedUid(): number {
-  const value = Number(process.env.E2E_CPU_DELEGATION_UID);
-  assert.ok(Number.isInteger(value) && value >= 0, "E2E_CPU_DELEGATION_UID must be a user ID");
-  return value;
-}
-
-function artifactDirectory(): string {
-  const value = process.env.E2E_ARTIFACT_DIR;
-  assert.ok(value, "E2E_ARTIFACT_DIR is required");
-  const resolved = path.resolve(value);
-  assert.equal(value, resolved, "E2E_ARTIFACT_DIR must be a normalized absolute path");
-  fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
-  return resolved;
+  throw new Error("CPU delegation proof requires the missing or delegated state.");
 }
 
 function sourceRevision(): string {
   const value = process.env.E2E_SOURCE_REVISION;
   assert.match(value ?? "", /^[a-f0-9]{40}$/u, "E2E_SOURCE_REVISION must be a commit SHA");
+  const checkoutRevision = execFileSync(
+    "git",
+    ["-c", `safe.directory=${process.cwd()}`, "rev-parse", "HEAD"],
+    { encoding: "utf8", killSignal: "SIGKILL", timeout: 10_000 },
+  ).trim();
+  assert.equal(value, checkoutRevision, "CPU delegation proof must run the requested commit");
   return value!;
 }
 
@@ -69,22 +58,23 @@ function proveFailureBeforeEffects(preflight: CpuDelegationPreflight): void {
 const proof = process.env.E2E_TARGET_ID === "portable-cpu-delegation" ? test : test.skip;
 
 proof(
-  "records portable CPU delegation evidence for the configured hierarchy (#9188)",
+  "portable CPU delegation admits only the delegated current-user hierarchy",
   {
+    timeout: 30_000,
     meta: {
       e2ePhases: [
-        "inspect the configured CPU delegation hierarchy",
-        "record CPU delegation admission evidence",
+        "inspect the current user CPU delegation boundary",
+        "record the CPU delegation admission result",
       ],
     },
   },
-  ({ progress }) => {
+  async ({ artifacts, progress }) => {
     assert.equal(process.platform, "linux", "CPU delegation proof requires Linux");
-    const uid = expectedUid();
-    assert.notEqual(uid, 0, "CPU delegation proof requires a non-root user");
-    assert.equal(process.getuid?.(), uid, "CPU delegation proof must run as the configured user");
-    const state = expectedState(process.env.E2E_CPU_DELEGATION_STATE);
-    progress.phase("inspect the configured CPU delegation hierarchy");
+    assert.notEqual(process.getuid?.(), 0, "CPU delegation proof requires a non-root user");
+    const state = expectedState(process.env.E2E_CPU_DELEGATION_EXPECTED_STATE);
+    const revision = sourceRevision();
+
+    progress.phase("inspect the current user CPU delegation boundary");
     const preflight = inspectPortableCpuDelegation();
     if (state === "missing") {
       proveFailureBeforeEffects(preflight);
@@ -92,20 +82,16 @@ proof(
       assert.equal(preflight.ok, true, preflight.detail);
       assert.equal(preflight.failure, undefined);
     }
-    progress.phase("record CPU delegation admission evidence");
-    fs.writeFileSync(
-      path.join(artifactDirectory(), `${state}.json`),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        sourceRevision: sourceRevision(),
-        state,
-        uid,
-        ok: preflight.ok,
-        failure: preflight.failure ?? null,
-        detail: preflight.detail,
-        effectsBeforeAdmission: 0,
-      })}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
+
+    progress.phase("record the CPU delegation admission result");
+    await artifacts.writeJson(`${state}.json`, {
+      schemaVersion: 1,
+      sourceRevision: revision,
+      state,
+      ok: preflight.ok,
+      failure: preflight.failure ?? null,
+      detail: preflight.detail,
+      effectsBeforeAdmission: 0,
+    });
   },
 );
