@@ -139,7 +139,12 @@ if (
 ) {
   fs.mkdirSync(args[2], { recursive: true, mode: 0o700 });
   fs.writeFileSync(process.env.FAKE_GATEWAY_CERT_MARKER, "generated\\n", { mode: 0o600 });
-  record({ args, kind: "generate-certs", tls: process.env.OPENSHELL_LOCAL_TLS_DIR });
+  record({
+    args,
+    kind: "generate-certs",
+    nvidiaInferenceApiKey: process.env.NVIDIA_INFERENCE_API_KEY ?? null,
+    tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
+  });
   process.exit(0);
 }
 if (args.length !== 0) process.exit(64);
@@ -151,6 +156,7 @@ record({
   dockerHost: process.env.DOCKER_HOST,
   drivers: process.env.OPENSHELL_DRIVERS,
   kind: "serve",
+  nvidiaInferenceApiKey: process.env.NVIDIA_INFERENCE_API_KEY ?? null,
   pid: process.pid,
   tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
 });
@@ -179,6 +185,7 @@ setInterval(() => undefined, 1000);
       FAKE_PODMAN_SOCKET: socketPath,
       HOME: homeDir,
       NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS: "1",
+      NVIDIA_INFERENCE_API_KEY: "test-only-hostile-inherited-key",
       OPENSHELL_BIND_ADDRESS: "127.0.0.1",
       OPENSHELL_DISABLE_GATEWAY_AUTH: "1",
       OPENSHELL_DISABLE_TLS: "1",
@@ -607,6 +614,7 @@ describe("portable profile systemctl fixture", () => {
             "--server-san",
             "host.openshell.internal",
           ],
+          nvidiaInferenceApiKey: null,
           tls: scope.gatewayTlsDir,
         });
         expect(commands[1]).toMatchObject({
@@ -616,6 +624,7 @@ describe("portable profile systemctl fixture", () => {
           disableTls: null,
           dockerHost: `unix://${scope.socketPath}`,
           drivers: "podman",
+          nvidiaInferenceApiKey: null,
           tls: scope.gatewayTlsDir,
         });
         expect(fs.readFileSync(scope.env.FAKE_GATEWAY_CERT_MARKER!, "utf8")).toBe("generated\n");
@@ -676,11 +685,13 @@ describe("portable profile systemctl fixture", () => {
           },
           ["--user", "restart", "nemoclaw-openshell-gateway"],
         );
+        if (fs.existsSync(originalRecordPath)) {
+          originalRecord = fs.readFileSync(originalRecordPath, "utf8");
+        }
         expect(result.status).toBe(1);
         expect(String(result.stderr)).toContain("does not match process");
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
         expect(fs.existsSync(originalRecordPath)).toBe(true);
-        originalRecord = fs.readFileSync(originalRecordPath, "utf8");
         const driftedRecord = readFixtureProcessRecord(scope.gatewayPidFile);
         expect(pidIsActive(driftedRecord.pid)).toBe(true);
       } finally {

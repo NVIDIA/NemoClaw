@@ -50,6 +50,11 @@ gateway_environment_keys=(
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE
   NETAVARK_FW
 )
+gateway_fixture_environment_keys=(
+  FAKE_GATEWAY_CERT_MARKER
+  FAKE_GATEWAY_COMMAND_LOG
+)
+gateway_process_environment=()
 process_identity_env="NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID"
 process_identity_failure_role="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE:-}"
 process_identity_failure_record="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD:-}"
@@ -516,6 +521,23 @@ load_gateway_environment() {
   done <"$gateway_env_file"
 }
 
+build_gateway_process_environment() {
+  gateway_process_environment=(
+    "HOME=${home_dir}"
+    "PATH=${PATH:-/usr/local/bin:/usr/bin:/bin}"
+    "XDG_BIN_HOME=${bin_home}"
+    "XDG_CONFIG_HOME=${config_home}"
+    "XDG_RUNTIME_DIR=${runtime_dir}"
+    "XDG_STATE_HOME=${state_home}"
+  )
+  local key
+  for key in "${gateway_environment_keys[@]}" "${gateway_fixture_environment_keys[@]}"; do
+    if declare -p "$key" >/dev/null 2>&1; then
+      gateway_process_environment+=("${key}=${!key}")
+    fi
+  done
+}
+
 gateway_service_is_active() {
   recorded_process_is_active "$gateway_pid_file" gateway
 }
@@ -527,8 +549,10 @@ stop_gateway_service() {
 start_gateway_service() {
   validate_gateway_unit
   load_gateway_environment
+  build_gateway_process_environment
   install -d -m 700 "$OPENSHELL_LOCAL_TLS_DIR" "$gateway_state_dir"
-  if ! "$gateway_binary_path" generate-certs --output-dir "$OPENSHELL_LOCAL_TLS_DIR" \
+  if ! env -i "${gateway_process_environment[@]}" "$gateway_binary_path" generate-certs \
+    --output-dir "$OPENSHELL_LOCAL_TLS_DIR" \
     --server-san host.openshell.internal >>"$gateway_log_file" 2>&1; then
     cat "$gateway_log_file" >&2 || true
     return 1
@@ -536,7 +560,8 @@ start_gateway_service() {
 
   local gateway_drift_identity gateway_identity gateway_pid gateway_pid_file_tmp
   gateway_identity="gateway:$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
-  NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID="$gateway_identity" nohup "$gateway_binary_path" \
+  env -i "${gateway_process_environment[@]}" \
+    "NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID=${gateway_identity}" nohup "$gateway_binary_path" \
     >>"$gateway_log_file" 2>&1 </dev/null &
   gateway_pid=$!
   if acquire_process_identity "$gateway_pid" "$gateway_identity"; then
