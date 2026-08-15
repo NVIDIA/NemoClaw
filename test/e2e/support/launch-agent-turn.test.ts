@@ -25,9 +25,9 @@ import {
 
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
+  | "buffered-before-ready"
   | "cleanup-failure"
   | "delayed-duplicate"
-  | "delayed-input"
   | "invalid-order"
   | "nonzero"
   | "nonzero-cleanup-failure"
@@ -162,11 +162,16 @@ const append = (role, content) => fs.appendFileSync(
 );
 
 (async () => {
-  if (mode === "delayed-input") {
-    await ask();
+  const bufferedInputs = [];
+  if (mode === "buffered-before-ready") {
+    const bufferInput = (line) => bufferedInputs.push(line);
+    rl.on("line", bufferInput);
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+    rl.off("line", bufferInput);
   }
+  process.stdout.write("idle | connected\n");
 
-  const first = await ask();
+  const first = bufferedInputs.shift() ?? await ask();
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", first);
@@ -174,6 +179,11 @@ const append = (role, content) => fs.appendFileSync(
     append("user", first);
     process.stdout.write(terminalCopy === "ansi" ? "\u001b[2Kignored repaint\r" : "ignored plain copy\n");
     append("assistant", "first response");
+  }
+
+  for (const duplicate of bufferedInputs) {
+    append("user", duplicate);
+    append("assistant", "duplicate response");
   }
 
   if (mode === "delayed-duplicate") {
@@ -384,10 +394,10 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "retries PTY input until structured user evidence is recorded (#9160)",
+  "does not queue duplicate PTY input before OpenClaw is ready (#9160)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "delayed-input",
+      "buffered-before-ready",
       "plain",
     );
 

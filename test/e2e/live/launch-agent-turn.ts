@@ -304,31 +304,39 @@ wait_for_turn_count() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
+wait_for_launch_readiness() {
+  for _ in {1..1800}; do
+    if grep -aEq -- 'idle.*\|[[:space:]]*(gateway[[:space:]]+)?connected([^[:alpha:]]|$)' "$capture"; then
+      return 0
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail_launch_session "launch did not report OpenClaw input readiness"
+}
+
 submit_turn() {
   local expected_turns="$1"
   local content="$2"
   local evidence_status
-  for _ in {1..90}; do
+  if ! kill -0 "$session_pid" 2>/dev/null || ! printf '%s\r' "$content" >&3; then
+    fail_launch_session "launch exited before PTY input was submitted"
+  fi
+  for _ in {1..180}; do
+    if session_evidence qualify-input "$expected_turns" "$content" >/dev/null 2>"$evidence_error"; then
+      return 0
+    else
+      evidence_status=$?
+    fi
+    if [[ "$evidence_status" != 1 ]]; then
+      fail_launch_session "structured session input evidence was invalid or unavailable (status $evidence_status)"
+    fi
     if ! kill -0 "$session_pid" 2>/dev/null; then
       break
     fi
-    if ! printf '%s\r' "$content" >&3; then
-      break
-    fi
-    for _ in {1..2}; do
-      if session_evidence qualify-input "$expected_turns" "$content" >/dev/null 2>"$evidence_error"; then
-        return 0
-      else
-        evidence_status=$?
-      fi
-      if [[ "$evidence_status" != 1 ]]; then
-        fail_launch_session "structured session input evidence was invalid or unavailable (status $evidence_status)"
-      fi
-      if ! kill -0 "$session_pid" 2>/dev/null; then
-        break 2
-      fi
-      sleep 1
-    done
+    sleep 1
   done
   fail_launch_session "launch did not record PTY input in the structured session"
 }
@@ -368,6 +376,7 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
+wait_for_launch_readiness
 submit_turn 1 "$NEMOCLAW_LAUNCH_FIRST_INPUT"
 wait_for_turn_count 1
 submit_turn 2 "$NEMOCLAW_LAUNCH_SECOND_INPUT"
