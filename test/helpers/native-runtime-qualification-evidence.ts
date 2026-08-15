@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 
 import {
   PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
+  type NativeRuntimeQualificationDefinition,
   type NativeRuntimeQualificationEvidenceEnvelope,
   type NativeRuntimeQualificationExpectedSource,
   type NativeRuntimeQualificationProtectedRun,
@@ -53,7 +54,16 @@ function protectedRun(
 export function nativeQualificationEvidence(
   sourceOverrides: Partial<NativeRuntimeQualificationProtectedRun> = {},
 ): NativeRuntimeQualificationEvidenceEnvelope {
-  const qualification = PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION;
+  return nativeQualificationEvidenceForDefinition(
+    PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
+    sourceOverrides,
+  );
+}
+
+export function nativeQualificationEvidenceForDefinition(
+  qualification: NativeRuntimeQualificationDefinition,
+  sourceOverrides: Partial<NativeRuntimeQualificationProtectedRun> = {},
+): NativeRuntimeQualificationEvidenceEnvelope {
   return {
     schemaVersion: 1,
     qualificationId: qualification.id,

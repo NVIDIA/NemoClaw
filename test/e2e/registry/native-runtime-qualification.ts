@@ -3,6 +3,18 @@
 
 import { createHash } from "node:crypto";
 
+import type {
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationExpectedSource,
+  NativeRuntimeQualificationProtectedRun,
+} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority";
+
+export type {
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationExpectedSource,
+  NativeRuntimeQualificationProtectedRun,
+} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority";
+
 export const NATIVE_RUNTIME_QUALIFICATION_AGENTS = [
   "openclaw",
   "hermes",
@@ -143,19 +155,6 @@ export interface NativeRuntimeQualificationArtifactReceipt {
   readonly sha256: string;
 }
 
-export interface NativeRuntimeQualificationProtectedRun {
-  readonly repository: string;
-  readonly workflow: string;
-  readonly pullRequestNumber: number;
-  readonly candidateRepository: string;
-  readonly headSha: string;
-  readonly baseRef: "main";
-  readonly baseSha: string;
-  readonly runId: number;
-  readonly attempt: number;
-  readonly jobId: number;
-}
-
 export interface NativeRuntimeQualificationCaseEvidence {
   readonly schemaVersion: 1;
   readonly caseId: string;
@@ -198,21 +197,6 @@ export interface NativeRuntimeQualificationEvidenceEnvelope {
   readonly qualificationId: string;
   readonly providerId: string;
   readonly cases: readonly NativeRuntimeQualificationCaseEvidence[];
-}
-
-export interface NativeRuntimeQualificationExpectedSource extends NativeRuntimeQualificationProtectedRun {
-  readonly artifact: {
-    readonly id: number;
-    readonly name: string;
-    readonly digest: string;
-  };
-}
-
-export interface NativeRuntimeQualificationAuthority {
-  readonly schemaVersion: 1;
-  readonly qualificationId: string;
-  readonly providerId: string;
-  readonly source: NativeRuntimeQualificationExpectedSource;
 }
 
 export type NativeRuntimeQualificationReceiptReader = (path: string) => Buffer | null;

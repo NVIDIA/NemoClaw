@@ -222,7 +222,7 @@ describe("native runtime qualification protected evidence collector", () => {
     },
   );
 
-  it("rejects a successful run at candidate code instead of the trusted base", async () => {
+  it("rejects a successful run at candidate code instead of the target-branch base SHA", async () => {
     const fixture = githubFixture();
     const runPath = `repos/${REPOSITORY}/actions/runs/7001`;
     fixture.json.set(runPath, {

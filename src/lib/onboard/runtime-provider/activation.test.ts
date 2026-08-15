@@ -2,6 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import {
+  compileNativeRuntimeQualification,
+  consumeNativeRuntimeQualificationEvidence,
+  nativeRuntimeQualificationDefinition,
+  type NativeRuntimeQualificationAuthority,
+} from "../../../../test/e2e/registry/native-runtime-qualification";
+import {
+  nativeQualificationEvidenceForDefinition,
+  nativeQualificationExpectedSource,
+  nativeQualificationReceiptReader,
+} from "../../../../test/helpers/native-runtime-qualification-evidence";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -51,6 +62,24 @@ const CANDIDATE_TOPOLOGIES = [
     transport: "socket-free",
   },
 ] as const satisfies readonly CandidateTopology[];
+
+const QUALIFICATION_AUTHORITIES = new Map<string, NativeRuntimeQualificationAuthority>();
+
+function qualificationAuthority(providerId: string): NativeRuntimeQualificationAuthority {
+  const existing = QUALIFICATION_AUTHORITIES.get(providerId);
+  if (existing) return existing;
+  const qualification = compileNativeRuntimeQualification(
+    nativeRuntimeQualificationDefinition(providerId),
+  );
+  const authority = consumeNativeRuntimeQualificationEvidence(
+    qualification,
+    nativeQualificationEvidenceForDefinition(qualification),
+    nativeQualificationExpectedSource(),
+    nativeQualificationReceiptReader,
+  );
+  QUALIFICATION_AUTHORITIES.set(providerId, authority);
+  return authority;
+}
 
 function unreachable(): never {
   throw new Error("Activation contract fixture operations are never executed.");
@@ -127,6 +156,7 @@ function registration(
   topology: CandidateTopology = CANDIDATE_TOPOLOGIES[1],
   bundle: RuntimeProviderBundle = completeBundle(topology.providerId),
 ): RuntimeProviderActivationRegistration {
+  const authority = qualificationAuthority(topology.providerId);
   return {
     declaration: {
       contractVersion: RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
@@ -143,11 +173,14 @@ function registration(
       journeys: [...RUNTIME_PROVIDER_ACTIVATION_JOURNEYS],
       installer: { releaseInstaller: true, dockerUnavailable: true },
       qualification: {
-        protectedE2e: true,
-        exactHeadAndBase: true,
-        authenticatedArtifact: true,
+        qualificationId: authority.qualificationId,
+        source: {
+          ...authority.source,
+          artifact: { ...authority.source.artifact },
+        },
       },
     },
+    qualificationAuthority: authority,
     bundle,
   };
 }
@@ -231,6 +264,11 @@ describe("runtime provider activation catalog", () => {
         Object.isFrozen(catalog[providerId]?.declaration.topology),
       ),
     ).toEqual([true, true, true]);
+    expect(
+      CANDIDATE_TOPOLOGIES.map(({ providerId }) =>
+        Object.isFrozen(catalog[providerId]?.qualificationAuthority.source.artifact),
+      ),
+    ).toEqual([true, true, true]);
   });
 
   it("leaves Docker and Kubernetes unchanged with no production candidate registration", () => {
@@ -304,21 +342,47 @@ describe("runtime provider activation catalog", () => {
     ).toThrow("does not match");
   });
 
-  it("rejects unauthenticated qualification declarations", () => {
+  it("rejects a missing canonical qualification authority", () => {
     const candidate = registration();
-    const incomplete = {
+    const { qualificationAuthority: _authority, ...incomplete } = candidate;
+
+    expect(() =>
+      createRuntimeProviderActivationCatalog([
+        incomplete as unknown as RuntimeProviderActivationRegistration,
+      ]),
+    ).toThrow("canonical qualification authority is required");
+  });
+
+  it("rejects qualification authority for a different provider", () => {
+    const candidate = registration();
+    const mismatched = {
       ...candidate,
-      declaration: {
-        ...candidate.declaration,
-        qualification: {
-          ...candidate.declaration.qualification,
-          authenticatedArtifact: false,
+      qualificationAuthority: {
+        ...candidate.qualificationAuthority,
+        providerId: "different-provider",
+      },
+    } as RuntimeProviderActivationRegistration;
+
+    expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
+      "does not match provider",
+    );
+  });
+
+  it("rejects qualification authority for a different candidate commit", () => {
+    const candidate = registration();
+    const mismatched = {
+      ...candidate,
+      qualificationAuthority: {
+        ...candidate.qualificationAuthority,
+        source: {
+          ...candidate.qualificationAuthority.source,
+          headSha: "c".repeat(40),
         },
       },
-    } as unknown as RuntimeProviderActivationRegistration;
+    } as RuntimeProviderActivationRegistration;
 
-    expect(() => createRuntimeProviderActivationCatalog([incomplete])).toThrow(
-      "authenticated protected E2E evidence",
+    expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
+      "does not match the required source identity",
     );
   });
 });

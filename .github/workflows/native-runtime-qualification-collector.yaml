@@ -15,11 +15,11 @@ on:
         required: true
         type: string
       head_sha:
-        description: Exact candidate pull request commit
+        description: Candidate PR commit SHA
         required: true
         type: string
       base_sha:
-        description: Exact target main commit and trusted collector revision
+        description: Target-branch base SHA and trusted collector revision
         required: true
         type: string
       evidence_workflow:

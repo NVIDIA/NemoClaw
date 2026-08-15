@@ -12,6 +12,11 @@ export {
   RuntimeProviderActivationError,
 } from "./activation";
 export type {
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationExpectedSource,
+  NativeRuntimeQualificationProtectedRun,
+} from "./native-qualification-authority";
+export type {
   RuntimeProviderBundle,
   RuntimeProviderBundleRegistry,
   RuntimeProviderChannelStopTransport,

@@ -154,7 +154,7 @@ describe("native runtime qualification contract", () => {
     );
   });
 
-  it("accepts only exact-source candidate prerequisites without activating Podman", () => {
+  it("accepts candidate prerequisites only for the expected candidate commit and target-branch base SHA without activating Podman", () => {
     expect(consumeNativeRuntimeCandidateEvidence(candidateEvidence(), SOURCE_REVISION)).toEqual({
       schemaVersion: 1,
       candidateId: "podman-cpu-lifecycle",

@@ -5,6 +5,10 @@ import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
+import type {
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationExpectedSource,
+} from "./native-qualification-authority";
 import {
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -39,6 +43,13 @@ export const RUNTIME_PROVIDER_ACTIVATION_HOST_AUTHORITIES = [
   "external",
 ] as const;
 export const RUNTIME_PROVIDER_ACTIVATION_TRANSPORTS = ["operation-scoped", "socket-free"] as const;
+
+const QUALIFICATION_ID = /^[a-z][a-z0-9-]{0,62}-protected-host-local-inference$/u;
+const SOURCE_REVISION = /^[a-f0-9]{40}$/u;
+const SOURCE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
+const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+const WORKFLOW = /^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/u;
+const ARTIFACT_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
 const REQUIRED_MUTATIONS = [
   "registration",
@@ -95,14 +106,14 @@ export interface RuntimeProviderActivationDeclaration {
     readonly dockerUnavailable: true;
   };
   readonly qualification: {
-    readonly protectedE2e: true;
-    readonly exactHeadAndBase: true;
-    readonly authenticatedArtifact: true;
+    readonly qualificationId: string;
+    readonly source: NativeRuntimeQualificationExpectedSource;
   };
 }
 
 export interface RuntimeProviderActivationRegistration {
   readonly declaration: RuntimeProviderActivationDeclaration;
+  readonly qualificationAuthority: NativeRuntimeQualificationAuthority;
   readonly bundle: RuntimeProviderBundle;
 }
 
@@ -149,6 +160,193 @@ function exactSet(value: readonly unknown[], expected: readonly string[], label:
   }
 }
 
+type UnknownRecord = Record<string, unknown>;
+
+function record(value: unknown, label: string): UnknownRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new RuntimeProviderActivationError(`${label} must be an object`);
+  }
+  return value as UnknownRecord;
+}
+
+function exactKeys(value: UnknownRecord, expected: readonly string[], label: string): void {
+  const actual = Object.keys(value).sort();
+  const canonical = [...expected].sort();
+  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
+    throw new RuntimeProviderActivationError(`${label} has unexpected or missing fields`);
+  }
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new RuntimeProviderActivationError(`${label} must be a positive integer`);
+  }
+  return Number(value);
+}
+
+function singleLine(value: unknown, label: string): string {
+  if (
+    typeof value !== "string" ||
+    value.trim() !== value ||
+    value.length === 0 ||
+    /[\r\n]/u.test(value)
+  ) {
+    throw new RuntimeProviderActivationError(`${label} must be a non-empty single-line string`);
+  }
+  return value;
+}
+
+function validatedQualificationSource(
+  value: unknown,
+  label: string,
+): NativeRuntimeQualificationExpectedSource {
+  const source = record(value, label);
+  exactKeys(
+    source,
+    [
+      "repository",
+      "workflow",
+      "pullRequestNumber",
+      "candidateRepository",
+      "headSha",
+      "baseRef",
+      "baseSha",
+      "runId",
+      "attempt",
+      "jobId",
+      "artifact",
+    ],
+    label,
+  );
+  const repository = singleLine(source.repository, `${label} repository`);
+  const workflow = singleLine(source.workflow, `${label} workflow`);
+  const candidateRepository = singleLine(
+    source.candidateRepository,
+    `${label} candidate repository`,
+  );
+  if (
+    repository !== "NVIDIA/NemoClaw" ||
+    !REPOSITORY.test(repository) ||
+    !REPOSITORY.test(candidateRepository) ||
+    !WORKFLOW.test(workflow) ||
+    source.baseRef !== "main" ||
+    typeof source.headSha !== "string" ||
+    !SOURCE_REVISION.test(source.headSha) ||
+    typeof source.baseSha !== "string" ||
+    !SOURCE_REVISION.test(source.baseSha) ||
+    source.headSha === source.baseSha
+  ) {
+    throw new RuntimeProviderActivationError(
+      `${label} must bind the candidate commit and target-branch base SHA`,
+    );
+  }
+  const artifact = record(source.artifact, `${label} artifact`);
+  exactKeys(artifact, ["id", "name", "digest"], `${label} artifact`);
+  const artifactName = singleLine(artifact.name, `${label} artifact name`);
+  if (
+    !ARTIFACT_NAME.test(artifactName) ||
+    typeof artifact.digest !== "string" ||
+    !SOURCE_DIGEST.test(artifact.digest)
+  ) {
+    throw new RuntimeProviderActivationError(`${label} artifact identity is invalid`);
+  }
+  return {
+    repository,
+    workflow,
+    pullRequestNumber: positiveInteger(source.pullRequestNumber, `${label} pull request number`),
+    candidateRepository,
+    headSha: source.headSha,
+    baseRef: "main",
+    baseSha: source.baseSha,
+    runId: positiveInteger(source.runId, `${label} run id`),
+    attempt: positiveInteger(source.attempt, `${label} run attempt`),
+    jobId: positiveInteger(source.jobId, `${label} job id`),
+    artifact: {
+      id: positiveInteger(artifact.id, `${label} artifact id`),
+      name: artifactName,
+      digest: artifact.digest,
+    },
+  };
+}
+
+function sameQualificationSource(
+  left: NativeRuntimeQualificationExpectedSource,
+  right: NativeRuntimeQualificationExpectedSource,
+): boolean {
+  return (
+    left.repository === right.repository &&
+    left.workflow === right.workflow &&
+    left.pullRequestNumber === right.pullRequestNumber &&
+    left.candidateRepository === right.candidateRepository &&
+    left.headSha === right.headSha &&
+    left.baseRef === right.baseRef &&
+    left.baseSha === right.baseSha &&
+    left.runId === right.runId &&
+    left.attempt === right.attempt &&
+    left.jobId === right.jobId &&
+    left.artifact.id === right.artifact.id &&
+    left.artifact.name === right.artifact.name &&
+    left.artifact.digest === right.artifact.digest
+  );
+}
+
+function validatedQualificationAuthority(
+  declaration: RuntimeProviderActivationDeclaration,
+  value: unknown,
+): NativeRuntimeQualificationAuthority {
+  const requirement = record(declaration.qualification, "qualification requirement");
+  exactKeys(requirement, ["qualificationId", "source"], "qualification requirement");
+  const qualificationId = singleLine(
+    requirement.qualificationId,
+    "qualification requirement identity",
+  );
+  if (
+    !QUALIFICATION_ID.test(qualificationId) ||
+    qualificationId !== `${declaration.providerId}-protected-host-local-inference`
+  ) {
+    throw new RuntimeProviderActivationError(
+      "qualification requirement does not match the provider identity",
+    );
+  }
+  const requiredSource = validatedQualificationSource(
+    requirement.source,
+    "required qualification source",
+  );
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new RuntimeProviderActivationError("canonical qualification authority is required");
+  }
+  const authority = record(value, "qualification authority");
+  exactKeys(
+    authority,
+    ["schemaVersion", "qualificationId", "providerId", "source"],
+    "qualification authority",
+  );
+  const authoritySource = validatedQualificationSource(
+    authority.source,
+    "qualification authority source",
+  );
+  if (
+    authority.schemaVersion !== 1 ||
+    authority.qualificationId !== qualificationId ||
+    authority.providerId !== declaration.providerId
+  ) {
+    throw new RuntimeProviderActivationError(
+      `qualification authority does not match provider '${declaration.providerId}'`,
+    );
+  }
+  if (!sameQualificationSource(authoritySource, requiredSource)) {
+    throw new RuntimeProviderActivationError(
+      "qualification authority does not match the required source identity",
+    );
+  }
+  return {
+    schemaVersion: 1,
+    qualificationId,
+    providerId: declaration.providerId,
+    source: authoritySource,
+  };
+}
+
 function validateDeclaration(declaration: RuntimeProviderActivationDeclaration): void {
   if (
     typeof declaration !== "object" ||
@@ -190,15 +388,6 @@ function validateDeclaration(declaration: RuntimeProviderActivationDeclaration):
   ) {
     throw new RuntimeProviderActivationError(
       "release-installer qualification with Docker unavailable is required",
-    );
-  }
-  if (
-    declaration.qualification?.protectedE2e !== true ||
-    declaration.qualification.exactHeadAndBase !== true ||
-    declaration.qualification.authenticatedArtifact !== true
-  ) {
-    throw new RuntimeProviderActivationError(
-      "authenticated protected E2E evidence bound to the exact head and base is required",
     );
   }
 }
@@ -331,6 +520,10 @@ function validatedRegistration(
   registration: RuntimeProviderActivationRegistration,
 ): Readonly<RuntimeProviderActivationRegistration> {
   validateDeclaration(registration.declaration);
+  const qualificationAuthority = validatedQualificationAuthority(
+    registration.declaration,
+    registration.qualificationAuthority,
+  );
   const providerId = registration.declaration.providerId;
   const validated = createRuntimeProviderBundleRegistry([[providerId, registration.bundle]])[
     providerId
@@ -354,7 +547,22 @@ function validatedRegistration(
       ]),
       journeys: Object.freeze([...registration.declaration.journeys]),
       installer: Object.freeze({ ...registration.declaration.installer }),
-      qualification: Object.freeze({ ...registration.declaration.qualification }),
+      qualification: Object.freeze({
+        qualificationId: registration.declaration.qualification.qualificationId,
+        source: Object.freeze({
+          ...registration.declaration.qualification.source,
+          artifact: Object.freeze({
+            ...registration.declaration.qualification.source.artifact,
+          }),
+        }),
+      }),
+    }),
+    qualificationAuthority: Object.freeze({
+      ...qualificationAuthority,
+      source: Object.freeze({
+        ...qualificationAuthority.source,
+        artifact: Object.freeze({ ...qualificationAuthority.source.artifact }),
+      }),
     }),
     bundle: validated,
   });
