@@ -46,6 +46,12 @@ function harness(overrides: StopHarnessOverrides = {}) {
   const findLabeledSandboxContainers = vi.fn<
     DockerRuntimeProviderDependencies["findLabeledSandboxContainers"]
   >(findContainersOverride ?? (() => [container("openshell-my-sandbox", true)]));
+  const hasPortableLifecycleReceipt = vi.fn<
+    DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
+  >(() => false);
+  const stopPortableSandbox = vi.fn<
+    DockerRuntimeProviderDependencies["stopPortableSandbox"]
+  >(() => ({ kind: "not-installed" }));
   const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
   const dockerStop = vi.fn<DockerRuntimeProviderDependencies["stopContainer"]>(
     dockerStopOverride ?? (() => ({ status: 0 })),
@@ -59,9 +65,11 @@ function harness(overrides: StopHarnessOverrides = {}) {
       "docker",
       createDockerRuntimeProviderBundle({
         findLabeledSandboxContainers,
+        hasPortableLifecycleReceipt,
         isRuntimeDown: isDockerRuntimeDown,
         printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
         stopContainer: dockerStop,
+        stopPortableSandbox,
       }),
     ],
     ["kubernetes", createKubernetesRuntimeProviderBundle()],
@@ -83,10 +91,12 @@ function harness(overrides: StopHarnessOverrides = {}) {
     teardownSandboxDashboardForward,
     findLabeledSandboxContainers,
     getSandbox,
+    hasPortableLifecycleReceipt,
     isDockerRuntimeDown,
     log,
     printDockerRuntimeDownGuidance,
     stopSandboxChannels,
+    stopPortableSandbox,
     warn,
   };
 }
@@ -260,6 +270,39 @@ describe("stopSandbox", () => {
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
     expect(output).toContain("Workspace state is preserved");
     expect(output).toContain("nemoclaw my-sandbox start");
+  });
+
+  it("uses recorded Podman authority instead of ambient Docker for a portable receipt (#9070)", () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.stopPortableSandbox.mockImplementation((_name, _context, beforeStop) => {
+      beforeStop();
+      return { kind: "stopped" };
+    });
+
+    expect(stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
+
+    expect(h.isDockerRuntimeDown).not.toHaveBeenCalled();
+    expect(h.stopPortableSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ lifecycleGeneration: "generation-alpha" }),
+      expect.any(Function),
+      expect.objectContaining({ env: process.env }),
+    );
+    expect(h.stopSandboxChannels).toHaveBeenCalledExactlyOnceWith(
+      "my-sandbox",
+      expect.any(Object),
+    );
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
   it("succeeds idempotently when the container is already stopped (#6026)", () => {

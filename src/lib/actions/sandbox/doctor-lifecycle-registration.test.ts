@@ -1,9 +1,45 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const receiptReadinessMocks = vi.hoisted(() => ({
+  inspect: vi.fn(),
+}));
+
+vi.mock("../../onboard/experimental/portable-runtime-receipt-readiness", () => ({
+  inspectPortableRuntimeReceiptReadiness: receiptReadinessMocks.inspect,
+}));
+
+import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
 import type { SandboxEntry } from "../../state/registry";
-import { buildLifecycleRegistrationCheck } from "./doctor-lifecycle-registration";
+import {
+  buildLifecycleRegistrationCheck,
+  buildPortableRuntimeCheck,
+} from "./doctor-lifecycle-registration";
+
+const READY_PORTABLE_RUNTIME = {
+  ok: true,
+  authority: {
+    directoryChain: [],
+    device: "1",
+    inode: "2",
+    mode: String(0o140600),
+    ownerUid: "1001",
+    socketPath: "/run/user/1001/podman/podman.sock",
+  },
+  dockerHost: "unix:///run/user/1001/podman/podman.sock",
+  serverVersion: "5.6.1",
+  timing: { mode: "warm", activationMs: 0, apiMs: 7, totalMs: 7 },
+} satisfies PortablePodmanReadinessResult;
+
+const FAILED_PORTABLE_RUNTIME = {
+  ok: false,
+  stage: "startup API health",
+  detail: "Podman did not report a server version.",
+  socketPath: "/run/user/1001/podman/podman.sock",
+  timing: { mode: "cold", activationMs: 21, apiMs: 9, totalMs: 30 },
+} satisfies PortablePodmanReadinessResult;
 
 function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
@@ -24,6 +60,36 @@ function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
 }
 
 describe("doctor lifecycle registration checks", () => {
+  beforeEach(() => {
+    receiptReadinessMocks.inspect.mockReset();
+  });
+
+  it("renders server and timing detail for a ready portable Podman API", () => {
+    receiptReadinessMocks.inspect.mockReturnValue(READY_PORTABLE_RUNTIME);
+
+    expect(buildPortableRuntimeCheck("alpha")).toEqual({
+      group: "Host",
+      label: "Portable Podman API",
+      status: "ok",
+      detail: "server 5.6.1; warm; activation 0 ms; API 7 ms; total 7 ms",
+    });
+    expect(receiptReadinessMocks.inspect).toHaveBeenCalledWith("alpha");
+  });
+
+  it("renders the failure stage, recorded socket, and recovery hint", () => {
+    receiptReadinessMocks.inspect.mockReturnValue(FAILED_PORTABLE_RUNTIME);
+
+    expect(buildPortableRuntimeCheck("alpha")).toEqual({
+      group: "Host",
+      label: "Portable Podman API",
+      status: "fail",
+      detail:
+        "startup API health: Podman did not report a server version. Recorded socket: /run/user/1001/podman/podman.sock.",
+      hint: "repair the recorded current-user Podman endpoint, then retry",
+    });
+    expect(receiptReadinessMocks.inspect).toHaveBeenCalledWith("alpha");
+  });
+
   it("reports a complete managed sandbox registration as ok", () => {
     expect(buildLifecycleRegistrationCheck("alpha", sandbox(), "nemoclaw")).toMatchObject({
       group: "Sandbox",
