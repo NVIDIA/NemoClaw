@@ -7,7 +7,10 @@
   },
   "messaging": {
     "createSandboxWithBaseImageResolution": 9,
-    "runOnboard": 2
+    "createSandboxWithBaseImageResolution.plan.rebindMessagingTokenDefs": 1,
+    "getOpenShellInstallDeps.hasRequiredOpenshellMessagingFeatures": 1,
+    "runOnboard": 1,
+    "runOnboard.finalizationDeps.verifyDeployment.getMessagingChannels": 1
   },
   "policy": {
     "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
@@ -19,11 +22,14 @@
   "provider": {
     "createSandboxWithBaseImageResolution": 20,
     "handleNimLocalSelection": 32,
-    "handleRemoteProviderSelection": 76,
+    "handleRemoteProviderSelection": 74,
+    "handleRemoteProviderSelection.providerExistsInGateway": 1,
+    "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
     "handleRoutedSelection": 15,
     "handleVllmSelection.queryVllmModels": 1,
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 9,
+    "runOnboard": 8,
+    "runOnboard.providerInference.deps.needsBedrockRuntimeAdapter": 1,
     "selectAndValidateOllamaModel": 18
   }
 }

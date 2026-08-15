@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -18,6 +19,12 @@ export type OnboardEntryCompositionViolation = {
   readonly actualCount: number;
   readonly budgetCount: number;
 };
+export type OnboardEntryCompositionBudgetExpansion = {
+  readonly category: OnboardDecisionCategory;
+  readonly declaration: string;
+  readonly budgetCount: number;
+  readonly baselineCount: number;
+};
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ENTRY_PATH = path.join(REPO_ROOT, "src/lib/onboard.ts");
@@ -31,16 +38,93 @@ const LOGICAL_OPERATORS = new Set([
   ts.SyntaxKind.QuestionQuestionToken,
   ts.SyntaxKind.QuestionQuestionEqualsToken,
 ]);
-const RECOVERY_NAME = /recover|recovery|repair|restore|retry|fallback|rollback/i;
-const RECOVERY_FACTORY_NAME = /^(?:build|create|install|make)/i;
-const RECOVERY_COMPOUND_ACTION =
-  /(?:And|Or)(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)|(?:Fallback|Recover|Recovery|Repair|Restore|Retry|Rollback)[A-Za-z0-9]*(?:And|Or)(?:Apply|Attach|Destroy|Ensure|Execute|Fallback|Kill|Launch|Perform|Recover|Register|Repair|Restart|Restore|Retire|Retry|Reuse|Rollback|Run|Start|Stop|Terminate|Wait)/i;
-const RECOVERY_ACTION_METHOD =
-  /^(?:apply|call|execute|perform|recover|repair|restore|retry|rollback|run|start)$/i;
+const RECOVERY_NAMES = [
+  "fallback",
+  "recover",
+  "recovery",
+  "repair",
+  "restore",
+  "retry",
+  "rollback",
+] as const;
+const GATEWAY_LIFECYCLE_NAMES = [
+  "start",
+  "stop",
+  "restart",
+  "launch",
+  "destroy",
+  ...RECOVERY_NAMES,
+  "retire",
+  "terminate",
+  "kill",
+  "wait",
+  "ensure",
+  "attach",
+  "register",
+  "reuse",
+] as const;
+const GATEWAY_STATE_NAMES = [
+  "health",
+  "ready",
+  "readiness",
+  "running",
+  "stale",
+  "process",
+  "runtime",
+  "lifecycle",
+] as const;
+const RECOVERY_FACTORY_NAMES = ["build", "create", "install", "make"] as const;
+const RECOVERY_ACTION_METHOD_NAMES = [
+  "apply",
+  "call",
+  "execute",
+  "perform",
+  ...RECOVERY_NAMES,
+  "run",
+  "start",
+] as const;
+const COMPOUND_ACTION_NAMES = [
+  ...GATEWAY_LIFECYCLE_NAMES,
+  "apply",
+  "execute",
+  "perform",
+  "run",
+] as const;
+
+function alternation(names: readonly string[]): string {
+  return names.join("|");
+}
+
+function titleCase(names: readonly string[]): string[] {
+  return names.map((name) => `${name[0].toUpperCase()}${name.slice(1)}`);
+}
+
+const RECOVERY_NAME = new RegExp(alternation(RECOVERY_NAMES), "i");
+const RECOVERY_FACTORY_NAME = new RegExp(`^(?:${alternation(RECOVERY_FACTORY_NAMES)})`, "i");
+const RECOVERY_COMPOUND_ACTION = new RegExp(
+  `(?:And|Or)(?:${alternation(titleCase(RECOVERY_NAMES))})|(?:${alternation(titleCase(RECOVERY_NAMES))})[A-Za-z0-9]*(?:And|Or)(?:${alternation(titleCase(COMPOUND_ACTION_NAMES))})`,
+  "i",
+);
+const RECOVERY_ACTION_METHOD = new RegExp(
+  `^(?:${alternation(RECOVERY_ACTION_METHOD_NAMES)})$`,
+  "i",
+);
+const GATEWAY_AFTER_LIFECYCLE = new RegExp(
+  `(?:${alternation(GATEWAY_LIFECYCLE_NAMES)}).*gateway`,
+  "i",
+);
+const GATEWAY_BEFORE_LIFECYCLE_OR_STATE = new RegExp(
+  `gateway.*(?:${alternation([...GATEWAY_LIFECYCLE_NAMES, ...GATEWAY_STATE_NAMES])})`,
+  "i",
+);
 
 type NamedScope = {
   readonly name: string;
   readonly node: ts.Node;
+};
+
+type DecisionScope = NamedScope & {
+  readonly prunedNodes: ReadonlySet<ts.Node>;
 };
 
 function functionBody(node: ts.Node): ts.ConciseBody | undefined {
@@ -75,31 +159,47 @@ function propertyName(node: ts.Node): string | null {
   ) {
     return node.name.text;
   }
-  return node.name.getText();
+  if (ts.isPrivateIdentifier(node.name)) return node.name.text;
+  return "[computed]";
 }
 
-function callableScopes(owner: string, root: ts.Node): NamedScope[] {
-  const scopes: NamedScope[] = [];
+function callableScopes(owner: string, root: ts.Node): DecisionScope[] {
+  type MutableDecisionScope = NamedScope & { readonly prunedNodes: Set<ts.Node> };
+  const scopes: MutableDecisionScope[] = [];
 
-  function visit(node: ts.Node, currentOwner: string, isRoot = false): void {
+  function visit(
+    node: ts.Node,
+    currentOwner: string,
+    enclosingScope?: MutableDecisionScope,
+    isRoot = false,
+  ): void {
     const member = isRoot ? null : propertyName(node);
     const callableOwner = member ? `${currentOwner}.${member}` : currentOwner;
     const body = functionBody(node);
     if (body) {
-      scopes.push({ name: callableOwner, node: body });
+      const scope: MutableDecisionScope = {
+        name: callableOwner,
+        node: body,
+        prunedNodes: new Set(),
+      };
+      enclosingScope?.prunedNodes.add(body);
+      scopes.push(scope);
+      ts.forEachChild(node, (child) =>
+        visit(child, callableOwner, child === body ? scope : enclosingScope),
+      );
       return;
     }
-    ts.forEachChild(node, (child) => visit(child, callableOwner));
+    ts.forEachChild(node, (child) => visit(child, callableOwner, enclosingScope));
   }
 
-  visit(root, owner, true);
+  visit(root, owner, undefined, true);
   return scopes;
 }
 
 function declarationOwner(declaration: ts.VariableDeclaration): string {
   if (ts.isIdentifier(declaration.name)) return declaration.name.text;
   if (declaration.initializer && ts.isCallExpression(declaration.initializer)) {
-    return declaration.initializer.expression.getText();
+    return calledName(declaration.initializer.expression) ?? "destructuredBinding";
   }
   return "destructuredBinding";
 }
@@ -139,12 +239,8 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
   }
   return (
     /^(?:chooseGateway|gatewayState)$/i.test(identifier) ||
-    /(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|ensure|attach|register|reuse).*gateway/i.test(
-      identifier,
-    ) ||
-    /gateway.*(?:start|stop|restart|launch|destroy|recover|repair|restore|retry|fallback|rollback|retire|terminate|kill|wait|ensure|attach|register|reuse|health|ready|readiness|running|stale|process|runtime|lifecycle)/i.test(
-      identifier,
-    )
+    GATEWAY_AFTER_LIFECYCLE.test(identifier) ||
+    GATEWAY_BEFORE_LIFECYCLE_OR_STATE.test(identifier)
   );
 }
 
@@ -217,15 +313,14 @@ function isRecoveryInvocation(node: ts.Node): node is RecoveryInvocation {
   const boundReceiver = immediatelyBoundReceiver(expression);
   if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
   const name = calledName(expression);
-  if (
-    name === null ||
-    (RECOVERY_FACTORY_NAME.test(name) && !RECOVERY_COMPOUND_ACTION.test(name))
-  ) {
+  if (name === null || (RECOVERY_FACTORY_NAME.test(name) && !RECOVERY_COMPOUND_ACTION.test(name))) {
     return false;
   }
   if (RECOVERY_NAME.test(name)) return true;
   const receiver = calledReceiver(expression);
-  return receiver !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiver.getText());
+  return (
+    receiver !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiver.getText())
+  );
 }
 
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and
@@ -450,13 +545,9 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
     for (const { name, node } of topLevelScopes(statement)) {
       const callables = callableScopes(name, node);
       const callableBodies = new Set(callables.map((scope) => scope.node));
-      const scopes = [{ name, node, prunedNodes: callableBodies }, ...callables];
+      const scopes: DecisionScope[] = [{ name, node, prunedNodes: callableBodies }, ...callables];
       for (const scope of scopes) {
-        const declarationCounts = decisionCounts(
-          scope.name,
-          scope.node,
-          "prunedNodes" in scope ? scope.prunedNodes : undefined,
-        );
+        const declarationCounts = decisionCounts(scope.name, scope.node, scope.prunedNodes);
         for (const category of CATEGORIES) {
           for (const [declaration, count] of Object.entries(declarationCounts[category])) {
             decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;
@@ -525,6 +616,49 @@ export function evaluateOnboardEntryComposition(
   return violations.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
 
+export function combineOnboardEntryCompositionCeiling(
+  baseBudget: OnboardEntryCompositionBudget,
+  baseActual: OnboardEntryCompositionBudget,
+): OnboardEntryCompositionBudget {
+  return Object.fromEntries(
+    CATEGORIES.map((category) => {
+      const declarations = new Set([
+        ...Object.keys(baseBudget[category]),
+        ...Object.keys(baseActual[category]),
+      ]);
+      return [
+        category,
+        sortCounts(
+          Object.fromEntries(
+            [...declarations].map((declaration) => [
+              declaration,
+              Math.max(
+                baseBudget[category][declaration] ?? 0,
+                baseActual[category][declaration] ?? 0,
+              ),
+            ]),
+          ),
+        ),
+      ];
+    }),
+  ) as Record<OnboardDecisionCategory, OnboardDecisionCounts>;
+}
+
+export function evaluateOnboardEntryCompositionBudgetExpansion(
+  budget: OnboardEntryCompositionBudget,
+  baseline: OnboardEntryCompositionBudget,
+): OnboardEntryCompositionBudgetExpansion[] {
+  const expansions: OnboardEntryCompositionBudgetExpansion[] = [];
+  for (const category of CATEGORIES) {
+    for (const [declaration, budgetCount] of Object.entries(budget[category])) {
+      const baselineCount = baseline[category][declaration] ?? 0;
+      if (budgetCount <= baselineCount) continue;
+      expansions.push({ category, declaration, budgetCount, baselineCount });
+    }
+  }
+  return expansions.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
 export function formatOnboardEntryCompositionViolations(
   violations: readonly OnboardEntryCompositionViolation[],
 ): string {
@@ -543,9 +677,65 @@ function totalDecisions(counts: OnboardDecisionCounts): number {
   return Object.values(counts).reduce((total, count) => total + count, 0);
 }
 
+function mergeBaseCompositionCeiling(): OnboardEntryCompositionBudget | null {
+  const baseBranch = process.env.GITHUB_BASE_REF?.trim();
+  const baseRef = baseBranch ? `origin/${baseBranch}` : "origin/main";
+  const mergeBase = spawnSync("git", ["merge-base", "HEAD", baseRef], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  if (mergeBase.status !== 0 || !mergeBase.stdout.trim()) {
+    if (baseBranch)
+      throw new Error(`could not resolve the pull-request merge base against ${baseRef}`);
+    return null;
+  }
+
+  const revision = mergeBase.stdout.trim();
+  function readBaseFile(relativePath: string): string {
+    const source = spawnSync("git", ["show", `${revision}:${relativePath}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    if (source.status !== 0) {
+      throw new Error(`could not read ${relativePath} from merge base ${revision}`);
+    }
+    return source.stdout;
+  }
+
+  const baseBudget = parseOnboardEntryCompositionBudget(
+    readBaseFile("ci/onboard-entry-composition-budget.json"),
+  );
+  const baseActual = collectOnboardEntryDecisions(readBaseFile("src/lib/onboard.ts"));
+  return combineOnboardEntryCompositionCeiling(baseBudget, baseActual);
+}
+
+function formatBudgetExpansions(
+  expansions: readonly OnboardEntryCompositionBudgetExpansion[],
+): string {
+  return [
+    "Onboarding entry composition budget must not expand relative to the merge base.",
+    "",
+    ...expansions.map(
+      ({ declaration, category, baselineCount, budgetCount }) =>
+        `- ${declaration}: ${category} budget increased from ${baselineCount} to ${budgetCount}.`,
+    ),
+  ].join("\n");
+}
+
 function main(): void {
   const actual = collectOnboardEntryDecisions(readFileSync(ENTRY_PATH, "utf8"));
   const budget = parseOnboardEntryCompositionBudget(readFileSync(BUDGET_PATH, "utf8"));
+  const baseline = mergeBaseCompositionCeiling();
+  const expansions = baseline
+    ? evaluateOnboardEntryCompositionBudgetExpansion(budget, baseline)
+    : [];
+  if (expansions.length > 0) {
+    console.error(formatBudgetExpansions(expansions));
+    process.exitCode = 1;
+    return;
+  }
   const violations = evaluateOnboardEntryComposition(actual, budget);
   if (violations.length > 0) {
     console.error(formatOnboardEntryCompositionViolations(violations));

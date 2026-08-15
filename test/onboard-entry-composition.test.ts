@@ -5,8 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  combineOnboardEntryCompositionCeiling,
   collectOnboardEntryDecisions,
   evaluateOnboardEntryComposition,
+  evaluateOnboardEntryCompositionBudgetExpansion,
   parseOnboardEntryCompositionBudget,
   type OnboardEntryCompositionBudget,
 } from "../scripts/checks/onboard-entry-composition.mts";
@@ -29,31 +31,6 @@ describe("onboarding entry composition boundary", () => {
     );
 
     expect(evaluateOnboardEntryComposition(actual, budget)).toEqual([]);
-    expect(actual).toEqual({
-      gateway: {
-        preflight: 2,
-        preflightAuthoritativeRebuildTarget: 1,
-        runOnboard: 1,
-      },
-      messaging: { createSandboxWithBaseImageResolution: 9, runOnboard: 2 },
-      policy: {
-        "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
-        createSandboxWithBaseImageResolution: 7,
-        preflightAuthoritativeRebuildTarget: 1,
-        runOnboard: 6,
-        "sandboxCreateIntentResolver.getAgentPolicyPath": 1,
-      },
-      provider: {
-        createSandboxWithBaseImageResolution: 20,
-        handleNimLocalSelection: 32,
-        handleRemoteProviderSelection: 76,
-        handleRoutedSelection: 15,
-        "handleVllmSelection.queryVllmModels": 1,
-        preflightAuthoritativeRebuildTarget: 1,
-        runOnboard: 9,
-        selectAndValidateOllamaModel: 18,
-      },
-    });
   });
 
   it("rejects a gateway action selected by a neutral condition", () => {
@@ -99,6 +76,36 @@ describe("onboarding entry composition boundary", () => {
     ],
   ])("checks a gateway decision in a top-level %s", (_form, source, declaration) => {
     const actual = collectOnboardEntryDecisions(source);
+
+    expect(actual.gateway).toEqual({ [declaration]: 1 });
+  });
+
+  it("uses a stable neutral name for a computed method", () => {
+    const compact = collectOnboardEntryDecisions(
+      "class Entry { [gatewayKey]() { if (ready) run(); } }",
+    );
+    const spaced = collectOnboardEntryDecisions(
+      "class Entry { [ gatewayKey ]() { if (ready) run(); } }",
+    );
+
+    expect(compact).toEqual(spaced);
+    expect(compact.gateway).toEqual({});
+  });
+
+  it("uses a stable static owner for a destructured call initializer", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const { choose } = factory.createEntry(() => { if (enabled) startGateway(); });",
+    );
+
+    expect(actual.gateway).toEqual({ createEntry: 1 });
+  });
+
+  it.each([
+    ["return () => { if (enabled) startGateway(); };", "runOnboard"],
+    ["schedule(() => { if (enabled) startGateway(); });", "runOnboard"],
+    ["const nested = { choose() { if (enabled) startGateway(); } };", "runOnboard.choose"],
+  ])("checks a gateway decision in a nested callable body: %s", (body, declaration) => {
+    const actual = collectOnboardEntryDecisions(`function runOnboard() { ${body} }`);
 
     expect(actual.gateway).toEqual({ [declaration]: 1 });
   });
@@ -152,21 +159,9 @@ describe("onboarding entry composition boundary", () => {
       "class Entry { choice = enabled ? startGateway() : stopGateway(); }",
       "Entry",
     ],
-    [
-      "class static block",
-      "class Entry { static { if (enabled) startGateway(); } }",
-      "Entry",
-    ],
-    [
-      "computed method name",
-      "class Entry { [enabled ? startGateway() : 'choose']() {} }",
-      "Entry",
-    ],
-    [
-      "decorator expression",
-      "@(enabled ? startGateway() : decorate)\nclass Entry {}",
-      "Entry",
-    ],
+    ["class static block", "class Entry { static { if (enabled) startGateway(); } }", "Entry"],
+    ["computed method name", "class Entry { [enabled ? startGateway() : 'choose']() {} }", "Entry"],
+    ["decorator expression", "@(enabled ? startGateway() : decorate)\nclass Entry {}", "Entry"],
     [
       "direct default export expression",
       "export default enabled ? startGateway() : stopGateway();",
@@ -332,13 +327,16 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ choose: 1 });
   });
 
-  it.each(["&&=", "||=", "??="])("checks a gateway action behind logical assignment %s", (operator) => {
-    const actual = collectOnboardEntryDecisions(
-      `function choose() { enabled ${operator} startGateway(); }`,
-    );
+  it.each(["&&=", "||=", "??="])(
+    "checks a gateway action behind logical assignment %s",
+    (operator) => {
+      const actual = collectOnboardEntryDecisions(
+        `function choose() { enabled ${operator} startGateway(); }`,
+      );
 
-    expect(actual.gateway).toEqual({ choose: 1 });
-  });
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
 
   it.each([
     "recoverGateway!()",
@@ -415,14 +413,14 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ choose: 1 });
   });
 
-  it.each([
-    "for (startGateway(); enabled;) {}",
-    "for (let value = startGateway(); enabled;) {}",
-  ])("checks a gateway action in a for-loop initializer: %s", (decision) => {
-    const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
+  it.each(["for (startGateway(); enabled;) {}", "for (let value = startGateway(); enabled;) {}"])(
+    "checks a gateway action in a for-loop initializer: %s",
+    (decision) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${decision} }`);
 
-    expect(actual.gateway).toEqual({ choose: 1 });
-  });
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
 
   it.each(["gateway.start()", "gateway.recover()"])(
     "combines a gateway receiver with lifecycle action %s",
@@ -524,6 +522,38 @@ describe("onboarding entry composition boundary", () => {
         declaration: "handleRemoteProviderSelection",
         actualCount: 1,
         budgetCount: 2,
+      },
+    ]);
+  });
+
+  it("permits detector recalibration but rejects allowance above the merge-base source", () => {
+    const baseBudget = {
+      ...EMPTY_BUDGET,
+      gateway: { runOnboard: 1 },
+    };
+    const baseActual = {
+      ...EMPTY_BUDGET,
+      gateway: { runOnboard: 2 },
+    };
+    const baseline = combineOnboardEntryCompositionCeiling(baseBudget, baseActual);
+
+    expect(
+      evaluateOnboardEntryCompositionBudgetExpansion(
+        { ...EMPTY_BUDGET, gateway: { runOnboard: 2 } },
+        baseline,
+      ),
+    ).toEqual([]);
+    expect(
+      evaluateOnboardEntryCompositionBudgetExpansion(
+        { ...EMPTY_BUDGET, gateway: { runOnboard: 3 } },
+        baseline,
+      ),
+    ).toEqual([
+      {
+        category: "gateway",
+        declaration: "runOnboard",
+        budgetCount: 3,
+        baselineCount: 2,
       },
     ]);
   });
