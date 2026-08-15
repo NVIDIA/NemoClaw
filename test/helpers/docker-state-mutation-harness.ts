@@ -8,8 +8,15 @@ import path from "node:path";
 
 import { vi } from "vitest";
 import type { ContainerEngineCommandCapture } from "../../src/lib/adapters/container-engine";
+import {
+  createPodmanContainerEngine,
+  type PodmanExecutableAuthorityDeps,
+  type PodmanExecutableStat,
+  type PodmanSocketAuthority,
+} from "../../src/lib/adapters/podman";
 import { RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION } from "../../src/lib/onboard/runtime-provider/contract";
 import { createDockerOperationAuthority } from "../../src/lib/onboard/runtime-provider/docker-operation-authority";
+import { createContainerStateMutationOwner } from "../../src/lib/onboard/runtime-provider/container-state-mutation";
 import { createDockerStateMutationOwner } from "../../src/lib/onboard/runtime-provider/docker-state-mutation";
 import { createFilePersistedEngineAuthorityStore } from "../../src/lib/onboard/runtime-provider/persisted-engine-authority";
 import {
@@ -25,11 +32,49 @@ export const DOCKER_STATE_MUTATION_PROJECTION_SHA256 = "b".repeat(64);
 export const DOCKER_STATE_MUTATION_STATE_ROOT = "/sandbox/.hermes";
 export const DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION = "generation-7";
 const SANDBOX_ID = "sandbox-alpha-id";
+const PODMAN_EXECUTABLE_BYTES = Buffer.from("qualified-podman-state-mutation", "utf8");
+const PODMAN_SOCKET_AUTHORITY = {
+  directoryChain: [],
+  device: "8",
+  inode: "9001",
+  mode: "384",
+  ownerUid: "1000",
+  socketPath: "/run/user/1000/podman/podman.sock",
+} as const satisfies PodmanSocketAuthority;
 export const DOCKER_STATE_MUTATION_SANDBOX_FINGERPRINT = createHash("sha256")
   .update(SANDBOX_ID)
   .digest("hex");
 
 const roots: string[] = [];
+
+function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
+  const executable: PodmanExecutableStat = {
+    dev: 8n,
+    ino: 42n,
+    mode: 0o100755n,
+    uid: 0n,
+    size: BigInt(PODMAN_EXECUTABLE_BYTES.byteLength),
+    mtimeNs: 1000n,
+    ctimeNs: 2000n,
+    isDirectory: () => false,
+    isFile: () => true,
+    isSymbolicLink: () => false,
+  };
+  const directory: PodmanExecutableStat = {
+    ...executable,
+    ino: 43n,
+    mode: 0o40755n,
+    size: 0n,
+    isDirectory: () => true,
+    isFile: () => false,
+  };
+  return {
+    uid: 1000,
+    lstat: (filePath) => (filePath === "/usr/bin/podman" ? executable : directory),
+    readFile: () => PODMAN_EXECUTABLE_BYTES,
+    realpath: (filePath) => filePath,
+  };
+}
 
 function temporaryRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-state-mutation-"));
@@ -105,7 +150,10 @@ export interface DockerStateMutationHarnessState {
   overlayProc: boolean;
 }
 
-export function createDockerStateMutationHarness(options: DockerStateMutationHarnessOptions = {}) {
+function createContainerStateMutationHarness(
+  providerId: "docker" | "podman",
+  options: DockerStateMutationHarnessOptions = {},
+) {
   const lifecycleGeneration =
     options.lifecycleGeneration ?? DOCKER_STATE_MUTATION_LIFECYCLE_GENERATION;
   const state: DockerStateMutationHarnessState = {
@@ -158,7 +206,8 @@ export function createDockerStateMutationHarness(options: DockerStateMutationHar
   };
 
   const capture = vi.fn<ContainerEngineCommandCapture>((_executable, args, _timeout, input) => {
-    const command = args.slice(4);
+    const commandStart = args.findIndex((value) => value === "ps" || value === "container");
+    const command = commandStart < 0 ? [] : args.slice(commandStart);
     if (command[0] === "ps") {
       return { status: 0, stdout: `${DOCKER_STATE_MUTATION_RUNTIME_ID}\n`, stderr: "" };
     }
@@ -243,7 +292,7 @@ export function createDockerStateMutationHarness(options: DockerStateMutationHar
       delete active.listenerIdentity;
       delete active.healthSha256;
       delete active.activationProviderHandle;
-      const expected = `docker-state-mutation-v1:${String(marker.transactionId)}:${createHash("sha256").update(JSON.stringify(active), "utf8").digest("hex")}`;
+      const expected = `${String(active.providerId)}-state-mutation-v1:${String(marker.transactionId)}:${createHash("sha256").update(JSON.stringify(active), "utf8").digest("hex")}`;
       if (request.providerHandle !== expected) {
         return { status: 1, stdout: "", stderr: "provider handle mismatch" };
       }
@@ -275,7 +324,7 @@ export function createDockerStateMutationHarness(options: DockerStateMutationHar
         configurationGeneration,
         listenerIdentity,
         healthSha256,
-        activationProviderHandle: `docker-state-mutation-activation-v1:${String(
+        activationProviderHandle: `${String(activeMarker.providerId)}-state-mutation-activation-v1:${String(
           activeMarker.transactionId,
         )}:${createHash("sha256").update(JSON.stringify(evidence), "utf8").digest("hex")}`,
       };
@@ -307,18 +356,38 @@ export function createDockerStateMutationHarness(options: DockerStateMutationHar
     return { status: 0, stdout: `${JSON.stringify(response)}\n`, stderr: "" };
   });
   const root = temporaryRoot();
-  const authority = createDockerOperationAuthority(
-    "sandbox-lifecycle",
-    {
-      HOME: "/tmp/nemoclaw-home",
-      DOCKER_CONFIG: "/tmp/nemoclaw-docker",
-      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
-    },
-    capture,
-  );
+  const environment =
+    providerId === "docker"
+      ? {
+          HOME: "/tmp/nemoclaw-home",
+          DOCKER_CONFIG: "/tmp/nemoclaw-docker",
+          DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+        }
+      : { HOME: "/tmp/nemoclaw-home" };
+  const dockerAuthority =
+    providerId === "docker"
+      ? createDockerOperationAuthority("sandbox-lifecycle", environment, capture)
+      : undefined;
+  const podmanEngine =
+    providerId === "podman"
+      ? createPodmanContainerEngine({
+          operation: "state-mutation",
+          socketAuthority: PODMAN_SOCKET_AUTHORITY,
+          executable: "/usr/bin/podman",
+          capture,
+          assertAuthority: vi.fn(),
+          executableAuthorityDeps: podmanExecutableAuthorityDeps(),
+        })
+      : undefined;
+  const authority =
+    dockerAuthority ??
+    Object.freeze({
+      assertAuthority: podmanEngine!.assertAuthority,
+      engine: podmanEngine!,
+    });
   const engineAuthorityStore = createFilePersistedEngineAuthorityStore(root);
   const lifecycleStore = createFilePersistedEngineLifecycleStore(root);
-  const owner = createDockerStateMutationOwner({
+  const ownerOptions = {
     sandboxName: "alpha",
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: DOCKER_STATE_MUTATION_SANDBOX_FINGERPRINT,
@@ -326,19 +395,24 @@ export function createDockerStateMutationHarness(options: DockerStateMutationHar
     authority,
     engineAuthorityStore,
     lifecycleStore,
-  });
+  };
+  const owner =
+    providerId === "docker"
+      ? createDockerStateMutationOwner({ ...ownerOptions, authority: dockerAuthority! })
+      : createContainerStateMutationOwner({
+          ...ownerOptions,
+          providerId,
+          providerDisplayName: "Podman",
+          engineOperation: "state-mutation",
+        });
   const sandbox: SandboxEntry = {
     name: "alpha",
-    openshellDriver: "docker",
+    openshellDriver: providerId,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: DOCKER_STATE_MUTATION_SANDBOX_FINGERPRINT,
   };
   const context = {
-    environment: {
-      HOME: "/tmp/nemoclaw-home",
-      DOCKER_CONFIG: "/tmp/nemoclaw-docker",
-      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
-    },
+    environment,
     sandbox,
     sandboxName: "alpha",
   };
@@ -367,6 +441,14 @@ export function createDockerStateMutationHarness(options: DockerStateMutationHar
     root,
     state,
   };
+}
+
+export function createDockerStateMutationHarness(options: DockerStateMutationHarnessOptions = {}) {
+  return createContainerStateMutationHarness("docker", options);
+}
+
+export function createPodmanStateMutationHarness(options: DockerStateMutationHarnessOptions = {}) {
+  return createContainerStateMutationHarness("podman", options);
 }
 
 export function createAmbiguousRuntimeCapture(

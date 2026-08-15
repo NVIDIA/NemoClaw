@@ -39,6 +39,7 @@ export type RuntimeProviderContainerEngineOperation =
   | "gateway-inspection"
   | "host-local-inference"
   | "sandbox-lifecycle"
+  | "state-mutation"
   | "workload-cleanup";
 
 export interface RuntimeProviderIdentity {
