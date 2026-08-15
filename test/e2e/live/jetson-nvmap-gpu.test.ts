@@ -13,6 +13,7 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import type { FakeOpenAiCompatibleRequest } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -99,6 +100,7 @@ test(
     });
 
     // A1: Skip before changing Docker or OpenShell state when the host is not a Jetson device.
+    progress.phase("detect Jetson hardware");
     const hardwareGate = await hostShell(
       host,
       String.raw`if [ -e /dev/nvmap ]; then
@@ -224,14 +226,13 @@ fi`,
       requireAuthModels: true,
     });
     cleanup.trackDisposable("close Jetson compatible inference fixture", async () => {
+      let requests: readonly FakeOpenAiCompatibleRequest[] = [];
       try {
-        await artifacts.writeJson(
-          "jetson-compatible-inference-requests.json",
-          inference.requests(),
-        );
+        requests = inference.requests();
       } finally {
         await inference.close();
       }
+      await artifacts.writeJson("jetson-compatible-inference-requests.json", requests);
     });
     await artifacts.writeJson("jetson-compatible-inference.json", { baseUrl: inference.baseUrl });
     const inferenceEnv = {
@@ -253,6 +254,30 @@ fi`,
     });
     await artifacts.writeText("install-jetson-nvmap.log", resultText(install));
     expect(install.exitCode, resultText(install)).toBe(0);
+
+    const inferenceRoute = await host.command(
+      "bash",
+      ["-lc", "openshell inference get -g nemoclaw 2>&1 || openshell inference get 2>&1"],
+      {
+        artifactName: "phase-2-openshell-inference-route",
+        env: env(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(inferenceRoute.exitCode, resultText(inferenceRoute)).toBe(0);
+    const plainInferenceRoute = resultText(inferenceRoute).replace(/\x1b\[[0-9;]*m/g, "");
+    expect(plainInferenceRoute).toContain("Provider: compatible-endpoint");
+    expect(plainInferenceRoute).toContain(`Model: ${INFERENCE_MODEL}`);
+
+    const inferenceRequests = inference.requests();
+    await artifacts.writeJson("phase-2-compatible-inference-requests.json", inferenceRequests);
+    expect(inferenceRequests).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        method: "GET",
+        path: "/v1/models",
+      }),
+    );
 
     const installedCli = await hostShell(host, "command -v nemoclaw", "phase-2-command-v-nemoclaw");
     expect(installedCli.exitCode, resultText(installedCli)).toBe(0);
