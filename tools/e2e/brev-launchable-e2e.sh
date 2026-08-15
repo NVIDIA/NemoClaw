@@ -211,7 +211,7 @@ run_budgeted_diagnostic_probe() {
   remaining=$((deadline - SECONDS))
   if [ "$remaining" -le 0 ]; then
     printf -v "$output_name" '%s' "diagnostic budget exhausted"
-    printf -v "$status_name" '%s' 124
+    printf -v "$status_name" '%s' "not-run"
     return
   fi
   [ "$remaining" -le 5 ] || remaining=5
@@ -220,7 +220,9 @@ run_budgeted_diagnostic_probe() {
 
 report_probe() {
   local label="$1" status="$2" error="$3"
-  if [ "$status" -eq 0 ]; then
+  if [ "$status" = "not-run" ]; then
+    log "Readiness probe $label: not run; status unavailable; error: $error"
+  elif [ "$status" -eq 0 ]; then
     log "Readiness probe $label: success; status 0"
   else
     log "Readiness probe $label: failure; status $status; error: $error"
@@ -284,7 +286,10 @@ run_connectivity_diagnostics() {
   report_probe "direct SSH container" "$default_ssh_status" "$default_ssh_error"
   report_probe "direct SSH host" "$host_ssh_status" "$host_ssh_error"
 
-  if [ "$refresh_status" -ne 0 ]; then
+  if [ "$container_status" = "not-run" ] || [ "$host_exec_status" = "not-run" ] \
+    || [ "$default_ssh_status" = "not-run" ] || [ "$host_ssh_status" = "not-run" ]; then
+    log "Readiness classification: incomplete diagnostics; inspect available bounded probe results"
+  elif [ "$refresh_status" -ne 0 ]; then
     log "Readiness classification: Brev refresh/configuration failure"
   elif [ "$host_exec_status" -eq 0 ] && [ "$host_ssh_status" -ne 0 ]; then
     log "Readiness classification: Brev host execution works but direct host SSH fails"

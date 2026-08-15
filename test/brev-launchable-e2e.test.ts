@@ -630,6 +630,9 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     const output = emittedOutput(result, workDir);
     expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1-host: not checked");
+    expect(output).toContain(
+      "Readiness classification: incomplete diagnostics; inspect available bounded probe results",
+    );
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -684,15 +687,17 @@ describe("focused staging Brev Launchable lane", () => {
     expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
     const output = emittedOutput(result, workDir);
     expect(output).toContain("Readiness diagnostics budget: up to 6 seconds");
-    for (const label of [
-      "brev exec container",
-      "brev exec host",
-      "direct SSH container",
-      "direct SSH host",
-    ]) {
-      expect(output).toContain(`Readiness probe ${label}: failure; status 124;`);
+    expect(output).toContain("Readiness probe brev exec container: failure; status 124;");
+    for (const label of ["brev exec host", "direct SSH container", "direct SSH host"]) {
+      expect(output).toContain(
+        `Readiness probe ${label}: not run; status unavailable; error: diagnostic budget exhausted`,
+      );
     }
     expect(output).toContain("diagnostic budget exhausted");
+    expect(output).toContain(
+      "Readiness classification: incomplete diagnostics; inspect available bounded probe results",
+    );
+    expect(output).not.toContain("Readiness classification: neither target reachable");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
