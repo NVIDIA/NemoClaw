@@ -5,6 +5,7 @@ import {
   collectLifecycleRegistrationIssues,
   type LifecycleRegistrationIssue,
 } from "../../domain/lifecycle-registration";
+import { inspectPortableRuntimeReceiptReadiness } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import type { SandboxEntry } from "../../state/registry";
 import type { DoctorCheck } from "./doctor-report";
 
@@ -21,6 +22,28 @@ function formatFieldList(
   )
     .sort()
     .join(", ");
+}
+
+export function buildPortableRuntimeCheck(sandboxName: string): DoctorCheck | null {
+  const portable = inspectPortableRuntimeReceiptReadiness(sandboxName);
+  if (!portable) return null;
+  const recordedSocket = !portable.ok && portable.socketPath
+    ? ` Recorded socket: ${portable.socketPath}.`
+    : "";
+  return portable.ok
+    ? {
+        group: "Host",
+        label: "Portable Podman API",
+        status: "ok",
+        detail: `server ${portable.serverVersion}; ${portable.timing.mode}; activation ${String(portable.timing.activationMs)} ms; API ${String(portable.timing.apiMs)} ms; total ${String(portable.timing.totalMs)} ms`,
+      }
+    : {
+        group: "Host",
+        label: "Portable Podman API",
+        status: "fail",
+        detail: `${portable.stage}: ${portable.detail}${recordedSocket}`,
+        hint: "repair the recorded current-user Podman endpoint, then retry",
+      };
 }
 
 export function buildLifecycleRegistrationCheck(

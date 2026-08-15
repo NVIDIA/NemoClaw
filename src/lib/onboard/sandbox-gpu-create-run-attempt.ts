@@ -78,6 +78,7 @@ function createPortableRuntimePatch(
         input.hostEnv ?? process.env,
         {
           ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+          runtimeAuthority: input.portableRuntimeAuthority ?? null,
         },
       );
       if (!generation) {
