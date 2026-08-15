@@ -111,6 +111,25 @@ function isExactReleaseQualificationWaiverUpload(
   );
 }
 
+function isExactNativeRuntimeQualificationUpload(
+  jobName: string,
+  step: WorkflowStep,
+): boolean {
+  return (
+    jobName === "native-runtime-qualification" &&
+    isDeepStrictEqual(step, {
+      name: "Upload the complete qualification evidence",
+      uses: UPLOAD_ARTIFACT_ACTION,
+      with: {
+        name: "native-runtime-qualification-${{ inputs.checkout_sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+        path: "${{ runner.temp }}/native-runtime-qualification-aggregate/aggregate.json",
+        "if-no-files-found": "error",
+        "retention-days": 30,
+      },
+    })
+  );
+}
+
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "generate-matrix",
@@ -365,7 +384,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         const jobSteps = steps(job.steps);
         const env = record(job.env);
         return (
-          jobName === "staging-brev-launchable" ||
+          (jobName !== "native-runtime-qualification" &&
+            (jobName === "staging-brev-launchable" ||
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
@@ -379,7 +399,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
               typeof step.run === "string" &&
               (step.run.includes("--project e2e-live") ||
                 step.run.includes("tools/e2e/live-vitest-invocation.mts run --test-path")),
-          )
+          )))
         );
       })
       .map(([jobName]) => jobName),
@@ -434,7 +454,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
-        !isExactReleaseQualificationWaiverUpload(jobName, step)
+        !isExactReleaseQualificationWaiverUpload(jobName, step) &&
+        !isExactNativeRuntimeQualificationUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }
