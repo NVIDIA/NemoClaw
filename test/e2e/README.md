@@ -673,7 +673,7 @@ For eligible `E2E main` push runs, `E2E / Main Retry` records `passed-first-atte
 A failed job can represent a deterministic product assertion, authentication or authorization failure, policy denial, malformed input, ambiguous mutation, cleanup failure, or an external transient.
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
 External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
-Their artifacts retain each attempt.
+Operation-level retry artifacts retain each attempt.
 Hosted runner loss remains owned by Hosted Runner Recovery.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
 
