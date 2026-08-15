@@ -646,6 +646,28 @@ describe("destroySandbox flow", () => {
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
   });
 
+  it("does not remove the Docker container during forced local cleanup (#9073)", async () => {
+    const containerId = "a".repeat(64);
+    const harness = createDestroyHarness({
+      deleteStatus: 1,
+      deleteOutput: "error trying to connect: connection refused",
+      dockerOrphanIds: [containerId],
+      dockerRunResult: {
+        status: 0,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
     // Gateway-unreachable delete failure + --force triggers forcedLocalCleanup:
     // the local record is removed but the gateway-side delete was never
