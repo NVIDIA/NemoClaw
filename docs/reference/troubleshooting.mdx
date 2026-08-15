@@ -3421,14 +3421,28 @@ sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")" || 
 create_drop_in() {
   drop_in="$1"
   shift
+  drop_in_dir="$(dirname -- "$drop_in")"
 
-  if ! printf '%s\n' "$@" | sudo dd of="$drop_in" oflag=excl status=none; then
-    printf 'CPU controller drop-in creation failed: %s\n' "$drop_in" >&2
+  if ! drop_in_tmp="$(sudo mktemp "${drop_in_dir}/.nemoclaw-cpu-controller.XXXXXX")"; then
+    printf 'CPU controller drop-in temporary file creation failed: %s\n' "$drop_in" >&2
     return 1
   fi
 
-  sudo chown root:root -- "$drop_in" &&
-    sudo chmod 0644 -- "$drop_in"
+  if ! printf '%s\n' "$@" | sudo dd of="$drop_in_tmp" status=none \
+    || ! sudo chown root:root -- "$drop_in_tmp" \
+    || ! sudo chmod 0644 -- "$drop_in_tmp" \
+    || ! sudo ln -T -- "$drop_in_tmp" "$drop_in"; then
+    printf 'CPU controller drop-in creation failed: %s\n' "$drop_in" >&2
+    if ! sudo rm -f -- "$drop_in_tmp"; then
+      printf 'CPU controller drop-in temporary file removal failed: %s\n' "$drop_in_tmp" >&2
+    fi
+    return 1
+  fi
+
+  if ! sudo rm -f -- "$drop_in_tmp"; then
+    printf 'CPU controller drop-in temporary file removal failed: %s\n' "$drop_in_tmp" >&2
+    return 1
+  fi
 }
 
 create_drop_in "$delegation_drop_in" '[Service]' 'Delegate=cpu memory pids' &&
@@ -3436,7 +3450,8 @@ create_drop_in "$delegation_drop_in" '[Service]' 'Delegate=cpu memory pids' &&
 ```
 
 If a creation command fails, do not reload systemd.
-Ask the administrator to inspect the named path and remove it only if this procedure created the partial file.
+Ask the administrator to inspect both drop-in paths and their directories.
+Remove either drop-in path or a `.nemoclaw-cpu-controller.*` temporary file only if this procedure created it.
 
 Verify that both persistent paths are root-owned regular files with mode `0644`:
 

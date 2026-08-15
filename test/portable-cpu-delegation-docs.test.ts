@@ -61,17 +61,23 @@ if [ "\${1-}" = install ]; then
   shift
   exec install -d -m 0755 -- "$9"
 fi
+if [ "\${1-}" = chown ]; then
+  exit 0
+fi
 if [ "\${1-}" = dd ]; then
-  case "\${SUDO_SCENARIO:-}" in
-    concurrent)
-      printf '%s\\n' 'concurrent content' > "$FAILURE_TARGET"
-      ;;
-    partial)
-      printf '%s\\n' 'partial content' > "$FAILURE_TARGET"
-      printf '%s\\n' 'simulated dd write failure' >&2
-      exit 74
-      ;;
-  esac
+  if [ "\${SUDO_SCENARIO:-}" = write-failure ]; then
+    for argument in "$@"; do
+      case "$argument" in
+        of=*) temporary_file="\${argument#of=}" ;;
+      esac
+    done
+    printf '%s\\n' 'partial content' > "$temporary_file"
+    printf '%s\\n' 'simulated temporary file write failure' >&2
+    exit 74
+  fi
+fi
+if [ "\${1-}" = ln ] && [ "\${SUDO_SCENARIO:-}" = concurrent ]; then
+  printf '%s\\n' 'concurrent content' > "$FAILURE_TARGET"
 fi
 exec "$@"
 `,
@@ -110,6 +116,25 @@ function runDocumentedCommand(fixture: CommandFixture, environment: NodeJS.Proce
   });
 }
 
+function listTemporaryDropIns(fixture: CommandFixture): string[] {
+  const temporaryFiles: string[] = [];
+  const directories = new Set([
+    path.dirname(fixture.delegationDropIn),
+    path.dirname(fixture.appSliceDropIn),
+  ]);
+
+  for (const directory of directories) {
+    if (!fs.existsSync(directory)) continue;
+    for (const entry of fs.readdirSync(directory)) {
+      if (entry.startsWith(".nemoclaw-cpu-controller.")) {
+        temporaryFiles.push(path.join(directory, entry));
+      }
+    }
+  }
+
+  return temporaryFiles;
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -117,7 +142,22 @@ afterEach(() => {
 });
 
 describe("portable CPU delegation documentation", () => {
-  it("does not replace a drop-in created after the existence check (#9195)", () => {
+  it("creates both drop-ins with their required content and mode (#9195)", () => {
+    const fixture = makeCommandFixture();
+    const result = runDocumentedCommand(fixture);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe(
+      "[Service]\nDelegate=cpu memory pids\n",
+    );
+    expect(fs.readFileSync(fixture.appSliceDropIn, "utf8")).toBe("[Slice]\nCPUWeight=100\n");
+    expect(fs.statSync(fixture.delegationDropIn).mode & 0o777).toBe(0o644);
+    expect(fs.statSync(fixture.appSliceDropIn).mode & 0o777).toBe(0o644);
+    expect(listTemporaryDropIns(fixture)).toEqual([]);
+  });
+
+  it("does not replace a drop-in created before the publish link (#9195)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "concurrent" });
 
@@ -129,6 +169,7 @@ describe("portable CPU delegation documentation", () => {
     expect(result.stderr).not.toContain("Refusing to replace existing file");
     expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe("concurrent content\n");
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+    expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 
   it.each([1, 2])(
@@ -144,20 +185,22 @@ describe("portable CPU delegation documentation", () => {
       expect(fs.readFileSync(fixture.installCallMarker, "utf8")).toBe(`${failedInstallCall}\n`);
       expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
       expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+      expect(listTemporaryDropIns(fixture)).toEqual([]);
     },
   );
 
-  it("reports a partial-file failure without classifying it as a collision (#9195)", () => {
+  it("removes the temporary file after its write fails (#9195)", () => {
     const fixture = makeCommandFixture();
-    const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "partial" });
+    const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "write-failure" });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("simulated dd write failure");
+    expect(result.stderr).toContain("simulated temporary file write failure");
     expect(result.stderr).toContain(
       `CPU controller drop-in creation failed: ${fixture.delegationDropIn}`,
     );
     expect(result.stderr).not.toContain("Refusing to replace existing file");
-    expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe("partial content\n");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+    expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 });
