@@ -106,7 +106,12 @@ export type ManagedStartupInputModality = "text" | "image";
 export type ManagedStartupWebSearchProvider = "brave" | "tavily";
 export type ManagedStartupDeviceAuthOptOutSource = "operator" | "managed-onboard";
 
-export const MANAGED_STARTUP_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+export const MANAGED_STARTUP_AGENTS = [
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+  "pi",
+] as const;
 
 export type ManagedStartupAgent = (typeof MANAGED_STARTUP_AGENTS)[number];
 export const MANAGED_STARTUP_MESSAGING_AGENTS = ["openclaw", "hermes"] as const;
@@ -191,10 +196,16 @@ export interface ManagedStartupDcodeDashboard {
   readonly mode: "disabled";
 }
 
+export interface ManagedStartupPiDashboard {
+  readonly agent: "pi";
+  readonly mode: "disabled";
+}
+
 export type ManagedStartupDashboard =
   | ManagedStartupOpenClawDashboard
   | ManagedStartupHermesDashboard
-  | ManagedStartupDcodeDashboard;
+  | ManagedStartupDcodeDashboard
+  | ManagedStartupPiDashboard;
 
 export interface ManagedStartupWebSearch {
   readonly enabled: boolean;
@@ -282,10 +293,15 @@ export interface ManagedStartupDcodeConfig {
   readonly observabilityEnabled: boolean;
 }
 
+export interface ManagedStartupPiConfig {
+  readonly agent: "pi";
+}
+
 export type ManagedStartupAgentConfig =
   | ManagedStartupOpenClawConfig
   | ManagedStartupHermesConfig
-  | ManagedStartupDcodeConfig;
+  | ManagedStartupDcodeConfig
+  | ManagedStartupPiConfig;
 
 export interface ManagedStartupProfile {
   readonly schemaVersion: typeof MANAGED_STARTUP_PROFILE_SCHEMA_VERSION;
@@ -402,6 +418,25 @@ const PROFILE_CAPABILITIES = {
     supportsExtraAgents: false,
     supportsDeviceAuth: false,
     observability: "dcode-marker",
+    supportsMinimalBootstrap: false,
+  },
+  pi: {
+    inferenceApis: ["openai-completions"],
+    dashboardModes: ["disabled"],
+    inputModalities: [],
+    webSearchProviders: [],
+    toolGateways: [],
+    tuningFields: [],
+    supportsMessaging: false,
+    supportsInferenceCompatibility: false,
+    supportsUpstreamEndpoint: false,
+    supportsHostProxyIntent: true,
+    supportsPrimaryModelRef: false,
+    supportsAgentTimeout: false,
+    supportsHeartbeat: false,
+    supportsExtraAgents: false,
+    supportsDeviceAuth: false,
+    observability: "none",
     supportsMinimalBootstrap: false,
   },
 } satisfies Record<ManagedStartupAgent, ManagedStartupAgentCapabilities>;
@@ -546,6 +581,23 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     ),
     ...HOST_PROXY_AFFORDANCES,
   ],
+  pi: [
+    affordance("NEMOCLAW_MODEL", "inference.model"),
+    affordance("NEMOCLAW_INFERENCE_PROVIDER_ID", "inference.routeProvider"),
+    affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
+    affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
+    affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
+    affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
+    affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
+    affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
+    affordance(
+      "NEMOCLAW_CORPORATE_CA_B64",
+      "corporateCa.bundleSha256",
+      "host-material",
+      "digest-handoff",
+    ),
+    ...HOST_PROXY_AFFORDANCES,
+  ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupAffordance[]>;
 
 export type ManagedStartupDeferredRuntimeOwner =
@@ -657,6 +709,13 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
       "engine-identity",
       "the lifecycle engine owns instance identity outside reusable startup intent",
     ),
+    deferredRuntimeInput(
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+      "credential-plumbing",
+      "credential provider construction owns key metadata outside the secret-free profile",
+    ),
+  ]),
+  pi: Object.freeze([
     deferredRuntimeInput(
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
       "credential-plumbing",
@@ -790,6 +849,15 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
+  pi: [
+    { input: "BASE_IMAGE", reason: "release-composition" },
+    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    { input: "PI_VERSION", reason: "integrity-pin" },
+    { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
+    { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
+    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+  ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupExcludedDockerInput[]>;
 
 export class ManagedStartupProfileError extends Error {
@@ -862,6 +930,8 @@ const OPENCLAW_CONFIG_KEYS = new Set([
 ]);
 const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
+const PI_CONFIG_KEYS = new Set(["agent"]);
+const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const WEB_SEARCH_KEYS = new Set(["enabled", "provider"]);
 const OTEL_KEYS = new Set(["enabled", "endpointUrl", "serviceName", "sampleRate"]);
 const DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
@@ -1510,6 +1580,11 @@ function validateAgentConfig(
     return { agent, webSearch: validateWebSearch(config.webSearch, agent) };
   }
 
+  if (agent === "pi") {
+    rejectUnknownKeys(config, PI_CONFIG_KEYS, "agentConfig");
+    return { agent };
+  }
+
   rejectUnknownKeys(config, DCODE_CONFIG_KEYS, "agentConfig");
   return {
     agent,
@@ -1621,6 +1696,12 @@ function validateDashboard(
       internalPort,
       tuiEnabled: requireBoolean(dashboard.tuiEnabled, "dashboard.tuiEnabled"),
     };
+  }
+
+  if (agent === "pi") {
+    rejectUnknownKeys(dashboard, PI_DASHBOARD_KEYS, "dashboard");
+    if (dashboard.mode !== "disabled") invalid("pi dashboard.mode must be disabled");
+    return { agent, mode: "disabled" };
   }
 
   rejectUnknownKeys(dashboard, DCODE_DASHBOARD_KEYS, "dashboard");

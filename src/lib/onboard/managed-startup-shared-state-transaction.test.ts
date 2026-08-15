@@ -67,7 +67,13 @@ describe("managed startup shared-state transaction", () => {
   function agentRoot(agent: ManagedStartupAgent): string {
     return path.join(
       sandboxRoot,
-      agent === "openclaw" ? ".openclaw" : agent === "hermes" ? ".hermes" : ".deepagents",
+      agent === "openclaw"
+        ? ".openclaw"
+        : agent === "hermes"
+          ? ".hermes"
+          : agent === "pi"
+            ? ".pi"
+            : ".deepagents",
     );
   }
 
@@ -96,6 +102,7 @@ describe("managed startup shared-state transaction", () => {
     "openclaw",
     "hermes",
     "langchain-deepagents-code",
+    "pi",
   ] as const)("restores exact %s bytes, ownership, modes, and absence receipts", (agent) => {
     const root = agentRoot(agent);
     fs.mkdirSync(root, { mode: 0o750 });
@@ -108,7 +115,9 @@ describe("managed startup shared-state transaction", () => {
               ["config.yaml", "hermes-original\n", 0o640] as const,
               [".env", "TOKEN=original\n", 0o600] as const,
             ]
-          : [["config.toml", "dcode-original\n", 0o660] as const];
+          : agent === "pi"
+            ? []
+            : [["config.toml", "dcode-original\n", 0o660] as const];
     for (const [name, contents, fileMode] of originalFiles) {
       const target = path.join(root, name);
       fs.writeFileSync(target, contents);
@@ -128,6 +137,10 @@ describe("managed startup shared-state transaction", () => {
         fs.mkdirSync(path.join(root, ".state"));
         fs.mkdirSync(path.join(root, "skills"));
       },
+      pi: () => {
+        fs.mkdirSync(path.join(root, "agent"));
+        fs.writeFileSync(path.join(root, "agent", "models.json"), "{}\n");
+      },
     };
     createManagedDrift[agent]();
 
@@ -144,6 +157,7 @@ describe("managed startup shared-state transaction", () => {
       openclaw: [".config-hash"],
       hermes: [".config-hash"],
       "langchain-deepagents-code": [".state", "skills"],
+      pi: ["agent", path.join("agent", "models.json")],
     };
     for (const relativePath of absentManagedPaths[agent]) {
       expect(fs.existsSync(path.join(root, relativePath))).toBe(false);

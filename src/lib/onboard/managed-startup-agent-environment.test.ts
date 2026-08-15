@@ -225,6 +225,48 @@ function dcodeProfile(): ManagedStartupProfile {
   };
 }
 
+function piProfile(): ManagedStartupProfile {
+  return {
+    schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+    agent: "pi",
+    agentConfig: { agent: "pi" },
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+      inputModalities: null,
+    },
+    proxy: {
+      managedHost: "10.200.0.1",
+      managedPort: 3128,
+      hostHttpUrl: null,
+      hostHttpsUrl: null,
+      hostNoProxy: [],
+    },
+    dashboard: {
+      agent: "pi",
+      mode: "disabled",
+    },
+    tools: {
+      disclosure: "progressive",
+      enabledGateways: [],
+    },
+    messaging: { plan: null },
+    tuning: {
+      contextWindow: null,
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    },
+    corporateCa: { bundleSha256: CA_SHA256 },
+  };
+}
+
 function decodeBase64Json(encoded: string): unknown {
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as unknown;
 }
@@ -243,6 +285,7 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
   openclaw: openClawProfile,
   hermes: hermesProfile,
   "langchain-deepagents-code": dcodeProfile,
+  pi: piProfile,
 };
 
 describe("managed startup agent environment", () => {
@@ -716,7 +759,7 @@ describe("managed startup agent environment", () => {
         (action) => action.kind === "apply-messaging-plan",
       );
       expect(messagingActions.map(({ phase, runAs }) => [phase, runAs])).toEqual(
-        agent === "langchain-deepagents-code"
+        agent === "langchain-deepagents-code" || agent === "pi"
           ? []
           : [
               ["runtime-setup", "root"],

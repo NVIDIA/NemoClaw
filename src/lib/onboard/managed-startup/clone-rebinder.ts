@@ -180,8 +180,8 @@ function currentWebSearch(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
 ): Extract<ManagedStartupProfile["agentConfig"], { agent: "openclaw" | "hermes" }>["webSearch"] {
-  if (profile.agentConfig.agent === "langchain-deepagents-code") {
-    fail("DCode cannot carry web-search state");
+  if (profile.agentConfig.agent !== "openclaw" && profile.agentConfig.agent !== "hermes") {
+    fail(`${profile.agentConfig.agent} cannot carry web-search state`);
   }
   const enabled = current.webSearchEnabled === true;
   const configuredProvider = current.webSearchProvider;
@@ -209,6 +209,9 @@ function currentAgentConfig(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
 ): ManagedStartupProfile["agentConfig"] {
+  if (profile.agentConfig.agent === "pi") {
+    return profile.agentConfig;
+  }
   if (profile.agentConfig.agent !== "langchain-deepagents-code") {
     return {
       ...profile.agentConfig,
@@ -396,8 +399,8 @@ function destinationMessagingPlan(
   destinationSandboxName: string,
 ): ManagedStartupJsonObject | null {
   if (profile.messaging.plan === null) return null;
-  if (profile.agent === "langchain-deepagents-code") {
-    fail("langchain-deepagents-code cannot carry a messaging plan");
+  if (profile.agent === "langchain-deepagents-code" || profile.agent === "pi") {
+    fail(`${profile.agent} cannot carry a messaging plan`);
   }
   const rebound = rebindSandboxMessagingPlanForClone({
     sourceSandboxName,
