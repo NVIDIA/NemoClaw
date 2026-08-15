@@ -25,6 +25,11 @@ export type OnboardEntryCompositionBudgetExpansion = {
   readonly budgetCount: number;
   readonly baselineCount: number;
 };
+export type CompositionGitResult = Readonly<{
+  status: number | null;
+  stdout: string;
+}>;
+export type CompositionGitRunner = (args: readonly string[]) => CompositionGitResult;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ENTRY_PATH = path.join(REPO_ROOT, "src/lib/onboard.ts");
@@ -677,21 +682,29 @@ function totalDecisions(counts: OnboardDecisionCounts): number {
   return Object.values(counts).reduce((total, count) => total + count, 0);
 }
 
-function mergeBaseCompositionCeiling(): OnboardEntryCompositionBudget | null {
-  const baseBranch = process.env.GITHUB_BASE_REF?.trim();
-  const baseRef = baseBranch ? `origin/${baseBranch}` : "origin/main";
-  const mergeBase = spawnSync("git", ["merge-base", "HEAD", baseRef], {
+function runGit(args: readonly string[]): CompositionGitResult {
+  const result = spawnSync("git", [...args], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     timeout: 5_000,
   });
-  if (mergeBase.status !== 0 || !mergeBase.stdout.trim()) {
-    if (baseBranch)
-      throw new Error(`could not resolve the pull-request merge base against ${baseRef}`);
-    return null;
-  }
+  return { status: result.status, stdout: result.stdout };
+}
 
-  const revision = mergeBase.stdout.trim();
+export function resolveCompositionMergeBase(
+  git: CompositionGitRunner = runGit,
+  baseBranch = process.env.GITHUB_BASE_REF?.trim(),
+): string {
+  const baseRef = baseBranch ? `origin/${baseBranch}` : "origin/main";
+  const mergeBase = git(["merge-base", "HEAD", baseRef]);
+  if (mergeBase.status !== 0 || !mergeBase.stdout.trim()) {
+    throw new Error(`could not resolve the composition merge base against ${baseRef}`);
+  }
+  return mergeBase.stdout.trim();
+}
+
+function mergeBaseCompositionCeiling(): OnboardEntryCompositionBudget {
+  const revision = resolveCompositionMergeBase();
   function readBaseFile(relativePath: string): string {
     const source = spawnSync("git", ["show", `${revision}:${relativePath}`], {
       cwd: REPO_ROOT,
@@ -728,9 +741,7 @@ function main(): void {
   const actual = collectOnboardEntryDecisions(readFileSync(ENTRY_PATH, "utf8"));
   const budget = parseOnboardEntryCompositionBudget(readFileSync(BUDGET_PATH, "utf8"));
   const baseline = mergeBaseCompositionCeiling();
-  const expansions = baseline
-    ? evaluateOnboardEntryCompositionBudgetExpansion(budget, baseline)
-    : [];
+  const expansions = evaluateOnboardEntryCompositionBudgetExpansion(budget, baseline);
   if (expansions.length > 0) {
     console.error(formatBudgetExpansions(expansions));
     process.exitCode = 1;

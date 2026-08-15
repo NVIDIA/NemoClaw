@@ -10,6 +10,7 @@ import {
   evaluateOnboardEntryComposition,
   evaluateOnboardEntryCompositionBudgetExpansion,
   parseOnboardEntryCompositionBudget,
+  resolveCompositionMergeBase,
   type OnboardEntryCompositionBudget,
 } from "../scripts/checks/onboard-entry-composition.mts";
 
@@ -556,5 +557,17 @@ describe("onboarding entry composition boundary", () => {
         baselineCount: 2,
       },
     ]);
+  });
+
+  it("fails closed when the composition merge base is unavailable", () => {
+    const calls: string[][] = [];
+
+    expect(() =>
+      resolveCompositionMergeBase((args) => {
+        calls.push([...args]);
+        return { status: 128, stdout: "" };
+      }, undefined),
+    ).toThrow("could not resolve the composition merge base against origin/main");
+    expect(calls).toEqual([["merge-base", "HEAD", "origin/main"]]);
   });
 });
