@@ -2,7 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
 import type { NativeRuntimeQualificationProducerPlanRow } from "./native-runtime-qualification-producer-plan.mts";
@@ -70,11 +80,22 @@ function exactStrings(actual: unknown, expected: readonly string[], label: strin
 }
 
 function readBoundedFile(file: string, maximum = MAX_RECEIPT_BYTES): string {
-  const status = lstatSync(file, { throwIfNoEntry: false });
-  if (!status?.isFile() || status.isSymbolicLink() || status.size < 1 || status.size > maximum) {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const status = fstatSync(descriptor);
+    if (!status.isFile() || status.size < 1 || status.size > maximum) {
+      throw new Error(`Native runtime qualification receipt is missing or invalid: ${file}`);
+    }
+    return readFileSync(descriptor, "utf8");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Native runtime qualification")) {
+      throw error;
+    }
     throw new Error(`Native runtime qualification receipt is missing or invalid: ${file}`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
-  return readFileSync(file, "utf8");
 }
 
 function readJson(file: string): unknown {
