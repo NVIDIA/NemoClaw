@@ -152,7 +152,11 @@ type DecisionScope = NamedScope & {
   readonly prunedNodes: ReadonlySet<ts.Node>;
 };
 
-type StaticAliases = ReadonlyMap<string, string>;
+type StaticAlias = Readonly<{
+  target: string;
+  context: ts.Node;
+}>;
+type StaticAliases = ReadonlyMap<ts.Node, ReadonlyMap<string, StaticAlias>>;
 
 function emptyDecisionCounts(): Record<string, number> {
   return Object.create(null) as Record<string, number>;
@@ -291,9 +295,11 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
 function identifierCategories(
   identifier: string,
   aliases: StaticAliases,
+  context?: ts.Node,
 ): ReadonlySet<OnboardDecisionCategory> {
   const categories = new Set<OnboardDecisionCategory>();
-  for (const candidate of new Set([identifier, resolveStaticAlias(identifier, aliases)])) {
+  const resolved = context ? resolveStaticAlias(identifier, aliases, context) : identifier;
+  for (const candidate of new Set([identifier, resolved])) {
     if (isGatewayLifecycleIdentifier(candidate)) categories.add("gateway");
     if (/messaging|channel/i.test(candidate)) categories.add("messaging");
     if (/policy|preset/i.test(candidate)) categories.add("policy");
@@ -348,14 +354,46 @@ function staticReferenceName(expression: ts.Expression): string | null {
 }
 
 function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
-  const aliases = new Map<string, string>();
+  const aliases = new Map<ts.Node, Map<string, StaticAlias>>();
+
+  function declarationScope(declaration: ts.VariableDeclaration): ts.Node {
+    const declarationList = declaration.parent;
+    const declarationParent = declarationList.parent;
+    if (
+      ts.isForStatement(declarationParent) ||
+      ts.isForInStatement(declarationParent) ||
+      ts.isForOfStatement(declarationParent)
+    ) {
+      return declarationParent;
+    }
+    let current: ts.Node | undefined = declarationParent;
+    while (current) {
+      if (
+        ts.isSourceFile(current) ||
+        ts.isBlock(current) ||
+        ts.isModuleBlock(current) ||
+        ts.isCaseBlock(current)
+      ) {
+        return current;
+      }
+      current = current.parent;
+    }
+    return sourceFile;
+  }
+
+  function recordAlias(declaration: ts.VariableDeclaration, name: string, target: string): void {
+    const scope = declarationScope(declaration);
+    const scopedAliases = aliases.get(scope) ?? new Map<string, StaticAlias>();
+    scopedAliases.set(name, { target, context: declaration.initializer ?? declaration });
+    aliases.set(scope, scopedAliases);
+  }
 
   function recordDeclaration(declaration: ts.VariableDeclaration): void {
     if (!declaration.initializer) return;
     const target = staticReferenceName(declaration.initializer);
     if (!target) return;
     if (ts.isIdentifier(declaration.name)) {
-      aliases.set(declaration.name.text, target);
+      recordAlias(declaration, declaration.name.text, target);
       return;
     }
     if (!ts.isObjectBindingPattern(declaration.name)) return;
@@ -364,7 +402,7 @@ function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
       const member = element.propertyName
         ? staticPropertyName(element.propertyName)
         : element.name.text;
-      if (member) aliases.set(element.name.text, `${target}.${member}`);
+      if (member) recordAlias(declaration, element.name.text, `${target}.${member}`);
     }
   }
 
@@ -379,14 +417,20 @@ function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
   return aliases;
 }
 
-function resolveStaticAlias(identifier: string, aliases: StaticAliases): string {
+function resolveStaticAlias(identifier: string, aliases: StaticAliases, context: ts.Node): string {
   let resolved = identifier;
-  const visited = new Set<string>();
-  while (!visited.has(resolved)) {
-    visited.add(resolved);
-    const target = aliases.get(resolved);
-    if (!target) break;
-    resolved = target;
+  const visited = new Set<StaticAlias>();
+  while (true) {
+    let alias: StaticAlias | undefined;
+    let current: ts.Node | undefined = context;
+    while (current && !alias) {
+      alias = aliases.get(current)?.get(resolved);
+      current = current.parent;
+    }
+    if (!alias || visited.has(alias)) break;
+    visited.add(alias);
+    resolved = alias.target;
+    context = alias.context;
   }
   return resolved;
 }
@@ -424,8 +468,10 @@ function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is Re
   const expression = recoveryInvocationExpression(node);
   const boundReceiver = immediatelyBoundReceiver(expression);
   if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
+  const callee = unwrapTransparentExpression(expression);
   const called = calledName(expression);
-  const name = called ? resolveStaticAlias(called, aliases) : null;
+  const name =
+    called && ts.isIdentifier(callee) ? resolveStaticAlias(called, aliases, callee) : called;
   if (name === null || (RECOVERY_FACTORY_NAME.test(name) && !RECOVERY_COMPOUND_ACTION.test(name))) {
     return false;
   }
@@ -470,7 +516,10 @@ function decisionNodeCategories(
 
   function addIdentifiers(candidate: ts.Node): void {
     if (ts.isIdentifier(candidate) || ts.isPrivateIdentifier(candidate)) {
-      for (const category of identifierCategories(candidate.text, aliases)) categories.add(category);
+      for (const category of identifierCategories(candidate.text, aliases, candidate)) {
+        categories.add(category);
+      }
+      return;
     }
     if (ts.isElementAccessExpression(candidate)) {
       const name = staticElementName(candidate);
@@ -483,6 +532,9 @@ function decisionNodeCategories(
           categories.add(category);
         }
       }
+      addIdentifiers(candidate.expression);
+      if (!name && candidate.argumentExpression) addIdentifiers(candidate.argumentExpression);
+      return;
     }
     if (ts.isPropertyAccessExpression(candidate)) {
       for (const category of identifierCategories(
@@ -491,6 +543,8 @@ function decisionNodeCategories(
       )) {
         categories.add(category);
       }
+      addIdentifiers(candidate.expression);
+      return;
     }
     ts.forEachChild(candidate, addIdentifiers);
   }

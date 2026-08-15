@@ -217,6 +217,64 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ choose: 1 });
   });
 
+  it.each([
+    [
+      "gateway alias first",
+      "function gatewayChoice(enabled: boolean) { const action = startGateway; if (enabled) action(); } function neutralChoice(enabled: boolean) { const action = reportError; if (enabled) action(); }",
+    ],
+    [
+      "gateway alias last",
+      "function neutralChoice(enabled: boolean) { const action = reportError; if (enabled) action(); } function gatewayChoice(enabled: boolean) { const action = startGateway; if (enabled) action(); }",
+    ],
+  ])("resolves same-name aliases by lexical scope with %s", (_order, source) => {
+    const actual = collectOnboardEntryDecisions(source);
+
+    expect(actual.gateway).toEqual({ gatewayChoice: 1 });
+  });
+
+  it("keeps same-name aliases in separate category scopes", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function gatewayChoice(enabled: boolean) { const action = startGateway; if (enabled) action(); } function messagingChoice(enabled: boolean) { const action = configureMessaging; if (enabled) action(); }",
+    );
+
+    expect(actual.gateway).toEqual({ gatewayChoice: 1 });
+    expect(actual.messaging).toEqual({ messagingChoice: 1 });
+  });
+
+  it("resolves a nested alias shadow in its lexical block", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose(enabled: boolean) { const action = startGateway; if (enabled) action(); { const action = configureMessaging; if (enabled) action(); } if (enabled) action(); }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 2 });
+    expect(actual.messaging).toEqual({ choose: 1 });
+  });
+
+  it("resolves an alias chain at its declaration scope", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const action = startGateway; function choose(enabled: boolean) { const selected = action; { const action = configureMessaging; if (enabled) selected(); } }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+    expect(actual.messaging).toEqual({});
+  });
+
+  it("resolves repeated alias names through distinct lexical bindings", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const action = startGateway; function choose(enabled: boolean) { const selected = action; { const action = selected; if (enabled) action(); } }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it("does not resolve a property member through a same-name alias", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const start = startGateway; function choose(enabled: boolean) { if (enabled) logger.start(); }",
+    );
+
+    expect(actual.gateway).toEqual({});
+  });
+
   it("checks an optional gateway call through a static alias", () => {
     const actual = collectOnboardEntryDecisions(
       "const start = startGateway; function choose() { start?.(); }",
