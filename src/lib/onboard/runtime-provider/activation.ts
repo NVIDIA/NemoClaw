@@ -60,12 +60,7 @@ export function createRuntimeProviderActivationCatalog(
     null,
   );
   for (const declaration of declarations) {
-    const bundle = bundles[declaration.providerId];
-    if (!bundle || bundle.identity.id !== declaration.providerId) {
-      throw new RuntimeProviderActivationError(
-        `declaration '${declaration.providerId}' does not match its provider bundle`,
-      );
-    }
+    const bundle = bundles[declaration.providerId]!;
     catalog[declaration.providerId] = Object.freeze({ declaration, bundle });
   }
   return Object.freeze(catalog);
