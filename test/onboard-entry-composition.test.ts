@@ -930,14 +930,22 @@ describe("onboarding entry composition boundary", () => {
   ])("fails closed when %s is unavailable at the composition merge base", (missingPath) => {
     const revision = "base-revision";
     const baseBudget = JSON.stringify(EMPTY_BUDGET);
+    const resultsByMissingPath = {
+      "ci/onboard-entry-composition-budget.json": [
+        { status: 0, stdout: revision },
+        { status: 128, stdout: "" },
+      ],
+      "src/lib/onboard.ts": [
+        { status: 0, stdout: revision },
+        { status: 0, stdout: baseBudget },
+        { status: 128, stdout: "" },
+      ],
+    } as const;
+    const results = resultsByMissingPath[missingPath as keyof typeof resultsByMissingPath];
+    const calls: string[][] = [];
     const git = (args: readonly string[]) => {
-      if (args[0] === "merge-base") return { status: 0, stdout: revision };
-      const relativePath = args[1]?.slice(`${revision}:`.length);
-      if (relativePath === missingPath) return { status: 128, stdout: "" };
-      if (relativePath === "ci/onboard-entry-composition-budget.json") {
-        return { status: 0, stdout: baseBudget };
-      }
-      return { status: 0, stdout: "function runOnboard() {}" };
+      calls.push([...args]);
+      return results[calls.length - 1];
     };
 
     expect(() => mergeBaseCompositionCeiling(git, "")).toThrow(
