@@ -175,6 +175,7 @@ export function inspectPortableRuntimeReceiptReadiness(
       ok: false,
       stage: "socket authority",
       detail: "The portable lifecycle receipt is unsafe or invalid; rerun onboarding.",
+      recovery: "portable-onboarding",
       timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
     };
   }
@@ -185,6 +186,7 @@ export function inspectPortableRuntimeReceiptReadiness(
       stage: "socket authority",
       detail:
         "The lifecycle receipt predates recorded portable Podman authority; rerun onboarding.",
+      recovery: "portable-onboarding",
       timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
     };
   }

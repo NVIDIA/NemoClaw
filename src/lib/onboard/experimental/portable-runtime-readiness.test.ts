@@ -309,7 +309,11 @@ describe("portable Podman activation readiness", () => {
     expect(validFailure.ok ? "" : portablePodmanReadinessError(validFailure).message).toContain(
       `Recorded socket: ${AUTHORITY.socketPath}.`,
     );
-    expect(invalidFailure).toMatchObject({ ok: false, stage: "socket authority" });
+    expect(invalidFailure).toMatchObject({
+      ok: false,
+      stage: "socket authority",
+      recovery: "current-user-authority",
+    });
     expect(invalidFailure).not.toHaveProperty("socketPath");
   });
 

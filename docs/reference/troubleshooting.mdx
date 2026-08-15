@@ -3353,7 +3353,10 @@ A portable readiness failure identifies the stage that did not complete:
 | Startup API health | The service was activated, but the recorded endpoint did not return a real Podman API response within the startup period. | Inspect the user-unit logs and run the explicit API request below against the reported socket path. Raise `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` only when valid cold activation needs more than 60,000 ms. |
 | Steady-state API health | An endpoint that completed activation did not answer the later shorter health check. | Inspect host load and the user-unit logs, then rerun the NemoClaw command. |
 
-Inspect the current user's units without changing them:
+The remaining service and API inspection applies only when the failure reports a recorded socket path.
+If the failure does not report one, follow the recovery in the table and do not try another endpoint.
+
+When a recorded socket path is reported, inspect the current user's units without changing them:
 
 ```bash
 systemctl --user status podman.socket podman.service --no-pager
@@ -3369,7 +3372,7 @@ systemctl --user start podman.socket
 
 These commands do not enable the socket for later user sessions.
 
-Use the exact socket path from the NemoClaw failure to require a real server response:
+Then use the exact socket path from the NemoClaw failure to require a real server response:
 
 ```bash
 podman --remote \
