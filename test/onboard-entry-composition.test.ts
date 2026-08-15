@@ -799,12 +799,15 @@ describe("onboarding entry composition boundary", () => {
 
   it("reports a Git execution failure while reading the merge-base budget", () => {
     const calls: string[][] = [];
+    const results = [
+      { status: 0, stdout: "base-revision\n" },
+      { status: null, stdout: "", error: "spawnSync git ETIMEDOUT" },
+    ];
 
     expect(() =>
       mergeBaseCompositionCeiling((args) => {
         calls.push([...args]);
-        if (args[0] === "merge-base") return { status: 0, stdout: "base-revision\n" };
-        return { status: null, stdout: "", error: "spawnSync git ETIMEDOUT" };
+        return results[calls.length - 1];
       }, ""),
     ).toThrow(
       "could not run git to read ci/onboard-entry-composition-budget.json from merge base base-revision (spawnSync git ETIMEDOUT)",
