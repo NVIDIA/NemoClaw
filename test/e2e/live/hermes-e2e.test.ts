@@ -127,7 +127,8 @@ function firstChoice(response: unknown): OpenAiChoiceLike | undefined {
   return choices.find((choice) => choice && typeof choice === "object");
 }
 
-function shouldRetryForReasoningBudget(response: unknown): boolean {
+/** Report whether a completed response spent its full budget on reasoning. */
+function exhaustedReasoningBudget(response: unknown): boolean {
   const content = chatContent(response);
   if (/PONG/i.test(content)) return false;
   const choice = firstChoice(response);
@@ -216,26 +217,6 @@ async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promis
   } catch {
     // The explicit sandbox-destroy assertion remains the primary phase-9 contract.
   }
-}
-
-async function retryHostedInference<T>(
-  label: string,
-  run: (attempt: number) => Promise<T>,
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await run(attempt);
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) await sleep(5_000 * attempt);
-    }
-  }
-  throw new Error(
-    `${label} failed after retries: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
-  );
 }
 
 // source-shape-contract: security -- Live execution proves the shipped Hermes manifest remains healthy and credential-safe
@@ -1261,64 +1242,35 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   progress.phase("exercise hosted and inference.local routes");
   // Phase 6: live inference through both the external provider and the
   // sandbox's inference.local route.
-  const directChat = await retryHostedInference(
-    `${inference.mode} direct chat`,
-    async (attempt) => {
-      const response = await inference.directChat("Reply with exactly one word: PONG", {
-        artifactName: `phase-6-direct-inference-chat-attempt-${attempt}`,
-        maxTokens: attempt === 1 ? 256 : 1024,
-      });
-      if (shouldRetryForReasoningBudget(response)) {
-        throw new Error("direct chat exhausted response budget while reasoning before PONG");
-      }
-      return response;
-    },
-  );
+  const directChat = await inference.directChat("Reply with exactly one word: PONG", {
+    artifactName: "phase-6-direct-inference-chat",
+    maxTokens: 1024,
+  });
+  expect(exhaustedReasoningBudget(directChat)).toBe(false);
   expectPong(`${inference.mode} direct chat`, directChat);
 
-  const sandboxChatJson = await retryHostedInference(
-    "Hermes sandbox inference.local chat",
-    async (attempt) => {
-      const result = await sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "curl",
-          "-fsS",
-          "--max-time",
-          "90",
-          "-H",
-          "Content-Type: application/json",
-          "--data-raw",
-          chatPayload(
-            inference.model,
-            "Reply with exactly one word: PONG",
-            attempt === 1 ? 256 : 1024,
-          ),
-          "https://inference.local/v1/chat/completions",
-        ],
-        {
-          artifactName: `phase-6-inference-local-chat-attempt-${attempt}`,
-          env: commandEnv(),
-          timeoutMs: 120_000,
-        },
-      );
-      if (result.exitCode !== 0) throw new Error(resultText(result));
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(result.stdout) as unknown;
-      } catch (error) {
-        throw new Error(
-          `Hermes sandbox inference.local chat response was not JSON: ${
-            error instanceof Error ? error.message : String(error)
-          }; body=${result.stdout.slice(0, 500)}`,
-        );
-      }
-      if (shouldRetryForReasoningBudget(parsed)) {
-        throw new Error("sandbox chat exhausted response budget while reasoning before PONG");
-      }
-      return parsed;
+  const sandboxChat = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "curl",
+      "-fsS",
+      "--max-time",
+      "90",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      chatPayload(inference.model, "Reply with exactly one word: PONG", 1024),
+      "https://inference.local/v1/chat/completions",
+    ],
+    {
+      artifactName: "phase-6-inference-local-chat",
+      env: commandEnv(),
+      timeoutMs: 120_000,
     },
   );
+  expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
+  const sandboxChatJson = JSON.parse(sandboxChat.stdout) as unknown;
+  expect(exhaustedReasoningBudget(sandboxChatJson)).toBe(false);
   expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
   progress.phase("validate CLI manifest and locked-config behavior");

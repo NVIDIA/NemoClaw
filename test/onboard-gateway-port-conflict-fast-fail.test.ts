@@ -118,7 +118,11 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       );
       expect(combined).not.toMatch(/occupied by unknown/);
       expect(combined).toMatch(/\(PID \d+\)/);
-      expect(combined).toMatch(/sudo kill \d+/);
+      expect(combined).toContain(
+        `sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`,
+      );
+      expect(combined).toContain("signal only the matching PID from that fresh result");
+      expect(combined).not.toMatch(/sudo kill \d+/);
     },
   );
 

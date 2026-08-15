@@ -4,11 +4,13 @@
 
 # Shared retry helpers for inference-switch E2Es. These tests still verify the
 # final OpenShell route, sandbox config, and live inference after this helper
-# returns. The --no-verify fallback is only used after verified route-setting
-# attempts fail with transient upstream/network symptoms.
+# returns. Exhausting the transient retry budget remains a verified failure.
 
 is_transient_inference_set_failure() {
-  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|failed to verify inference endpoint|502|503|504|temporar' <<<"$1"
+  if grep -qiE 'authentication failed|authorization failed|unauthorized|forbidden|HTTP 40[13]|(^|[^0-9])40[13]([^0-9]|$)|denied by network policy|network policy denied|policy (update |validation )?failed|malformed|invalid (provider|model|configuration|request|.*(credential|api[_ -]?key))|(model|route|verification) mismatch|expected (model|provider|route).*(got|found)' <<<"$1"; then
+    return 1
+  fi
+  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|(^|[^0-9])50[234]([^0-9]|$)' <<<"$1"
 }
 
 log_inference_switch_retry_info() {
@@ -21,8 +23,8 @@ log_inference_switch_retry_info() {
 
 run_inference_set_with_retry() {
   local attempts="${NEMOCLAW_SWITCH_SET_ATTEMPTS:-3}"
-  if ! [[ "$attempts" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'Invalid NEMOCLAW_SWITCH_SET_ATTEMPTS=%s; expected a positive integer.\n' "$attempts" >&2
+  if ! [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || [ "$attempts" -gt 10 ]; then
+    printf 'Invalid NEMOCLAW_SWITCH_SET_ATTEMPTS=%s; expected an integer between 1 and 10.\n' "$attempts" >&2
     return 2
   fi
   if [ "$#" -eq 0 ]; then
@@ -30,7 +32,7 @@ run_inference_set_with_retry() {
     return 2
   fi
 
-  local attempt rc output fallback_output
+  local attempt rc output
   local -a command=("$@")
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     output=$("${command[@]}" 2>&1)
@@ -41,13 +43,6 @@ run_inference_set_with_retry() {
     fi
 
     if ! is_transient_inference_set_failure "$output" || [ "$attempt" -ge "$attempts" ]; then
-      if is_transient_inference_set_failure "$output"; then
-        log_inference_switch_retry_info "Verified inference switch failed after ${attempts} transient attempt(s); retrying with --no-verify before live route checks..."
-        fallback_output=$("${command[@]}" --no-verify 2>&1)
-        rc=$?
-        printf '%s\n%s\n' "$output" "$fallback_output"
-        return "$rc"
-      fi
       printf '%s\n' "$output"
       return "$rc"
     fi

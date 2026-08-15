@@ -1,11 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+} from "../src/lib/onboard/docker-driver-gateway-config";
+import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../src/lib/onboard/docker-driver-gateway-runtime-marker";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
@@ -68,6 +77,57 @@ exit 0
         ...extraEnv,
       },
     });
+  }
+
+  function startManagedGatewayProcess(tmp: string): ChildProcess {
+    const stateDir = path.join(
+      tmp,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway",
+    );
+    const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+    fs.writeFileSync(
+      path.join(stateDir, "openshell-gateway.toml"),
+      buildDockerDriverGatewayConfigToml(
+        {
+          OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+          OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+          OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+        },
+        "/usr/bin/openshell-sandbox",
+        jwtBundle,
+        gatewayIdForStateDir(stateDir),
+      ),
+      { mode: 0o600 },
+    );
+    const processScript = path.join(tmp, "managed-gateway-process.mjs");
+    fs.writeFileSync(processScript, "setInterval(() => {}, 1_000);\n", { mode: 0o600 });
+    const child = spawn(
+      process.execPath,
+      [processScript, "--name", "nemoclaw", "--port", "8080"],
+      {
+        env: {
+          ...sanitizedParentEnv(),
+          [NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV]: gatewayIdForStateDir(stateDir),
+        },
+        stdio: "ignore",
+      },
+    );
+    const childPid = child.pid ?? (() => {
+      throw new Error("managed gateway fixture did not start");
+    })();
+    fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), `${String(childPid)}\n`, {
+      mode: 0o600,
+    });
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+      desiredEnv: {},
+      endpoint: "https://127.0.0.1:8080",
+      pid: childPid,
+    });
+    return child;
   }
 
   it("exits 0 and shows usage for --help", () => {
@@ -158,16 +218,17 @@ exit 0
     }
   }, 60_000);
 
-  it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", () => {
+  it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));
     const fakeBin = path.join(tmp, "bin");
     writeFakeTools(fakeBin);
+    const managedGateway = startManagedGatewayProcess(tmp);
     fs.writeFileSync(
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
-  "sandbox delete my-assistant")
+  "sandbox delete -g nemoclaw my-assistant")
     printf "Error: status: NotFound, sandbox 'my-assistant' not found\\n" >&2
     exit 1
     ;;
@@ -189,7 +250,10 @@ exit 0
       }),
     );
     try {
-      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
+      await once(managedGateway, "spawn");
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"], {
+        NEMOCLAW_OPENSHELL_GATEWAY_BIN: process.execPath,
+      });
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
@@ -197,6 +261,7 @@ exit 0
       expect(output).not.toMatch(/Selected gateway cleanup was incomplete/);
       expect(output).not.toMatch(/Uninstall completed with errors/);
     } finally {
+      managedGateway.kill("SIGKILL");
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }, 60_000);

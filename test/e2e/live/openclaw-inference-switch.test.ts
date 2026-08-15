@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -26,8 +27,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import {
   type CompatibleAnthropicSwitchBinding,
+  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
+  installGatewayHostVerificationAlias,
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -40,11 +43,14 @@ import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
+  writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   agentReplyContainsToken,
+  classifyOpenClawPostSwitchInferenceAttempt,
   MOCK_BASELINE_API_KEY,
   MOCK_BASELINE_MODEL,
   mockBaselineInference,
@@ -199,10 +205,6 @@ async function proveSelectedMockBaselineAuthentication(
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parsePortEnv(name: string, fallback: number): number {
@@ -426,7 +428,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
   }
   const port = (address as AddressInfo).port;
   return {
-    endpointUrl: `http://host.openshell.internal:${port}`,
+    endpointUrl: compatibleAnthropicMockEndpointUrl(port),
     close: () => closeServer(server),
   };
 }
@@ -577,10 +579,6 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
   expect(hashCheck.stdout.trim()).toBe("OK");
 }
 
-function isTransientLiveHttpCode(status: string): boolean {
-  return ["502", "503", "504"].includes(status);
-}
-
 function httpStatusFromResponse(response: string): string {
   return (
     response
@@ -625,6 +623,7 @@ function parseAnthropicContent(raw: string): string {
 
 async function checkSandboxInference(
   sandbox: SandboxClient,
+  artifacts: ArtifactSink,
   home: string,
 ): Promise<"ok" | { skipped: string }> {
   const payload =
@@ -658,43 +657,72 @@ async function checkSandboxInference(
     'exit "$rc"',
   ].join("\n");
 
-  let lastFailure = "not attempted";
-  let transient = false;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    transient = false;
-    const result = await sandboxShell(sandbox, home, script, {
-      artifactName: `sandbox-inference-local-after-switch-${attempt}`,
-      timeoutMs: INFERENCE_TIMEOUT_MS,
-    });
-    const response = resultText(result);
-    const httpCode = httpStatusFromResponse(response) || "000";
-    const body = httpBodyFromResponse(response);
+  const execution = await runBoundedRetry<{
+    classification: ReturnType<typeof classifyOpenClawPostSwitchInferenceAttempt>;
+    lastFailure: string;
+  }>({
+    operation: "openclaw-inference-switch.post-switch-inference",
+    owner: "inference-provider",
+    idempotence: "read-only",
+    maxAttempts: 3,
+    delayMs: 5_000,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/openclaw-post-switch-inference.json", evidence);
+    },
+    run: async (attempt) => {
+      const result = await sandboxShell(sandbox, home, script, {
+        artifactName: `sandbox-inference-local-after-switch-${attempt}`,
+        timeoutMs: INFERENCE_TIMEOUT_MS,
+      });
+      const response = resultText(result);
+      const httpCode = httpStatusFromResponse(response) || "000";
+      const body = httpBodyFromResponse(response);
+      let malformed = false;
+      let productMatched = false;
+      let lastFailure: string;
 
-    if (result.exitCode !== 0) {
-      transient = result.exitCode === 28;
-      lastFailure = `curl failed with exit ${result.exitCode}; HTTP ${httpCode}: ${body.slice(0, 300)}`;
-    } else if (isTransientLiveHttpCode(httpCode)) {
-      transient = true;
-      lastFailure = `transient HTTP ${httpCode}: ${body.slice(0, 300)}`;
-    } else if (httpCode !== "200") {
-      lastFailure = `HTTP ${httpCode}: ${body.slice(0, 300)}`;
-    } else {
-      const content =
-        SWITCH_INFERENCE_API === "anthropic-messages"
-          ? parseAnthropicContent(body)
-          : parseChatContent(body);
-      const responseModel = inferenceResponseModel(body);
-      const modelMatches = responseModel === SWITCH_MODEL;
-      if (modelMatches && /\bPONG\b/i.test(content)) return "ok";
-      lastFailure = modelMatches
-        ? `expected PONG, got ${content.slice(0, 300)}`
-        : `route not yet propagated: expected model ${SWITCH_MODEL}, got ${responseModel || "<missing>"}`;
-    }
+      if (result.exitCode !== 0) {
+        lastFailure = `curl failed (exit ${result.exitCode}); HTTP ${httpCode}: ${body.slice(0, 300)}`;
+      } else if (httpCode !== "200") {
+        lastFailure = `HTTP ${httpCode}: ${body.slice(0, 300)}`;
+      } else {
+        try {
+          const content =
+            SWITCH_INFERENCE_API === "anthropic-messages"
+              ? parseAnthropicContent(body)
+              : parseChatContent(body);
+          const responseModel = inferenceResponseModel(body);
+          const modelMatches = responseModel === SWITCH_MODEL;
+          productMatched = modelMatches && /\bPONG\b/iu.test(content);
+          lastFailure = modelMatches
+            ? `expected PONG, got ${content.slice(0, 300)}`
+            : `expected model ${SWITCH_MODEL}, got ${responseModel || "<missing>"}`;
+        } catch {
+          malformed = true;
+          lastFailure = `HTTP 200 response was not parseable JSON: ${body.slice(0, 300)}`;
+        }
+      }
 
-    if (attempt < 3) await sleep(5_000);
-  }
+      return {
+        classification: classifyOpenClawPostSwitchInferenceAttempt({
+          exitCode: result.exitCode,
+          httpStatus: httpCode,
+          malformed,
+          output: response,
+          productMatched,
+        }),
+        lastFailure,
+      };
+    },
+    classify: (value, error) =>
+      error !== undefined || !value
+        ? { outcome: "failed", failureClass: "deterministic" }
+        : value.classification,
+  });
 
-  if (transient) {
+  if (execution.outcome === "passed") return "ok";
+  const lastFailure = execution.value?.lastFailure ?? "probe failed without a result";
+  if (execution.evidence.outcome === "exhausted") {
     return {
       skipped: `Sandbox inference.local transient failure after switch; route/config checks already passed: ${lastFailure}`,
     };
@@ -866,6 +894,7 @@ async function runOpenClawInferenceSetWithRetry(
   home: string,
   redactionValues: string[],
   switchBinding: CompatibleAnthropicSwitchBinding | null,
+  artifacts: { writeJson(path: string, value: unknown): Promise<string> },
 ): Promise<ShellProbeResult> {
   const attempts = inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS);
   const compatibleCredentialEnv = (() => {
@@ -902,6 +931,7 @@ async function runOpenClawInferenceSetWithRetry(
 
   return runInferenceSetWithRetry({
     attempts,
+    onEvidence: (evidence) => writeInferenceSwitchRetryEvidence(artifacts, evidence),
     run: (attempt, verify) =>
       runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
         artifactName: verify
@@ -1063,6 +1093,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
     mockProvider = await startMockAnthropicProvider();
+    await installGatewayHostVerificationAlias(host, cleanup);
     await artifacts.writeJson("mock-anthropic-provider.json", {
       endpointUrl: mockProvider.endpointUrl,
     });
@@ -1088,6 +1119,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     home,
     redactionValues,
     switchBinding,
+    artifacts,
   );
   expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
   expect(
@@ -1114,7 +1146,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
   await assertRegistryAndSession(home, { mockProvider });
 
   progress.phase("prove inference.local and OpenClaw agent turns");
-  const inference = await checkSandboxInference(sandbox, home);
+  const inference = await checkSandboxInference(sandbox, artifacts, home);
   if (inference !== "ok") {
     await artifacts.target.complete({
       id: "openclaw-inference-switch",

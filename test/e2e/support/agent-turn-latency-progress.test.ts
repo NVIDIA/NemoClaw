@@ -16,6 +16,7 @@ import {
   bestEffortPreclean,
   cleanupTurnSandboxes,
   installSandbox,
+  turnLatencyInstallAttemptCount,
 } from "../live/agent-turn-latency-helpers.ts";
 
 function fakeInference(apiKey = "secret-api-key"): AgentTurnInference {
@@ -86,6 +87,18 @@ function failedProbe(stderr: string, timedOut = false): ShellProbeResult {
 describe("live test progress", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("rejects invalid configured install attempt counts", () => {
+    expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
+    for (let expected = 1; expected <= 10; expected += 1) {
+      expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
+    }
+    for (const value of ["0", "-1", "abc", "01", "11"]) {
+      expect(() => turnLatencyInstallAttemptCount(value)).toThrow(
+        /NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS must be an integer between 1 and 10/u,
+      );
+    }
   });
 
   it("reports semantic transitions and adds command-safe evidence only after a stall", () => {

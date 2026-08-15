@@ -498,7 +498,7 @@ describe("managed gateway port readiness (#7411)", () => {
     }
   });
 
-  it("names the foreign listener the unprivileged scan resolved and how to stop it (#9118)", async () => {
+  it("names the foreign listener and requires a fresh check before stopping it (#9118)", async () => {
     const foreignListener = net.createServer();
     await new Promise<void>((resolve, reject) => {
       foreignListener.once("error", reject);
@@ -525,7 +525,11 @@ describe("managed gateway port readiness (#7411)", () => {
 
       expect(observed.portConflictState).not.toBe("none");
       expect(observed.portConflictDetail).toContain(`python3 (PID ${process.pid})`);
-      expect(observed.portConflictDetail).toContain(`sudo kill ${process.pid}`);
+      expect(observed.portConflictDetail).toContain(
+        `sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`,
+      );
+      expect(observed.portConflictDetail).toContain("matching PID from that fresh result");
+      expect(observed.portConflictDetail).not.toContain(`sudo kill ${process.pid}`);
       expect(observed.portConflictDetail).not.toContain("occupied by unknown");
     } finally {
       await new Promise<void>((resolve) => foreignListener.close(() => resolve()));
@@ -544,7 +548,7 @@ describe("managed gateway port readiness (#7411)", () => {
     expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
   });
 
-  it("lists every listener and limits the stop command to the unverified listener (#9118)", () => {
+  it("lists every listener and requires a fresh check before stopping an unverified listener (#9118)", () => {
     const processNames = new Map([
       [100, "openshell-gateway"],
       [200, "python3"],
@@ -562,8 +566,33 @@ describe("managed gateway port readiness (#7411)", () => {
 
     expect(detail).toContain("openshell-gateway (PID 100), python3 (PID 200)");
     expect(detail).toContain("Confirm PID 200 is not another NemoClaw gateway");
-    expect(detail).toContain("sudo kill 200");
+    expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+    expect(detail).toContain("signal only the matching PID from that fresh result");
+    expect(detail).not.toContain("sudo kill 200");
     expect(detail).not.toContain("sudo kill 100");
+  });
+
+  it("requires fresh proof for every unverified listener before stopping multiple processes (#9118)", () => {
+    const processNames = new Map([
+      [200, "python3"],
+      [300, "node"],
+    ]);
+    const owners = describeGatewayPortOwners(
+      { pids: [], unverifiedPids: [200, 300] },
+      (pid) => processNames.get(pid) ?? null,
+    );
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "multiple-owners",
+      owners,
+    );
+
+    expect(detail).toContain("python3 (PID 200), node (PID 300)");
+    expect(detail).toContain("Confirm PIDs 200, 300 are not another NemoClaw gateway");
+    expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+    expect(detail).toContain("signal only the matching PIDs from that fresh result");
+    expect(detail).not.toContain("sudo kill");
   });
 
   it("recommends releasing a verified gateway environment without a process stop command (#9118)", () => {
