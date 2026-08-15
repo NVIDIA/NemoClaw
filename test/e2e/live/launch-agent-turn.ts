@@ -280,6 +280,19 @@ wait_for_turn_count() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
+wait_for_launch_readiness() {
+  for _ in {1..1800}; do
+    if grep -Fq -- "gateway connected | idle" "$capture"; then
+      return 0
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail_launch_session "launch did not report OpenClaw readiness"
+}
+
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not record the structured session baseline"
 fi
@@ -315,6 +328,7 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
+wait_for_launch_readiness
 printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3
 wait_for_turn_count 1
 printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3

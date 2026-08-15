@@ -26,6 +26,7 @@ import {
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
+  | "delayed-ready"
   | "invalid-order"
   | "nonzero"
   | "nonzero-cleanup-failure"
@@ -157,6 +158,19 @@ const append = (role, content) => fs.appendFileSync(
 );
 
 (async () => {
+  if (mode === "delayed-ready") {
+    process.stdout.write("starting gateway\n");
+    let inputBeforeReadiness = false;
+    const recordEarlyInput = () => { inputBeforeReadiness = true; };
+    process.stdin.on("data", recordEarlyInput);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    process.stdin.off("data", recordEarlyInput);
+    process.stdout.write("gateway connected | idle\n");
+    if (inputBeforeReadiness) process.exit(67);
+  } else {
+    process.stdout.write("gateway connected | idle\n");
+  }
+
   const first = await ask();
   if (mode === "invalid-order") {
     append("assistant", "response before input");
@@ -324,6 +338,21 @@ it.runIf(process.platform === "linux")(
       expect(result.signal).toBeNull();
       expect(result.status).toBe(0);
     }
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "waits for OpenClaw readiness before sending PTY input (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "delayed-ready",
+      "plain",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(0);
   },
 );
 
