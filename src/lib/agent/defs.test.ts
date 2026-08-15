@@ -65,7 +65,9 @@ describe("agent definitions", () => {
     expect(listAgents({})).not.toContain("pi");
     expect(getAgentChoices().map((choice) => choice.name)).not.toContain("pi");
     expect(resolveAgentNameAlias("pi", listAgents({}))).toBeNull();
-    expect(() => loadAgent("pi", {})).toThrow("Pi is not selectable in this release");
+    expect(() => loadAgent("pi", {})).toThrow(
+      "Agent 'pi' is a release candidate and is not selectable in this release",
+    );
   });
 
   it("does not let an ordinary environment setting expose Pi (#7925)", () => {
@@ -73,7 +75,22 @@ describe("agent definitions", () => {
 
     expect(listAgents(ordinaryEnv)).not.toContain("pi");
     expect(resolveAgentNameAlias("pi", listAgents(ordinaryEnv))).toBeNull();
-    expect(() => loadAgent("pi", ordinaryEnv)).toThrow("Pi is not selectable in this release");
+    expect(() => loadAgent("pi", ordinaryEnv)).toThrow(
+      "Agent 'pi' is a release candidate and is not selectable in this release",
+    );
+  });
+
+  it("selects Pi only through the protected candidate gate (#7927)", () => {
+    const candidateEnv = { NEMOCLAW_CANDIDATE_AGENTS: "1" };
+
+    expect(listAgents(candidateEnv)).toContain("pi");
+    expect(resolveAgentNameAlias("pi", listAgents(candidateEnv))).toBe("pi");
+    expect(loadAgent("pi", candidateEnv).name).toBe("pi");
+  });
+
+  it("keeps the candidate gate off for an unrelated environment value (#7927)", () => {
+    expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "0" })).not.toContain("pi");
+    expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "true" })).not.toContain("pi");
   });
 
   it("keeps the Pi candidate manifest readable without public resolution (#7925)", () => {

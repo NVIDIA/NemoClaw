@@ -47,6 +47,7 @@ import {
   isTerminalAgent,
   loadAgent,
   requireAgentPolicyAdditionsPath,
+  requireCandidateQualificationEnabled,
   resolveAgentName,
 } from "./defs";
 import { waitForAgentGatewayReady } from "./gateway-readiness";
@@ -184,6 +185,7 @@ export function resolveAgent({
   if (name === "nemocua" && !isCuaQualificationEnabled()) {
     throw new Error("NemoCUA candidate onboarding requires exact qualification authority");
   }
+  requireCandidateQualificationEnabled(name);
   return loadAgent(name);
 }
 

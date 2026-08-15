@@ -74,6 +74,8 @@ function dashboard(agent: ManagedStartupAgent): ManagedStartupDashboard {
       };
     case "langchain-deepagents-code":
       return { agent, mode: "disabled" };
+    case "pi":
+      return { agent, mode: "disabled" };
   }
 }
 
@@ -82,7 +84,7 @@ function actionInput(
   mode: "apply" | "clear" = "apply",
 ): ManagedStartupImageActionPlanInput {
   const messagingActions =
-    agent === "langchain-deepagents-code"
+    agent === "langchain-deepagents-code" || agent === "pi"
       ? []
       : [
           {

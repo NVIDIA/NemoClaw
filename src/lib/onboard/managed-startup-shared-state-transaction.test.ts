@@ -128,6 +128,9 @@ describe("managed startup shared-state transaction", () => {
         fs.mkdirSync(path.join(root, ".state"));
         fs.mkdirSync(path.join(root, "skills"));
       },
+      pi: () => {
+        fs.mkdirSync(path.join(root, "agent"));
+      },
     };
     createManagedDrift[agent]();
 
@@ -144,6 +147,7 @@ describe("managed startup shared-state transaction", () => {
       openclaw: [".config-hash"],
       hermes: [".config-hash"],
       "langchain-deepagents-code": [".state", "skills"],
+      pi: ["agent"],
     };
     for (const relativePath of absentManagedPaths[agent]) {
       expect(fs.existsSync(path.join(root, relativePath))).toBe(false);

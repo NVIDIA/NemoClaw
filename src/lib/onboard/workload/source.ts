@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isManagedImageAgent,
   isManagedImagePlatform,
   isShippedManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -63,6 +64,7 @@ export interface ResolveSandboxWorkloadSourceOptions {
   readonly runtime: SandboxWorkloadRuntimeCapabilities;
   readonly catalog: ManagedImageContractCatalog;
   readonly policy?: ManagedImageSelectionPolicy;
+  readonly candidateAgentsEnabled?: boolean;
 }
 
 export class SandboxWorkloadSourceError extends Error {
@@ -156,11 +158,19 @@ export function resolveSandboxWorkloadSource(
     return legacySource(options, "custom-dockerfile");
   }
 
-  if (!isShippedManagedImageAgent(options.agentName)) {
+  const agentName = options.agentName;
+  if (!isManagedImageAgent(agentName)) {
     return unavailableSource(
       options,
       "agent-not-managed",
       "the selected agent is not a shipped managed agent",
+    );
+  }
+  if (!isShippedManagedImageAgent(agentName) && options.candidateAgentsEnabled !== true) {
+    return unavailableSource(
+      options,
+      "agent-not-managed",
+      "the selected agent is a release candidate and candidate selection is disabled",
     );
   }
 
@@ -169,7 +179,7 @@ export function resolveSandboxWorkloadSource(
     return unavailableSource(options, "runtime-unsupported", runtimeSupportError);
   }
 
-  const candidate = options.catalog[options.agentName];
+  const candidate = options.catalog[agentName];
   if (candidate === undefined) {
     return unavailableSource(
       options,
@@ -186,7 +196,7 @@ export function resolveSandboxWorkloadSource(
   }
 
   try {
-    const contract = parseManagedImageContractV1(candidate, options.agentName, expectedPlatform);
+    const contract = parseManagedImageContractV1(candidate, agentName, expectedPlatform);
     return {
       kind: "managed-image",
       reference: contract.reference,
@@ -194,7 +204,7 @@ export function resolveSandboxWorkloadSource(
     };
   } catch (error) {
     throw new SandboxWorkloadSourceError(
-      `Managed image contract for '${options.agentName}' failed closed validation.`,
+      `Managed image contract for '${agentName}' failed closed validation.`,
       { cause: error },
     );
   }

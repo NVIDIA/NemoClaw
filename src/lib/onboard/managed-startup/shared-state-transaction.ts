@@ -340,6 +340,8 @@ function agentRoot(agent: ManagedStartupAgent, sandboxRoot: string): string {
       return path.join(sandboxRoot, ".hermes");
     case "langchain-deepagents-code":
       return path.join(sandboxRoot, ".deepagents");
+    case "pi":
+      return path.join(sandboxRoot, ".pi");
   }
 }
 
@@ -384,6 +386,10 @@ function managedOutputTargets(
       files.add(path.join(root, "config.toml"));
       directories.add(path.join(root, ".state"));
       directories.add(path.join(root, "skills"));
+      break;
+    case "pi":
+      directories.add(path.join(root, "agent"));
+      files.add(path.join(root, "agent", "models.json"));
       break;
   }
 

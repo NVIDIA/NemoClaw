@@ -50,6 +50,8 @@ function agentConfigFor(agent: ManagedStartupAgent): ManagedStartupAgentConfig {
       return { agent, webSearch: { enabled: false, provider: "tavily" } };
     case "langchain-deepagents-code":
       return { agent, autoApprovalMode: "thread-opt-in", observabilityEnabled: true };
+    case "pi":
+      return { agent };
   }
 }
 
@@ -101,10 +103,9 @@ function profileFor(
             internalPort: null,
             tuiEnabled: false as const,
           }
-        : {
-            agent,
-            mode: "disabled" as const,
-          };
+        : agent === "pi"
+          ? { agent, mode: "disabled" as const }
+          : { agent, mode: "disabled" as const };
   return {
     schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
     agent,

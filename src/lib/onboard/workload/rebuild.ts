@@ -10,9 +10,9 @@ import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   parseManagedImageContractV1,
-  type ShippedManagedImageAgent,
 } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
@@ -57,7 +57,7 @@ const HOST_PROXY_ENV_NAMES = [
 export interface ManagedWorkloadRebuildCatalogHandoff {
   readonly schemaVersion: 1;
   readonly providerId: string;
-  readonly agent: ShippedManagedImageAgent;
+  readonly agent: ManagedImageAgent;
   /** Exact authority retained until a replacement has become Ready. */
   readonly previousReceipt: ManagedWorkloadReceipt;
   readonly previousContract: ManagedImageContractV1;
