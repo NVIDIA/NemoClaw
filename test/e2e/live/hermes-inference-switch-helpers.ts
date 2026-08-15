@@ -18,6 +18,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import {
   type CompatibleAnthropicSwitchBinding,
+  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
   requireCompatibleAnthropicProviderAbsent,
@@ -79,14 +80,6 @@ export function compatibleAnthropicMetadataArgs(endpointUrl: string | null): str
   return endpointUrl
     ? ["--endpoint-url", endpointUrl, "--credential-env", "COMPATIBLE_ANTHROPIC_API_KEY"]
     : [];
-}
-
-export function mockAnthropicEndpointUrl(
-  port: number,
-  runtimeEnv: NodeJS.ProcessEnv = process.env,
-): string {
-  const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "host.openshell.internal";
-  return `http://${host}:${port}`;
 }
 
 export function openAiSurfaceEndpointUrl(endpointUrl: string): string {
@@ -536,7 +529,7 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
     throw new Error("mock Anthropic provider did not expose a TCP port");
   }
   return {
-    endpointUrl: mockAnthropicEndpointUrl((address as AddressInfo).port),
+    endpointUrl: compatibleAnthropicMockEndpointUrl((address as AddressInfo).port),
     close: () => closeServer(server),
   };
 }

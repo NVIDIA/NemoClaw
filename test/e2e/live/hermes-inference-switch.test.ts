@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
-import { withHostVerificationLoopbackAlias } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
@@ -192,15 +190,15 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   progress.phase("switch Hermes inference provider");
   const compatibleMetadataArgs = compatibleAnthropicMetadataArgs(switchEndpointUrl);
-  const switchInference = (commandHost: HostCliClient = host) =>
-    runHermesInferenceSetWithRetry(commandHost, redactionValues, compatibleMetadataArgs, {
+  const switched = await runHermesInferenceSetWithRetry(
+    host,
+    redactionValues,
+    compatibleMetadataArgs,
+    {
       artifacts,
       compatibleBinding: switchBinding,
-    });
-  const switched =
-    switchBinding && mockAnthropicSwitchEnabled()
-      ? await withHostVerificationLoopbackAlias(host, switchInference)
-      : await switchInference();
+    },
+  );
   expect(switched.exitCode, resultText(switched)).toBe(0);
   expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
   expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);

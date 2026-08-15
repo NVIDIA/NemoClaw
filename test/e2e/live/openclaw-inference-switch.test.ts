@@ -26,10 +26,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import {
   type CompatibleAnthropicSwitchBinding,
+  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
   requireCompatibleAnthropicProviderAbsent,
-  withHostVerificationLoopbackAlias,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
@@ -428,7 +428,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
   }
   const port = (address as AddressInfo).port;
   return {
-    endpointUrl: `http://host.openshell.internal:${port}`,
+    endpointUrl: compatibleAnthropicMockEndpointUrl(port),
     close: () => closeServer(server),
   };
 }
@@ -1087,17 +1087,13 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     gatewayRestartExpected ? "anthropic-messages" : "openai-completions",
   );
   const pidBefore = await openclawGatewayPid(sandbox, home);
-  const switchInference = (commandHost: HostCliClient = host) =>
-    runOpenClawInferenceSetWithRetry(
-      commandHost,
-      home,
-      redactionValues,
-      switchBinding,
-      artifacts,
-    );
-  const switchResult = mockProvider
-    ? await withHostVerificationLoopbackAlias(host, switchInference)
-    : await switchInference();
+  const switchResult = await runOpenClawInferenceSetWithRetry(
+    host,
+    home,
+    redactionValues,
+    switchBinding,
+    artifacts,
+  );
   expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
   expect(
     resultText(switchResult).includes(

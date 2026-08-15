@@ -1,22 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV,
   COMPATIBLE_ANTHROPIC_PROVIDER,
+  compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
-  HOST_VERIFICATION_NAMESPACE_SCRIPT,
   requireCompatibleAnthropicProviderAbsent,
-  withHostVerificationLoopbackAlias,
 } from "../fixtures/compatible-anthropic-switch.ts";
 
 describe("compatible Anthropic inference switch setup", () => {
@@ -53,45 +47,8 @@ describe("compatible Anthropic inference switch setup", () => {
     ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
   });
 
-  it("runs host verification inside a private resolver mount namespace", async () => {
-    const result = { exitCode: 0, stderr: "", stdout: "verified" };
-    const command = vi.fn().mockResolvedValue(result);
-    const commandEnv = { COMPATIBLE_ANTHROPIC_API_KEY: "fixture-key" };
-
-    await expect(
-      withHostVerificationLoopbackAlias(
-        { command } as unknown as HostCliClient,
-        (scopedHost) =>
-          scopedHost.command("node", ["nemoclaw.js", "inference", "set"], {
-            artifactName: "inference-set",
-            env: commandEnv,
-            redactionValues: ["fixture-key"],
-          }),
-      ),
-    ).resolves.toBe(result);
-
-    expect(command).toHaveBeenCalledOnce();
-    const [program, args, options] = command.mock.calls[0] ?? [];
-    expect(program).toBe("sudo");
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "unshare",
-        "--mount",
-        "--fork",
-        "/etc/hosts",
-        process.execPath,
-        "nemoclaw.js",
-        "inference",
-        "set",
-      ]),
-    );
-    expect(args).toContain("--preserve-env=COMPATIBLE_ANTHROPIC_API_KEY");
-    expect(args).not.toContain("fixture-key");
-    expect(options).toEqual({
-      artifactName: "inference-set",
-      env: commandEnv,
-      redactionValues: ["fixture-key"],
-    });
+  it("advertises the mock on the gateway host loopback (#9166)", () => {
+    expect(compatibleAnthropicMockEndpointUrl(18_766)).toBe("http://127.0.0.1:18766");
   });
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {
@@ -141,70 +98,5 @@ describe("compatible Anthropic inference switch setup", () => {
     await expect(requireCompatibleAnthropicProviderAbsent(host, options)).rejects.toThrow(
       "Could not prove",
     );
-  });
-});
-
-const linuxIt = process.platform === "linux" ? it : it.skip;
-
-describe("host verifier resolver namespace", () => {
-  function testFiles(): { directory: string; hostsPath: string; capturedPath: string } {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-verifier-test-"));
-    const hostsPath = path.join(directory, "hosts");
-    const capturedPath = path.join(directory, "hosts.private");
-    fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", { mode: 0o644 });
-    return { directory, hostsPath, capturedPath };
-  }
-
-  linuxIt("preserves an unrelated resolver write during private mount setup (#9166)", () => {
-    const files = testFiles();
-    const fakeBin = path.join(files.directory, "bin");
-    const fakeMount = path.join(fakeBin, "mount");
-    try {
-      fs.mkdirSync(fakeBin);
-      fs.writeFileSync(
-        fakeMount,
-        [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          '[[ "$1" == "--make-rprivate" ]] && exit 0',
-          '[[ "$1" == "--bind" ]]',
-          "printf '192.0.2.10 concurrent.example.test\\n' >> \"$NEMOCLAW_TEST_RESOLVER_SOURCE\"",
-          'cp -- "$2" "$NEMOCLAW_TEST_RESOLVER_COPY"',
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      const result = spawnSync(
-        "bash",
-        [
-          "-ceu",
-          HOST_VERIFICATION_NAMESPACE_SCRIPT,
-          "host-verifier-namespace-test",
-          files.hostsPath,
-          String(process.getuid?.()),
-          String(process.getgid?.()),
-          process.env.PATH ?? "/usr/bin:/bin",
-          "true",
-        ],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            NEMOCLAW_TEST_RESOLVER_COPY: files.capturedPath,
-            NEMOCLAW_TEST_RESOLVER_SOURCE: files.hostsPath,
-            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          },
-        },
-      );
-      expect(result.status, result.stderr).toBe(0);
-
-      expect(fs.readFileSync(files.hostsPath, "utf8")).toBe(
-        "127.0.0.1 localhost\n192.0.2.10 concurrent.example.test\n",
-      );
-      const privateResolver = fs.readFileSync(files.capturedPath, "utf8");
-      expect(privateResolver).toContain("127.0.0.1 host.openshell.internal");
-      expect(privateResolver).not.toContain("concurrent.example.test");
-    } finally {
-      fs.rmSync(files.directory, { force: true, recursive: true });
-    }
   });
 });

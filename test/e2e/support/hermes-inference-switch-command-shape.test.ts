@@ -22,7 +22,6 @@ import {
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
-  mockAnthropicEndpointUrl,
   mockAnthropicSwitchEnabled,
   openAiSurfaceEndpointUrl,
   openshellGatewayName,
@@ -108,15 +107,6 @@ describe("Hermes inference switch command shape", () => {
         NEMOCLAW_SWITCH_MODEL: "target-switch-model",
       }),
     ).toBe("initial-hosted-model");
-  });
-
-  it("advertises the mock through the OpenShell host alias", () => {
-    expect(mockAnthropicEndpointUrl(18_766, {})).toBe("http://host.openshell.internal:18766");
-    expect(
-      mockAnthropicEndpointUrl(18_766, {
-        NEMOCLAW_SWITCH_MOCK_HOST: "host.openshell.internal",
-      }),
-    ).toBe("http://host.openshell.internal:18766");
   });
 
   it("uses authenticated model inventory as baseline readiness evidence", () => {

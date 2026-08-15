@@ -7,55 +7,14 @@ import { resultText } from "./clients/index.ts";
 export const COMPATIBLE_ANTHROPIC_PROVIDER = "compatible-anthropic-endpoint";
 export const COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const DEFAULT_COMPATIBLE_ANTHROPIC_CREDENTIAL = "test-compatible-anthropic-key";
-const HOST_VERIFICATION_HOSTS_PATH = "/etc/hosts";
-
-export const HOST_VERIFICATION_NAMESPACE_SCRIPT = [
-  "set -euo pipefail",
-  "",
-  'hosts_path="$1"',
-  'run_uid="$2"',
-  'run_gid="$3"',
-  'command_path="$4"',
-  "shift 4",
-  'alias_name="host.openshell.internal"',
-  "",
-  '[[ "$run_uid" =~ ^[0-9]+$ ]] || { echo "invalid host verifier user ID" >&2; exit 2; }',
-  '[[ "$run_gid" =~ ^[0-9]+$ ]] || { echo "invalid host verifier group ID" >&2; exit 2; }',
-  '[[ "$#" -gt 0 ]] || { echo "host verifier command is required" >&2; exit 2; }',
-  '[[ -f "$hosts_path" && ! -L "$hosts_path" ]] || { echo "host resolver file is not a regular file" >&2; exit 2; }',
-  'command -v mount >/dev/null 2>&1 || { echo "mount is required for scoped host resolution" >&2; exit 2; }',
-  'command -v setpriv >/dev/null 2>&1 || { echo "setpriv is required for scoped host resolution" >&2; exit 2; }',
-  "",
-  'private_hosts="$(mktemp)"',
-  "trap 'rm -f \"$private_hosts\"' EXIT",
-  'cp --preserve=mode,ownership,timestamps -- "$hosts_path" "$private_hosts"',
-  "printf '\\n127.0.0.1 %s\\n' \"$alias_name\" >> \"$private_hosts\"",
-  "",
-  "# The private mount keeps the fixture alias inside this command's mount namespace.",
-  "# The host resolver file remains available to unrelated writers.",
-  'mount --make-rprivate /',
-  'mount --bind "$private_hosts" "$hosts_path"',
-  "",
-  'if [[ "$(id -u)" == "$run_uid" && "$(id -g)" == "$run_gid" ]]; then',
-  '  /usr/bin/env PATH="$command_path" "$@"',
-  "else",
-  '  /usr/bin/setpriv --reuid="$run_uid" --regid="$run_gid" --init-groups -- /usr/bin/env PATH="$command_path" "$@"',
-  "fi",
-].join("\n");
-
-function hostVerificationPreservedEnvNames(env: NodeJS.ProcessEnv | undefined): string[] {
-  return Object.keys(env ?? {})
-    .filter((name) =>
-      /^(?:CI|COMPATIBLE_ANTHROPIC_API_KEY|GITHUB_ACTIONS|HOME|LANG|LC_ALL|LC_CTYPE|LOGNAME|NEMOCLAW_[A-Z0-9_]+|OPENSHELL_GATEWAY|RUNNER_OS|RUNNER_TEMP|TERM|TMPDIR|TZ|USER)$/u.test(
-        name,
-      ),
-    )
-    .sort();
-}
 
 export interface CompatibleAnthropicSwitchBinding {
   endpointUrl: string;
   credentialValue: string;
+}
+
+export function compatibleAnthropicMockEndpointUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
 }
 
 export function compatibleAnthropicSwitchBinding(
@@ -82,51 +41,6 @@ export function compatibleAnthropicSwitchEnv(
   binding: CompatibleAnthropicSwitchBinding | null,
 ): NodeJS.ProcessEnv {
   return binding ? { [COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV]: binding.credentialValue } : {};
-}
-
-export async function withHostVerificationLoopbackAlias<T>(
-  host: HostCliClient,
-  run: (scopedHost: HostCliClient) => Promise<T>,
-): Promise<T> {
-  const uid = process.getuid?.();
-  const gid = process.getgid?.();
-  if (uid === undefined || gid === undefined) {
-    throw new Error("scoped host verification requires Linux user and group IDs");
-  }
-  const scopedHost = {
-    command: (
-      command: string,
-      args: string[] = [],
-      options: Parameters<HostCliClient["command"]>[2] = {},
-    ) => {
-      const preservedEnvNames = hostVerificationPreservedEnvNames(options.env);
-      const preserveEnvOption = `--preserve-env=${preservedEnvNames.join(",")}`;
-      const commandPath = options.env?.PATH ?? process.env.PATH ?? "/usr/bin:/bin";
-      const scopedCommand = command === "node" ? process.execPath : command;
-      return host.command(
-        "sudo",
-        [
-          preserveEnvOption,
-          "unshare",
-          "--mount",
-          "--fork",
-          "--",
-          "bash",
-          "-ceu",
-          HOST_VERIFICATION_NAMESPACE_SCRIPT,
-          "host-verifier-namespace",
-          HOST_VERIFICATION_HOSTS_PATH,
-          String(uid),
-          String(gid),
-          commandPath,
-          scopedCommand,
-          ...args,
-        ],
-        options,
-      );
-    },
-  } as HostCliClient;
-  return await run(scopedHost);
 }
 
 export async function requireCompatibleAnthropicProviderAbsent(
