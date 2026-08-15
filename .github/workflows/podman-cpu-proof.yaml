@@ -3,7 +3,7 @@
 
 name: Runtime / Podman CPU Proof
 
-run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }}"
+run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} commit ${{ github.event.pull_request.head.sha }}"
 
 on:
   pull_request:
@@ -15,6 +15,8 @@ on:
       - "src/lib/onboard/docker-driver-gateway-*.ts"
       - "src/lib/onboard/managed-bootstrap/podman-*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
+      - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
+      - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
       - "test/e2e/live/podman-cpu-lifecycle-artifacts.ts"

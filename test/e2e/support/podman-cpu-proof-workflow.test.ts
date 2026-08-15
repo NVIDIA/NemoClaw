@@ -33,8 +33,8 @@ function namedStep(name: string): WorkflowStep {
 }
 
 describe("native Podman CPU proof workflow", () => {
-  // source-shape-contract: security -- Exact checkout and package pins bind the credential-free Podman proof to the reported PR head and reviewed runtime bytes
-  it("runs as a credential-free exact-head PR workflow", () => {
+  // source-shape-contract: security -- Checkout binding and package pins bind the credential-free Podman proof to the commit under review and its runtime bytes
+  it("runs as a credential-free PR workflow bound to the commit under review", () => {
     const parsed = workflow();
     const job = proofJob();
 
@@ -45,6 +45,12 @@ describe("native Podman CPU proof workflow", () => {
     expect(parsed.on.pull_request.paths).toContain("src/lib/onboard/managed-bootstrap/podman-*.ts");
     expect(parsed.on.pull_request.paths).toContain(
       "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/runtime-provider/container-state-mutation.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
     );
     expect(parsed.on.pull_request.paths).toContain("scripts/install-openshell.sh");
     expect(parsed.on.pull_request.paths).toContain(
