@@ -298,24 +298,34 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 CORRELATION_ID="${CORRELATION_ID:-$(tr '[:upper:]' '[:lower:]' </proc/sys/kernel/random/uuid)}"
+IMAGE_ONLY="${NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY:-0}"
+[[ "$IMAGE_ONLY" =~ ^[01]$ ]] || die "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1"
 for name in WORK_DIR CANDIDATE_SHA CORRELATION_ID GH_TOKEN GITHUB_RUN_ID \
-  GITHUB_RUN_ATTEMPT BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
+  GITHUB_RUN_ATTEMPT; do
   require "$name"
 done
-for tool in brev gh jq mktemp python3 sed ssh timeout; do
+for tool in gh jq; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "candidate SHA is not canonical"
 [[ "$CORRELATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || die "correlation ID is not a UUIDv4"
-[[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
-[[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
-if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
-  && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-  die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
-fi
-if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-  die "POLL_SECONDS must be a positive integer"
+if [ "$IMAGE_ONLY" -eq 0 ]; then
+  for name in BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
+    require "$name"
+  done
+  for tool in brev mktemp python3 sed ssh timeout; do
+    command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
+  done
+  [[ "$INSTANCE_NAME" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "workspace name is unsafe"
+  [[ "$BREV_LAUNCHABLE_ID" =~ ^env-[A-Za-z0-9]+$ ]] || die "Launchable ID is unsafe"
+  if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
+    && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+  fi
+  if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    die "POLL_SECONDS must be a positive integer"
+  fi
 fi
 : >"$WORK_DIR/lane.log"
 log "Candidate $CANDIDATE_SHA"
@@ -378,6 +388,35 @@ jq -e --arg sha "$CANDIDATE_SHA" --arg correlation "$CORRELATION_ID" \
 expected_boot_image="projects/$(jq -er .project "$manifest")/global/images/$(jq -er .imageName "$manifest")"
 image_repository_sha="$(jq -er .imageRepositorySha "$manifest")"
 rm -rf "$WORK_DIR/handoff"
+
+if [ "$IMAGE_ONLY" -eq 1 ]; then
+  jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
+    --arg imageUri "$expected_boot_image" --arg imageRepositorySha "$image_repository_sha" '
+    {
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-image-v1",
+      candidateSha: $candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: $producerRun,
+        status: "success"
+      },
+      image: {
+        uri: $imageUri,
+        family: "nemoclaw-brev-staging-cpu",
+        imageRepositorySha: $imageRepositorySha
+      },
+      validation: {
+        launchable: "not-run",
+        runtime: "not-run",
+        inference: "not-run"
+      }
+    }' >"$WORK_DIR/launchable-image.json"
+  log "Published staging Launchable image $expected_boot_image"
+  log "Launchable deployment, runtime, and inference validation did not run"
+  exit 0
+fi
 
 # The standing Launchable resolves the staging family. Give that reference time to
 # observe the family update before deploying it.

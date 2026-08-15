@@ -53,7 +53,7 @@ Before asking for the release confirmation phrase, require a completed, successf
 
 - `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
 - Push runs publish `Relevant E2E`; only full manual runs dispatched against `main` with empty selectors publish `Release qualification`.
-- By default, the check requires every default-required workflow E2E result to succeed, including `Exact staging Brev Launchable`.
+- By default, the check requires every default-required workflow result to succeed, including `Publish staging Brev Launchable image`.
 - A repository administrator may waive one or more release-required E2E execution jobs with `release_qualification_waived_jobs` and `release_qualification_waiver_reason`.
 - `release_qualification_waived_jobs` is a comma-separated list of requested job IDs.
 - The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
@@ -68,7 +68,8 @@ Before asking for the release confirmation phrase, require a completed, successf
 - A normal full run must conclude with `success`.
 - An administrator-waived full run may conclude with `failure` when a waived execution job fails, `Release qualification` succeeds, and the waiver artifact binds that failure to the candidate, run, actors, reason, and canonical waived job IDs.
 - `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` remain separate opt-in work and do not block this check.
-- A successful Launchable job proves the candidate checkout, in-guest full E2E result, and cleanup. Its artifacts are diagnostic evidence, not a second status ledger.
+- A successful Launchable image job proves that the producer published the exact candidate image to the staging family. Its `launchable-image.json` artifact records Launchable, runtime, and inference validation as not run.
+- Manual staging Launchable validation is advisory while issue #8924 blocks the automated deployment path. A missing, partial, or failed manual result does not block the release tag and must not be reported as an automated E2E pass.
 - A skipped, queued, in-progress, cancelled, or failed `Release qualification` check is not release evidence.
 - A check from another commit SHA is not release evidence.
 - Use an existing qualifying pre-tag run for the candidate SHA; run `nemoclaw-maintainer-e2e` in full mode when none exists, with an administrator-authorized job waiver when required.

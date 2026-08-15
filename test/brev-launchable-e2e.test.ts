@@ -280,6 +280,72 @@ function emittedOutput(result: ReturnType<typeof run>, workDir: string): string 
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("publishes exact image evidence without Brev or inference access (#8924)", () => {
+    const { calls, env, state, workDir } = fixture();
+    const imageOnlyEnv: NodeJS.ProcessEnv = {
+      ...env,
+      NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+    };
+    delete imageOnlyEnv.BREV_API_KEY;
+    delete imageOnlyEnv.BREV_LAUNCHABLE_ID;
+    delete imageOnlyEnv.INSTANCE_NAME;
+    delete imageOnlyEnv.NVIDIA_INFERENCE_API_KEY;
+    const result = run(imageOnlyEnv);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.match(/\/dispatches/gu)).toHaveLength(1);
+    expect(commands).not.toMatch(/\bbrev\b|\bssh\b|sleep 300|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readdirSync(workDir).sort()).toEqual(["lane.log", "launchable-image.json"]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-image.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-image-v1",
+      candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: "123",
+        status: "success",
+      },
+      image: {
+        uri: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        family: "nemoclaw-brev-staging-cpu",
+        imageRepositorySha: "b".repeat(40),
+      },
+      validation: {
+        launchable: "not-run",
+        runtime: "not-run",
+        inference: "not-run",
+      },
+    });
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Launchable deployment, runtime, and inference validation did not run",
+    );
+
+    const wrongReceipt = fixture({ receiptSha: "b".repeat(40) });
+    const wrongResult = run({
+      ...wrongReceipt.env,
+      NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+    });
+    expect(wrongResult.status).not.toBe(0);
+    expect(wrongResult.stderr).toContain("producer receipt does not match the candidate");
+    expect(fs.readFileSync(wrongReceipt.calls, "utf8")).not.toMatch(/\bbrev\b|\bssh\b/u);
+    expect(fs.existsSync(path.join(wrongReceipt.workDir, "launchable-image.json"))).toBe(false);
+  });
+
+  it("rejects an invalid image-publication mode before dispatch (#8924)", () => {
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "yes" });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(
+      "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1",
+    );
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
     const { calls, env, sshAttempts, state, workDir } = fixture({ sshReadyAfter: 6 });
     const result = run(env);

@@ -101,10 +101,7 @@ function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep
   );
 }
 
-function isExactReleaseQualificationWaiverUpload(
-  jobName: string,
-  step: WorkflowStep,
-): boolean {
+function isExactReleaseQualificationWaiverUpload(jobName: string, step: WorkflowStep): boolean {
   return (
     jobName === "release-qualification" &&
     isDeepStrictEqual(step, RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT)
@@ -139,9 +136,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
-        "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
-        "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
-        "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-image.json",
         "",
       ].join("\n"),
     },
