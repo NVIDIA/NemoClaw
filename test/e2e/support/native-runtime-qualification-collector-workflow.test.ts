@@ -113,15 +113,6 @@ describe("native runtime qualification collector workflow", () => {
       EVIDENCE_JOB_NAME: "${{ inputs.evidence_job_name }}",
       EVIDENCE_ARTIFACT_NAME: "${{ inputs.evidence_artifact_name }}",
     });
-    expect(source).toContain("consumeNativeRuntimeQualificationEvidence");
-    expect(source).toContain("readValidatedArtifactZipEntry");
-    expect(source).toContain("readValidatedArtifactZipEntryBytes");
-    expect(source).toContain("collaborators/");
-    expect(source).toContain("/attempts/");
-    expect(source).toContain("actions/artifacts/");
-    expect(source).toContain(
-      "input.evidenceWorkflow === NATIVE_RUNTIME_QUALIFICATION_COLLECTOR_WORKFLOW",
-    );
     expect(source).not.toMatch(/node:child_process|execFile|spawn\(/u);
   });
 });

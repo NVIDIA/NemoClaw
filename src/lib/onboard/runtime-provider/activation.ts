@@ -5,9 +5,11 @@ import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
-import type {
-  NativeRuntimeQualificationAuthority,
-  NativeRuntimeQualificationExpectedSource,
+import {
+  NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
+  NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
+  type NativeRuntimeQualificationAuthority,
+  type NativeRuntimeQualificationExpectedSource,
 } from "./native-qualification-authority";
 import {
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
@@ -47,8 +49,6 @@ export const RUNTIME_PROVIDER_ACTIVATION_TRANSPORTS = ["operation-scoped", "sock
 const QUALIFICATION_ID = /^[a-z][a-z0-9-]{0,62}-protected-host-local-inference$/u;
 const SOURCE_REVISION = /^[a-f0-9]{40}$/u;
 const SOURCE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
-const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const WORKFLOW = /^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/u;
 const ARTIFACT_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
 const REQUIRED_MUTATIONS = [
@@ -225,10 +225,15 @@ function validatedQualificationSource(
     `${label} candidate repository`,
   );
   if (
-    repository !== "NVIDIA/NemoClaw" ||
-    !REPOSITORY.test(repository) ||
-    !REPOSITORY.test(candidateRepository) ||
-    !WORKFLOW.test(workflow) ||
+    repository !== NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY ||
+    workflow !== NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW ||
+    candidateRepository !== NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY
+  ) {
+    throw new RuntimeProviderActivationError(
+      `${label} must bind the protected qualification repository and producer workflow`,
+    );
+  }
+  if (
     source.baseRef !== "main" ||
     typeof source.headSha !== "string" ||
     !SOURCE_REVISION.test(source.headSha) ||
@@ -273,21 +278,7 @@ function sameQualificationSource(
   left: NativeRuntimeQualificationExpectedSource,
   right: NativeRuntimeQualificationExpectedSource,
 ): boolean {
-  return (
-    left.repository === right.repository &&
-    left.workflow === right.workflow &&
-    left.pullRequestNumber === right.pullRequestNumber &&
-    left.candidateRepository === right.candidateRepository &&
-    left.headSha === right.headSha &&
-    left.baseRef === right.baseRef &&
-    left.baseSha === right.baseSha &&
-    left.runId === right.runId &&
-    left.attempt === right.attempt &&
-    left.jobId === right.jobId &&
-    left.artifact.id === right.artifact.id &&
-    left.artifact.name === right.artifact.name &&
-    left.artifact.digest === right.artifact.digest
-  );
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function validatedQualificationAuthority(
@@ -525,6 +516,11 @@ function validatedRegistration(
     registration.qualificationAuthority,
   );
   const providerId = registration.declaration.providerId;
+  if (registration.bundle.identity.id !== providerId) {
+    throw new RuntimeProviderActivationError(
+      `declaration '${providerId}' does not match its provider bundle`,
+    );
+  }
   const validated = createRuntimeProviderBundleRegistry([[providerId, registration.bundle]])[
     providerId
   ];

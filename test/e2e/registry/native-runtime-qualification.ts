@@ -3,6 +3,10 @@
 
 import { createHash } from "node:crypto";
 
+export {
+  NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
+  NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
+} from "../../../src/lib/onboard/runtime-provider/native-qualification-authority";
 import type {
   NativeRuntimeQualificationAuthority,
   NativeRuntimeQualificationExpectedSource,

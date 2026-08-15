@@ -4,6 +4,8 @@
 import { createHash } from "node:crypto";
 
 import {
+  NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
+  NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
   PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
   type NativeRuntimeQualificationDefinition,
   type NativeRuntimeQualificationEvidenceEnvelope,
@@ -26,10 +28,10 @@ export function nativeQualificationReceiptReader(): Buffer {
 
 export function nativeQualificationExpectedSource(): NativeRuntimeQualificationExpectedSource {
   return {
-    repository: "NVIDIA/NemoClaw",
-    workflow: ".github/workflows/native-runtime-qualification.yaml",
+    repository: NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
+    workflow: NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
     pullRequestNumber: 9143,
-    candidateRepository: "NVIDIA/NemoClaw",
+    candidateRepository: NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
     headSha: NATIVE_QUALIFICATION_HEAD_SHA,
     baseRef: "main",
     baseSha: NATIVE_QUALIFICATION_BASE_SHA,

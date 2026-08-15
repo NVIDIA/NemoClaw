@@ -7,6 +7,11 @@
  * an authority receipt; activation must match the receipt to its independently
  * required source identity.
  */
+export const NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY = "NVIDIA/NemoClaw";
+/** The trusted collector is separate and rejects evidence emitted by its own workflow. */
+export const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW =
+  ".github/workflows/native-runtime-qualification.yaml";
+
 export interface NativeRuntimeQualificationProtectedRun {
   readonly repository: string;
   readonly workflow: string;

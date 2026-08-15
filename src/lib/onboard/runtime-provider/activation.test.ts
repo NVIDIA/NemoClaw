@@ -158,6 +158,7 @@ function registration(
   topology: CandidateTopology = CANDIDATE_TOPOLOGIES[1],
   bundle: RuntimeProviderBundle = completeBundle(topology.providerId),
 ): RuntimeProviderActivationRegistration {
+  const requiredSource = nativeQualificationExpectedSource();
   const authority = qualificationAuthority(topology.providerId);
   return {
     declaration: {
@@ -175,10 +176,10 @@ function registration(
       journeys: [...RUNTIME_PROVIDER_ACTIVATION_JOURNEYS],
       installer: { releaseInstaller: true, dockerUnavailable: true },
       qualification: {
-        qualificationId: authority.qualificationId,
+        qualificationId: `${topology.providerId}-protected-host-local-inference`,
         source: {
-          ...authority.source,
-          artifact: { ...authority.source.artifact },
+          ...requiredSource,
+          artifact: { ...requiredSource.artifact },
         },
       },
     },
@@ -317,7 +318,7 @@ describe("runtime provider activation catalog", () => {
     },
   );
 
-  it("rejects a partial lifecycle capability set", () => {
+  it("rejects incomplete host-local inference authority", () => {
     const candidate = CANDIDATE_TOPOLOGIES[1];
     const bundle = completeBundle(candidate.providerId);
     const incomplete = {
@@ -385,6 +386,24 @@ describe("runtime provider activation catalog", () => {
 
     expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
       "does not match the required source identity",
+    );
+  });
+
+  it("rejects qualification authority from a different producer workflow", () => {
+    const candidate = registration();
+    const mismatched = {
+      ...candidate,
+      qualificationAuthority: {
+        ...candidate.qualificationAuthority,
+        source: {
+          ...candidate.qualificationAuthority.source,
+          workflow: ".github/workflows/untrusted-native-qualification.yaml",
+        },
+      },
+    } as RuntimeProviderActivationRegistration;
+
+    expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
+      "must bind the protected qualification repository and producer workflow",
     );
   });
 });

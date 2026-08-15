@@ -41,16 +41,26 @@ describe("validated GitHub artifact ZIP reader", () => {
     expect(readValidatedArtifactZipEntry(archive, "log.txt", { maxBytes: 1_024 })).toBeNull();
   });
 
-  it.each(["/summary.json", "../summary.json", "diagnostics/../summary.json", "a\\b"])(
-    "rejects unsafe requested path %s",
-    (requestedPath) => {
-      const archive = artifactZip([{ name: "summary.json", contents: '{"safe":true}' }]);
+  it.each([
+    ["empty", ""],
+    ["absolute", "/summary.json"],
+    ["parent", "../summary.json"],
+    ["nested parent", "diagnostics/../summary.json"],
+    ["backslash", "a\\b"],
+    ["empty segment", "diagnostics//log.txt"],
+    ["dot segment", "diagnostics/./log.txt"],
+    ["trailing slash", "diagnostics/"],
+    ["NUL byte", "diagnostics/\0log.txt"],
+  ])("rejects unsafe requested path with %s", (_case, requestedPath) => {
+    const archive = artifactZip([
+      { name: requestedPath, contents: "unsafe" },
+      { name: "summary.json", contents: '{"safe":true}' },
+    ]);
 
-      expect(
-        readValidatedArtifactZipEntryBytes(archive, requestedPath, { maxBytes: 1_024 }),
-      ).toBeNull();
-    },
-  );
+    expect(
+      readValidatedArtifactZipEntryBytes(archive, requestedPath, { maxBytes: 1_024 }),
+    ).toBeNull();
+  });
 
   it("rejects duplicate target entries and payloads over the caller's bound", () => {
     expect(
