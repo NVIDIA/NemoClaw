@@ -182,6 +182,7 @@ function staticPropertyName(name: ts.PropertyName): string | null {
   ) {
     return name.text;
   }
+  if (!ts.isComputedPropertyName(name)) return null;
   const expression = unwrapTransparentExpression(name.expression);
   if (
     ts.isStringLiteral(expression) ||
