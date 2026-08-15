@@ -57,6 +57,9 @@ type DestroyHarnessOptions = {
   deleteOutput?: string;
   deleteStatus?: number;
   dockerPsOutput?: string;
+  dockerOrphanIds?: string[];
+  dockerOrphanQueryStatus?: number | null;
+  dockerRemoveStatus?: number | null;
   dockerRunResult?: { status: number | null; stdout?: string; stderr?: string };
   dockerRunResultSequence?: Array<{
     status: number | null;
@@ -345,8 +348,28 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
   let identityProbeCall = 0;
+  let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
   const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
+    const isDockerOrphanQuery =
+      argv[0] === "ps" &&
+      argv.includes("label=openshell.ai/managed-by=openshell") &&
+      argv.includes("label=openshell.ai/sandbox-name=alpha") &&
+      argv.at(-1) === "{{.ID}}";
+    if (isDockerOrphanQuery) {
+      return {
+        status: options.dockerOrphanQueryStatus ?? 0,
+        stdout: dockerOrphanIds.join("\n"),
+        stderr: "",
+      } as ReturnType<typeof dockerRun.dockerRun>;
+    }
+    if (argv[0] === "rm" && argv[1] === "-f") {
+      const status = options.dockerRemoveStatus ?? 0;
+      if (status === 0) {
+        dockerOrphanIds = dockerOrphanIds.filter((id) => id !== argv[2]);
+      }
+      return { status, stdout: "", stderr: "" } as ReturnType<typeof dockerRun.dockerRun>;
+    }
     const filterIndex = argv.indexOf("--filter");
     const isIdentityProbe =
       argv[0] === "ps" &&
