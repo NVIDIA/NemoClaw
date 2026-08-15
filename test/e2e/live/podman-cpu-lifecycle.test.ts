@@ -140,6 +140,32 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
   } as const;
 
   progress.phase("prove cold activation and warm API readiness");
+  const proofServicePid = process.env.E2E_PODMAN_SERVICE_PID ?? "";
+  expect(proofServicePid).toMatch(/^[1-9][0-9]*$/u);
+  await runCommand(
+    shellProbe,
+    "bash",
+    [
+      "-ceu",
+      `
+pid="$1"
+kill "$pid"
+for _attempt in $(seq 1 100); do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    exit 0
+  fi
+  sleep 0.1
+done
+printf 'Podman proof service %s did not stop\n' "$pid" >&2
+exit 1
+`,
+      "podman-proof-service-stop",
+      proofServicePid,
+    ],
+    { artifactName: "podman-lifecycle-stop-proof-service", timeoutMs: 15_000 },
+  );
+  expect(fs.existsSync(`/proc/${proofServicePid}`)).toBe(false);
+  fs.rmSync(SOCKET_PATH, { force: true });
   await runCommand(
     shellProbe,
     "systemctl",
