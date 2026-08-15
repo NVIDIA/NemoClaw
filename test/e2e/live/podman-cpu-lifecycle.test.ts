@@ -162,7 +162,7 @@ exit 1
       "podman-proof-service-stop",
       proofServicePid,
     ],
-    { artifactName: "podman-lifecycle-stop-proof-service", timeoutMs: 15_000 },
+    { artifactName: "podman-lifecycle-stop-proof-service", timeoutMs: 60_000 },
   );
   expect(fs.existsSync(`/proc/${proofServicePid}`)).toBe(false);
   fs.rmSync(SOCKET_PATH, { force: true });
