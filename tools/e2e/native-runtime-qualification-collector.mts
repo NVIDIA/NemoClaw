@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  closeSync,
+  constants,
+  fstatSync,
   mkdirSync,
-  lstatSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -341,16 +344,38 @@ export function aggregateNativeRuntimeQualificationCases(
 }
 
 function readJsonFile(file: string): unknown {
-  const status = lstatSync(file, { throwIfNoEntry: false });
-  if (!status?.isFile() || status.size < 1 || status.size > 1_048_576) {
+  let descriptor: number;
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
     throw new Error(
       `Native runtime qualification file is missing or outside its size limit: ${file}`,
     );
   }
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as unknown;
-  } catch {
-    throw new Error(`Native runtime qualification JSON is invalid: ${file}`);
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size < 1 || before.size > 1_048_576) {
+      throw new Error(
+        `Native runtime qualification file is missing or outside its size limit: ${file}`,
+      );
+    }
+    const source = readFileSync(descriptor, "utf8");
+    const after = fstatSync(descriptor);
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs
+    ) {
+      throw new Error(`Native runtime qualification file changed while it was read: ${file}`);
+    }
+    try {
+      return JSON.parse(source) as unknown;
+    } catch {
+      throw new Error(`Native runtime qualification JSON is invalid: ${file}`);
+    }
+  } finally {
+    closeSync(descriptor);
   }
 }
 
