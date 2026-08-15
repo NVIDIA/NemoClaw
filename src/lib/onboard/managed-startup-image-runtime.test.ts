@@ -73,6 +73,7 @@ function dashboard(agent: ManagedStartupAgent): ManagedStartupDashboard {
         tuiEnabled: false,
       };
     case "langchain-deepagents-code":
+    case "pi":
       return { agent, mode: "disabled" };
   }
 }
@@ -81,20 +82,21 @@ function actionInput(
   agent: ManagedStartupAgent,
   mode: "apply" | "clear" = "apply",
 ): ManagedStartupImageActionPlanInput {
+  const messagingAgent = agent === "openclaw" || agent === "hermes" ? agent : null;
   const messagingActions =
-    agent === "langchain-deepagents-code"
+    messagingAgent === null
       ? []
       : [
           {
             kind: "apply-messaging-plan" as const,
-            agent,
+            agent: messagingAgent,
             mode,
             phase: "runtime-setup" as const,
             runAs: "root" as const,
           },
           {
             kind: "apply-messaging-plan" as const,
-            agent,
+            agent: messagingAgent,
             mode,
             phase: "post-agent-install" as const,
             runAs: "sandbox" as const,

@@ -545,6 +545,54 @@ function mapDcodeProfile(
   });
 }
 
+function mapPiProfile(
+  profile: ManagedStartupProfile,
+  environment: ApplicationEnvironment,
+): ManagedStartupAgentEnvironment {
+  if (
+    profile.agent !== "pi" ||
+    profile.agentConfig.agent !== "pi" ||
+    profile.dashboard.agent !== "pi" ||
+    profile.dashboard.mode !== "disabled" ||
+    profile.messaging.plan !== null ||
+    profile.inference.api !== "openai-completions" ||
+    profile.inference.primaryModelRef !== null ||
+    profile.inference.compatibility !== null ||
+    profile.inference.inputModalities !== null ||
+    profile.inference.upstreamEndpointUrl !== null ||
+    profile.tuning.contextWindow === null ||
+    profile.tuning.maxTokens === null ||
+    profile.tuning.reasoning === null ||
+    profile.tuning.reasoningEffort === null
+  ) {
+    throw new ManagedStartupAgentEnvironmentError("Pi profile state is inconsistent");
+  }
+
+  const configurationEnvironment: MutableEnvironment = {
+    ...commonConfigurationEnvironment(profile),
+    NEMOCLAW_CONTEXT_WINDOW: String(profile.tuning.contextWindow),
+    NEMOCLAW_MAX_TOKENS: String(profile.tuning.maxTokens),
+    NEMOCLAW_REASONING: String(profile.tuning.reasoning),
+    NEMOCLAW_REASONING_EFFORT: profile.tuning.reasoningEffort,
+  };
+  const runtimeEnvironment: MutableEnvironment = {
+    ...configurationEnvironment,
+    NEMOCLAW_PROXY_HOST: profile.proxy.managedHost,
+    NEMOCLAW_PROXY_PORT: String(profile.proxy.managedPort),
+  };
+  appendHostProxyEnvironment(runtimeEnvironment, profile, { preserveAmbientWhenAbsent: true });
+
+  return Object.freeze({
+    schemaVersion: profile.schemaVersion,
+    agent: profile.agent,
+    configurationEnvironment: sortedEnvironment(configurationEnvironment),
+    runtimeEnvironment: sortedEnvironment(runtimeEnvironment),
+    applicationRuntime: applicationRuntimePlan(profile, environment),
+    materials: Object.freeze([corporateCaMaterial(profile)]),
+    actions: applicationActions(profile, null),
+  });
+}
+
 /**
  * Convert a secret-free validated profile into existing agent-generator and
  * entrypoint inputs without depending on Docker, Podman, or another compute
@@ -563,5 +611,7 @@ export function mapManagedStartupProfileToAgentEnvironment(
       return mapHermesProfile(validated, environment);
     case "langchain-deepagents-code":
       return mapDcodeProfile(validated, environment);
+    case "pi":
+      return mapPiProfile(validated, environment);
   }
 }

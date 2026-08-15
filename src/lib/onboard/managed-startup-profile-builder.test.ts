@@ -138,6 +138,34 @@ function dcodeInput(
   };
 }
 
+function piInput(
+  overrides: Partial<ManagedStartupProfileBuilderInput> = {},
+): ManagedStartupProfileBuilderInput {
+  return {
+    agent: "pi",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: { agent: "pi", mode: "disabled" },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    environment: {},
+    corporateCa: null,
+    ...overrides,
+  };
+}
+
 describe("buildManagedStartupProfile", () => {
   it("parses and hydrates messaging before exposing the validated transport handoff", () => {
     const compactPlan = {
@@ -440,6 +468,73 @@ describe("buildManagedStartupProfile", () => {
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
   });
 
+  it("builds Pi with exact Chat Completions capabilities and serialized tuning", () => {
+    const built = buildManagedStartupProfile(
+      piInput({
+        environment: {
+          NEMOCLAW_CONTEXT_WINDOW: "262144",
+          NEMOCLAW_MAX_TOKENS: "32768",
+          NEMOCLAW_REASONING: "true",
+          NEMOCLAW_REASONING_EFFORT: "high",
+        },
+      }),
+    );
+    expect(built.profile).toMatchObject({
+      agent: "pi",
+      agentConfig: {
+        agent: "pi",
+        requiresStreaming: true,
+        requiresStructuredToolCalls: true,
+      },
+      inference: {
+        routeProvider: "inference",
+        routedBaseUrl: "https://inference.local/v1",
+        api: "openai-completions",
+        primaryModelRef: null,
+        compatibility: null,
+        inputModalities: null,
+      },
+      dashboard: { agent: "pi", mode: "disabled" },
+      messaging: { plan: null },
+      tuning: {
+        contextWindow: 262_144,
+        maxTokens: 32_768,
+        reasoning: true,
+        reasoningEffort: "high",
+      },
+    });
+    expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
+  });
+
+  it.each([
+    [
+      "API family",
+      piInput({ inference: { ...piInput().inference, api: "openai-responses" } }),
+      /inference\.api is not supported/u,
+    ],
+    [
+      "route provider",
+      piInput({ inference: { ...piInput().inference, routeProvider: "openai" } }),
+      /routeProvider must be the managed 'inference' route/u,
+    ],
+    [
+      "route URL",
+      piInput({
+        inference: { ...piInput().inference, routedBaseUrl: "https://route.example.test/v1" },
+      }),
+      /routedBaseUrl must be https:\/\/inference\.local\/v1/u,
+    ],
+    [
+      "token bounds",
+      piInput({
+        environment: { NEMOCLAW_CONTEXT_WINDOW: "8192", NEMOCLAW_MAX_TOKENS: "16384" },
+      }),
+      /maxTokens must not exceed contextWindow/u,
+    ],
+  ])("rejects incompatible Pi %s before config application", (_label, input, message) => {
+    expect(() => buildManagedStartupProfile(input)).toThrow(message);
+  });
+
   it("keeps validated corporate CA bytes out of the profile and returns a digest-bound transport", () => {
     const built = buildManagedStartupProfile(
       openClawInput({
@@ -544,6 +639,16 @@ describe("buildManagedStartupProfile", () => {
       "DCode input modalities",
       dcodeInput({ environment: { NEMOCLAW_INFERENCE_INPUTS: "text" } }),
       /NEMOCLAW_INFERENCE_INPUTS is not supported by langchain-deepagents-code/,
+    ],
+    [
+      "Pi messaging",
+      piInput({ messagingPlan: messagingPlan("openclaw") }),
+      /Pi input contains unsupported or wrong-agent state/,
+    ],
+    [
+      "Pi web search",
+      piInput({ webSearch: { fetchEnabled: false, provider: "brave" } }),
+      /Pi input contains unsupported or wrong-agent state/,
     ],
   ])("rejects unsupported cross-agent intent: %s", (_label, input, message) => {
     expect(() => buildManagedStartupProfile(input)).toThrow(message);

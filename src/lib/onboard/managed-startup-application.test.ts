@@ -50,6 +50,8 @@ function agentConfigFor(agent: ManagedStartupAgent): ManagedStartupAgentConfig {
       return { agent, webSearch: { enabled: false, provider: "tavily" } };
     case "langchain-deepagents-code":
       return { agent, autoApprovalMode: "thread-opt-in", observabilityEnabled: true };
+    case "pi":
+      return { agent, requiresStreaming: true, requiresStructuredToolCalls: true };
   }
 }
 
@@ -101,8 +103,13 @@ function profileFor(
             internalPort: null,
             tuiEnabled: false as const,
           }
-        : {
-            agent,
+        : agent === "pi"
+          ? {
+              agent,
+              mode: "disabled" as const,
+            }
+          : {
+            agent: "langchain-deepagents-code" as const,
             mode: "disabled" as const,
           };
   return {
@@ -125,9 +132,10 @@ function profileFor(
     messaging: { plan: null },
     tuning: {
       contextWindow: agent === "langchain-deepagents-code" ? null : 65_536,
-      maxTokens: agent === "openclaw" ? 8192 : null,
-      reasoning: agent === "openclaw" ? true : null,
-      reasoningEffort: agent === "openclaw" ? "default" : null,
+      maxTokens: agent === "openclaw" ? 8192 : agent === "pi" ? 16_384 : null,
+      reasoning: agent === "openclaw" ? true : agent === "pi" ? false : null,
+      reasoningEffort:
+        agent === "openclaw" || agent === "pi" ? "default" : null,
     },
     corporateCa: {
       bundleSha256: corporateCa === null ? null : sha256(corporateCa),

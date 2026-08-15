@@ -69,6 +69,7 @@ export interface SetupNimRemoteProviderConfigEntry {
 }
 
 export interface SetupNimRemoteSelectionArgs {
+  agentName: string | null;
   gatewayName: string | null;
   selected: ProviderMenuChoice;
   requestedModel: string | null;
@@ -493,6 +494,7 @@ async function handleEndpointProviderSelection(input: {
   if (!remoteConfig) throw new Error(`Missing remote provider config for '${selected.key}'.`);
   return deps.handleRemoteProviderSelection(
     {
+      agentName: agent?.name ?? null,
       selected,
       requestedModel,
       recoveredFromSandbox,

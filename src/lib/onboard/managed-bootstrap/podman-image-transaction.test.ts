@@ -8,7 +8,6 @@ import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-ma
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import {
   encodeManagedStartupProfile,
-  MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
 } from "../managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
@@ -41,6 +40,7 @@ const SPEC_FINGERPRINT = "5".repeat(64);
 const STAGING_NAME = "sandbox-nemoclaw-bootstrap-333333333333";
 const STATE_VOLUME_NAME = "sandbox-nemoclaw-state-333333333333";
 const STATE_VOLUME_MOUNTPOINT = "/var/lib/containers/storage/volumes/state/_data";
+const PODMAN_BOOTSTRAP_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 function requestFor(agent: ManagedStartupAgent) {
   return createManagedStartupRootApplyRequest({
@@ -254,7 +254,7 @@ function startInput(agent: ManagedStartupAgent, fake: ReturnType<typeof harness>
 
 describe("Podman image-owned bootstrap transaction", () => {
   it.each(
-    MANAGED_STARTUP_AGENTS,
+    PODMAN_BOOTSTRAP_AGENTS,
   )("stages, starts, and authenticates one protected %s completion without exec", (agent) => {
     const fake = harness(agent);
     const transaction = startPodmanBootstrapImageTransaction(startInput(agent, fake), {
@@ -319,6 +319,14 @@ describe("Podman image-owned bootstrap transaction", () => {
     expect(fake.commands.every((command) => !command.includes("exec"))).toBe(true);
     expect(fake.commands.every((command) => !command.includes("--user"))).toBe(true);
     expect(fake.watcher.assertStillStopped).toHaveBeenCalled();
+  });
+
+  it("rejects Pi before any Podman mutation while its runtime work is deferred (#7744)", () => {
+    const fake = harness("pi");
+    expect(() => startPodmanBootstrapImageTransaction(startInput("pi", fake))).toThrow(
+      "the managed agent is unsupported",
+    );
+    expect(fake.commands).toEqual([]);
   });
 
   it("retries an unpublished completion while retaining the stopped watcher lease", () => {

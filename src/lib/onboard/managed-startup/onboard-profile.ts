@@ -45,6 +45,14 @@ const PROFILE_ENVIRONMENT_INPUTS = {
     "NEMOCLAW_PROXY_PORT",
     "NEMOCLAW_REASONING_EFFORT",
   ],
+  pi: [
+    "NEMOCLAW_CONTEXT_WINDOW",
+    "NEMOCLAW_MAX_TOKENS",
+    "NEMOCLAW_PROXY_HOST",
+    "NEMOCLAW_PROXY_PORT",
+    "NEMOCLAW_REASONING",
+    "NEMOCLAW_REASONING_EFFORT",
+  ],
 } as const satisfies Record<ManagedStartupAgent, readonly string[]>;
 
 const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
@@ -113,9 +121,11 @@ function dashboardForInput(
   agent: ManagedStartupAgent,
   input: ManagedStartupOnboardProfileInput,
 ): ManagedStartupDashboard {
-  if (agent === "langchain-deepagents-code") {
+  if (agent === "langchain-deepagents-code" || agent === "pi") {
     if (input.manageDashboard) {
-      throw new ManagedStartupOnboardProfileError("DCode must not enable a dashboard");
+      throw new ManagedStartupOnboardProfileError(
+        `${agent === "pi" ? "Pi" : "DCode"} must not enable a dashboard`,
+      );
     }
     return { agent, mode: "disabled" };
   }
@@ -232,7 +242,7 @@ export function buildManagedStartupOnboardProfile(
     agent,
     inference: input.inference,
     dashboard,
-    webSearch: agent === "langchain-deepagents-code" ? null : input.webSearch,
+    webSearch: agent === "langchain-deepagents-code" || agent === "pi" ? null : input.webSearch,
     toolDisclosure: input.toolDisclosure,
     hermesToolGateways: agent === "hermes" ? input.hermesToolGateways : [],
     messagingPlan: capabilities.supportsMessaging ? input.messagingPlan : null,

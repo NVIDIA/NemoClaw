@@ -67,7 +67,13 @@ describe("managed startup shared-state transaction", () => {
   function agentRoot(agent: ManagedStartupAgent): string {
     return path.join(
       sandboxRoot,
-      agent === "openclaw" ? ".openclaw" : agent === "hermes" ? ".hermes" : ".deepagents",
+      agent === "openclaw"
+        ? ".openclaw"
+        : agent === "hermes"
+          ? ".hermes"
+          : agent === "pi"
+            ? path.join(".pi", "agent")
+            : ".deepagents",
     );
   }
 
@@ -96,9 +102,10 @@ describe("managed startup shared-state transaction", () => {
     "openclaw",
     "hermes",
     "langchain-deepagents-code",
+    "pi",
   ] as const)("restores exact %s bytes, ownership, modes, and absence receipts", (agent) => {
     const root = agentRoot(agent);
-    fs.mkdirSync(root, { mode: 0o750 });
+    fs.mkdirSync(root, { mode: 0o750, recursive: true });
     fs.chmodSync(root, 0o750);
     const originalFiles =
       agent === "openclaw"
@@ -108,7 +115,12 @@ describe("managed startup shared-state transaction", () => {
               ["config.yaml", "hermes-original\n", 0o640] as const,
               [".env", "TOKEN=original\n", 0o600] as const,
             ]
-          : [["config.toml", "dcode-original\n", 0o660] as const];
+          : agent === "langchain-deepagents-code"
+            ? [["config.toml", "dcode-original\n", 0o660] as const]
+            : [
+                ["models.json", "pi-models-original\n", 0o600] as const,
+                ["settings.json", "pi-settings-original\n", 0o600] as const,
+              ];
     for (const [name, contents, fileMode] of originalFiles) {
       const target = path.join(root, name);
       fs.writeFileSync(target, contents);
@@ -128,6 +140,7 @@ describe("managed startup shared-state transaction", () => {
         fs.mkdirSync(path.join(root, ".state"));
         fs.mkdirSync(path.join(root, "skills"));
       },
+      pi: () => undefined,
     };
     createManagedDrift[agent]();
 
@@ -144,6 +157,7 @@ describe("managed startup shared-state transaction", () => {
       openclaw: [".config-hash"],
       hermes: [".config-hash"],
       "langchain-deepagents-code": [".state", "skills"],
+      pi: [],
     };
     for (const relativePath of absentManagedPaths[agent]) {
       expect(fs.existsSync(path.join(root, relativePath))).toBe(false);

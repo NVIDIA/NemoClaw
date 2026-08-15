@@ -225,6 +225,46 @@ function dcodeProfile(): ManagedStartupProfile {
   };
 }
 
+function piProfile(): ManagedStartupProfile {
+  return {
+    schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+    agent: "pi",
+    agentConfig: {
+      agent: "pi",
+      requiresStreaming: true,
+      requiresStructuredToolCalls: true,
+    },
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+      inputModalities: null,
+    },
+    proxy: {
+      managedHost: "10.200.0.1",
+      managedPort: 3128,
+      hostHttpUrl: "http://proxy.example.test:8080",
+      hostHttpsUrl: null,
+      hostNoProxy: ["localhost", "inference.local"],
+    },
+    dashboard: { agent: "pi", mode: "disabled" },
+    tools: { disclosure: "progressive", enabledGateways: [] },
+    messaging: { plan: null },
+    tuning: {
+      contextWindow: 131_072,
+      maxTokens: 16_384,
+      reasoning: true,
+      reasoningEffort: "high",
+    },
+    corporateCa: { bundleSha256: CA_SHA256 },
+  };
+}
+
 function decodeBase64Json(encoded: string): unknown {
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as unknown;
 }
@@ -243,6 +283,7 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
   openclaw: openClawProfile,
   hermes: hermesProfile,
   "langchain-deepagents-code": dcodeProfile,
+  pi: piProfile,
 };
 
 describe("managed startup agent environment", () => {
@@ -632,6 +673,47 @@ describe("managed startup agent environment", () => {
     ]);
   });
 
+  it("maps Pi to the exact managed Chat Completions route and tuning contract", () => {
+    const result = mapManagedStartupProfileToAgentEnvironment(piProfile());
+    expect(result.configurationEnvironment).toEqual({
+      NEMOCLAW_CONTEXT_WINDOW: "131072",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_MAX_TOKENS: "16384",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_REASONING: "true",
+      NEMOCLAW_REASONING_EFFORT: "high",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+    });
+    expect(result.runtimeEnvironment).toMatchObject({
+      ...result.configurationEnvironment,
+      HTTP_PROXY: "http://proxy.example.test:8080",
+      HTTPS_PROXY: "",
+      NO_PROXY: "inference.local,localhost",
+      NEMOCLAW_PROXY_HOST: "10.200.0.1",
+      NEMOCLAW_PROXY_PORT: "3128",
+    });
+    expect(result.actions).toEqual([
+      { kind: "generate-agent-config", agent: "pi", runAs: "sandbox" },
+      { kind: "configure-dashboard", dashboard: { agent: "pi", mode: "disabled" } },
+    ]);
+  });
+
+  it("keeps Pi config identical across supported Docker compute identities", () => {
+    const [amd64, arm64] = ["docker-linux-amd64", "docker-linux-arm64"].map(
+      (computeRuntimeIdentity) =>
+        mapManagedStartupProfileToAgentEnvironment(piProfile(), {
+          NEMOCLAW_COMPUTE_RUNTIME_ID: computeRuntimeIdentity,
+        }),
+    );
+    expect(amd64).toEqual(arm64);
+    expect(amd64?.configurationEnvironment).not.toHaveProperty(
+      "NEMOCLAW_COMPUTE_RUNTIME_ID",
+    );
+  });
+
   it("feeds the existing OpenClaw and Hermes config consumers without translation", () => {
     const openclaw = mapManagedStartupProfileToAgentEnvironment(openClawProfile());
     const openclawConfig = buildOpenClawConfig({
@@ -691,12 +773,12 @@ describe("managed startup agent environment", () => {
       (action) => action.kind === "apply-messaging-plan",
     );
     expect(messagingActions.map(({ phase, runAs }) => [phase, runAs])).toEqual(
-      agent === "langchain-deepagents-code"
-        ? []
-        : [
+      agent === "openclaw" || agent === "hermes"
+        ? [
             ["runtime-setup", "root"],
             ["post-agent-install", "sandbox"],
-          ],
+          ]
+        : [],
     );
     expect(messagingActions.map((action) => String(action.phase))).not.toContain("agent-install");
   });

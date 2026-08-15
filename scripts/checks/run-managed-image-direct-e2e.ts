@@ -277,6 +277,8 @@ function managedConfig(agent: ManagedStartupAgent): string {
       return "/sandbox/.hermes/config.yaml";
     case "langchain-deepagents-code":
       return "/sandbox/.deepagents/config.toml";
+    case "pi":
+      return "/sandbox/.pi/agent/models.json";
   }
 }
 

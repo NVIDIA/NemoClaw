@@ -202,7 +202,9 @@ type ProbeAuthMode = "bearer" | "query-param" | undefined;
 
 type ProbeOptions = {
   requireResponsesToolCalling?: boolean;
+  requireChatCompletionsToolCalling?: boolean;
   skipResponsesProbe?: boolean;
+  probeStreaming?: boolean;
   authMode?: ProbeAuthMode;
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
@@ -232,6 +234,7 @@ type RemoteModelValidatorDeps = {
     credentialEnv: string,
     helpUrl: string | null,
     capabilityCache?: OnboardInferenceCapabilityCache,
+    requirements?: PiOpenAiProbeRequirements,
   ) => Promise<ValidationResult>;
   validateCustomAnthropicSelection: (
     label: string,
@@ -241,6 +244,8 @@ type RemoteModelValidatorDeps = {
     helpUrl: string | null,
     options?: {
       intendedApi?: "anthropic-messages" | "openai-completions";
+      requireChatCompletionsToolCalling?: boolean;
+      probeStreaming?: boolean;
     },
   ) => Promise<ValidationResult>;
   validateAnthropicSelectionWithRetryMessage: (
@@ -270,12 +275,34 @@ type RemoteModelValidatorDeps = {
 };
 
 type ValidateSelectedRemoteModelArgs = {
+  agentName?: string | null;
   selected: ProviderChoice;
   remoteConfig: RemoteProviderConfig;
   state: SetupNimSelectionState;
   selectedCredentialEnv: string;
   intendedInferenceApi?: string | null;
 };
+
+type PiOpenAiProbeRequirements = {
+  requireResponsesToolCalling?: boolean;
+  requireChatCompletionsToolCalling?: boolean;
+  skipResponsesProbe?: boolean;
+  probeStreaming?: boolean;
+};
+
+/** Pi v1 only accepts a streaming, structured-tool-call Chat Completions surface. */
+export function getAgentOpenAiProbeRequirements(
+  agentName: string | null | undefined,
+): PiOpenAiProbeRequirements {
+  return agentName === "pi"
+    ? {
+        requireResponsesToolCalling: false,
+        requireChatCompletionsToolCalling: true,
+        skipResponsesProbe: true,
+        probeStreaming: true,
+      }
+    : {};
+}
 
 function shouldRetryModel(validation: ValidationResult): boolean {
   return (
@@ -300,12 +327,14 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
 } {
   return {
     validateSelectedRemoteModel: async ({
+      agentName,
       selected,
       remoteConfig,
       state,
       selectedCredentialEnv,
       intendedInferenceApi = "anthropic-messages",
     }) => {
+      const agentProbeRequirements = getAgentOpenAiProbeRequirements(agentName);
       delete state.endpointPinnedAddresses;
       delete state.endpointTrustedPrivateCapability;
       const selectedModel = deps.requireValue(
@@ -322,7 +351,9 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         state.compatibleEndpointReasoningEffort = reasoningEffort ?? null;
         if (reasoning === "true") {
           (deps.log ?? console.log)(
-            "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+            agentProbeRequirements.requireChatCompletionsToolCalling === true
+              ? "  Pi reasoning mode retains required streaming and structured tool-call validation."
+              : "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
           );
         }
         const validation = await deps.validateCustomOpenAiLikeSelection(
@@ -332,6 +363,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           selectedCredentialEnv,
           remoteConfig.helpUrl,
           state.inferenceCapabilityCache,
+          agentProbeRequirements,
         );
         if (validation.ok) {
           if (validation.pinnedAddresses)
@@ -379,7 +411,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
-          { intendedApi },
+          { intendedApi, ...agentProbeRequirements },
         );
         if (validation.ok) {
           if (validation.pinnedAddresses)
@@ -427,6 +459,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         {
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
+          ...agentProbeRequirements,
           authMode: deps.getProbeAuthMode(state.provider),
           extraHeaders:
             deps.getProbeExtraHeaders?.(state.provider) ?? getProbeExtraHeaders(state.provider),

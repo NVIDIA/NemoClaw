@@ -27,7 +27,6 @@ import { createDockerManagedBootstrapSurface } from "../../src/lib/onboard/manag
 import { managedImageRuntimeIdentity } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   encodeManagedStartupProfile,
-  type ManagedStartupAgent,
 } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import type {
@@ -55,13 +54,14 @@ import {
   resolveManagedImageLocalInferenceRoute,
   withManagedImageLocalInferenceProfile,
 } from "./managed-image-protected-runtime-contract.ts";
+import type { ProtectedManagedImageAgent } from "./protected-managed-image-contract.ts";
 
 // This executable owns one protected qualification transaction from sandbox
 // creation through exact cleanup. Keep its stateful orchestration and cleanup
 // together so no cross-module return path can bypass rollback; stateless route
 // and profile policy remains in managed-image-protected-runtime-contract.ts.
 
-const MANAGED_AGENTS = new Set<ManagedStartupAgent>([
+const MANAGED_AGENTS = new Set<ProtectedManagedImageAgent>([
   "openclaw",
   "hermes",
   "langchain-deepagents-code",
@@ -69,7 +69,7 @@ const MANAGED_AGENTS = new Set<ManagedStartupAgent>([
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_PORT = 8080;
 const IMMUTABLE_MANIFEST_REFERENCE_RE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/u;
-const MANAGED_AGENT_BASE_POLICIES: Record<ManagedStartupAgent, readonly string[]> = {
+const MANAGED_AGENT_BASE_POLICIES: Record<ProtectedManagedImageAgent, readonly string[]> = {
   openclaw: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
   hermes: ["agents", "hermes", "policy-additions.yaml"],
   "langchain-deepagents-code": ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
@@ -102,7 +102,7 @@ function redactProtectedGpuProof(value: string): string {
 }
 
 export type ManagedImageOpenShellE2eInputs = {
-  agent: ManagedStartupAgent;
+  agent: ProtectedManagedImageAgent;
   image: string;
   sandbox: string;
   gpu?: true;
@@ -212,7 +212,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
     index += 1;
   }
   const agentValue = requiredValue(argv, "--agent");
-  if (!MANAGED_AGENTS.has(agentValue as ManagedStartupAgent)) {
+  if (!MANAGED_AGENTS.has(agentValue as ProtectedManagedImageAgent)) {
     throw new Error("--agent must identify a shipped managed-image agent");
   }
   const image = requiredValue(argv, "--image");
@@ -250,7 +250,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
     );
   }
   return {
-    agent: agentValue as ManagedStartupAgent,
+    agent: agentValue as ProtectedManagedImageAgent,
     image,
     sandbox,
     ...(gpu ? { gpu: true as const } : {}),
@@ -262,7 +262,7 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
   };
 }
 
-export function managedImageOpenShellBasePolicyPath(agent: ManagedStartupAgent): string {
+export function managedImageOpenShellBasePolicyPath(agent: ProtectedManagedImageAgent): string {
   return path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "..",
@@ -386,7 +386,7 @@ async function assertGatewayPortAvailable(): Promise<void> {
   });
 }
 
-function managedConfigPath(agent: ManagedStartupAgent): string {
+function managedConfigPath(agent: ProtectedManagedImageAgent): string {
   switch (agent) {
     case "openclaw":
       return "/sandbox/.openclaw/openclaw.json";
@@ -398,7 +398,7 @@ function managedConfigPath(agent: ManagedStartupAgent): string {
 }
 
 export function managedImageOpenShellProbe(
-  agent: ManagedStartupAgent,
+  agent: ProtectedManagedImageAgent,
   model: string = MODEL,
 ): string {
   const healthProbe =

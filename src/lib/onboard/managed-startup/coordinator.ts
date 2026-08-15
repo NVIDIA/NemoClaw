@@ -44,7 +44,7 @@ export interface ManagedStartupCoordinationResult {
 
 type AdapterRegistry = Readonly<Record<ManagedStartupAgent, ManagedStartupAgentAdapter>>;
 
-const SHIPPED_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
+const MANAGED_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 
 const DEFAULT_DEPENDENCIES: ManagedStartupCoordinatorDependencies = {
   prepareApplication: (input) => prepareManagedStartupApplication(input),
@@ -68,10 +68,10 @@ function createAdapterRegistry(adapters: readonly ManagedStartupAgentAdapter[]):
     if (
       typeof adapter !== "object" ||
       adapter === null ||
-      !SHIPPED_AGENT_SET.has(adapter.agent) ||
+      !MANAGED_AGENT_SET.has(adapter.agent) ||
       typeof adapter.apply !== "function"
     ) {
-      fail("every adapter must identify one shipped agent and provide an apply function");
+      fail("every adapter must identify one managed-startup agent and provide an apply function");
     }
     if (byAgent.has(adapter.agent)) {
       fail(`duplicate adapter registered for ${adapter.agent}`);
@@ -84,7 +84,7 @@ function createAdapterRegistry(adapters: readonly ManagedStartupAgentAdapter[]):
     fail(`missing adapter for ${missing.join(", ")}`);
   }
   if (byAgent.size !== MANAGED_STARTUP_AGENTS.length) {
-    fail("adapter registry must contain exactly the shipped agents");
+    fail("adapter registry must contain exactly the managed-startup agents");
   }
 
   return Object.freeze(

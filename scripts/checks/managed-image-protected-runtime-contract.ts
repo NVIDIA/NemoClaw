@@ -5,9 +5,11 @@ import type {
   ManagedStartupAgent,
   ManagedStartupProfile,
 } from "../../src/lib/onboard/managed-startup/profile.ts";
+import type { ProtectedManagedImageAgent } from "./protected-managed-image-contract.ts";
 
 export {
   PROTECTED_MANAGED_IMAGE_AGENTS,
+  type ProtectedManagedImageAgent,
   type ProtectedManagedImageContract,
   parseProtectedManagedImageContracts,
 } from "./protected-managed-image-contract.ts";
@@ -24,7 +26,7 @@ export type ManagedImageProtectedRouteKind = ManagedImageLocalInferenceKind | "r
 // free without relying on truncation.
 export const MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX = "nmc-mi-";
 
-const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ManagedStartupAgent, string>> = Object.freeze(
+const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ProtectedManagedImageAgent, string>> = Object.freeze(
   {
     openclaw: "oc",
     hermes: "he",
@@ -119,7 +121,7 @@ export function withManagedImageLocalInferenceProfile(
 }
 
 export function managedImageProtectedSandboxName(
-  agent: ManagedStartupAgent,
+  agent: ProtectedManagedImageAgent,
   routeKind: ManagedImageProtectedRouteKind,
 ): string {
   return `${MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX}${PROTECTED_SANDBOX_AGENT_TOKENS[agent]}-${PROTECTED_SANDBOX_ROUTE_TOKENS[routeKind]}`;

@@ -136,6 +136,39 @@ function dcodeInput(
   };
 }
 
+function piInput(
+  overrides: Partial<ManagedStartupOnboardProfileInput> = {},
+): ManagedStartupOnboardProfileInput {
+  return {
+    agentName: "pi",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    chatUiUrl: "",
+    effectiveDashboardPort: 0,
+    manageDashboard: false,
+    dashboardBindAddress: undefined,
+    wslExposure: false,
+    hermesDashboardState: { config: null, enabled: false },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: "disabled",
+    observabilityEnabled: false,
+    environment: EMPTY_ENVIRONMENT,
+    corporateCa: null,
+    ...overrides,
+  };
+}
+
 describe("buildManagedStartupOnboardProfile", () => {
   it("maps a remote OpenClaw dashboard and its complete agent-owned state", () => {
     const plan = messagingPlan("openclaw");
@@ -316,9 +349,42 @@ describe("buildManagedStartupOnboardProfile", () => {
     });
   });
 
+  it("maps Pi through the internal Docker managed-startup profile", () => {
+    const built = buildManagedStartupOnboardProfile(
+      piInput({
+        environment: {
+          NEMOCLAW_REASONING: "true",
+          NEMOCLAW_REASONING_EFFORT: "medium",
+        },
+      }),
+    );
+    expect(built.profile).toMatchObject({
+      agent: "pi",
+      agentConfig: {
+        agent: "pi",
+        requiresStreaming: true,
+        requiresStructuredToolCalls: true,
+      },
+      dashboard: { agent: "pi", mode: "disabled" },
+      inference: {
+        routeProvider: "inference",
+        routedBaseUrl: "https://inference.local/v1",
+        api: "openai-completions",
+      },
+      tuning: {
+        contextWindow: 131_072,
+        maxTokens: 16_384,
+        reasoning: true,
+        reasoningEffort: "medium",
+      },
+    });
+    expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
+  });
+
   it.each([
     ["hermes", hermesInput, "text,image"],
     ["langchain-deepagents-code", dcodeInput, "text"],
+    ["pi", piInput, "text"],
   ] as const)("rejects OpenClaw input modalities for %s before filtering ambient input", (agent, input, modalities) => {
     expect(() =>
       buildManagedStartupOnboardProfile(
@@ -331,6 +397,15 @@ describe("buildManagedStartupOnboardProfile", () => {
     expect(() =>
       buildManagedStartupOnboardProfile(dcodeInput({ messagingPlan: messagingPlan("openclaw") })),
     ).toThrow(/langchain-deepagents-code does not support messaging/u);
+  });
+
+  it("rejects Pi dashboard and messaging intent instead of silently discarding it", () => {
+    expect(() => buildManagedStartupOnboardProfile(piInput({ manageDashboard: true }))).toThrow(
+      /Pi must not enable a dashboard/u,
+    );
+    expect(() =>
+      buildManagedStartupOnboardProfile(piInput({ messagingPlan: messagingPlan("openclaw") })),
+    ).toThrow(/pi does not support messaging/u);
   });
 
   it("does not inspect host CA settings during profile construction", () => {

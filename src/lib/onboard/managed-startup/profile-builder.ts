@@ -38,6 +38,7 @@ const DEFAULT_MANAGED_PROXY_HOST = "10.200.0.1";
 const DEFAULT_MANAGED_PROXY_PORT = 3128;
 const DEFAULT_CONTEXT_WINDOW = 131_072;
 const DEFAULT_OPENCLAW_MAX_TOKENS = 4096;
+const DEFAULT_PI_MAX_TOKENS = 16_384;
 const DEFAULT_OPENCLAW_AGENT_TIMEOUT_SECONDS = 600;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
@@ -67,6 +68,7 @@ const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
+  pi: "240b6605d618ba96e559b7c8604065da70fbb8b8098bbebdb949945aad33904b",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -351,9 +353,9 @@ function normalizeWebSearch(
   agent: ManagedStartupAgent,
   config: ManagedStartupProfileBuilderInput["webSearch"],
 ): ManagedStartupWebSearch | null {
-  if (agent === "langchain-deepagents-code") {
+  if (agent === "langchain-deepagents-code" || agent === "pi") {
     if (config !== null) {
-      fail("langchain-deepagents-code does not support web-search profile intent");
+      fail(`${agent} does not support web-search profile intent`);
     }
     return null;
   }
@@ -385,9 +387,9 @@ function normalizeMessagingPlan(
   agent: ManagedStartupAgent,
   value: unknown | null,
 ): ManagedStartupJsonObject | null {
-  if (agent === "langchain-deepagents-code") {
+  if (agent === "langchain-deepagents-code" || agent === "pi") {
     if (value !== null) {
-      fail("langchain-deepagents-code messagingPlan must be null");
+      fail(`${agent} messagingPlan must be null`);
     }
     return null;
   }
@@ -531,6 +533,20 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
     }
     return;
   }
+  if (input.agent === "pi") {
+    if (
+      input.webSearch !== null ||
+      input.hermesToolGateways.length > 0 ||
+      input.messagingPlan !== null ||
+      input.inference.compatibility !== null ||
+      input.inference.upstreamEndpointUrl !== null ||
+      input.dcodeAutoApprovalMode !== null ||
+      input.observabilityEnabled !== null
+    ) {
+      fail("Pi input contains unsupported or wrong-agent state");
+    }
+    return;
+  }
   if (input.webSearch !== null) {
     fail("langchain-deepagents-code does not support web-search profile intent");
   }
@@ -647,7 +663,9 @@ function assertEnvironmentConsistency(
     NEMOCLAW_INFERENCE_API: profile.inference.api,
     NEMOCLAW_TOOL_DISCLOSURE: profile.tools.disclosure,
     CHAT_UI_URL:
-      profile.dashboard.agent === "langchain-deepagents-code" ? null : profile.dashboard.url,
+      profile.dashboard.agent === "openclaw" || profile.dashboard.agent === "hermes"
+        ? profile.dashboard.url
+        : null,
   };
   for (const [name, expected] of Object.entries(stringValues)) {
     const raw = presentEnvironmentValue(environment, name);
@@ -787,6 +805,19 @@ function assertEnvironmentConsistency(
         profile.tools.enabledGateways,
       );
     }
+  } else if (profile.agentConfig.agent === "pi") {
+    const reasoning = presentEnvironmentValue(environment, "NEMOCLAW_REASONING");
+    if (reasoning !== null) {
+      assertEquivalent("NEMOCLAW_REASONING", String(parseReasoning(environment)), reasoning);
+    }
+    const reasoningEffort = presentEnvironmentValue(environment, "NEMOCLAW_REASONING_EFFORT");
+    if (reasoningEffort !== null) {
+      assertEquivalent(
+        "NEMOCLAW_REASONING_EFFORT",
+        reasoningEffort.toLowerCase(),
+        profile.tuning.reasoningEffort,
+      );
+    }
   } else {
     const config = profile.agentConfig;
     const approval = presentEnvironmentValue(environment, "NEMOCLAW_DCODE_AUTO_APPROVAL");
@@ -908,6 +939,23 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       maxTokens: null,
       reasoning: null,
       reasoningEffort: null,
+    };
+  } else if (input.agent === "pi") {
+    agentConfig = {
+      agent: "pi",
+      requiresStreaming: true,
+      requiresStructuredToolCalls: true,
+    };
+    tuning = {
+      contextWindow:
+        parsePositiveInteger(input.environment, "NEMOCLAW_CONTEXT_WINDOW", DEFAULT_CONTEXT_WINDOW, {
+          maximum: MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+        }) ?? DEFAULT_CONTEXT_WINDOW,
+      maxTokens:
+        parsePositiveInteger(input.environment, "NEMOCLAW_MAX_TOKENS", DEFAULT_PI_MAX_TOKENS) ??
+        DEFAULT_PI_MAX_TOKENS,
+      reasoning: parseReasoning(input.environment),
+      reasoningEffort: parseReasoningEffort(input.environment),
     };
   } else {
     if (input.dcodeAutoApprovalMode === null || input.observabilityEnabled === null) {

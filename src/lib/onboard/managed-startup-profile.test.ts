@@ -229,7 +229,45 @@ const DCODE_PROFILE = {
   corporateCa: { bundleSha256: CA_SHA256 },
 } as const satisfies ManagedStartupProfile;
 
-const VALID_PROFILES = [OPENCLAW_PROFILE, HERMES_PROFILE, DCODE_PROFILE] as const;
+const PI_PROFILE = {
+  schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+  agent: "pi",
+  agentConfig: {
+    agent: "pi",
+    requiresStreaming: true,
+    requiresStructuredToolCalls: true,
+  },
+  inference: {
+    routeProvider: "inference",
+    upstreamProvider: "nvidia",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    routedBaseUrl: "https://inference.local/v1",
+    upstreamEndpointUrl: null,
+    api: "openai-completions",
+    primaryModelRef: null,
+    compatibility: null,
+    inputModalities: null,
+  },
+  proxy: {
+    managedHost: "10.200.0.1",
+    managedPort: 3128,
+    hostHttpUrl: null,
+    hostHttpsUrl: null,
+    hostNoProxy: [],
+  },
+  dashboard: { agent: "pi", mode: "disabled" },
+  tools: { disclosure: "progressive", enabledGateways: [] },
+  messaging: { plan: null },
+  tuning: {
+    contextWindow: 131_072,
+    maxTokens: 16_384,
+    reasoning: false,
+    reasoningEffort: "default",
+  },
+  corporateCa: { bundleSha256: CA_SHA256 },
+} as const satisfies ManagedStartupProfile;
+
+const VALID_PROFILES = [OPENCLAW_PROFILE, HERMES_PROFILE, DCODE_PROFILE, PI_PROFILE] as const;
 
 function encodeUnknown(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -248,6 +286,7 @@ const STOCK_DOCKER_ARGS = {
   "langchain-deepagents-code": dockerArgs(
     path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile"),
   ),
+  pi: dockerArgs(path.join(process.cwd(), "agents/pi/Dockerfile")),
 } satisfies Record<ManagedStartupAgent, Set<string>>;
 
 const RUNTIME_INPUT_SOURCE_FILES = [
@@ -448,6 +487,12 @@ describe("managed startup profile", () => {
     expect(
       MANAGED_STARTUP_PROFILE_CAPABILITIES["langchain-deepagents-code"].inputModalities,
     ).toEqual([]);
+    expect(MANAGED_STARTUP_PROFILE_CAPABILITIES.pi).toMatchObject({
+      dashboardModes: ["disabled"],
+      inferenceApis: ["openai-completions"],
+      inputModalities: [],
+      supportsMessaging: false,
+    });
   });
 
   it("keeps exported capabilities deeply frozen and validation authority private", () => {

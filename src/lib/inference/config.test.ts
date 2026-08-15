@@ -47,6 +47,15 @@ describe("resolveAgentDefaultCloudModel", () => {
 });
 
 describe("resolveAgentInferenceApi", () => {
+  it("forces Pi onto Chat Completions for every selected provider (#7930)", () => {
+    expect(resolveAgentInferenceApi("pi", "openai-api", "openai-responses")).toBe(
+      "openai-completions",
+    );
+    expect(
+      resolveAgentInferenceApi("pi", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("openai-completions");
+  });
+
   it("uses the managed OpenAI frontend for Hermes custom Anthropic routes (#6289)", () => {
     expect(
       resolveAgentInferenceApi("hermes", "compatible-anthropic-endpoint", "anthropic-messages"),

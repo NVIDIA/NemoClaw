@@ -12,19 +12,27 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const SUPPORTED_INFERENCE_API = "openai-completions";
+const MANAGED_INFERENCE_BASE_URL = "https://inference.local/v1";
 const MANAGED_PROVIDER_ID = "openshell";
 const MANAGED_PROVIDER_API_KEY = "nemoclaw-managed-inference";
+const DEFAULT_CONTEXT_WINDOW = 131_072;
+const DEFAULT_MAX_TOKENS = 16_384;
+
+type ReasoningEffort = "default" | "low" | "medium" | "high";
 
 type Settings = {
   model: string;
   baseUrl: string;
-  providerKey: string;
-  upstreamProvider: string;
   inferenceApi: string;
+  contextWindow: number;
+  maxTokens: number;
+  reasoning: boolean;
+  reasoningEffort: ReasoningEffort;
 };
 
 type ManagedPiConfig = {
-  text: string;
+  modelsText: string;
+  settingsText: string;
   model: string;
   baseUrl: string;
 };
@@ -35,17 +43,19 @@ function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-function normalizeMetadata(value: string, name: string): string {
+function normalizeModel(value: string, name: string): string {
   if (/[\p{Cc}\p{Cf}]/u.test(value)) {
     throw new Error(`${name} must not contain control characters.`);
   }
   const text = value.trim();
-  if (!text) throw new Error(`${name} must not be empty.`);
+  if (!text || !/^[A-Za-z0-9._:/-]+$/.test(text)) {
+    throw new Error(`${name} must be a safe model identifier.`);
+  }
   return text;
 }
 
 function normalizeInferenceApi(value: string | undefined): string {
-  const text = normalizeMetadata(value || SUPPORTED_INFERENCE_API, "NEMOCLAW_INFERENCE_API");
+  const text = (value || SUPPORTED_INFERENCE_API).trim();
   if (text !== SUPPORTED_INFERENCE_API) {
     throw new Error(`NEMOCLAW_INFERENCE_API must be ${SUPPORTED_INFERENCE_API} for Pi.`);
   }
@@ -53,62 +63,101 @@ function normalizeInferenceApi(value: string | undefined): string {
 }
 
 function normalizeInferenceBaseUrl(value: string): string {
-  if (/[\r\n]/.test(value)) {
-    throw new Error("NEMOCLAW_INFERENCE_BASE_URL must not contain line breaks.");
-  }
   const text = value.trim();
-  let url: URL;
-  try {
-    url = new URL(text);
-  } catch {
-    throw new Error("NEMOCLAW_INFERENCE_BASE_URL must be a valid URL.");
+  if (text !== MANAGED_INFERENCE_BASE_URL) {
+    throw new Error(
+      `NEMOCLAW_INFERENCE_BASE_URL must be exactly ${MANAGED_INFERENCE_BASE_URL} for Pi.`,
+    );
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("NEMOCLAW_INFERENCE_BASE_URL must use HTTP or HTTPS.");
+  return text;
+}
+
+function normalizePositiveInteger(
+  value: string | undefined,
+  name: string,
+  fallback: number,
+): number {
+  const parsed = value === undefined || value.trim() === "" ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
   }
-  if (url.username || url.password) {
-    throw new Error("NEMOCLAW_INFERENCE_BASE_URL must not include credentials.");
+  return parsed;
+}
+
+function normalizeBoolean(value: string | undefined, name: string): boolean {
+  const text = (value || "false").trim().toLowerCase();
+  if (text !== "true" && text !== "false") {
+    throw new Error(`${name} must be true or false.`);
   }
-  if (url.search || url.hash) {
-    throw new Error("NEMOCLAW_INFERENCE_BASE_URL must not include query strings or fragments.");
+  return text === "true";
+}
+
+function normalizeReasoningEffort(value: string | undefined): ReasoningEffort {
+  const text = (value || "default").trim().toLowerCase();
+  if (text !== "default" && text !== "low" && text !== "medium" && text !== "high") {
+    throw new Error("NEMOCLAW_REASONING_EFFORT must be default, low, medium, or high.");
   }
   return text;
 }
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
-  const providerKey = normalizeMetadata(
-    env.NEMOCLAW_INFERENCE_PROVIDER_ID || env.NEMOCLAW_PROVIDER_KEY || "inference",
-    "NEMOCLAW_INFERENCE_PROVIDER_ID",
-  );
-  return {
-    model: normalizeMetadata(readRequiredEnv(env, "NEMOCLAW_MODEL"), "NEMOCLAW_MODEL"),
+  const settings: Settings = {
+    model: normalizeModel(readRequiredEnv(env, "NEMOCLAW_MODEL"), "NEMOCLAW_MODEL"),
     baseUrl: normalizeInferenceBaseUrl(
-      env.NEMOCLAW_INFERENCE_BASE_URL || "https://inference.local/v1",
-    ),
-    providerKey,
-    upstreamProvider: normalizeMetadata(
-      env.NEMOCLAW_UPSTREAM_PROVIDER || providerKey,
-      "NEMOCLAW_UPSTREAM_PROVIDER",
+      env.NEMOCLAW_INFERENCE_BASE_URL || MANAGED_INFERENCE_BASE_URL,
     ),
     inferenceApi: normalizeInferenceApi(env.NEMOCLAW_INFERENCE_API),
+    contextWindow: normalizePositiveInteger(
+      env.NEMOCLAW_CONTEXT_WINDOW,
+      "NEMOCLAW_CONTEXT_WINDOW",
+      DEFAULT_CONTEXT_WINDOW,
+    ),
+    maxTokens: normalizePositiveInteger(
+      env.NEMOCLAW_MAX_TOKENS,
+      "NEMOCLAW_MAX_TOKENS",
+      DEFAULT_MAX_TOKENS,
+    ),
+    reasoning: normalizeBoolean(env.NEMOCLAW_REASONING, "NEMOCLAW_REASONING"),
+    reasoningEffort: normalizeReasoningEffort(env.NEMOCLAW_REASONING_EFFORT),
   };
+  if (settings.maxTokens > settings.contextWindow) {
+    throw new Error("NEMOCLAW_MAX_TOKENS must not exceed NEMOCLAW_CONTEXT_WINDOW.");
+  }
+  return settings;
 }
 
 function buildConfig(settings: Settings): ManagedPiConfig {
-  const config = {
-    $comment: `Generated by NemoClaw. This file contains no provider secrets. NemoClaw provider route: ${settings.providerKey}; upstream provider: ${settings.upstreamProvider}; API: ${settings.inferenceApi}.`,
+  const modelsConfig = {
+    $comment: "Generated by NemoClaw. Provider credentials remain outside the sandbox.",
     defaultModel: settings.model,
     providers: {
       [MANAGED_PROVIDER_ID]: {
         api: settings.inferenceApi,
         apiKey: MANAGED_PROVIDER_API_KEY,
         baseUrl: settings.baseUrl,
-        models: [{ id: settings.model }],
+        models: [
+          {
+            id: settings.model,
+            contextWindow: settings.contextWindow,
+            maxTokens: settings.maxTokens,
+            reasoning: settings.reasoning,
+          },
+        ],
       },
     },
   };
+  const agentSettings = {
+    defaultProvider: MANAGED_PROVIDER_ID,
+    defaultModel: settings.model,
+    defaultThinkingLevel: settings.reasoning
+      ? settings.reasoningEffort === "default"
+        ? "medium"
+        : settings.reasoningEffort
+      : "off",
+  };
   return {
-    text: `${JSON.stringify(config, null, 2)}\n`,
+    modelsText: `${JSON.stringify(modelsConfig, null, 2)}\n`,
+    settingsText: `${JSON.stringify(agentSettings, null, 2)}\n`,
     model: settings.model,
     baseUrl: settings.baseUrl,
   };
@@ -119,12 +168,17 @@ function main(): void {
   const configDir = join(homedir(), ".pi", "agent");
   mkdirSync(configDir, { recursive: true, mode: 0o700 });
 
-  const configPath = join(configDir, "models.json");
+  const modelsPath = join(configDir, "models.json");
+  const settingsPath = join(configDir, "settings.json");
   const config = buildConfig(settings);
-  writeFileSync(configPath, config.text, { mode: 0o600 });
-  chmodSync(configPath, 0o600);
+  writeFileSync(modelsPath, config.modelsText, { mode: 0o600 });
+  writeFileSync(settingsPath, config.settingsText, { mode: 0o600 });
+  chmodSync(modelsPath, 0o600);
+  chmodSync(settingsPath, 0o600);
 
-  console.log(`[config] Wrote ${configPath} (model=${config.model}, base_url=${config.baseUrl})`);
+  console.log(
+    `[config] Wrote ${modelsPath} and ${settingsPath} (model=${config.model}, base_url=${config.baseUrl})`,
+  );
 }
 
 main();

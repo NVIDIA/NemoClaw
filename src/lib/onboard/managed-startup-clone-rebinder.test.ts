@@ -152,6 +152,31 @@ function dcodeInput(): ManagedStartupProfileBuilderInput {
   };
 }
 
+function piInput(): ManagedStartupProfileBuilderInput {
+  return {
+    agent: "pi",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: { agent: "pi", mode: "disabled" },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    environment: {},
+    corporateCa: null,
+  };
+}
+
 function rebind(
   built: ReturnType<typeof buildManagedStartupProfile>,
   expectedAgent: ManagedStartupProfileBuilderInput["agent"],
@@ -164,9 +189,9 @@ function rebind(
 ) {
   const profile = built.profile;
   const webSearch =
-    profile.agentConfig.agent === "langchain-deepagents-code"
-      ? null
-      : profile.agentConfig.webSearch;
+    profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+      ? profile.agentConfig.webSearch
+      : null;
   const hermesDashboard = profile.dashboard.agent === "hermes" ? profile.dashboard : null;
   const dcodeConfig =
     profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;
@@ -381,6 +406,28 @@ describe("rebindManagedStartupProfileForClone", () => {
     });
     expect(rebound.profile.messaging).toEqual({ plan: null });
     expect(rebound.encodedProfile).toBe(buildManagedStartupProfile(dcodeInput()).encodedProfile);
+  });
+
+  it("rebuilds Pi from current route selection without stale model or unsupported state", () => {
+    const built = buildManagedStartupProfile(piInput());
+    const rebound = rebind(built, "pi", null, {
+      provider: "openai-api",
+      model: "catalog/alternate-streaming-tools-model",
+      preferredInferenceApi: "openai-responses",
+    });
+    expect(rebound.profile.inference).toMatchObject({
+      routeProvider: "inference",
+      upstreamProvider: "openai-api",
+      model: "catalog/alternate-streaming-tools-model",
+      routedBaseUrl: "https://inference.local/v1",
+      api: "openai-completions",
+    });
+    expect(rebound.profile.dashboard).toEqual({ agent: "pi", mode: "disabled" });
+    expect(rebound.profile.messaging).toEqual({ plan: null });
+    expect(rebound.encodedProfile).not.toBe(built.encodedProfile);
+    expect(JSON.stringify(rebound.profile)).not.toContain(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
   });
 
   it("retains and revalidates the exact public corporate CA transport", () => {

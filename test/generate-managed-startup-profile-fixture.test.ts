@@ -59,8 +59,8 @@ describe("generate-managed-startup-profile-fixture.mts CLI", () => {
     },
     {
       name: "invalid agent",
-      args: ["--agent", "not-a-shipped-agent"] as const,
-      error: "--agent must identify a shipped managed-image agent",
+      args: ["--agent", "not-a-managed-agent"] as const,
+      error: "--agent must identify a managed-startup agent",
     },
     {
       name: "unsupported argument",

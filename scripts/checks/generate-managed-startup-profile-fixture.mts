@@ -177,6 +177,29 @@ export function managedStartupE2eProfile(
           reasoningEffort: null,
         },
       };
+    case "pi":
+      return {
+        ...common,
+        agent,
+        agentConfig: {
+          agent,
+          requiresStreaming: true,
+          requiresStructuredToolCalls: true,
+        },
+        inference: {
+          ...common.inference,
+          primaryModelRef: null,
+          compatibility: null,
+          inputModalities: null,
+        },
+        dashboard: { agent, mode: "disabled" },
+        tuning: {
+          contextWindow: 131_072,
+          maxTokens: 16_384,
+          reasoning: false,
+          reasoningEffort: "default",
+        },
+      };
   }
 }
 
@@ -184,7 +207,7 @@ function readAgent(value: string | undefined): ManagedStartupAgent {
   if (value && AGENTS.has(value as ManagedStartupAgent)) {
     return value as ManagedStartupAgent;
   }
-  throw new Error("--agent must identify a shipped managed-image agent");
+  throw new Error("--agent must identify a managed-startup agent");
 }
 
 function main(argv: readonly string[]): void {

@@ -11,6 +11,7 @@ import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
   createRemoteModelValidator,
+  getAgentOpenAiProbeRequirements,
   type SetupNimSelectionState,
 } from "./setup-nim-selection";
 
@@ -68,6 +69,70 @@ describe("setupNim selection state helpers", () => {
 });
 
 describe("createRemoteModelValidator", () => {
+  it("defines Pi's strict Chat Completions capability contract", () => {
+    assert.deepEqual(getAgentOpenAiProbeRequirements("pi"), {
+      requireResponsesToolCalling: false,
+      requireChatCompletionsToolCalling: true,
+      skipResponsesProbe: true,
+      probeStreaming: true,
+    });
+    assert.deepEqual(getAgentOpenAiProbeRequirements("openclaw"), {});
+  });
+
+  it.each([
+    "nvidia/nemotron-3-super-120b-a12b",
+    "catalog/alternate-streaming-tools-model",
+  ])("applies Pi probes to catalog-selected model %s without a model allowlist", async (model) => {
+    const state = makeState();
+    state.provider = "nvidia";
+    state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+    state.model = model;
+    let receivedOptions: unknown;
+    const { validateSelectedRemoteModel } = createRemoteModelValidator({
+      OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
+      ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
+      requireValue,
+      isBackToSelection: (_value): _value is never => false,
+      validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+      validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+      validateAnthropicSelectionWithRetryMessage: async () => ({
+        ok: false,
+        retry: "selection",
+      }),
+      validateOpenAiLikeSelection: async (...args) => {
+        receivedOptions = args[6];
+        return { ok: true, api: "openai-completions" };
+      },
+      shouldRequireResponsesToolCalling: () => true,
+      shouldSkipResponsesProbe: () => false,
+      getProbeAuthMode: () => "bearer",
+    });
+
+    assert.equal(
+      await validateSelectedRemoteModel({
+        agentName: "pi",
+        selected: { key: "build" },
+        remoteConfig: {
+          label: "NVIDIA Endpoints",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+      "selected",
+    );
+    assert.deepEqual(receivedOptions, {
+      requireResponsesToolCalling: false,
+      skipResponsesProbe: true,
+      requireChatCompletionsToolCalling: true,
+      probeStreaming: true,
+      authMode: "bearer",
+      extraHeaders: [],
+      capabilityCache: undefined,
+    });
+  });
+
   it.each([
     "openai-completions",
     "anthropic-messages",

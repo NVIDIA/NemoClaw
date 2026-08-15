@@ -259,14 +259,19 @@ function applicationBindings(input: {
   const bindings: ManagedCloneProviderBinding[] = activeMessagingCredentialBindings(
     input.messagingPlan,
     input.sandboxName,
-    input.profile.agent,
+    input.profile.agent === "openclaw" || input.profile.agent === "hermes"
+      ? input.profile.agent
+      : null,
   ).map((binding) => ({
     providerName: binding.providerName,
     providerType: "generic",
     providerEnvKey: binding.providerEnvKey,
     source: "messaging",
   }));
-  if (input.profile.agentConfig.agent !== "langchain-deepagents-code") {
+  if (
+    input.profile.agentConfig.agent === "openclaw" ||
+    input.profile.agentConfig.agent === "hermes"
+  ) {
     const webSearch = input.profile.agentConfig.webSearch;
     if (webSearch.enabled) {
       bindings.push({

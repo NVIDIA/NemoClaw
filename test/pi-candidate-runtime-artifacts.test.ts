@@ -408,12 +408,12 @@ describe("Pi runtime boundaries", () => {
 });
 
 describe("Pi managed model catalog generation", () => {
-  function generate(env: Record<string, string>): {
+  function generate(env: Record<string, string>, existingHome?: string): {
     home: string;
     status: number | null;
     stderr: string;
   } {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
+    const home = existingHome ?? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-config-"));
     const result = spawnSync(
       process.execPath,
       ["--experimental-strip-types", path.join(root, "agents/pi/generate-config.ts")],
@@ -434,10 +434,24 @@ describe("Pi managed model catalog generation", () => {
     });
     expect(status, stderr).toBe(0);
     const configPath = path.join(home, ".pi", "agent", "models.json");
+    const settingsPath = path.join(home, ".pi", "agent", "settings.json");
     const configFd = fs.openSync(configPath, "r");
     let config: {
       defaultModel: string;
-      providers: Record<string, { baseUrl: string; api: string; apiKey: string }>;
+      providers: Record<
+        string,
+        {
+          baseUrl: string;
+          api: string;
+          apiKey: string;
+          models: Array<{
+            id: string;
+            contextWindow: number;
+            maxTokens: number;
+            reasoning: boolean;
+          }>;
+        }
+      >;
     };
     try {
       expect(fs.fstatSync(configFd).mode & 0o777).toBe(0o600);
@@ -449,6 +463,20 @@ describe("Pi managed model catalog generation", () => {
     expect(config.providers.openshell.baseUrl).toBe("https://inference.local/v1");
     expect(config.providers.openshell.api).toBe("openai-completions");
     expect(config.providers.openshell.apiKey).toBe("nemoclaw-managed-inference");
+    expect(config.providers.openshell.models).toEqual([
+      {
+        id: "nvidia/nemotron-3-super-120b-a12b",
+        contextWindow: 131_072,
+        maxTokens: 16_384,
+        reasoning: false,
+      },
+    ]);
+    expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toEqual({
+      defaultProvider: "openshell",
+      defaultModel: "nvidia/nemotron-3-super-120b-a12b",
+      defaultThinkingLevel: "off",
+    });
   });
 
   it("rejects a model name that is empty after trimming", () => {
@@ -456,7 +484,7 @@ describe("Pi managed model catalog generation", () => {
       NEMOCLAW_MODEL: "   ",
     });
     expect(status).not.toBe(0);
-    expect(stderr).toContain("NEMOCLAW_MODEL must not be empty.");
+    expect(stderr).toContain("NEMOCLAW_MODEL must be a safe model identifier.");
   });
 
   it("keeps every provider credential out of the generated catalog", () => {
@@ -464,10 +492,14 @@ describe("Pi managed model catalog generation", () => {
       NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
       NVIDIA_API_KEY: "nvapi-should-never-be-written",
       OPENAI_API_KEY: "sk-proj-should-never-be-written",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "nvapi-should-never-be-written",
+      NEMOCLAW_UPSTREAM_PROVIDER: "sk-proj-should-never-be-written",
     });
-    const config = fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8");
-    expect(config).not.toContain("nvapi-");
-    expect(config).not.toContain("sk-proj-");
+    const generated = ["models.json", "settings.json"]
+      .map((name) => fs.readFileSync(path.join(home, ".pi", "agent", name), "utf8"))
+      .join("\n");
+    expect(generated).not.toContain("nvapi-");
+    expect(generated).not.toContain("sk-proj-");
   });
 
   it("rejects an inference API family other than openai-completions", () => {
@@ -479,12 +511,52 @@ describe("Pi managed model catalog generation", () => {
     expect(stderr).toContain("NEMOCLAW_INFERENCE_API must be openai-completions for Pi.");
   });
 
-  it("rejects an inference base URL that carries credentials", () => {
+  it("rejects any route drift from the exact managed inference surface", () => {
     const { status, stderr } = generate({
       NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
       NEMOCLAW_INFERENCE_BASE_URL: "https://user:secret@inference.local/v1",
     });
     expect(status).not.toBe(0);
-    expect(stderr).toContain("NEMOCLAW_INFERENCE_BASE_URL must not include credentials.");
+    expect(stderr).toContain(
+      "NEMOCLAW_INFERENCE_BASE_URL must be exactly https://inference.local/v1 for Pi.",
+    );
+  });
+
+  it("rebuilds model and reasoning settings without retaining the prior selection", () => {
+    const first = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_REASONING: "false",
+    });
+    const second = generate(
+      {
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+        NEMOCLAW_CONTEXT_WINDOW: "262144",
+        NEMOCLAW_MAX_TOKENS: "32768",
+        NEMOCLAW_REASONING: "true",
+        NEMOCLAW_REASONING_EFFORT: "high",
+      },
+      first.home,
+    );
+    expect(second.status, second.stderr).toBe(0);
+    const generated = ["models.json", "settings.json"]
+      .map((name) => fs.readFileSync(path.join(second.home, ".pi", "agent", name), "utf8"))
+      .join("\n");
+    expect(generated).toContain("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(generated).toContain('"contextWindow": 262144');
+    expect(generated).toContain('"maxTokens": 32768');
+    expect(generated).toContain('"defaultThinkingLevel": "high"');
+    expect(generated).not.toContain("nvidia/nemotron-3-super-120b-a12b");
+  });
+
+  it("rejects incompatible tuning before Pi can start", () => {
+    const { status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_CONTEXT_WINDOW: "8192",
+      NEMOCLAW_MAX_TOKENS: "16384",
+    });
+    expect(status).not.toBe(0);
+    expect(stderr).toContain(
+      "NEMOCLAW_MAX_TOKENS must not exceed NEMOCLAW_CONTEXT_WINDOW.",
+    );
   });
 });

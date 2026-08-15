@@ -45,11 +45,11 @@ const MAX_TIMEOUT_SECONDS = 3_600;
 type BootstrapEngine = ContainerEngine & { readonly authorityId: string };
 type ManagedStartupAgent = ManagedStartupRootApplyRequest["agent"];
 
-const PODMAN_BOOTSTRAP_AGENTS = Object.freeze({
-  openclaw: true,
-  hermes: true,
-  "langchain-deepagents-code": true,
-} satisfies Record<ManagedStartupAgent, true>);
+const PODMAN_BOOTSTRAP_AGENTS = new Set<ManagedStartupAgent>([
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+]);
 
 export interface PodmanBootstrapImageTransactionInput {
   readonly engine: BootstrapEngine;
@@ -126,7 +126,7 @@ function exactEngine(engine: BootstrapEngine, expectedAuthorityId?: string): Boo
 }
 
 function exactAgent(value: string): ManagedStartupAgent {
-  if (Object.prototype.hasOwnProperty.call(PODMAN_BOOTSTRAP_AGENTS, value)) {
+  if (PODMAN_BOOTSTRAP_AGENTS.has(value as ManagedStartupAgent)) {
     return value as ManagedStartupAgent;
   }
   return fail("the managed agent is unsupported");

@@ -174,6 +174,58 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("keeps Pi streaming and structured tool-call probes strict in reasoning mode (#7930)", async () => {
+    vi.stubEnv("NEMOCLAW_REASONING", "true");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+      label: "Chat Completions API",
+    }));
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "Pi",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateCustomOpenAiLikeSelection(
+          "Custom endpoint",
+          "https://compatible.example/v1",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "COMPATIBLE_API_KEY",
+          null,
+          undefined,
+          {
+            requireChatCompletionsToolCalling: true,
+            skipResponsesProbe: true,
+            probeStreaming: true,
+          },
+        ),
+      ).resolves.toMatchObject({ ok: true, api: "openai-completions" });
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://compatible.example/v1",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "test-key",
+        {
+          calibrateTimeouts: true,
+          requireResponsesToolCalling: false,
+          requireChatCompletionsToolCalling: true,
+          skipResponsesProbe: true,
+          probeStreaming: true,
+          pinnedAddresses: ["93.184.216.34"],
+        },
+      );
+    } finally {
+      log.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("refuses a custom OpenAI-like endpoint that resolves to a private address before probing (#6293)", async () => {
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
     const promptValidationRecovery = vi.fn(async () => "selection" as const);

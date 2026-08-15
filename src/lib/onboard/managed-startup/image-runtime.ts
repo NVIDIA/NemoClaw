@@ -525,6 +525,12 @@ function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
         "--experimental-strip-types",
         "/opt/nemoclaw-deepagents-code/generate-config.ts",
       ];
+    case "pi":
+      return [
+        "/usr/local/bin/node",
+        "--experimental-strip-types",
+        "/opt/nemoclaw-pi/generate-config.ts",
+      ];
   }
 }
 
@@ -1321,6 +1327,7 @@ function applyAdapter(
       normalizeHermesManagedConfiguration();
       break;
     case "langchain-deepagents-code":
+    case "pi":
       break;
   }
   installRootOwnedMaterials(mapped.materials);

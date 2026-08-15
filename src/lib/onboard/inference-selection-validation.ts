@@ -120,6 +120,11 @@ export interface InferenceSelectionValidationHelpers {
     credentialEnv: string,
     helpUrl?: string | null,
     capabilityCache?: OnboardInferenceCapabilityCache,
+    requirements?: {
+      requireChatCompletionsToolCalling?: boolean;
+      skipResponsesProbe?: boolean;
+      probeStreaming?: boolean;
+    },
   ): Promise<EndpointValidationResult>;
   validateCustomAnthropicSelection(
     label: string,
@@ -129,6 +134,8 @@ export interface InferenceSelectionValidationHelpers {
     helpUrl?: string | null,
     options?: {
       intendedApi?: "anthropic-messages" | "openai-completions";
+      requireChatCompletionsToolCalling?: boolean;
+      probeStreaming?: boolean;
     },
   ): Promise<EndpointValidationResult>;
 }
@@ -377,6 +384,11 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
     capabilityCache?: OnboardInferenceCapabilityCache,
+    requirements: {
+      requireChatCompletionsToolCalling?: boolean;
+      skipResponsesProbe?: boolean;
+      probeStreaming?: boolean;
+    } = {},
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
       label,
@@ -388,15 +400,19 @@ export function createInferenceSelectionValidationHelpers(
     const { pinnedAddresses, trustedPrivateCapability } = preflight;
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
+    const strictChatCompletions = requirements.requireChatCompletionsToolCalling === true;
     // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
     const probe = await runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       calibrateTimeouts: true,
-      requireResponsesToolCalling: !reasoningEnabled,
+      requireResponsesToolCalling: !strictChatCompletions && !reasoningEnabled,
+      ...(strictChatCompletions ? { requireChatCompletionsToolCalling: true } : {}),
       skipResponsesProbe:
-        reasoningEnabled || shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
-      probeStreaming: !reasoningEnabled,
+        requirements.skipResponsesProbe === true ||
+        reasoningEnabled ||
+        shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
+      probeStreaming: requirements.probeStreaming === true || !reasoningEnabled,
       pinnedAddresses,
-      trustedPrivateCapability,
+      ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
     });
     if (probe.ok) {
       if (probe.note) {
@@ -411,6 +427,7 @@ export function createInferenceSelectionValidationHelpers(
         capabilityCache?.rememberCompletedOpenAiChat({
           endpointUrl,
           model,
+          ...(strictChatCompletions ? { requireChatCompletionsToolCalling: true } : {}),
           pinnedAddresses,
           trustedPrivateCapability,
         });
@@ -447,6 +464,8 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
     options: {
       intendedApi?: "anthropic-messages" | "openai-completions";
+      requireChatCompletionsToolCalling?: boolean;
+      probeStreaming?: boolean;
     } = {},
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
@@ -473,8 +492,12 @@ export function createInferenceSelectionValidationHelpers(
             {
               calibrateTimeouts: true,
               skipResponsesProbe: true,
+              ...(options.requireChatCompletionsToolCalling === true
+                ? { requireChatCompletionsToolCalling: true }
+                : {}),
+              ...(options.probeStreaming === true ? { probeStreaming: true } : {}),
               pinnedAddresses,
-              trustedPrivateCapability,
+              ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
             },
           )
         : runAnthropicProbe(endpointUrl, model, apiKey, {

@@ -24,7 +24,9 @@ runtime:
   smoke_commands:
     - "pi --version"
     - "test -s /sandbox/.pi/agent/models.json && echo NEMOCLAW_PI_MODELS_OK"
+    - "test -s /sandbox/.pi/agent/settings.json && echo NEMOCLAW_PI_SETTINGS_OK"
     - 'test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600 && echo NEMOCLAW_PI_MODE_OK'
+    - 'test "$(stat -c %a /sandbox/.pi/agent/settings.json)" = 600 && echo NEMOCLAW_PI_SETTINGS_MODE_OK'
 config:
   dir: /sandbox/.pi/agent
   config_file: models.json

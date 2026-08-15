@@ -78,6 +78,9 @@ function adaptersFor(order: string[] = []): {
     "langchain-deepagents-code": vi.fn(async () => {
       order.push("apply:langchain-deepagents-code");
     }),
+    pi: vi.fn(async () => {
+      order.push("apply:pi");
+    }),
   };
   return {
     adapters: [
@@ -87,6 +90,7 @@ function adaptersFor(order: string[] = []): {
         agent: "langchain-deepagents-code",
         apply: applyByAgent["langchain-deepagents-code"],
       },
+      { agent: "pi", apply: applyByAgent.pi },
     ],
     applyByAgent,
   };
@@ -97,6 +101,7 @@ describe("managed startup coordinator", () => {
     "openclaw",
     "hermes",
     "langchain-deepagents-code",
+    "pi",
   ] as const)("dispatches exactly the %s adapter before commit", async (agent) => {
     const order: string[] = [];
     const prepared = preparedFor(agent);
@@ -119,7 +124,7 @@ describe("managed startup coordinator", () => {
         fingerprint: prepared.fingerprint,
       }),
     );
-    for (const otherAgent of ["openclaw", "hermes", "langchain-deepagents-code"] as const) {
+    for (const otherAgent of ["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const) {
       expect(applyByAgent[otherAgent]).toHaveBeenCalledTimes(otherAgent === agent ? 1 : 0);
     }
     expect(dependencies.commitApplication).toHaveBeenCalledWith(prepared);
@@ -173,18 +178,18 @@ describe("managed startup coordinator", () => {
     expect(dependencies.prepareApplication).not.toHaveBeenCalled();
   });
 
-  it("rejects an adapter for an unshipped agent before preparing state", async () => {
+  it("rejects an adapter outside the managed-startup set before preparing state", async () => {
     const prepared = preparedFor("openclaw");
     const dependencies = dependenciesFor(prepared);
     const { adapters } = adaptersFor();
     const wrong = {
-      agent: "not-a-shipped-agent",
+      agent: "not-a-managed-agent",
       apply: vi.fn(),
     } as unknown as ManagedStartupAgentAdapter;
 
     await expect(
       coordinateManagedStartupApplication(inputFor("openclaw"), [...adapters, wrong], dependencies),
-    ).rejects.toThrow(/one shipped agent/u);
+    ).rejects.toThrow(/one managed-startup agent/u);
     expect(dependencies.prepareApplication).not.toHaveBeenCalled();
   });
 

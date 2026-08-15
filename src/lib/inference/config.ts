@@ -115,9 +115,11 @@ export function resolveAgentInferenceApi(
   provider: string | null | undefined,
   preferredInferenceApi: string | null,
 ): string | null {
-  return agentName === "hermes" && provider === "compatible-anthropic-endpoint"
+  return agentName === "pi"
     ? "openai-completions"
-    : preferredInferenceApi;
+    : agentName === "hermes" && provider === "compatible-anthropic-endpoint"
+      ? "openai-completions"
+      : preferredInferenceApi;
 }
 
 /**
