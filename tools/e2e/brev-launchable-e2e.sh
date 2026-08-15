@@ -233,7 +233,7 @@ ssh_alias_status() {
   local -a pipeline_status
   remaining=$((deadline - SECONDS))
   if [ "$remaining" -le 0 ]; then
-    printf -v "$result_name" '%s' missing
+    printf -v "$result_name" '%s' "not checked"
     return
   fi
   [ "$remaining" -le 2 ] || remaining=2
@@ -247,7 +247,9 @@ ssh_alias_status() {
     ' >/dev/null
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
-  if [ "${pipeline_status[0]}" -eq 0 ] && [ "${pipeline_status[1]}" -eq 0 ]; then
+  if [ "${pipeline_status[0]}" -ne 0 ]; then
+    printf -v "$result_name" '%s' unavailable
+  elif [ "${pipeline_status[1]}" -eq 0 ]; then
     printf -v "$result_name" '%s' configured
   else
     printf -v "$result_name" '%s' missing

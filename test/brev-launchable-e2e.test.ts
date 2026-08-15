@@ -598,6 +598,26 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
+  it("distinguishes unavailable and unobserved SSH aliases", () => {
+    const { env, state, workDir } = fixture({
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+      timeoutBlockDiagnostics: true,
+    });
+    const result = run({
+      ...env,
+      BREV_HOST_SSH_TIMEOUT_SECONDS: "1",
+      BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS: "2",
+    });
+    expect(result.status).not.toBe(0);
+    const output = emittedOutput(result, workDir);
+    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1-host: not checked");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
   it.each([
     ["BREV_HOST_SSH_TIMEOUT_SECONDS", "1+1"],
     ["BREV_HOST_SSH_TIMEOUT_SECONDS", "0"],
