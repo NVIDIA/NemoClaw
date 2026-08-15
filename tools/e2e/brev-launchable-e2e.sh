@@ -204,6 +204,20 @@ run_bounded_probe() {
   printf -v "$status_name" '%s' "$status"
 }
 
+run_budgeted_diagnostic_probe() {
+  local deadline="$1" output_name="$2" status_name="$3"
+  local remaining
+  shift 3
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -le 0 ]; then
+    printf -v "$output_name" '%s' "diagnostic budget exhausted"
+    printf -v "$status_name" '%s' 124
+    return
+  fi
+  [ "$remaining" -le 5 ] || remaining=5
+  run_bounded_probe "$remaining" "$output_name" "$status_name" "$@"
+}
+
 report_probe() {
   local label="$1" status="$2" error="$3"
   if [ "$status" -eq 0 ]; then
@@ -214,10 +228,17 @@ report_probe() {
 }
 
 ssh_alias_status() {
-  local alias="$1" result_name="$2"
+  local deadline="$1" alias="$2" result_name="$3"
+  local remaining
   local -a pipeline_status
+  remaining=$((deadline - SECONDS))
+  if [ "$remaining" -le 0 ]; then
+    printf -v "$result_name" '%s' missing
+    return
+  fi
+  [ "$remaining" -le 2 ] || remaining=2
   set +e
-  timeout 5s ssh -G "$alias" 2>/dev/null \
+  timeout "${remaining}s" ssh -G "$alias" 2>/dev/null \
     | awk -v alias="$alias" '
       tolower($1) == "hostname" && $2 != alias { configured = 1 }
       tolower($1) == "proxycommand" && tolower($2) != "none" { configured = 1 }
@@ -234,21 +255,26 @@ ssh_alias_status() {
 }
 
 run_connectivity_diagnostics() {
-  local refresh_status="$1"
+  local refresh_status="$1" timeout_seconds="$2"
   local container_error container_status host_exec_error host_exec_status
   local default_ssh_error default_ssh_status host_ssh_error host_ssh_status
   local plain_alias host_alias
+  local deadline=$((SECONDS + timeout_seconds))
 
-  ssh_alias_status "$INSTANCE_NAME" plain_alias
-  ssh_alias_status "${INSTANCE_NAME}-host" host_alias
+  log "Readiness diagnostics budget: up to $timeout_seconds seconds"
+
+  ssh_alias_status "$deadline" "$INSTANCE_NAME" plain_alias
+  ssh_alias_status "$deadline" "${INSTANCE_NAME}-host" host_alias
   log "Readiness SSH alias $INSTANCE_NAME: $plain_alias"
   log "Readiness SSH alias ${INSTANCE_NAME}-host: $host_alias"
 
-  run_bounded_probe 15 container_error container_status brev exec "$INSTANCE_NAME" true
-  run_bounded_probe 15 host_exec_error host_exec_status brev exec "$INSTANCE_NAME" true --host
-  run_bounded_probe 15 default_ssh_error default_ssh_status \
+  run_budgeted_diagnostic_probe "$deadline" container_error container_status \
+    brev exec "$INSTANCE_NAME" true
+  run_budgeted_diagnostic_probe "$deadline" host_exec_error host_exec_status \
+    brev exec "$INSTANCE_NAME" true --host
+  run_budgeted_diagnostic_probe "$deadline" default_ssh_error default_ssh_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "$INSTANCE_NAME" true
-  run_bounded_probe 15 host_ssh_error host_ssh_status \
+  run_budgeted_diagnostic_probe "$deadline" host_ssh_error host_ssh_status \
     ssh "${SSH_PROBE_OPTIONS[@]}" "${INSTANCE_NAME}-host" true
 
   report_probe "brev exec container" "$container_status" "$container_error"
@@ -273,6 +299,7 @@ run_connectivity_diagnostics() {
 
 wait_for_host_ssh() {
   local timeout_seconds="${BREV_HOST_SSH_TIMEOUT_SECONDS:-900}"
+  local diagnostic_timeout_seconds="${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS:-30}"
   local poll_seconds="${POLL_SECONDS:-5}"
   local deadline=$((SECONDS + timeout_seconds))
   local remaining refresh_timeout sleep_seconds ssh_timeout refresh_error ssh_error container_error
@@ -344,7 +371,7 @@ wait_for_host_ssh() {
   else
     log "Readiness initial default Brev container probe: status $container_status; error: $container_error"
   fi
-  run_connectivity_diagnostics "$refresh_status"
+  run_connectivity_diagnostics "$refresh_status" "$diagnostic_timeout_seconds"
   die "host SSH readiness timed out"
 }
 
@@ -403,6 +430,10 @@ done
 if [ "${BREV_HOST_SSH_TIMEOUT_SECONDS+x}" = x ] \
   && ! [[ "$BREV_HOST_SSH_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   die "BREV_HOST_SSH_TIMEOUT_SECONDS must be a positive integer"
+fi
+if [ "${BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS+x}" = x ] \
+  && ! [[ "$BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  die "BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS must be a positive integer"
 fi
 if [ "${POLL_SECONDS+x}" = x ] && ! [[ "$POLL_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
   die "POLL_SECONDS must be a positive integer"

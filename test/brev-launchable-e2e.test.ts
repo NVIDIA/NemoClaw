@@ -49,6 +49,7 @@ function fixture(
     sourceRepository?: string;
     sourcePath?: string;
     timeoutBlockCommand?: "brev refresh" | "ssh-host";
+    timeoutBlockDiagnostics?: boolean;
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-e2e-"));
@@ -78,6 +79,16 @@ if [ "$FAKE_TIMEOUT_BLOCK_COMMAND" = "brev refresh" ] && [ "\${1:-} \${2:-}" = "
 elif [ "$FAKE_TIMEOUT_BLOCK_COMMAND" = "ssh-host" ] && [ "\${1:-}" = ssh ] &&
   [[ " $* " == *" $INSTANCE_NAME-host true "* ]]; then
   should_block=1
+fi
+if [ "$FAKE_TIMEOUT_BLOCK_DIAGNOSTICS" = 1 ] && [[ "$duration" =~ ^[1-5]s$ ]]; then
+  if [ "\${1:-} \${2:-}" = "ssh -G" ]; then
+    touch "$FAKE_DIAGNOSTIC_PHASE"
+    /bin/sleep "\${duration%s}"
+    exit 124
+  elif [ -f "$FAKE_DIAGNOSTIC_PHASE" ]; then
+    /bin/sleep "\${duration%s}"
+    exit 124
+  fi
 fi
 if [ -f "$FAKE_TIMEOUT_BLOCK" ] && [ "$should_block" -eq 1 ]; then
   rm -f "$FAKE_TIMEOUT_BLOCK"
@@ -305,6 +316,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
       ? timeoutBlock
       : path.join(root, "timeout-disabled"),
     FAKE_TIMEOUT_BLOCK_COMMAND: options.timeoutBlockCommand ?? "",
+    FAKE_TIMEOUT_BLOCK_DIAGNOSTICS: options.timeoutBlockDiagnostics ? "1" : "0",
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
     GITHUB_RUN_ID: "789",
@@ -384,7 +396,7 @@ describe("focused staging Brev Launchable lane", () => {
     expect(commands).not.toContain("nvapi-test-value");
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
     expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).not.toMatch(
-      /last failure|Readiness probe|Readiness SSH alias|Readiness classification/u,
+      /last failure|Readiness diagnostics budget|Readiness probe|Readiness SSH alias|Readiness classification/u,
     );
     expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
       "Waiting up to 900 seconds for host SSH access",
@@ -496,15 +508,15 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
     const commands = fs.readFileSync(calls, "utf8");
-    expect(commands).toContain("timeout 5s ssh -G nclaw-e2e-test-1");
-    expect(commands).toContain("timeout 5s ssh -G nclaw-e2e-test-1-host");
-    expect(commands).toContain("timeout 15s brev exec nclaw-e2e-test-1 true");
-    expect(commands).toContain("timeout 15s brev exec nclaw-e2e-test-1 true --host");
+    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1");
+    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1-host");
+    expect(commands).toContain("timeout 5s brev exec nclaw-e2e-test-1 true");
+    expect(commands).toContain("timeout 5s brev exec nclaw-e2e-test-1 true --host");
     expect(commands).toMatch(
-      /timeout 15s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1 true/u,
+      /timeout 5s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1 true/u,
     );
     expect(commands).toMatch(
-      /timeout 15s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true/u,
+      /timeout 5s ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR nclaw-e2e-test-1-host true/u,
     );
     expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
 
@@ -575,10 +587,10 @@ describe("focused staging Brev Launchable lane", () => {
     expect(result.status).not.toBe(0);
     expect(emittedOutput(result, workDir)).toContain(`Readiness classification: ${classification}`);
     const commands = fs.readFileSync(calls, "utf8");
-    expect(commands).toContain("timeout 15s brev exec nclaw-e2e-test-1 true");
-    expect(commands).toContain("timeout 15s brev exec nclaw-e2e-test-1 true --host");
-    expect(commands).toMatch(/timeout 15s ssh -T .* nclaw-e2e-test-1 true/u);
-    expect(commands).toMatch(/timeout 15s ssh -T .* nclaw-e2e-test-1-host true/u);
+    expect(commands).toContain("timeout 5s brev exec nclaw-e2e-test-1 true");
+    expect(commands).toContain("timeout 5s brev exec nclaw-e2e-test-1 true --host");
+    expect(commands).toMatch(/timeout 5s ssh -T .* nclaw-e2e-test-1 true/u);
+    expect(commands).toMatch(/timeout 5s ssh -T .* nclaw-e2e-test-1-host true/u);
     expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
@@ -590,6 +602,7 @@ describe("focused staging Brev Launchable lane", () => {
     ["BREV_HOST_SSH_TIMEOUT_SECONDS", "1+1"],
     ["BREV_HOST_SSH_TIMEOUT_SECONDS", "0"],
     ["BREV_HOST_SSH_TIMEOUT_SECONDS", ""],
+    ["BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS", "0"],
     ["POLL_SECONDS", "0"],
     ["POLL_SECONDS", ""],
   ])("rejects invalid %s=%s before dispatch", (name, value) => {
@@ -610,18 +623,38 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.existsSync(calls)).toBe(false);
   });
 
-  it("caps a blocking refresh by the host SSH deadline and deletes the workspace", () => {
-    const { calls, env, state, workDir } = fixture({ timeoutBlockCommand: "brev refresh" });
+  it("caps blocking readiness and failure diagnostics by separate deadlines", () => {
+    const { calls, env, state, workDir } = fixture({
+      timeoutBlockCommand: "brev refresh",
+      timeoutBlockDiagnostics: true,
+    });
     const startedAt = performance.now();
-    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+    const result = run({
+      ...env,
+      BREV_HOST_SSH_TIMEOUT_SECONDS: "1",
+      BREV_READINESS_DIAGNOSTIC_TIMEOUT_SECONDS: "6",
+    });
     const elapsedMs = performance.now() - startedAt;
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("host SSH readiness timed out");
-    expect(elapsedMs).toBeLessThan(80_000);
+    expect(elapsedMs).toBeLessThan(12_000);
     const commands = fs.readFileSync(calls, "utf8");
     expect(commands).toContain("timeout 1s brev refresh");
+    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1");
+    expect(commands).toContain("timeout 2s ssh -G nclaw-e2e-test-1-host");
+    expect(commands).toMatch(/timeout [12]s brev exec nclaw-e2e-test-1 true/u);
     expect(commands).not.toMatch(/NEMOCLAW_BOOT_IMAGE|full-e2e\.test\.ts/u);
-    expect(commands).toContain("timeout 15s brev exec nclaw-e2e-test-1 true");
+    const output = emittedOutput(result, workDir);
+    expect(output).toContain("Readiness diagnostics budget: up to 6 seconds");
+    for (const label of [
+      "brev exec container",
+      "brev exec host",
+      "direct SSH container",
+      "direct SSH host",
+    ]) {
+      expect(output).toContain(`Readiness probe ${label}: failure; status 124;`);
+    }
+    expect(output).toContain("diagnostic budget exhausted");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
