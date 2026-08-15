@@ -673,7 +673,6 @@ describe("portable profile systemctl fixture", () => {
     async () => {
       const scope = createFixture();
       const originalRecordPath = `${scope.gatewayPidFile}.before-validation`;
-      let originalRecord: string | undefined;
       try {
         const result = systemctl(
           {
@@ -685,9 +684,7 @@ describe("portable profile systemctl fixture", () => {
           },
           ["--user", "restart", "nemoclaw-openshell-gateway"],
         );
-        if (fs.existsSync(originalRecordPath)) {
-          originalRecord = fs.readFileSync(originalRecordPath, "utf8");
-        }
+        fs.accessSync(originalRecordPath, fs.constants.R_OK);
         expect(result.status).toBe(1);
         expect(String(result.stderr)).toContain("does not match process");
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
@@ -695,11 +692,13 @@ describe("portable profile systemctl fixture", () => {
         const driftedRecord = readFixtureProcessRecord(scope.gatewayPidFile);
         expect(pidIsActive(driftedRecord.pid)).toBe(true);
       } finally {
-        if (originalRecord !== undefined) {
-          fs.writeFileSync(scope.gatewayPidFile, originalRecord, { mode: 0o600 });
+        try {
+          fs.copyFileSync(originalRecordPath, scope.gatewayPidFile);
+          fs.chmodSync(scope.gatewayPidFile, 0o600);
+        } finally {
+          fs.rmSync(originalRecordPath, { force: true });
+          await cleanFixture(scope);
         }
-        fs.rmSync(originalRecordPath, { force: true });
-        await cleanFixture(scope);
       }
     },
   );
