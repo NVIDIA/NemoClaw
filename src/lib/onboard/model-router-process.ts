@@ -27,6 +27,11 @@ type ModelRouterCommandLineReaderDeps = {
   listProcPids?: () => number[];
 };
 
+export type ModelRouterProcessLookup =
+  | { status: "found"; pid: number }
+  | { status: "absent" }
+  | { status: "unavailable" };
+
 export type RouterHealthSnapshot = {
   healthy: boolean;
   body: string | null;
@@ -255,34 +260,34 @@ export async function stopModelRouterProcess(
 /**
  * Scan /proc for a model-router process bound to `port`.
  *
- * Used by reconcileModelRouter to auto-recover orphaned routers whose PID
- * was not recorded in the current session (e.g. after a failed install left a
- * running router and the next session starts fresh). Returns null when /proc
- * is unavailable (macOS) or no matching process is found.
+ * Used by reconcileModelRouter and destroy to recover orphaned routers whose
+ * PID was not recorded in the matching session. The result distinguishes a
+ * completed scan with no match from an unavailable process inventory so
+ * teardown does not erase recovery identity on inconclusive evidence.
  */
-export function findModelRouterPidForPort(
+export function inspectModelRouterProcessForPort(
   port: number,
   deps: ModelRouterCommandLineReaderDeps = {},
-): number | null {
+): ModelRouterProcessLookup {
   let pids: number[];
-  if (deps.listProcPids) {
-    pids = deps.listProcPids();
-  } else {
-    try {
+  try {
+    if (deps.listProcPids) {
+      pids = deps.listProcPids();
+    } else {
       pids = fs
         .readdirSync("/proc")
         .map(Number)
         .filter((n) => Number.isFinite(n) && n > 0);
-    } catch {
-      return null;
     }
+  } catch {
+    return { status: "unavailable" };
   }
   const readCmdLine = deps.readProcCommandLine ?? readProcCommandLine;
   for (const pid of pids) {
     const args = readCmdLine(pid);
-    if (args && isModelRouterCommandLineForPort(args, port)) return pid;
+    if (args && isModelRouterCommandLineForPort(args, port)) return { status: "found", pid };
   }
-  return null;
+  return { status: "absent" };
 }
 
 export async function stopTrackedModelRouterForAgentChange(
