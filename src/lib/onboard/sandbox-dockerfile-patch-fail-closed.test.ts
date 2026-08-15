@@ -123,7 +123,7 @@ describe("prepareSandboxDockerfilePatch DCode provider input", () => {
     now: vi.fn(() => 1),
   };
 
-  it.each(["provider/name", "café", `a${"b".repeat(64)}`])(
+  it.each(["-provider", "provider/name", "café", `a${"b".repeat(64)}`])(
     "rejects provider %s before changing the legacy Dockerfile (#7112)",
     async (provider) => {
       const dockerfile = stagedDcodeDockerfile();
@@ -153,8 +153,8 @@ describe("prepareSandboxDockerfilePatch DCode provider input", () => {
       deps,
     });
 
-    expect(fs.readFileSync(dockerfile.path, "utf8")).toContain(
-      "ARG NEMOCLAW_UPSTREAM_PROVIDER=inference",
-    );
+    const patched = fs.readFileSync(dockerfile.path, "utf8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=inference");
+    expect(patched).not.toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=old");
   });
 });
