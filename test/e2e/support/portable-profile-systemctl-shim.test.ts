@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  cleanupPortableProfileRootlessFixture,
   cleanupPortableProfileSystemctlFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
@@ -135,8 +136,7 @@ function pidIsActive(pid: number): boolean {
 }
 
 async function cleanFixture(scope: FixtureScope): Promise<void> {
-  await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
-  fs.rmSync(scope.directory, { force: true, recursive: true });
+  await cleanupPortableProfileRootlessFixture(scope.runtimeDir, scope.directory);
 }
 
 function runInstallerOverride(scope: FixtureScope): ReturnType<typeof spawnSync> {
@@ -294,6 +294,26 @@ describe("portable profile systemctl fixture", () => {
       }
     },
   );
+
+  it.each([
+    ["malformed PID text", "not-a-pid"],
+    ["a PID beyond Number.MAX_SAFE_INTEGER", `${Number.MAX_SAFE_INTEGER}0`],
+  ])("rejects %s without removing the rootless fixture (#9006)", async (_kind, invalidPid) => {
+    const scope = createFixture();
+    const pidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+    try {
+      fs.writeFileSync(pidFile, `${invalidPid}\n`, { mode: 0o600 });
+
+      await expect(
+        cleanupPortableProfileRootlessFixture(scope.runtimeDir, scope.directory),
+      ).rejects.toThrow(`Portable profile fixture PID file ${pidFile} is invalid.`);
+      expect(fs.existsSync(pidFile)).toBe(true);
+      expect(fs.existsSync(scope.directory)).toBe(true);
+    } finally {
+      fs.rmSync(pidFile, { force: true });
+      await cleanFixture(scope);
+    }
+  });
 
   it("rejects malformed or extended user-service commands (#9006)", () => {
     const scope = createFixture();

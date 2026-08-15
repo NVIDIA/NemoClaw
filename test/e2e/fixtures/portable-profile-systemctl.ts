@@ -18,7 +18,11 @@ const FIXTURE_SOCKET_FILES = ["podman.sock", "nemoclaw-podman-service.sock"] as 
 function readFixturePid(pidFile: string): number | undefined {
   try {
     const value = fs.readFileSync(pidFile, "utf8").trim();
-    return /^[1-9][0-9]*$/.test(value) ? Number(value) : undefined;
+    const pid = Number(value);
+    if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(pid)) {
+      throw new Error(`Portable profile fixture PID file ${pidFile} is invalid.`);
+    }
+    return pid;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -81,4 +85,12 @@ export async function cleanupPortableProfileSystemctlFixture(runtimeDir: string)
   ]) {
     fs.rmSync(artifact, { force: true });
   }
+}
+
+export async function cleanupPortableProfileRootlessFixture(
+  runtimeDir: string,
+  root: string,
+): Promise<void> {
+  await cleanupPortableProfileSystemctlFixture(runtimeDir);
+  fs.rmSync(root, { force: true, recursive: true });
 }

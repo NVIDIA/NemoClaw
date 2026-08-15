@@ -15,7 +15,7 @@ import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebu
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import {
-  cleanupPortableProfileSystemctlFixture,
+  cleanupPortableProfileRootlessFixture,
   installPortableProfileSystemctlShim,
 } from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -262,12 +262,7 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
-    try {
-      await cleanupPortableProfileSystemctlFixture(runtimeDir);
-      fs.rmSync(root, { recursive: true, force: true });
-    } catch (error) {
-      console.warn(`Portable E2E temporary cleanup was incomplete: ${String(error)}`);
-    }
+    await cleanupPortableProfileRootlessFixture(runtimeDir, root);
   }
 }
 
