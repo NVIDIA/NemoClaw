@@ -270,7 +270,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome.replacementPresence).toBe("absent");
     expect(dockerRun).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledOnce();
-    expect(sleep).toHaveBeenCalledWith(500);
+    expect(sleep).toHaveBeenCalledWith(0.5);
   });
 
   it("keeps replacement presence unknown after repeated daemon errors (#7996)", () => {
@@ -295,8 +295,8 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome.replacementPresence).toBe("unknown");
     expect(dockerRun).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenNthCalledWith(1, 500);
-    expect(sleep).toHaveBeenNthCalledWith(2, 500);
+    expect(sleep).toHaveBeenNthCalledWith(1, 0.5);
+    expect(sleep).toHaveBeenNthCalledWith(2, 0.5);
     const diagnostics = collectRollbackDiagnostics(newContainerId, outcome);
     expect(diagnostics.cleanupDisposition).toBe("manual");
     expect(diagnostics.cleanupCommands).toEqual([`docker rm -f ${JSON.stringify(newContainerId)}`]);

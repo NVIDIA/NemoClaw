@@ -32,10 +32,10 @@ type DockerRunFn = (args: readonly string[], opts?: DockerRunOptions) => DockerR
 const REPLACEMENT_PRESENCE_ATTEMPTS = 3;
 const REPLACEMENT_PRESENCE_RETRY_MS = 500;
 
-function sleepBeforeReplacementPresenceRetry(milliseconds: number): void {
-  if (milliseconds <= 0 || !Number.isFinite(milliseconds)) return;
+function sleepBeforeReplacementPresenceRetry(seconds: number): void {
+  if (seconds <= 0 || !Number.isFinite(seconds)) return;
   const buffer = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(buffer, 0, 0, milliseconds);
+  Atomics.wait(buffer, 0, 0, seconds * 1000);
 }
 
 export type DockerGpuPatchRollbackOutcome = {
@@ -51,7 +51,7 @@ export type ResolvedDockerGpuPatchRollbackDeps = {
   dockerRm: DockerContainerFn;
   dockerRename: DockerRenameFn;
   dockerStart: DockerContainerFn;
-  sleep: (milliseconds: number) => void;
+  sleep: (seconds: number) => void;
 };
 
 export function resolveDockerGpuPatchRollbackDeps(
@@ -90,7 +90,7 @@ function observeReplacementPresence(
         { length: REPLACEMENT_PRESENCE_ATTEMPTS - 1 },
         () => REPLACEMENT_PRESENCE_RETRY_MS,
       ),
-      sleep: deps.sleep,
+      sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
     },
   );
   if (!hasZeroDockerExitStatus(result)) return "unknown";

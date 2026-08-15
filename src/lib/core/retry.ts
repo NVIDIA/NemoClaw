@@ -4,17 +4,17 @@
 interface RetryUntilBaseOptions<T> {
   /** Return true to stop retrying after this result. */
   accept: (result: T, attempt: number) => boolean;
-  /** Delays before each additional attempt. */
+  /** Delay in milliseconds before each additional attempt. */
   retryDelaysMs: readonly number[];
 }
 
 export type RetryUntilOptions<T> = RetryUntilBaseOptions<T> & {
-  /** Sleep function used between attempts. */
+  /** Sleep for the specified number of milliseconds between attempts. */
   sleep: (ms: number) => void;
 };
 
 export type RetryUntilAsyncOptions<T> = RetryUntilBaseOptions<T> & {
-  /** Sleep function used between attempts. */
+  /** Sleep for the specified number of milliseconds between attempts. */
   sleep: (ms: number) => Promise<void>;
 };
 

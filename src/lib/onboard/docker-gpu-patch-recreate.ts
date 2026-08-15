@@ -72,8 +72,8 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
     dockerRm,
     dockerStart,
     dockerStop,
-    sleep: (milliseconds: number) => {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, milliseconds));
+    sleep: (seconds: number) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
     },
     now: () => new Date(),
     detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
@@ -127,7 +127,7 @@ function waitForNewContainerId(
       (id) => !sameContainerId(id, oldContainerId),
     );
     if (replacement) return replacement;
-    d.sleep(2_000);
+    d.sleep(2);
   }
   return null;
 }
