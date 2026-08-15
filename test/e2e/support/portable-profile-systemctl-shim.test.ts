@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -57,13 +57,26 @@ if (
 ) {
   process.exit(64);
 }
+fs.appendFileSync(process.env.FAKE_PODMAN_PID_LOG, process.pid + "\\n");
 const socketPath = args[3].slice("unix://".length);
 fs.rmSync(socketPath, { force: true });
+const sockets = new Set();
 const server = net.createServer((socket) => {
-  socket.once("data", () => socket.end("ready"));
+  sockets.add(socket);
+  socket.once("close", () => sockets.delete(socket));
+  socket.once("data", (data) => {
+    if (data.toString() === "hold") {
+      socket.write("held");
+      return;
+    }
+    socket.end("ready");
+  });
 });
 server.listen(socketPath);
-const stop = () => server.close(() => process.exit(0));
+const stop = () => {
+  for (const socket of sockets) socket.destroy();
+  server.close(() => process.exit(0));
+};
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 `,
@@ -74,6 +87,7 @@ process.on("SIGTERM", stop);
     directory,
     env: {
       ...process.env,
+      FAKE_PODMAN_PID_LOG: path.join(directory, "podman-pids.log"),
       FAKE_PODMAN_SOCKET: socketPath,
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
       XDG_RUNTIME_DIR: runtimeDir,
@@ -89,6 +103,35 @@ function systemctl(scope: FixtureScope, args: string[]): ReturnType<typeof spawn
     encoding: "utf8",
     env: scope.env,
     timeout: 15_000,
+  });
+}
+
+function systemctlAsync(
+  scope: FixtureScope,
+  args: string[],
+): Promise<{ readonly status: number | null; readonly stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(scope.shim, args, {
+      env: scope.env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Timed out waiting for systemctl ${args.join(" ")}.`));
+    }, 15_000);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("close", (status) => {
+      clearTimeout(timeout);
+      resolve({ status, stderr });
+    });
   });
 }
 
@@ -118,8 +161,36 @@ function activateThroughSocket(socketPath: string): Promise<string> {
   });
 }
 
+function openHeldSocket(socketPath: string): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection(socketPath);
+    const timeout = setTimeout(() => {
+      client.destroy();
+      reject(new Error("Timed out waiting for the held Podman client."));
+    }, 15_000);
+    client.setEncoding("utf8");
+    client.once("connect", () => client.write("hold"));
+    client.once("data", (chunk) => {
+      clearTimeout(timeout);
+      expect(chunk).toBe("held");
+      resolve(client);
+    });
+    client.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+
 async function waitForServiceStatus(scope: FixtureScope, expected: number): Promise<void> {
   await vi.waitFor(() => expect(serviceStatus(scope)).toBe(expected), {
+    interval: 50,
+    timeout: 5_000,
+  });
+}
+
+async function waitForPath(filePath: string): Promise<void> {
+  await vi.waitFor(() => expect(fs.existsSync(filePath)).toBe(true), {
     interval: 50,
     timeout: 5_000,
   });
@@ -249,6 +320,96 @@ describe("portable profile systemctl fixture", () => {
         expect(serviceStatus(scope)).toBe(0);
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
       } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "serializes try-restart with a public-socket request and leaves only the recorded backend process active (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const refreshGate = path.join(scope.directory, "refresh-gate");
+      const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      const backendSocketPath = path.join(
+        scope.runtimeDir,
+        "podman",
+        "nemoclaw-podman-service.sock",
+      );
+      const pidLog = scope.env.FAKE_PODMAN_PID_LOG!;
+      scope.env.NEMOCLAW_PODMAN_REFRESH_GATE = refreshGate;
+      let backendPids: number[] = [];
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        const socketAuthority = fs.statSync(scope.socketPath);
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+        await waitForServiceStatus(scope, 0);
+        const previousPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+
+        const refresh = systemctlAsync(scope, ["--user", "try-restart", "podman.service"]);
+        await waitForPath(`${refreshGate}.waiting`);
+        const response = activateThroughSocket(scope.socketPath);
+        await waitForPath(`${refreshGate}.client`);
+        fs.writeFileSync(`${refreshGate}.release`, "release\n", { mode: 0o600 });
+
+        const [refreshResult, responseOutput] = await Promise.all([refresh, response]);
+        expect(refreshResult.status, refreshResult.stderr).toBe(0);
+        expect(responseOutput).toBe("ready");
+        await waitForServiceStatus(scope, 0);
+        const recordedPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+        backendPids = fs.readFileSync(pidLog, "utf8").trim().split("\n").map(Number);
+        expect(recordedPid).not.toBe(previousPid);
+        expect(pidIsActive(previousPid)).toBe(false);
+        expect(backendPids).toEqual([previousPid, recordedPid]);
+        expect(backendPids.filter(pidIsActive)).toEqual([recordedPid]);
+        expect(fs.statSync(scope.socketPath)).toMatchObject({
+          dev: socketAuthority.dev,
+          ino: socketAuthority.ino,
+        });
+
+        await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
+        expect(backendPids.every((pid) => !pidIsActive(pid))).toBe(true);
+        for (const artifact of [
+          activatorPidFile,
+          servicePidFile,
+          scope.socketPath,
+          backendSocketPath,
+        ]) {
+          expect(fs.existsSync(artifact), artifact).toBe(false);
+        }
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "refreshes the backend while an established public-socket client remains open (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      let heldClient: net.Socket | undefined;
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+        await waitForServiceStatus(scope, 0);
+        const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+        const previousPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+
+        heldClient = await openHeldSocket(scope.socketPath);
+        expect(heldClient.destroyed).toBe(false);
+        const refresh = await systemctlAsync(scope, ["--user", "try-restart", "podman.service"]);
+
+        expect(refresh.status, refresh.stderr).toBe(0);
+        await waitForServiceStatus(scope, 0);
+        const recordedPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+        expect(recordedPid).not.toBe(previousPid);
+        expect(pidIsActive(previousPid)).toBe(false);
+        expect(pidIsActive(recordedPid)).toBe(true);
+      } finally {
+        heldClient?.destroy();
         await cleanFixture(scope);
       }
     },

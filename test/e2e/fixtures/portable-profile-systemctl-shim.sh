@@ -63,29 +63,28 @@ stop_runtime() {
   rm -f "$socket_path" "$backend_socket_path"
 }
 
-wait_for_service() {
+refresh_service() {
+  if ! service_is_active; then
+    return 0
+  fi
+
+  local previous_pid activator_pid
+  previous_pid="$(<"$service_pid_file")"
+  activator_pid="$(<"$activator_pid_file")"
+  kill -HUP "$activator_pid"
+
   for ((attempt = 0; attempt < 100; attempt += 1)); do
-    if service_is_active; then
-      chmod 660 "$socket_path"
+    if service_is_active && [[ "$(<"$service_pid_file")" != "$previous_pid" ]]; then
       return 0
     fi
-    if ! pid_is_active "$service_pid_file"; then
+    if ! pid_is_active "$activator_pid_file"; then
       break
     fi
     sleep 0.1
   done
 
-  stop_service
   cat "$log_file" >&2 || true
   return 1
-}
-
-start_service() {
-  stop_service
-  install -d -m 700 "$service_dir"
-  nohup podman system service --time=0 "unix://$backend_socket_path" >>"$log_file" 2>&1 &
-  echo $! >"$service_pid_file"
-  wait_for_service
 }
 
 start_socket() {
@@ -106,20 +105,50 @@ const net = require("node:net");
 
 const [socketPath, backendSocketPath, servicePidFile, activatorPidFile] = process.argv.slice(2);
 const logFile = process.env.NEMOCLAW_PODMAN_LOG_FILE;
-let activationPromise;
+const refreshGate = process.env.NEMOCLAW_PODMAN_REFRESH_GATE;
+let lifecycleTail = Promise.resolve();
 
 function removeActivatorState() {
   fs.rmSync(activatorPidFile, { force: true });
 }
 
-function pidIsActive() {
+function readServicePid() {
   try {
-    const pid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+    const value = fs.readFileSync(servicePidFile, "utf8").trim();
+    const pid = Number(value);
+    if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(pid)) {
+      throw new Error(`Portable profile fixture PID file ${servicePidFile} is invalid.`);
+    }
+    return pid;
+  } catch (error) {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function processIsActive(pid) {
+  try {
     process.kill(pid, 0);
-    return Number.isInteger(pid) && pid > 0;
-  } catch {
+    return true;
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
     return false;
   }
+}
+
+function signalProcess(pid, signal) {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+    return false;
+  }
+}
+
+function pidIsActive() {
+  const pid = readServicePid();
+  return pid !== undefined && processIsActive(pid);
 }
 
 function backendIsReady() {
@@ -131,13 +160,42 @@ function backendIsReady() {
   }
 }
 
-function serviceIsRunning(service) {
-  return service.exitCode === null && service.signalCode === null;
+async function waitForProcessExit(pid) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (!processIsActive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+async function stopService() {
+  const pid = readServicePid();
+  if (pid !== undefined && processIsActive(pid)) {
+    const termSent = signalProcess(pid, "SIGTERM");
+    if (termSent && !(await waitForProcessExit(pid))) {
+      const killSent = signalProcess(pid, "SIGKILL");
+      if (killSent && !(await waitForProcessExit(pid))) {
+        throw new Error(`Portable profile fixture process ${pid} did not exit.`);
+      }
+    }
+  }
+  fs.rmSync(servicePidFile, { force: true });
+  fs.rmSync(backendSocketPath, { force: true });
+}
+
+async function waitForRefreshGate() {
+  if (!refreshGate) return;
+  fs.writeFileSync(`${refreshGate}.waiting`, `${process.pid}\n`, { mode: 0o600 });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (fs.existsSync(`${refreshGate}.release`)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for the test to release the portable profile refresh gate.");
 }
 
 async function startService() {
   if (backendIsReady()) return;
-  fs.rmSync(backendSocketPath, { force: true });
+  await stopService();
   const output = fs.openSync(logFile, "a");
   const service = spawn(
     "podman",
@@ -151,25 +209,57 @@ async function startService() {
 
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (backendIsReady()) return;
-    if (!serviceIsRunning(service)) break;
+    if (!processIsActive(service.pid)) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  if (serviceIsRunning(service)) service.kill("SIGTERM");
-  fs.rmSync(servicePidFile, { force: true });
-  fs.rmSync(backendSocketPath, { force: true });
+  await stopService();
   throw new Error("Podman service did not create its backend socket.");
 }
 
-async function proxy(client) {
-  activationPromise ??= startService().finally(() => {
-    activationPromise = undefined;
+async function refreshService() {
+  await stopService();
+  await waitForRefreshGate();
+  await startService();
+}
+
+function runLifecycle(operation) {
+  const result = lifecycleTail.then(operation, operation);
+  lifecycleTail = result.catch(() => undefined);
+  return result;
+}
+
+function connectBackend(client) {
+  return new Promise((resolve, reject) => {
+    const backend = net.createConnection(backendSocketPath);
+    const fail = (error) => {
+      client.off("close", clientClosed);
+      backend.destroy();
+      reject(error);
+    };
+    const clientClosed = () => fail(new Error("Portable profile client closed before proxying."));
+    client.once("close", clientClosed);
+    backend.once("error", fail);
+    backend.once("connect", () => {
+      client.off("close", clientClosed);
+      backend.off("error", fail);
+      resolve(backend);
+    });
   });
-  await activationPromise;
-  const backend = net.createConnection(backendSocketPath);
-  backend.once("connect", () => client.pipe(backend).pipe(client));
+}
+
+async function proxy(client) {
+  const lifecycle = runLifecycle(async () => {
+    await startService();
+    return connectBackend(client);
+  });
+  if (refreshGate && fs.existsSync(`${refreshGate}.waiting`)) {
+    fs.writeFileSync(`${refreshGate}.client`, `${process.pid}\n`, { mode: 0o600 });
+  }
+  const backend = await lifecycle;
   backend.once("error", () => client.destroy());
   client.once("error", () => backend.destroy());
+  client.pipe(backend).pipe(client);
 }
 
 const server = net.createServer((client) => {
@@ -188,6 +278,9 @@ const stop = () => {
 };
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
+process.on("SIGHUP", () => {
+  void runLifecycle(refreshService).catch((error) => console.error(error));
+});
 NODE
   echo $! >"$activator_pid_file"
 
@@ -218,9 +311,7 @@ if [[ "$#" -eq 3 &&
   "$1" == "--user" &&
   "$2" == "try-restart" &&
   "$3" == "podman.service" ]]; then
-  if service_is_active; then
-    start_service
-  fi
+  refresh_service
   exit 0
 fi
 
