@@ -78,7 +78,8 @@ function qualifyTuiInputMode() {
   let ttyPath;
   try {
     ttyPath = fs.realpathSync(path.join("/proc", pids[0], "fd", "0"));
-  } catch {
+  } catch (error) {
+    if (error && ["ENOENT", "ESRCH"].includes(error.code)) finish(1);
     finish(2, "tui_stdin_unavailable");
   }
   if (!/^\/dev\/pts\/\d+$/.test(ttyPath)) finish(2, "tui_stdin_not_pty");
