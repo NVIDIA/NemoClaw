@@ -138,12 +138,13 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const fakeLaunch = join(fixtureRoot, "openclaw");
   const fakeOpenshell = join(fixtureRoot, "openshell");
   const sessionRoot = join(fixtureRoot, "sessions");
-  const inputMarker = join(fixtureRoot, "input-observed");
-  const duplicateMarker = join(fixtureRoot, "duplicate-ready");
+  const tuiInputMarkerRoot = join(fixtureRoot, "tui-input");
+  const tuiPidsPath = join(fixtureRoot, "tui-pids");
   const ttyMarker = join(fixtureRoot, "tty-observed");
   const runId = basename(fixtureRoot).replaceAll(/[^a-zA-Z0-9]/gu, "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   mkdirSync(sessionRoot);
+  mkdirSync(tuiInputMarkerRoot);
 
   try {
     writeFileSync(
@@ -153,47 +154,57 @@ const fs = require("node:fs");
 const readline = require("node:readline");
 const childProcess = require("node:child_process");
 
+const mode = process.env.NEMOCLAW_FIXTURE_MODE;
 if (process.argv[2] !== "tui") {
-  const child = childProcess.spawnSync(process.execPath, [__filename, "tui"], { stdio: "inherit" });
-  process.exit(child.status ?? 66);
+  if (mode !== "multiple-tui-processes") {
+    const child = childProcess.spawnSync(process.execPath, [__filename, "tui"], { stdio: "inherit" });
+    process.exit(child.status ?? 66);
+  }
+  const children = Array.from({ length: 2 }, () =>
+    childProcess.spawn(process.execPath, [__filename, "tui"], { stdio: "inherit" }),
+  );
+  fs.writeFileSync(
+    process.env.NEMOCLAW_FIXTURE_TUI_PIDS,
+    children.map((child) => child.pid).join("\n") + "\n",
+  );
+  const stopChildren = () => {
+    for (const child of children) {
+      try { child.kill("SIGTERM"); } catch {}
+    }
+  };
+  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      stopChildren();
+      setTimeout(() => process.exit(0), 100);
+    });
+  }
+  let activeChildren = children.length;
+  for (const child of children) {
+    child.once("exit", () => {
+      activeChildren -= 1;
+      if (activeChildren === 0) process.exit(0);
+    });
+  }
 }
 
-if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(64);
-fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
-const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
-const mode = process.env.NEMOCLAW_FIXTURE_MODE;
-const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
-const append = (role, content) => fs.appendFileSync(
-  sessionFile,
-  JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
-);
-
-(async () => {
-  let duplicate;
+if (process.argv[2] === "tui") (async () => {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(64);
+  fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
+  const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
+  const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
+  const append = (role, content) => fs.appendFileSync(
+    sessionFile,
+    JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
+  );
   if (mode === "multiple-tui-processes") {
-    duplicate = childProcess.spawn(
-      process.execPath,
-      [
-        "-e",
-        'const fs = require("node:fs"); fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER, ""); setInterval(() => { if (process.ppid === 1) process.exit(0); }, 20);',
-        __filename,
-        "tui",
-      ],
-      { env: process.env, stdio: "ignore" },
-    );
-    process.once("exit", () => duplicate.kill("SIGKILL"));
-    for (let attempt = 0; attempt < 200 && !fs.existsSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER); attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    if (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER)) process.exit(68);
+    let observedPtyInput = "";
+    process.stdin.on("data", (chunk) => {
+      observedPtyInput += chunk.toString();
+      if (observedPtyInput.includes(process.env.NEMOCLAW_LAUNCH_FIRST_INPUT)) {
+        fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT + "/" + process.pid, "");
+      }
+    });
   }
-  let observedPtyInput = "";
-  process.stdin.on("data", (chunk) => {
-    observedPtyInput += chunk.toString();
-    if (observedPtyInput.includes(process.env.NEMOCLAW_LAUNCH_FIRST_INPUT)) {
-      fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_INPUT_MARKER, "");
-    }
-  });
   if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
     let inputBeforeAttachment = false;
     const recordEarlyInput = () => { inputBeforeAttachment = true; };
@@ -264,10 +275,10 @@ exec "$@"
       env: {
         ...process.env,
         NEMOCLAW_FIXTURE_MODE: mode,
-        NEMOCLAW_FIXTURE_DUPLICATE_MARKER: duplicateMarker,
-        NEMOCLAW_FIXTURE_INPUT_MARKER: inputMarker,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
         NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
+        NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT: tuiInputMarkerRoot,
+        NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
         NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
         NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
         NEMOCLAW_LAUNCH_ENTRYPOINT: "",
@@ -285,10 +296,24 @@ exec "$@"
       timeout: 15_000,
     });
 
+    const tuiProcessIds = existsSync(tuiPidsPath)
+      ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
+      : [];
+    const processExitDeadline = Date.now() + 1_000;
+    while (
+      tuiProcessIds.some((pid) => existsSync(`/proc/${pid}`)) &&
+      Date.now() < processExitDeadline
+    ) {
+      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 25)"], { timeout: 100 });
+    }
     return {
       baselineRemoved: !existsSync(baselinePath),
-      inputObserved: existsSync(inputMarker),
+      orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
+      recordedTuiInputProcessIds: tuiProcessIds.filter((pid) =>
+        existsSync(join(tuiInputMarkerRoot, pid)),
+      ),
       result,
+      tuiProcessIds,
       ttyObserved: existsSync(ttyMarker),
     };
   } finally {
@@ -415,17 +440,23 @@ it.runIf(process.platform === "linux")(
 it.runIf(process.platform === "linux")(
   "rejects multiple OpenClaw TUI processes before submitting PTY input (#9160)",
   () => {
-    const { baselineRemoved, inputObserved, result, ttyObserved } = runLaunchSessionFixture(
-      "multiple-tui-processes",
-      "absent",
-    );
+    const {
+      baselineRemoved,
+      orphanedTuiProcessIds,
+      recordedTuiInputProcessIds,
+      result,
+      tuiProcessIds,
+      ttyObserved,
+    } = runLaunchSessionFixture("multiple-tui-processes", "absent");
 
     expect(ttyObserved).toBe(true);
-    expect(inputObserved).toBe(false);
+    expect(tuiProcessIds).toHaveLength(2);
+    expect(recordedTuiInputProcessIds).toEqual([]);
+    expect(orphanedTuiProcessIds).toEqual([]);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("multiple_tui_processes");
+    expect(result.stderr).toContain('"reason":"multiple_tui_processes"');
   },
 );
 
