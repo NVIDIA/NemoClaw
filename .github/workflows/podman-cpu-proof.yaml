@@ -74,11 +74,13 @@ jobs:
           set -euo pipefail
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-created"
+          drop_in_dir_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-dir-created"
           slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-weight-drop-in-created"
           slice_drop_in_dir_marker="$RUNNER_TEMP/nemoclaw-cpu-weight-drop-in-dir-created"
           {
             printf 'E2E_CPU_DELEGATION_USER_CREATED=0\n'
             printf 'E2E_CPU_DELEGATION_DROP_IN_MARKER=%s\n' "$drop_in_marker"
+            printf 'E2E_CPU_DELEGATION_DROP_IN_DIR_MARKER=%s\n' "$drop_in_dir_marker"
             printf 'E2E_CPU_WEIGHT_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
             printf 'E2E_CPU_WEIGHT_DROP_IN_DIR_MARKER=%s\n' "$slice_drop_in_dir_marker"
           } >>"$GITHUB_ENV"
@@ -93,12 +95,24 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"
           printf 'E2E_CPU_DELEGATION_USER_CREATED=1\n' >>"$GITHUB_ENV"
           uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
-          home="$(getent passwd "$E2E_CPU_DELEGATION_USER" | cut -d: -f6)"
-          sudo install -d -o "$uid" -g "$uid" -m 0700 "$E2E_ARTIFACT_DIR"
-          slice_drop_in_dir="/run/systemd/system.control/user-${uid}.slice.d"
-          slice_drop_in="$slice_drop_in_dir/50-CPUWeight.conf"
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          slice_drop_in_dir="/run/systemd/system/user-${uid}.slice.d"
+          slice_drop_in="$slice_drop_in_dir/90-nemoclaw-cpu-controller.conf"
+          if sudo test -e "$slice_drop_in"; then
+            echo "::error::CPU controller proof drop-in already exists" >&2
+            exit 1
+          fi
+          if ! sudo test -d "$slice_drop_in_dir"; then
+            touch "$slice_drop_in_dir_marker"
+          fi
+          touch "$slice_drop_in_marker"
+          sudo install -d -m 0755 "$slice_drop_in_dir"
+          # GitHub's Ubuntu runner does not activate the CPU controller for fresh
+          # user slices. Systemd's default CPU weight activates it without
+          # changing the slice's relative scheduling policy.
+          printf '[Slice]\nCPUWeight=100\n' | sudo tee "$slice_drop_in" >/dev/null
+          sudo systemctl daemon-reload
           {
-            printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
             printf 'E2E_CPU_DELEGATION_RUNTIME_DIR=/run/user/%s\n' "$uid"
             printf 'E2E_CPU_WEIGHT_DROP_IN=%s\n' "$slice_drop_in"
@@ -112,51 +126,31 @@ jobs:
           sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
           sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"
           sudo --user "$E2E_CPU_DELEGATION_USER" \
-            env \
-              "E2E_ARTIFACT_DIR=$E2E_ARTIFACT_DIR" \
-              "E2E_CPU_DELEGATION_STATE=missing" \
-              "E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID" \
-              "E2E_SOURCE_REVISION=$E2E_SOURCE_REVISION" \
-              "E2E_TARGET_ID=$E2E_TARGET_ID" \
-              "HOME=$E2E_CPU_DELEGATION_HOME" \
-              "NEMOCLAW_RUN_LIVE_E2E=$NEMOCLAW_RUN_LIVE_E2E" \
-              "PATH=$PATH" \
-              "XDG_RUNTIME_DIR=$E2E_CPU_DELEGATION_RUNTIME_DIR" \
-              ./node_modules/.bin/vitest run --no-cache --project e2e-live \
-                test/e2e/live/portable-cpu-delegation-proof.test.ts
-
-      - name: Apply administrator delegation and prove admission
-        shell: bash
-        run: |
-          set -euo pipefail
-          drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
-          sudo install -d -m 0755 "$(dirname "$drop_in")"
-          touch "$E2E_CPU_DELEGATION_DROP_IN_MARKER"
-          if sudo test -e "$E2E_CPU_WEIGHT_DROP_IN"; then
-            echo "::error::CPU delegation proof slice property already exists" >&2
-            exit 1
-          fi
-          if ! sudo test -d "$E2E_CPU_WEIGHT_DROP_IN_DIR"; then
-            touch "$E2E_CPU_WEIGHT_DROP_IN_DIR_MARKER"
-          fi
-          touch "$E2E_CPU_WEIGHT_DROP_IN_MARKER"
-          # GitHub's Ubuntu runner does not activate the CPU controller for fresh
-          # user slices. Apply systemd's default CPU weight to the active dedicated
-          # slice before exercising the administrator delegation under test.
-          sudo systemctl set-property --runtime \
-            "user-${E2E_CPU_DELEGATION_UID}.slice" CPUWeight=100
-          if ! sudo test -f "$E2E_CPU_WEIGHT_DROP_IN" \
-            || ! sudo grep -q '^CPUWeight=100$' "$E2E_CPU_WEIGHT_DROP_IN"; then
-            echo "::error::CPU weight runtime property was not recorded as expected" >&2
-            exit 1
-          fi
+            env "XDG_RUNTIME_DIR=$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+            systemctl --user start app.slice
           user_slice_controllers="/sys/fs/cgroup/user.slice/user-${E2E_CPU_DELEGATION_UID}.slice/cgroup.controllers"
           if ! grep -qw cpu "$user_slice_controllers"; then
             echo "::error::dedicated proof user slice does not expose the CPU controller" >&2
             cat "$user_slice_controllers" >&2 || true
             exit 1
           fi
+          E2E_CPU_DELEGATION_STATE=missing \
+            E2E_CPU_DELEGATION_UID="$E2E_CPU_DELEGATION_UID" \
+            npx vitest run --no-cache --project e2e-live \
+              test/e2e/live/portable-cpu-delegation-proof.test.ts
+
+      - name: Apply administrator delegation and prove admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          drop_in_dir="/etc/systemd/system/user@.service.d"
+          drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           sudo systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"
+          if ! sudo test -d "$drop_in_dir"; then
+            touch "$E2E_CPU_DELEGATION_DROP_IN_DIR_MARKER"
+          fi
+          touch "$E2E_CPU_DELEGATION_DROP_IN_MARKER"
+          sudo install -d -m 0755 "$drop_in_dir"
           printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "$drop_in" >/dev/null
           sudo systemctl daemon-reload
           if ! sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"; then
@@ -169,18 +163,12 @@ jobs:
             exit 1
           fi
           sudo --user "$E2E_CPU_DELEGATION_USER" \
-            env \
-              "E2E_ARTIFACT_DIR=$E2E_ARTIFACT_DIR" \
-              "E2E_CPU_DELEGATION_STATE=delegated" \
-              "E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID" \
-              "E2E_SOURCE_REVISION=$E2E_SOURCE_REVISION" \
-              "E2E_TARGET_ID=$E2E_TARGET_ID" \
-              "HOME=$E2E_CPU_DELEGATION_HOME" \
-              "NEMOCLAW_RUN_LIVE_E2E=$NEMOCLAW_RUN_LIVE_E2E" \
-              "PATH=$PATH" \
-              "XDG_RUNTIME_DIR=$E2E_CPU_DELEGATION_RUNTIME_DIR" \
-              ./node_modules/.bin/vitest run --no-cache --project e2e-live \
-                test/e2e/live/portable-cpu-delegation-proof.test.ts
+            env "XDG_RUNTIME_DIR=$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+            systemctl --user start app.slice
+          E2E_CPU_DELEGATION_STATE=delegated \
+            E2E_CPU_DELEGATION_UID="$E2E_CPU_DELEGATION_UID" \
+            npx vitest run --no-cache --project e2e-live \
+              test/e2e/live/portable-cpu-delegation-proof.test.ts
 
       - name: Capture CPU delegation failure diagnostics
         if: failure()
@@ -212,6 +200,7 @@ jobs:
         run: |
           set -u
           cleanup_failed=0
+          drop_in_dir="/etc/systemd/system/user@.service.d"
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           if [ "${E2E_CPU_DELEGATION_USER_CREATED:-0}" = "1" ]; then
             uid="$(id -u "$E2E_CPU_DELEGATION_USER" 2>/dev/null || true)"
@@ -224,6 +213,14 @@ jobs:
             sudo rm -f "$drop_in" || cleanup_failed=1
             if sudo test -e "$drop_in"; then
               echo "::error::CPU delegation proof drop-in remained after cleanup" >&2
+              cleanup_failed=1
+            fi
+          fi
+          if [ -n "${E2E_CPU_DELEGATION_DROP_IN_DIR_MARKER:-}" ] \
+            && [ -e "$E2E_CPU_DELEGATION_DROP_IN_DIR_MARKER" ]; then
+            sudo rmdir "$drop_in_dir" || cleanup_failed=1
+            if sudo test -d "$drop_in_dir"; then
+              echo "::error::CPU delegation proof drop-in directory remained after cleanup" >&2
               cleanup_failed=1
             fi
           fi
@@ -252,9 +249,6 @@ jobs:
               echo "::error::CPU delegation proof user remained after cleanup" >&2
               cleanup_failed=1
             fi
-          fi
-          if [ -d "$E2E_ARTIFACT_DIR" ]; then
-            sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR" || cleanup_failed=1
           fi
           exit "$cleanup_failed"
 
