@@ -31,6 +31,7 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 |------------|----------------------------------|
 | Node.js    | 22.19 or later |
 | npm        | 10 or later |
+| Python     | Python 3 at a trusted system location, with POSIX descriptor-relative filesystem support |
 | Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
 | Platform   | Refer to [Platforms](#platforms) below |
 
@@ -39,6 +40,13 @@ The installer can install Docker, start the Docker service, and add your user to
 When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
 In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
+
+NemoClaw uses an isolated `python3` helper for descriptor-relative migration snapshot sanitization and deletion.
+NemoClaw does not resolve this credential-bearing helper through the host `PATH`.
+It accepts a verified executable at `/usr/bin/python3`, `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`, `/opt/local/bin/python3`, or beside the Node.js executable.
+The sanitizer fails closed before it reads snapshot content if no candidate passes its ownership, permission, and executable checks.
+Supported Linux, macOS, and WSL environments provide the required POSIX filesystem operations.
+Native Windows is not a supported execution path; use WSL.
 
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
@@ -71,7 +79,7 @@ docker info
 
 <Warning title="OpenShell Lifecycle">
 For NemoClaw-managed environments, use `$$nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
-Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `$$nemoclaw onboard`.
+Avoid `openshell self-update`, `npm update -g openshell`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `$$nemoclaw onboard`.
 </Warning>
 
 <Note title="Docker Storage Driver">
@@ -93,10 +101,11 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 {/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
-| DGX OS (Spark) | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
+| DGX OS (Spark) | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. DGX Spark Express keeps automatic managed-vLLM serving-profile selection as option 1 and offers the fixed single-host catalog profile as option 2. The automatic two-DGX Spark managed-vLLM profile is Experimental, and physical two-node end-to-end validation is pending. For the profile requirements and controls, see [Set Up vLLM on Two DGX Sparks](../inference/local-inference/set-up-vllm-on-two-dgx-sparks). For the validated single-DGX Spark walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
 | DGX OS (Station) | Docker | Tested with limitations | Tested with limitations across qualified profiles on one physical DGX Station GB300; see [Additional Setup for DGX Station](additional-setup/dgx-station-preparation) for accepted profiles, the pending no-OTA DGX OS `7.6.x` end-to-end qualification, runtime gates, and current dual-Station and dedicated CI limitations. |
 | Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. When Homebrew is available, OpenShell uses its official formula and the gateway appears in `brew services list` as `openshell`; without Homebrew, NemoClaw uses the standalone OpenShell install and detached gateway fallback. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before installing; NemoClaw verifies the pinned official OpenShell formula and grants formula-scoped trust only around each Homebrew install, inspection, start, or stop operation, requires a legacy or changed formula to be repaired by rerunning the pinned installer, uses the standalone gateway only when Homebrew is absent or both the staged formula and installed keg are absent, requires Homebrew Colima users to install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work, and recommends Xcode Command Line Tools (`xcode-select --install`) for Node native modules. |
+| N1x FASTOS | Docker | Deferred | N1x Express remains Deferred until a physical NemoClaw Express E2E test passes. Host identity requires Linux `arm64`, a trusted `/etc/fastos-release` marker with `NAME="N1x FASTOS"`, and NVIDIA display PCI identity `10de:2e2a`. CUDA and Container Device Interface (CDI) readiness are still required. |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart. |
 
 For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).

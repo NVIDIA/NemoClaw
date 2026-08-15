@@ -177,15 +177,17 @@ export function rebuildProviderFlowOptions(
 
 export type AuthoritativeRebuildTargetDeps = {
   resolveBaselinePolicy(sandboxName: string): unknown | null;
-  runFatalRuntimePreflight(): unknown;
+  bindGatewayAuthority(): void;
+  runFatalRuntimePreflight(): unknown | Promise<unknown>;
   ensureOpenshell(): unknown;
+  assertGatewayReadiness(): unknown | Promise<unknown>;
   inferenceRouteReady(provider: string, model: string): boolean;
   captureForwardList(): string | null;
   checkPort(port: number): Promise<PortProbeResult>;
   env?: NodeJS.ProcessEnv;
 };
 
-/** Run non-mutating target checks under an exact process-local gateway scope. */
+/** Run target-bound readiness and installer checks under an exact process-local gateway scope. */
 export async function preflightAuthoritativeRebuildTarget(
   target: AuthoritativeRebuildTarget,
   deps: AuthoritativeRebuildTargetDeps,
@@ -200,8 +202,10 @@ export async function preflightAuthoritativeRebuildTarget(
     if (!deps.resolveBaselinePolicy(target.sandboxName)) {
       fail(`Could not read the baseline policy for sandbox '${target.sandboxName}'.`);
     }
-    deps.runFatalRuntimePreflight();
+    deps.bindGatewayAuthority();
+    await deps.runFatalRuntimePreflight();
     deps.ensureOpenshell();
+    await deps.assertGatewayReadiness();
     // Prepared-backup recovery can run after the installer has replaced a
     // legacy gateway. That fresh gateway has no inference route to validate
     // yet; authoritative onboarding configures and verifies the pinned route

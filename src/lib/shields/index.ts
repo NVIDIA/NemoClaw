@@ -19,11 +19,12 @@
 // in those modules, and a later decomposition must preserve the transition and
 // timer-bound lock tests before this facade can shrink safely.
 
+import { run, runCapture, validateName } from "../runner";
+
 const fs = require("fs");
 const path = require("path");
 const { fork } = require("child_process");
-const { randomBytes } = require("crypto");
-const { run, runCapture, validateName } = require("../runner");
+const { createHash, randomBytes } = require("crypto");
 const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
 const { isObjectRecord }: typeof import("../core/json-types") = require("../core/json-types");
 const {
@@ -33,6 +34,7 @@ const {
 const {
   isDirectSandboxFallbackUnavailableError,
   privilegedSandboxExecArgv,
+  withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
   buildPolicyGetCommand,
@@ -45,33 +47,56 @@ const {
   timerMarkerPath,
   readTimerMarker,
   clearTimerMarker,
+  hasExactTimerAuthorizationProof,
   isProcessAlive,
-  readProcessState,
   readProcessStartIdentity,
-  listDescendantProcessIdentities,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
   verifyTimerMarkerIdentity,
   killTimer,
 } = require("./timer-control");
-const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
-const { resolveAgentConfig } = require("../sandbox/config");
 const {
+  resolveAgentConfig,
+  resolveRegisteredSandboxAgentAuthority,
+  resolveAgentStateLockContract,
+}: typeof import("../sandbox/agent-config") = require("../sandbox/agent-config");
+const {
+  assertLegacyMcpPolicyRestoreSafe,
+  buildDeadlineRuntimeManagedMcpPolicy,
+  buildRuntimeManagedMcpPolicy,
   buildRuntimePermissivePolicy,
+  hasManagedMcpPolicyClaims,
+  inspectExactManagedMcpPolicies,
+  inspectProvableManagedMcpPoliciesForDeadline,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
-const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
-  inspectShieldsTransitionLockOwner,
-  takeoverShieldsTransitionLock,
+  relockAndReconfirm,
+  waitForHermesInferenceRouteConvergence,
+}: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
+const {
+  inspectAnyShieldsTransitionLockOwner,
+  isShieldsTransitionLockUnavailable,
+  resolveShieldsStateDir,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
 const {
+  beginCommittedMcpLifecycleContainmentSync,
+  getMcpLifecycleLockPath,
+  isMcpLifecycleLockHeld,
+  durableMcpLifecycleContainmentFailure,
+  withMcpLifecycleDeadlineFenceSync,
+  withMcpLifecycleLockSync,
+  withTimerBoundAutoRestoreLock,
   withTimerBoundShieldsMutationLock,
+  withTimerBoundShieldsMutationLockFallback,
 }: typeof import("./timer-bound-lock") = require("./timer-bound-lock");
 const {
+  buildConfigHashRepairCommand,
+  buildDeepAgentsConfigLockCommand,
+  DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX,
   parseSha256Output,
   isHashVerificationIssue,
   isSha256Hex,
@@ -80,6 +105,8 @@ const {
   applyStateDirLockMode,
   preflightStateDirLock,
   restoreStateDirLockPosture,
+  restoreStateDirStartupAccess,
+  stateLockPlanCompatibilityIssues,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 const {
   OPENCLAW_CONFIG_DIR,
@@ -94,44 +121,197 @@ const {
 const {
   normalizeMutableOpenClawConfig,
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
+const {
+  HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+  hasActiveHermesRuntimeProviderStateMutation,
+  runHermesRuntimeProviderStateMutation,
+  supportsHermesRuntimeProviderStateMutation,
+}: typeof import("./hermes-runtime-state-mutation") = require("./hermes-runtime-state-mutation");
 type MutableConfigPermsInspection = import("./mutable-config-perms").MutableConfigPermsInspection;
 type MutableConfigRepairResult = import("./mutable-config-perms").MutableConfigRepairResult;
-type ProcessIdentity = import("./timer-control").ProcessIdentity;
-
-const STATE_DIR = resolveNemoclawStateDir();
+type AgentStateLockPlan = import("../agent/definition-types").AgentStateLockPlan;
+type ManagedMcpPolicyOmission = import("./permissive-runtime").ManagedMcpPolicyOmission;
+type TimerMarker = import("./timer-control").TimerMarker;
+const STATE_DIR = resolveShieldsStateDir();
 const SHIELDS_TRANSITION_POLL_MS = 50;
 const SHIELDS_TRANSITION_HANDOFF_GRACE_MS = 500;
 const SHIELDS_TRANSITION_TERMINATE_GRACE_MS = 1000;
+const SHIELDS_TIMER_START_IDENTITY_WAIT_MS = 1000;
+const SHIELDS_TIMER_AUTHORIZATION_WAIT_MS = 5000;
+const INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS =
+  Math.floor(SHIELDS_TRANSITION_HANDOFF_GRACE_MS / SHIELDS_TRANSITION_POLL_MS) + 1;
 const AUTO_RESTORE_COMPLETION_GRACE_MS = 30_000;
+// Retry on the detached timer's cadence for one additional completion-grace
+// window before converting the live deadline fence into durable containment.
+const INTERACTIVE_AUTO_RESTORE_RETRY_MS = 5_000;
+const INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS =
+  Math.floor(AUTO_RESTORE_COMPLETION_GRACE_MS / INTERACTIVE_AUTO_RESTORE_RETRY_MS) + 1;
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
 const HERMES_CONFIG_HASH = "/etc/nemoclaw/hermes.config-hash";
+const HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PROBE = [
+  "import os",
+  "import sys",
+  "try:",
+  "    os.lstat(sys.argv[1])",
+  "except FileNotFoundError:",
+  '    print("absent")',
+  "else:",
+  '    print("present")',
+].join("\n");
 const STATE_DIR_GUARD_TIMEOUT_MS = 15 * 60 * 1000;
 const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
+// Exceeds the failed-startup guard's 25-minute in-container timeout and its
+// five-second termination grace, so the host never abandons a live recovery.
+const OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS = 26 * 60 * 1000;
 const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
+const MAX_SHIELDS_FORWARD_POLICY_BYTES = 16 * 1024 * 1024;
+
+type ShieldsDownForwardPolicy = {
+  schemaVersion: 1;
+  path: string;
+  sha256: string;
+  size: number;
+  mode: number;
+  uid: number;
+  gid: number;
+  nlink: 1;
+};
 
 type ShieldsDownTransition = {
   version: 1;
-  phase: "preparing" | "active";
+  phase: "preparing" | "active" | "policy_rejected";
   ownerPid: number;
   ownerStartIdentity: string;
   processToken: string;
   sandboxName: string;
   snapshotPath: string;
+  /** Exact generated MCP keys owned when snapshotPath was captured. */
+  managedMcpPolicyKeys?: string[];
+  /** Durable exact policy replay authority for interrupted forward recovery. */
+  forwardPolicy?: ShieldsDownForwardPolicy;
 };
 
 const transitionPollBuffer = new Int32Array(new SharedArrayBuffer(4));
 
+function sameTimerMarkerGeneration(current: TimerMarker | null, expected: TimerMarker): boolean {
+  return (
+    current?.pid === expected.pid &&
+    current.sandboxName === expected.sandboxName &&
+    current.snapshotPath === expected.snapshotPath &&
+    current.restoreAt === expected.restoreAt &&
+    current.processToken === expected.processToken &&
+    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
+    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
+    current.agentName === expected.agentName &&
+    current.configPath === expected.configPath &&
+    current.configDir === expected.configDir &&
+    current.leaseOwnerPid === expected.leaseOwnerPid &&
+    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
+  );
+}
+
+function assertTimerMarkerGeneration(sandboxName: string, expected: TimerMarker): void {
+  if (!sameTimerMarkerGeneration(readTimerMarker(sandboxName), expected)) {
+    throw new Error("Auto-restore authority changed before Shields transition takeover");
+  }
+}
+
+function isExactLiveFutureTimerAuthority(marker: TimerMarker, now = Date.now()): boolean {
+  const restoreAtMs = new Date(marker.restoreAt).getTime();
+  if (!Number.isFinite(restoreAtMs) || restoreAtMs <= now || !marker.timerProcessStartIdentity) {
+    return false;
+  }
+  const deadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
+  return (
+    isProcessAlive(marker.pid, deadline) &&
+    readProcessStartIdentity(marker.pid, deadline) === marker.timerProcessStartIdentity &&
+    verifyTimerMarkerIdentity(marker).verified &&
+    hasExactTimerAuthorizationProof(marker)
+  );
+}
+
+function assertExactLiveFutureTimerAuthority(sandboxName: string, marker: TimerMarker): void {
+  assertTimerMarkerGeneration(sandboxName, marker);
+  if (!isExactLiveFutureTimerAuthority(marker)) {
+    throw new Error(
+      "Interrupted Hermes Shields down recovery has no exact live future auto-restore timer authority",
+    );
+  }
+  assertTimerMarkerGeneration(sandboxName, marker);
+}
+
+function waitForTimerProcessStartIdentity(pid: number): string | null {
+  const deadline = Date.now() + SHIELDS_TIMER_START_IDENTITY_WAIT_MS;
+  while (true) {
+    const identity = readProcessStartIdentity(pid);
+    if (identity) return identity;
+    if (Date.now() >= deadline || !isProcessAlive(pid)) return null;
+    Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+  }
+}
+
+function waitForTimerAuthorizationProof(marker: TimerMarker): boolean {
+  const deadline = Date.now() + SHIELDS_TIMER_AUTHORIZATION_WAIT_MS;
+  while (true) {
+    if (hasExactTimerAuthorizationProof(marker)) return true;
+    if (
+      Date.now() >= deadline ||
+      !isProcessAlive(marker.pid) ||
+      readProcessStartIdentity(marker.pid) !== marker.timerProcessStartIdentity
+    ) {
+      return false;
+    }
+    Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+  }
+}
+
+function appendAuditEntryBestEffort(entry: Parameters<typeof appendAuditEntry>[0]): void {
+  try {
+    appendAuditEntry(entry);
+  } catch {
+    // A failed diagnostic write must not release an active recovery gate.
+  }
+}
+
 function shieldsDownTransitionPath(sandboxName: string, processToken: string): string {
   return path.join(STATE_DIR, `shields-transition-${sandboxName}-${processToken}.json`);
+}
+
+function shieldsDownForwardPolicyPath(sandboxName: string, processToken: string): string {
+  return path.join(STATE_DIR, `shields-forward-policy-${sandboxName}-${processToken}.yaml`);
+}
+
+function isShieldsDownForwardPolicy(value: unknown): value is ShieldsDownForwardPolicy {
+  if (!isObjectRecord(value)) return false;
+  return (
+    value.schemaVersion === 1 &&
+    typeof value.path === "string" &&
+    typeof value.sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(value.sha256) &&
+    typeof value.size === "number" &&
+    Number.isSafeInteger(value.size) &&
+    value.size > 0 &&
+    value.size <= MAX_SHIELDS_FORWARD_POLICY_BYTES &&
+    value.mode === 0o600 &&
+    typeof value.uid === "number" &&
+    Number.isSafeInteger(value.uid) &&
+    value.uid >= 0 &&
+    typeof value.gid === "number" &&
+    Number.isSafeInteger(value.gid) &&
+    value.gid >= 0 &&
+    value.nlink === 1
+  );
 }
 
 function isShieldsDownTransition(value: unknown): value is ShieldsDownTransition {
   if (!isObjectRecord(value)) return false;
   return (
     value.version === 1 &&
-    (value.phase === "preparing" || value.phase === "active") &&
+    (value.phase === "preparing" ||
+      value.phase === "active" ||
+      value.phase === "policy_rejected") &&
     typeof value.ownerPid === "number" &&
     Number.isInteger(value.ownerPid) &&
     value.ownerPid > 0 &&
@@ -140,8 +320,202 @@ function isShieldsDownTransition(value: unknown): value is ShieldsDownTransition
     typeof value.processToken === "string" &&
     /^[0-9a-f]{32}$/.test(value.processToken) &&
     typeof value.sandboxName === "string" &&
-    typeof value.snapshotPath === "string"
+    typeof value.snapshotPath === "string" &&
+    isOptionalManagedMcpPolicyKeys(value.managedMcpPolicyKeys) &&
+    (value.forwardPolicy === undefined || isShieldsDownForwardPolicy(value.forwardPolicy))
   );
+}
+
+function sameManagedMcpPolicyKeys(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((key, index) => key === right[index]);
+}
+
+function sameShieldsDownForwardPolicy(
+  left: ShieldsDownForwardPolicy | undefined,
+  right: ShieldsDownForwardPolicy | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.schemaVersion === right.schemaVersion &&
+    left.path === right.path &&
+    left.sha256 === right.sha256 &&
+    left.size === right.size &&
+    left.mode === right.mode &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.nlink === right.nlink
+  );
+}
+
+function sameShieldsDownTransitionAuthority(
+  left: ShieldsDownTransition,
+  right: ShieldsDownTransition,
+  phase: ShieldsDownTransition["phase"] = right.phase,
+): boolean {
+  return (
+    left.version === right.version &&
+    left.phase === phase &&
+    left.ownerPid === right.ownerPid &&
+    left.ownerStartIdentity === right.ownerStartIdentity &&
+    left.processToken === right.processToken &&
+    left.sandboxName === right.sandboxName &&
+    left.snapshotPath === right.snapshotPath &&
+    sameManagedMcpPolicyKeys(left.managedMcpPolicyKeys, right.managedMcpPolicyKeys) &&
+    sameShieldsDownForwardPolicy(left.forwardPolicy, right.forwardPolicy)
+  );
+}
+
+function fsyncShieldsStateDirectory(): void {
+  const directoryFd = fs.openSync(STATE_DIR, "r");
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
+}
+
+function writeShieldsFileAtomicDurable(
+  filePath: string,
+  content: string | Buffer,
+  mode = 0o600,
+  replaceExisting = true,
+): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const tempPath = `${filePath}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      mode,
+    );
+    fs.writeFileSync(fd, content);
+    fs.fchmodSync(fd, mode);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    if (replaceExisting) {
+      fs.renameSync(tempPath, filePath);
+    } else {
+      fs.linkSync(tempPath, filePath);
+      fs.unlinkSync(tempPath);
+    }
+    const directoryFd = fs.openSync(path.dirname(filePath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(tempPath, { force: true });
+  }
+}
+
+function publishShieldsDownForwardPolicy(
+  sandboxName: string,
+  processToken: string,
+  sourcePath: string,
+): ShieldsDownForwardPolicy {
+  const content = fs.readFileSync(sourcePath);
+  if (content.length === 0 || content.length > MAX_SHIELDS_FORWARD_POLICY_BYTES) {
+    throw new Error(
+      `Shields-down forward policy must contain 1-${String(MAX_SHIELDS_FORWARD_POLICY_BYTES)} bytes`,
+    );
+  }
+  const artifactPath = shieldsDownForwardPolicyPath(sandboxName, processToken);
+  const flags =
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
+  let fd: number | undefined;
+  let created = false;
+  try {
+    fd = fs.openSync(artifactPath, flags, 0o600);
+    created = true;
+    fs.writeFileSync(fd, content);
+    fs.fchmodSync(fd, 0o600);
+    fs.fsyncSync(fd);
+    const metadata = fs.fstatSync(fd);
+    if (!metadata.isFile() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600) {
+      throw new Error("Shields-down forward policy was published with unsafe metadata");
+    }
+    const currentUid = typeof process.getuid === "function" ? process.getuid() : metadata.uid;
+    if (metadata.uid !== currentUid) {
+      throw new Error("Shields-down forward policy is not owned by the current host identity");
+    }
+    fs.closeSync(fd);
+    fd = undefined;
+    fsyncShieldsStateDirectory();
+    return Object.freeze({
+      schemaVersion: 1,
+      path: artifactPath,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      size: content.length,
+      mode: 0o600,
+      uid: metadata.uid,
+      gid: metadata.gid,
+      nlink: 1,
+    });
+  } catch (error) {
+    if (fd !== undefined) fs.closeSync(fd);
+    if (created) fs.rmSync(artifactPath, { force: true });
+    throw error;
+  }
+}
+
+function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): string {
+  const binding = transition.forwardPolicy;
+  const expectedPath = shieldsDownForwardPolicyPath(
+    transition.sandboxName,
+    transition.processToken,
+  );
+  if (!binding || binding.path !== expectedPath || path.normalize(binding.path) !== binding.path) {
+    throw new Error(
+      "Interrupted Shields down recovery is missing its exact forward-policy authority",
+    );
+  }
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      binding.path,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    const before = fs.fstatSync(fd);
+    if (
+      !before.isFile() ||
+      before.nlink !== binding.nlink ||
+      (before.mode & 0o777) !== binding.mode ||
+      before.uid !== binding.uid ||
+      before.gid !== binding.gid ||
+      before.size !== binding.size ||
+      (typeof process.getuid === "function" && before.uid !== process.getuid())
+    ) {
+      throw new Error("Interrupted Shields down forward policy has unsafe metadata");
+    }
+    const content = fs.readFileSync(fd);
+    const after = fs.fstatSync(fd);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      content.length !== binding.size ||
+      createHash("sha256").update(content).digest("hex") !== binding.sha256
+    ) {
+      throw new Error("Interrupted Shields down forward policy no longer matches its binding");
+    }
+    return binding.path;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot validate interrupted Shields down forward policy: ${message}`, {
+      cause: error,
+    });
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 function readShieldsDownTransition(
@@ -159,6 +533,13 @@ function readShieldsDownTransition(
   }
 }
 
+function readTimerBoundShieldsDownTransition(sandboxName: string): ShieldsDownTransition | null {
+  const marker = readTimerMarker(sandboxName);
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  const transition = readShieldsDownTransition(sandboxName, marker.processToken);
+  return transition?.snapshotPath === marker.snapshotPath ? transition : null;
+}
+
 function writeShieldsDownTransition(
   transition: ShieldsDownTransition,
   expectedPhase: ShieldsDownTransition["phase"] | null,
@@ -171,17 +552,31 @@ function writeShieldsDownTransition(
       !current ||
       current.phase !== expectedPhase ||
       current.ownerPid !== transition.ownerPid ||
-      current.snapshotPath !== transition.snapshotPath
+      current.ownerStartIdentity !== transition.ownerStartIdentity ||
+      current.snapshotPath !== transition.snapshotPath ||
+      !sameManagedMcpPolicyKeys(current.managedMcpPolicyKeys, transition.managedMcpPolicyKeys) ||
+      !sameShieldsDownForwardPolicy(current.forwardPolicy, transition.forwardPolicy)
     ) {
       throw new Error("Shields-down recovery ownership changed during the transition");
     }
   }
 
   const tempPath = `${transitionPath}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`;
+  let tempFd: number | undefined;
   try {
-    fs.writeFileSync(tempPath, JSON.stringify(transition), { flag: "wx", mode: 0o600 });
+    tempFd = fs.openSync(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(tempFd, JSON.stringify(transition));
+    fs.fsyncSync(tempFd);
+    fs.closeSync(tempFd);
+    tempFd = undefined;
     fs.renameSync(tempPath, transitionPath);
+    fsyncShieldsStateDirectory();
   } finally {
+    if (tempFd !== undefined) fs.closeSync(tempFd);
     try {
       fs.rmSync(tempPath, { force: true });
     } catch {
@@ -190,11 +585,30 @@ function writeShieldsDownTransition(
   }
 }
 
+function writeTimerMarkerAtomic(sandboxName: string, marker: TimerMarker): void {
+  writeShieldsFileAtomicDurable(timerMarkerPath(sandboxName), JSON.stringify(marker));
+}
+
 function clearShieldsDownTransition(sandboxName: string, processToken: string): void {
+  let removed = false;
   try {
     fs.rmSync(shieldsDownTransitionPath(sandboxName, processToken), { force: true });
+    removed = true;
   } catch {
     // Best effort. A stale transition marker never grants mutation authority.
+  }
+  try {
+    fs.rmSync(shieldsDownForwardPolicyPath(sandboxName, processToken), { force: true });
+    removed = true;
+  } catch {
+    // Best effort. The deterministic artifact path cannot grant authority alone.
+  }
+  if (removed) {
+    try {
+      fsyncShieldsStateDirectory();
+    } catch {
+      // Best effort. Neither retired path can grant recovery authority alone.
+    }
   }
 }
 
@@ -222,9 +636,33 @@ function readExactProcessStatus(
   return alive ? "current" : "gone";
 }
 
+function persistUnresolvedShieldsContainment(
+  sandboxName: string,
+  processToken: string,
+  reason: string,
+  assertTakeoverAuthority?: () => void,
+): void {
+  const containmentPath = `${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`;
+  if (fs.existsSync(containmentPath)) return;
+  try {
+    beginCommittedMcpLifecycleContainmentSync(
+      sandboxName,
+      processToken,
+      reason,
+      STATE_DIR,
+      assertTakeoverAuthority,
+    );
+  } catch (error) {
+    if (isDurableContainmentFailure(error)) throw error;
+    if (fs.existsSync(containmentPath)) return;
+    throw error;
+  }
+}
+
 function waitForShieldsDownForwardCommit(
   sandboxName: string,
   processToken: string,
+  assertTakeoverAuthority?: () => void,
 ): ShieldsDownTransition | null {
   let observed = readShieldsDownTransition(sandboxName, processToken);
   if (!observed) return null;
@@ -245,7 +683,9 @@ function waitForShieldsDownForwardCommit(
       next.ownerPid !== observed.ownerPid ||
       next.ownerStartIdentity !== observed.ownerStartIdentity ||
       next.snapshotPath !== observed.snapshotPath ||
-      next.processToken !== observed.processToken
+      next.processToken !== observed.processToken ||
+      !sameManagedMcpPolicyKeys(next.managedMcpPolicyKeys, observed.managedMcpPolicyKeys) ||
+      !sameShieldsDownForwardPolicy(next.forwardPolicy, observed.forwardPolicy)
     ) {
       throw new Error("Shields-down recovery ownership changed while waiting for forward commit");
     }
@@ -253,150 +693,41 @@ function waitForShieldsDownForwardCommit(
   }
 
   if (observed.phase === "preparing") {
-    // The absolute shields-down deadline has expired while the forward owner
-    // is still able to weaken policy/config. Preempt that exact process
-    // instance, then restore from the captured snapshot. Waiting forever would
-    // turn the requested timeout into an unbounded mutable window.
-    stopTimedOutShieldsDownTree(observed.ownerPid, observed.ownerStartIdentity);
+    const ownerStatus = readExactProcessStatus(
+      observed.ownerPid,
+      observed.ownerStartIdentity,
+      processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS),
+    );
+    if (ownerStatus === "gone") {
+      assertTakeoverAuthority?.();
+      try {
+        persistUnresolvedShieldsContainment(
+          sandboxName,
+          processToken,
+          `Shields recovery owner PID ${String(
+            observed.ownerPid,
+          )} exited without descendant-containment proof`,
+          assertTakeoverAuthority,
+        );
+      } catch (error) {
+        if (isDurableContainmentFailure(error)) throw error;
+        assertTakeoverAuthority?.();
+        throw durableMcpLifecycleContainmentFailure(
+          error,
+          getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+        );
+      }
+      throw new Error(
+        "Shields-down forward owner exited before committing its final mutation; durable containment requires operator resolution",
+      );
+    }
+    throw new Error(
+      "Shields-down forward owner is still active; automatic recovery is waiting behind the deadline gate",
+    );
   }
   return observed;
 }
 
-function excludeRecoveryProcessTree(
-  descendants: ProcessIdentity[],
-  recovery: Pick<ProcessIdentity, "pid" | "startIdentity">,
-  recoveryDescendants: ProcessIdentity[],
-): ProcessIdentity[] {
-  const identityKey = ({ pid, startIdentity }: Pick<ProcessIdentity, "pid" | "startIdentity">) =>
-    `${String(pid)}\0${startIdentity}`;
-  const excludedIdentities = new Set<string>([recovery, ...recoveryDescendants].map(identityKey));
-  return descendants.filter((descendant) => !excludedIdentities.has(identityKey(descendant)));
-}
-
-function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: string): void {
-  let freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
-  const waitForKnownExactProcess = (
-    pid: number,
-    startIdentity: string,
-    deadline: number,
-  ): Exclude<ExactProcessStatus, "unknown"> => {
-    while (true) {
-      const status = readExactProcessStatus(pid, startIdentity, deadline);
-      if (status !== "unknown") return status;
-      if (processInspectionDeadlineReached(deadline)) {
-        throw new Error("Timed-out shields-down process identity could not be verified safely");
-      }
-      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-    }
-  };
-  const signalExact = (
-    pid: number,
-    startIdentity: string,
-    signal: NodeJS.Signals,
-    deadline: number,
-  ): void => {
-    if (waitForKnownExactProcess(pid, startIdentity, deadline) === "gone") return;
-    try {
-      process.kill(pid, signal);
-    } catch (error) {
-      const errno = error as NodeJS.ErrnoException;
-      if (errno.code !== "ESRCH") throw error;
-    }
-  };
-  const waitForExactStop = (pid: number, startIdentity: string): "gone" | "stopped" => {
-    while (true) {
-      const state = readProcessState(pid, freezeDeadline);
-      const status = readExactProcessStatus(pid, startIdentity, freezeDeadline);
-      if (status === "gone" || state?.startsWith("Z")) return "gone";
-      if (status === "current" && /^[Tt]/.test(state ?? "")) return "stopped";
-      if (processInspectionDeadlineReached(freezeDeadline)) {
-        throw new Error("Timed-out shields-down process tree could not be frozen safely");
-      }
-      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-    }
-  };
-  if (waitForKnownExactProcess(ownerPid, ownerStartIdentity, freezeDeadline) === "gone") return;
-  // Stop the exact owner before enumerating its descendants so it cannot launch
-  // another weakening subprocess while takeover is being established.
-  signalExact(ownerPid, ownerStartIdentity, "SIGSTOP", freezeDeadline);
-  if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") return;
-  freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
-  const recoveryStartIdentity = readProcessStartIdentity(process.pid, freezeDeadline);
-  if (recoveryStartIdentity === null) {
-    throw new Error("Cannot identify the auto-restore recovery process safely");
-  }
-  const recoveryTree = listDescendantProcessIdentities(process.pid, freezeDeadline);
-  if (recoveryTree === null) {
-    throw new Error("Cannot identify the auto-restore recovery process tree safely");
-  }
-  const tracked = new Map<number, { startIdentity: string; depth: number }>();
-  let observedQuiescentPass = false;
-  for (let pass = 0; pass < 8; pass += 1) {
-    if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") {
-      throw new Error("Timed-out shields-down process tree could not be frozen safely");
-    }
-    const descendants = listDescendantProcessIdentities(ownerPid, freezeDeadline);
-    if (descendants === null) {
-      throw new Error("Cannot enumerate timed-out shields-down subprocesses safely");
-    }
-    let added = false;
-    const recoveryIsInsideOwnerTree = descendants.some(
-      ({ pid }: { pid: number }) => pid === process.pid,
-    );
-    const passDescendants = excludeRecoveryProcessTree(
-      descendants,
-      { pid: process.pid, startIdentity: recoveryStartIdentity },
-      recoveryIsInsideOwnerTree ? recoveryTree : [],
-    );
-    for (const descendant of passDescendants) {
-      const previous = tracked.get(descendant.pid);
-      if (!previous || previous.startIdentity !== descendant.startIdentity) added = true;
-      tracked.set(descendant.pid, {
-        startIdentity: descendant.startIdentity,
-        depth: descendant.depth,
-      });
-      signalExact(descendant.pid, descendant.startIdentity, "SIGSTOP", freezeDeadline);
-    }
-    for (const descendant of passDescendants) {
-      waitForExactStop(descendant.pid, descendant.startIdentity);
-    }
-    if (!added) {
-      observedQuiescentPass = true;
-      break;
-    }
-    Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-  }
-  if (!observedQuiescentPass) {
-    throw new Error("Timed-out shields-down process tree could not be frozen safely");
-  }
-
-  const deepestFirst = [...tracked.entries()].sort((a, b) => b[1].depth - a[1].depth);
-  const killDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
-  for (const [pid, identity] of deepestFirst) {
-    signalExact(pid, identity.startIdentity, "SIGKILL", killDeadline);
-  }
-  signalExact(ownerPid, ownerStartIdentity, "SIGKILL", killDeadline);
-
-  const exactProcessIsGone = (pid: number, startIdentity: string): boolean => {
-    const state = readProcessState(pid, killDeadline);
-    return (
-      state?.startsWith("Z") === true ||
-      readExactProcessStatus(pid, startIdentity, killDeadline) === "gone"
-    );
-  };
-  while (!processInspectionDeadlineReached(killDeadline)) {
-    const survivor = deepestFirst.some(
-      ([pid, identity]) => !exactProcessIsGone(pid, identity.startIdentity),
-    );
-    if (!survivor && exactProcessIsGone(ownerPid, ownerStartIdentity)) {
-      return;
-    }
-    Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-  }
-  throw new Error("Timed-out shields-down process tree could not be stopped safely");
-}
-
-// ---------------------------------------------------------------------------
 // privileged sandbox exec — bypasses the sandbox's Landlock context
 //
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
@@ -452,17 +783,146 @@ function openClawRollbackIssue(prefix: string, error: unknown): OpenClawRollback
 }
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
-  dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
+  withPrivilegedSandboxExecutionLease(sandboxName, "shields privileged execution", () => {
+    dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout,
+    });
   });
 }
 
 function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeout = 15000): string {
-  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  }).trim();
+  return withPrivilegedSandboxExecutionLease(sandboxName, "shields privileged capture", () =>
+    dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout,
+    }).trim(),
+  );
+}
+
+// Reject unsafe config paths before Shields down weakens policy or persists a
+// provisional DOWN record. A symlink planted after shields up is refused by the
+// unlock path, but without this preflight the provisional DOWN/permissive
+// status survives when re-lock also fails on the same path (#8804).
+const SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT = String.raw`
+# nemoclaw-shields-down-path-preflight
+import errno
+import os
+import stat
+import sys
+
+def die(message):
+    sys.stderr.write(message + "\n")
+    raise SystemExit(1)
+
+def open_flags(want_dir):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if want_dir:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    else:
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    return flags
+
+def open_nofollow(path, want_dir, dir_fd=None):
+    try:
+        if dir_fd is None:
+            return os.open(path, open_flags(want_dir))
+        return os.open(path, open_flags(want_dir), dir_fd=dir_fd)
+    except OSError as exc:
+        label = path if dir_fd is None else "%s/%s" % (sys.argv[1].rstrip("/"), path)
+        if exc.errno in (errno.ELOOP, getattr(errno, "ENOTDIR", errno.EINVAL)):
+            die("refusing symlink path: " + label)
+        if exc.errno == errno.ENOENT:
+            die("missing config path: " + label)
+        die("open failed for %s: %s" % (label, exc))
+
+def child_name(config_dir, path):
+    prefix = config_dir.rstrip("/") + "/"
+    if not path.startswith(prefix):
+        die("refusing config path outside config dir: " + path)
+    name = path[len(prefix):]
+    if not name or "/" in name or name in (".", ".."):
+        die("refusing nested or unsafe config path: " + path)
+    return name
+
+config_dir = sys.argv[1]
+files = sys.argv[2:]
+dir_fd = open_nofollow(config_dir, True)
+try:
+    mode = os.fstat(dir_fd).st_mode
+    if not stat.S_ISDIR(mode):
+        die("refusing non-directory config path: " + config_dir)
+    for path in files:
+        name = child_name(config_dir, path)
+        fd = open_nofollow(name, False, dir_fd=dir_fd)
+        try:
+            mode = os.fstat(fd).st_mode
+            if not stat.S_ISREG(mode):
+                die("refusing non-regular config path: " + path)
+        finally:
+            os.close(fd)
+finally:
+    os.close(dir_fd)
+`;
+
+function errorStderr(error: unknown): string {
+  if (!(error instanceof Error) || !("stderr" in error) || error.stderr == null) return "";
+  return Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : String(error.stderr);
+}
+
+function errorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  return `${errorStderr(error)}\n${error.message}`.trim();
+}
+
+function isUnsafeShieldsConfigPathError(error: unknown): boolean {
+  const message = errorText(error);
+  return (
+    /refusing (?:to follow )?symlink(?: path)?/i.test(message) ||
+    /refusing non-(?:regular|directory) config path/i.test(message) ||
+    /refusing unsafe(?:-| )(?:config|sealed|Hermes).*path/i.test(message) ||
+    /canonical config path is not a safe regular file/i.test(message) ||
+    /missing config path:/i.test(message)
+  );
+}
+
+function assertShieldsDownConfigPathsSafe(sandboxName: string, target: AgentConfigTarget): void {
+  const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  try {
+    privilegedSandboxExecCapture(sandboxName, [
+      "python3",
+      "-I",
+      "-c",
+      SHIELDS_DOWN_CONFIG_PATH_PREFLIGHT_SCRIPT,
+      target.configDir,
+      ...files,
+    ]);
+  } catch (error) {
+    const message = errorText(error);
+    const refusal = message
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => isUnsafeShieldsConfigPathError(line));
+    if (refusal) {
+      throw new Error(refusal);
+    }
+    throw new Error(`Unsafe Shields config path check failed: ${message}`);
+  }
+}
+
+function requireShieldsDownConfigPathsSafe(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  throwOnError?: boolean,
+): void {
+  try {
+    assertShieldsDownConfigPathsSafe(sandboxName, target);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  ERROR: ${message}`);
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    failShieldsCommand(message, throwOnError);
+  }
 }
 
 function hermesShieldsGuardArgs(
@@ -488,9 +948,13 @@ function hermesShieldsGuardArgs(
   ];
 }
 
-type HermesShieldsProtocol = "sealed" | "legacy";
+type HermesShieldsProtocol =
+  | "provider-state-mutation-v2"
+  | "sealed-plan-v1"
+  | "sealed-v1"
+  | "legacy";
 
-const HERMES_SEALED_SHIELDS_CONTRACT = [
+const HERMES_SEALED_V1_CONTRACT = [
   "begin-shields-transition",
   "run-state-dir-transition",
   "apply-shields-transition",
@@ -499,17 +963,104 @@ const HERMES_SEALED_SHIELDS_CONTRACT = [
   "abort-shields-transition",
   "--rollback-shields-mode",
 ] as const;
+const HERMES_SEALED_PLAN_V1_CONTRACT = [
+  ...HERMES_SEALED_V1_CONTRACT,
+  "--state-lock-plan-json",
+] as const;
 const HERMES_LEGACY_GUARD_CONTRACT = [
   "ensure-api-key",
   "refresh-hashes",
   "provider-placeholders",
 ] as const;
 
+function hasActiveRuntimeProviderStateMutation(sandboxName: string): boolean {
+  return hasActiveHermesRuntimeProviderStateMutation(sandboxName, STATE_DIR);
+}
+
+/**
+ * Drain retained provider authority before a Shields command can return from
+ * persisted state or invoke an ordinary privileged container command. The
+ * full same-locked transition first recovers the retained plan to its
+ * fail-closed rollback, then republishes and verifies the complete recursive
+ * locked plan before releasing the new fence.
+ */
+function resolveActiveHermesRuntimeProviderMutationTarget(
+  sandboxName: string,
+): AgentConfigTarget | null {
+  if (!hasActiveRuntimeProviderStateMutation(sandboxName)) return null;
+  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+  if (target.agentName !== "hermes") {
+    throw new Error(
+      "An active runtime-provider state mutation no longer matches the Hermes sandbox registry authority",
+    );
+  }
+  return target;
+}
+
+function recoverActiveHermesRuntimeProviderMutation(sandboxName: string): AgentConfigTarget | null {
+  const target = resolveActiveHermesRuntimeProviderMutationTarget(sandboxName);
+  if (!target) return null;
+  runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+  return target;
+}
+
 function inspectHermesShieldsProtocol(
   sandboxName: string,
   target: AgentConfigTarget,
 ): HermesShieldsProtocol {
-  if (target.agentName !== "hermes") return "sealed";
+  if (target.agentName !== "hermes") return "sealed-plan-v1";
+  const { sandbox } = resolveRegisteredSandboxAgentAuthority(sandboxName);
+  if (!sandbox || sandbox.agent !== "hermes") {
+    throw new Error("Hermes shields protocol inspection lost its exact sandbox registry authority");
+  }
+  if (hasActiveRuntimeProviderStateMutation(sandboxName)) {
+    return "provider-state-mutation-v2";
+  }
+  if (
+    sandbox.openshellDriver?.trim().toLowerCase() === "docker" &&
+    sandbox.workload?.kind === "managed-image" &&
+    !sandbox.lifecycleGeneration
+  ) {
+    throw new Error("Managed Hermes Docker registry authority has no lifecycle generation");
+  }
+  if (
+    sandbox.openshellDriver?.trim().toLowerCase() === "docker" &&
+    sandbox.workload?.kind === "managed-image" &&
+    sandbox.lifecycleGeneration
+  ) {
+    const capabilityPresence = privilegedSandboxExecCapture(sandboxName, [
+      HERMES_PYTHON,
+      "-I",
+      "-c",
+      HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PROBE,
+      HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+    ]);
+    if (capabilityPresence === "present") {
+      const metadata = privilegedSandboxExecCapture(sandboxName, [
+        "stat",
+        "-c",
+        "%a %u %g %h %F",
+        HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+      ]);
+      const content = privilegedSandboxExecCapture(sandboxName, [
+        "cat",
+        HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+      ]);
+      if (supportsHermesRuntimeProviderStateMutation(sandbox, { content, metadata })) {
+        return "provider-state-mutation-v2";
+      }
+      throw new Error(
+        "Hermes runtime state-mutation capability is present but invalid or unsupported; rebuild the sandbox",
+      );
+    }
+    if (capabilityPresence !== "absent") {
+      throw new Error(
+        `Unexpected Hermes runtime state-mutation capability probe response: ${capabilityPresence}`,
+      );
+    }
+    // A successful lstat probe proved the old image has no provider publisher
+    // capability. Only that exact absence may select its sealed-plan protocol.
+  }
   const help = privilegedSandboxExecCapture(
     sandboxName,
     [
@@ -524,8 +1075,11 @@ function inspectHermesShieldsProtocol(
     ],
     HERMES_CONFIG_GUARD_TIMEOUT_MS,
   );
-  if (HERMES_SEALED_SHIELDS_CONTRACT.every((entry) => help.includes(entry))) {
-    return "sealed";
+  if (HERMES_SEALED_PLAN_V1_CONTRACT.every((entry) => help.includes(entry))) {
+    return "sealed-plan-v1";
+  }
+  if (HERMES_SEALED_V1_CONTRACT.every((entry) => help.includes(entry))) {
+    return "sealed-v1";
   }
   if (HERMES_LEGACY_GUARD_CONTRACT.every((entry) => help.includes(entry))) {
     return "legacy";
@@ -568,7 +1122,7 @@ function resolveHermesShieldsProtocol(
 function supportsHermesSealedShieldsTransactions(sandboxName: string): boolean {
   validateName(sandboxName, "sandbox name");
   const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-  return inspectHermesShieldsProtocol(sandboxName, target) === "sealed";
+  return inspectHermesShieldsProtocol(sandboxName, target) !== "legacy";
 }
 
 function beginHermesConfigShields(
@@ -677,17 +1231,110 @@ function runHermesStateDirTransition(
   target: AgentConfigTarget,
   token: string,
   action: "lock" | "unlock",
+  protocol: HermesShieldsProtocol,
 ): void {
+  const planArgs =
+    protocol === "sealed-plan-v1"
+      ? ["--state-lock-plan-json", JSON.stringify(requireStateLockPlan(target))]
+      : [];
   privilegedSandboxExec(
     sandboxName,
     hermesShieldsGuardArgs(
       "run-state-dir-transition",
       target,
-      ["--state-action", action, "--lock-token", token],
+      ["--state-action", action, ...planArgs, "--lock-token", token],
       "13m",
     ),
     STATE_DIR_GUARD_TIMEOUT_MS,
   );
+}
+
+function requireHermesRuntimeProviderSandbox(sandboxName: string) {
+  const { sandbox } = resolveRegisteredSandboxAgentAuthority(sandboxName);
+  if (
+    !sandbox ||
+    sandbox.agent !== "hermes" ||
+    sandbox.openshellDriver?.trim().toLowerCase() !== "docker" ||
+    sandbox.workload?.kind !== "managed-image" ||
+    !sandbox.lifecycleGeneration
+  ) {
+    throw new Error(
+      "Hermes runtime-provider state mutation lost its exact managed Docker registry authority",
+    );
+  }
+  return sandbox;
+}
+
+function runHermesProviderProtectionTransition(
+  sandboxName: string,
+  configTarget: AgentConfigTarget,
+  targetPosture: "locked" | "mutable",
+  rollback: "locked" | "mutable",
+): void {
+  runHermesRuntimeProviderStateMutation({
+    environment: process.env,
+    sandbox: requireHermesRuntimeProviderSandbox(sandboxName),
+    sandboxName,
+    configTarget,
+    target: targetPosture,
+    rollback,
+  });
+}
+
+function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentConfigTarget): void {
+  const issues: string[] = [];
+  for (const file of [target.configPath, ...(target.sensitiveFiles || [])]) {
+    try {
+      const [mode, owner] = privilegedSandboxExecCapture(sandboxName, [
+        "stat",
+        "-c",
+        "%a %U:%G",
+        file,
+      ]).split(" ");
+      if (mode !== "640") issues.push(`${file} mode=${mode} (expected 640)`);
+      if (owner !== "sandbox:sandbox") {
+        issues.push(`${file} owner=${owner} (expected sandbox:sandbox)`);
+      }
+      const [flags] = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", file])
+        .trim()
+        .split(/\s+/, 1);
+      if (flags.includes("i")) issues.push(`${file} immutable bit still set`);
+    } catch (error) {
+      issues.push(
+        `${file} verification failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  try {
+    const [mode, owner] = privilegedSandboxExecCapture(sandboxName, [
+      "stat",
+      "-c",
+      "%a %U:%G",
+      target.configDir,
+    ]).split(" ");
+    if (mode !== "3770") issues.push(`${target.configDir} mode=${mode} (expected 3770)`);
+    if (owner !== "sandbox:sandbox") {
+      issues.push(`${target.configDir} owner=${owner} (expected sandbox:sandbox)`);
+    }
+  } catch (error) {
+    issues.push(
+      `${target.configDir} verification failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (issues.length > 0) throw new Error(`Config not unlocked: ${issues.join(", ")}`);
+}
+
+function hermesProviderChattrApplied(sandboxName: string, target: AgentConfigTarget): boolean {
+  try {
+    return [target.configPath, ...(target.sensitiveFiles || [])].every((file) => {
+      const [flags] = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", file])
+        .trim()
+        .split(/\s+/, 1);
+      return flags.includes("i");
+    });
+  } catch {
+    return false;
+  }
 }
 
 // Re-export for tests and external consumers
@@ -716,6 +1363,8 @@ interface ShieldsState {
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
   shieldsPolicySnapshotPath?: string | null;
+  /** Exact generated MCP keys owned in the restrictive snapshot. */
+  shieldsManagedMcpPolicyKeys?: string[];
   chattrApplied?: boolean;
   // SHA-256 seal of each locked file, captured by `shields up` after the
   // lock verification passes. `shields status` re-hashes the same files
@@ -751,7 +1400,53 @@ type AgentConfigTarget = {
   configPath: string;
   configDir: string;
   sensitiveFiles?: string[];
+  stateLockPlan?: AgentStateLockPlan;
+  stateLockPlanInImage: boolean;
 };
+
+function requireStateLockPlan(target: AgentConfigTarget): AgentStateLockPlan {
+  const plan = target.stateLockPlan;
+  if (!plan || plan.version !== 1) {
+    throw new Error(
+      `Agent '${target.agentName ?? "unknown"}' does not expose a supported state lock plan`,
+    );
+  }
+  return plan;
+}
+
+const DEEP_AGENTS_NAME = "langchain-deepagents-code";
+const DEEP_AGENTS_CONFIG_DIR = "/sandbox/.deepagents";
+const DEEP_AGENTS_CONFIG_PATH = `${DEEP_AGENTS_CONFIG_DIR}/config.toml`;
+const DEEP_AGENTS_CONFIG_HASH_PATH = `${DEEP_AGENTS_CONFIG_DIR}/.config-hash`;
+
+function isDeepAgentsTarget(target: AgentConfigTarget): boolean {
+  return target.agentName === DEEP_AGENTS_NAME;
+}
+
+function assertCanonicalDeepAgentsTarget(target: AgentConfigTarget): void {
+  if (!isDeepAgentsTarget(target)) return;
+  const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  if (
+    target.configDir !== DEEP_AGENTS_CONFIG_DIR ||
+    target.configPath !== DEEP_AGENTS_CONFIG_PATH ||
+    files.length !== 2 ||
+    files[0] !== DEEP_AGENTS_CONFIG_PATH ||
+    files[1] !== DEEP_AGENTS_CONFIG_HASH_PATH
+  ) {
+    throw new Error(
+      `Deep Agents shields require the canonical protected-file set under ${DEEP_AGENTS_CONFIG_DIR}`,
+    );
+  }
+}
+
+function requiresProtectedSandboxParent(target: AgentConfigTarget): boolean {
+  return (
+    target.configDir.startsWith("/sandbox/") &&
+    (target.agentName === "openclaw" ||
+      target.agentName === "hermes" ||
+      target.agentName === "langchain-deepagents-code")
+  );
+}
 
 function configHashPath(configDir: string): string {
   return `${configDir.replace(/\/+$/, "")}/.config-hash`;
@@ -762,6 +1457,51 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
   const sensitiveFiles = target.sensitiveFiles || [];
   if (sensitiveFiles.includes(hashPath)) return target;
   return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
+}
+function loadMarkerAgentStateLockPlan(
+  agentName: string | undefined,
+): Pick<AgentConfigTarget, "stateLockPlan" | "stateLockPlanInImage"> {
+  if (!agentName) return { stateLockPlanInImage: false };
+  try {
+    return resolveAgentStateLockContract(agentName);
+  } catch {
+    // A marker path remains authoritative, but a missing agent definition
+    // cannot authorize a state-directory mutation.
+    return { stateLockPlanInImage: false };
+  }
+}
+
+function resolvePersistedAutoRestoreTarget(
+  sandboxName: string,
+  marker: { agentName?: string; configPath?: string; configDir?: string },
+  resolveConfig: (sandboxName: string) => AgentConfigTarget = resolveAgentConfig,
+): AgentConfigTarget | undefined {
+  if (!marker.configPath || !marker.configDir) return undefined;
+
+  const persistedTarget: AgentConfigTarget = {
+    ...(marker.agentName ? { agentName: marker.agentName } : {}),
+    configPath: marker.configPath,
+    configDir: marker.configDir,
+    sensitiveFiles: [
+      configHashPath(marker.configDir),
+      ...(marker.agentName === "hermes" ? [`${marker.configDir.replace(/\/+$/, "")}/.env`] : []),
+    ],
+    ...loadMarkerAgentStateLockPlan(marker.agentName),
+  };
+
+  try {
+    const resolved = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
+    return (!marker.agentName || resolved.agentName === marker.agentName) &&
+      resolved.configPath === marker.configPath &&
+      resolved.configDir === marker.configDir
+      ? resolved
+      : persistedTarget;
+  } catch {
+    // The host-side timer marker is the recovery authority when the registry
+    // is unavailable. Keep the original target instead of silently selecting
+    // another agent's default configuration.
+    return persistedTarget;
+  }
 }
 
 const { DeferredShieldsExit }: typeof import("./deferred-exit") = require("./deferred-exit");
@@ -775,6 +1515,11 @@ function failShieldsCommand(message: string, _shouldThrow?: boolean): never {
 }
 
 function completeDeferredShieldsExit(error: unknown, shouldThrow = false): never {
+  if (isShieldsTransitionLockUnavailable(error)) {
+    console.error(`  ${error.summary}`);
+    if (error.recovery) console.error(`  Recovery: ${error.recovery}`);
+    return failShieldsCommand(error.summary, shouldThrow);
+  }
   if (error instanceof DeferredShieldsExit && !shouldThrow) {
     process.exit(error.exitCode);
   }
@@ -795,6 +1540,30 @@ function deriveShieldsMode(state: ShieldsState, hasStateFile: boolean): ShieldsM
   if (state.shieldsDown === false) return "locked";
   // State file exists but shieldsDown is undefined — treat as mutable default
   return "mutable_default";
+}
+
+function isEquivalentShieldsDownRequest(
+  state: ShieldsState,
+  timeoutSeconds: number,
+  reason: string | null,
+  policyName: string,
+): boolean {
+  return (
+    state.shieldsDown === true &&
+    state.shieldsDownTimeout === timeoutSeconds &&
+    state.shieldsDownReason === reason &&
+    state.shieldsDownPolicy === policyName
+  );
+}
+
+function hasEquivalentShieldsDownTimerAuthority(sandboxName: string, state: ShieldsState): boolean {
+  const marker = readTimerMarker(sandboxName);
+  return (
+    marker !== null &&
+    marker.sandboxName === sandboxName &&
+    marker.snapshotPath === state.shieldsPolicySnapshotPath &&
+    isExactLiveFutureTimerAuthority(marker)
+  );
 }
 
 function describeShieldsMode(mode: ShieldsPostureMode): Omit<ShieldsPosture, "state"> {
@@ -838,7 +1607,8 @@ function loadShieldsState(sandboxName: string): LoadedShieldsState {
   const filePath = stateFilePath(sandboxName);
   if (!fs.existsSync(filePath)) return { _hasStateFile: false };
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const contents = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(contents);
     if (!isShieldsState(parsed)) {
       return {
         _hasStateFile: true,
@@ -863,34 +1633,324 @@ function getShieldsPostureWithoutHostLock(
   allowInlineRecovery = false,
 ): ShieldsPosture {
   const state = recoverExpiredAutoRestoreGate(sandboxName, allowInlineRecovery);
-  const mode = state._isCorrupt ? "error" : deriveShieldsMode(state, state._hasStateFile);
-  return { ...describeShieldsMode(mode), state };
+  const timerBoundTransition =
+    !state._isCorrupt && state.shieldsDown === true
+      ? readTimerBoundShieldsDownTransition(sandboxName)
+      : null;
+  const transitionDeniesMutability =
+    timerBoundTransition?.phase === "policy_rejected" ||
+    timerBoundTransition?.phase === "preparing";
+  const effectiveState: LoadedShieldsState = transitionDeniesMutability
+    ? {
+        ...state,
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+      }
+    : state;
+  const mode = effectiveState._isCorrupt
+    ? "error"
+    : deriveShieldsMode(effectiveState, effectiveState._hasStateFile);
+  return { ...describeShieldsMode(mode), state: effectiveState };
 }
 
-function prepareExpiredAutoRestoreHostLockTakeover(sandboxName: string): void {
+type ExpiredAutoRestoreTakeover = {
+  marker: TimerMarker & { processToken: string };
+};
+
+function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | null {
   const state = loadShieldsState(sandboxName);
-  if (state._isCorrupt || state.shieldsDown !== true) return;
+  if (state._isCorrupt || state.shieldsDown !== true) return null;
   const marker = readTimerMarker(sandboxName);
-  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return;
-  const restoreAtMs = new Date(marker.restoreAt).getTime();
-  const now = Date.now();
-  if (!Number.isFinite(restoreAtMs) || restoreAtMs > now) return;
-  if (
-    isProcessAlive(marker.pid) &&
-    verifyTimerMarkerIdentity(marker).verified &&
-    now <= restoreAtMs + AUTO_RESTORE_COMPLETION_GRACE_MS
-  ) {
-    return;
+  if (!marker) return null;
+  return isExactLiveFutureTimerAuthority(marker) ? null : marker;
+}
+
+function inspectExpiredAutoRestoreTakeover(
+  sandboxName: string,
+  marker = inspectExpiredAutoRestoreMarker(sandboxName),
+): ExpiredAutoRestoreTakeover | null {
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  return {
+    marker: marker as TimerMarker & { processToken: string },
+  };
+}
+
+function failInteractiveAutoRestoreClosed(
+  sandboxName: string,
+  marker: TimerMarker & { processToken: string },
+  message: string,
+): never {
+  const containmentPath = `${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`;
+  let notifiedError: string | null = null;
+  let lastContainmentError: string | null = null;
+  // Retry a durable containment commit for one normal transition-handoff
+  // window. A persistent state-directory failure returns to the operator only
+  // through the coded failure that keeps the owned lifecycle gates.
+  for (let attempt = 0; attempt < INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS; attempt += 1) {
+    assertTimerMarkerGeneration(sandboxName, marker);
+    try {
+      persistUnresolvedShieldsContainment(
+        sandboxName,
+        marker.processToken,
+        `Interactive auto-restore could not complete safely: ${message}`,
+        () => assertTimerMarkerGeneration(sandboxName, marker),
+      );
+      break;
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      if (fs.existsSync(containmentPath)) break;
+      assertTimerMarkerGeneration(sandboxName, marker);
+      const containmentError = error instanceof Error ? error.message : String(error);
+      lastContainmentError = containmentError;
+      if (containmentError !== notifiedError) {
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: `Durable containment commit failed; retrying behind the deadline gate: ${containmentError}`,
+        });
+        notifiedError = containmentError;
+      }
+      if (attempt + 1 < INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS) {
+        Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+      }
+    }
   }
-  prepareAutoRestoreTransitionTakeover(sandboxName, marker.processToken, marker.snapshotPath);
+  if (!fs.existsSync(containmentPath)) {
+    throw durableMcpLifecycleContainmentFailure(
+      new Error(
+        `${message}. Durable containment could not be committed after ${String(
+          INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS,
+        )} attempts: ${lastContainmentError ?? "unknown state-directory failure"}. Correct the state-directory write failure and retry the command before running another sandbox mutation`,
+      ),
+      getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+    );
+  }
+  throw new Error(`${message}. Durable sandbox mutation containment requires operator resolution`);
+}
+
+function isDurableContainmentFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: string }).code === "NEMOCLAW_DURABLE_CONTAINMENT"
+  );
+}
+
+function retryInlineAutoRestore(
+  sandboxName: string,
+  marker: TimerMarker & { processToken: string },
+): void {
+  let notifiedError: string | null = null;
+  for (let attempt = 0; attempt < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const recoveredState = recoverExpiredAutoRestoreGate(sandboxName, true);
+      if (!recoveredState._isCorrupt && recoveredState.shieldsDown !== true) {
+        return;
+      }
+      assertTimerMarkerGeneration(sandboxName, marker);
+      const message = "Inline auto-restore did not complete; retrying under the lifecycle gate";
+      if (message !== notifiedError) {
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: message,
+        });
+        notifiedError = message;
+      }
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      assertTimerMarkerGeneration(sandboxName, marker);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== notifiedError) {
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: message,
+        });
+        notifiedError = message;
+      }
+    }
+    if (attempt + 1 < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS) {
+      Atomics.wait(transitionPollBuffer, 0, 0, INTERACTIVE_AUTO_RESTORE_RETRY_MS);
+    }
+  }
+  failInteractiveAutoRestoreClosed(
+    sandboxName,
+    marker,
+    `Inline auto-restore exhausted ${String(
+      INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS,
+    )} attempts: ${notifiedError ?? "recovery did not complete"}`,
+  );
+}
+
+function withExpiredAutoRestoreDeadlineFence<T>(
+  sandboxName: string,
+  command: string,
+  operation: (allowInlineRecovery: boolean) => T,
+  fallbackTakeoverToken?: string,
+): T {
+  const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
+  const takeover = inspectExpiredAutoRestoreTakeover(sandboxName, expiredMarker);
+  const runWithHostLock = (callback: () => T) =>
+    fallbackTakeoverToken
+      ? withTimerBoundShieldsMutationLockFallback(
+          sandboxName,
+          command,
+          fallbackTakeoverToken,
+          callback,
+        )
+      : withTimerBoundShieldsMutationLock(sandboxName, command, callback);
+  const retireUnexpectedFreshTimerGeneration = () => {
+    if (!fallbackTakeoverToken) return;
+    const state = loadShieldsState(sandboxName);
+    if (state._isCorrupt || state.shieldsDown === true || !readTimerMarker(sandboxName)) return;
+    withTimerBoundShieldsMutationLock(sandboxName, command, () => {
+      const marker = readTimerMarker(sandboxName);
+      const currentState = loadShieldsState(sandboxName);
+      if (!marker || currentState._isCorrupt || currentState.shieldsDown === true) return;
+      const revocation = killTimer(sandboxName);
+      for (const warning of revocation.warnings) console.warn(`  ${warning}`);
+      if (!revocation.authorityRevoked) {
+        throw new Error(
+          `Cannot revoke stale auto-restore timer authority for ${sandboxName}; refusing to create a replacement generation`,
+        );
+      }
+      if (marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
+        clearShieldsDownTransition(sandboxName, marker.processToken);
+      }
+    });
+  };
+  const recoverThenRun = () => {
+    withTimerBoundAutoRestoreLock(sandboxName, command, () => {
+      if (takeover) retryInlineAutoRestore(sandboxName, takeover.marker);
+    });
+    return runWithHostLock(() => operation(false));
+  };
+  if (isMcpLifecycleLockHeld(sandboxName, STATE_DIR)) {
+    if (!expiredMarker || !takeover) {
+      retireUnexpectedFreshTimerGeneration();
+      return runWithHostLock(() => operation(true));
+    }
+    const { marker } = takeover;
+    prepareAutoRestoreTransitionTakeover(
+      sandboxName,
+      marker.processToken,
+      marker.snapshotPath,
+      () => assertTimerMarkerGeneration(sandboxName, marker),
+    );
+    if (fallbackTakeoverToken) {
+      retryInlineAutoRestore(sandboxName, marker);
+    }
+    // This lifecycle owner is what the live timer is waiting on. Run the
+    // nested operation without re-entering recovery against that timer.
+    return runWithHostLock(() => operation(false));
+  }
+  if (!takeover) {
+    return withMcpLifecycleLockSync(
+      sandboxName,
+      () => {
+        retireUnexpectedFreshTimerGeneration();
+        return runWithHostLock(() => operation(true));
+      },
+      {
+        stateDir: STATE_DIR,
+      },
+    );
+  }
+
+  const { marker } = takeover;
+  const assertTakeoverAuthority = () => assertTimerMarkerGeneration(sandboxName, marker);
+  return withMcpLifecycleDeadlineFenceSync(
+    sandboxName,
+    marker.processToken,
+    () => {
+      let notifiedError: string | null = null;
+      for (let attempt = 0; attempt < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          prepareAutoRestoreTransitionTakeover(
+            sandboxName,
+            marker.processToken,
+            marker.snapshotPath,
+            assertTakeoverAuthority,
+          );
+          return recoverThenRun();
+        } catch (error) {
+          if (isDurableContainmentFailure(error)) throw error;
+          assertTakeoverAuthority();
+          if (fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`)) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          if (message !== notifiedError) {
+            appendAuditEntryBestEffort({
+              action: "shields_up_failed",
+              sandbox: sandboxName,
+              timestamp: new Date().toISOString(),
+              restored_by: "auto_timer",
+              policy_snapshot: marker.snapshotPath,
+              error: message,
+            });
+            notifiedError = message;
+          }
+          if (attempt + 1 < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS) {
+            Atomics.wait(transitionPollBuffer, 0, 0, INTERACTIVE_AUTO_RESTORE_RETRY_MS);
+          }
+        }
+      }
+      return failInteractiveAutoRestoreClosed(
+        sandboxName,
+        marker,
+        `Auto-restore transition takeover exhausted ${String(
+          INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS,
+        )} attempts: ${notifiedError ?? "transition ownership did not become available"}`,
+      );
+    },
+    {
+      stateDir: STATE_DIR,
+      throwOnCommittedContainment: true,
+      onContainment: ({ kind, ownerPid, reason }) => {
+        if (kind === "verified-live-wait") {
+          appendAuditEntryBestEffort({
+            action: "shields_auto_restore_lock_warning",
+            sandbox: sandboxName,
+            timestamp: new Date().toISOString(),
+            restored_by: "auto_timer",
+            policy_snapshot: marker.snapshotPath,
+            warning: reason,
+          });
+          return;
+        }
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: `${reason}${ownerPid ? ` Contained owner PID: ${String(ownerPid)}.` : ""}`,
+        });
+      },
+    },
+  );
 }
 
 function getShieldsPosture(sandboxName: string, allowInlineRecovery = false): ShieldsPosture {
   if (!allowInlineRecovery) return getShieldsPostureWithoutHostLock(sandboxName, false);
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  return withTimerBoundShieldsMutationLock(sandboxName, "recover expired shields posture", () =>
-    getShieldsPostureWithoutHostLock(sandboxName, true),
+  return withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "recover expired shields posture",
+    (allowInlineRecovery) => getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery),
   );
 }
 
@@ -908,9 +1968,26 @@ function saveShieldsState(sandboxName: string, patch: ShieldsState): ShieldsStat
     ...patch,
     updatedAt: new Date().toISOString(),
   };
-  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(stateFilePath(sandboxName), JSON.stringify(updated, null, 2), { mode: 0o600 });
+  writeShieldsFileAtomicDurable(stateFilePath(sandboxName), JSON.stringify(updated, null, 2));
   return updated;
+}
+
+function restoreShieldsStateSnapshot(sandboxName: string, state: LoadedShieldsState): void {
+  const {
+    _hasStateFile: hasStateFile,
+    _isCorrupt: isCorrupt,
+    _corruptError: _corruptError,
+    ...persisted
+  } = state;
+  const filePath = stateFilePath(sandboxName);
+  if (!hasStateFile) {
+    fs.rmSync(filePath, { force: true });
+    return;
+  }
+  if (isCorrupt) {
+    throw new Error("Cannot restore a corrupt shields state snapshot");
+  }
+  writeShieldsFileAtomicDurable(filePath, JSON.stringify(persisted, null, 2));
 }
 
 function isOptionalBoolean(value: unknown): value is boolean | undefined {
@@ -946,6 +2023,14 @@ function isOptionalHashMap(value: unknown): value is { [path: string]: string } 
   return true;
 }
 
+function isOptionalManagedMcpPolicyKeys(value: unknown): value is string[] | undefined {
+  if (value === undefined) return true;
+  // Preserve string entries exactly so deadline recovery can strip and audit
+  // malformed or duplicate ownership without delaying restrictive lockdown.
+  // Manual restoration validates the same entries strictly during composition.
+  return Array.isArray(value) && value.every((key) => typeof key === "string");
+}
+
 function isShieldsState(value: unknown): value is ShieldsState {
   return (
     isObjectRecord(value) &&
@@ -955,6 +2040,7 @@ function isShieldsState(value: unknown): value is ShieldsState {
     isOptionalNullableString(value.shieldsDownReason) &&
     isOptionalNullableString(value.shieldsDownPolicy) &&
     isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    isOptionalManagedMcpPolicyKeys(value.shieldsManagedMcpPolicyKeys) &&
     isOptionalBoolean(value.chattrApplied) &&
     isOptionalHashMap(value.fileHashes) &&
     isOptionalString(value.updatedAt)
@@ -963,55 +2049,59 @@ function isShieldsState(value: unknown): value is ShieldsState {
 
 // ---------------------------------------------------------------------------
 // State-dir lock — adapter between this module's privileged-exec helpers and
-// the lock pipeline in ./state-dir-lock. The inventory of locked dirs, the
-// preflight/mutation/verification logic, and the `agents/*/sessions`
-// carve-out live in that sibling module so this file stays focused on
-// shields state transitions.
+// the lock pipeline in ./state-dir-lock. AgentDefinition supplies the path
+// plan; the sibling module owns helper execution and output validation so this
+// file stays focused on shields state transitions.
 // ---------------------------------------------------------------------------
 
 function stateDirLockExec(sandboxName: string) {
   return {
-    run: (cmd: string[], input?: string) => {
-      const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-        {
-          encoding: "utf-8",
-          input,
-          timeout: STATE_DIR_GUARD_TIMEOUT_MS,
-          maxBuffer: 16 * 1024 * 1024,
-        },
-      );
-      return {
-        status: result.status,
-        signal: result.signal,
-        stdout: String(result.stdout ?? ""),
-        stderr: String(result.stderr ?? ""),
-        ...(result.error ? { error: result.error.message } : {}),
-      };
-    },
+    run: (cmd: string[], input?: string) =>
+      withPrivilegedSandboxExecutionLease(sandboxName, "state directory guard", () => {
+        const result = dockerSpawnSync(
+          privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
+          {
+            encoding: "utf-8",
+            input,
+            timeout: STATE_DIR_GUARD_TIMEOUT_MS,
+            maxBuffer: 16 * 1024 * 1024,
+          },
+        );
+        return {
+          status: result.status,
+          signal: result.signal,
+          stdout: String(result.stdout ?? ""),
+          stderr: String(result.stderr ?? ""),
+          ...(result.error ? { error: result.error.message } : {}),
+        };
+      }),
   };
 }
 
 function openClawConfigGuardExec(sandboxName: string) {
   return {
-    run: (cmd: string[], input?: string) => {
-      const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-        {
-          encoding: "utf-8",
-          input,
-          timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
-        },
-      );
-      return {
-        status: result.status,
-        signal: result.signal,
-        stdout: String(result.stdout ?? ""),
-        stderr: String(result.stderr ?? ""),
-        ...(result.error ? { error: result.error.message } : {}),
-      };
-    },
+    run: (cmd: string[], input?: string) =>
+      withPrivilegedSandboxExecutionLease(sandboxName, "OpenClaw config guard", () => {
+        const timeout = cmd.includes("unlock-failed-startup")
+          ? OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS
+          : OPENCLAW_CONFIG_GUARD_TIMEOUT_MS;
+        const result = dockerSpawnSync(
+          privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
+          {
+            encoding: "utf-8",
+            input,
+            timeout,
+            maxBuffer: 2 * 1024 * 1024,
+          },
+        );
+        return {
+          status: result.status,
+          signal: result.signal,
+          stdout: String(result.stdout ?? ""),
+          stderr: String(result.stderr ?? ""),
+          ...(result.error ? { error: result.error.message } : {}),
+        };
+      }),
   };
 }
 
@@ -1039,8 +2129,19 @@ function transitionOpenClawTopConfig(
   assertCanonicalOpenClawConfigTarget(target);
   const result = runOpenClawConfigGuard(openClawConfigGuardExec(sandboxName), action);
   if (result.issues.length > 0) {
-    throw new Error(
+    const issueCodes = result.issueCodes?.length === result.issues.length ? result.issueCodes : [];
+    throw new OpenClawConfigGuardFailure(
       `Config not ${action === "unlock" ? "unlocked" : "locked"}: ${result.issues.join(", ")}`,
+      issueCodes,
+    );
+  }
+  if (result.resealedDrift) {
+    // The guard found an already-locked config whose canonical file had drifted
+    // perms-only (a reconciler re-permissioned it after the lock) and re-sealed
+    // it in place instead of failing closed (#4663 / #7985). Surface the
+    // self-heal so a rebuild/relock does not fix drift invisibly.
+    console.log(
+      "  Re-sealed a perms-only config-lock drift (config dir stays root-owned; contents intact).",
     );
   }
   return result.chattrApplied;
@@ -1115,8 +2216,9 @@ def config_child_name(config_dir, path):
 file_mode = int(sys.argv[1], 8)
 dir_mode = int(sys.argv[2], 8)
 uid, gid = resolve_user_group(sys.argv[3])
-config_dir = os.path.normpath(sys.argv[4])
-files = sys.argv[5:]
+restore_mutable_parent = sys.argv[4] == "1"
+config_dir = os.path.normpath(sys.argv[5])
+files = sys.argv[6:]
 
 parent_dir = os.path.dirname(config_dir)
 config_name = os.path.basename(config_dir)
@@ -1181,8 +2283,12 @@ finally:
             restore_errors.append(str(exc))
         os.close(dir_fd)
     try:
-        os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
-        os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
+        if unlock_ok and restore_mutable_parent:
+            os.fchown(parent_fd, uid, gid)
+            os.fchmod(parent_fd, 0o755)
+        else:
+            os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
+            os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
     except OSError as exc:
         restore_errors.append(str(exc))
     os.close(parent_fd)
@@ -1573,9 +2679,95 @@ function unlockConfigPathsNoSymlinkFollow(
     fileMode,
     dirMode,
     "sandbox:sandbox",
+    requiresProtectedSandboxParent(target) ? "1" : "0",
     target.configDir,
     ...filesToUnlock,
   ]);
+}
+
+function writeAbsentConfigHashNoSymlinkFollow(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): void {
+  privilegedSandboxExec(
+    sandboxName,
+    buildConfigHashRepairCommand(target.configDir, target.configPath),
+  );
+}
+
+type DeepAgentsConfigLockFailureStatus =
+  | "config-root"
+  | "sandbox-parent"
+  | "incomplete"
+  | "rollback-failed"
+  | "transaction-failed";
+
+const DEEP_AGENTS_CONFIG_LOCK_GENERIC_ERROR = "Deep Agents config lock transaction failed.";
+const DEEP_AGENTS_CONFIG_LOCK_PROTOCOL_MAX_BYTES = 128;
+
+function parseDeepAgentsConfigLockFailure(
+  error: unknown,
+): DeepAgentsConfigLockFailureStatus | null {
+  const stderr = (error as { stderr?: unknown } | null)?.stderr;
+  if (typeof stderr !== "string" && !Buffer.isBuffer(stderr)) return null;
+
+  const byteLength = Buffer.isBuffer(stderr) ? stderr.length : Buffer.byteLength(stderr);
+  if (byteLength === 0 || byteLength > DEEP_AGENTS_CONFIG_LOCK_PROTOCOL_MAX_BYTES) return null;
+
+  let line = Buffer.isBuffer(stderr) ? stderr.toString("utf8") : stderr;
+  if (line.endsWith("\n")) line = line.slice(0, -1);
+  if (!line || line.includes("\n") || line.includes("\r")) return null;
+
+  const prefix = `${DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX}:`;
+  if (!line.startsWith(prefix)) return null;
+  const status = line.slice(prefix.length);
+  switch (status) {
+    case "config-root":
+    case "sandbox-parent":
+    case "incomplete":
+    case "rollback-failed":
+    case "transaction-failed":
+      return status;
+    default:
+      return null;
+  }
+}
+
+function lockDeepAgentsTopConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  failClosedOnError: boolean,
+): void {
+  assertCanonicalDeepAgentsTarget(target);
+  let outcome: string;
+  try {
+    outcome = privilegedSandboxExecCapture(
+      sandboxName,
+      buildDeepAgentsConfigLockCommand(target.configDir, target.configPath, failClosedOnError),
+    );
+  } catch (error) {
+    const status = parseDeepAgentsConfigLockFailure(error);
+    if (status === "config-root") {
+      console.error(
+        "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the config root. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=config-root",
+      );
+    } else if (status === "sandbox-parent") {
+      console.error(
+        "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because NemoClaw could not confirm the complete config-root posture. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
+      );
+    } else if (status === "incomplete") {
+      console.error(
+        "  CRITICAL: Deep Agents lock failed after containment began, and NemoClaw could not confirm fail-closed containment. Do not retry or repair from inside the sandbox. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=incomplete",
+      );
+    } else if (status === "rollback-failed") {
+      console.error(
+        "  CRITICAL: Deep Agents config lock transaction could not restore its original posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. rollback failed",
+      );
+    }
+    throw new Error(DEEP_AGENTS_CONFIG_LOCK_GENERIC_ERROR);
+  }
+  if (outcome === "hash-created" || outcome === "hash-existing") return;
+  throw new Error("Deep Agents config lock returned an unexpected result.");
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -1616,6 +2808,118 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
 // read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
+class OpenClawConfigGuardFailure extends Error {
+  constructor(
+    message: string,
+    readonly issueCodes: readonly string[],
+  ) {
+    super(message);
+    this.name = "OpenClawConfigGuardFailure";
+  }
+}
+
+/** Whether a guard error reports the OpenClaw startup readiness lease. */
+function isOpenClawStartupNotReady(error: unknown): boolean {
+  return (
+    error instanceof OpenClawConfigGuardFailure &&
+    error.issueCodes.length === 1 &&
+    error.issueCodes[0] === "startup-not-ready"
+  );
+}
+
+/** The guard's refusal when the sandbox is simply not in a failed startup. */
+const FAILED_STARTUP_NOT_PROVEN = "failed-startup-not-proven";
+
+/**
+ * Lower shields on an OpenClaw sandbox whose startup terminally failed.
+ *
+ * Returns false when the sandbox is not in that state. The guard proves a
+ * stable supervisor with no startup process and no readiness marker, then
+ * unseals both layers in one mutex window.
+ */
+function recoverOpenClawFailedStartupShields(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): boolean {
+  assertCanonicalOpenClawConfigTarget(target);
+  const result = runOpenClawConfigGuard(
+    openClawConfigGuardExec(sandboxName),
+    "unlock-failed-startup",
+    { planJson: JSON.stringify(requireStateLockPlan(target)) },
+  );
+  if (result.issues.length === 0) return true;
+  // Only "not a failed startup" falls back. A transition, rollback, contract,
+  // parse, or timeout failure must surface instead of being masked.
+  const notApplicable =
+    result.issueCodes?.length === result.issues.length &&
+    result.issueCodes.every((code) => code === FAILED_STARTUP_NOT_PROVEN);
+  if (notApplicable) return false;
+  throw new Error(`Failed-startup shields recovery failed: ${result.issues.join(", ")}`);
+}
+
+/** Independently observe the mutable OpenClaw posture after the guard returns. */
+function openClawMutablePostureIssues(sandboxName: string, target: AgentConfigTarget): string[] {
+  assertCanonicalOpenClawConfigTarget(target);
+  const issues: string[] = [];
+  for (const file of [target.configPath, ...(target.sensitiveFiles || [])]) {
+    try {
+      const perms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", file]);
+      const [mode, owner] = perms.split(" ");
+      if (mode !== "660") issues.push(`${file} mode=${mode} (expected 660)`);
+      if (owner !== "sandbox:sandbox") {
+        issues.push(`${file} owner=${owner} (expected sandbox:sandbox)`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      issues.push(`${file} stat failed: ${message}`);
+    }
+    try {
+      const attrs = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", file]);
+      const [flags] = attrs.trim().split(/\s+/, 1);
+      if (flags.includes("i")) issues.push(`${file} immutable bit still set`);
+    } catch {
+      // Some supported images omit lsattr. Ownership and mode remain required.
+    }
+  }
+
+  try {
+    const perms = privilegedSandboxExecCapture(sandboxName, [
+      "stat",
+      "-c",
+      "%a %U:%G",
+      target.configDir,
+    ]);
+    const [mode, owner] = perms.split(" ");
+    if (mode !== "2770") issues.push(`config dir mode=${mode} (expected 2770)`);
+    if (owner !== "sandbox:sandbox") {
+      issues.push(`config dir owner=${owner} (expected sandbox:sandbox)`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    issues.push(`config dir stat failed: ${message}`);
+  }
+
+  if (requiresProtectedSandboxParent(target)) {
+    try {
+      const perms = privilegedSandboxExecCapture(sandboxName, [
+        "stat",
+        "-c",
+        "%a %U:%G",
+        "/sandbox",
+      ]);
+      const [mode, owner] = perms.split(" ");
+      if (mode !== "755") issues.push(`parent dir mode=${mode} (expected 755)`);
+      if (owner !== "sandbox:sandbox") {
+        issues.push(`parent dir owner=${owner} (expected sandbox:sandbox)`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      issues.push(`parent dir stat failed: ${message}`);
+    }
+  }
+  return issues;
+}
+
 function unlockAgentConfigUnderMutationLock(
   sandboxName: string,
   rawTarget: AgentConfigTarget,
@@ -1623,6 +2927,30 @@ function unlockAgentConfigUnderMutationLock(
   protocol: HermesShieldsProtocol,
 ): void {
   const target = ensureConfigHashSensitiveFile(rawTarget);
+  if (target.agentName === "hermes" && protocol === "provider-state-mutation-v2") {
+    if (!rollbackLocked) {
+      runHermesProviderProtectionTransition(sandboxName, target, "mutable", "mutable");
+      try {
+        verifyHermesProviderMutablePosture(sandboxName, target);
+        return;
+      } catch {
+        // State-derived mutable-default authority disagrees with the live
+        // posture. Repair it with a restrictive rollback instead of creating
+        // an invalid same-posture provider plan.
+      }
+    }
+    runHermesProviderProtectionTransition(sandboxName, target, "mutable", "locked");
+    verifyHermesProviderMutablePosture(sandboxName, target);
+    return;
+  }
+  const compatibilityIssues = stateLockPlanCompatibilityIssues(
+    stateDirLockExec(sandboxName),
+    requireStateLockPlan(target),
+    target.stateLockPlanInImage,
+  );
+  if (compatibilityIssues.length > 0) {
+    throw new Error(`Config not unlocked: ${compatibilityIssues.join(", ")}`);
+  }
   const errors: string[] = [];
   const filesToUnlock = [target.configPath, ...(target.sensitiveFiles || [])];
   // Mutable-default mode for OpenClaw: group-writable + setgid on the
@@ -1647,7 +2975,20 @@ function unlockAgentConfigUnderMutationLock(
   let openClawMutationStarted = false;
   try {
     if (openClawProtocol) {
-      transitionOpenClawTopConfig(sandboxName, target, "preflight");
+      try {
+        transitionOpenClawTopConfig(sandboxName, target, "preflight");
+      } catch (preflightError) {
+        // Preflight is read-only, so nothing is mutated yet. Hand the whole
+        // unseal to the guard, which does it atomically (#8304).
+        if (!isOpenClawStartupNotReady(preflightError)) throw preflightError;
+        if (!recoverOpenClawFailedStartupShields(sandboxName, target)) throw preflightError;
+        const postureIssues = openClawMutablePostureIssues(sandboxName, target);
+        if (postureIssues.length > 0) {
+          throw new Error(`Config not unlocked: ${postureIssues.join(", ")}`);
+        }
+        console.log("  Lowered shields on a sandbox whose startup never completed.");
+        return;
+      }
     }
     if (target.agentName === "hermes" && !legacyHermesProtocol) {
       transaction = beginHermesConfigShields(
@@ -1672,13 +3013,15 @@ function unlockAgentConfigUnderMutationLock(
       // the fresh-inode Hermes transaction. If the host Docker client dies,
       // a later locked takeover can observe and wait for the exact worker
       // identity instead of racing an orphaned unlock pass.
-      runHermesStateDirTransition(sandboxName, target, transaction.token, "unlock");
+      runHermesStateDirTransition(sandboxName, target, transaction.token, "unlock", protocol);
     } else {
       const stateDirUnlockIssues = applyStateDirLockMode(
         stateDirLockExec(sandboxName),
         target.configDir,
         "sandbox:sandbox",
         false,
+        requireStateLockPlan(target),
+        target.stateLockPlanInImage,
       );
       for (const issue of stateDirUnlockIssues) errors.push(`state dir unlock: ${issue}`);
     }
@@ -1695,73 +3038,75 @@ function unlockAgentConfigUnderMutationLock(
       transitionOpenClawTopConfig(sandboxName, target, "unlock");
     }
 
-    const issues: string[] = [];
-    for (const f of filesToUnlock) {
-      try {
-        const perms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", f]);
-        const [mode, owner] = perms.split(" ");
-        if (mode !== fileMode) issues.push(`${f} mode=${mode} (expected ${fileMode})`);
-        if (owner !== "sandbox:sandbox")
-          issues.push(`${f} owner=${owner} (expected sandbox:sandbox)`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        issues.push(`${f} stat failed: ${msg}`);
+    const issues = openClawProtocol ? openClawMutablePostureIssues(sandboxName, target) : [];
+    if (!openClawProtocol) {
+      for (const f of filesToUnlock) {
+        try {
+          const perms = privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", f]);
+          const [mode, owner] = perms.split(" ");
+          if (mode !== fileMode) issues.push(`${f} mode=${mode} (expected ${fileMode})`);
+          if (owner !== "sandbox:sandbox")
+            issues.push(`${f} owner=${owner} (expected sandbox:sandbox)`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          issues.push(`${f} stat failed: ${msg}`);
+        }
+        try {
+          const attrs = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", f]);
+          const [flags] = attrs.trim().split(/\s+/, 1);
+          if (flags.includes("i")) issues.push(`${f} immutable bit still set`);
+        } catch {
+          // lsattr may not be available on all images — skip
+        }
       }
-      try {
-        const attrs = privilegedSandboxExecCapture(sandboxName, ["lsattr", "-d", f]);
-        const [flags] = attrs.trim().split(/\s+/, 1);
-        if (flags.includes("i")) issues.push(`${f} immutable bit still set`);
-      } catch {
-        // lsattr may not be available on all images — skip
-      }
-    }
 
-    try {
-      const dirPerms = privilegedSandboxExecCapture(sandboxName, [
-        "stat",
-        "-c",
-        "%a %U:%G",
-        target.configDir,
-      ]);
-      const [mode, owner] = dirPerms.split(" ");
-      // A 0700 Hermes root is provisional here. The token-bound guard finish
-      // preserves it only for an attested same-UID topology, repairs and
-      // verifies 03770 for a root-separated topology, and fails closed for an
-      // unknown topology.
-      const validDirMode =
-        mode === dirMode ||
-        (target.agentName === "hermes" && mode === "700" && transaction !== null);
-      if (!validDirMode) {
-        const expectedDirModes =
-          target.agentName === "hermes" && transaction !== null
-            ? `${dirMode}, or provisional 700 pending sealed guard topology attestation`
-            : dirMode;
-        issues.push(`config dir mode=${mode} (expected ${expectedDirModes})`);
-      }
-      if (owner !== "sandbox:sandbox") {
-        issues.push(`config dir owner=${owner} (expected sandbox:sandbox)`);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      issues.push(`config dir stat failed: ${msg}`);
-    }
-
-    if (openClawProtocol) {
       try {
-        const parentPerms = privilegedSandboxExecCapture(sandboxName, [
+        const dirPerms = privilegedSandboxExecCapture(sandboxName, [
           "stat",
           "-c",
           "%a %U:%G",
-          "/sandbox",
+          target.configDir,
         ]);
-        const [mode, owner] = parentPerms.split(" ");
-        if (mode !== "755") issues.push(`parent dir mode=${mode} (expected 755)`);
+        const [mode, owner] = dirPerms.split(" ");
+        // A 0700 Hermes root is provisional here. The token-bound guard finish
+        // preserves it only for an attested same-UID topology, repairs and
+        // verifies 03770 for a root-separated topology, and fails closed for an
+        // unknown topology.
+        const validDirMode =
+          mode === dirMode ||
+          (target.agentName === "hermes" && mode === "700" && transaction !== null);
+        if (!validDirMode) {
+          const expectedDirModes =
+            target.agentName === "hermes" && transaction !== null
+              ? `${dirMode}, or provisional 700 pending sealed guard topology attestation`
+              : dirMode;
+          issues.push(`config dir mode=${mode} (expected ${expectedDirModes})`);
+        }
         if (owner !== "sandbox:sandbox") {
-          issues.push(`parent dir owner=${owner} (expected sandbox:sandbox)`);
+          issues.push(`config dir owner=${owner} (expected sandbox:sandbox)`);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        issues.push(`parent dir stat failed: ${msg}`);
+        issues.push(`config dir stat failed: ${msg}`);
+      }
+
+      if (requiresProtectedSandboxParent(target) && target.agentName !== "hermes") {
+        try {
+          const parentPerms = privilegedSandboxExecCapture(sandboxName, [
+            "stat",
+            "-c",
+            "%a %U:%G",
+            "/sandbox",
+          ]);
+          const [mode, owner] = parentPerms.split(" ");
+          if (mode !== "755") issues.push(`parent dir mode=${mode} (expected 755)`);
+          if (owner !== "sandbox:sandbox") {
+            issues.push(`parent dir owner=${owner} (expected sandbox:sandbox)`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          issues.push(`parent dir stat failed: ${msg}`);
+        }
       }
     }
 
@@ -1778,6 +3123,7 @@ function unlockAgentConfigUnderMutationLock(
           target,
           transaction.token,
           transaction.rollbackLocked ? "lock" : "unlock",
+          protocol,
         );
         abortHermesConfigShields(sandboxName, target, transaction.token);
       } catch (abortError) {
@@ -1806,6 +3152,8 @@ function unlockAgentConfigUnderMutationLock(
             stateDirLockExec(sandboxName),
             target.configDir,
             rollbackLocked,
+            requireStateLockPlan(target),
+            target.stateLockPlanInImage,
           ),
         );
       } catch (rollbackError) {
@@ -1836,6 +3184,8 @@ function unlockAgentConfigUnderMutationLock(
               stateDirLockExec(sandboxName),
               target.configDir,
               rollbackLocked,
+              requireStateLockPlan(target),
+              target.stateLockPlanInImage,
             ),
           );
         } catch (rollbackError) {
@@ -1910,15 +3260,14 @@ function unlockAgentConfig(
 
 function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspection {
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  return withTimerBoundShieldsMutationLock(
+  return withExpiredAutoRestoreDeadlineFence(
     sandboxName,
     "inspect mutable config permissions",
-    () => {
+    (allowInlineRecovery) => {
       const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
       return inspectMutableConfigPermsCore(
         target,
-        getShieldsPostureWithoutHostLock(sandboxName, true).mode,
+        getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery).mode,
         (p) => privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", p]),
       );
     },
@@ -1927,15 +3276,39 @@ function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspe
 
 function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResult {
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  return withTimerBoundShieldsMutationLock(sandboxName, "repair mutable config permissions", () => {
-    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-    return repairMutableConfigPermsCore(
-      target,
-      getShieldsPostureWithoutHostLock(sandboxName, true).mode,
-      () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
-    );
-  });
+  return withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "repair mutable config permissions",
+    (allowInlineRecovery) => {
+      const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+      return repairMutableConfigPermsCore(
+        target,
+        getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery).mode,
+        () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
+      );
+    },
+  );
+}
+
+function restoreLockedStateDirStartupAccess(sandboxName: string): void {
+  validateName(sandboxName, "sandbox name");
+  withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "restore locked startup access",
+    (allowInlineRecovery) => {
+      const posture = getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery);
+      if (!posture.locked) return;
+      const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+      const issues = restoreStateDirStartupAccess(
+        stateDirLockExec(sandboxName),
+        target.configDir,
+        requireStateLockPlan(target),
+      );
+      if (issues.length > 0) {
+        throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1982,9 +3355,50 @@ function lockAgentConfigUnderMutationLock(
   protocol: HermesShieldsProtocol,
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const target = ensureConfigHashSensitiveFile(rawTarget);
+  if (target.agentName === "hermes" && protocol === "provider-state-mutation-v2") {
+    const verifyProviderLockedPosture = () => {
+      const chattrApplied = hermesProviderChattrApplied(sandboxName, target);
+      const verified = verifyShieldsLockState(sandboxName, target, {
+        verifyChattr: chattrApplied,
+        verifyParentProtection: true,
+        exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+        assertLegacyLayout: assertNoLegacyStateLayout,
+      });
+      if (verified.issues.length > 0) {
+        throw new Error(`Config not locked: ${verified.issues.join(", ")}`);
+      }
+      return {
+        chattrApplied,
+        fileHashes: captureSealHashes(sandboxName, [
+          target.configPath,
+          ...(target.sensitiveFiles || []),
+        ]),
+      };
+    };
+    if (rollbackLocked) {
+      runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+      try {
+        return verifyProviderLockedPosture();
+      } catch {
+        // Repair a drifted live posture with a mutable rollback. Locked-target
+        // failures retain the provider fence, so this remains fail-closed.
+      }
+    }
+    runHermesProviderProtectionTransition(sandboxName, target, "locked", "mutable");
+    return verifyProviderLockedPosture();
+  }
+  const compatibilityIssues = stateLockPlanCompatibilityIssues(
+    stateDirLockExec(sandboxName),
+    requireStateLockPlan(target),
+    target.stateLockPlanInImage,
+  );
+  if (compatibilityIssues.length > 0) {
+    throw new Error(`Config not locked: ${compatibilityIssues.join(", ")}`);
+  }
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
   const openClawProtocol = target.agentName === "openclaw";
+  const deepAgentsProtocol = isDeepAgentsTarget(target);
   let transaction: {
     token: string;
     originalLocked: boolean;
@@ -1992,14 +3406,25 @@ function lockAgentConfigUnderMutationLock(
   } | null = null;
   const legacyHermesProtocol = target.agentName === "hermes" && protocol === "legacy";
   let openClawMutationStarted = false;
+  let deepAgentsLockSucceeded = false;
   let chattrSucceeded = target.agentName === "hermes" && !legacyHermesProtocol ? false : true;
 
   // Agents without a descriptor-sealed top-level transaction retain the
-  // historical validate-before-mutate ordering. OpenClaw and current Hermes
-  // must revoke writes to their canonical config first: otherwise an agent can
-  // plant one invalid nested entry and veto the auto-restore deadline forever.
-  if (!openClawProtocol && (target.agentName !== "hermes" || legacyHermesProtocol)) {
-    const preflightIssues = preflightStateDirLock(stateDirLockExec(sandboxName), target.configDir);
+  // historical validate-before-mutate ordering. OpenClaw, sealed Hermes, and
+  // Deep Agents must revoke writes to their canonical config first. Otherwise,
+  // an agent can plant one invalid nested entry and prevent the deadline from
+  // restoring Shields up.
+  if (
+    !openClawProtocol &&
+    !deepAgentsProtocol &&
+    (target.agentName !== "hermes" || legacyHermesProtocol)
+  ) {
+    const preflightIssues = preflightStateDirLock(
+      stateDirLockExec(sandboxName),
+      target.configDir,
+      requireStateLockPlan(target),
+      target.stateLockPlanInImage,
+    );
     if (preflightIssues.length > 0) {
       throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
     }
@@ -2022,6 +3447,12 @@ function lockAgentConfigUnderMutationLock(
     } else if (legacyHermesProtocol) {
       transitionLegacyHermesConfig(sandboxName, target, "lock", filesToLock);
     } else if (target.agentName !== "hermes") {
+      if (isDeepAgentsTarget(target)) {
+        lockDeepAgentsTopConfig(sandboxName, target, !rollbackLocked);
+        deepAgentsLockSucceeded = true;
+      } else {
+        writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
+      }
       for (const f of filesToLock) {
         try {
           privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
@@ -2059,13 +3490,15 @@ function lockAgentConfigUnderMutationLock(
     }
 
     if (transaction) {
-      runHermesStateDirTransition(sandboxName, target, transaction.token, "lock");
+      runHermesStateDirTransition(sandboxName, target, transaction.token, "lock", protocol);
     } else {
       const stateDirLockIssues = applyStateDirLockMode(
         stateDirLockExec(sandboxName),
         target.configDir,
         "root:sandbox",
         true,
+        requireStateLockPlan(target),
+        target.stateLockPlanInImage,
       );
       if (stateDirLockIssues.length > 0) {
         throw new Error(`Config not locked: ${stateDirLockIssues.join(", ")}`);
@@ -2099,7 +3532,8 @@ function lockAgentConfigUnderMutationLock(
       // parent metadata. Verify the recursively locked tree while rollback is
       // still available, then verify the parent after the final commit below.
       verifyParentProtection:
-        (target.agentName === "hermes" && transaction === null) || openClawProtocol,
+        requiresProtectedSandboxParent(target) &&
+        (target.agentName !== "hermes" || transaction === null),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
     });
@@ -2145,6 +3579,7 @@ function lockAgentConfigUnderMutationLock(
           target,
           transaction.token,
           transaction.rollbackLocked ? "lock" : "unlock",
+          protocol,
         );
         abortHermesConfigShields(sandboxName, target, transaction.token);
       } catch (abortError) {
@@ -2171,6 +3606,8 @@ function lockAgentConfigUnderMutationLock(
               stateDirLockExec(sandboxName),
               target.configDir,
               rollbackLocked,
+              requireStateLockPlan(target),
+              target.stateLockPlanInImage,
             ).map((message) => ({ message, readinessFailure: false })),
           );
         } catch (rollbackError) {
@@ -2204,6 +3641,43 @@ function lockAgentConfigUnderMutationLock(
           );
         }
       }
+    } else if (deepAgentsLockSucceeded) {
+      const rollbackIssues: string[] = [];
+      if (rollbackLocked) {
+        try {
+          rollbackIssues.push(
+            ...restoreStateDirLockPosture(
+              stateDirLockExec(sandboxName),
+              target.configDir,
+              true,
+              requireStateLockPlan(target),
+              target.stateLockPlanInImage,
+            ),
+          );
+        } catch (rollbackError) {
+          rollbackIssues.push(
+            `state-directory rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          );
+        }
+        try {
+          rollbackIssues.push(
+            ...verifyShieldsLockState(sandboxName, target, {
+              verifyParentProtection: true,
+              exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+              assertLegacyLayout: assertNoLegacyStateLayout,
+            }).issues,
+          );
+        } catch (rollbackError) {
+          rollbackIssues.push(
+            `locked rollback verification failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          );
+        }
+      }
+      if (rollbackIssues.length > 0) {
+        console.error(
+          `  CRITICAL: Deep Agents lock rollback could not restore the trusted posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. ${rollbackIssues.join(", ")}`,
+        );
+      }
     }
     throw error;
   }
@@ -2213,8 +3687,17 @@ function synchronizeAutoRestoreTransition(
   sandboxName: string,
   processToken: string,
   snapshotPath: string,
+  options: {
+    expiredTimerRecovery?: boolean;
+    retainTransition?: boolean;
+    assertTakeoverAuthority?: () => void;
+  } = {},
 ): void {
-  const transition = waitForShieldsDownForwardCommit(sandboxName, processToken);
+  const transition = waitForShieldsDownForwardCommit(
+    sandboxName,
+    processToken,
+    options.assertTakeoverAuthority,
+  );
   if (!transition) return;
   if (transition.snapshotPath !== snapshotPath) {
     throw new Error("Auto-restore snapshot does not match shields-down transition ownership");
@@ -2226,8 +3709,16 @@ function synchronizeAutoRestoreTransition(
   // above waits until the forward path has either committed its last weakening
   // mutation or its owner has died; restore the restrictive snapshot again at
   // that stable boundary before locking config.
-  const restoreResult = run(buildPolicySetCommand(transition.snapshotPath, sandboxName), {
-    ignoreError: true,
+  const marker = readTimerMarker(sandboxName);
+  const timerOwnsRecovery =
+    marker?.pid === process.pid &&
+    marker.processToken === processToken &&
+    marker.snapshotPath === transition.snapshotPath;
+  const deadlineAuthoritative = timerOwnsRecovery || options.expiredTimerRecovery === true;
+  const restoreResult = applyShieldsPolicySnapshot(sandboxName, transition.snapshotPath, {
+    transitionProcessToken: processToken,
+    ...(deadlineAuthoritative ? { deadlineAuthoritative: true } : {}),
+    ...(options.expiredTimerRecovery ? { expiredTimerRecovery: true } : {}),
   });
   const status = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (status !== 0) {
@@ -2235,49 +3726,59 @@ function synchronizeAutoRestoreTransition(
       `Policy restore after shields-down handoff exited with status ${String(status)}`,
     );
   }
-  clearShieldsDownTransition(sandboxName, processToken);
+  if (!options.retainTransition) {
+    clearShieldsDownTransition(sandboxName, processToken);
+  }
 }
 
 function prepareAutoRestoreTransitionTakeover(
   sandboxName: string,
   processToken: string,
   snapshotPath: string,
+  assertTakeoverAuthority?: () => void,
 ): void {
   if (!/^[0-9a-f]{32}$/.test(processToken)) {
     throw new Error("Invalid auto-restore transition takeover token");
   }
-
   const transition = readShieldsDownTransition(sandboxName, processToken);
   if (transition && transition.snapshotPath !== snapshotPath) {
     throw new Error("Auto-restore snapshot does not match shields-down transition ownership");
   }
   if (transition) {
-    // This waits briefly for the forward commit and stops its exact process
-    // tree if the deadline fired while it was still weakening the sandbox.
-    waitForShieldsDownForwardCommit(sandboxName, processToken);
+    waitForShieldsDownForwardCommit(sandboxName, processToken, assertTakeoverAuthority);
   }
 
-  const owner = inspectShieldsTransitionLockOwner(sandboxName, processToken);
+  const owner = inspectAnyShieldsTransitionLockOwner(sandboxName);
   if (!owner) return;
-  // The same timer token is also propagated to config/inference/restart
-  // mutations made during the mutable window. At expiry those operations
-  // are weaker than restoring lockdown and may be preempted safely. The stop
-  // helper pins the exact identity and fails closed if it cannot be read.
-  stopTimedOutShieldsDownTree(owner.pid, owner.processStartIdentity);
-  const takeover = takeoverShieldsTransitionLock(
-    sandboxName,
+  const ownerStatus = readExactProcessStatus(
     owner.pid,
     owner.processStartIdentity,
-    processToken,
+    processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS),
   );
-  if (
-    !takeover.removed &&
-    takeover.reason !== "missing" &&
-    takeover.reason !== "path-changed" &&
-    takeover.reason !== "owner-mismatch"
-  ) {
-    throw new Error(`Cannot take over expired shields transition lock: ${takeover.reason}`);
+  if (ownerStatus === "gone") {
+    assertTakeoverAuthority?.();
+    try {
+      persistUnresolvedShieldsContainment(
+        sandboxName,
+        processToken,
+        `Shields recovery owner PID ${String(owner.pid)} exited without descendant-containment proof`,
+        assertTakeoverAuthority,
+      );
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      assertTakeoverAuthority?.();
+      throw durableMcpLifecycleContainmentFailure(
+        error,
+        getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+      );
+    }
+    throw new Error(
+      "Shields transition owner exited without descendant-containment proof; durable containment requires operator resolution",
+    );
   }
+  throw new Error(
+    "Shields transition owner is still active; automatic recovery is waiting behind the deadline gate",
+  );
 }
 
 function synchronizeAutoRestoreWithShieldsDown(sandboxName: string): void {
@@ -2290,7 +3791,36 @@ function synchronizeAutoRestoreWithShieldsDown(sandboxName: string): void {
   ) {
     return;
   }
-  synchronizeAutoRestoreTransition(sandboxName, timerMarker.processToken, timerMarker.snapshotPath);
+  synchronizeAutoRestoreTransition(
+    sandboxName,
+    timerMarker.processToken,
+    timerMarker.snapshotPath,
+    {
+      retainTransition: true,
+      assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, timerMarker),
+    },
+  );
+}
+
+function completeAutoRestoreTransition(
+  sandboxName: string,
+  processToken: string,
+  snapshotPath: string,
+): boolean {
+  const marker = readTimerMarker(sandboxName);
+  if (
+    marker?.pid !== process.pid ||
+    marker.processToken !== processToken ||
+    marker.snapshotPath !== snapshotPath
+  ) {
+    return false;
+  }
+  const transition = readShieldsDownTransition(sandboxName, processToken);
+  if (transition && transition.snapshotPath !== snapshotPath) {
+    throw new Error("Auto-restore completion does not match shields-down transition ownership");
+  }
+  clearShieldsDownTransition(sandboxName, processToken);
+  return true;
 }
 
 function lockAgentConfigWithoutHostLock(
@@ -2330,39 +3860,294 @@ function lockAgentConfig(
   });
 }
 
+type ShieldsDownRollbackOutcome =
+  | "mutable_default_restored"
+  | "lockdown_restored"
+  | "manual_intervention_required";
+
+type ShieldsDownRollbackResult = {
+  outcome: ShieldsDownRollbackOutcome;
+  timerAuthorityRevoked: boolean;
+};
+
+function describeRollbackTimerAuthority(
+  hadScheduledTimer: boolean,
+  timerAuthorityRevoked: boolean,
+): string {
+  if (!hadScheduledTimer) return "";
+  return timerAuthorityRevoked
+    ? " Auto-restore timer authority was revoked."
+    : " The scheduled auto-restore remains authoritative.";
+}
+function resolveExactManagedMcpPolicies(
+  sandboxName: string,
+  livePolicyYaml?: string,
+): ReturnType<typeof inspectExactManagedMcpPolicies> {
+  let effectiveLivePolicy = livePolicyYaml;
+  if (!effectiveLivePolicy) {
+    let rawPolicy: string;
+    try {
+      rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+    } catch (error) {
+      throw new Error("Cannot read the live gateway policy for managed MCP reconciliation", {
+        cause: error,
+      });
+    }
+    effectiveLivePolicy = parseCurrentPolicy(rawPolicy);
+  }
+  if (!effectiveLivePolicy) {
+    throw new Error("Cannot parse the live gateway policy for managed MCP reconciliation");
+  }
+  return inspectExactManagedMcpPolicies(sandboxName, effectiveLivePolicy);
+}
+
+function resolveProvableManagedMcpPoliciesForDeadline(
+  sandboxName: string,
+): ReturnType<typeof inspectProvableManagedMcpPoliciesForDeadline> {
+  try {
+    let effectiveLivePolicy = "";
+    try {
+      effectiveLivePolicy = parseCurrentPolicy(runCapture(buildPolicyGetCommand(sandboxName)));
+    } catch {
+      // The tolerant deadline inspector records exact omissions for every claim
+      // when the live policy cannot be parsed or read.
+    }
+    return inspectProvableManagedMcpPoliciesForDeadline(sandboxName, effectiveLivePolicy);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      policies: [],
+      omissions: [
+        {
+          reason: `Managed MCP registry inspection failed at the auto-restore deadline: ${message}`,
+        },
+      ],
+    };
+  }
+}
+
+/**
+ * Restore a saved complete policy while reconciling only exact generated MCP
+ * entries. Snapshot-time keys are removed before currently owned entries are
+ * overlaid, so changes made during the shields-down window survive both manual
+ * and timer restoration.
+ */
+interface ShieldsPolicySnapshotRestoreOptions {
+  transitionProcessToken?: string;
+  deadlineAuthoritative?: boolean;
+  expiredTimerRecovery?: boolean;
+  buildPolicySet?: typeof buildPolicySetCommand;
+  runPolicySet?: typeof run;
+}
+
+type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
+  managedMcpOmissions?: ManagedMcpPolicyOmission[];
+};
+
+function applyShieldsPolicySnapshot(
+  sandboxName: string,
+  snapshotPath: string,
+  options: ShieldsPolicySnapshotRestoreOptions = {},
+): ShieldsPolicySnapshotRestoreResult {
+  const buildPolicySet = options.buildPolicySet ?? buildPolicySetCommand;
+  const runPolicySet = options.runPolicySet ?? run;
+  const state = loadShieldsState(sandboxName);
+  let transition: ShieldsDownTransition | null = null;
+  if (options.transitionProcessToken !== undefined) {
+    if (!/^[0-9a-f]{32}$/.test(options.transitionProcessToken)) {
+      throw new Error("Invalid Shields transition recovery token");
+    }
+    transition = readShieldsDownTransition(sandboxName, options.transitionProcessToken);
+    if (
+      !transition &&
+      fs.existsSync(shieldsDownTransitionPath(sandboxName, options.transitionProcessToken))
+    ) {
+      throw new Error("Shields transition recovery authority is invalid");
+    }
+    if (transition && transition.snapshotPath !== snapshotPath) {
+      throw new Error("Shields transition does not authorize the policy snapshot being restored");
+    }
+  }
+  if (options.deadlineAuthoritative) {
+    const marker = readTimerMarker(sandboxName);
+    const markerMatchesRecovery =
+      marker?.sandboxName === sandboxName &&
+      marker.snapshotPath === snapshotPath &&
+      marker.processToken === options.transitionProcessToken;
+    const timerAuthorityIsInactive =
+      options.expiredTimerRecovery === true &&
+      markerMatchesRecovery &&
+      !isExactLiveFutureTimerAuthority(marker!);
+    if (
+      options.transitionProcessToken === undefined ||
+      !markerMatchesRecovery ||
+      (marker!.pid !== process.pid && !timerAuthorityIsInactive)
+    ) {
+      throw new Error("The active auto-restore timer does not authorize deadline restoration");
+    }
+  }
+
+  if (state._isCorrupt && !transition) {
+    throw new Error(
+      `Cannot restore a Shields policy while persisted state is corrupt: ${
+        state._corruptError ?? "invalid state"
+      }`,
+    );
+  }
+  // A preparing transition can outlive its owner before Shields state is
+  // committed; its token-bound marker is then the recovery authority.
+  // Every ordinary restore remains bound to the exact persisted snapshot.
+  if (!transition && state.shieldsPolicySnapshotPath !== snapshotPath) {
+    throw new Error("Shields state does not match the policy snapshot being restored");
+  }
+  const persistedSnapshotMatches = state.shieldsPolicySnapshotPath === snapshotPath;
+  const ownershipOmissions: ManagedMcpPolicyOmission[] = [];
+  if (
+    transition?.managedMcpPolicyKeys !== undefined &&
+    persistedSnapshotMatches &&
+    state.shieldsManagedMcpPolicyKeys !== undefined &&
+    !sameManagedMcpPolicyKeys(transition.managedMcpPolicyKeys, state.shieldsManagedMcpPolicyKeys)
+  ) {
+    if (!options.deadlineAuthoritative) {
+      throw new Error("Shields transition ownership does not match persisted policy ownership");
+    }
+    ownershipOmissions.push({
+      reason:
+        "Shields transition ownership did not match persisted policy ownership at the auto-restore deadline",
+    });
+  }
+  let snapshotManagedPolicyKeys =
+    transition?.managedMcpPolicyKeys ??
+    (persistedSnapshotMatches ? state.shieldsManagedMcpPolicyKeys : undefined);
+  // Older Shields state has no exact snapshot-time ownership manifest.
+  // A manual restore preserves raw-snapshot behavior only when neither current
+  // state nor the snapshot can involve managed MCP. Deadline restoration
+  // instead strips every reserved key and overlays only independently proven
+  // current entries so legacy metadata cannot delay restrictive lockdown.
+  if (snapshotManagedPolicyKeys === undefined) {
+    if (options.deadlineAuthoritative) {
+      snapshotManagedPolicyKeys = [];
+      ownershipOmissions.push({
+        reason:
+          "Legacy Shields state had no managed MCP ownership manifest at the auto-restore deadline",
+      });
+    } else {
+      assertLegacyMcpPolicyRestoreSafe(
+        fs.readFileSync(snapshotPath, "utf-8"),
+        hasManagedMcpPolicyClaims(sandboxName),
+      );
+      return runPolicySet(buildPolicySet(snapshotPath, sandboxName), {
+        ignoreError: true,
+      });
+    }
+  }
+  let managedMcpOmissions: ManagedMcpPolicyOmission[] = [];
+  let runtimePolicyPath: string;
+  if (options.deadlineAuthoritative) {
+    const inspection = resolveProvableManagedMcpPoliciesForDeadline(sandboxName);
+    const runtime = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
+      managedMcpPolicies: inspection.policies,
+      snapshotManagedPolicyKeys,
+      readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
+    });
+    runtimePolicyPath = runtime.path;
+    managedMcpOmissions = [...ownershipOmissions, ...inspection.omissions, ...runtime.omissions];
+  } else {
+    const managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName);
+    runtimePolicyPath = buildRuntimeManagedMcpPolicy(snapshotPath, {
+      managedMcpPolicies,
+      snapshotManagedPolicyKeys,
+      readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
+    });
+  }
+  const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
+  try {
+    const result = runPolicySet(buildPolicySet(runtimePolicyPath, sandboxName), {
+      ignoreError: true,
+    });
+    return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
+  } finally {
+    if (runtimePolicyIsTemp) {
+      cleanupTempDir(runtimePolicyPath, "nemoclaw-permissive-runtime");
+    }
+  }
+}
+
 function rollbackShieldsDown(
   sandboxName: string,
   target: AgentConfigTarget,
   snapshotPath: string,
+  initialMode: ShieldsMode,
+  initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
-): void {
+): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
-  const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  let rollbackResult: ReturnType<typeof run> | null = null;
+  try {
+    rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Warning: Policy restore preparation failed during rollback: ${message}`);
+  }
+  let timerAuthorityRevoked = false;
   let rollbackChattrApplied: boolean | null = null;
   let rollbackFileHashes: { [path: string]: string } | null = null;
-  if (rollbackResult.status === 0) {
+  const protocol = resolveHermesShieldsProtocol(
+    sandboxName,
+    target,
+    allowLegacyHermesProtocol,
+    cachedProtocol,
+  );
+  if (rollbackResult?.status === 0) {
+    if (initialMode === "mutable_default" && target.agentName === "openclaw") {
+      try {
+        unlockAgentConfigUnderMutationLock(sandboxName, target, false, protocol);
+        const timerCancellation = killTimer(sandboxName);
+        timerAuthorityRevoked = timerCancellation.authorityRevoked;
+        if (!timerCancellation.authorityRevoked) {
+          throw new Error(
+            `Cannot revoke auto-restore timer authority: ${timerCancellation.warnings.join("; ")}`,
+          );
+        }
+        restoreShieldsStateSnapshot(sandboxName, initialState);
+        console.error("  Original mutable-default posture restored.");
+        return { outcome: "mutable_default_restored", timerAuthorityRevoked };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(
+          `  Warning: Could not verify the original mutable-default posture; applying fail-closed lockdown. ${detail}`,
+        );
+      }
+    }
     // Re-confirm after the settle window so a reconciler revert cannot leave
     // the rolled-back config DRIFTED — same fail-closed treatment as the
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
     // below) when the lock will not re-confirm.
     const relock = relockAndReconfirm(() =>
-      lockAgentConfig(sandboxName, target, true, allowLegacyHermesProtocol, cachedProtocol),
+      lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol),
     );
     if (relock.ok && relock.lastResult) {
       rollbackChattrApplied = relock.lastResult.chattrApplied;
       rollbackFileHashes = relock.lastResult.fileHashes;
     } else {
       console.error(
-        "  Warning: Rollback re-lock could not be re-confirmed. Check config manually.",
+        `  Warning: Rollback re-lock could not be re-confirmed. Check config manually. ${relock.error ?? ""}`.trimEnd(),
       );
     }
   } else {
     console.error("  Warning: Policy restore failed during rollback.");
   }
   if (rollbackChattrApplied !== null && rollbackFileHashes !== null) {
+    if (!timerAuthorityRevoked) {
+      const timerCancellation = killTimer(sandboxName);
+      timerAuthorityRevoked = timerCancellation.authorityRevoked;
+      if (!timerCancellation.authorityRevoked) {
+        console.error(
+          `  Warning: Lockdown was restored, but auto-restore timer authority could not be revoked: ${timerCancellation.warnings.join("; ")}`,
+        );
+      }
+    }
     saveShieldsState(sandboxName, {
       shieldsDown: false,
       shieldsDownAt: null,
@@ -2372,11 +4157,16 @@ function rollbackShieldsDown(
       chattrApplied: rollbackChattrApplied,
       fileHashes: rollbackFileHashes,
     });
-    console.error("  Lockdown restored. Config was never left unguarded.");
-  } else {
-    console.error("  Config remains unlocked — manual intervention required.");
-    printManualRelockRecoveryHint(sandboxName);
+    console.error(
+      initialMode === "mutable_default"
+        ? "  Fail-closed lockdown applied; the original mutable-default posture was not restored."
+        : "  Lockdown restored. Config was never left unguarded.",
+    );
+    return { outcome: "lockdown_restored", timerAuthorityRevoked };
   }
+  console.error("  Config remains unlocked — manual intervention required.");
+  printManualRelockRecoveryHint(sandboxName);
+  return { outcome: "manual_intervention_required", timerAuthorityRevoked };
 }
 
 interface LockdownActivationResult {
@@ -2384,6 +4174,7 @@ interface LockdownActivationResult {
   error?: string;
   chattrApplied?: boolean;
   fileHashes?: { [path: string]: string };
+  managedMcpOmissions?: ManagedMcpPolicyOmission[];
 }
 
 function activateLockdownFromSnapshot(
@@ -2392,14 +4183,23 @@ function activateLockdownFromSnapshot(
   allowLegacyHermesProtocol = false,
   cachedTarget?: AgentConfigTarget,
   cachedProtocol?: HermesShieldsProtocol,
+  restoreOptions: ShieldsPolicySnapshotRestoreOptions = {},
 ): LockdownActivationResult {
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
     return { ok: false, error: "saved snapshot is missing" };
   }
 
-  const restoreResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  let restoreResult: ShieldsPolicySnapshotRestoreResult;
+  try {
+    restoreResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath, restoreOptions);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `policy restore preparation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   const restoreStatus = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (restoreStatus !== 0) {
     return {
@@ -2441,6 +4241,9 @@ function activateLockdownFromSnapshot(
     ok: true,
     chattrApplied: relock.lastResult.chattrApplied,
     fileHashes: relock.lastResult.fileHashes,
+    ...(restoreResult.managedMcpOmissions
+      ? { managedMcpOmissions: restoreResult.managedMcpOmissions }
+      : {}),
   };
 }
 
@@ -2452,45 +4255,33 @@ function recoverExpiredAutoRestoreInline(
   if (state.shieldsDown !== true) return { attempted: false, restored: false };
 
   const marker = readTimerMarker(sandboxName);
-  if (!marker) return { attempted: false, restored: false };
-
-  const restoreAtMs = new Date(marker.restoreAt).getTime();
-  if (!Number.isFinite(restoreAtMs) || restoreAtMs > Date.now()) {
+  if (marker && isExactLiveFutureTimerAuthority(marker)) {
     return { attempted: false, restored: false };
   }
 
-  // PID liveness alone is unsafe: after a reboot/OOM the original timer's PID
-  // can be reassigned to an unrelated live process, which would otherwise block
-  // recovery forever and reproduce the #3112 fail-open. Treat a live PID as
-  // "our timer" only if cmdline + sandbox + processToken match.
-  if (isProcessAlive(marker.pid) && verifyTimerMarkerIdentity(marker).verified) {
-    if (Date.now() <= restoreAtMs + AUTO_RESTORE_COMPLETION_GRACE_MS) {
-      return { attempted: false, restored: false };
-    }
-    const timerStartIdentity = readProcessStartIdentity(marker.pid);
-    if (!timerStartIdentity) {
-      console.error(
-        "  Recovery warning: expired auto-restore timer identity cannot be pinned safely.",
-      );
-      return { attempted: true, restored: false };
-    }
-    try {
-      stopTimedOutShieldsDownTree(marker.pid, timerStartIdentity);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Recovery warning: ${message}`);
-      return { attempted: true, restored: false };
-    }
+  const snapshotPath = marker?.snapshotPath ?? state.shieldsPolicySnapshotPath;
+  if (!snapshotPath || !fs.existsSync(snapshotPath)) {
+    console.error(
+      "  Recovery warning: DOWN state has no usable timer authority or restrictive policy snapshot.",
+    );
+    return { attempted: true, restored: false };
   }
 
   console.error(
-    "  Warning: auto-restore timer marker is expired and the timer process is not the recorded shields timer; attempting inline restore.",
+    marker
+      ? "  Warning: auto-restore timer authority is expired, invalid, or no longer live; attempting inline restore."
+      : "  Warning: DOWN state has a missing or malformed auto-restore marker; attempting inline restore under the lifecycle gate.",
   );
 
-  if (marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
+  if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     try {
-      synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath);
+      synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath, {
+        expiredTimerRecovery: true,
+        retainTransition: true,
+        assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, marker),
+      });
     } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       appendAuditEntry({
         action: "shields_up_failed",
@@ -2505,10 +4296,20 @@ function recoverExpiredAutoRestoreInline(
     }
   }
 
+  const cachedTarget = marker ? resolvePersistedAutoRestoreTarget(sandboxName, marker) : undefined;
   const activation = activateLockdownFromSnapshot(
     sandboxName,
-    marker.snapshotPath,
-    marker.allowLegacyHermesProtocol === true,
+    snapshotPath,
+    marker?.allowLegacyHermesProtocol === true,
+    cachedTarget,
+    undefined,
+    marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)
+      ? {
+          transitionProcessToken: marker.processToken,
+          deadlineAuthoritative: true,
+          expiredTimerRecovery: true,
+        }
+      : {},
   );
   const nowIso = new Date().toISOString();
   if (!activation.ok) {
@@ -2517,7 +4318,7 @@ function recoverExpiredAutoRestoreInline(
       sandbox: sandboxName,
       timestamp: nowIso,
       restored_by: "auto_timer",
-      policy_snapshot: marker.snapshotPath,
+      policy_snapshot: snapshotPath,
       error: `Inline auto-restore failed: ${activation.error ?? "unknown error"}`,
     });
     console.error("  Recovery warning: inline auto-restore failed; shields remain DOWN.");
@@ -2538,7 +4339,7 @@ function recoverExpiredAutoRestoreInline(
         }
       : {}),
   });
-  if (marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
+  if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     clearShieldsDownTransition(sandboxName, marker.processToken);
   }
   clearTimerMarker(sandboxName);
@@ -2547,8 +4348,15 @@ function recoverExpiredAutoRestoreInline(
     sandbox: sandboxName,
     timestamp: nowIso,
     restored_by: "auto_timer",
-    policy_snapshot: marker.snapshotPath,
+    policy_snapshot: snapshotPath,
     restored_at: nowIso,
+    ...(activation.managedMcpOmissions?.length
+      ? {
+          warning: `Inline auto-restore omitted ${String(
+            activation.managedMcpOmissions.length,
+          )} unproven managed MCP policy entries`,
+        }
+      : {}),
   });
   return { attempted: true, restored: true };
 }
@@ -2579,7 +4387,6 @@ interface ShieldsDownOpts {
   timeout?: string | null;
   reason?: string | null;
   policy?: string;
-  skipTimer?: boolean;
   throwOnError?: boolean;
   allowLegacyHermesProtocol?: boolean;
   // Internal rebuild lease: once the deadline expires, the detached recovery
@@ -2589,18 +4396,477 @@ interface ShieldsDownOpts {
   processToken?: string;
 }
 
+type RecoveredShieldsDownCompletion = {
+  readonly alreadyCommitted: boolean;
+  readonly audit: Parameters<typeof appendAuditEntry>[0];
+  readonly marker: TimerMarker | null;
+  readonly authority: ShieldsDownTransition | null;
+  readonly transition: ShieldsDownTransition | null;
+};
+
+function prepareRecoveredShieldsDownCompletion(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  state: LoadedShieldsState,
+): RecoveredShieldsDownCompletion {
+  if (
+    !state.shieldsDownAt ||
+    !Number.isFinite(new Date(state.shieldsDownAt).getTime()) ||
+    typeof state.shieldsDownTimeout !== "number" ||
+    !state.shieldsDownPolicy ||
+    !state.shieldsPolicySnapshotPath ||
+    !fs.existsSync(state.shieldsPolicySnapshotPath)
+  ) {
+    throw new Error(
+      "Interrupted Hermes Shields down recovery is missing its exact persisted completion state",
+    );
+  }
+  const audit: Parameters<typeof appendAuditEntry>[0] = {
+    action: "shields_down",
+    sandbox: sandboxName,
+    timestamp: state.shieldsDownAt,
+    timeout_seconds: state.shieldsDownTimeout,
+    reason: state.shieldsDownReason ?? undefined,
+    policy_applied: state.shieldsDownPolicy,
+    policy_snapshot: state.shieldsPolicySnapshotPath,
+  };
+  const marker = readTimerMarker(sandboxName);
+  if (!marker) {
+    throw new Error(
+      "Interrupted Hermes Shields down recovery lost its exact auto-restore timer authority",
+    );
+  }
+  if (
+    !marker.processToken ||
+    !/^[0-9a-f]{32}$/.test(marker.processToken) ||
+    marker.snapshotPath !== state.shieldsPolicySnapshotPath ||
+    marker.agentName !== target.agentName ||
+    marker.configPath !== target.configPath ||
+    marker.configDir !== target.configDir
+  ) {
+    throw new Error(
+      "Interrupted Hermes Shields down recovery no longer matches its exact timer authority",
+    );
+  }
+  const transition = readShieldsDownTransition(sandboxName, marker.processToken);
+  if (
+    !transition ||
+    transition.snapshotPath !== marker.snapshotPath ||
+    !sameManagedMcpPolicyKeys(transition.managedMcpPolicyKeys, state.shieldsManagedMcpPolicyKeys)
+  ) {
+    throw new Error(
+      "Interrupted Hermes Shields down recovery no longer matches its timer-bound transition",
+    );
+  }
+  if (transition.phase === "policy_rejected") {
+    throw new Error("A rejected Shields down transition cannot be recovered as mutable");
+  }
+  requireShieldsDownForwardPolicy(transition);
+  return {
+    alreadyCommitted: transition.phase === "active",
+    audit,
+    marker,
+    authority: transition,
+    transition: transition.phase === "preparing" ? transition : null,
+  };
+}
+
+function applyRecoveredShieldsDownForwardPolicy(
+  sandboxName: string,
+  completion: RecoveredShieldsDownCompletion,
+): void {
+  if (!completion.authority) return;
+  assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+  const policyPath = requireShieldsDownForwardPolicy(completion.authority);
+  const result = run(buildPolicySetCommand(policyPath, sandboxName), { ignoreError: true });
+  if (result.status !== 0) {
+    throw new Error("Interrupted Shields down forward policy could not be reapplied");
+  }
+  requireShieldsDownForwardPolicy(completion.authority);
+  assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+}
+
+function assertRecoveredShieldsDownAuthority(
+  sandboxName: string,
+  completion: RecoveredShieldsDownCompletion,
+  phase: ShieldsDownTransition["phase"],
+): void {
+  if (!completion.marker || !completion.authority) return;
+  assertExactLiveFutureTimerAuthority(sandboxName, completion.marker);
+  const current = readShieldsDownTransition(sandboxName, completion.authority.processToken);
+  if (!current || !sameShieldsDownTransitionAuthority(current, completion.authority, phase)) {
+    throw new Error("Interrupted Hermes Shields down recovery lost its exact transition authority");
+  }
+  requireShieldsDownForwardPolicy(current);
+  assertExactLiveFutureTimerAuthority(sandboxName, completion.marker);
+}
+
+function assertFreshShieldsDownAuthority(
+  sandboxName: string,
+  marker: TimerMarker,
+  transition: ShieldsDownTransition,
+  phase: ShieldsDownTransition["phase"],
+): void {
+  assertExactLiveFutureTimerAuthority(sandboxName, marker);
+  const current = readShieldsDownTransition(sandboxName, transition.processToken);
+  if (!current || !sameShieldsDownTransitionAuthority(current, transition, phase)) {
+    throw new Error("Fresh Shields down lost its exact timer-bound transition authority");
+  }
+  requireShieldsDownForwardPolicy(current);
+  assertExactLiveFutureTimerAuthority(sandboxName, marker);
+}
+
+function resolveReleasedProviderShieldsDownTarget(
+  sandboxName: string,
+  state: LoadedShieldsState,
+  allowLegacyHermesProtocol: boolean,
+): AgentConfigTarget | null {
+  if (!state.shieldsDown) return null;
+  const marker = readTimerMarker(sandboxName);
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  const transition = readShieldsDownTransition(sandboxName, marker.processToken);
+  if (transition?.phase !== "preparing") return null;
+  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+  if (target.agentName !== "hermes") return null;
+  return requireHermesShieldsProtocol(sandboxName, target, allowLegacyHermesProtocol) ===
+    "provider-state-mutation-v2"
+    ? target
+    : null;
+}
+
+function finishRecoveredHermesShieldsDown(
+  sandboxName: string,
+  completion: RecoveredShieldsDownCompletion,
+): void {
+  if (completion.authority) {
+    assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+  }
+  const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
+  if (!convergence.ok) {
+    const status = convergence.httpStatus > 0 ? `HTTP ${convergence.httpStatus}` : "unavailable";
+    throw new Error(
+      `Hermes inference route did not converge after policy transition (${status}; ${convergence.attempts} attempts)`,
+    );
+  }
+  if (completion.authority) {
+    assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+  }
+  if (completion.transition) {
+    writeShieldsDownTransition({ ...completion.transition, phase: "active" }, "preparing");
+  }
+  if (completion.authority) {
+    assertRecoveredShieldsDownAuthority(sandboxName, completion, "active");
+  }
+}
+
+function failRecoveredHermesShieldsDown(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  state: LoadedShieldsState,
+  completion: RecoveredShieldsDownCompletion,
+  allowLegacyHermesProtocol: boolean,
+  error: unknown,
+  throwOnError: boolean | undefined,
+): never {
+  const message = error instanceof Error ? error.message : String(error);
+  const rollback = rollbackShieldsDown(
+    sandboxName,
+    target,
+    state.shieldsPolicySnapshotPath as string,
+    "locked",
+    state,
+    allowLegacyHermesProtocol,
+    "provider-state-mutation-v2",
+  );
+  if (completion.transition && rollback.timerAuthorityRevoked) {
+    clearShieldsDownTransition(sandboxName, completion.transition.processToken);
+  }
+  console.error(`  ERROR: ${message}`);
+  const timerAuthority = describeRollbackTimerAuthority(
+    completion.transition !== null,
+    rollback.timerAuthorityRevoked,
+  );
+  if (rollback.outcome === "lockdown_restored") {
+    console.error(`  Interrupted config unlock was rolled back to lockdown.${timerAuthority}`);
+  } else {
+    console.error(
+      `  Interrupted config unlock recovery is incomplete.${timerAuthority} Manual intervention is required.`,
+    );
+  }
+  return failShieldsCommand(message, throwOnError);
+}
+
+type FreshShieldsDownTimerStart = {
+  transition: ShieldsDownTransition;
+  timerAuthority: TimerMarker;
+  policyPathForApply: string;
+};
+
+function startFreshShieldsDownTimer(input: {
+  sandboxName: string;
+  timeoutSeconds: number;
+  processToken: string;
+  snapshotPath: string;
+  target: AgentConfigTarget;
+  allowLegacyHermesProtocol: boolean;
+  deferAutoRestoreWhileOwnerAlive: boolean;
+  managedMcpPolicyKeys: string[];
+  policyFile: string;
+}): FreshShieldsDownTimerStart {
+  const {
+    sandboxName,
+    timeoutSeconds,
+    processToken,
+    snapshotPath,
+    target,
+    allowLegacyHermesProtocol,
+    deferAutoRestoreWhileOwnerAlive,
+    managedMcpPolicyKeys,
+    policyFile,
+  } = input;
+  const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
+  const timerScript = path.join(__dirname, "timer.ts");
+  const timerScriptJs = timerScript.replace(/\.ts$/, ".js");
+  const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
+  let timerChild: ReturnType<typeof fork> | null = null;
+  let transition: ShieldsDownTransition | null = null;
+
+  try {
+    const ownerStartIdentity =
+      readProcessStartIdentity(process.pid) ??
+      (() => {
+        throw new Error("Cannot identify shields-down owner process");
+      })();
+    const forwardPolicy = publishShieldsDownForwardPolicy(sandboxName, processToken, policyFile);
+    transition = {
+      version: 1,
+      phase: "preparing",
+      ownerPid: process.pid,
+      ownerStartIdentity,
+      processToken,
+      sandboxName,
+      snapshotPath,
+      managedMcpPolicyKeys,
+      forwardPolicy,
+    };
+    const leaseOwnerPid = deferAutoRestoreWhileOwnerAlive ? transition.ownerPid : null;
+    const leaseOwnerStartIdentity = deferAutoRestoreWhileOwnerAlive
+      ? transition.ownerStartIdentity
+      : null;
+    // Publish forward ownership before authorizing the timer so an early
+    // deadline waits for active or owner death instead of racing mutations.
+    writeShieldsDownTransition(transition, null);
+    timerChild = fork(
+      actualScript,
+      [
+        sandboxName,
+        snapshotPath,
+        restoreAt.toISOString(),
+        target.configPath,
+        target.configDir,
+        processToken,
+        allowLegacyHermesProtocol ? "1" : "0",
+        leaseOwnerPid === null ? "" : String(leaseOwnerPid),
+        leaseOwnerStartIdentity ?? "",
+        target.agentName ?? "",
+      ],
+      {
+        detached: true,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      },
+    );
+    if (!timerChild.pid) throw new Error("auto-restore timer did not report a process id");
+    const timerProcessStartIdentity = waitForTimerProcessStartIdentity(timerChild.pid);
+    if (!timerProcessStartIdentity) {
+      throw new Error("auto-restore timer process identity could not be verified");
+    }
+    const timerMarker: TimerMarker = {
+      pid: timerChild.pid,
+      sandboxName,
+      snapshotPath,
+      restoreAt: restoreAt.toISOString(),
+      processToken,
+      timerProcessStartIdentity,
+      allowLegacyHermesProtocol,
+      agentName: target.agentName,
+      configPath: target.configPath,
+      configDir: target.configDir,
+      ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
+        ? { leaseOwnerPid, leaseOwnerStartIdentity }
+        : {}),
+    };
+    writeTimerMarkerAtomic(sandboxName, timerMarker);
+    if (!timerChild.send({ type: "authorize", processToken, acknowledge: true })) {
+      throw new Error("auto-restore timer authorization channel closed early");
+    }
+    if (!waitForTimerAuthorizationProof(timerMarker)) {
+      throw new Error("auto-restore timer did not publish exact authorization proof");
+    }
+    assertExactLiveFutureTimerAuthority(sandboxName, timerMarker);
+    timerChild.disconnect();
+    timerChild.unref();
+    return {
+      transition,
+      timerAuthority: timerMarker,
+      policyPathForApply: forwardPolicy.path,
+    };
+  } catch (error) {
+    clearTimerMarker(sandboxName);
+    if (transition) clearShieldsDownTransition(sandboxName, processToken);
+    if (timerChild) {
+      try {
+        timerChild.disconnect();
+      } catch {
+        // The failed child may already have closed IPC.
+      }
+      timerChild.unref();
+    }
+    throw error;
+  }
+}
+
+function completeInterruptedShieldsDown(
+  sandboxName: string,
+  state: LoadedShieldsState,
+  retainedProviderTarget: AgentConfigTarget | null,
+  opts: ShieldsDownOpts,
+): boolean {
+  if (!state.shieldsDown) return false;
+
+  // Provider release deliberately precedes route convergence and the final
+  // timer-bound transition commit. A process can therefore die after the
+  // durable provider claim is gone while the exact host transition remains
+  // in preparing. Treat that marker as recovery authority too: verify (or
+  // repair) mutable posture, converge the route, then commit it active.
+  const completionTarget =
+    retainedProviderTarget ??
+    resolveReleasedProviderShieldsDownTarget(
+      sandboxName,
+      state,
+      opts.allowLegacyHermesProtocol === true,
+    );
+  if (!completionTarget) return false;
+
+  const completion = prepareRecoveredShieldsDownCompletion(sandboxName, completionTarget, state);
+  // The provisional DOWN record can outlive a process that lost its
+  // provider-unlock response. Recovery first restores the retained plan's
+  // restrictive rollback. Reconcile the recorded mutable posture and verify
+  // it before treating this retry as complete.
+  try {
+    applyRecoveredShieldsDownForwardPolicy(sandboxName, completion);
+    if (retainedProviderTarget) {
+      runHermesProviderProtectionTransition(
+        sandboxName,
+        retainedProviderTarget,
+        "locked",
+        "locked",
+      );
+    }
+    if (completion.authority) {
+      assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+    }
+    unlockAgentConfigUnderMutationLock(
+      sandboxName,
+      completionTarget,
+      false,
+      "provider-state-mutation-v2",
+    );
+    if (completion.authority) {
+      assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
+    }
+    finishRecoveredHermesShieldsDown(sandboxName, completion);
+  } catch (error) {
+    return failRecoveredHermesShieldsDown(
+      sandboxName,
+      completionTarget,
+      state,
+      completion,
+      opts.allowLegacyHermesProtocol === true,
+      error,
+      opts.throwOnError,
+    );
+  }
+  if (!completion.alreadyCommitted) {
+    if (completion.authority) {
+      assertRecoveredShieldsDownAuthority(sandboxName, completion, "active");
+    }
+    appendAuditEntry(completion.audit);
+  }
+  console.log(`  Recovered interrupted config unlock for ${sandboxName}.`);
+  return true;
+}
+
+function persistIncompleteShieldsDownPosture(
+  sandboxName: string,
+  transition: ShieldsDownTransition,
+  timerAuthority: TimerMarker,
+  rollback: ShieldsDownRollbackResult,
+): ShieldsDownTransition {
+  if (rollback.outcome !== "manual_intervention_required" || rollback.timerAuthorityRevoked) {
+    return transition;
+  }
+
+  try {
+    assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+    transition = { ...transition, phase: "active" };
+    writeShieldsDownTransition(transition, "preparing");
+    assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "active");
+  } catch (transitionError) {
+    const transitionMessage =
+      transitionError instanceof Error ? transitionError.message : String(transitionError);
+    console.error(
+      `  CRITICAL: Could not persist the incomplete Shields down posture. Treat the config as mutable and recover it manually. ${transitionMessage}`,
+    );
+  }
+  return transition;
+}
+
 function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
+  const retainedProviderTarget = resolveActiveHermesRuntimeProviderMutationTarget(sandboxName);
   if (state._isCorrupt) {
+    if (retainedProviderTarget) {
+      runHermesProviderProtectionTransition(
+        sandboxName,
+        retainedProviderTarget,
+        "locked",
+        "locked",
+      );
+    }
     console.error("  Shields state is corrupt; refusing to unlock.");
     console.error(
       `  Recovery: inspect the reported state error and restore trusted state for ${sandboxName} before retrying.`,
     );
     return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
   }
+  let recoveredProviderTarget: AgentConfigTarget | null = null;
+  if (retainedProviderTarget && state.shieldsDown !== true) {
+    runHermesProviderProtectionTransition(sandboxName, retainedProviderTarget, "locked", "locked");
+    recoveredProviderTarget = retainedProviderTarget;
+  }
+  const initialMode = deriveShieldsMode(state, state._hasStateFile);
+  if (completeInterruptedShieldsDown(sandboxName, state, retainedProviderTarget, opts)) return;
+
+  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
+  const reason = opts.reason || null;
+  const policyName = opts.policy || "permissive";
   if (state.shieldsDown) {
+    if (isEquivalentShieldsDownRequest(state, timeoutSeconds, reason, policyName)) {
+      if (!hasEquivalentShieldsDownTimerAuthority(sandboxName, state)) {
+        recoverExpiredAutoRestoreInline(sandboxName, state);
+        console.error(
+          "  Cannot accept equivalent shields down request without live auto-restore timer authority.",
+        );
+        return failShieldsCommand(
+          `Cannot accept equivalent shields down request without live auto-restore timer authority for ${sandboxName}`,
+          opts.throwOnError,
+        );
+      }
+      console.log(`  Shields already down for ${sandboxName}; equivalent request accepted.`);
+      return;
+    }
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
     );
@@ -2613,21 +4879,35 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   // unsupported/incomplete guard must leave an ordinary shields command with
   // no partial mutation. The result is pinned for the complete transition so
   // a later probe failure cannot silently switch a sealed path to legacy.
-  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-  const protocol = requireHermesShieldsProtocol(
-    sandboxName,
-    target,
-    opts.allowLegacyHermesProtocol === true,
-  );
+  const target =
+    recoveredProviderTarget ?? ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+  const protocol: HermesShieldsProtocol = recoveredProviderTarget
+    ? "provider-state-mutation-v2"
+    : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
+
+  // Refuse an unsafe config path before timer, host state, or policy mutation.
+  // Otherwise unlock rejects the path after the provisional DOWN/permissive
+  // record is already live, and status integrity fails when re-lock cannot
+  // reseal the same unsafe path (#8804).
+  requireShieldsDownConfigPathsSafe(sandboxName, target, opts.throwOnError);
 
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
   // active timer and leave the sandbox unlocked indefinitely.
-  killTimer(sandboxName);
+  const timerCancellation = killTimer(sandboxName);
+  if (!timerCancellation.authorityRevoked) {
+    const detail = timerCancellation.warnings.join("; ");
+    console.error(`  Cannot revoke stale auto-restore timer authority: ${detail}`);
+    return failShieldsCommand(
+      `Cannot revoke stale auto-restore timer authority for ${sandboxName}`,
+      opts.throwOnError,
+    );
+  }
 
-  const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
-  const reason = opts.reason || null;
-  const policyName = opts.policy || "permissive";
+  const processToken = opts.processToken ?? randomBytes(16).toString("hex");
+  if (!/^[0-9a-f]{32}$/.test(processToken)) {
+    throw new Error("Invalid shields-down recovery process token");
+  }
 
   // 1. Capture current policy snapshot
   console.log("  Capturing current policy snapshot...");
@@ -2644,131 +4924,107 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
   }
 
-  const ts = Date.now();
-  const snapshotPath = path.join(STATE_DIR, `policy-snapshot-${ts}.yaml`);
-  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(snapshotPath, policyYaml, { mode: 0o600 });
+  let managedMcpPolicies: ReturnType<typeof inspectExactManagedMcpPolicies>;
+  try {
+    managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName, policyYaml);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot preserve managed MCP policy state: ${message}`);
+    return failShieldsCommand(
+      `Cannot preserve managed MCP policy state: ${message}`,
+      opts.throwOnError,
+    );
+  }
+  const snapshotManagedMcpPolicyKeys = managedMcpPolicies.map((policy) => policy.key);
+
+  const snapshotPath = path.join(
+    STATE_DIR,
+    `policy-snapshot-${sandboxName}-${processToken}-${randomBytes(8).toString("hex")}.yaml`,
+  );
+  writeShieldsFileAtomicDurable(snapshotPath, policyYaml, 0o600, false);
   console.log(`  Saved: ${snapshotPath}`);
 
   // 2. Determine and apply relaxed policy
   let policyFile: string;
   let policyFileIsTemp = false;
-  if (policyName === "permissive") {
-    const basePath = resolvePermissivePolicyPath(sandboxName);
-    // Union the live sandbox's filesystem_policy.read_only/read_write into
-    // the static permissive baseline. OpenShell rejects removal of those
-    // paths on a live sandbox, and runtime-injected entries (/proc on
-    // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
-    // etc.) are not present in the static YAML. See #3942, #3957, #3168.
-    // policyYaml is the pre-parsed body we already captured for the
-    // snapshot above — reuse it instead of re-fetching.
-    policyFile = buildRuntimePermissivePolicy(basePath, {
-      livePolicyYaml: policyYaml,
-      readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
-    });
-    policyFileIsTemp = policyFile !== basePath;
-  } else if (fs.existsSync(policyName)) {
-    policyFile = path.resolve(policyName);
-  } else {
-    console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
-    return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
+  try {
+    if (policyName === "permissive") {
+      const basePath = resolvePermissivePolicyPath(sandboxName);
+      // Union the live sandbox's filesystem_policy.read_only/read_write into
+      // the static permissive baseline. OpenShell rejects removal of those
+      // paths on a live sandbox, and runtime-injected entries (/proc on
+      // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
+      // etc.) are not present in the static YAML. See #3942, #3957, #3168.
+      // policyYaml is the pre-parsed body we already captured for the
+      // snapshot above — reuse it instead of re-fetching. Exact generated MCP
+      // entries are overlaid without copying any unrelated live egress.
+      policyFile = buildRuntimePermissivePolicy(basePath, {
+        livePolicyYaml: policyYaml,
+        managedMcpPolicies,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      policyFileIsTemp = policyFile !== basePath;
+    } else if (fs.existsSync(policyName)) {
+      const basePath = path.resolve(policyName);
+      policyFile = buildRuntimeManagedMcpPolicy(basePath, {
+        managedMcpPolicies,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      policyFileIsTemp = policyFile !== basePath;
+    } else {
+      console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
+      fs.rmSync(snapshotPath, { force: true });
+      return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
+    }
+  } catch (error) {
+    fs.rmSync(snapshotPath, { force: true });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot compose Shields-down policy: ${message}`);
+    return failShieldsCommand(`Cannot compose Shields-down policy: ${message}`, opts.throwOnError);
   }
 
-  const now = new Date().toISOString();
-  let transition: ShieldsDownTransition | null = null;
+  // Every exit after the permissive merge builds a temp policy directory must
+  // remove it. The apply below has always cleaned up, but the timer-failure
+  // and saveShieldsState-failure early exits between here and there historically
+  // leaked one 0700 nemoclaw-permissive-runtime-* directory per failed
+  // attempt. Route all three exits through one cleanup. See #7964.
+  const cleanupRuntimePolicyFile = () => {
+    if (policyFileIsTemp) {
+      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+    }
+  };
 
+  const now = new Date().toISOString();
   // Commit the host-side recovery authority before weakening policy or file
   // permissions. If this process is killed later, the detached timer and its
   // marker already exist and the persisted state honestly reports shields
   // down. A crash can therefore never leave an untracked mutable window.
-  if (!opts.skipTimer) {
-    const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
-    const processToken = opts.processToken ?? randomBytes(16).toString("hex");
-    if (!/^[0-9a-f]{32}$/.test(processToken)) {
-      throw new Error("Invalid shields-down recovery process token");
-    }
-    const timerScript = path.join(__dirname, "timer.ts");
-    const timerScriptJs = timerScript.replace(/\.ts$/, ".js");
-    const actualScript = fs.existsSync(timerScriptJs) ? timerScriptJs : timerScript;
-    transition = {
-      version: 1,
-      phase: "preparing",
-      ownerPid: process.pid,
-      ownerStartIdentity:
-        readProcessStartIdentity(process.pid) ??
-        (() => {
-          throw new Error("Cannot identify shields-down owner process");
-        })(),
-      processToken,
+  let timerStart: FreshShieldsDownTimerStart;
+  try {
+    timerStart = startFreshShieldsDownTimer({
       sandboxName,
+      timeoutSeconds,
+      processToken,
       snapshotPath,
-    };
-    const leaseOwnerPid = opts.deferAutoRestoreWhileOwnerAlive ? transition.ownerPid : null;
-    const leaseOwnerStartIdentity = opts.deferAutoRestoreWhileOwnerAlive
-      ? transition.ownerStartIdentity
-      : null;
-    let timerChild: ReturnType<typeof fork> | null = null;
-
-    try {
-      // Publish the forward-transition ownership marker before authorizing the
-      // timer. If the timeout expires while this command is still weakening
-      // policy/config, the timer waits for phase=active or owner death instead
-      // of racing the forward mutations.
-      writeShieldsDownTransition(transition, null);
-      timerChild = fork(
-        actualScript,
-        [
-          sandboxName,
-          snapshotPath,
-          restoreAt.toISOString(),
-          target.configPath,
-          target.configDir,
-          processToken,
-          opts.allowLegacyHermesProtocol === true ? "1" : "0",
-          leaseOwnerPid === null ? "" : String(leaseOwnerPid),
-          leaseOwnerStartIdentity ?? "",
-        ],
-        {
-          detached: true,
-          stdio: ["ignore", "ignore", "ignore", "ipc"],
-        },
-      );
-      if (!timerChild.pid) throw new Error("auto-restore timer did not report a process id");
-      fs.writeFileSync(
-        timerMarkerPath(sandboxName),
-        JSON.stringify({
-          pid: timerChild.pid,
-          sandboxName,
-          snapshotPath,
-          restoreAt: restoreAt.toISOString(),
-          processToken,
-          allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
-          ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
-            ? { leaseOwnerPid, leaseOwnerStartIdentity }
-            : {}),
-        }),
-        { mode: 0o600 },
-      );
-      if (!timerChild.send({ type: "authorize", processToken })) {
-        throw new Error("auto-restore timer authorization channel closed early");
-      }
-      timerChild.disconnect();
-      timerChild.unref();
-    } catch (err) {
-      try {
-        timerChild?.kill("SIGTERM");
-      } catch {
-        // Best effort; without a matching marker the child has no authority.
-      }
-      clearTimerMarker(sandboxName);
-      clearShieldsDownTransition(sandboxName, processToken);
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`  Cannot start auto-restore timer: ${message}`);
-      return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
-    }
+      target,
+      allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
+      deferAutoRestoreWhileOwnerAlive: opts.deferAutoRestoreWhileOwnerAlive === true,
+      managedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
+      policyFile,
+    });
+  } catch (error) {
+    cleanupRuntimePolicyFile();
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot start auto-restore timer: ${message}`);
+    return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
   }
+  let { transition } = timerStart;
+  const { timerAuthority, policyPathForApply } = timerStart;
 
   try {
+    if (transition && timerAuthority) {
+      assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+    }
     saveShieldsState(sandboxName, {
       shieldsDown: true,
       shieldsDownAt: now,
@@ -2776,72 +5032,229 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       shieldsDownReason: reason,
       shieldsDownPolicy: policyName,
       shieldsPolicySnapshotPath: snapshotPath,
+      shieldsManagedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
     });
   } catch (error) {
     if (transition) {
-      clearShieldsDownTransition(sandboxName, transition.processToken);
-      killTimer(sandboxName);
+      const timerCancellation = killTimer(sandboxName);
+      if (timerCancellation.authorityRevoked) {
+        clearShieldsDownTransition(sandboxName, transition.processToken);
+      }
     }
+    cleanupRuntimePolicyFile();
     throw error;
   }
 
-  console.log(`  Applying ${policyName} policy...`);
-  try {
-    run(buildPolicySetCommand(policyFile, sandboxName));
-  } finally {
-    if (policyFileIsTemp) {
-      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+  if (transition && timerAuthority) {
+    try {
+      assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const rollback = rollbackShieldsDown(
+        sandboxName,
+        target,
+        snapshotPath,
+        initialMode,
+        state,
+        opts.allowLegacyHermesProtocol === true,
+        protocol,
+      );
+      if (rollback.timerAuthorityRevoked) {
+        clearShieldsDownTransition(sandboxName, transition.processToken);
+      }
+      cleanupRuntimePolicyFile();
+      console.error(`  ERROR: ${message}`);
+      if (rollback.outcome === "mutable_default_restored") {
+        console.error(
+          "  Timer handoff failed before policy mutation; original state was restored.",
+        );
+      } else if (rollback.outcome === "lockdown_restored") {
+        console.error("  Timer handoff failed before policy mutation; lockdown was restored.");
+      } else {
+        console.error("  Timer handoff failed; manual recovery is required.");
+      }
+      return failShieldsCommand(message, opts.throwOnError);
     }
+  }
+
+  console.log(`  Applying ${policyName} policy...`);
+  let policySetResult: ReturnType<typeof run>;
+  try {
+    policySetResult = run(buildPolicySetCommand(policyPathForApply, sandboxName), {
+      ignoreError: true,
+    });
+  } finally {
+    cleanupRuntimePolicyFile();
+  }
+  if (policySetResult.status !== 0) {
+    // The permissive policy was rejected before it applied — for example,
+    // OpenShell refuses a live Landlock change on a sandbox whose policy is
+    // sealed at startup (Deep Agents). Nothing was weakened: configuration is
+    // still locked and the restrictive policy is unchanged. The provisional
+    // Shields down record written above therefore conflicts with the actual
+    // posture. Clear it, cancel the now-pointless timer and transition, and
+    // fail closed. Otherwise `shields status` would report `DOWN`/permissive
+    // for an unlock that never happened.
+    // See #8198.
+    try {
+      saveShieldsState(sandboxName, {
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+        shieldsPolicySnapshotPath: null,
+      });
+    } catch (stateErr) {
+      // Clearing the provisional Shields down record failed, so on disk the
+      // record still says `DOWN`. Mark the retained transition as rejected so
+      // status derives the restrictive posture instead of treating the
+      // provisional record as a completed unlock. The timer and transition
+      // remain the recovery authority and reclaim the restrictive snapshot.
+      if (transition) {
+        try {
+          transition = { ...transition, phase: "policy_rejected" };
+          writeShieldsDownTransition(transition, "preparing");
+        } catch (transitionErr) {
+          const transitionMessage =
+            transitionErr instanceof Error ? transitionErr.message : String(transitionErr);
+          console.error(
+            `  The rejected Shields down transition could not be recorded: ${transitionMessage}`,
+          );
+        }
+      }
+      const stateMessage = stateErr instanceof Error ? stateErr.message : String(stateErr);
+      console.error(
+        `  ERROR: Could not apply the ${policyName} policy, and clearing the provisional Shields down record failed: ${stateMessage}`,
+      );
+      console.error("  The scheduled auto-restore remains authoritative.");
+      return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
+    }
+    const timerCancellation = killTimer(sandboxName);
+    if (transition && timerCancellation.authorityRevoked) {
+      clearShieldsDownTransition(sandboxName, transition.processToken);
+    }
+    console.error(
+      `  ERROR: Could not apply the ${policyName} policy; the sandbox remains in the Shields up state.`,
+    );
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
   //     is a member of the sandbox group, can mutate runtime config.
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
+  let inferenceRouteConvergenceFailed = false;
   try {
+    if (transition && timerAuthority) {
+      assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
+    }
     unlockAgentConfig(
       sandboxName,
       target,
-      deriveShieldsMode(state, state._hasStateFile) === "locked",
+      initialMode === "locked",
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
+    if (target.agentName === "hermes") {
+      console.log("  Confirming Hermes inference route after policy transition...");
+      const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
+      if (!convergence.ok) {
+        inferenceRouteConvergenceFailed = true;
+        const status =
+          convergence.httpStatus > 0 ? `HTTP ${convergence.httpStatus}` : "unavailable";
+        throw new Error(
+          `Hermes inference route did not converge after policy transition (${status}; ${convergence.attempts} attempts)`,
+        );
+      }
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    rollbackShieldsDown(
+    const rollback = rollbackShieldsDown(
       sandboxName,
       target,
       snapshotPath,
+      initialMode,
+      state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
-    if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
+    transition = persistIncompleteShieldsDownPosture(
+      sandboxName,
+      transition,
+      timerAuthority,
+      rollback,
+    );
+    if (transition && rollback.timerAuthorityRevoked) {
+      clearShieldsDownTransition(sandboxName, transition.processToken);
+    }
     console.error(`  ERROR: ${message}`);
-    console.error(
-      "  Config did not reach the mutable-default state; the scheduled auto-restore remains authoritative.",
+    const timerAuthorityDescription = describeRollbackTimerAuthority(
+      transition !== null,
+      rollback.timerAuthorityRevoked,
     );
-    console.error(
-      `  Re-run \`nemoclaw ${sandboxName} shields down\` after correcting file ownership.`,
-    );
+    if (rollback.outcome === "mutable_default_restored") {
+      console.error(
+        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthorityDescription}`,
+      );
+    } else if (rollback.outcome === "lockdown_restored") {
+      console.error(
+        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthorityDescription}`,
+      );
+    } else {
+      console.error(
+        `  Config rollback is incomplete.${timerAuthorityDescription} Manual intervention is required.`,
+      );
+    }
+    if (inferenceRouteConvergenceFailed) {
+      console.error(
+        `  Recover the Hermes inference route, then re-run \`nemoclaw ${sandboxName} shields down\`.`,
+      );
+    } else {
+      console.error(
+        `  Re-run \`nemoclaw ${sandboxName} shields down\` after correcting file ownership.`,
+      );
+    }
     return failShieldsCommand(message, opts.throwOnError);
   }
 
   if (transition) {
     try {
+      if (!timerAuthority) {
+        throw new Error("Fresh Shields down lost its timer authorization proof");
+      }
+      assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
       transition = { ...transition, phase: "active" };
       writeShieldsDownTransition(transition, "preparing");
+      assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "active");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      rollbackShieldsDown(
+      const rollback = rollbackShieldsDown(
         sandboxName,
         target,
         snapshotPath,
+        initialMode,
+        state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
       );
-      clearShieldsDownTransition(sandboxName, transition.processToken);
+      if (rollback.timerAuthorityRevoked) {
+        clearShieldsDownTransition(sandboxName, transition.processToken);
+      }
       console.error(`  ERROR: ${message}`);
-      console.error("  Auto-restore handoff failed; lockdown was restored.");
+      const timerAuthority = describeRollbackTimerAuthority(true, rollback.timerAuthorityRevoked);
+      if (rollback.outcome === "mutable_default_restored") {
+        console.error(
+          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthority}`,
+        );
+      } else if (rollback.outcome === "lockdown_restored") {
+        console.error(`  Auto-restore handoff failed; lockdown was restored.${timerAuthority}`);
+      } else {
+        console.error(
+          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+        );
+      }
       return failShieldsCommand(message, opts.throwOnError);
     }
   }
@@ -2858,34 +5271,26 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   });
 
   // 6. Output
-  if (opts.skipTimer) {
-    console.log(
-      `  Config unlocked for ${sandboxName} (no auto-lockdown timer; caller will re-lock).`,
-    );
-  } else {
-    const mins = Math.floor(timeoutSeconds / 60);
-    const secs = timeoutSeconds % 60;
-    console.log(
-      `  Config unlocked for ${sandboxName} (auto-lockdown in: ${mins}m${secs ? ` ${secs}s` : ""})`,
-    );
-    console.log("");
-    console.log("  Sandbox is in default (mutable) state.");
-    console.log(`  Run \`nemoclaw ${sandboxName} shields up\` to opt into lockdown.`);
-  }
+  const mins = Math.floor(timeoutSeconds / 60);
+  const secs = timeoutSeconds % 60;
+  console.log(
+    `  Config unlocked for ${sandboxName} (auto-lockdown in: ${mins}m${secs ? ` ${secs}s` : ""})`,
+  );
+  console.log("");
+  console.log("  Sandbox is in default (mutable) state.");
+  console.log(`  Run \`nemoclaw ${sandboxName} shields up\` to opt into lockdown.`);
 }
 
 function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   validateName(sandboxName, "sandbox name");
-  const processToken = opts.skipTimer
-    ? undefined
-    : (opts.processToken ?? randomBytes(16).toString("hex"));
-  const effectiveOpts = processToken ? { ...opts, processToken } : opts;
+  const processToken = opts.processToken ?? randomBytes(16).toString("hex");
+  const effectiveOpts = { ...opts, processToken };
   try {
-    return withShieldsTransitionLock(
+    return withExpiredAutoRestoreDeadlineFence(
       sandboxName,
       "shields down",
       () => shieldsDownWithoutHostLock(sandboxName, effectiveOpts),
-      processToken ? { takeoverToken: processToken } : {},
+      processToken,
     );
   } catch (error) {
     return completeDeferredShieldsExit(error, opts.throwOnError === true);
@@ -2906,6 +5311,7 @@ function shieldsUpWithoutHostLock(
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
+  const recoveredProviderTarget = recoverActiveHermesRuntimeProviderMutation(sandboxName);
   if (state._isCorrupt) {
     console.error("  Shields state is corrupt; refusing to raise shields.");
     console.error(
@@ -2923,10 +5329,18 @@ function shieldsUpWithoutHostLock(
     // host-root tamper has reverted protected perms or rewritten file
     // content (even when the mode/owner is restored), re-apply the lock
     // so the recovery hint surfaced by `shields status` actually works.
-    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+    const target =
+      recoveredProviderTarget ?? ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+    if (
+      !recoveredProviderTarget &&
+      target.agentName === "hermes" &&
+      inspectHermesShieldsProtocol(sandboxName, target) === "provider-state-mutation-v2"
+    ) {
+      runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+    }
     const { issues } = verifyShieldsLockState(sandboxName, target, {
       verifyChattr: state.chattrApplied === true,
-      verifyParentProtection: target.agentName === "openclaw" || target.agentName === "hermes",
+      verifyParentProtection: requiresProtectedSandboxParent(target),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
       expectedHashes: state.fileHashes,
@@ -3013,11 +5427,9 @@ function shieldsUpWithoutHostLock(
     // missing-seal entries that the operator has just opted in to. In
     // both cases re-applying the lock rewrites perms and captures a
     // fresh, complete seal.
-    const protocol = requireHermesShieldsProtocol(
-      sandboxName,
-      target,
-      opts.allowLegacyHermesProtocol === true,
-    );
+    const protocol: HermesShieldsProtocol = recoveredProviderTarget
+      ? "provider-state-mutation-v2"
+      : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
     console.log(`  Lockdown drifted — re-applying lock for ${sandboxName}...`);
     // #4663: re-confirm the lock held after the in-sandbox reconciler settles,
     // re-applying if it reverts perms. A single re-apply here was also being
@@ -3066,12 +5478,11 @@ function shieldsUpWithoutHostLock(
     );
     return failShieldsCommand("Saved policy snapshot is missing", opts.throwOnError);
   }
-  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-  const protocol = requireHermesShieldsProtocol(
-    sandboxName,
-    target,
-    opts.allowLegacyHermesProtocol === true,
-  );
+  const target =
+    recoveredProviderTarget ?? ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+  const protocol: HermesShieldsProtocol = recoveredProviderTarget
+    ? "provider-state-mutation-v2"
+    : requireHermesShieldsProtocol(sandboxName, target, opts.allowLegacyHermesProtocol === true);
 
   // Keep the auto-restore owner alive through policy restore, config locking,
   // and the final UP state commit. Manual shields-up and the timer are both
@@ -3185,7 +5596,7 @@ function shieldsUp(
 ): void {
   validateName(sandboxName, "sandbox name");
   try {
-    return withTimerBoundShieldsMutationLock(sandboxName, "shields up", () =>
+    return withExpiredAutoRestoreDeadlineFence(sandboxName, "shields up", () =>
       shieldsUpWithoutHostLock(sandboxName, opts),
     );
   } catch (error) {
@@ -3200,7 +5611,49 @@ function shieldsUp(
 type ShieldsStatusDeps = {
   verifyLockState?: typeof verifyShieldsLockState;
   resolveConfig?: typeof resolveAgentConfig;
+  verifyStateLockPlan?: (sandboxName: string, target: AgentConfigTarget) => string[];
 };
+
+function verifyHermesProviderMutableStatus(
+  sandboxName: string,
+  mode: "mutable_default" | "temporarily_unlocked",
+  transition: ShieldsDownTransition | null,
+  resolveConfig: typeof resolveAgentConfig,
+): void {
+  try {
+    const target = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
+    if (target.agentName !== "hermes") return;
+    if (inspectHermesShieldsProtocol(sandboxName, target) !== "provider-state-mutation-v2") {
+      return;
+    }
+
+    const marker = mode === "temporarily_unlocked" ? readTimerMarker(sandboxName) : null;
+    const assertTimedAuthority = () => {
+      if (mode !== "temporarily_unlocked") return;
+      if (!marker || !transition || transition.phase !== "active") {
+        throw new Error("Timed mutable status lost its exact active auto-restore authority");
+      }
+      assertFreshShieldsDownAuthority(sandboxName, marker, transition, "active");
+    };
+
+    assertTimedAuthority();
+    runHermesProviderProtectionTransition(sandboxName, target, "mutable", "mutable");
+    assertTimedAuthority();
+    verifyHermesProviderMutablePosture(sandboxName, target);
+    assertTimedAuthority();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const declared = mode === "temporarily_unlocked" ? "DOWN" : "NOT CONFIGURED";
+    console.error(
+      `  Shields: ${declared} (DRIFTED — declared mutable but runtime-provider verification failed)`,
+    );
+    console.error(`  Drift: ${message}`);
+    console.error(
+      `  Recovery: run \`nemoclaw ${sandboxName} shields up\` to reconcile and verify lockdown.`,
+    );
+    throw new DeferredShieldsExit("Mutable shields state has runtime-provider drift", 2);
+  }
+}
 
 function shieldsStatusWithoutHostLock(
   sandboxName: string,
@@ -3223,8 +5676,28 @@ function shieldsStatusWithoutHostLock(
     throw new DeferredShieldsExit("Shields state is corrupt", 1);
   }
 
+  const transition = readTimerBoundShieldsDownTransition(sandboxName);
+  if (transition?.phase === "preparing") {
+    console.error("  Shields: ERROR (Shields down transition incomplete)");
+    console.error("  The scheduled auto-restore remains authoritative.");
+    throw new DeferredShieldsExit("Shields down transition is incomplete", 1);
+  }
+
+  const recoveredProviderTarget = recoverActiveHermesRuntimeProviderMutation(sandboxName);
+  if (recoveredProviderTarget && posture.mode !== "locked") {
+    console.error("  Shields: ERROR (runtime-provider recovery restored lockdown)");
+    console.error(
+      `  Recovery: retry the intended Shields transition for ${sandboxName}; persisted posture was not accepted as clean.`,
+    );
+    throw new DeferredShieldsExit(
+      "Recovered runtime-provider mutation conflicts with persisted mutable posture",
+      2,
+    );
+  }
+
   switch (posture.mode) {
     case "mutable_default":
+      verifyHermesProviderMutableStatus(sandboxName, posture.mode, transition, resolveConfig);
       // NC-2227-02: Fresh sandbox with no shields history — do NOT claim locked
       console.log(`  Shields: ${posture.statusText}`);
       console.log("  Config is mutable. Run `nemoclaw <sandbox> shields up` to opt into lockdown.");
@@ -3235,15 +5708,44 @@ function shieldsStatusWithoutHostLock(
       // protected perms back to a sandbox-writable state is surfaced as drift
       // instead of reported as a clean lockdown.
       let driftIssues: string[] = [];
+      let planIssues: string[] = [];
       try {
-        const target = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
-        driftIssues = verify(sandboxName, target, {
-          verifyChattr: state.chattrApplied === true,
-          verifyParentProtection: target.agentName === "openclaw" || target.agentName === "hermes",
-          exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
-          assertLegacyLayout: assertNoLegacyStateLayout,
-          expectedHashes: state.fileHashes,
-        }).issues;
+        const target =
+          recoveredProviderTarget ?? ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
+        if (
+          !recoveredProviderTarget &&
+          target.agentName === "hermes" &&
+          inspectHermesShieldsProtocol(sandboxName, target) === "provider-state-mutation-v2"
+        ) {
+          runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+        }
+        try {
+          planIssues = deps.verifyStateLockPlan
+            ? deps.verifyStateLockPlan(sandboxName, target)
+            : stateLockPlanCompatibilityIssues(
+                stateDirLockExec(sandboxName),
+                requireStateLockPlan(target),
+                target.stateLockPlanInImage,
+              );
+          driftIssues.push(...planIssues.map((issue) => `state lock plan: ${issue}`));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          driftIssues.push(`unable to verify state lock plan: ${msg}`);
+        }
+        try {
+          driftIssues.push(
+            ...verify(sandboxName, target, {
+              verifyChattr: state.chattrApplied === true,
+              verifyParentProtection: requiresProtectedSandboxParent(target),
+              exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+              assertLegacyLayout: assertNoLegacyStateLayout,
+              expectedHashes: state.fileHashes,
+            }).issues,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          driftIssues.push(`unable to verify agent config target: ${msg}`);
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         driftIssues = [`unable to resolve agent config target: ${msg}`];
@@ -3271,12 +5773,16 @@ function shieldsStatusWithoutHostLock(
             ? [
                 `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
               ]
-            : hasMissingSeals
+            : planIssues.length > 0
               ? [
-                  "  Recovery: rebuild the sandbox for a known-good baseline,",
-                  `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+                  "  Recovery: rebuild the sandbox so its generated state lock plan matches the current agent manifest.",
                 ]
-              : [`  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`];
+              : hasMissingSeals
+                ? [
+                    "  Recovery: rebuild the sandbox for a known-good baseline,",
+                    `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+                  ]
+                : [`  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`];
         for (const line of recoveryLines) {
           console.error(line);
         }
@@ -3309,6 +5815,7 @@ function shieldsStatusWithoutHostLock(
     }
 
     case "temporarily_unlocked": {
+      verifyHermesProviderMutableStatus(sandboxName, posture.mode, transition, resolveConfig);
       const downSince = state.shieldsDownAt ? new Date(state.shieldsDownAt) : null;
       const elapsed = downSince ? Math.floor((Date.now() - downSince.getTime()) / 1000) : 0;
       const remaining =
@@ -3340,9 +5847,10 @@ function shieldsStatus(
         shieldsStatusWithoutHostLock(sandboxName, false, deps),
       );
     }
-    prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-    return withTimerBoundShieldsMutationLock(sandboxName, "shields status", () =>
-      shieldsStatusWithoutHostLock(sandboxName, true, deps),
+    return withExpiredAutoRestoreDeadlineFence(
+      sandboxName,
+      "shields status",
+      (allowInlineRecovery) => shieldsStatusWithoutHostLock(sandboxName, allowInlineRecovery, deps),
     );
   } catch (error) {
     return completeDeferredShieldsExit(error);
@@ -3360,12 +5868,8 @@ function shieldsStatus(
  * "not configured" instead of "down".
  */
 function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolean {
-  const state = allowInlineRecovery
-    ? getShieldsPosture(sandboxName, true).state
-    : recoverExpiredAutoRestoreGate(sandboxName, false);
-  if (state._isCorrupt) return false;
-  const mode = deriveShieldsMode(state, state._hasStateFile);
-  return mode !== "locked";
+  const posture = getShieldsPosture(sandboxName, allowInlineRecovery);
+  return posture.mode !== "error" && posture.mode !== "locked";
 }
 
 /**
@@ -3402,10 +5906,11 @@ function clearShieldsState(sandboxName: string): void {
 // ---------------------------------------------------------------------------
 
 export {
+  applyShieldsPolicySnapshot,
   clearShieldsState,
+  completeAutoRestoreTransition,
   DEFAULT_TIMEOUT_SECONDS,
   deriveShieldsMode,
-  excludeRecoveryProcessTree,
   getShieldsPosture,
   inspectMutableConfigPerms,
   isShieldsDown,
@@ -3415,6 +5920,8 @@ export {
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
+  resolvePersistedAutoRestoreTarget,
+  restoreLockedStateDirStartupAccess,
   shieldsDown,
   shieldsStatus,
   shieldsUp,

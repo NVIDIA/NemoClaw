@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseLiveSandboxEntries } from "../../runtime-recovery";
+import { resolveSandboxContainerOwner } from "./container-owner";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
@@ -128,10 +129,6 @@ export function resolveDestroyGatewayCleanupDecision(
   return "prompt";
 }
 
-export function dockerSandboxContainerNamePrefix(sandboxName: string): string {
-  return `openshell-${sandboxName}-`;
-}
-
 function dockerContainerNames(output: string): string[] {
   return output
     .split(/\r?\n/u)
@@ -144,17 +141,9 @@ function ownsDockerSandboxContainer(
   sandboxName: string,
   knownSandboxNames: Iterable<string>,
 ): boolean {
-  const exactName = `openshell-${sandboxName}`;
-  const containerNamePrefix = `${exactName}-`;
-  if (containerName === exactName) return true;
-  if (!containerName.startsWith(containerNamePrefix)) return false;
-  const known = new Set(knownSandboxNames);
-  known.add(sandboxName);
-  const stripped = containerName.replace(/^openshell-/, "");
-  const owner = [...known]
-    .filter((name) => stripped === name || stripped.startsWith(`${name}-`))
-    .sort((a, b) => b.length - a.length)[0];
-  return owner === sandboxName;
+  return (
+    resolveSandboxContainerOwner(containerName, sandboxName, knownSandboxNames) === containerName
+  );
 }
 
 export function hasRunningDockerSandboxContainer(

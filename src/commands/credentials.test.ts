@@ -18,9 +18,11 @@ vi.mock("../lib/credentials/store", () => ({
 }));
 vi.mock("../lib/actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
-  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
   recordExtraProvider: mocks.recordExtraProvider,
   forgetExtraProvider: mocks.forgetExtraProvider,
+}));
+vi.mock("../lib/adapters/openshell/provider-command", () => ({
+  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
 }));
 vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
   resolveGatewayCredentialMutationAuthority: mocks.resolveGatewayCredentialMutationAuthority,

@@ -15,6 +15,8 @@ import {
   NAME_ALLOWED_FORMAT,
   suggestNameSlug,
 } from "../src/lib/name-validation.js";
+import { deriveCheckpointFromSession } from "../src/lib/state/onboard-checkpoint-migrate.js";
+import { createSession } from "../src/lib/state/onboard-session.js";
 
 const {
   getDefaultSandboxNameForAgent,
@@ -97,15 +99,15 @@ describe("onboard sandbox naming helpers", () => {
 
   it("exposes the full allowed sandbox name format", () => {
     expect(NAME_ALLOWED_FORMAT).toBe(
-      "1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
+      "1-19 characters, lowercase, starts with a letter, letters/numbers/single internal hyphens only, ends with letter/number",
     );
   });
 
   it("explains sandbox name length and allowed format violations", () => {
     expect(getNameValidationGuidance("sandbox name", "a".repeat(64))).toEqual([
-      "Sandbox names must be 63 characters or fewer.",
+      "Sandbox names must be 19 characters or fewer.",
       `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
-      `Try: ${"a".repeat(63)}`,
+      `Try: ${"a".repeat(19)}`,
     ]);
     expect(
       getNameValidationGuidance("sandbox name", "bad name", { includeAllowedFormat: false }),
@@ -128,8 +130,8 @@ describe("onboard sandbox naming helpers", () => {
       expect(suggestNameSlug("foo  bar")).toBe("foo-bar");
     });
 
-    it("returns null for inputs that are already valid even with internal hyphen runs", () => {
-      expect(suggestNameSlug("a---b")).toBeNull();
+    it("collapses consecutive hyphens that OpenShell reserves for routed names (#8497)", () => {
+      expect(suggestNameSlug("a---b")).toBe("a-b");
     });
 
     it("prefixes 's-' when the slug would otherwise start with a digit", () => {
@@ -139,8 +141,8 @@ describe("onboard sandbox naming helpers", () => {
 
     it("truncates over-length inputs to the max name length", () => {
       const slug = suggestNameSlug("a".repeat(80));
-      expect(slug).toBe("a".repeat(63));
-      expect(slug!.length).toBe(63);
+      expect(slug).toBe("a".repeat(19));
+      expect(slug!.length).toBe(19);
     });
 
     it("returns null when the input is already a valid name", () => {
@@ -205,13 +207,77 @@ const onboardModule = require(${onboardPath});
     assert.equal(payload.exitCode, 1);
     assert.equal(payload.nonInteractiveEnv, "preserve-me");
     assert.ok(
-      payload.lines.some((line: string) => line.includes("Invalid sandbox name: 'MyAssistant'.")),
+      payload.lines.some((line: string) => line.includes('Invalid sandbox name: "MyAssistant".')),
       `expected 'Invalid sandbox name' line, got ${JSON.stringify(payload.lines)}`,
     );
     assert.ok(
       payload.lines.some((line: string) => line.trim() === "Try: myassistant"),
       `expected standalone 'Try: myassistant' line, got ${JSON.stringify(payload.lines)}`,
     );
+  });
+
+  it("escapes control characters in the rejected --name value instead of printing raw bytes (#7796)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hostile-name-"));
+    const scriptPath = path.join(tmpDir, "onboard-hostile-name.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+
+    const script = String.raw`
+const onboardModule = require(${onboardPath});
+const esc = String.fromCharCode(27);
+const hostileName = "bad" + esc + "[31mX" + esc + "[0m";
+
+(async () => {
+  const lines = [];
+  const originalError = console.error;
+  const originalExit = process.exit;
+  console.error = (...args) => lines.push(args.join(" "));
+  process.exit = (code) => {
+    const error = new Error("process.exit:" + code);
+    error.exitCode = code;
+    throw error;
+  };
+  let exitCode = null;
+  try {
+    await onboardModule.onboard({ sandboxName: hostileName, nonInteractive: true });
+    process.stdout.write(JSON.stringify({ completed: true, exitCode, lines }));
+  } catch (error) {
+    exitCode = error.exitCode ?? null;
+    process.stdout.write(JSON.stringify({ completed: false, exitCode, lines }));
+  } finally {
+    console.error = originalError;
+    process.exit = originalExit;
+  }
+})().catch((error) => {
+  process.stderr.write(error.stack || String(error));
+  process.exit(2);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, NEMOCLAW_NON_INTERACTIVE: "1" },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.completed, false);
+      assert.equal(payload.exitCode, 1);
+
+      const printed = payload.lines.join("\n");
+      assert.ok(
+        !printed.includes(String.fromCharCode(27)),
+        `expected no raw escape byte, got ${JSON.stringify(printed)}`,
+      );
+      assert.ok(
+        printed.includes(String.raw`Invalid sandbox name: "bad\u001b[31mX\u001b[0m".`),
+        `expected an escaped preview line, got ${JSON.stringify(payload.lines)}`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("exits nonzero for non-interactive resume when the session has no sandbox name", () => {
@@ -221,21 +287,18 @@ const onboardModule = require(${onboardPath});
     try {
       const sessionDir = path.join(tmpDir, ".nemoclaw");
       fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      const session = createSession({
+        sessionId: "null-sandbox-name",
+        status: "in_progress",
+        resumable: true,
+        mode: "interactive",
+        agent: "langchain-deepagents-code",
+        sandboxName: null,
+      });
+      session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
       fs.writeFileSync(
         path.join(sessionDir, "onboard-session.json"),
-        JSON.stringify(
-          {
-            version: 1,
-            sessionId: "null-sandbox-name",
-            status: "in_progress",
-            resumable: true,
-            mode: "interactive",
-            agent: "langchain-deepagents-code",
-            sandboxName: null,
-          },
-          null,
-          2,
-        ),
+        JSON.stringify(session, null, 2),
       );
 
       const result = spawnSync(

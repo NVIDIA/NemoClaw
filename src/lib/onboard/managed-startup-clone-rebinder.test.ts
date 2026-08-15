@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
 import {
   type ManagedStartupCloneCurrentState,
   ManagedStartupCloneRebindError,
+  managedStartupCloneRebinderDependencies,
   rebindManagedStartupProfileForClone,
 } from "./managed-startup/clone-rebinder";
 import {
@@ -24,13 +25,31 @@ function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): Sa
     channels: [
       {
         channelId: "telegram",
+        displayName: "Telegram",
+        authMode: "token-paste",
         configured: true,
         active: true,
+        selected: true,
         disabled: false,
         inputs: [
-          { inputId: "botToken", credentialAvailable: true },
-          { inputId: "allowedIds", value: ["123456"] },
+          {
+            channelId: "telegram",
+            inputId: "botToken",
+            kind: "secret",
+            required: true,
+            sourceEnv: "TELEGRAM_BOT_TOKEN",
+            credentialAvailable: true,
+          },
+          {
+            channelId: "telegram",
+            inputId: "allowedIds",
+            kind: "config",
+            required: false,
+            statePath: "allowedIds.telegram",
+            value: ["123456"],
+          },
         ],
+        hooks: [],
       },
     ],
     disabledChannels: [],
@@ -38,9 +57,10 @@ function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): Sa
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
-  } as unknown as SandboxMessagingPlan;
+  };
 }
 
 function openClawInput(): ManagedStartupProfileBuilderInput {
@@ -144,9 +164,9 @@ function rebind(
 ) {
   const profile = built.profile;
   const webSearch =
-    profile.agentConfig.agent === "langchain-deepagents-code"
-      ? null
-      : profile.agentConfig.webSearch;
+    profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+      ? profile.agentConfig.webSearch
+      : null;
   const hermesDashboard = profile.dashboard.agent === "hermes" ? profile.dashboard : null;
   const dcodeConfig =
     profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;
@@ -213,40 +233,33 @@ function rebind(
 describe("rebindManagedStartupProfileForClone", () => {
   it("rebinds OpenClaw dashboard and manifest-derived provider identity without ambient tokens", () => {
     const built = buildManagedStartupProfile(openClawInput());
-    const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-    process.env.TELEGRAM_BOT_TOKEN = "ambient-token-must-not-be-read";
-    try {
-      const rebound = rebind(built, "openclaw", 20_789);
-      expect(rebound.profile.dashboard).toMatchObject({
-        agent: "openclaw",
-        url: "http://127.0.0.1:20789",
-        port: 20_789,
-      });
-      expect(rebound.profile.messaging.plan).toMatchObject({
-        sandboxName: "destination",
-        credentialBindings: [
-          {
-            providerName: "destination-telegram-bridge",
-            credentialAvailable: true,
-          },
-        ],
-      });
-      expect(JSON.stringify(rebound.profile.messaging.plan)).not.toContain(
-        "ambient-token-must-not-be-read",
-      );
-      expect(
-        (rebound.profile.messaging.plan as unknown as SandboxMessagingPlan).credentialBindings[0],
-      ).not.toHaveProperty("credentialHash");
-      expect(rebound.startupProfileSha256).not.toBe(built.startupProfileSha256);
-      expect(Object.isFrozen(rebound)).toBe(true);
-      expect(Object.isFrozen(rebound.profile)).toBe(true);
-      expect(Object.isFrozen(rebound.profile.messaging.plan)).toBe(true);
-      expect(Object.isFrozen(rebound.profile.tools.enabledGateways)).toBe(true);
-    } finally {
-      previousToken === undefined
-        ? Reflect.deleteProperty(process.env, "TELEGRAM_BOT_TOKEN")
-        : Reflect.set(process.env, "TELEGRAM_BOT_TOKEN", previousToken);
-    }
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "ambient-token-must-not-be-read");
+    const rebound = rebind(built, "openclaw", 20_789);
+    expect(rebound.profile.dashboard).toMatchObject({
+      agent: "openclaw",
+      url: "http://127.0.0.1:20789",
+      port: 20_789,
+    });
+    expect(rebound.profile.messaging.plan).toMatchObject({
+      sandboxName: "destination",
+      credentialBindings: [
+        {
+          providerName: "destination-telegram-bridge",
+          credentialAvailable: true,
+        },
+      ],
+    });
+    expect(JSON.stringify(rebound.profile.messaging.plan)).not.toContain(
+      "ambient-token-must-not-be-read",
+    );
+    expect(
+      (rebound.profile.messaging.plan as unknown as SandboxMessagingPlan).credentialBindings[0],
+    ).not.toHaveProperty("credentialHash");
+    expect(rebound.startupProfileSha256).not.toBe(built.startupProfileSha256);
+    expect(Object.isFrozen(rebound)).toBe(true);
+    expect(Object.isFrozen(rebound.profile)).toBe(true);
+    expect(Object.isFrozen(rebound.profile.messaging.plan)).toBe(true);
+    expect(Object.isFrozen(rebound.profile.tools.enabledGateways)).toBe(true);
   });
 
   it("rebinds the current compatible-endpoint reasoning effort instead of stale receipt tuning", () => {
@@ -273,6 +286,54 @@ describe("rebindManagedStartupProfileForClone", () => {
       reasoning: true,
       reasoningEffort: "high",
     });
+  });
+
+  it("resolves the current Ollama context window when the source provider changed", () => {
+    const built = buildManagedStartupProfile(openClawInput());
+    const resolveContextWindowForModel = vi
+      .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
+      .mockReturnValue(131_072);
+
+    const rebound = rebind(built, "openclaw", 20_789, {
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
+
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen3.5:9b",
+    );
+    expect(rebound.profile.tuning.contextWindow).toBe(131_072);
+  });
+
+  it("resolves the current Ollama context window when only the source model changed", () => {
+    const input = openClawInput();
+    const ollamaSource = buildManagedStartupProfile({
+      ...input,
+      inference: {
+        ...input.inference,
+        upstreamProvider: "ollama-local",
+        model: "qwen3:8b",
+        api: "openai-completions",
+        primaryModelRef: "inference/qwen3:8b",
+        compatibility: { supportsUsageInStreaming: true },
+      },
+      environment: { NEMOCLAW_CONTEXT_WINDOW: "65536" },
+    });
+    const resolveContextWindowForModel = vi
+      .spyOn(managedStartupCloneRebinderDependencies, "resolveContextWindowForModel")
+      .mockReturnValue(131_072);
+
+    const rebound = rebind(ollamaSource, "openclaw", 20_789, {
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+    });
+
+    expect(resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen3.5:9b",
+    );
+    expect(rebound.profile.tuning.contextWindow).toBe(131_072);
   });
 
   it("rebinds Hermes public dashboard and provider identity while retaining its internal port", () => {

@@ -71,3 +71,37 @@ export function bindGatewayAuthorityToCheckpoint(
   };
   return resolvedOwner;
 }
+
+/**
+ * Persist the one authority transition produced by NemoClaw's own successful
+ * OpenShell install. All other checkpoint drift remains an error.
+ */
+export function adoptPackagedGatewayAuthorityAfterTrustedInstall(
+  session: Session,
+  resolvedOwner: GatewayOwner,
+): GatewayOwner {
+  const checkpoint = session.checkpoint ?? deriveCheckpointFromSession(session);
+  const decision = checkpoint.gatewayAuthority;
+  if (!isDecisionSelected(decision)) {
+    throw new Error("Trusted gateway installation requires a previously bound gateway authority.");
+  }
+  const recordedOwner = gatewayOwnerFromCheckpoint(decision.value);
+  const expectedPackagedOwner = { ...recordedOwner, source: "packaged-service" as const };
+  if (
+    recordedOwner.mode !== "nemoclaw-managed" ||
+    recordedOwner.source !== "standalone" ||
+    resolvedOwner.source !== "packaged-service" ||
+    !sameGatewayOwner(expectedPackagedOwner, resolvedOwner)
+  ) {
+    throw new Error(
+      "Gateway lifecycle authority changed during trusted OpenShell installation " +
+        `(${describeGatewayOwnerForError(recordedOwner)} -> ${describeGatewayOwnerForError(resolvedOwner)}).`,
+    );
+  }
+  session.checkpoint = {
+    ...checkpoint,
+    updatedAt: new Date().toISOString(),
+    gatewayAuthority: decisionSelected(checkpointGatewayAuthority(resolvedOwner)),
+  };
+  return resolvedOwner;
+}

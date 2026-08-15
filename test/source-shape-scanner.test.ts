@@ -5,11 +5,15 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   contractExceptionAllowlistErrors,
   isSourceShapePathSkipped,
+  renderSourceShapeHuman,
+  renderSourceShapeJson,
+  renderSourceShapeMetrics,
+  runSourceShapeCommand,
   scanTextForTest,
   scanTextForTestReport,
   sourceShapeSummary,
@@ -684,33 +688,70 @@ describe("source-shape scanner", () => {
   });
 });
 
-describe("source-shape scanner CLI entrypoint", () => {
-  function runCli(...args: string[]): { status: number | null; stdout: string; stderr: string } {
-    const result = spawnSync(
-      process.execPath,
-      ["--import", "tsx", "scripts/find-source-shape-tests.mts", ...args],
-      { cwd: process.cwd(), encoding: "utf8" },
-    );
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+describe("source-shape scanner output", () => {
+  function reportFor(source: string) {
+    const fileReport = scanTextForTestReport("test/virtual-source-shape.test.ts", source);
+    return { summary: sourceShapeSummary(fileReport), ...fileReport };
   }
 
-  it("invoking the .mts entrypoint with --check prints the human report, metrics, and preserves the budget exit status", () => {
-    const { status, stdout } = runCli("--check");
-    expect(status).toBe(0);
-    expect(stdout).toMatch(
-      /No source-shape tests detected\.|Detected \d+ source-shape test cases:/,
+  const source = `
+    import { readFileSync } from "node:fs";
+    import { expect, it } from "vitest";
+
+    it("mirrors source text", () => {
+      const sourceText = readFileSync("src/lib/example.ts", "utf8");
+      expect(sourceText).toContain("implementation detail");
+    });
+  `;
+
+  it("renders the human report and metrics from scan results", () => {
+    const output = renderSourceShapeHuman(reportFor(source));
+
+    expect(output).toContain("Detected 1 source-shape test cases:");
+    expect(output).toContain("test/virtual-source-shape.test.ts:");
+    expect(output).toContain("METRIC source_shape_cases=1");
+  });
+
+  it("renders a JSON report from scan results", () => {
+    const report = reportFor(source);
+
+    expect(JSON.parse(renderSourceShapeJson(report))).toEqual(report);
+  });
+
+  it("renders metrics without the human report", () => {
+    const output = renderSourceShapeMetrics(reportFor(source));
+
+    expect(output).toContain("METRIC source_shape_cases=1");
+    expect(output).not.toContain("Detected");
+  });
+
+  it("dispatches JSON output without running the budget check", () => {
+    const writeOutput = vi.fn();
+    const checkBudget = vi.fn();
+
+    runSourceShapeCommand(["--json"], reportFor(source), { writeOutput, checkBudget });
+
+    expect(writeOutput).toHaveBeenCalledOnce();
+    expect(JSON.parse(writeOutput.mock.calls[0]![0])).toEqual(reportFor(source));
+    expect(checkBudget).not.toHaveBeenCalled();
+  });
+
+  it("writes the human report before checking the budget", () => {
+    const writeOutput = vi.fn();
+    const checkBudget = vi.fn();
+
+    runSourceShapeCommand(["--check"], reportFor(source), { writeOutput, checkBudget });
+
+    expect(writeOutput).toHaveBeenCalledWith(
+      expect.stringContaining("METRIC source_shape_cases=1"),
     );
-    expect(stdout).toContain("METRIC source_shape_cases=");
-  }, 90_000);
+    expect(checkBudget).toHaveBeenCalledOnce();
+    expect(writeOutput.mock.invocationCallOrder[0]).toBeLessThan(
+      checkBudget.mock.invocationCallOrder[0]!,
+    );
+  });
 
-  it("invoking the .mts entrypoint with --json prints a parsable report and exits 0", () => {
-    const { status, stdout } = runCli("--json");
-    expect(status).toBe(0);
-    const report = JSON.parse(stdout) as { summary: { source_shape_cases: number } };
-    expect(typeof report.summary.source_shape_cases).toBe("number");
-  }, 90_000);
-
-  it("importing the .mts entrypoint does not run its CLI main", () => {
+  it("does not run the CLI when imported", () => {
     const scriptUrl = pathToFileURL(path.resolve("scripts/find-source-shape-tests.mts")).href;
     const result = spawnSync(
       process.execPath,

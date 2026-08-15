@@ -36,7 +36,7 @@ type OpenAiLikeProbe = (
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
-  parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
 } from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
@@ -50,7 +50,7 @@ export type EndpointValidationResult =
       retry?: undefined;
       /** Public addresses approved for this custom endpoint's host probes. */
       pinnedAddresses?: string[];
-      /** Non-forgeable proof of the exact private subset admitted by the operator allowlist. */
+      /** Non-forgeable proof of the exact host and complete pins admitted by the operator allowlist. */
       trustedPrivateCapability?: TrustedPrivateEndpointCapability;
     }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };
@@ -65,6 +65,11 @@ export interface InferenceSelectionValidationDeps {
   resolveEndpointHost?: EndpointDnsLookupFn;
   /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
   trustedPrivateEndpointHosts?: readonly string[];
+  /**
+   * Optional abort teardown hook for tests. Production loads the helper lazily
+   * so openshell binaries stay out of the validation unit graph.
+   */
+  teardownOrphanManagedGatewayOnAbort?: () => void;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -91,9 +96,12 @@ export interface InferenceSelectionValidationHelpers {
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
+      retryChatCompletionsToolReadiness?: boolean;
+
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      probeFromDocker?: { expectedPort: number } | null;
       capabilityCache?: OnboardInferenceCapabilityCache;
     },
   ): Promise<EndpointValidationResult>;
@@ -141,10 +149,25 @@ export function createInferenceSelectionValidationHelpers(
   const runAnthropicProbe = deps.probeAnthropicEndpoint ?? probeAnthropicEndpoint;
   const runOpenAiLikeProbe = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpointOptimized;
   const trustedPrivateEndpointHosts =
-    deps.trustedPrivateEndpointHosts ??
-    parseTrustedPrivateInferenceHosts(process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS);
+    deps.trustedPrivateEndpointHosts ?? parseTrustedPrivateInferenceHostsFromEnv(process.env);
 
   function exitNonInteractiveValidationFailure(): never {
+    // #8952: tear down an unowned managed gateway before fatal exit.
+    try {
+      const teardown =
+        deps.teardownOrphanManagedGatewayOnAbort ??
+        (() => {
+          const { teardownOrphanManagedGatewayOnAbort } =
+            require("./gateway-destroy") as typeof import("./gateway-destroy");
+          teardownOrphanManagedGatewayOnAbort();
+        });
+      teardown();
+    } catch (error) {
+      // Helper never throws; this covers require/load / inject failures.
+      console.error(
+        `  Gateway teardown after onboard abort failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     process.exitCode = 1;
     (process.exit as (code?: number) => void)(1);
     throw new Error("Non-interactive endpoint validation failed.");
@@ -192,7 +215,7 @@ export function createInferenceSelectionValidationHelpers(
       if (preflight.trustedPrivateEndpoint) {
         console.warn(
           "  ⚠ Using an operator-trusted private inference endpoint; keep " +
-            "NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS restricted to infrastructure you control.",
+            "trusted-private host configuration restricted to infrastructure you control.",
         );
       }
       return {
@@ -258,9 +281,12 @@ export function createInferenceSelectionValidationHelpers(
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
+      retryChatCompletionsToolReadiness?: boolean;
+
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      probeFromDocker?: { expectedPort: number } | null;
       capabilityCache?: OnboardInferenceCapabilityCache;
     } = {},
   ): Promise<EndpointValidationResult> {

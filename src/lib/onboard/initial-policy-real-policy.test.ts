@@ -18,8 +18,12 @@ type PolicyRule = {
 
 type PolicyEndpoint = {
   host?: string;
+  port?: number;
+  access?: string;
   protocol?: string;
+  enforcement?: string;
   tls?: string;
+  allowed_ips?: string[];
   request_body_credential_rewrite?: boolean;
   rules?: PolicyRule[];
 };
@@ -30,7 +34,7 @@ type PolicyEntry = {
 };
 
 type PolicyDocument = {
-  filesystem_policy?: { read_write?: string[] };
+  filesystem_policy?: { read_only?: string[]; read_write?: string[] };
   network_policies?: Record<string, PolicyEntry>;
 };
 
@@ -55,6 +59,39 @@ function readPreparedPolicy(prepared: {
 }
 
 describe("initial sandbox policy real preset merge", () => {
+  it.each([
+    {
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      agent: "openclaw",
+    },
+    { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
+    {
+      path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+      agent: "langchain-deepagents-code",
+    },
+  ])("keeps $agent on the provider-neutral inference.local route without host-native inference egress", ({
+    path: policyPath,
+    agent,
+  }) => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(repoPath(...policyPath), [], { agentName: agent }),
+    );
+    const endpoints = Object.values(effective.network_policies ?? {}).flatMap(
+      (policy) => policy.endpoints ?? [],
+    );
+
+    expect(endpoints).toContainEqual(
+      expect.objectContaining({ host: "inference.local", port: 443 }),
+    );
+    expect(
+      endpoints.filter(
+        (endpoint) =>
+          endpoint.host === "host.openshell.internal" &&
+          [8000, 8001, 8081, 11434, 11435].includes(endpoint.port ?? 0),
+      ),
+    ).toEqual([]);
+  });
+
   it("uses Hermes channel YAML when the Hermes base policy path implies the agent", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("agents", "hermes", "policy-additions.yaml"),
@@ -137,6 +174,37 @@ describe("initial sandbox policy real preset merge", () => {
 
       expect(readWrite, policyCase.path.join("/")).toContain("/dev/pts");
       expect(readWrite, policyCase.path.join("/")).not.toContain("/dev/ptmx");
+    }
+  });
+
+  it("grants read-only package database access in every shipping sandbox policy (#8467)", () => {
+    const policyCases = [
+      { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
+      {
+        path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+        agent: "openclaw",
+      },
+      { path: ["agents", "openclaw", "policy-permissive.yaml"], agent: "openclaw" },
+      { path: ["agents", "hermes", "policy-additions.yaml"], agent: "hermes" },
+      { path: ["agents", "hermes", "policy-permissive.yaml"], agent: "hermes" },
+      {
+        path: ["agents", "langchain-deepagents-code", "policy-additions.yaml"],
+        agent: "langchain-deepagents-code",
+      },
+    ];
+
+    for (const policyCase of policyCases) {
+      const prepared = prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+        agentName: policyCase.agent,
+      });
+      const policy = readPreparedPolicy(prepared);
+      const readOnly = policy.filesystem_policy?.read_only ?? [];
+      const readWrite = policy.filesystem_policy?.read_write ?? [];
+
+      expect(readOnly, policyCase.path.join("/")).toContain("/var/lib/dpkg");
+      for (const writableAncestor of ["/", "/var", "/var/lib", "/var/lib/dpkg"]) {
+        expect(readWrite, policyCase.path.join("/")).not.toContain(writableAncestor);
+      }
     }
   });
 
@@ -295,5 +363,73 @@ describe("initial sandbox policy real preset merge", () => {
         }
       }
     }
+  });
+
+  it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {
+    const baselinePath = repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
+    const reviewed = YAML.parse(fs.readFileSync(baselinePath, "utf-8")) as PolicyDocument;
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(baselinePath, [], {
+        agentName: "openclaw",
+        policyTier: "restricted",
+      }),
+    );
+
+    expect(effective.network_policies?.npm_registry).toEqual(
+      reviewed.network_policies?.npm_registry,
+    );
+    const endpoint = effective.network_policies?.npm_registry?.endpoints?.[0];
+    expect(endpoint).toMatchObject({ protocol: "rest", enforcement: "enforce" });
+    expect(endpoint).not.toHaveProperty("access");
+    expect(endpoint?.rules?.map((rule) => rule.allow)).toEqual([{ method: "GET", path: "/**" }]);
+  });
+
+  it("composes default OpenClaw package and pricing routes without v0.0.99 ambiguity (#8497)", () => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(
+        repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        [],
+        {
+          agentName: "openclaw",
+          policyTier: "balanced",
+          additionalPresets: ["npm", "brew", "openclaw-pricing"],
+        },
+      ),
+    );
+    const endpoint = (policyName: string, host: string): PolicyEndpoint => {
+      const match = effective.network_policies?.[policyName]?.endpoints?.find(
+        (candidate) => candidate.host === host,
+      );
+      expect(match, `${policyName}:${host}`).toBeDefined();
+      return match ?? {};
+    };
+    const connectionMetadata = (candidate: PolicyEndpoint) => ({
+      tls: candidate.tls ?? "auto",
+      allowedIps: [...(candidate.allowed_ips ?? [])].sort(),
+    });
+    const requestMetadata = (candidate: PolicyEndpoint) => ({
+      protocol: candidate.protocol ?? "",
+      enforcement: candidate.enforcement ?? "audit",
+    });
+
+    const baselineNpm = endpoint("npm_registry", "registry.npmjs.org");
+    const presetNpm = endpoint("npm_yarn", "registry.npmjs.org");
+    expect(connectionMetadata(baselineNpm)).toEqual(connectionMetadata(presetNpm));
+    expect(requestMetadata(baselineNpm)).toEqual(requestMetadata(presetNpm));
+    expect(baselineNpm).toMatchObject({ access: "full", tls: "skip" });
+    expect(baselineNpm).not.toHaveProperty("protocol");
+    expect(baselineNpm).not.toHaveProperty("rules");
+    expect(effective.network_policies?.npm_registry?.binaries).toEqual([
+      { path: "/usr/local/bin/openclaw" },
+    ]);
+
+    const brewRaw = endpoint("brew", "raw.githubusercontent.com");
+    const pricingRaw = endpoint("openclaw-pricing", "raw.githubusercontent.com");
+    expect(connectionMetadata(brewRaw)).toEqual(connectionMetadata(pricingRaw));
+    expect(brewRaw).not.toHaveProperty("protocol");
+    expect(pricingRaw).toMatchObject({ protocol: "rest", enforcement: "enforce" });
+    expect(effective.network_policies?.brew?.binaries).not.toEqual(
+      expect.arrayContaining([{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }]),
+    );
   });
 });

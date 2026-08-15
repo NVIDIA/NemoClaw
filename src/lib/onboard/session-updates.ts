@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ServingProfileProvenance } from "../inference/serving/types";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { HermesAuthMethod, SessionUpdates } from "../state/onboard-session";
@@ -11,6 +12,7 @@ export interface OnboardSessionUpdateInput {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | string | null;
@@ -55,6 +57,9 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
     normalized.sandboxName = toNullableString(updates.sandboxName);
   if (updates.provider !== undefined) normalized.provider = toNullableString(updates.provider);
   if (updates.model !== undefined) normalized.model = toNullableString(updates.model);
+  if (updates.servingProfileProvenance !== undefined) {
+    normalized.servingProfileProvenance = updates.servingProfileProvenance;
+  }
   if (updates.endpointUrl !== undefined)
     normalized.endpointUrl = toNullableString(updates.endpointUrl);
   if (updates.credentialEnv !== undefined)

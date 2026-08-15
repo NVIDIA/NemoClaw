@@ -46,7 +46,7 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`No hostname found in URL: ${url}`);
+    throw new Error("No hostname found in URL.");
   }
 
   if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
@@ -59,6 +59,11 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   const hostname = parsed.hostname;
   if (!hostname) {
     throw new Error(`No hostname found in URL: ${url}`);
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error(
+      "Endpoint URL must not contain credentials. Remove the username and password from the URL.",
+    );
   }
   if (isPrivateHostname(hostname)) {
     throw new Error(

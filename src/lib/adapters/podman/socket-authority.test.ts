@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import net from "node:net";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { assertPodmanSocketAuthority, capturePodmanSocketAuthority } from "./socket-authority";
+import {
+  assertPodmanSocketAuthority,
+  capturePodmanSocketAuthority,
+  hardenPodmanSocketDirectory,
+} from "./socket-authority";
 
 const SOCKET_PATH = "/run/user/1000/podman/podman.sock";
 
@@ -85,10 +93,79 @@ describe("Podman socket authority", () => {
     ).toThrow("writable by another user or group");
   });
 
-  it.each([0o660n, 0o666n])("rejects another-user-writable socket mode %s", (mode) => {
+  it("accepts the rootless systemd socket mode inside a private current-user directory", () => {
+    const authority = capturePodmanSocketAuthority(SOCKET_PATH, {
+      lstat: secureLstat({ mode: 0o660n }, { "/run/user/1000/podman": { mode: 0o700n } }),
+      uid: 1000,
+    });
+
+    expect(authority.mode).toBe(String(0o660));
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "hardens the current-user socket directory without following unsafe parents (#8584)",
+    async () => {
+      const root = fs.mkdtempSync(path.join(fs.realpathSync(process.cwd()), ".nc-p-"));
+      const server = net.createServer();
+      try {
+        const socketDirectory = path.join(root, "p");
+        fs.mkdirSync(socketDirectory);
+        fs.chmodSync(socketDirectory, 0o755);
+        const socketPath = path.join(socketDirectory, "s");
+        const uid = process.getuid?.() ?? -1;
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(socketPath, resolve);
+        });
+        fs.chmodSync(socketPath, 0o660);
+
+        hardenPodmanSocketDirectory(socketPath, uid);
+        expect(fs.statSync(socketDirectory).mode & 0o777).toBe(0o700);
+
+        fs.chmodSync(socketDirectory, 0o770);
+        expect(() => hardenPodmanSocketDirectory(socketPath, uid)).toThrow(
+          "writable by another user or group",
+        );
+
+        const targetDirectory = path.join(root, "target");
+        const linkedDirectory = path.join(root, "linked");
+        fs.mkdirSync(targetDirectory);
+        fs.symlinkSync(targetDirectory, linkedDirectory, "dir");
+        expect(() =>
+          hardenPodmanSocketDirectory(path.join(linkedDirectory, "podman.sock"), uid),
+        ).toThrow();
+
+        const missingSocketDirectory = path.join(root, "missing");
+        fs.mkdirSync(missingSocketDirectory, { mode: 0o755 });
+        expect(() =>
+          hardenPodmanSocketDirectory(path.join(missingSocketDirectory, "missing.sock"), uid),
+        ).toThrow();
+        expect(fs.statSync(missingSocketDirectory).mode & 0o777).toBe(0o755);
+
+        fs.chmodSync(socketDirectory, 0o755);
+        fs.chmodSync(socketPath, 0o666);
+        expect(() => hardenPodmanSocketDirectory(socketPath, uid)).toThrow(
+          "writable by another user or group",
+        );
+        expect(fs.statSync(socketDirectory).mode & 0o777).toBe(0o755);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("rejects socket modes reachable by another user", () => {
     expect(() =>
       capturePodmanSocketAuthority(SOCKET_PATH, {
-        lstat: secureLstat({ mode }),
+        lstat: secureLstat({ mode: 0o660n }),
+        uid: 1000,
+      }),
+    ).toThrow("socket authority is writable by another user or group");
+
+    expect(() =>
+      capturePodmanSocketAuthority(SOCKET_PATH, {
+        lstat: secureLstat({ mode: 0o666n }, { "/run/user/1000/podman": { mode: 0o700n } }),
         uid: 1000,
       }),
     ).toThrow("socket authority is writable by another user or group");

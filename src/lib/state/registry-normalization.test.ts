@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
+  normalizeCustomPolicyEntries,
 } from "./registry-normalization";
 
 const originalHome = process.env.HOME;
@@ -45,6 +47,26 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  const servingProfileProvenance = {
+    schemaVersion: 1,
+    catalogDigest: `sha256:${"1".repeat(64)}`,
+    preset: {
+      id: "vllm.dgx-spark-gb10.single.example",
+      digest: `sha256:${"2".repeat(64)}`,
+      displayName: "Example Spark profile",
+      supportState: "experimental",
+    },
+    recipe: {
+      id: "vllm.dgx-spark-gb10.single.example",
+      digest: `sha256:${"3".repeat(64)}`,
+      backend: "vllm",
+    },
+    model: { id: "example/model", revision: "revision-1" },
+    runtimeImage: null,
+    estimatedImageDownloadBytes: null,
+    estimatedModelDownloadBytes: null,
+  } as const;
+
   it.each([
     null,
     [],
@@ -137,6 +159,100 @@ describe("sandbox registry normalization", () => {
       lifecycleGeneration,
       lifecycleLiveIdentityFingerprint,
     });
+  });
+
+  it("backfills a lifecycle generation only for the unchanged legacy Docker row (#8584)", async () => {
+    const registry = await loadRegistryWith({});
+    const { compareAndSetLegacySandboxLifecycleGeneration } = await import(
+      "./registry/lifecycle-generation"
+    );
+    registry.registerSandbox({ name: "portable", openshellDriver: "docker" });
+    const expected = registry.getSandbox("portable")!;
+
+    expect(compareAndSetLegacySandboxLifecycleGeneration(expected, "a".repeat(64))).toBe(true);
+    expect(registry.getSandbox("portable")?.lifecycleGeneration).toBe("a".repeat(64));
+    expect(compareAndSetLegacySandboxLifecycleGeneration(expected, "b".repeat(64))).toBe(false);
+
+    registry.registerSandbox({ name: "changed", openshellDriver: "docker" });
+    const stale = registry.getSandbox("changed")!;
+    registry.updateSandbox("changed", { model: "replacement" });
+    expect(compareAndSetLegacySandboxLifecycleGeneration(stale, "c".repeat(64))).toBe(false);
+  });
+
+  it("round-trips immutable serving profile provenance while preserving legacy rows (#8246)", async () => {
+    const registry = await loadRegistryWith({ legacy: { name: "legacy" } });
+    expect(registry.getSandbox("legacy")?.servingProfileProvenance).toBeUndefined();
+
+    registry.registerSandbox({ name: "profile", servingProfileProvenance });
+    vi.resetModules();
+    const reloadedRegistry = await import("./registry");
+    expect(reloadedRegistry.getSandbox("profile")?.servingProfileProvenance).toEqual(
+      servingProfileProvenance,
+    );
+  });
+
+  it("fails closed when persisted serving profile provenance is malformed (#8246)", async () => {
+    const registry = await loadRegistryWith({
+      profile: {
+        name: "profile",
+        servingProfileProvenance: { schemaVersion: 1, catalogDigest: "latest" },
+      },
+    });
+    expect(() => registry.getSandbox("profile")).toThrow("invalid serving profile provenance");
+  });
+});
+
+describe("custom policy pin receipt normalization (#8176)", () => {
+  const content = `network_policies:
+  private-api:
+    endpoints:
+      - host: api.corp.example
+        allowed_ips: [10.20.30.40]
+`;
+  const receipt = {
+    version: 1 as const,
+    contentDigest: createHash("sha256").update(content).digest("hex"),
+  };
+
+  it("keeps exact generated-pin authority bound to custom policy content", () => {
+    expect(
+      normalizeCustomPolicyEntries([
+        {
+          name: "private-api",
+          content,
+          sourcePath: "/tmp/private-api.yaml",
+          trustedPrivatePins: receipt,
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "private-api",
+        content,
+        sourcePath: "/tmp/private-api.yaml",
+        trustedPrivatePins: receipt,
+      },
+    ]);
+  });
+
+  it("fails closed when persisted pin authority does not match exact content", () => {
+    expect(() =>
+      normalizeCustomPolicyEntries([
+        {
+          name: "private-api",
+          content: `${content}\n# changed`,
+          trustedPrivatePins: receipt,
+        },
+      ]),
+    ).toThrow(/invalid trusted-private pin authority.*before rebuilding/i);
+    expect(() =>
+      normalizeCustomPolicyEntries([
+        {
+          name: "private-api",
+          content,
+          trustedPrivatePins: { contentDigest: receipt.contentDigest },
+        },
+      ]),
+    ).toThrow(/invalid trusted-private pin authority.*before rebuilding/i);
   });
 });
 

@@ -4,8 +4,8 @@
 title: "Set Up an OpenAI-Compatible Endpoint"
 sidebar-title: "OpenAI-Compatible Endpoint"
 description: "Connect NemoClaw to a self-hosted or custom OpenAI-compatible inference endpoint."
-description-agent: "Shows how to configure an OpenAI-compatible endpoint for NemoClaw, including raw model files and non-interactive onboarding."
-keywords: ["nemoclaw openai compatible endpoint", "custom inference endpoint", "self-hosted inference"]
+description-agent: "Shows how to configure an OpenAI-compatible endpoint for NemoClaw, including portable inference descriptors, raw model files, and non-interactive onboarding."
+keywords: ["nemoclaw openai compatible endpoint", "portable inference descriptor", "custom inference endpoint", "self-hosted inference"]
 content:
   type: "how_to"
 ---
@@ -64,6 +64,104 @@ Other URLs still require `COMPATIBLE_API_KEY`.
 
 Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
 
+## Supply a Portable Inference Descriptor
+
+A host-side activation component can select a compatible endpoint for the portable experimental profile.
+The component must write the descriptor before the installer or onboarding command starts.
+The activation component owns authentication to the descriptor source and writes only the five resolved inference fields.
+
+<Warning>
+The descriptor contains an API key.
+Use a real `/run/nemoclaw` directory owned by root or the user who runs NemoClaw.
+Do not permit group or other users to write that directory.
+Publish the descriptor only at `/run/nemoclaw/portable-inference.json`.
+Use a regular file with one hard link, mode `0600`, and ownership by the user who runs NemoClaw.
+Do not add descriptor-source locations or source credentials to the descriptor.
+Do not include the descriptor or its values in a repository, image, log, shell argument, artifact, or activation-component persistent state.
+Use a short-lived API key and set `expiresAt` to that credential's expiration time.
+</Warning>
+
+Create a temporary regular file in `/run/nemoclaw` with the required owner and mode `0600`.
+Write the complete JSON.
+Close the temporary file.
+Rename that file to `/run/nemoclaw/portable-inference.json`.
+This atomic replacement prevents NemoClaw from reading a partial descriptor.
+The descriptor uses this schema:
+
+```json
+{
+  "schemaVersion": 1,
+  "apiKey": "<short-lived-api-key>",
+  "baseUrl": "https://inference.example.com/v1",
+  "model": "example-model",
+  "expiresAt": "<future-ISO-8601-UTC-timestamp>"
+}
+```
+
+Each field has one required purpose:
+
+| Field | Requirement |
+|---|---|
+| `schemaVersion` | Use the integer `1`. |
+| `apiKey` | Supply the short-lived API key for the compatible endpoint. |
+| `baseUrl` | Supply a compatible endpoint base URL that uses HTTPS, without credentials, a query, or a fragment. NemoClaw applies its existing endpoint and server-side request forgery (SSRF) policy. |
+| `model` | Supply the provider model ID. |
+| `expiresAt` | Supply a future ISO 8601 UTC timestamp that matches the API key lifetime. |
+
+Run the portable installer after the final descriptor is available:
+
+<AgentOnly variant="openclaw">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --experimental-profile portable --fresh
+```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --experimental-profile portable --fresh
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --experimental-profile portable --fresh
+```
+
+</AgentOnly>
+
+The portable profile handles the descriptor as follows:
+
+| Descriptor state | Onboarding result |
+|---|---|
+| Absent | NemoClaw keeps the existing portable behavior. The local Podman `qwen3-vl:4b` model remains the active inference route. |
+| Directory and file metadata meet the requirements above, the descriptor is valid, and the authenticated onboarding checks pass | NemoClaw makes the compatible endpoint model the active inference route. If the local Podman `qwen3-vl:4b` runner already exists, NemoClaw leaves it installed as standby. |
+| File passes the metadata checks but contains malformed JSON, an invalid schema, an expired credential, or a rejected endpoint | NemoClaw deletes the descriptor and exits before it changes gateway, provider, sandbox, or onboarding state. |
+| Descriptor is valid, but the endpoint, selected model, or configured route fails an authenticated onboarding check | NemoClaw deletes the descriptor and exits without reporting onboarding success. The compatible route may already be configured. NemoClaw does not activate an existing local runner automatically. |
+| Descriptor entry is present, but directory or file metadata does not meet the requirements above | NemoClaw does not read or delete the filesystem entry. It exits before onboarding changes state. The activation component or operator must atomically replace the entry. |
+
+OpenShell keeps one active inference route.
+The local runner is standby only when it already exists.
+OpenShell does not automatically switch to that runner when the compatible endpoint is unavailable.
+Use [Switch Inference Providers](../manage-inference/switch-providers) when you need to change the active route.
+
+Endpoint validation is a point-in-time onboarding check, not continuous health monitoring.
+During onboarding, NemoClaw sends an authenticated Chat Completions request for the selected model.
+After route setup, applicable flows also verify that the sandbox receives non-empty assistant content through `inference.local`.
+These checks do not provide continuous availability monitoring or automatic failover.
+
+NemoClaw consumes and deletes a descriptor only after its file metadata passes these checks.
+It deletes an admitted descriptor whether it accepts or rejects the descriptor content.
+During onboarding, NemoClaw holds the API key in an asynchronous in-process credential scope instead of `process.env`.
+Unrelated child processes do not inherit the API key.
+Compatible-endpoint validation reads the scoped value, and provider registration passes it explicitly to OpenShell.
+After registration, OpenShell holds the provider credential and adds it to managed inference requests.
+NemoClaw does not write the API key into the sandbox or its persistent state.
+The upstream credential expiration still controls the registered credential's lifetime.
+The activation component must supply a new descriptor for each onboarding attempt that needs the compatible endpoint.
+
 ## Serve a Raw Model File
 
 Start a compatible server for a raw model file instead of passing the file path to NemoClaw.
@@ -119,11 +217,12 @@ NEMOCLAW_PROVIDER=custom \
 | Variable | Purpose |
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `custom`. |
-| `NEMOCLAW_ENDPOINT_URL` | Base URL of the server. |
+| `NEMOCLAW_ENDPOINT_URL` | Base URL of the server, without userinfo, query, or fragment components. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
-| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
 
 <AgentOnly variant="openclaw">
@@ -141,7 +240,7 @@ Private and reserved addresses are blocked by default.
 To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:
 
 ```bash
-NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=llm.corp.example \
+NEMOCLAW_TRUSTED_PRIVATE_HOSTS=llm.corp.example \
   NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=https://llm.corp.example/v1 \
   NEMOCLAW_MODEL=your-model \
@@ -149,8 +248,12 @@ NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=llm.corp.example \
   $$nemoclaw onboard --non-interactive
 ```
 
-NemoClaw still resolves the host before probing and pins the probe to the resolved address.
-Only RFC1918, CGNAT, and IPv6 ULA destinations can be admitted; link-local metadata and other reserved ranges remain blocked.
+NemoClaw still resolves the host before probing and pins outbound validation to the complete canonical address set.
+An exact trusted host can return both public and supported private addresses.
+NemoClaw pins every canonical answer.
+If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the endpoint instead of discarding that answer.
+Among private answers, NemoClaw admits only RFC1918, carrier-grade network address translation (CGNAT), and IPv6 unique local address (ULA) destinations.
+Link-local metadata and other reserved ranges remain blocked.
 An unlisted private host, a hostname suffix match, or a DNS failure also remains blocked.
 
 ## Related Topics

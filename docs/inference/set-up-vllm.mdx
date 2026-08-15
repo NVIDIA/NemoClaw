@@ -11,6 +11,7 @@ content:
 ---
 
 NemoClaw can connect to an existing vLLM server or install and start a managed vLLM container on supported NVIDIA GPU hosts.
+It also provides a Deferred N1x preview pending a physical NemoClaw Express E2E run.
 
 <Note>
 NemoClaw forces the Chat Completions API path for vLLM.
@@ -24,13 +25,18 @@ Use a host firewall with default-deny inbound rules.
 Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
 
-The qualified dual-DGX Station path instead binds its bearer-protected `/v1` API to one selected private rail address and uses host networking on both runtime containers.
-Follow [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for its isolation requirements.
+An authenticated fixed profile publishes Docker port `8000` on exactly two host addresses: `127.0.0.1` and the exact private IPv4 gateway of the `openshell-docker` bridge.
+It never publishes that host port on `0.0.0.0` or `::`.
+The provider route remains `https://inference.local` inside the sandbox, and OpenShell reaches the server through the private bridge binding.
+The managed Muse Glimmer profile uses the same bearer-protected listener and two-address publication boundary.
+
+The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
+Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
 </Warning>
 
 ## Use an Existing Server
 
-When vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+On hosts other than N1x, when vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
 
 Run onboarding.
 
@@ -39,10 +45,19 @@ $$nemoclaw onboard
 ```
 
 Select **Local vLLM**.
-On generic hosts, the entry includes an experimental label; on DGX Spark or DGX Station, it does not.
+On generic hosts, the entry includes an experimental label.
+N1x does not offer the existing-server entry; it offers only the managed **Install vLLM** or **Start vLLM** entry with the **Deferred preview** label.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 
-When an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
+On hosts other than N1x, when an install request encounters an already-running server, NemoClaw selects that server instead of starting another container.
+On N1x, explicit managed-preview intent never reuses an already-running server.
+Stop the server, then rerun managed onboarding.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw onboard --non-interactive
+```
+
 If the requested registry model and the served `id` differ, NemoClaw accepts the served `id` only when `/v1/models` reports a safe `root` that exactly matches the registry model.
 NemoClaw rejects mismatched or unverifiable roots, and it still requires the exact served identity for a newly started NemoClaw-managed container and for an existing shared-gateway route.
 When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the configured context window unless you set `NEMOCLAW_CONTEXT_WINDOW`.
@@ -74,23 +89,71 @@ vllm serve /models/Hermes-3-Llama-3.1-8B \
 
 Use the parser required by your selected model instead of copying `hermes` for another model family.
 Without both `--enable-auto-tool-choice` and a matching parser, tool calls can appear as raw assistant text instead of structured `tool_calls`.
+The `--host` value in this operator-run example controls the listener inside that server process.
+For the authenticated fixed profile, evaluate host exposure from its published Docker port bindings as described in [Install a Fixed vLLM Profile](choose-local-inference-server#install-a-fixed-vllm-profile).
 
 ## Install or Start Managed vLLM
 
 NemoClaw displays the **Install vLLM** or **Start vLLM** entry by default on DGX Spark and DGX Station.
+N1x displays the same entry with a **Deferred preview** label.
 Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
+
+### Discover Serving Profiles
+
+List the serving profiles installed with NemoClaw before you select a managed inference configuration.
+
+```bash
+$$nemoclaw profiles list
+```
+
+The command evaluates the catalog against the current host without downloading a model or changing host, gateway, inference, or sandbox resources.
+Each entry includes a stable ID, display name, backend, model, topology, selection mode, support state, estimated downloads, and an incompatibility reason when applicable.
+Add `--json` when a script needs the same fields as structured output.
+
+### Select a Serving Profile
+
+Pass a compatible profile's stable ID to onboarding.
+
+```bash
+$$nemoclaw onboard --profile <profile-id>
+```
+
+The same profile selector works with interactive and non-interactive onboarding.
+NemoClaw rejects unknown, ambiguous, disabled, incompatible, or conflicting selections before image or model downloads begin.
+Before confirmation, the review screen shows the resolved profile and recipe IDs, model, immutable runtime image, support state, and estimated image and model downloads.
+Do not combine `--profile` with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` overrides.
+If `NEMOCLAW_SERVING_PRESET` is already set, it must select the same stable profile ID; a different ID conflicts with `--profile`.
+
+The profile selector is model-independent, so a catalog can add profiles without adding model-specific CLI flags.
+Omitting `--profile` preserves the existing provider and model defaults.
+If onboarding is interrupted, `$$nemoclaw onboard --resume` reuses the recorded catalog, preset, and recipe digests.
+It exits before runtime effects if the installed catalog changed instead of silently switching the recipe; use `$$nemoclaw onboard --fresh --profile <profile-id>` to review and start with the current definition.
+Legacy sessions that predate profile provenance still resume with their original behavior, but you cannot add `--profile` to one of those in-progress sessions.
 
 In an interactive run, the managed path lists the supported model registry for your host profile.
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
-NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
-The container carries a NemoClaw ownership label so later onboarding runs can distinguish it from a bring-your-own server without trusting the container name alone.
+The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container on `localhost:8000`.
+The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
+The container carries NemoClaw ownership and immutable catalog labels so later onboarding, recovery, and uninstall runs can distinguish it from a bring-your-own server without trusting the container name alone.
+NemoClaw also records an owner-only, credential-free runtime receipt that binds those labels to the exact container ID and API-key fingerprint.
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
-If another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On hosts other than N1x, if another vLLM server already occupies port `8000`, NemoClaw selects the existing-server path and applies the model-identity checks described above.
+On N1x, NemoClaw stops managed onboarding and requires you to stop that server before trying the Deferred preview again.
+If another process holds the configured single-host port, NemoClaw stops the managed install before it persists a bearer key or records the selected model.
+NemoClaw also stops before storage prompts, cache creation, image pull, or container start.
+Stop the process, then run onboarding again.
+Docker reports a bind failure if another process claims the port after this preflight.
 Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+  N1x uses the same image.
+- The DGX Spark Muse Glimmer recipe uses the `linux/arm64` post-merge vLLM nightly digest `sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204` with a compressed layer size of `9.70 GB` under `vllm/vllm-openai`.
+  The image was built from vLLM commit `ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9`, which contains merged Muse Glimmer support commit `6adad08767583f52eb4d2122111af0bf638ed5e6`.
+  It pins Hugging Face revision `d35cb79050f419c457611b1cee5c5d15b176f285` for the approximately `25.45 GB` model download.
+- The DGX Spark Nemotron 3.5 Lightning recipe uses the `linux/arm64` digest `sha256:3af90144a0926e5c5fe46ee16e5201e763dd854538b9d7ce433755f11dadaf78` with a compressed layer size of approximately `12.69 GB` under `vllm/vllm-openai`.
+  It pins Hugging Face revision `0dcd680e5585c791728c83342b311d0a0026dbeb` for the approximately `21.56 GB` model download.
 - The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
@@ -102,7 +165,7 @@ The two-Station page records the distributed recipe's image and runtime versions
 
 The first run duration depends on image and model size, storage performance, and network throughput.
 Later runs reuse the cached image and model weights.
-The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
+The single-host managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
 
 ### Authenticate Hugging Face Downloads
 
@@ -130,6 +193,25 @@ $$nemoclaw onboard --resume
 
 Authentication reduces anonymous rate-limit exposure but does not guarantee that a download cannot receive HTTP `429`.
 Gated models still require license acceptance and a token before NemoClaw starts image or model downloads.
+
+### Check GPU Compute Capability
+
+A quantized checkpoint does not load on a GPU whose compute capability is lower than the capability the checkpoint was built for.
+Before the image pull and the model download, NemoClaw reads the compute capability of each GPU that `nvidia-smi` reports.
+It compares the lowest reported capability against the selected model's minimum.
+
+On a mismatch, the managed install stops before those downloads and the error names both values.
+
+```text
+  vLLM install failed: NVIDIA Nemotron-3 Nano 4B FP8 requires GPU compute capability 8.9 or newer, but this host reports 8.0. Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.
+```
+
+Interactive onboarding returns to the inference-provider list so you can select another provider or model.
+Non-interactive onboarding exits.
+
+[Select a Managed Model](#select-a-managed-model) lists the minimum for each registry entry.
+A registry entry with no declared minimum, such as an unquantized checkpoint, skips this check.
+When `nvidia-smi` reports no compute capability, NemoClaw continues and leaves the decision to vLLM.
 
 ### Check Storage Before Downloads
 
@@ -169,7 +251,7 @@ Pressing **Enter**, entering `n` or `no`, or entering any other response stops b
 
 <Warning>
 `--yes` and `NEMOCLAW_YES=1` do not change managed vLLM storage-warning handling.
-Express installation and other non-interactive setup treat a verified warning that Docker image storage or model-cache storage is insufficient as advisory, so NemoClaw prints the warning and continues the guarded download.
+Express installation and other non-interactive setup stop after a verified warning that Docker image storage or model-cache storage is insufficient, before the guarded download starts.
 Interactive setup still requires you to enter `y` or `yes` for a verified insufficient-capacity warning.
 
 An inconclusive model-cache warning also requires explicit confirmation interactively, and non-interactive setup stops with guidance to rerun interactively.
@@ -179,24 +261,134 @@ An inconclusive Docker image-storage check retains its existing automatic-contin
 <Note>
 The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
 NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+The long-lived vLLM container mounts only the Hugging Face hub cache read-only and uses offline mode, so it cannot change host-cache ownership.
 Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
 
 A legacy root-owned or otherwise unwritable required model-cache path stops before the image pull and prints a scoped ownership-repair command; NemoClaw never changes its ownership automatically.
 </Note>
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
 If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
+Because the single-host managed container carries the `--restart unless-stopped` policy described above, a container that cannot serve its model restarts instead of exiting.
+While NemoClaw waits for the API, it also reads that container's restart count.
+After the container restarts three times, NemoClaw stops the container and the install instead of waiting out the full load timeout.
 
 When you start managed vLLM outside the installer express flow, NemoClaw uses these profile defaults:
 
 | Host profile | Default model |
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
+| N1x | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
 | DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
+
+For the managed one-host DGX Spark and N1x `nvidia/Qwen3.6-35B-A3B-NVFP4` profiles, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
+The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
+
+NVIDIA Nemotron 3.5 Lightning is an additional explicit-only single-DGX Spark profile and does not change the Qwen default.
+Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.nemotron-3.5-lightning-30b-a3b-nvfp4
+```
+
+The profile serves the public [`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) checkpoint through a pinned ARM64 vLLM image.
+Its profile limits for one concurrent sequence are a 65,536-token context window, a 4,096-token batch limit, 0.65 GPU-memory utilization, FP8 KV cache, and one-token MTP speculative decoding.
+It uses vLLM's Python frontend because the pinned runtime's Rust frontend does not register the required `step3p5` reasoning and tool-call parsers.
+Physical single-DGX Spark validation of public revision `0dcd680e5585c791728c83342b311d0a0026dbeb` covered direct chat, automatic and named structured tool calls, a ten-request release workload with input lengths from 32,768 through 41,984 tokens and 2,048 output tokens per request, OpenClaw chat and file tools, and a cached restart.
+Requests 2 through 10 averaged about 102 output tokens/s.
+At 0.65 utilization, the workload completed with about 33 GiB of host memory available and no NVIDIA kernel errors.
+
+<Warning title="Experimental Nemotron 3.5 Lightning vLLM Profile">
+This profile is an explicit opt-in for one DGX Spark and remains Experimental.
+Promotion requires broader validation of the pinned Python frontend and the `step3p5` reasoning and tool-call parsers.
+The fixed recipe intentionally rejects model and serve-argument overrides; use another catalog profile instead of modifying its validated resource boundary.
+</Warning>
+
+<Note title="Reading Reasoning and Sizing max_tokens for Direct Callers">
+Nemotron 3.5 Lightning is a reasoning model that emits a hidden reasoning trace before its answer.
+Two behaviors surprise direct callers of the managed vLLM endpoint; the OpenClaw agent path is unaffected because it already requests a large budget.
+
+- **Read reasoning from `reasoning`, not `reasoning_content`.**
+  The pinned vLLM runtime renamed the deprecated `reasoning_content` response field to `reasoning`, so `choices[].message.reasoning_content` is `null` even for prompts that reasoned heavily.
+  The reasoning is not discarded.
+  Read non-streaming reasoning from `choices[].message.reasoning`.
+  For streaming responses, read `choices[].delta.reasoning`.
+- **Send a generous `max_tokens` (at least `1024`, and more for hard prompts).**
+  The reasoning trace counts against `max_tokens`.
+  With a modest budget the model can spend the entire budget on reasoning before it reaches the answer, returning an empty `content` with `finish_reason=length`.
+  A larger budget lets the answer follow the reasoning.
+</Note>
+
+Muse Glimmer is an additional single-DGX Spark choice and does not change the Qwen default.
+Select its stable catalog ID after confirming that `$$nemoclaw profiles list` reports it as compatible.
+
+```bash
+$$nemoclaw onboard --profile vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4
+```
+
+The profile serves `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` with the `muse-glimmer` alias.
+The registered recipe configures a 32,768-token context window, 1 concurrent sequence, a 4,096-token batch limit, and 0.75 GPU-memory utilization.
+It uses `muse_glimmer` for reasoning and tool-call parsing and sets `--generation-config auto`.
+The pinned post-merge runtime image was verified on one physical DGX Spark.
+The managed `/v1/models` endpoint reported `muse-glimmer`.
+A direct chat request returned exact text `391`, and a reasoning request returned separated reasoning in `message.reasoning`.
+A required structured tool request returned a named tool call.
+A real OpenClaw TUI turn used one prompt and returned `391` through provider `inference` and model `muse-glimmer`.
+A managed stop and start preserved the exact image digest and managed inference route.
+The fixed profile does not enable DFlash, pass `--quantization` or `--trust-remote-code`, or install `fastsafetensors`.
+It rejects model and serve-argument overrides so its validated resource boundary remains reproducible.
+
+<Warning title="Experimental Muse Glimmer vLLM Profile">
+This profile pins a post-merge vLLM nightly image and remains Experimental.
+Physical qualification covered only the bounded verification above.
+Vision and DFlash speculative decoding are disabled and outside this profile's scope.
+</Warning>
+
+NemoClaw creates or reuses the Muse Glimmer bearer key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` host file before confirmation.
+The managed vLLM container reads the key while it runs, and the sandbox receives only the managed inference route.
+The key remains for a retry after cancellation, interruption, or a later preflight failure.
+A full uninstall removes it only after exact managed-runtime cleanup succeeds and no sibling gateway remains; gateway-scoped cleanup can preserve the host-global runtime and key for another gateway.
+
+### Use N1x Express
+
+On an N1x host that matches the required identity, the Deferred Express preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+The installer uses the existing managed-vLLM image, download, container, receipt, recovery, and uninstall lifecycle.
+The installer applies the existing CUDA and Container Device Interface (CDI) readiness checks before it downloads the image or model.
+
+NemoClaw requires all of this N1x identity evidence:
+
+- The host runs Linux on `arm64`.
+- `/etc/fastos-release` is a regular file of 1 through 4,096 bytes that is owned by UID 0 and GID 0.
+- The marker is not a symbolic link, grants no group or world write access, and contains exactly one `NAME="N1x FASTOS"` line.
+- A display-class PCI device has NVIDIA vendor ID `10de` and device ID `2e2a`.
+
+NemoClaw parses `/etc/fastos-release` as inert text and does not source it.
+The classifier does not pin a FastOS version, kernel version, driver version, firmware version, or GPU UUID.
+Generic DMI values, such as `SKU 1` and `JMJWOA-Generic`, do not establish N1x identity by themselves.
+
+N1x Express does not activate DGX Spark cluster discovery, the fixed catalog path, managed llama.cpp, or NVIDIA NIM.
+Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pending-validation readiness exception.
+Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
+Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
+
+<Warning title="N1x Express Qualification Pending">
+Physical CUDA and CDI checks passed on one N1x host.
+The full NemoClaw Express E2E test is still pending, so the N1x platform status remains Deferred.
+Do not claim this path as supported until [Platform Support](../../reference/platform-support) reports a promoted status.
+</Warning>
 
 On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b`.
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
+
+On DGX Spark, Express keeps automatic managed-vLLM serving-profile selection as option 1, the default.
+It offers the fixed local vLLM profile as option 2.
+When you select option 2, the serving catalog supplies the pinned model, runtime image, port, and serve arguments.
+The installer rejects provider and model overrides for that fixed profile, and the dedicated onboarder rejects vLLM model, port, and serve-argument overrides before it starts the managed container.
+Explicit `NEMOCLAW_MODEL` or `NEMOCLAW_VLLM_MODEL` intent retains the customizable managed-vLLM path and skips the fixed-profile choice.
+If onboarding stops after you select option 2, `$$nemoclaw onboard --resume` reuses the recorded fixed profile instead of returning to automatic serving-profile selection.
+Refer to [Choose a Local Inference Server](choose-local-inference-server#install-a-fixed-vllm-profile) for fixed-profile installation and verification.
+Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit distributed-profile selection, profile requirements, and cleanup behavior.
 
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 
@@ -232,14 +424,14 @@ If no server is running, it selects the managed install or start entry.
 If neither local entry is available, it selects NVIDIA Endpoints.
 On DGX Station and other hosts, an unset provider keeps NVIDIA Endpoints as the automatic default.
 
-Use an already-running server.
+On hosts other than N1x, use an already-running server.
 
 ```bash
 NEMOCLAW_PROVIDER=vllm \
   $$nemoclaw onboard --non-interactive
 ```
 
-Install or start managed vLLM on a supported host.
+Install or start managed vLLM on a supported host, or explicitly enter the Deferred N1x preview.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
@@ -247,6 +439,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 ```
 
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for a non-interactive run.
+On N1x, that setting is explicit preview intent and waives only the pending physical-validation finding after the N1x identity qualifies.
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 
@@ -288,19 +481,22 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 Set `NEMOCLAW_VLLM_MODEL=<slug>` before onboarding to select a model without prompting.
 NemoClaw applies the registered `vllm serve` arguments, including the reasoning parser, tool-call parser, and `--max-model-len`.
 
-| Slug | Hugging Face model | Supported host profiles | Notes |
-|---|---|---|---|
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Supported override. |
-| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | DGX Spark default. |
-| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Generic Linux NVIDIA GPU default. |
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | DGX Station profile default outside express install. |
-| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
-| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Gated and requires license acceptance. |
+| Slug | Hugging Face model | Registered host profiles | Minimum compute capability | Notes |
+|---|---|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Supported override. |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark, N1x | `12.1` | DGX Spark and N1x default. |
+| `muse-glimmer-30b` | `Inferact/Muse-Glimmer-30B-NVFP4-W4A4` | DGX Spark | `12.1` | Experimental single-DGX Spark choice for text, reasoning, and structured tool calls. NemoClaw does not enable or support DFlash for this profile. |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
+| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | None | Gated and requires license acceptance. |
 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
 A recognized override that does not support the detected host also fails before image or model downloads.
 The error names the selected model and detected host profile.
+A model whose quantized checkpoint needs a newer GPU than the host provides also fails before those downloads.
+Follow [Check GPU Compute Capability](#check-gpu-compute-capability) for that check.
 
 Gated models require a Hugging Face token and license acceptance.
 Follow [Authenticate Hugging Face Downloads](#authenticate-hugging-face-downloads) before onboarding so NemoClaw can forward the token temporarily to the one-shot model downloader.
@@ -317,7 +513,7 @@ The host checks the token before `docker pull`, so a missing or empty token stop
 
 ## Add Managed Serve Arguments
 
-Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options that are not in the registry.
+Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options and overrides.
 NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the registry defaults.
 
 ```bash
@@ -328,9 +524,23 @@ NEMOCLAW_PROVIDER=install-vllm \
 
 If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
 
+To bound resource use while investigating long-context workflows on one DGX Spark or N1x host, select the Qwen profile.
+The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=qwen3.6-35b-a3b-nvfp4 \
+  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--no-async-scheduling","--max-model-len","32768","--max-num-seqs","1","--max-num-batched-tokens","4096"]' \
+  $$nemoclaw onboard --non-interactive
+```
+
+This override reduces request concurrency and context capacity, so it can reduce throughput.
+It does not guarantee protection against a DGX Spark or N1x host freeze.
+
 ## Related Topics
 
 - [Choose a Local Inference Server](choose-local-inference-server) to compare vLLM with Ollama and NVIDIA NIM.
+- [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for the Experimental distributed DeepSeek V4 Flash profile.
 - [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for the Deferred distributed-serving workflow.
 - [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) when model startup or validation needs more time.
 - [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.

@@ -67,13 +67,13 @@ function mustGetTier(name: string): Tier {
 
 describe("tiers", () => {
   describe("listTiers", () => {
-    it("returns exactly 3 tiers", () => {
-      expect(listTiers()).toHaveLength(3);
+    it("returns exactly 4 tiers", () => {
+      expect(listTiers()).toHaveLength(4);
     });
 
-    it("orders tiers as restricted, balanced, then open", () => {
+    it("orders tiers as restricted, balanced, open, then personal", () => {
       const names = listTiers().map((tier: Tier) => tier.name);
-      expect(names).toEqual(["restricted", "balanced", "open"]);
+      expect(names).toEqual(["restricted", "balanced", "open", "personal"]);
     });
 
     it("each tier has name, label, description, and presets array", () => {
@@ -87,7 +87,7 @@ describe("tiers", () => {
 
     it("labels are human-readable capitalised strings", () => {
       const labels = listTiers().map((tier: Tier) => tier.label);
-      expect(labels).toEqual(["Restricted", "Balanced", "Open"]);
+      expect(labels).toEqual(["Restricted", "Balanced", "Open", "Personal"]);
     });
   });
 
@@ -105,6 +105,11 @@ describe("tiers", () => {
     it("returns the open tier", () => {
       const tier = mustGetTier("open");
       expect(tier.name).toBe("open");
+    });
+
+    it("returns the personal tier", () => {
+      const tier = mustGetTier("personal");
+      expect(tier.name).toBe("personal");
     });
 
     it("returns null for an unknown tier", () => {
@@ -212,6 +217,22 @@ describe("tiers", () => {
       );
       for (const name of balancedNames) {
         expect(openNames.has(name)).toBe(true);
+      }
+    });
+  });
+
+  describe("tier: personal", () => {
+    it("includes every maintained preset", () => {
+      const available = policies.listPresets().map((preset: Preset) => preset.name);
+      const personal = mustGetTier("personal").presets.map((preset: TierPreset) => preset.name);
+
+      expect(new Set(personal)).toEqual(new Set(available));
+      expect(personal).toHaveLength(available.length);
+    });
+
+    it("defaults every preset to read-write", () => {
+      for (const preset of mustGetTier("personal").presets) {
+        expect(preset.access).toBe("read-write");
       }
     });
   });

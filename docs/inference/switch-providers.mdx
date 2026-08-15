@@ -59,7 +59,7 @@ When the API family changes, NemoClaw commits the route and configuration, then 
 <AgentOnly variant="hermes">
 
 For Hermes, NemoClaw updates `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
-When the dashboard profile exists, NemoClaw also mirrors the route into `/sandbox/.hermes/dashboard-home/config.yaml`; a normal runtime route change does not rebuild or restart Hermes.
+When the dashboard profile exists, NemoClaw also mirrors the route into `/sandbox/.hermes/profiles/dashboard-home/config.yaml`; a normal runtime route change does not rebuild or restart Hermes.
 If that dashboard mirror cannot be confirmed, the route and main config remain committed but the command exits nonzero.
 Follow [Hermes dashboard config did not converge](../../reference/troubleshooting#hermes-dashboard-config-did-not-converge) before using Dashboard Chat.
 A missing dashboard profile is treated as disabled and does not fail the switch.

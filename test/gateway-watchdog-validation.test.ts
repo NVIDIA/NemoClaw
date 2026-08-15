@@ -53,6 +53,7 @@ describe("gateway watchdog numeric env guard", () => {
     ["12", 0],
     ["30", 0],
     ["999", 0],
+    ["999999999", 0],
   ])("accepts positive integer %s", (input, expected) => {
     expect(runGuard(input)).toBe(expected);
   });
@@ -67,6 +68,12 @@ describe("gateway watchdog numeric env guard", () => {
     [" 5 ", 1],
     ["5.0", 1],
     ["one", 1],
+    // Over-long decimals overflow Bash arithmetic to a negative value, which
+    // would make every threshold comparison false and kill the gateway on its
+    // first not-serving probe.
+    ["1000000000", 1],
+    ["9223372036854775808", 1],
+    ["999999999999999999999999999999999999", 1],
   ])("rejects non-positive-integer %j", (input, expected) => {
     expect(runGuard(input)).toBe(expected);
   });

@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import {
@@ -133,8 +136,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
-    expect(output).toContain("Connected:");
-    expect(output).toContain("2 sessions");
+    expect(output).toContain("SSH sessions: 2");
     expect(output).toContain("Permissions: mutable default");
     expect(output).toContain("Update:");
     expect(output).toContain("Recovered NemoClaw gateway runtime via gateway reattach.");
@@ -147,6 +149,65 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports zero SSH sessions as 'none' without connection-negative language (#7805)", async () => {
+    const harness = createStatusFlowHarness();
+    harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: true, sessions: [] });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("SSH sessions: none");
+    expect(output).not.toMatch(/^\s*Connected:/m);
+  });
+
+  it("reports durable read-only host directory exposure", async () => {
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".status-text-host-mount-test-"));
+    try {
+      const harness = createStatusFlowHarness({
+        sandboxEntry: {
+          hostMounts: [{ source, target: "/sandbox/project", readOnly: true }],
+        },
+      });
+
+      await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+      const output = harness.logSpy.mock.calls.flat().join("\n");
+      expect(output).toContain("Host mounts:");
+      expect(output).toContain(`${source} -> /sandbox/project (read-only)`);
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects control-character host mounts before terminal rendering", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        hostMounts: [
+          {
+            source: "/srv/project\u001b[31m",
+            target: "/sandbox/project",
+            readOnly: true,
+          },
+        ],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow(
+      "unsafe terminal control characters",
+    );
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("\u001b[31m");
+  });
+
+  it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {
+    const harness = createStatusFlowHarness();
+    harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: false, sessions: [] });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toMatch(/^\s*(?:Connected|SSH sessions):/m);
   });
 
   it("reports active baseline exclusions and their support impact (#7178)", async () => {
@@ -487,7 +548,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toContain("Inference: healthy");
     expect(output).toContain("Inference: not verified (gateway/sandbox state not verified)");
     expect(output).toContain("gateway is still refusing connections after restart");
-    expect(output).toContain("Retry `openshell gateway start --name nemoclaw`");
+    expect(output).toContain("Start the gateway again with `nemoclaw onboard`.");
     expect(output).toContain("If the gateway never becomes healthy");
     expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", {
       preflight: {
@@ -653,6 +714,83 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Could not verify sandbox 'alpha'");
     expect(output).toContain("verify the active gateway");
     expect(output).not.toContain("Recovered NemoClaw gateway runtime");
+  });
+
+  it("points SSH operators to dashboard-url for remote-access instructions when the gateway is running (#8465)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
+    const harness = createStatusFlowHarness({ gatewayRunning: true });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("OpenClaw: ");
+    expect(output).toContain("running");
+    expect(output).toContain(
+      "Remote access: run `nemoclaw 'alpha' dashboard-url` for SSH port forward instructions.",
+    );
+  });
+
+  it("shell-quotes the sandbox name in SSH dashboard guidance (#8465)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
+    const sandboxName = "alpha's box";
+    const harness = createStatusFlowHarness({
+      gatewayRunning: true,
+      sandboxEntry: { name: sandboxName },
+    });
+
+    await expect(harness.showSandboxStatus(sandboxName)).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain(
+      "Remote access: run `nemoclaw 'alpha'\\''s box' dashboard-url` for SSH port forward instructions.",
+    );
+  });
+
+  it.each([
+    {
+      caseLabel: "a routable dashboard URL",
+      chatUiUrl: "https://dashboard.example.test",
+      sandboxEntry: {},
+    },
+    {
+      caseLabel: "a prepared remote bind",
+      chatUiUrl: "",
+      sandboxEntry: { dashboardRemoteBindPrepared: true },
+    },
+  ])("omits port forward guidance for $caseLabel (#8465)", async ({ chatUiUrl, sandboxEntry }) => {
+    vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
+    vi.stubEnv("CHAT_UI_URL", chatUiUrl);
+    const harness = createStatusFlowHarness({ gatewayRunning: true, sandboxEntry });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("running");
+    expect(output).not.toContain("Remote access: run");
+  });
+
+  it("omits dashboard guidance over SSH when the gateway is stopped (#8465)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "203.0.113.9 51000 198.51.100.2 22");
+    const harness = createStatusFlowHarness({ gatewayRunning: false });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("not running");
+    expect(output).not.toContain("Remote access: run");
+  });
+
+  it("omits the remote-access pointer when the session is not over SSH (#8465)", async () => {
+    vi.stubEnv("SSH_CONNECTION", "");
+    vi.stubEnv("SSH_CLIENT", "");
+    vi.stubEnv("SSH_TTY", "");
+    const harness = createStatusFlowHarness({ gatewayRunning: true });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("running");
+    expect(output).not.toContain("Remote access: run");
   });
 
   it("renders gateway-level handshake failures without removing registry state", async () => {

@@ -86,7 +86,7 @@ raw_out=$(
     -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
+    "openshell-${SANDBOX_NAME}.default" \
     "$remote_cmd" 2>&1
 )
 agent_rc=$?

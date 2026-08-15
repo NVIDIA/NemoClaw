@@ -13,7 +13,7 @@ import type {
 } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
-import type { BaselineExclusionTransition } from "../../src/lib/state/registry";
+import type { BaselineExclusionTransition, SandboxHostMount } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
 
@@ -30,6 +30,7 @@ export type StatusFlowHarness = {
   collectSandboxStatusSnapshotSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
+  isSandboxGatewayRunningForStatusSpy: MockInstance;
   logSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   showSandboxStatus: ShowSandboxStatus;
@@ -65,6 +66,7 @@ export type StatusFlowHarnessOptions = {
   baselineExclusionStatus?: BaselineExclusionRuntimeStatus;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
+  gatewayRunning?: boolean;
   preflight?: SandboxStatusPreflightResult;
   postRecoveryPreflight?: SandboxStatusPreflightResult;
   sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
@@ -75,6 +77,8 @@ export type StatusFlowHarnessOptions = {
     baselineExclusionTransition?: BaselineExclusionTransition;
     preferredInferenceApi?: string | null;
     compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
+    hostMounts?: SandboxHostMount[];
+    dashboardRemoteBindPrepared?: boolean;
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";
@@ -201,7 +205,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       health: "unhealthy",
       paused: false,
     });
-  vi.spyOn(statusProcessRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(false);
+  const isSandboxGatewayRunningForStatusSpy = vi
+    .spyOn(statusProcessRecovery, "isSandboxGatewayRunningForStatus")
+    .mockResolvedValue(options.gatewayRunning ?? false);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
@@ -248,6 +254,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     collectSandboxStatusSnapshotSpy,
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,
+    isSandboxGatewayRunningForStatusSpy,
     logSpy,
     removeSandboxSpy,
     showSandboxStatus: requireDist(statusModulePath).showSandboxStatus,

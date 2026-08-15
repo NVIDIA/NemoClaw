@@ -20,8 +20,8 @@
 # Priority groups (prek runs same-priority hooks in parallel):
 #   0  — General file fixers (whitespace, EOF, line endings)
 #   4  — SPDX header insertion (--fix)
-#   5  — Shell / JS / TS formatters (shfmt, Biome)
-#   6  — Fixes that should follow formatters (ruff check --fix, Biome lint --write)
+#   5  — Shell / JS / TS formatters (shfmt, Oxfmt)
+#   6  — Oxlint fixes after formatting
 #  10  — Linters and read-only checks
 #  20  — Project-level checks (vitest, coverage, ratchet)
 
@@ -111,22 +111,22 @@ repos:
 
   - repo: local
     hooks:
-      - id: biome-format
-        name: Biome format
-        entry: npx biome format --write --no-errors-on-unmatched
+      - id: oxfmt
+        name: Oxfmt
+        entry: bash tools/lint/format-added-files.sh --write
         language: system
-        files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|scripts/.*\.js|test/.*\.js|.*\.ts)$
+        files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
         pass_filenames: true
         priority: 5
 
   # ── Priority 6: auto-fix after formatting ─────────────────────────────────
   - repo: local
     hooks:
-      - id: biome-lint-fix
-        name: Biome lint fixes
-        entry: npx biome lint --write
+      - id: oxlint-fix
+        name: Oxlint fixes
+        entry: npx oxlint --fix --no-error-on-unmatched-pattern
         language: system
-        files: ^(commitlint\.config\.js|bin/.*\.js|scripts/.*\.js|test/.*\.js|.*\.ts)$
+        files: \.(cjs|cts|js|jsx|mjs|mts|ts|tsx)$
         pass_filenames: true
         priority: 6
 
@@ -159,12 +159,28 @@ repos:
 
   - repo: local
     hooks:
+      - id: oxlint-type-aware
+        name: Oxlint type-aware rules
+        entry: npx oxlint --config oxlint.type-aware.config.ts --no-error-on-unmatched-pattern
+        language: system
+        files: ^nemoclaw/src/.*\.ts$
+        pass_filenames: true
+        priority: 10
+
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
         entry: npx tsx scripts/validate-configs.mts
         language: system
         pass_filenames: false
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
+        priority: 10
+
+      - id: validate-managed-inference-catalog
+        name: Validate managed inference catalog
+        entry: npm run catalog:check
+        language: system
+        pass_filenames: false
+        files: ^(managed-inference/(?:presets|recipes)/.*\.yaml$|managed-inference/schemas/.*\.json$|src/lib/inference/serving/(?:adapter-registry|catalog|generate-catalog|types)\.ts$)
         priority: 10
 
       - id: repository-checks

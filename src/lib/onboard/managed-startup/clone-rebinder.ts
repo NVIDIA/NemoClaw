@@ -20,6 +20,10 @@ import {
   validateManagedStartupProfile,
 } from "./profile";
 
+export const managedStartupCloneRebinderDependencies = {
+  resolveContextWindowForModel,
+};
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MANAGED_INFERENCE_API_SET = new Set([
   "openai-completions",
@@ -176,8 +180,8 @@ function currentWebSearch(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
 ): Extract<ManagedStartupProfile["agentConfig"], { agent: "openclaw" | "hermes" }>["webSearch"] {
-  if (profile.agentConfig.agent === "langchain-deepagents-code") {
-    fail("DCode cannot carry web-search state");
+  if (profile.agentConfig.agent !== "openclaw" && profile.agentConfig.agent !== "hermes") {
+    fail(`${profile.agentConfig.agent} cannot carry web-search state`);
   }
   const enabled = current.webSearchEnabled === true;
   const configuredProvider = current.webSearchProvider;
@@ -205,13 +209,10 @@ function currentAgentConfig(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
 ): ManagedStartupProfile["agentConfig"] {
-  if (profile.agentConfig.agent === "openclaw") {
-    return {
-      ...profile.agentConfig,
-      webSearch: currentWebSearch(profile, current),
-    };
+  if (profile.agentConfig.agent === "pi") {
+    return profile.agentConfig;
   }
-  if (profile.agentConfig.agent === "hermes") {
+  if (profile.agentConfig.agent !== "langchain-deepagents-code") {
     return {
       ...profile.agentConfig,
       webSearch: currentWebSearch(profile, current),
@@ -330,7 +331,7 @@ function reconcileCurrentSourceProfile(
       profile.inference.upstreamProvider !== current.provider ||
       profile.inference.model !== current.model
     ) {
-      contextWindow = resolveContextWindowForModel(
+      contextWindow = managedStartupCloneRebinderDependencies.resolveContextWindowForModel(
         requireCurrentString(current.provider, "inference provider"),
         requireCurrentString(current.model, "inference model"),
       );
@@ -398,8 +399,8 @@ function destinationMessagingPlan(
   destinationSandboxName: string,
 ): ManagedStartupJsonObject | null {
   if (profile.messaging.plan === null) return null;
-  if (profile.agent === "langchain-deepagents-code") {
-    fail("langchain-deepagents-code cannot carry a messaging plan");
+  if (profile.agent === "langchain-deepagents-code" || profile.agent === "pi") {
+    fail(`${profile.agent} cannot carry a messaging plan`);
   }
   const rebound = rebindSandboxMessagingPlanForClone({
     sourceSandboxName,

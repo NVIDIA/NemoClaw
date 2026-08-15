@@ -215,15 +215,21 @@ describe("policy tier onboarding adapter contracts", () => {
     const script = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_NON_INTERACTIVE = "preserve-direct";
 process.env.NEMOCLAW_POLICY_TIER = "invalid_tier";
 const { onboard } = require(${onboardPath});
 const exitMarker = "__NEMOCLAW_TEST_PROCESS_EXIT__";
-process.exit = (code = 0) => {
+let exitObservation = null;
+const originalExit = (code = 0) => {
+  exitObservation = {
+    processExitRestored: process.exit === originalExit,
+    nonInteractiveEnv: process.env.NEMOCLAW_NON_INTERACTIVE,
+  };
   const err = new Error(exitMarker);
   err.code = Number(code);
   throw err;
 };
+process.exit = originalExit;
 (async () => {
   try {
     await onboard({
@@ -245,6 +251,7 @@ process.exit = (code = 0) => {
       usageNoticeExists: fs.existsSync(path.join(stateDir, "usage-notice.json")),
       lockExists: fs.existsSync(path.join(stateDir, "onboard.lock")),
       sessionExists: fs.existsSync(path.join(stateDir, "onboard-session.json")),
+      exitObservation,
     }) + "\n");
     process.exitCode = err.code;
   }
@@ -257,9 +264,13 @@ process.exit = (code = 0) => {
     assert.equal(payload.usageNoticeExists, false, "usage notice must not be accepted/written");
     assert.equal(payload.lockExists, false, "onboard lock must not be created");
     assert.equal(payload.sessionExists, false, "onboard session must not be created");
+    assert.deepEqual(payload.exitObservation, {
+      processExitRestored: true,
+      nonInteractiveEnv: "preserve-direct",
+    });
     assert.match(
       result.stderr,
-      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open/,
+      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open, personal/,
     );
     assert.doesNotMatch(result.stderr, /Third-Party Software Notice/);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /\[1\/8\] Preflight checks/);
@@ -370,7 +381,7 @@ describe("policy tier selection", () => {
     assert.equal(exit.mock.calls[0]?.[0], 1);
     assert.match(
       errors.join("\n"),
-      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open/,
+      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open, personal/,
     );
   });
 
@@ -444,6 +455,56 @@ describe("policy tier setup", () => {
 
     assert.deepEqual(result.tierUpdates, [{ sandboxName: "test-sb", policyTier: "open" }]);
     assert.deepEqual(result.applied, []);
+  });
+
+  it("keeps OpenClaw web search and OpenClaw-only presets in Personal", async () => {
+    const result = await runPolicySetup(
+      { tierName: "personal" },
+      { agent: "openclaw", webSearchConfig: null, webSearchSupported: true },
+    );
+
+    for (const name of [
+      "personal-open-internet",
+      "brave",
+      "tavily",
+      "openclaw-pricing",
+      "openclaw-diagnostics-otel-local",
+      "googlechat",
+    ]) {
+      assert.ok(result.applied.includes(name), `${name} should be applied`);
+    }
+    assert.ok(!result.applied.includes("nous-web"), "Hermes-only presets must remain filtered");
+    assert.ok(
+      !result.applied.includes("observability-otlp-local"),
+      "Deep Agents-only presets must remain filtered",
+    );
+  });
+
+  it("keeps supported Hermes web search and Hermes-only presets in Personal", async () => {
+    const result = await runPolicySetup(
+      { tierName: "personal" },
+      { agent: "hermes", webSearchConfig: null, webSearchSupported: true },
+    );
+
+    for (const name of ["personal-open-internet", "tavily", "nous-web", "nous-browser"]) {
+      assert.ok(result.applied.includes(name), `${name} should be applied`);
+    }
+    assert.ok(!result.applied.includes("brave"), "unsupported Brave must remain filtered");
+    assert.ok(
+      !result.applied.includes("openclaw-pricing"),
+      "OpenClaw-only presets must remain filtered",
+    );
+  });
+
+  it("keeps open internet access in Personal for Deep Agents Code", async () => {
+    const result = await runPolicySetup(
+      { tierName: "personal" },
+      { agent: "langchain-deepagents-code", webSearchConfig: null, webSearchSupported: true },
+    );
+
+    assert.ok(result.applied.includes("personal-open-internet"));
+    assert.ok(result.applied.includes("tavily"));
+    assert.ok(!result.applied.includes("brave"));
   });
 
   it("omits Brave from policy preset selection when web search is unsupported", async () => {
@@ -529,6 +590,22 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.applied, ["brave", "npm"]);
     assert.deepEqual(result.appliedCalls, ["brave", "npm"]);
   });
+
+  it(
+    "keeps an explicit Personal preset list authoritative before policy mutation (#8991)",
+    async () => {
+      const explicitPresets = ["weather", "public-reference", "github"];
+      const result = await runPolicySetup({
+        tierName: "personal",
+        policyMode: "custom",
+        policyPresets: explicitPresets.join(","),
+      });
+
+      assert.deepEqual(result.applied, explicitPresets);
+      assert.deepEqual(result.appliedCalls, explicitPresets);
+      assert.deepEqual(result.syncCalls[0]?.selected, explicitPresets);
+    },
+  );
 
   it("preserves a recorded Balanced tier default during resumed reapply (#6844)", async () => {
     const result = await runPolicySetup(

@@ -17,7 +17,7 @@ import {
 } from "./hosted-runner-loss.mts";
 
 const GITHUB_ACTIONS_APP_ID = 15368;
-const USER_AGENT = "nemoclaw-pr-e2e-gate";
+const USER_AGENT = "nemoclaw-hosted-runner-recovery";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const MAX_WORKFLOW_JOB_PAGES = 10;
 const MAX_JOB_ANNOTATION_PAGES = 1;

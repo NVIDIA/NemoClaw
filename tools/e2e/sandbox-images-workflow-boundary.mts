@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
@@ -27,10 +27,12 @@ const HERMES_SETUP_BUILDX_ACTION =
   "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const HERMES_BUILD_PUSH_ACTION =
   "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
+const HERMES_DEFAULT_TRUST_STEP_NAME = "Verify Hermes default-trust final image";
 const HERMES_DOWNLOAD_ARTIFACT_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const HERMES_UPLOAD_ARTIFACT_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
+const HERMES_BASE_IMAGE_RESOLVER_ACTION = "./.github/actions/resolve-hermes-base-image";
 const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
@@ -71,6 +73,13 @@ function normalizeShellContinuations(run: string): string {
   return run.replace(/\\\r?\n[ \t]*/gu, " ");
 }
 
+function normalizeLocalActionPath(uses: string | undefined): string | undefined {
+  if (!uses?.startsWith("./")) {
+    return uses;
+  }
+  return posix.normalize(uses).replace(/\/+$/u, "");
+}
+
 type GuardedProductionBuildContract = {
   args: string;
   envName: string;
@@ -107,46 +116,6 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
     stepName: "Build production image on arm64",
     target: "nemoclaw-production-arm64",
     testImageDockerfile: "-f test/Dockerfile.sandbox",
-  },
-];
-
-type NodeTarImageScanContract = Readonly<{
-  artifactName: string;
-  boundaryStepName: string;
-  evidencePath: string;
-  jobName: "build-hermes-sandbox-image" | "build-sandbox-images" | "build-sandbox-images-arm64";
-  scanStepName: string;
-  target: string;
-  uploadStepName: string;
-}>;
-
-const NODE_TAR_IMAGE_SCAN_CONTRACTS: readonly NodeTarImageScanContract[] = [
-  {
-    artifactName: "openclaw-node-tar-inventory",
-    boundaryStepName: "Save images to tarballs",
-    evidencePath: "/tmp/openclaw-node-tar-inventory.json",
-    jobName: "build-sandbox-images",
-    scanStepName: "Scan completed OpenClaw image for node-tar",
-    target: "nemoclaw-production",
-    uploadStepName: "Upload OpenClaw node-tar inventory",
-  },
-  {
-    artifactName: "hermes-node-tar-inventory",
-    boundaryStepName: "Save Hermes production image",
-    evidencePath: "/tmp/hermes-node-tar-inventory.json",
-    jobName: "build-hermes-sandbox-image",
-    scanStepName: "Scan completed Hermes image for node-tar",
-    target: "nemoclaw-hermes-production",
-    uploadStepName: "Upload Hermes node-tar inventory",
-  },
-  {
-    artifactName: "openclaw-arm64-node-tar-inventory",
-    boundaryStepName: "Build sandbox test image on arm64",
-    evidencePath: "/tmp/openclaw-arm64-node-tar-inventory.json",
-    jobName: "build-sandbox-images-arm64",
-    scanStepName: "Scan completed OpenClaw arm64 image for node-tar",
-    target: "nemoclaw-production-arm64",
-    uploadStepName: "Upload OpenClaw arm64 node-tar inventory",
   },
 ];
 
@@ -284,9 +253,13 @@ function validateCanonicalAuth(errors: string[], auth: SandboxImagesWorkflowStep
     'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
     ': > "${auth_marker}"',
     'chmod 600 "${auth_marker}"',
-    "for attempt in 1 2 3; do",
+    "login_attempts=5",
+    "retry_seconds=5",
+    "for ((attempt = 1; attempt <= login_attempts; attempt += 1)); do",
     `if printf '%s' "\${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "\${DOCKERHUB_USERNAME}" --password-stdin; then`,
-    "Docker Hub login failed after 3 attempts",
+    "if ((attempt < login_attempts)); then",
+    'sleep "${retry_seconds}"',
+    'Docker Hub login failed after ${login_attempts} attempts',
   ];
   for (const fragment of requiredFragments) {
     if (!run.includes(fragment)) {
@@ -470,6 +443,29 @@ function validateGuardedProductionBuild(
         "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
       );
     }
+    const defaultTrust = requireStep(errors, contract.jobName, job, HERMES_DEFAULT_TRUST_STEP_NAME);
+    const defaultTrustRun = normalizedShell(defaultTrust.run);
+    const requiredDefaultTrustFragments = [
+      "set -euo pipefail",
+      "docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --entrypoint /bin/sh nemoclaw-hermes-production -eu -c",
+      'test -z "${NODE_EXTRA_CA_CERTS:-}"',
+      'test -z "${CURL_CA_BUNDLE:-}"',
+      "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test ! -L /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test -x /usr/local/bin/hermes",
+      'node -e "const tls = require(\\"node:tls\\"); if (tls.rootCertificates.length === 0) process.exit(1); tls.createSecureContext()"',
+      '/opt/hermes/.venv/bin/python -I -c "import ssl; assert ssl.create_default_context().get_ca_certs()"',
+    ];
+    if (
+      steps(job).filter((step) => step.name === HERMES_DEFAULT_TRUST_STEP_NAME).length !== 1 ||
+      defaultTrust.shell !== "bash" ||
+      requiredDefaultTrustFragments.some((fragment) => !defaultTrustRun.includes(fragment)) ||
+      stepIndex(job, action.name ?? "") >= stepIndex(job, HERMES_DEFAULT_TRUST_STEP_NAME)
+    ) {
+      errors.push(
+        "Hermes producer must verify that the final image uses default trust when no corporate CA is supplied.",
+      );
+    }
     return;
   }
 
@@ -495,94 +491,6 @@ function validateGuardedProductionBuildContracts(
   }
 }
 
-function validateNodeTarImageScan(
-  errors: string[],
-  workflow: SandboxImagesWorkflow,
-  contract: NodeTarImageScanContract,
-): void {
-  const job = workflow.jobs[contract.jobName] ?? {};
-  const scan = requireStep(errors, contract.jobName, job, contract.scanStepName);
-  const upload = requireStep(errors, contract.jobName, job, contract.uploadStepName);
-  if (steps(job).filter((step) => step.name === contract.scanStepName).length !== 1) {
-    errors.push(`${contract.jobName} must scan its completed image exactly once`);
-  }
-  if (scan.id !== "node-tar-scan" || scan.shell !== "bash") {
-    errors.push(`${contract.jobName} node-tar scan must expose its outcome from a bash step`);
-  }
-
-  const run = normalizedShell(scan.run);
-  const requiredFragments = [
-    "set -euo pipefail",
-    `image_id="$(docker image inspect --format '{{.Id}}' ${contract.target})"`,
-    "docker run --rm",
-    "--network none",
-    "--read-only",
-    "--cap-drop ALL",
-    "--cap-add DAC_READ_SEARCH",
-    "--security-opt no-new-privileges",
-    "--pids-limit 64",
-    "--memory 256m",
-    "--entrypoint node",
-    '-v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro"',
-    contract.target,
-    "--experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
-    "--root /",
-    '--image "${image_id}"',
-    `| tee ${contract.evidencePath}`,
-  ];
-  for (const fragment of requiredFragments) {
-    if (!run.includes(fragment)) {
-      errors.push(`${contract.jobName} node-tar scan must include ${fragment}`);
-    }
-  }
-  if (run.includes("--privileged") || run.includes("/var/run/docker.sock")) {
-    errors.push(`${contract.jobName} node-tar scan must remain isolated from host privileges`);
-  }
-
-  if (
-    steps(job).filter((step) => step.name === contract.uploadStepName).length !== 1 ||
-    upload.if !== "${{ always() && steps.node-tar-scan.outcome != 'skipped' }}" ||
-    !FULL_SHA_ACTION.test(upload.uses ?? "") ||
-    !String(upload.uses ?? "").startsWith("actions/upload-artifact@") ||
-    !isDeepStrictEqual(record(upload.with), {
-      name: contract.artifactName,
-      path: contract.evidencePath,
-      "if-no-files-found": "error",
-      "retention-days": 14,
-    })
-  ) {
-    errors.push(`${contract.jobName} must retain its node-tar inventory for 14 days`);
-  }
-
-  const buildIndex = stepIndex(
-    job,
-    contract.jobName === "build-hermes-sandbox-image"
-      ? "Build Hermes production image"
-      : contract.jobName === "build-sandbox-images-arm64"
-        ? "Build production image on arm64"
-        : "Build production image",
-  );
-  const scanIndex = stepIndex(job, contract.scanStepName);
-  const uploadIndex = stepIndex(job, contract.uploadStepName);
-  const boundaryIndex = stepIndex(job, contract.boundaryStepName);
-  if (
-    buildIndex < 0 ||
-    scanIndex <= buildIndex ||
-    uploadIndex <= scanIndex ||
-    boundaryIndex <= uploadIndex
-  ) {
-    errors.push(
-      `${contract.jobName} must scan and retain evidence before the completed image is handed off`,
-    );
-  }
-}
-
-function validateNodeTarImageScans(errors: string[], workflow: SandboxImagesWorkflow): void {
-  for (const contract of NODE_TAR_IMAGE_SCAN_CONTRACTS) {
-    validateNodeTarImageScan(errors, workflow, contract);
-  }
-}
-
 function normalizedShell(run: string | undefined): string {
   return (run ?? "")
     .replace(/\\\r?\n\s*/gu, " ")
@@ -597,6 +505,7 @@ function validateMessagingPlanBoundaryBuild(
     readonly agent: "hermes" | "openclaw";
     readonly baseArgName: "BASE_IMAGE";
     readonly baseEnvName: "BASE_IMAGE" | "HERMES_BASE_IMAGE";
+    readonly extraRequiredFragments?: readonly string[];
     readonly stepName: string;
     readonly target: string;
   },
@@ -614,6 +523,7 @@ function validateMessagingPlanBoundaryBuild(
     'scripts/check-production-build-args.sh "${build_args[@]}"',
     `docker build \"\${build_args[@]}\" -t ${options.target} .`,
     `node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify ${options.target} ${options.agent}`,
+    ...(options.extraRequiredFragments ?? []),
   ];
 
   if (step.shell !== "bash" || !isDeepStrictEqual(record(step.env), expectedEnv)) {
@@ -636,6 +546,64 @@ function validateMessagingPlanBoundaryBuild(
     verifyIndex <= buildIndex
   ) {
     errors.push(`${options.agent} messaging plan image boundary steps are out of order`);
+  }
+}
+
+function validateHermesMessagingPlanCaFixture(
+  errors: string[],
+  job: SandboxImagesWorkflowJob,
+): void {
+  const step = findStep(job, "Build and verify Hermes messaging plan boundary");
+  const run = normalizedShell(step?.run);
+  const helperInvocation =
+    'node --experimental-strip-types scripts/checks/select-ci-endpoint-ca-roots.mts --output "$compact_ca_bundle"';
+  const compactEncoding = 'corporate_ca_b64="$(base64 -w 0 "$compact_ca_bundle")"';
+  const sourceHash = 'corporate_ca_sha256="$(sha256sum "$compact_ca_bundle" | cut -d \' \' -f 1)"';
+  const corporateCaBuildArg = '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"';
+  const installedHash =
+    "installed_ca_sha256=\"$( docker run --rm --network none --entrypoint sha256sum nemoclaw-hermes-plan-boundary /usr/local/share/nemoclaw/corporate-ca.pem | cut -d ' ' -f 1 )\"";
+  const matchingHash = 'test "$installed_ca_sha256" = "$corporate_ca_sha256"';
+  const parseProof =
+    "docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null";
+  const orderedFragments = [
+    'compact_ca_bundle="$(mktemp)"',
+    "trap 'rm -f \"$compact_ca_bundle\"' EXIT",
+    helperInvocation,
+    compactEncoding,
+    sourceHash,
+    "check-messaging-plan-image-boundary.mts plan",
+    corporateCaBuildArg,
+    "check-production-build-args.sh",
+    'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary',
+    installedHash,
+    matchingHash,
+    parseProof,
+    "check-messaging-plan-image-boundary.mts verify",
+  ];
+  for (const fragment of orderedFragments) {
+    if (!run.includes(fragment)) {
+      errors.push(`hermes messaging plan image boundary must include ${fragment}`);
+    }
+  }
+  if (
+    run.split("select-ci-endpoint-ca-roots.mts").length - 1 !== 1 ||
+    !run.includes(`${helperInvocation} ${compactEncoding}`)
+  ) {
+    errors.push(`hermes messaging plan image boundary must include exactly ${helperInvocation}`);
+  }
+  if (
+    run.includes("/etc/ssl/certs/ca-certificates.crt") ||
+    /base64 -w 0 "?\$\{?system_ca_bundle\}?"?/u.test(run)
+  ) {
+    errors.push(
+      "hermes messaging plan image boundary must not encode the system CA bundle directly",
+    );
+  }
+  const positions = orderedFragments.map((fragment) => run.indexOf(fragment));
+  if (
+    positions.some((position, index) => position < 0 || position <= (positions[index - 1] ?? -1))
+  ) {
+    errors.push("hermes messaging plan image boundary CA fixture steps are out of order");
   }
 }
 
@@ -677,9 +645,11 @@ function validateMessagingPlanImageBoundary(
     agent: "hermes",
     baseArgName: "BASE_IMAGE",
     baseEnvName: "HERMES_BASE_IMAGE",
+    extraRequiredFragments: ['--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"'],
     stepName: "Build and verify Hermes messaging plan boundary",
     target: "nemoclaw-hermes-plan-boundary",
   });
+  validateHermesMessagingPlanCaFixture(errors, job);
 
   const builds = dockerBuildLines(job);
   if (
@@ -788,6 +758,7 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
       name: "isolation-image",
       path: "/tmp/isolation-image.tar.gz",
       "retention-days": 1,
+      "if-no-files-found": "error",
     }) ||
     stepIndex(producer, save.name ?? "") >= stepIndex(producer, isolationUpload.name ?? "")
   ) {
@@ -903,6 +874,31 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     testJob,
     "Run Hermes sandbox secret boundary test",
   );
+  const resolverActionPath = normalizeLocalActionPath(HERMES_BASE_IMAGE_RESOLVER_ACTION);
+  const resolverSteps = steps(testJob).filter(
+    (step) =>
+      step.name === "Resolve Hermes base image" ||
+      normalizeLocalActionPath(step.uses) === resolverActionPath,
+  );
+  const baseImageResolver = resolverSteps.find(
+    (step) => normalizeLocalActionPath(step.uses) === resolverActionPath,
+  );
+  if (
+    resolverSteps.length !== 1 ||
+    baseImageResolver?.name !== "Resolve Hermes base image" ||
+    stepIndex(testJob, baseImageResolver?.name ?? "") >=
+      stepIndex(testJob, secretBoundary.name ?? "")
+  ) {
+    errors.push(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  }
+  if (resolverSteps.some((step) => step.if !== undefined)) {
+    errors.push("Hermes base-image resolver must run unconditionally");
+  }
+  if (resolverSteps.some((step) => step["continue-on-error"] !== undefined)) {
+    errors.push("Hermes base-image resolver must fail closed");
+  }
   const rootEntrypoint = requireStep(
     errors,
     testJobName,
@@ -994,6 +990,7 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       name: "hermes-isolation-image",
       path: "/tmp/hermes-isolation-image.tar.gz",
       "retention-days": 1,
+      "if-no-files-found": "error",
     }) ||
     stepIndex(producer, save.name ?? "") >= stepIndex(producer, upload.name ?? "") ||
     stepIndex(producer, upload.name ?? "") >= stepIndex(producer, CLEANUP_STEP_NAME)
@@ -1132,7 +1129,6 @@ export function validateSandboxImagesWorkflow(
   }
   validateSecretScopeAndRegistryWrites(errors, workflow);
   validateGuardedProductionBuildContracts(errors, workflow);
-  validateNodeTarImageScans(errors, workflow);
   validateHermesExportSwap(errors, workflow);
   validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);

@@ -179,6 +179,27 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["192.0.2.192", true, "192.0.2.0/24 three-quarter"],
     ["192.0.1.255", false, "192.0.2.0/24 before-start"],
     ["192.0.3.0", false, "192.0.2.0/24 after-end"],
+    // 192.31.196.0/24 — AS112 DNS anycast
+    ["192.31.196.0", true, "192.31.196.0/24 start"],
+    ["192.31.196.255", true, "192.31.196.0/24 end"],
+    ["192.31.196.64", true, "192.31.196.0/24 quarter"],
+    ["192.31.196.192", true, "192.31.196.0/24 three-quarter"],
+    ["192.31.195.255", false, "192.31.196.0/24 before-start"],
+    ["192.31.197.0", false, "192.31.196.0/24 after-end"],
+    // 192.52.193.0/24 — AMT relay anycast
+    ["192.52.193.0", true, "192.52.193.0/24 start"],
+    ["192.52.193.255", true, "192.52.193.0/24 end"],
+    ["192.52.193.64", true, "192.52.193.0/24 quarter"],
+    ["192.52.193.192", true, "192.52.193.0/24 three-quarter"],
+    ["192.52.192.255", false, "192.52.193.0/24 before-start"],
+    ["192.52.194.0", false, "192.52.193.0/24 after-end"],
+    // 192.88.99.0/24 — Deprecated 6to4 relay anycast
+    ["192.88.99.0", true, "192.88.99.0/24 start"],
+    ["192.88.99.255", true, "192.88.99.0/24 end"],
+    ["192.88.99.64", true, "192.88.99.0/24 quarter"],
+    ["192.88.99.192", true, "192.88.99.0/24 three-quarter"],
+    ["192.88.98.255", false, "192.88.99.0/24 before-start"],
+    ["192.88.100.0", false, "192.88.99.0/24 after-end"],
     // 192.168.0.0/16 — Private /16
     ["192.168.0.0", true, "192.168.0.0/16 start"],
     ["192.168.255.255", true, "192.168.0.0/16 end"],
@@ -186,6 +207,13 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["192.168.192.0", true, "192.168.0.0/16 three-quarter"],
     ["192.167.255.255", false, "192.168.0.0/16 before-start"],
     ["192.169.0.0", false, "192.168.0.0/16 after-end"],
+    // 192.175.48.0/24 — AS112 direct delegation anycast
+    ["192.175.48.0", true, "192.175.48.0/24 start"],
+    ["192.175.48.255", true, "192.175.48.0/24 end"],
+    ["192.175.48.64", true, "192.175.48.0/24 quarter"],
+    ["192.175.48.192", true, "192.175.48.0/24 three-quarter"],
+    ["192.175.47.255", false, "192.175.48.0/24 before-start"],
+    ["192.175.49.0", false, "192.175.48.0/24 after-end"],
     // 198.18.0.0/15 — Benchmark
     ["198.18.0.0", true, "198.18.0.0/15 start"],
     ["198.19.255.255", true, "198.18.0.0/15 end"],
@@ -224,12 +252,16 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["244.0.0.0", true, "240.0.0.0/4 quarter"],
     ["252.0.0.0", true, "240.0.0.0/4 three-quarter"],
     // ::/128 — Unspecified. No before-start (0 is the minimum IPv6
-    // address). No after-end vector: ::1 is the next blocked CIDR.
+    // address). Covered again by ::/96 below.
     ["::", true, "::/128 start"],
-    // ::1/128 — Loopback. No before-start vector: :: is the start of
-    // the previous block.
+    // ::1/128 — Loopback. Also covered by ::/96.
     ["::1", true, "::1/128 start"],
-    ["::2", false, "::1/128 after-end"],
+    // ::/96 — Deprecated IPv4-compatible encodings
+    ["::", true, "::/96 start"],
+    ["::ffff:ffff", true, "::/96 end"],
+    ["::4000:0", true, "::/96 quarter"],
+    ["::c000:0", true, "::/96 three-quarter"],
+    ["0:0:0:0:0:1::", false, "::/96 after-end"],
     // 64:ff9b::/96 — NAT64 well-known
     ["64:ff9b::", true, "64:ff9b::/96 start"],
     ["64:ff9b::ffff:ffff", true, "64:ff9b::/96 end"],
@@ -250,14 +282,21 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["100::4000:0:0:0", true, "100::/64 quarter"],
     ["100::c000:0:0:0", true, "100::/64 three-quarter"],
     ["ff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "100::/64 before-start"],
-    ["100:0:0:1::", false, "100::/64 after-end"],
-    // 2001::/32 — Teredo
-    ["2001::", true, "2001::/32 start"],
-    ["2001:0:ffff:ffff:ffff:ffff:ffff:ffff", true, "2001::/32 end"],
-    ["2001:0:4000::", true, "2001::/32 quarter"],
-    ["2001:0:c000::", true, "2001::/32 three-quarter"],
-    ["2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "2001::/32 before-start"],
-    ["2001:1::", false, "2001::/32 after-end"],
+    ["100:0:1::", false, "100::/64 after-end"],
+    // 100:0:0:1::/64 — Dummy IPv6 Prefix. No before-start vector: the
+    // previous hextet is covered by the 100::/64 discard prefix.
+    ["100:0:0:1::", true, "100:0:0:1::/64 start"],
+    ["100:0:0:1:ffff:ffff:ffff:ffff", true, "100:0:0:1::/64 end"],
+    ["100:0:0:1:4000:0:0:0", true, "100:0:0:1::/64 quarter"],
+    ["100:0:0:1:c000:0:0:0", true, "100:0:0:1::/64 three-quarter"],
+    ["100:0:0:2::", false, "100:0:0:1::/64 after-end"],
+    // 2001::/23 — IETF protocol assignments (includes Teredo)
+    ["2001::", true, "2001::/23 start"],
+    ["2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff", true, "2001::/23 end"],
+    ["2001:80::", true, "2001::/23 quarter"],
+    ["2001:180::", true, "2001::/23 three-quarter"],
+    ["2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "2001::/23 before-start"],
+    ["2001:200::", false, "2001::/23 after-end"],
     // 2001:db8::/32 — Documentation
     ["2001:db8::", true, "2001:db8::/32 start"],
     ["2001:db8:ffff:ffff:ffff:ffff:ffff:ffff", true, "2001:db8::/32 end"],
@@ -272,6 +311,27 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["2002:c000::", true, "2002::/16 three-quarter"],
     ["2001:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "2002::/16 before-start"],
     ["2003::", false, "2002::/16 after-end"],
+    // 2620:4f:8000::/48 — AS112 IPv6 anycast
+    ["2620:4f:8000::", true, "2620:4f:8000::/48 start"],
+    ["2620:4f:8000:ffff:ffff:ffff:ffff:ffff", true, "2620:4f:8000::/48 end"],
+    ["2620:4f:8000:4000::", true, "2620:4f:8000::/48 quarter"],
+    ["2620:4f:8000:c000::", true, "2620:4f:8000::/48 three-quarter"],
+    ["2620:4f:7fff:ffff:ffff:ffff:ffff:ffff", false, "2620:4f:8000::/48 before-start"],
+    ["2620:4f:8001::", false, "2620:4f:8000::/48 after-end"],
+    // 3fff::/20 — Documentation
+    ["3fff::", true, "3fff::/20 start"],
+    ["3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff", true, "3fff::/20 end"],
+    ["3fff:400::", true, "3fff::/20 quarter"],
+    ["3fff:c00::", true, "3fff::/20 three-quarter"],
+    ["3ffe:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "3fff::/20 before-start"],
+    ["3fff:1000::", false, "3fff::/20 after-end"],
+    // 5f00::/16 — SRv6 SIDs
+    ["5f00::", true, "5f00::/16 start"],
+    ["5f00:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "5f00::/16 end"],
+    ["5f00:4000::", true, "5f00::/16 quarter"],
+    ["5f00:c000::", true, "5f00::/16 three-quarter"],
+    ["5eff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "5f00::/16 before-start"],
+    ["5f01::", false, "5f00::/16 after-end"],
     // fc00::/7 — Unique local
     ["fc00::", true, "fc00::/7 start"],
     ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "fc00::/7 end"],
@@ -279,19 +339,26 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["fd80::", true, "fc00::/7 three-quarter"],
     ["fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "fc00::/7 before-start"],
     ["fe00::", false, "fc00::/7 after-end"],
-    // fe80::/10 — Link-local
+    // fe80::/10 — Link-local. No after-end vector: fec0:: is the start
+    // of the next blocked site-local block.
     ["fe80::", true, "fe80::/10 start"],
     ["febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "fe80::/10 end"],
     ["fe90::", true, "fe80::/10 quarter"],
     ["feb0::", true, "fe80::/10 three-quarter"],
     ["fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "fe80::/10 before-start"],
-    ["fec0::", false, "fe80::/10 after-end"],
-    // ff00::/8 — Multicast
+    // fec0::/10 — Deprecated site-local. No before-start vector: febf:: is
+    // the end of the previous link-local block. No after-end: ff00:: starts
+    // multicast.
+    ["fec0::", true, "fec0::/10 start"],
+    ["feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "fec0::/10 end"],
+    ["fed0::", true, "fec0::/10 quarter"],
+    ["fef0::", true, "fec0::/10 three-quarter"],
+    // ff00::/8 — Multicast. No before-start vector: feff:: is the end of
+    // the previous site-local block.
     ["ff00::", true, "ff00::/8 start"],
     ["ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true, "ff00::/8 end"],
     ["ff40::", true, "ff00::/8 quarter"],
     ["ffc0::", true, "ff00::/8 three-quarter"],
-    ["feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", false, "ff00::/8 before-start"],
   ];
 
   for (const [addr, expected, label] of vectors) {
@@ -324,8 +391,11 @@ describe("CLI and plugin isPrivateHostname agree on wrapper-level cases", () => 
     ["printer.local", true, "RFC 6762 mDNS .local"],
     ["PRINTER.LOCAL.", true, "mDNS .local uppercase with trailing dot"],
     ["my-vm.c.my-project.internal", true, "ICANN-reserved .internal subdomain"],
+    ["metadata", true, "cloud metadata reserved name"],
+    ["instance.metadata", true, "*.metadata subdomain"],
     ["local.example.com", false, "'.local' as a non-final label"],
     ["internal.example.com", false, "'.internal' as a non-final label"],
+    ["metadata.example.com", false, "'.metadata' as a non-final label"],
     ["example.com", false, "DNS name"],
     ["not-an-ip", false, "garbage"],
     ["", false, "empty"],

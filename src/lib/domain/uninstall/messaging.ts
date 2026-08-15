@@ -17,6 +17,14 @@ export function gatewayDestroySkipMessage(gatewayLabel: string): string {
   return `Gateway '${gatewayLabel}' already removed or unreachable`;
 }
 
+export function sandboxDeleteAbsentMessage(sandboxName: string): string {
+  return `OpenShell sandbox '${sandboxName}' already removed`;
+}
+
+export function sandboxDeleteFailureMessage(sandboxName: string): string {
+  return `OpenShell sandbox '${sandboxName}' could not be removed or was unreachable`;
+}
+
 /**
  * Warnings shown when uninstall preserves sandboxes.json: uninstall removes
  * the gateway registration, provider registrations, and Docker image the

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { HERMES_OPENAI_API_PORT } from "../core/ports";
+import { isHermesApiPort } from "../core/ports";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -11,7 +11,7 @@ import {
   readHermesDashboardConfig,
 } from "../hermes-dashboard";
 import type { SandboxEntry } from "../state/registry";
-import { RESERVED_HERMES_DASHBOARD_PORT_MESSAGE } from "./preflight-ports";
+import { reservedHermesDashboardPortMessage } from "./preflight-ports";
 
 export interface HermesDashboardOnboardState {
   config: HermesDashboardConfig | null;
@@ -31,18 +31,20 @@ export function resolveHermesDashboardOnboardState({
   env: NodeJS.ProcessEnv;
   fail?: (message: string) => never;
 }): HermesDashboardOnboardState {
-  // #4984 — reject the reserved Hermes API port (HERMES_OPENAI_API_PORT) as the
-  // dashboard port for ANY agent, before any sandbox is built. Check both the
-  // resolved effectivePort (covers --control-ui-port / CHAT_UI_URL / persisted)
-  // and the raw env override, which the host otherwise silently drops so
-  // effectivePort never shows it. Message mirrors agents/hermes/start.sh:164.
+  // #4984 — reject a reserved Hermes API port as the dashboard port for ANY
+  // agent, before any sandbox is built. Every port in the API range is reserved
+  // because each Hermes sandbox allocates its own from that range. Check both
+  // the resolved effectivePort (covers --control-ui-port / CHAT_UI_URL /
+  // persisted) and the raw env override, which the host otherwise silently
+  // drops so effectivePort never shows it. This host guard rejects the whole
+  // API range; agents/hermes/start.sh rejects only this sandbox's resolved port.
   const rawDashboardPort = env.NEMOCLAW_DASHBOARD_PORT?.trim();
   const requestedDashboardPort = rawDashboardPort ? Number(rawDashboardPort) : undefined;
-  if (
-    effectivePort === HERMES_OPENAI_API_PORT ||
-    requestedDashboardPort === HERMES_OPENAI_API_PORT
-  ) {
-    const message = RESERVED_HERMES_DASHBOARD_PORT_MESSAGE;
+  const reservedPort = [effectivePort, requestedDashboardPort].find(
+    (port): port is number => port !== undefined && isHermesApiPort(port),
+  );
+  if (reservedPort !== undefined) {
+    const message = reservedHermesDashboardPortMessage(reservedPort);
     if (fail) return fail(message);
     throw new Error(message);
   }

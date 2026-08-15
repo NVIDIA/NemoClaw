@@ -49,7 +49,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     };
 
     await expect(
-      createSandbox(null, "test-model", "nvidia-prod", null, "bad; touch /tmp/pwned"),
+      createSandbox(null, "test-model", "nvidia-prod", null, "bad;touch"),
     ).rejects.toThrow(/Invalid sandbox name/);
   });
 
@@ -68,7 +68,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     const streamPath = sourceModule("sandbox", "create-stream.ts");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+    writeOkOpenshell(fakeBin, { readySandboxGet: true });
     fs.writeFileSync(
       scriptPath,
       String.raw`
@@ -147,7 +147,11 @@ try {
         {
           cwd: repoRoot,
           encoding: "utf-8",
-          env: { HOME: tmpDir, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+          env: {
+            HOME: tmpDir,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
+          },
           timeout: 30_000,
         },
       );

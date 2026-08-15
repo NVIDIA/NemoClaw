@@ -1,0 +1,45 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.103
+
+NemoClaw v0.0.103 adds `nemoclaw launch <name>` and its agent-specific CLI variants so you can start an agent directly after the standard sandbox preflight and recovery checks.
+It improves onboarding, managed inference, installation, uninstall, snapshot, rebuild, and Shields failure handling with more accurate recovery behavior and diagnostics.
+It also strengthens endpoint validation, sandbox privilege separation, and the managed Hermes and LangChain Deep Agents Code lifecycle.
+
+- The new `nemoclaw launch <name>` command starts the sandbox agent in one host-side step while preserving the same preflight, process recovery, inference reconciliation, and pairing checks used by `connect`.
+  The command resolves the trusted interactive command from the selected agent manifest and supports OpenClaw, Hermes, and LangChain Deep Agents Code through their corresponding NemoClaw CLI variants.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Quickstart](/user-guide/openclaw/get-started/quickstart).
+- Managed vLLM onboarding now rejects a model before image or checkpoint download when the host GPU does not meet its minimum compute capability.
+  The readiness poller also stops a repeatedly restarting vLLM container instead of waiting for the full load timeout, and the DGX Spark Qwen profile no longer enables multi-token prediction by default.
+  Non-interactive onboarding preserves an explicit model selection when you switch providers.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- Windows Subsystem for Linux Express setup now waits until Node.js can read Docker Desktop configuration before selecting the Ollama provider.
+  Re-running the installer at the installed revision reuses a clean managed checkout instead of recloning it after dependency installation, and packaged-service teardown can complete through the expected standalone fallback.
+  Scoped uninstall also treats an already-removed sandbox as completed cleanup while retaining retry state for unreachable or rejected deletions.
+  For more information, refer to [Additional Setup for Windows Machines](/user-guide/openclaw/get-started/additional-setup/windows-preparation), [Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- Onboarding and rebuild recovery now preserve the original container-start failure diagnosis, require journal-backed authority before repairing a not-ready sandbox, and print a structured safe-abort diagnostic for rebuild preflight failures.
+  Top-level CLI and MCP bridge destruction failures return one redacted error with a nonzero exit status instead of exposing an uncaught Node.js stack trace.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- A failed `snapshot create` now removes its incomplete capture so later list and restore operations do not treat it as complete.
+  Cross-sandbox restore keeps documented policy reconciliation best-effort, warns when preset mutation fails, and continues to gateway pairing when the restored sandbox remains usable.
+  The documentation also clarifies that OpenClaw snapshot persistence follows the manifest-defined `/sandbox/.openclaw/workspace` paths rather than arbitrary files under `/sandbox`.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state).
+- Shields transitions now preserve independently managed MCP policy entries, retain a fresh OpenClaw sandbox's mutable-default rollback state, and reject corrupt persisted transition state before mutation.
+  A rejected policy transition no longer leaves `shields status` claiming a state that was not applied, and lock inspection remains bound to the verified descriptor.
+  For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes), [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes now stores dashboard state in the canonical `~/.hermes/profiles/dashboard-home` profile and safely migrates an existing legacy dashboard home when the destination is empty.
+  Rebuild restore keeps script-backed cron jobs undispatchable until restored state and scripts validate against the same gateway, and successful gateway recovery resets the consecutive health-failure budget.
+  Hermes build stages also apply configured corporate certificate authority trust before supported `npm`, `uv`, and Python dependency downloads.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/hermes/manage-sandboxes/state-and-backups/create-and-restore-snapshots), [Understand Runtime Changes](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-runtime-changes), and [Configure Corporate CA Trust](/user-guide/hermes/security/configure-corporate-ca-trust).
+- Managed LangChain Deep Agents Code non-interactive failures now use a bounded error classification instead of exposing exception messages or reporting every failure as unknown.
+  Rebuilds reuse the published Deep Agents Code base image, while the documented recovery guidance reflects the classified failure and managed-image path.
+  For more information, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code) and [Troubleshooting](/user-guide/deepagents/reference/troubleshooting).
+- CLI and plugin endpoint validation now share expanded special-purpose address protections and reject endpoint URLs containing embedded credentials before DNS resolution.
+  Managed images use the Debian-pinned `setpriv` implementation for reviewed user and group transitions and fail closed instead of starting an agent service as root when that transition is unavailable.
+  Shields-protected confidentiality roots remain unlistable while allowing the sandbox group to resolve an absent top-level path without breaking gateway startup.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Review Sandbox Hardening](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/review-sandbox-hardening), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Documentation now removes the unsupported `logs --audit` example, places network-policy walkthrough prerequisites before the command sequence, and clarifies snapshot restore selection and platform runtime validation.
+  For more information, refer to [Troubleshoot MCP Servers](/user-guide/openclaw/reference/troubleshoot-mcp-servers), [Approve Network Requests](/user-guide/openclaw/network-policy/approve-network-requests), and [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).

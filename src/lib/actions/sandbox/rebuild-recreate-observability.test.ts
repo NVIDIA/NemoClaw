@@ -4,8 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import * as shields from "../../shields";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
+import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
@@ -15,6 +17,22 @@ import { type RebuildRecreatePhaseInput, runRebuildRecreatePhase } from "./rebui
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 const DCODE_AGENT = "langchain-deepagents-code";
+
+const STANDALONE_GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  mode: "nemoclaw-managed",
+  source: "standalone",
+  endpoint: null,
+  stateDir: null,
+  supervisor: null,
+  requiredCapabilities: [],
+};
+
+const PACKAGED_GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
+  ...STANDALONE_GATEWAY_AUTHORITY,
+  source: "packaged-service",
+};
 
 const durableConfig: RebuildDurableConfig = {
   dcodeAutoApprovalMode: "disabled",
@@ -69,7 +87,36 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   observabilityRequestedExplicitly: true,
   policyTier: "restricted",
   baseImageResolutionHint: null,
+  rebuildGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
 };
+
+function seedRecreateJournalCheckpoint(
+  session: Session,
+  gatewayAuthority: CheckpointGatewayAuthority = STANDALONE_GATEWAY_AUTHORITY,
+): void {
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "alpha", agent: DCODE_AGENT }),
+    gatewayAuthority: decisionSelected(gatewayAuthority),
+    sandboxRecreate: {
+      version: 1,
+      id: "journal-1",
+      revision: 3,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sourceRegistryFingerprint: "source-registry",
+      sourceLiveIdentityFingerprint: "source-identity",
+      sourceWorkload: null,
+      targetIntentFingerprint: "intent-1",
+      targetGeneration: "generation-1",
+      targetLiveIdentityFingerprint: null,
+      phase: "deleted",
+      startedAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "2026-07-28T00:00:01.000Z",
+    },
+  };
+}
 
 function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildRecreatePhaseInput {
   return {
@@ -92,6 +139,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
       id: "journal-1",
       acceptedTarget: false,
       sourceConfirmedAbsent: false,
+      gatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       targetGeneration: "generation-1",
       targetIntentFingerprint: "intent-1",
       markDeleting: vi.fn(),
@@ -131,6 +179,7 @@ describe("runRebuildRecreatePhase handoff", () => {
       sandboxName: "alpha",
       observabilityEnabled: false,
     });
+    seedRecreateJournalCheckpoint(session);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
@@ -191,37 +240,6 @@ describe("runRebuildRecreatePhase handoff", () => {
   });
 
   it("carries the replacement journal and its target fingerprint into inner onboard (#7734)", async () => {
-    session.checkpoint = {
-      ...deriveCheckpointFromSession(session),
-      sandboxIdentity: decisionSelected({ name: "alpha", agent: DCODE_AGENT }),
-      gatewayAuthority: decisionSelected({
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        mode: "nemoclaw-managed",
-        source: "standalone",
-        endpoint: null,
-        stateDir: null,
-        supervisor: null,
-        requiredCapabilities: [],
-      }),
-      sandboxRecreate: {
-        version: 1,
-        id: "journal-1",
-        revision: 3,
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        sourceRegistryFingerprint: "source-registry",
-        sourceLiveIdentityFingerprint: "source-identity",
-        sourceWorkload: null,
-        targetIntentFingerprint: "intent-1",
-        targetGeneration: "generation-1",
-        targetLiveIdentityFingerprint: null,
-        phase: "deleted",
-        startedAt: "2026-07-28T00:00:00.000Z",
-        updatedAt: "2026-07-28T00:00:01.000Z",
-      },
-    };
     const retiredSessionId = session.sessionId;
     let observedFingerprint: string | null | undefined;
     let observedJournalPhase: string | undefined;
@@ -246,6 +264,40 @@ describe("runRebuildRecreatePhase handoff", () => {
     } finally {
       onboardSpy.mockRestore();
     }
+  });
+
+  it("carries the journal authority instead of a stale preflight option (#7411)", async () => {
+    let observedAuthority: unknown;
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      observedAuthority = options.rebuildGatewayAuthority;
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          recreateOptions: {
+            ...recreateOptions,
+            rebuildGatewayAuthority: PACKAGED_GATEWAY_AUTHORITY,
+          },
+        }),
+      ),
+    ).resolves.toBe(true);
+
+    expect(observedAuthority).toBe(STANDALONE_GATEWAY_AUTHORITY);
+    const selected = onboardSession.loadSession()?.checkpoint?.gatewayAuthority;
+    expect(selected?.kind === "selected" && selected.value).toBe(STANDALONE_GATEWAY_AUTHORITY);
+  });
+
+  it("refuses a changed checkpoint authority before recreating the sandbox (#7411)", async () => {
+    seedRecreateJournalCheckpoint(session, PACKAGED_GATEWAY_AUTHORITY);
+    const onboardSpy = vi.spyOn(rebuildOnboardDependencies, "onboard");
+
+    await expect(runRebuildRecreatePhase(makeInput())).rejects.toThrow(
+      "bail: Authoritative rebuild journal authority changed before sandbox recreation.",
+    );
+
+    expect(onboardSession.updateSession).not.toHaveBeenCalled();
+    expect(onboardSpy).not.toHaveBeenCalled();
   });
 
   it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {
@@ -291,6 +343,66 @@ describe("runRebuildRecreatePhase handoff", () => {
     } finally {
       restoreEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", previousRecreateWithoutBackup);
     }
+  });
+
+  it("carries preserved Hermes home channels to the Dockerfile patch boundary (#7803)", async () => {
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.rebuildPreservedEnv).toEqual([
+        {
+          path: ".env",
+          assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+        },
+      ]);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sandboxEntry: {
+            name: "alpha",
+            agent: "hermes",
+            observabilityEnabled: true,
+            policyTier: "restricted",
+          },
+          rebuildAgent: "hermes",
+          rebuildsHermesSandbox: true,
+          messagingPlan: {
+            schemaVersion: 1,
+            sandboxName: "alpha",
+            agent: "hermes",
+            workflow: "rebuild",
+            channels: [
+              {
+                channelId: "slack",
+                displayName: "Slack",
+                authMode: "token-paste",
+                active: true,
+                selected: true,
+                configured: true,
+                disabled: false,
+                inputs: [],
+                hooks: [],
+              },
+            ],
+            disabledChannels: [],
+            credentialBindings: [],
+            networkPolicy: { presets: [], entries: [] },
+            agentRender: [],
+            buildSteps: [],
+            stateUpdates: [],
+            healthChecks: [],
+          },
+          backupManifest: {
+            preservedEnv: [
+              {
+                path: ".env",
+                assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+              },
+            ],
+          } as never,
+        }),
+      ),
+    ).resolves.toBe(true);
   });
 
   it("restores the caller backup marker after inner recreate failure", async () => {
@@ -360,5 +472,61 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(false);
     expect(input.onCreated).not.toHaveBeenCalled();
     expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 1);
+  });
+});
+
+describe("rebuild recreate shields state", () => {
+  let session: Session;
+
+  beforeEach(() => {
+    session = onboardSession.createSession({
+      sandboxName: "alpha",
+      observabilityEnabled: false,
+    });
+    seedRecreateJournalCheckpoint(session);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
+    vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
+      session = mutator(session) ?? session;
+      return session;
+    });
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("clears prior shields state only after a recovery recreate succeeds (#8283)", async () => {
+    const clearShieldsState = vi
+      .spyOn(shields, "clearShieldsState")
+      .mockImplementation(() => undefined);
+
+    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: false }))).resolves.toBe(
+      true,
+    );
+    expect(clearShieldsState).not.toHaveBeenCalled();
+
+    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: true }))).resolves.toBe(
+      true,
+    );
+    expect(clearShieldsState).toHaveBeenCalledOnce();
+    expect(clearShieldsState).toHaveBeenCalledWith("alpha");
+  });
+
+  it("keeps prior shields state when a recovery recreate fails (#8283)", async () => {
+    const clearShieldsState = vi
+      .spyOn(shields, "clearShieldsState")
+      .mockImplementation(() => undefined);
+    vi.mocked(rebuildOnboardDependencies.onboard).mockRejectedValue(
+      new Error("inner onboard failed"),
+    );
+
+    await expect(runRebuildRecreatePhase(makeInput({ recoveryRecreate: true }))).rejects.toThrow(
+      "bail: Recreate failed (stale-sandbox recovery).",
+    );
+
+    expect(clearShieldsState).not.toHaveBeenCalled();
   });
 });

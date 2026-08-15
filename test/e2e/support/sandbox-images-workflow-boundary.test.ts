@@ -153,6 +153,27 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("requires the canonical no-CA Hermes build and its default-trust image proof", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const build = producer.steps!.find((step) => step.name === "Build Hermes production image")!;
+    build.with!["build-args"] = `${build.with!["build-args"]}\nNEMOCLAW_CORPORATE_CA_B64=test`;
+    const proof = producer.steps!.find(
+      (step) => step.name === "Verify Hermes default-trust final image",
+    )!;
+    proof.run = proof.run!.replace(
+      "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test -e /usr/local/share/nemoclaw/corporate-ca.pem",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+        "Hermes producer must verify that the final image uses default trust when no corporate CA is supplied.",
+      ]),
+    );
+  });
+
   it("rejects non-canonical Hermes Buildx action pins", () => {
     for (const stepName of ["Set up Docker Buildx", "Build Hermes production image"]) {
       const { imageWorkflow, mainWorkflow } = readWorkflows();
@@ -178,6 +199,115 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
       "Hermes image tests must download and load the producer artifact exactly once with the canonical action",
+    );
+  });
+
+  it("rejects omitting the Hermes base-image resolver before the secret-boundary probe", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    consumer.steps = consumer.steps!.filter((step) => step.name !== "Resolve Hermes base image");
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  });
+
+  it("rejects replacing the Hermes base-image resolver with another action", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    resolver.uses = "./.github/actions/resolve-sandbox-base-image";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  });
+
+  it("rejects conditionally skipping the Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    resolver.if = "${{ false }}";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes base-image resolver must run unconditionally",
+    );
+  });
+
+  it("rejects tolerating a Hermes base-image resolver failure", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    resolver["continue-on-error"] = true;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes base-image resolver must fail closed",
+    );
+  });
+
+  it("rejects a renamed duplicate Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    consumer.steps!.push({ ...resolver, name: "Resolve Hermes base image again" });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  });
+
+  it("rejects a conditional trailing-separator alias of the Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    consumer.steps!.push({
+      ...resolver,
+      name: "Resolve Hermes base image through trailing separator",
+      uses: `${resolver.uses}/`,
+      if: "${{ false }}",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+        "Hermes base-image resolver must run unconditionally",
+      ]),
+    );
+  });
+
+  it("rejects a failure-tolerant dot-segment alias of the Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    consumer.steps!.push({
+      ...resolver,
+      name: "Resolve Hermes base image through dot segment",
+      uses: `${resolver.uses}/.`,
+      "continue-on-error": true,
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+        "Hermes base-image resolver must fail closed",
+      ]),
+    );
+  });
+
+  it("rejects resolving the Hermes base image after the secret-boundary probe", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolverIndex = consumer.steps!.findIndex(
+      (step) => step.name === "Resolve Hermes base image",
+    );
+    const [resolver] = consumer.steps!.splice(resolverIndex, 1);
+    const secretBoundaryIndex = consumer.steps!.findIndex(
+      (step) => step.name === "Run Hermes sandbox secret boundary test",
+    );
+    consumer.steps!.splice(secretBoundaryIndex + 1, 0, resolver);
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
     );
   });
 
@@ -368,43 +498,6 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("requires hardened completed-image node-tar scans and retained evidence", () => {
-    const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const openclaw = imageWorkflow.jobs["build-sandbox-images"];
-    const openclawScan = openclaw.steps!.find(
-      (step) => step.name === "Scan completed OpenClaw image for node-tar",
-    )!;
-    openclawScan.run = openclawScan
-      .run!.replace("--network none", "--network host")
-      .replaceAll("/scripts/checks/node-tar-image-scan.mts", "/tmp/node-tar-image-scan.mts");
-
-    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    const hermesUpload = hermes.steps!.find(
-      (step) => step.name === "Upload Hermes node-tar inventory",
-    )!;
-    hermesUpload.with!["retention-days"] = 1;
-
-    const arm = imageWorkflow.jobs["build-sandbox-images-arm64"];
-    const armSteps = arm.steps!;
-    const armUploadIndex = armSteps.findIndex(
-      (step) => step.name === "Upload OpenClaw arm64 node-tar inventory",
-    );
-    const [armUpload] = armSteps.splice(armUploadIndex, 1);
-    const armBoundaryIndex = armSteps.findIndex(
-      (step) => step.name === "Build sandbox test image on arm64",
-    );
-    armSteps.splice(armBoundaryIndex + 1, 0, armUpload!);
-
-    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
-      expect.arrayContaining([
-        "build-sandbox-images node-tar scan must include --network none",
-        expect.stringContaining("build-sandbox-images node-tar scan must include -v"),
-        "build-hermes-sandbox-image must retain its node-tar inventory for 14 days",
-        "build-sandbox-images-arm64 must scan and retain evidence before the completed image is handed off",
-      ]),
-    );
-  });
-
   it("keeps messaging plan image probes isolated, guarded, local, and verified", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const probe = imageWorkflow.jobs["messaging-plan-image-boundary"];
@@ -428,10 +521,20 @@ describe("sandbox image workflow boundary", () => {
     const hermes = probe.steps!.find(
       (step) => step.name === "Build and verify Hermes messaging plan boundary",
     )!;
-    hermes.run = hermes.run!.replace(
-      "check-messaging-plan-image-boundary.mts verify",
-      "check-messaging-plan-image-boundary.mts bypass",
-    );
+    hermes.run = hermes
+      .run!.replace(
+        'scripts/check-production-build-args.sh "${build_args[@]}"',
+        'echo "guard bypassed"',
+      )
+      .replace(
+        '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+        '--build-arg "NEMOCLAW_CORPORATE_CA_B64="',
+      )
+      .replace("crl2pkcs7 -nocrl", "version")
+      .replace(
+        "check-messaging-plan-image-boundary.mts verify",
+        "check-messaging-plan-image-boundary.mts bypass",
+      );
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
@@ -440,9 +543,100 @@ describe("sandbox image workflow boundary", () => {
         "messaging plan image boundary must set up Node exactly once",
         "messaging plan image boundary must use Node 22.19.0",
         'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        'hermes messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        'hermes messaging plan image boundary must include --build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+        "hermes messaging plan image boundary must include docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
         "hermes messaging plan image boundary must include node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify nemoclaw-hermes-plan-boundary hermes",
         "messaging plan image boundary must not publish probe image artifacts",
       ]),
+    );
+  });
+
+  it("requires the exact compact CA root helper invocation", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes.run!.replace(
+      "select-ci-endpoint-ca-roots.mts",
+      "select-ci-endpoint-ca-roots.mts --endpoint registry.example.invalid",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      'hermes messaging plan image boundary must include exactly node --experimental-strip-types scripts/checks/select-ci-endpoint-ca-roots.mts --output "$compact_ca_bundle"',
+    );
+  });
+
+  it("rejects direct base64 encoding of the broad system CA bundle", () => {
+    for (const forbidden of [
+      'forbidden_ca_b64="$(base64 -w 0 "$system_ca_bundle")"',
+      [
+        "corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt",
+        'forbidden_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
+      ].join("\n"),
+    ]) {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+        (step) => step.name === "Build and verify Hermes messaging plan boundary",
+      )!;
+      hermes.run = `${hermes.run}\n${forbidden}`;
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+        "hermes messaging plan image boundary must not encode the system CA bundle directly",
+      );
+    }
+  });
+
+  it("requires offline equality and parse proofs for the installed Hermes CA bundle", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes
+      .run!.replace(
+        'test "$installed_ca_sha256" = "$corporate_ca_sha256"',
+        'test -n "$installed_ca_sha256"',
+      )
+      .replace("crl2pkcs7 -nocrl", "version");
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        'hermes messaging plan image boundary must include test "$installed_ca_sha256" = "$corporate_ca_sha256"',
+        "hermes messaging plan image boundary must include docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
+      ]),
+    );
+  });
+
+  it("requires the Hermes build guard before the build and offline CA proofs", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    const guard = 'scripts/check-production-build-args.sh "${build_args[@]}"';
+    hermes.run = `${hermes.run!.replace(guard, "")}\n${guard}`;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "hermes messaging plan image boundary steps are out of order",
+        "hermes messaging plan image boundary CA fixture steps are out of order",
+      ]),
+    );
+  });
+
+  it("rejects the Hermes CA build argument after the image build", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    const buildArg = '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"';
+    const buildCommand = 'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .';
+    expect(hermes.run).toContain(buildArg);
+    hermes.run = hermes
+      .run!.replace(buildArg, "")
+      .replace(buildCommand, `${buildCommand}\n${buildArg}`);
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "hermes messaging plan image boundary CA fixture steps are out of order",
     );
   });
 

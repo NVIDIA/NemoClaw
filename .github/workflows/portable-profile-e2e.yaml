@@ -1,0 +1,181 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Portable Profile
+
+run-name: "Portable profile rootless E2E for ${{ github.sha }}"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/portable-profile-e2e.yaml"
+      - "install.sh"
+      - "scripts/install.sh"
+      - "scripts/install-openshell.sh"
+      - "src/lib/onboard/**"
+      - "src/lib/actions/sandbox/**"
+      - "src/lib/domain/sandbox/image-tag.ts"
+      - "src/lib/sandbox/**"
+      - "test/e2e/fixtures/availability-env.ts"
+      - "test/e2e/fixtures/portable-profile-systemctl-shim.sh"
+      - "test/e2e/fixtures/portable-profile-systemctl.ts"
+      - "test/e2e/live/full-e2e.test.ts"
+      - "test/e2e/live/launch-agent-turn.ts"
+      - "test/e2e/live/portable-profile-gateway-proof.ts"
+      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
+      - "tools/e2e/check-semantic-phases.mts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-profile-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rootless-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build shared policy boundary
+        run: npm run build:policy-boundary
+
+      - name: Install pinned OpenShell
+        run: |
+          env -u GH_TOKEN -u GITHUB_TOKEN NEMOCLAW_NON_INTERACTIVE=1 bash scripts/install-openshell.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Provision restricted rootless Linux runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          runtime_dir="/run/user/$(id -u)"
+          sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            sudo usermod --add-subuids 100000-165535 "$USER"
+          fi
+          if ! grep -q "^${USER}:" /etc/subgid; then
+            sudo usermod --add-subgids 100000-165535 "$USER"
+          fi
+          podman --version
+          pasta --version
+          docker --version
+
+      - name: Exercise portable profile in the rootless environment
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-profile
+          E2E_TARGET_ID: portable-profile
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: >-
+          npx vitest run --project e2e-live
+          test/e2e/live/portable-profile-rootless-linux.test.ts
+          --silent=false --reporter=default
+
+      - name: Upload portable profile E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-profile-e2e-artifacts
+          path: e2e-artifacts/portable-profile/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  portable-launch:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: portable-launch
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-launch
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_EXPERIMENTAL_PROFILE: portable
+      NEMOCLAW_SANDBOX_NAME: portable-launch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Provision restricted rootless Linux runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          runtime_dir="/run/user/$(id -u)"
+          sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            sudo usermod --add-subuids 100000-165535 "$USER"
+          fi
+          if ! grep -q "^${USER}:" /etc/subgid; then
+            sudo usermod --add-subgids 100000-165535 "$USER"
+          fi
+
+          shim_dir="${RUNNER_TEMP}/nemoclaw-portable-bin"
+          install -d -m 700 "$shim_dir"
+          install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"
+
+          export PATH="$shim_dir:$PATH"
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          printf '%s\n' "$shim_dir" >>"$GITHUB_PATH"
+          printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
+          printf 'DOCKER_HOST=unix://%s/podman/podman.sock\n' "$runtime_dir" >>"$GITHUB_ENV"
+          systemctl --user start podman.socket
+          podman --version
+          docker --version
+          docker --host "unix://$runtime_dir/podman/podman.sock" info
+
+      - name: Exercise a portable launch through chat and permission restoration
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: >-
+          npx tsx tools/e2e/live-vitest-invocation.mts run
+          --test-path test/e2e/live/full-e2e.test.ts
+
+      - name: Upload portable launch E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-launch-e2e-artifacts
+          path: e2e-artifacts/portable-launch/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up portable runtime
+        if: always()
+        shell: bash
+        run: |
+          podman system reset --force || true
+          runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          node --experimental-strip-types --no-warnings --input-type=module \
+            --eval 'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);' \
+            "$runtime_dir"

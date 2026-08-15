@@ -51,7 +51,7 @@ function runHoldWithFakeIdentity(identity: FakeIdentity, args: readonly string[]
         ),
       { mode: 0o755 },
     );
-    return spawnSync("/bin/bash", [script, ...args], {
+    return spawnSync(script, [...args], {
       encoding: "utf8",
       env: { ...process.env, TEST_PATH: directory },
     });
@@ -61,6 +61,19 @@ function runHoldWithFakeIdentity(identity: FakeIdentity, args: readonly string[]
 }
 
 describe("managed startup image hold", () => {
+  it("pins privileged Bash, consumes the identity delimiter, and delegates only to the fixed entrypoint", () => {
+    const source = fs.readFileSync(HOLD, "utf8");
+
+    expect(source.startsWith("#!/bin/bash -p\n")).toBe(true);
+    expect(source).toContain('[ "$5" = "--bootstrap-identity" ]');
+    expect(source).toContain('[ "$7" = "--" ]');
+    expect(source).toContain('--bootstrap-identity "$_nemoclaw_bootstrap_identity"');
+    expect(source).toContain(
+      'exec "${_nemoclaw_scrubbed_env[@]}" /usr/local/bin/nemoclaw-start "$@"',
+    );
+    expect(source.match(/^exec /gmu)).toHaveLength(1);
+  });
+
   it("keeps the bundled image runtime independent of the host-only channel policy parser", () => {
     const persistence = fs.readFileSync(MESSAGING_PERSISTENCE, "utf8");
 
@@ -97,8 +110,15 @@ describe("managed startup image hold", () => {
       executable(path.join(directory, "node"), `#!/bin/sh\nprintf 'node:%s\\n' "$*" >>"$TRACE"\n`);
       executable(
         path.join(directory, "nemoclaw-start"),
-        `#!/bin/sh\nprintf 'start:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMOCLAW_STARTUP_PROFILE_B64-unset}" "\${NEMOCLAW_CORPORATE_CA_B64-unset}" "$*" >>"$TRACE"\n`,
+        `#!/bin/bash
+if declare -F attacker >/dev/null; then attacker; fi
+case ":$SHELLOPTS:" in *:xtrace:*) printf 'attacker:shellopts\\n' >>"$TRACE" ;; esac
+case ":$BASHOPTS:" in *:extdebug:*) printf 'attacker:bashopts\\n' >>"$TRACE" ;; esac
+printf 'start:%s:%s:%s:%s:%s:%s\\n' "$NEMOCLAW_MANAGED_STARTUP_APPLIED" "\${NEMOCLAW_STARTUP_PROFILE_B64-unset}" "\${NEMOCLAW_CORPORATE_CA_B64-unset}" "\${BASH_ENV-unset}" "\${NODE_OPTIONS-unset}" "$*" >>"$TRACE"
+`,
       );
+      const attacker = path.join(directory, "attacker.sh");
+      fs.writeFileSync(attacker, `printf 'attacker:bash-env\\n' >>"$TRACE"\n`);
       const source = fs
         .readFileSync(HOLD, "utf8")
         .replace(
@@ -118,6 +138,7 @@ describe("managed startup image hold", () => {
       fs.writeFileSync(script, source, { mode: 0o755 });
       fs.chmodSync(script, 0o755);
       const fingerprint = "a".repeat(64);
+      const bootstrapIdentity = "b".repeat(64);
 
       execFileSync(
         script,
@@ -126,6 +147,9 @@ describe("managed startup image hold", () => {
           agent,
           "--profile-fingerprint",
           fingerprint,
+          "--bootstrap-identity",
+          bootstrapIdentity,
+          "--",
           "/bin/sh",
           "-c",
           "exec tail -f /dev/null",
@@ -137,13 +161,19 @@ describe("managed startup image hold", () => {
             TEST_PATH: directory,
             NEMOCLAW_STARTUP_PROFILE_B64: "must-drop",
             NEMOCLAW_CORPORATE_CA_B64: "must-drop",
+            BASH_ENV: attacker,
+            ENV: attacker,
+            NODE_OPTIONS: "--require=/sandbox/attacker.cjs",
+            SHELLOPTS: "xtrace",
+            BASHOPTS: "extdebug",
+            "BASH_FUNC_attacker%%": '() { printf "attacker:function\\n" >>"$TRACE"; }',
           },
         },
       );
 
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
-        `node:${runtime} --wait-for-completion --agent ${agent} --profile-fingerprint ${fingerprint}`,
-        "start:1:unset:unset:/bin/sh -c exec tail -f /dev/null",
+        `node:${runtime} --wait-for-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${bootstrapIdentity}`,
+        "start:1:unset:unset:unset:unset:/bin/sh -c exec tail -f /dev/null",
       ]);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -165,6 +195,9 @@ describe("managed startup image hold", () => {
       "openclaw",
       "--profile-fingerprint",
       "a".repeat(64),
+      "--bootstrap-identity",
+      "b".repeat(64),
+      "--",
     ]);
     expect(result.status).not.toBe(0);
     expect(String(result.stderr ?? "")).toContain("must run as the sandbox account");
@@ -173,9 +206,51 @@ describe("managed startup image hold", () => {
   it("rejects unsupported agents before invoking the runtime", () => {
     const result = runHoldWithFakeIdentity(
       { currentUid: 1000, currentGid: 1000, sandboxUid: 1000, sandboxGid: 1000 },
-      ["--agent", "unknown", "--profile-fingerprint", "a".repeat(64)],
+      [
+        "--agent",
+        "unknown",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "b".repeat(64),
+        "--",
+      ],
     );
     expect(result.status).not.toBe(0);
     expect(String(result.stderr ?? "")).toContain("agent is unsupported");
+  });
+
+  it.each([
+    {
+      args: [
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "invalid",
+        "--",
+      ],
+      message: "bootstrap identity must be lowercase SHA-256",
+    },
+    {
+      args: [
+        "--agent",
+        "openclaw",
+        "--profile-fingerprint",
+        "a".repeat(64),
+        "--bootstrap-identity",
+        "b".repeat(64),
+        "/bin/sh",
+      ],
+      message: "startup argument delimiter is missing",
+    },
+  ])("rejects malformed identity-bound grammar: $message", ({ args, message }) => {
+    const result = runHoldWithFakeIdentity(
+      { currentUid: 1000, currentGid: 1000, sandboxUid: 1000, sandboxGid: 1000 },
+      args,
+    );
+    expect(result.status).not.toBe(0);
+    expect(String(result.stderr ?? "")).toContain(message);
   });
 });

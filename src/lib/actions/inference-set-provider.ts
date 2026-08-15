@@ -111,7 +111,7 @@ function inspectProvider(
 
 function providerLookupReportsNotFound(output: string, providerName: string): boolean {
   if (openshellReportsProviderNotFound(output, providerName)) return true;
-  // OpenShell 0.0.85 omits the name only from this exact-name `provider get`
+  // OpenShell 0.0.99 omits the name only from this exact-name `provider get`
   // command. Keep the route-update parser strict because its output can name
   // a different missing provider.
   return stripAnsi(output)

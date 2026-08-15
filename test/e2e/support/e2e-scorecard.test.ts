@@ -154,7 +154,7 @@ function runSanitizer(source: string, output: string) {
 function scorecardData(overrides: Partial<ScorecardData> = {}): ScorecardData {
   return {
     today: "Jun 29",
-    runMode: "Scheduled E2E",
+    runMode: "Main push",
     actor: "",
     isSelectiveDispatch: false,
     requestedJobs: [],
@@ -464,13 +464,13 @@ describe("E2E scorecard", () => {
           { conclusion: "skipped", name: "jetson-nvmap-gpu", status: "completed" },
           {
             conclusion: "success",
-            name: "sandbox-rlimits-connect",
+            name: "mcp-bridge-dev",
             status: "completed",
           },
           { conclusion: "success", name: "report-to-pr", status: "completed" },
         ],
-        explicitOnlyJobNames: ["jetson-nvmap-gpu", "sandbox-rlimits-connect"],
-        explicitlySelected: ["sandbox-rlimits-connect"],
+        explicitOnlyJobNames: ["jetson-nvmap-gpu", "mcp-bridge-dev"],
+        explicitlySelected: ["mcp-bridge-dev"],
         metaJobNames: ["generate-matrix", "report-to-pr", "scorecard"],
         needs: {},
       }),
@@ -518,11 +518,11 @@ describe("E2E scorecard", () => {
     expect(summary.timingRows.map(({ name }) => name)).toEqual(["matrix / slow", "matrix / fast"]);
   });
 
-  it("falls back to needs without counting unselected explicit-only jobs", () => {
+  it("falls back to needs without counting jobs omitted from the run", () => {
     expect(
       scorecardJobs.summarizeJobs({
         apiJobs: null,
-        explicitOnlyJobNames: ["jetson-nvmap-gpu", "sandbox-rlimits-connect"],
+        explicitOnlyJobNames: ["jetson-nvmap-gpu", "mcp-bridge-dev"],
         explicitlySelected: ["jetson-nvmap-gpu"],
         metaJobNames: ["generate-matrix", "report-to-pr", "scorecard"],
         needs: {
@@ -530,7 +530,7 @@ describe("E2E scorecard", () => {
           cloud: { result: "success" },
           malformed: { result: "timed_out" },
           "jetson-nvmap-gpu": { result: "skipped" },
-          "sandbox-rlimits-connect": { result: "skipped" },
+          "mcp-bridge-dev": { result: "skipped" },
           "report-to-pr": { result: "success" },
         },
       }),

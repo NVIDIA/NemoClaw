@@ -13,6 +13,7 @@ import {
 
 export {
   buildOwnedHostGatewayArgv0,
+  canonicalGatewayTargetMatches,
   type OpenShellGatewayProcessTarget,
 } from "./gateway-process-target-identity";
 
@@ -43,6 +44,7 @@ export function gatewayProcessCmdlineMatches(
   opts: {
     expectedOpenShellGateway?: OpenShellGatewayProcessTarget;
     processNames?: ReadonlySet<string>;
+    requireExpectedFlags?: boolean;
     resolveExecutablePath?: ResolveExecutablePath;
   } = {},
 ): boolean {
@@ -59,12 +61,12 @@ export function gatewayProcessCmdlineMatches(
   if (processNames.has(base)) {
     if (processNames.has("openshell-gateway") && base === "openshell-gateway") {
       return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
-        requireExpectedFlags: false,
+        requireExpectedFlags: opts.requireExpectedFlags ?? false,
       });
     }
     if (base === "openclaw-gateway") {
       return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
-        requireExpectedFlags: true,
+        requireExpectedFlags: opts.requireExpectedFlags ?? true,
       });
     }
     return true;
@@ -76,7 +78,7 @@ export function gatewayProcessCmdlineMatches(
     tokens[2] === "start"
   ) {
     return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
-      requireExpectedFlags: true,
+      requireExpectedFlags: opts.requireExpectedFlags ?? true,
     });
   }
 
@@ -86,7 +88,7 @@ export function gatewayProcessCmdlineMatches(
     const expected = normalize(gatewayBin);
     if (actual && expected && actual === expected) {
       return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
-        requireExpectedFlags: false,
+        requireExpectedFlags: opts.requireExpectedFlags ?? false,
       });
     }
   }
@@ -108,8 +110,10 @@ export function hostGatewayCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
   expectedOpenShellGateway?: OpenShellGatewayProcessTarget,
+  opts: { requireExpectedFlags?: boolean } = {},
 ): boolean {
   return gatewayProcessCmdlineMatches(cmdline, gatewayBin, {
     expectedOpenShellGateway,
+    requireExpectedFlags: opts.requireExpectedFlags,
   });
 }

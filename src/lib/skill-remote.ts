@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 
+import { openshellSandboxSshHost } from "./adapters/openshell/sandbox-ssh-host";
 import { shellQuote } from "./core/shell-quote";
 import type { SkillPaths } from "./skill-install";
 
@@ -42,7 +43,7 @@ export function sshExec(
         "ConnectTimeout=10",
         "-o",
         "LogLevel=ERROR",
-        `openshell-${ctx.sandboxName}`,
+        openshellSandboxSshHost(ctx.sandboxName),
         command,
       ],
       {
@@ -165,7 +166,11 @@ export function removeSkill(
   }
 
   if (!paths.mirrorDir && !paths.sessionFile) {
-    messages.push("Restart the agent gateway for the removal to take effect.");
+    messages.push(
+      paths.reloadsSkillsOnSessionStart
+        ? "Start a new chat session for the removal to take effect; a gateway restart is not required."
+        : "Restart the agent gateway for the removal to take effect.",
+    );
   }
 
   return {

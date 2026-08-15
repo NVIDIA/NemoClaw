@@ -1,14 +1,89 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import YAML from "yaml";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
 export type McpDnsRebindingAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+
+export type CapturedManagedMcpPolicy = {
+  networkPolicies: Record<string, McpNetworkPolicy>;
+  policy: McpNetworkPolicy;
+};
+
+type McpNetworkPolicy = {
+  endpoints?: Array<{
+    host?: string;
+    allowed_ips?: string[];
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
+export async function captureManagedMcpPolicy(
+  sandbox: SandboxClient,
+  options: {
+    artifactName: string;
+    label: string;
+    policyKey: string;
+    sandboxName: string;
+    url: string;
+  },
+): Promise<CapturedManagedMcpPolicy> {
+  const result = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
+    artifactName: options.artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  assertExitZero(result, options.label);
+  const document = YAML.parse(parseOpenShellPolicy(resultText(result)).yamlBody) as {
+    network_policies?: Record<string, McpNetworkPolicy>;
+  };
+  const networkPolicies = document.network_policies ?? {};
+  const policy = networkPolicies[options.policyKey];
+  if (!policy) {
+    throw new Error(`${options.label}: managed MCP policy '${options.policyKey}' is absent`);
+  }
+  const endpoint = policy.endpoints?.[0];
+  const expectedHost = new URL(options.url).hostname;
+  if (endpoint?.host !== expectedHost) {
+    throw new Error(`${options.label}: expected managed MCP host '${expectedHost}'`);
+  }
+  if (
+    !Array.isArray(endpoint.allowed_ips) ||
+    endpoint.allowed_ips.length === 0 ||
+    endpoint.allowed_ips.some((address) => typeof address !== "string")
+  ) {
+    throw new Error(`${options.label}: expected at least one managed MCP address pin`);
+  }
+  return { networkPolicies, policy };
+}
+
+export function assertManagedMcpPolicySurvivedRemoval(
+  before: McpNetworkPolicy,
+  after: CapturedManagedMcpPolicy,
+  removedPolicyKey: string,
+): void {
+  assert.deepStrictEqual(after.policy, before);
+  assert.equal(after.networkPolicies[removedPolicyKey], undefined);
+}
+
+export function expectExitNonZero(result: ShellProbeResult, label: string, pattern: RegExp): void {
+  assert.ok(
+    !result.timedOut && result.exitCode !== null && result.exitCode !== 0,
+    `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  assert.match(resultText(result), pattern);
+}
 
 export async function hostAddressForSandbox(_host: HostCliClient): Promise<string> {
   return "host.openshell.internal";
@@ -66,15 +141,15 @@ export function isExpectedMcpCurlPolicyDenial(
 
 /**
  * Build an MCP request whose curl child retains the selected adapter runtime
- * as an ancestor. OpenShell v0.0.85 attributes policy to /proc/<pid>/exe and
+ * as an ancestor. OpenShell v0.0.101 attributes policy to /proc/<pid>/exe and
  * ancestors, so this exercises the same unavoidable Node/Python identity used
  * by the corresponding adapter instead of an unrelated curl-only identity.
  *
  * Pinned upstream source contract:
- * NVIDIA/OpenShell@3dee5570a46076a57a3b056f35f35ebc0861ac85,
- * crates/openshell-supervisor-network/src/proxy.rs:2648-2674 resolves once,
- * :2699-2739 and :2794-2803 validate and return that same address list,
- * and :1079-1081 passes it directly to TcpStream::connect.
+ * NVIDIA/OpenShell@8ddd98c3dff62619a3963f99ba1e055b67650e72,
+ * crates/openshell-supervisor-network/src/proxy.rs:3030-3055 resolves once,
+ * proxy/destination.rs:134-185 validates and retains that same address list,
+ * and proxy.rs:3209-3211 dials those addresses on the direct path used here.
  */
 export function buildMcpDnsRebindingProbeScript(
   adapter: McpDnsRebindingAdapter,

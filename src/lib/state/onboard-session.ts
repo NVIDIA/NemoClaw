@@ -14,6 +14,10 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { GATEWAY_PORT } from "../core/ports";
+import {
+  parseServingProfileProvenance,
+  type ServingProfileProvenance,
+} from "../inference/serving/profile-provenance";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
@@ -42,6 +46,7 @@ import {
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
+import { decisionUnset } from "./onboard-checkpoint-decision";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   assignSafeToolDisclosureUpdate,
@@ -49,16 +54,16 @@ import {
   preserveInvalidSessionToolDisclosure,
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
-import {
-  RECORD_ONLY_STEP_MUTATION_OPTIONS,
-  type StepMutationOptions,
-  shouldUpdateMachine,
-} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
+import type { SandboxHostMount } from "./registry/types";
+import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
+
+export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
+const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
@@ -99,6 +104,38 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  hostMounts?: SandboxHostMount[];
+}
+
+function structurallyInvalidHostMounts(source: unknown): boolean {
+  if (typeof source !== "object" || source === null) return false;
+  const metadata = (source as { metadata?: unknown }).metadata;
+  if (typeof metadata !== "object" || metadata === null) return false;
+  const hostMounts = (metadata as { hostMounts?: unknown }).hostMounts;
+  if (hostMounts === undefined) return false;
+  return (
+    !Array.isArray(hostMounts) ||
+    hostMounts.some(
+      (candidate) =>
+        !isObject(candidate) ||
+        typeof candidate.source !== "string" ||
+        typeof candidate.target !== "string" ||
+        hasUnsafeHostMountTerminalText(candidate.source) ||
+        hasUnsafeHostMountTerminalText(candidate.target) ||
+        candidate.readOnly !== true,
+    )
+  );
+}
+
+export function hasInvalidSessionHostMounts(session: unknown): boolean {
+  return (
+    (typeof session === "object" && session !== null && INVALID_HOST_MOUNT_SESSIONS.has(session)) ||
+    structurallyInvalidHostMounts(session)
+  );
+}
+
+function preserveInvalidSessionHostMounts(source: unknown, target: object): void {
+  if (hasInvalidSessionHostMounts(source)) INVALID_HOST_MOUNT_SESSIONS.add(target);
 }
 
 export type SessionRecoveryReceiptReason =
@@ -166,6 +203,8 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Exact secret-free serving recipe identity selected before runtime side effects. */
+  servingProfileProvenance: ServingProfileProvenance | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
   stationExpressIntent: StationExpressResumeIntent | null;
   /** Receipt generation durably awaiting exact-match retirement after Station completion. */
@@ -254,6 +293,7 @@ export interface SessionUpdates {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   endpointUrl?: string | null;
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
@@ -289,6 +329,7 @@ export interface DebugSessionSummary {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  servingProfileProvenance: ServingProfileProvenance | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -468,9 +509,27 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
+  const hostMounts =
+    Array.isArray(value.hostMounts) &&
+    value.hostMounts.every(
+      (candidate) =>
+        isObject(candidate) &&
+        typeof candidate.source === "string" &&
+        typeof candidate.target === "string" &&
+        !hasUnsafeHostMountTerminalText(candidate.source) &&
+        !hasUnsafeHostMountTerminalText(candidate.target) &&
+        candidate.readOnly === true,
+    )
+      ? value.hostMounts.map((candidate): SandboxHostMount => ({
+          source: (candidate as { source: string }).source,
+          target: (candidate as { target: string }).target,
+          readOnly: true,
+        }))
+      : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
 }
 
@@ -641,6 +700,16 @@ function transitionMachineSnapshot(
     return;
   }
   session.machine = createMachineSnapshot(state, now, current.revision + 1);
+  syncCheckpointMachineState(session, state, now);
+}
+
+export function syncCheckpointMachineState(
+  session: Session,
+  state: OnboardMachineState,
+  updatedAt: string,
+): void {
+  if (!session.checkpoint) return;
+  session.checkpoint = { ...session.checkpoint, machineState: state, updatedAt };
 }
 
 export function createSession(overrides: Partial<Session> = {}): Session {
@@ -666,6 +735,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    servingProfileProvenance: parseServingProfileProvenance(overrides.servingProfileProvenance),
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
       overrides.stationExpressReceiptRetirement,
@@ -705,6 +775,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      ...(overrides.metadata?.hostMounts?.length
+        ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
+        : {}),
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined, sessionId) ??
@@ -713,11 +786,20 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     steps,
   };
   preserveInvalidSessionToolDisclosure(overrides, session);
+  preserveInvalidSessionHostMounts(overrides, session);
   return session;
 }
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
+  if (
+    hasOwn(data, "servingProfileProvenance") &&
+    data.servingProfileProvenance !== null &&
+    !servingProfileProvenance
+  ) {
+    return null;
+  }
   const compatibleEndpointReasoningEffort = normalizeReasoningEffort(
     data.compatibleEndpointReasoningEffort,
   );
@@ -757,6 +839,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    servingProfileProvenance,
     stationExpressIntent,
     stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
@@ -822,13 +905,19 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     const providerBound = Boolean(
       intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
+    const incompleteProviderStateValid =
+      (normalized.provider === null && normalized.model === null) ||
+      (intent.kind === "spark" &&
+        normalized.provider === "vllm-local" &&
+        normalized.model !== null &&
+        normalized.model.trim().length > 0);
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
         (intent.kind === "spark" ||
           normalized.provider !== "vllm-local" ||
           normalized.model !== intent.servedModel)) ||
-      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+      (!providerComplete && !incompleteProviderStateValid)
     ) {
       return null;
     }
@@ -836,7 +925,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
 
   normalized.machine =
     parseMachineSnapshot(data.machine, normalized.sessionId) ?? inferMachineSnapshot(normalized);
+  if (
+    normalized.checkpoint &&
+    (normalized.checkpoint.sessionId !== normalized.sessionId ||
+      normalized.checkpoint.machineState !== normalized.machine.state)
+  ) {
+    return null;
+  }
   preserveInvalidSessionToolDisclosure(data, normalized);
+  preserveInvalidSessionHostMounts(data, normalized);
 
   return normalized;
 }
@@ -1281,6 +1378,14 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   assignNullableString(safe, "sandboxName", updates.sandboxName);
   assignNullableString(safe, "provider", updates.provider);
   assignNullableString(safe, "model", updates.model);
+  if (updates.servingProfileProvenance === null) {
+    safe.servingProfileProvenance = null;
+  } else {
+    const servingProfileProvenance = parseServingProfileProvenance(
+      updates.servingProfileProvenance,
+    );
+    if (servingProfileProvenance) safe.servingProfileProvenance = servingProfileProvenance;
+  }
   assignNullableString(safe, "endpointUrl", updates.endpointUrl, redactUrl);
   assignNullableString(safe, "credentialEnv", updates.credentialEnv);
   if (updates.hermesAuthMethod === "oauth" || updates.hermesAuthMethod === "api_key") {
@@ -1382,11 +1487,37 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(
-  stepName: string,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  let shouldEmit = false;
+export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
+
+/**
+ * Mutate the current session while this process owns the onboarding lock.
+ *
+ * Reuse the process-local `LOCK_FILE` lock when the caller already holds it.
+ * Otherwise, acquire the lock without waiting and return `busy` when another
+ * onboarding writer owns it.
+ */
+export function compareAndSwapSession(
+  matches: (session: Session) => boolean,
+  mutator: (session: Session) => Session | void,
+  command = "nemoclaw session compare-and-swap",
+): CompareAndSwapSessionResult {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) return "busy";
+  }
+  try {
+    const current = loadSession();
+    if (!current || !matches(current)) return "mismatch";
+    const next = mutator(current) || current;
+    saveSession(next);
+    return "updated";
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
+}
+
+export function markStepStarted(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -1398,28 +1529,14 @@ function markStepStartedWithOptions(
     session.lastStepStarted = stepName;
     session.failure = null;
     session.status = "in_progress";
-    const state = machineStateFromOnboardSessionStep(stepName);
-    shouldEmit = Boolean(state && shouldUpdateMachine(options));
-    if (state && shouldEmit) transitionMachineSnapshot(session, state, now);
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
-    );
-  }
   return updatedSession;
 }
 
-function markStepCompleteWithOptions(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
+export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
-  const hasUpdates = Object.keys(safeUpdates).length > 0;
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     // Spark managed-vLLM Express intents (#7231) carry no receipt/served state
@@ -1445,62 +1562,12 @@ function markStepCompleteWithOptions(
     Object.assign(session, safeUpdates);
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     else if (sparkExpressComplete) session.stationExpressIntent = null;
-    const nextState = nextMachineStateAfterCompletedStep(stepName, session);
-    shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
-    if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
     return session;
   });
-  if (hasUpdates) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "context.updated",
-        session: updatedSession,
-        step: stepName,
-        metadata: { fields: Object.keys(safeUpdates) },
-      }),
-    );
-  }
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "state.completed",
-        session: updatedSession,
-        step: stepName,
-      }),
-    );
-  }
-  return updatedSession;
-}
-
-export function markStepStarted(
-  stepName: string,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepStartedWithOptions(stepName, options);
-}
-
-export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
-}
-
-export function markStepComplete(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepCompleteWithOptions(stepName, updates, options);
-}
-
-export function markStepCompleteRecordOnly(
-  stepName: string,
-  updates: SessionUpdates = {},
-): Session {
-  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
@@ -1509,75 +1576,57 @@ export function markStepSkipped(stepName: string): Session {
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
-    shouldEmit = true;
+    if (session.lastStepStarted === stepName) session.lastStepStarted = null;
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.skipped", session: updatedSession, step: stepName }),
-    );
-  }
-  return updatedSession;
 }
 
-function markStepFailedWithOptions(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+export function markStepRejected(stepName: string): Session {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    const now = new Date().toISOString();
-    step.status = "failed";
+    step.status = "skipped";
+    step.startedAt = null;
     step.completedAt = null;
-    step.error = redactSensitiveText(message);
-    shouldEmit = shouldUpdateMachine(options);
-    if (shouldEmit) {
-      session.failure = sanitizeFailure({
-        step: stepName,
-        message,
-        recordedAt: now,
-        interrupted: false,
-      });
+    step.error = null;
+    if (session.lastStepStarted === stepName) session.lastStepStarted = null;
+    if (stepName === "provider_selection") {
+      session.provider = null;
+      session.model = null;
+      session.endpointUrl = null;
+      session.credentialEnv = null;
+      session.hermesAuthMethod = null;
+      session.preferredInferenceApi = null;
+      session.compatibleEndpointReasoning = null;
+      session.compatibleEndpointReasoningEffort = null;
+      session.nimContainer = null;
+      session.hermesToolGateways = null;
+      session.sandboxName = null;
+      session.sandboxPromptProgress.sandboxName = false;
+      session.resumable = false;
       session.status = "failed";
-      transitionMachineSnapshot(session, "failed", now);
+      session.failure = null;
+      if (session.checkpoint) {
+        session.checkpoint = {
+          ...session.checkpoint,
+          sandboxIdentity: decisionUnset(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
     }
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "state.failed",
-        session: updatedSession,
-        step: stepName,
-        error: message,
-      }),
-    );
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "onboard.failed",
-        session: updatedSession,
-        state: "failed",
-        step: stepName,
-        error: message,
-      }),
-    );
-  }
-  return updatedSession;
 }
 
-export function markStepFailed(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepFailedWithOptions(stepName, message, options);
-}
-
-export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
+export function markStepFailed(stepName: string, message: string | null = null): Session {
+  return updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    step.status = "failed";
+    step.completedAt = null;
+    step.error = redactSensitiveText(message);
+    return session;
+  });
 }
 
 /**
@@ -1762,6 +1811,7 @@ export function summarizeForDebug(
     sandboxName: session.sandboxName,
     provider: session.provider,
     model: session.model,
+    servingProfileProvenance: session.servingProfileProvenance,
     endpointUrl: redactUrl(session.endpointUrl),
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,

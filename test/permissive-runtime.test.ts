@@ -7,7 +7,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { buildRuntimePermissivePolicy } from "../src/lib/shields/permissive-runtime.js";
+import {
+  buildRuntimePermissivePolicy,
+  type ExactManagedMcpPolicy,
+} from "../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -17,6 +20,16 @@ const BASE_PERMISSIVE = YAML.stringify({
   },
   landlock: { compatibility: "best_effort" },
 });
+
+const MANAGED_POLICY: ExactManagedMcpPolicy = {
+  key: "mcp_bridge_alpha",
+  networkPolicy: {
+    endpoints: [{ host: "alpha.example.com", port: 443, protocol: "mcp" }],
+    binaries: [{ path: "/opt/hermes/.venv/bin/python*" }],
+  },
+  policyName: "mcp-bridge-alpha",
+  server: "alpha",
+};
 
 const tempFilesToClean: string[] = [];
 
@@ -46,6 +59,42 @@ afterEach(() => {
 });
 
 describe("buildRuntimePermissivePolicy (#3942)", () => {
+  it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_write: ["/proc"] },
+      network_policies: {
+        mcp_bridge_alpha: MANAGED_POLICY.networkPolicy,
+        unrelated_live_entry: {
+          endpoints: [{ host: "unrelated.example.com", port: 443 }],
+        },
+      },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      managedMcpPolicies: [MANAGED_POLICY],
+      readBasePolicy: () =>
+        YAML.stringify({
+          ...YAML.parse(BASE_PERMISSIVE),
+          network_policies: {
+            permissive_baseline: {
+              endpoints: [{ host: "*", port: 443 }],
+            },
+          },
+        }),
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies).toMatchObject({
+      mcp_bridge_alpha: MANAGED_POLICY.networkPolicy,
+      permissive_baseline: {
+        endpoints: [{ host: "*", port: 443 }],
+      },
+    });
+    expect(result.network_policies).not.toHaveProperty("unrelated_live_entry");
+  });
+
   it("preserves /proc when the live GPU sandbox has it in read_write", () => {
     const liveYaml = YAML.stringify({
       filesystem_policy: {
@@ -143,14 +192,67 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(out).toBe(basePath);
   });
 
-  it("returns the static base path when live policy has no filesystem_policy section", () => {
-    const basePath = "/path/to/static.yaml";
-    const liveYaml = YAML.stringify({ landlock: { compatibility: "best_effort" } });
+  it("carries the live landlock stanza so a startup-sealed field is not changed (#8461)", () => {
+    // Deep Agents Code starts with `strict` but ships no permissive policy of
+    // its own, so the base is the OpenClaw document with `best_effort`.
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+      landlock: { compatibility: "strict" },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "strict" });
+  });
+
+  it("carries a live landlock stanza that already equals the base (#8461)", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+      landlock: { compatibility: "best_effort" },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "best_effort" });
+  });
+
+  it("keeps the base landlock stanza when the live policy carries none (#8461)", () => {
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_only: ["/etc"], read_write: ["/tmp"] },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE,
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "best_effort" });
+  });
+
+  it("carries Landlock when the live policy has no filesystem paths (#8461)", () => {
+    const basePath = "/unused-base.yaml";
+    const liveYaml = YAML.stringify({ landlock: { compatibility: "strict" } });
     const out = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
-    expect(out).toBe(basePath);
+    trackTempForCleanup(out, basePath);
+
+    expect(out).not.toBe(basePath);
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.landlock).toEqual({ compatibility: "strict" });
   });
 
   it("returns the static base path when readBasePolicy throws (I/O failure)", () => {
@@ -165,6 +267,41 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       },
     });
     expect(out).toBe(basePath);
+  });
+
+  it("fails closed when the base cannot be read with managed MCP policies active (#7952)", () => {
+    expect(() =>
+      buildRuntimePermissivePolicy("/path/to/static.yaml", {
+        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
+        managedMcpPolicies: [MANAGED_POLICY],
+        readBasePolicy: () => {
+          throw new Error("ENOENT");
+        },
+      }),
+    ).toThrow(/Cannot read the Shields-down policy/);
+  });
+
+  it("fails closed when the base is not a mapping with managed MCP policies active (#7952)", () => {
+    expect(() =>
+      buildRuntimePermissivePolicy("/path/to/static.yaml", {
+        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
+        managedMcpPolicies: [MANAGED_POLICY],
+        readBasePolicy: () => "[]",
+      }),
+    ).toThrow(/Cannot parse the Shields-down policy/);
+  });
+
+  it("fails closed when staging fails with managed MCP policies active (#7952)", () => {
+    expect(() =>
+      buildRuntimePermissivePolicy("/path/to/static.yaml", {
+        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
+        managedMcpPolicies: [MANAGED_POLICY],
+        readBasePolicy: () => BASE_PERMISSIVE,
+        writeTempPolicy: () => {
+          throw new Error("ENOSPC: simulated /tmp full");
+        },
+      }),
+    ).toThrow(/Cannot stage the Shields-down policy/);
   });
 
   it("returns the static base path when base YAML is unparseable", () => {

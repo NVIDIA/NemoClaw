@@ -10,7 +10,7 @@ const SAFE_GATEWAY_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u;
 const SAFE_LEASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/u;
 
-export const PODMAN_WATCHER_LEASE_SCHEMA_VERSION = 1;
+export const PODMAN_WATCHER_LEASE_SCHEMA_VERSION = 2;
 
 export type PodmanGatewayWatcherOwnerKind = "managed-service" | "standalone";
 export type PodmanGatewayWatcherLeasePhase = "acquiring" | "stopped";
@@ -33,6 +33,13 @@ export interface PodmanGatewayWatcherSnapshot {
   readonly processStartIdentity: string;
 }
 
+/** Process identity for the NemoClaw transaction that currently owns a lease. */
+export interface PodmanGatewayWatcherLeaseHolder {
+  readonly pid: number;
+  /** Stable process-start identity that prevents PID reuse from proving liveness. */
+  readonly processStartIdentity: string;
+}
+
 /**
  * Durable authority written before NemoClaw asks a gateway owner to stop.
  * Recovery treats both phases as unfinished and derives the real state from
@@ -40,6 +47,7 @@ export interface PodmanGatewayWatcherSnapshot {
  */
 export interface PodmanGatewayWatcherLeaseRecord extends PodmanGatewayWatcherSnapshot {
   readonly schemaVersion: typeof PODMAN_WATCHER_LEASE_SCHEMA_VERSION;
+  readonly holder: PodmanGatewayWatcherLeaseHolder;
   readonly leaseId: string;
   readonly phase: PodmanGatewayWatcherLeasePhase;
 }
@@ -62,6 +70,8 @@ export interface PodmanManagedGatewayWatcherControllerDeps {
     target: Readonly<Pick<PodmanGatewayWatcherSnapshot, "gatewayName" | "gatewayPort">>,
   ) => readonly PodmanGatewayWatcherSnapshot[];
   readonly isProcessInstanceAlive: (snapshot: PodmanGatewayWatcherSnapshot) => boolean;
+  readonly captureLeaseHolder: () => PodmanGatewayWatcherLeaseHolder;
+  readonly isLeaseHolderAlive: (holder: PodmanGatewayWatcherLeaseHolder) => boolean;
   readonly isOwnerStopped: (snapshot: PodmanGatewayWatcherSnapshot) => boolean;
   readonly stopExactOwner: (snapshot: PodmanGatewayWatcherSnapshot) => void;
   readonly resumeSameOwner: (snapshot: PodmanGatewayWatcherSnapshot) => void;
@@ -170,6 +180,22 @@ function normalizeSnapshot(
   });
 }
 
+function normalizeHolder(value: PodmanGatewayWatcherLeaseHolder): PodmanGatewayWatcherLeaseHolder {
+  if (!value || typeof value !== "object" || !Number.isSafeInteger(value.pid) || value.pid <= 0) {
+    throw new PodmanGatewayWatcherLeaseError(
+      "Durable Podman watcher lease holder has an invalid process ID.",
+      true,
+    );
+  }
+  return Object.freeze({
+    pid: value.pid,
+    processStartIdentity: safeOpaqueIdentity(
+      value.processStartIdentity,
+      "lease-holder process-start identity",
+    ),
+  });
+}
+
 function normalizeRecord(value: PodmanGatewayWatcherLeaseRecord): PodmanGatewayWatcherLeaseRecord {
   if (
     !value ||
@@ -186,6 +212,7 @@ function normalizeRecord(value: PodmanGatewayWatcherLeaseRecord): PodmanGatewayW
   return Object.freeze({
     ...normalizeSnapshot(value),
     schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+    holder: normalizeHolder(value.holder),
     leaseId: value.leaseId,
     phase: value.phase,
   });
@@ -409,7 +436,12 @@ function sameLease(
   left: PodmanGatewayWatcherLeaseRecord,
   right: PodmanGatewayWatcherLeaseRecord,
 ): boolean {
-  return left.leaseId === right.leaseId && sameProcessInstance(left, right);
+  return (
+    left.leaseId === right.leaseId &&
+    left.holder.pid === right.holder.pid &&
+    left.holder.processStartIdentity === right.holder.processStartIdentity &&
+    sameProcessInstance(left, right)
+  );
 }
 
 /**
@@ -426,6 +458,12 @@ export function createPodmanManagedGatewayWatcherController(
   const recoverUnfinishedLease = () => {
     const record = readLease(deps);
     if (!record) return;
+    if (deps.isLeaseHolderAlive(record.holder)) {
+      throw new PodmanGatewayWatcherLeaseError(
+        "Durable Podman watcher lease is still owned by a live transaction process.",
+        true,
+      );
+    }
     resumeAndProve(record, deps);
     deps.store.clear(record.leaseId);
   };
@@ -441,9 +479,11 @@ export function createPodmanManagedGatewayWatcherController(
       if (!SAFE_LEASE_ID.test(leaseId)) {
         throw new PodmanGatewayWatcherLeaseError("Podman watcher lease identity is invalid.");
       }
+      const holder = normalizeHolder(deps.captureLeaseHolder());
       const acquiring = Object.freeze({
         ...captured,
         schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+        holder,
         leaseId,
         phase: "acquiring" as const,
       });

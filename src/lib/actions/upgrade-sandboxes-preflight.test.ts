@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { diagnosticPreview, NAME_MAX_LENGTH } from "../name-validation";
+
 const mocks = vi.hoisted(() => ({
   captureNamedGatewaySandboxListReadOnly: vi.fn(),
   captureSandboxListWithGatewayPreflightOrExit: vi.fn(),
@@ -88,6 +90,73 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     expect(mocks.captureNamedGatewaySandboxListReadOnly).not.toHaveBeenCalled();
     expect(mocks.classifyUpgradeableSandboxes).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes found");
+  });
+
+  it("reports every incompatible registered name without querying a gateway in check mode (#8497)", async () => {
+    const overlengthName = `a${"b".repeat(NAME_MAX_LENGTH)}`;
+    const invalidFormatName = "Legacy_Name";
+    const unsafeDiagnosticName = "bad\u202e::error::forged";
+    const routeOnlyInvalidName = "Route_Only_Invalid";
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        { name: "alpha", provider: "nvidia-prod", model: "nemotron" },
+        { name: overlengthName, provider: "nvidia-prod", model: "nemotron" },
+        { name: invalidFormatName, provider: "nvidia-prod", model: "nemotron" },
+        { name: unsafeDiagnosticName, provider: "nvidia-prod", model: "nemotron" },
+        {
+          name: routeOnlyInvalidName,
+          provider: "nvidia-prod",
+          model: "nemotron",
+          pendingRouteReservation: true,
+        },
+      ],
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    await expect(upgradeSandboxes({ check: true })).resolves.toBeUndefined();
+
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(JSON.stringify(overlengthName));
+    expect(output).toContain(JSON.stringify(invalidFormatName));
+    expect(output).toContain(diagnosticPreview(unsafeDiagnosticName));
+    expect(output).not.toContain(unsafeDiagnosticName);
+    expect(output).not.toContain(JSON.stringify(routeOnlyInvalidName));
+    expect(output).toContain(`1-${NAME_MAX_LENGTH} characters`);
+    expect(output).toContain("create a replacement with a valid name and transfer its state");
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mocks.captureNamedGatewaySandboxListReadOnly).not.toHaveBeenCalled();
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.classifyUpgradeableSandboxes).not.toHaveBeenCalled();
+    expect(upgradeSandboxesDependencies.rebuildSandbox).not.toHaveBeenCalled();
+  });
+
+  it("exits before gateway preflight or rebuild when automatic mode finds an incompatible name (#8497)", async () => {
+    const incompatibleNames = [`a${"b".repeat(NAME_MAX_LENGTH)}`, "Legacy_Name", "legacy--box"];
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: incompatibleNames.map((name) => ({
+        name,
+        provider: "nvidia-prod",
+        model: "nemotron",
+      })),
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await expect(upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    const output = errorSpy.mock.calls.flat().join("\n");
+    for (const name of incompatibleNames) {
+      expect(output).toContain(JSON.stringify(name));
+    }
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mocks.captureNamedGatewaySandboxListReadOnly).not.toHaveBeenCalled();
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.classifyUpgradeableSandboxes).not.toHaveBeenCalled();
+    expect(mocks.getLatestBackup).not.toHaveBeenCalled();
+    expect(upgradeSandboxesDependencies.rebuildSandbox).not.toHaveBeenCalled();
   });
 
   it("queries the sandbox's recorded gateway read-only, never the recovering preflight (#7279)", async () => {

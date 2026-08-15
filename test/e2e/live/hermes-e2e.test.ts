@@ -5,13 +5,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { exportHermesSession, hermesLastActive } from "../fixtures/hermes-session.ts";
+import {
+  assertHermesHasNoRoutingSidecars,
+  captureHermesRoutingTopology,
+} from "../fixtures/hermes-routing-topology.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertSecurityPosture,
@@ -19,7 +21,10 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
+import { assertHermesSkillLifecycle } from "./hermes-skill-lifecycle.ts";
+import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -122,7 +127,8 @@ function firstChoice(response: unknown): OpenAiChoiceLike | undefined {
   return choices.find((choice) => choice && typeof choice === "object");
 }
 
-function shouldRetryForReasoningBudget(response: unknown): boolean {
+/** Report whether a completed response spent its full budget on reasoning. */
+function exhaustedReasoningBudget(response: unknown): boolean {
   const content = chatContent(response);
   if (/PONG/i.test(content)) return false;
   const choice = firstChoice(response);
@@ -161,20 +167,6 @@ function registryEntry(name: string): Record<string, unknown> | undefined {
 
 function httpStatusOk(status: string): boolean {
   return /^[23][0-9][0-9]$/.test(status.trim());
-}
-
-function stripAnsi(value: string): string {
-  return value.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g, "");
-}
-
-function hermesSessionIds(output: string): Set<string> {
-  return new Set(output.match(/\b[0-9]{8}_[0-9]{6}_[a-zA-Z0-9]+\b/g) ?? []);
-}
-
-function onlyNewHermesSessionId(before: Set<string>, after: Set<string>): string {
-  const created = [...after].filter((id) => !before.has(id));
-  expect(created).toHaveLength(1);
-  return created[0];
 }
 
 function forwardListHasRunningPort(output: string, sandboxName: string, port: string): boolean {
@@ -225,26 +217,6 @@ async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promis
   } catch {
     // The explicit sandbox-destroy assertion remains the primary phase-9 contract.
   }
-}
-
-async function retryHostedInference<T>(
-  label: string,
-  run: (attempt: number) => Promise<T>,
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await run(attempt);
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) await sleep(5_000 * attempt);
-    }
-  }
-  throw new Error(
-    `${label} failed after retries: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
-  );
 }
 
 // source-shape-contract: security -- Live execution proves the shipped Hermes manifest remains healthy and credential-safe
@@ -309,6 +281,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
 
   // Phase 0: pre-cleanup, after the secret gate so local skipped runs do not
   // mutate host state.
+  progress.phase("prepare clean Hermes runner");
   await cleanupHermes("pre-cleanup");
 
   // Phase 1: prerequisites.
@@ -389,7 +362,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(resultText(install)).toContain(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`);
   }
 
-  progress.phase("validate sandbox layout and health");
+  progress.phase("validate sandbox layout, health, and skill activation");
   // Phase 3: sandbox verification.
   const list = await host.command("nemoclaw", ["list"], {
     artifactName: "phase-3-nemoclaw-list",
@@ -433,6 +406,15 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(policy.exitCode, resultText(policy)).toBe(0);
   expect(resultText(policy)).toMatch(/network_policies/i);
 
+  await expectPackageDatabaseReadOnly({
+    artifactPrefix: "phase-3",
+    env: commandEnv(),
+    host,
+    sandbox,
+    sandboxName: SANDBOX_NAME,
+    timeoutMs: 30_000,
+  });
+
   const deniedEgress = await sandbox.exec(
     SANDBOX_NAME,
     ["curl", "-fsS", "--connect-timeout", "5", "--max-time", "15", "https://example.com/"],
@@ -470,6 +452,26 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
   expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
 
+  const dependencyVersions = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "/opt/hermes/.venv/bin/python",
+      "-I",
+      "-c",
+      "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual; print('\\n'.join(f'{name}=={actual[name]}' for name in sorted(actual)))",
+    ],
+    {
+      artifactName: "phase-4-hermes-dependency-versions",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(dependencyVersions.exitCode, resultText(dependencyVersions)).toBe(0);
+  expect(dependencyVersions.stdout.trim().split(/\r?\n/u)).toEqual([
+    "aiohttp==3.14.3",
+    "cryptography==50.0.0",
+  ]);
+
   const configProbe = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -484,88 +486,21 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
   expect(configProbe.stdout).toContain("OK");
 
-  const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
-    const result = await sandbox.exec(SANDBOX_NAME, ["hermes", ...args], {
-      artifactName,
-      env: commandEnv(),
-      redactionValues,
-      timeoutMs,
-    });
-    expect(result.exitCode, resultText(result)).toBe(0);
-    return resultText(result);
-  };
-  const listHermesSessionsText = (artifactName: string) =>
-    runHermesCli(["sessions", "list"], artifactName, 60_000);
-  const listHermesSessions = async (artifactName: string) =>
-    hermesSessionIds(await listHermesSessionsText(artifactName));
-  const sessionLastActive = (id: string, artifactName: string) =>
-    hermesLastActive(sandbox, SANDBOX_NAME, id, artifactName);
-  const expectNoNewHermesSessions = async (
-    before: Set<string>,
-    beforeActivityArtifact: string,
-    expectedSessionId: string,
-    expectedRowToken: string,
-    args: string[],
-    runArtifact: string,
-    afterArtifact: string,
-  ) => {
-    const beforeActivity = await sessionLastActive(expectedSessionId, beforeActivityArtifact);
-    await runHermesCli(args, runArtifact);
-    const afterText = await listHermesSessionsText(afterArtifact);
-    const after = hermesSessionIds(afterText);
-    expect([...after].filter((id) => !before.has(id))).toEqual([]);
-    expect(after.has(expectedSessionId), stripAnsi(afterText)).toBe(true);
-    const row = stripAnsi(afterText)
-      .split("\n")
-      .find((line) => line.includes(expectedSessionId));
-    expect(row, stripAnsi(afterText)).toContain(expectedRowToken);
-    expect(await sessionLastActive(expectedSessionId, `${afterArtifact}-metadata`)).toBeGreaterThan(
-      beforeActivity,
-    );
-  };
+  await assertHermesSkillLifecycle({
+    env: commandEnv(),
+    host,
+    inference,
+    redactionValues,
+    sandboxName: SANDBOX_NAME,
+  });
 
-  const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
-  const beforeSeedSessions = await listHermesSessions("phase-4-issue-5254-sessions-before-seed");
-  const seedPrompt = `Remember this exact token: ${issue5254Marker}. Reply with acknowledged.`;
-  await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
-  const seedSessionId = onlyNewHermesSessionId(
-    beforeSeedSessions,
-    await listHermesSessions("phase-4-issue-5254-sessions-after-seed"),
-  );
-  const resumePrompt = `N5254_${Date.now().toString(36)}_RESUME`;
-  await expectNoNewHermesSessions(
-    await listHermesSessions("phase-4-issue-5254-sessions-before-resume"),
-    "phase-4-issue-5254-session-before-resume-metadata",
-    seedSessionId,
-    resumePrompt,
-    ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
-    "phase-4-issue-5254-resume-oneshot",
-    "phase-4-issue-5254-sessions-after-resume",
-  );
-  const continuePrompt = `N5254_${Date.now().toString(36)}_CONTINUE`;
-  await expectNoNewHermesSessions(
-    await listHermesSessions("phase-4-issue-5254-sessions-before-continue"),
-    "phase-4-issue-5254-session-before-continue-metadata",
-    seedSessionId,
-    continuePrompt,
-    ["-c", seedSessionId, "-z", continuePrompt],
-    "phase-4-issue-5254-continue-oneshot",
-    "phase-4-issue-5254-sessions-after-continue",
-  );
-  const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
-  await exportHermesSession(
+  await assertHermesCliAdapterLiveContract({
+    env: commandEnv(),
+    host,
+    redactionValues,
     sandbox,
-    SANDBOX_NAME,
-    seedSessionId,
-    exportPath,
-    [seedPrompt, resumePrompt, continuePrompt],
-    {
-      artifactName: "phase-4-issue-5254-export-session",
-      env: commandEnv(),
-      redactionValues,
-      timeoutMs: 60_000,
-    },
-  );
+    sandboxName: SANDBOX_NAME,
+  });
 
   if (hermesDashboardE2eEnabled()) {
     const entry = registryEntry(SANDBOX_NAME);
@@ -657,6 +592,21 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       String.raw`awk '($4 ~ /(^|\/)(hermes|hermes[.]real|python|python3)$/) && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'`,
     ].join(" "),
   );
+  let routingTopologyCaptures = 0;
+  const assertNoStandaloneRoutingSidecars = async (
+    artifactName: string,
+    expectedGatewayPid: number,
+  ): Promise<void> => {
+    const topology = await captureHermesRoutingTopology({
+      artifactName,
+      artifacts,
+      env: commandEnv(),
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+    });
+    assertHermesHasNoRoutingSidecars(topology, expectedGatewayPid);
+    routingTopologyCaptures += 1;
+  };
   const beforeRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
     artifactName: "phase-5-hermes-gateway-process-before-restart",
     env: commandEnv(),
@@ -664,6 +614,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   });
   expect(beforeRestartProcess.exitCode, resultText(beforeRestartProcess)).toBe(0);
   const beforeGateway = parseGatewayProcess(beforeRestartProcess.stdout);
+  await assertNoStandaloneRoutingSidecars(
+    "phase-5-hermes-routing-topology-before-restart",
+    Number(beforeGateway.pid),
+  );
   const rootSupervisorTopology = beforeGateway.owner === "gateway";
   let recoveredGateway: ReturnType<typeof parseGatewayProcess>;
 
@@ -689,9 +643,9 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
           "set -eu",
           `marker=${shellQuote(envMarker)}`,
           `backup=${shellQuote(envBackup)}`,
-          "command -v gosu >/dev/null 2>&1",
-          'gosu sandbox cp /sandbox/.hermes/.env "$backup"',
-          'gosu sandbox sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
+          "test -x /usr/bin/setpriv",
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- cp /sandbox/.hermes/.env "$backup"',
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
         ].join("; "),
       ),
       {
@@ -730,7 +684,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
         [
           "set -eu",
           `backup=${shellQuote(envBackup)}`,
-          'gosu sandbox sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
           "sha256sum -c /etc/nemoclaw/hermes.config-hash --status",
           "echo ENV_RESTORED",
         ].join("; "),
@@ -770,6 +724,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     const afterGateway = parseGatewayProcess(afterRestartProcess.stdout);
     expect(afterGateway.owner).toBe("gateway");
     expect(afterGateway.pid).not.toBe(beforeGateway.pid);
+    await assertNoStandaloneRoutingSidecars(
+      "phase-5-hermes-routing-topology-after-root-supervised-restart",
+      Number(afterGateway.pid),
+    );
 
     const afterRestartPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
       artifactName: "phase-5-pid1-after-restart",
@@ -1169,6 +1127,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(restartedManagedGateway.owner).toBe("sandbox");
     expect(restartedManagedGateway.ppid).toBe(supervisor.pid);
     expect(restartedManagedGateway.pid).not.toBe(beforeGateway.pid);
+    await assertNoStandaloneRoutingSidecars(
+      "phase-5-hermes-routing-topology-after-managed-restart",
+      Number(restartedManagedGateway.pid),
+    );
 
     const afterManagedRestartPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
       artifactName: "phase-5-managed-pid1-after-restart",
@@ -1272,67 +1234,43 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     }
   }
 
+  expect(routingTopologyCaptures).toBe(2);
+
+  // OpenClaw launch qualification now reads its structured JSONL session
+  // store. Hermes owns a different SQLite contract, so this target must not
+  // infer Hermes replies from terminal copy through the OpenClaw helper.
   progress.phase("exercise hosted and inference.local routes");
   // Phase 6: live inference through both the external provider and the
   // sandbox's inference.local route.
-  const directChat = await retryHostedInference(
-    `${inference.mode} direct chat`,
-    async (attempt) => {
-      const response = await inference.directChat("Reply with exactly one word: PONG", {
-        artifactName: `phase-6-direct-inference-chat-attempt-${attempt}`,
-        maxTokens: attempt === 1 ? 256 : 1024,
-      });
-      if (shouldRetryForReasoningBudget(response)) {
-        throw new Error("direct chat exhausted response budget while reasoning before PONG");
-      }
-      return response;
-    },
-  );
+  const directChat = await inference.directChat("Reply with exactly one word: PONG", {
+    artifactName: "phase-6-direct-inference-chat",
+    maxTokens: 1024,
+  });
+  expect(exhaustedReasoningBudget(directChat)).toBe(false);
   expectPong(`${inference.mode} direct chat`, directChat);
 
-  const sandboxChatJson = await retryHostedInference(
-    "Hermes sandbox inference.local chat",
-    async (attempt) => {
-      const result = await sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "curl",
-          "-fsS",
-          "--max-time",
-          "90",
-          "-H",
-          "Content-Type: application/json",
-          "--data-raw",
-          chatPayload(
-            inference.model,
-            "Reply with exactly one word: PONG",
-            attempt === 1 ? 256 : 1024,
-          ),
-          "https://inference.local/v1/chat/completions",
-        ],
-        {
-          artifactName: `phase-6-inference-local-chat-attempt-${attempt}`,
-          env: commandEnv(),
-          timeoutMs: 120_000,
-        },
-      );
-      if (result.exitCode !== 0) throw new Error(resultText(result));
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(result.stdout) as unknown;
-      } catch (error) {
-        throw new Error(
-          `Hermes sandbox inference.local chat response was not JSON: ${
-            error instanceof Error ? error.message : String(error)
-          }; body=${result.stdout.slice(0, 500)}`,
-        );
-      }
-      if (shouldRetryForReasoningBudget(parsed)) {
-        throw new Error("sandbox chat exhausted response budget while reasoning before PONG");
-      }
-      return parsed;
+  const sandboxChat = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "curl",
+      "-fsS",
+      "--max-time",
+      "90",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      chatPayload(inference.model, "Reply with exactly one word: PONG", 1024),
+      "https://inference.local/v1/chat/completions",
+    ],
+    {
+      artifactName: "phase-6-inference-local-chat",
+      env: commandEnv(),
+      timeoutMs: 120_000,
     },
   );
+  expect(sandboxChat.exitCode, resultText(sandboxChat)).toBe(0);
+  const sandboxChatJson = JSON.parse(sandboxChat.stdout) as unknown;
+  expect(exhaustedReasoningBudget(sandboxChatJson)).toBe(false);
   expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
   progress.phase("validate CLI manifest and locked-config behavior");
@@ -1492,6 +1430,10 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       sandboxListedAndHealthy: true,
       directProviderInferencePong: true,
       sandboxInferenceLocalPong: true,
+      hermesSkillInstalled: true,
+      hermesSkillDiscovered: true,
+      hermesSkillUsedInFreshSession: true,
+      standaloneRoutingSidecarsAbsentBeforeAndAfterRestart: true,
       dashboardChecked: hermesDashboardE2eEnabled(),
       securityPostureChecked: securityPosture !== null,
     },

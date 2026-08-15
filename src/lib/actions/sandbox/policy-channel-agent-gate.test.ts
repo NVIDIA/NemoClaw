@@ -14,7 +14,7 @@ import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as policy from "../../policy";
 import * as registry from "../../state/registry";
-import { addSandboxChannel } from "./policy-channel";
+import { addSandboxChannel, startSandboxChannel, stopSandboxChannel } from "./policy-channel";
 import { policyChannelDependencies } from "./policy-channel-dependencies";
 
 function agentFixture(name: string): defs.AgentDefinition {
@@ -148,5 +148,44 @@ describe("addSandboxChannel agent gate", () => {
     void caught;
     void exitMock;
     void logSpy;
+  });
+});
+
+describe("channel lifecycle agent gate", () => {
+  it.each([
+    ["start", ["googlechat"], () => startSandboxChannel("da-test", { channel: "googlechat" })],
+    ["stop", [], () => stopSandboxChannel("da-test", { channel: "googlechat" })],
+  ])("rejects a stale channel during %s before reading channel state or mutating the sandbox", async (_verb, disabledChannels, run) => {
+    getSandboxMock.mockReturnValue({ name: "da-test", agent: "hermes" });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("hermes"));
+    const configuredChannelsMock = vi
+      .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
+      .mockReturnValue(["googlechat"]);
+    const disabledChannelsMock = vi
+      .spyOn(registry, "getDisabledChannels")
+      .mockReturnValue(disabledChannels);
+
+    let caught: unknown;
+    try {
+      await run();
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(exitCodeFromError(caught)).toBe(1);
+    const errorText = (errSpy.mock.calls as unknown[][])
+      .map((call) => call.map(String).join(" "))
+      .join("\n");
+    expect(errorText).toMatch(/Channel 'googlechat' does not support agent 'hermes'/);
+    expect(errorText).toMatch(/Channel-supported agents: openclaw/);
+    expect(errorText).toMatch(/Channels supported by agent 'hermes':/);
+
+    expect(configuredChannelsMock).not.toHaveBeenCalled();
+    expect(disabledChannelsMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildMock).not.toHaveBeenCalled();
+    expect(runOpenshellMock).not.toHaveBeenCalled();
   });
 });

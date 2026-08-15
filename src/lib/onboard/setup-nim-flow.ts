@@ -8,11 +8,31 @@ import {
 } from "../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
+import {
+  LLAMA_CPP_CREDENTIAL_ENV,
+  LLAMA_CPP_HOST_OPENAI_BASE_URL,
+  LLAMA_CPP_PROVIDER_NAME,
+  LLAMA_CPP_RECIPE_ENV,
+} from "../inference/llama-cpp/contract";
+import {
+  installManagedLlamaCpp,
+  resumeManagedLlamaCppRuntime,
+} from "../inference/llama-cpp/managed-installer";
+import {
+  type ManagedLlamaCppSelectionChoice,
+  type ManagedLlamaCppSelectionResult,
+  listManagedLlamaCppSelectionChoices,
+  resolveManagedLlamaCppSelection,
+} from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
+import {
+  createLocalModelProfileIntegration,
+  type LocalModelProfilePlan,
+} from "./local-model-profile/integration";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
@@ -25,8 +45,17 @@ import { resolveRequestedProviderSelection } from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
+import type { RuntimeProviderBundle } from "./runtime-provider/contract";
+
+export { resolveCurrentRuntimeProviderBundle } from "./runtime-provider/current";
+
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
+
+export { probeLlamaCppAttachment } from "../inference/llama-cpp";
+export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
+export { createLocalModelProfileIntegration } from "./local-model-profile/integration";
+export { resumeManagedLlamaCppRuntime };
 
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
@@ -67,10 +96,15 @@ export interface SetupNimFlowDeps {
   experimental: boolean;
   ollamaPort: number;
   vllmPort: number;
+  getGatewayPort(): number;
+  getRuntimeProvider(): RuntimeProviderBundle;
   step(current: number, total: number, label: string): void;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
-  getNonInteractiveModel(providerKey: string): string | null;
+  getNonInteractiveModel(
+    providerKey: string,
+    options?: { allowProviderModelFallback?: boolean },
+  ): string | null;
   createNvidiaFeaturedModelSession(
     options?: NvidiaFeaturedModelSessionOptions,
   ): NvidiaFeaturedModelSession;
@@ -110,10 +144,19 @@ export interface SetupNimFlowDeps {
   error(message: string): void;
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
+  localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
+  resolveManagedLlamaCppSelection?(env?: NodeJS.ProcessEnv): ManagedLlamaCppSelectionResult;
+  listManagedLlamaCppSelectionChoices?(): readonly ManagedLlamaCppSelectionChoice[];
+  installManagedLlamaCpp?: typeof installManagedLlamaCpp;
   handleRemoteProviderSelection(
     args: SetupNimRemoteSelectionArgs,
     state: SetupNimSelectionState,
     recoveredRegistryRoute: RegistryInferenceRoute | null,
+  ): Promise<SetupNimSelectionResult>;
+  handleLlamaCppSelection(
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
   ): Promise<SetupNimSelectionResult>;
   handleNimLocalSelection(
     gpu: SetupNimGpu,
@@ -129,6 +172,7 @@ export interface SetupNimFlowDeps {
     recoveredModel: string | null,
     ollamaRunning: boolean,
     state: SetupNimSelectionState,
+    isWindowsHostOllama?: boolean,
   ): Promise<SetupNimSelectionResult>;
   handleWindowsHostOllamaSelection(
     gpu: SetupNimGpu,
@@ -183,6 +227,40 @@ function requireSelectedProvider(
     deps.exitProcess(1);
   }
   return selected;
+}
+
+function handleSelectedOllama(
+  deps: Pick<
+    SetupNimFlowDeps,
+    "handleInstallOllamaSelection" | "handleRunningOllamaSelection"
+  >,
+  args: {
+    gpu: SetupNimGpu;
+    requestedModel: string | null;
+    recoveredModel: string | null;
+    ollamaRunning: boolean;
+    isWindowsHostOllama: boolean;
+    state: SetupNimSelectionState;
+    ollamaInstallMenu: InferenceProviderHostState["ollamaInstallMenu"];
+  },
+): Promise<SetupNimSelectionResult> {
+  if (args.ollamaInstallMenu.hasUpgradableOllama) {
+    return deps.handleInstallOllamaSelection(
+      args.gpu,
+      args.requestedModel,
+      args.recoveredModel,
+      args.state,
+      args.ollamaInstallMenu,
+    );
+  }
+  return deps.handleRunningOllamaSelection(
+    args.gpu,
+    args.requestedModel,
+    args.recoveredModel,
+    args.ollamaRunning,
+    args.state,
+    args.isWindowsHostOllama,
+  );
 }
 
 function resolveValidationInferenceApi(
@@ -242,12 +320,215 @@ function applyGatewayRouteDiscoveryConstraints(
   }
 }
 
+function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string): boolean {
+  return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
+}
+
+function resolveManagedLlamaCppSafely(
+  deps: SetupNimFlowDeps,
+  env?: NodeJS.ProcessEnv,
+): ManagedLlamaCppSelectionResult {
+  try {
+    return (deps.resolveManagedLlamaCppSelection ?? resolveManagedLlamaCppSelection)(env);
+  } catch (error) {
+    return {
+      kind: "rejected",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function buildManagedLlamaCppOptions(input: {
+  deps: SetupNimFlowDeps;
+  candidate: boolean;
+  requestedProvider: string | null;
+  resolution: ManagedLlamaCppSelectionResult | null;
+}): ProviderMenuChoice[] {
+  const { deps, candidate, requestedProvider, resolution } = input;
+  if (!candidate) return [];
+
+  let choices: readonly ManagedLlamaCppSelectionChoice[] = [];
+  try {
+    if (deps.listManagedLlamaCppSelectionChoices) {
+      choices = deps.listManagedLlamaCppSelectionChoices();
+    } else if (deps.resolveManagedLlamaCppSelection) {
+      choices =
+        resolution?.kind === "selected" ? [{ priority: 0, selection: resolution.selection }] : [];
+    } else {
+      choices = listManagedLlamaCppSelectionChoices();
+    }
+  } catch (error) {
+    deps.note(
+      `  Managed llama.cpp profiles unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    choices = [];
+  }
+
+  const defaultRecipeId =
+    resolution?.kind === "selected" ? resolution.selection.recipe.metadata.id : null;
+  const options = choices.map(({ selection }): ProviderMenuChoice => {
+    const recipeId = selection.recipe.metadata.id;
+    const displayName =
+      selection.preset?.metadata.displayName ?? selection.recipe.metadata.displayName ?? recipeId;
+    return {
+      key: "install-llama-cpp",
+      label: `Managed llama.cpp: ${displayName}${recipeId === defaultRecipeId ? " (recommended)" : ""}`,
+      managedLlamaCppRecipeId: recipeId,
+    };
+  });
+  if (options.length === 0 && requestedProvider === "install-llama-cpp") {
+    options.push({ key: "install-llama-cpp", label: "Managed llama.cpp" });
+  }
+  return options;
+}
+
+function prepareManagedLlamaCppMenu(input: {
+  deps: SetupNimFlowDeps;
+  platform: InferenceProviderHostGpu["platform"] | undefined;
+  requestedProvider: string | null;
+}): {
+  resolution: ManagedLlamaCppSelectionResult | null;
+  options: ProviderMenuChoice[];
+} {
+  const { deps, platform, requestedProvider } = input;
+  const candidate = platform === "spark" || requestedProvider === "install-llama-cpp";
+  const resolution = candidate
+    ? resolveManagedLlamaCppSafely(
+        deps,
+        !deps.isNonInteractive() && !requestedProvider
+          ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
+          : undefined,
+      )
+    : null;
+  return {
+    resolution,
+    options: buildManagedLlamaCppOptions({ deps, candidate, requestedProvider, resolution }),
+  };
+}
+
+function resolveSelectedManagedLlamaCpp(input: {
+  deps: SetupNimFlowDeps;
+  selectedFromInteractiveMenu: boolean;
+  selectedRecipeId: string | undefined;
+}): ManagedLlamaCppSelectionResult {
+  const { deps, selectedFromInteractiveMenu, selectedRecipeId } = input;
+  const env =
+    selectedFromInteractiveMenu && selectedRecipeId
+      ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
+      : undefined;
+  return resolveManagedLlamaCppSafely(deps, env);
+}
+
+async function runDedicatedLocalModelProfile(input: {
+  deps: SetupNimFlowDeps;
+  integration: ReturnType<typeof createLocalModelProfileIntegration>;
+  gpu: SetupNimGpu;
+  hasVllmImage: boolean;
+  vllmProfile: VllmProfile | null;
+  vllmRunning: boolean;
+  providerMenuOptionCount: number;
+  createSelectionState: () => SetupNimSelectionState;
+}): Promise<{ state: SetupNimSelectionState | null; providerMenuOptionCount: number }> {
+  let plan: LocalModelProfilePlan | null;
+  try {
+    plan = input.integration.resolvePlan();
+  } catch (error) {
+    input.deps.abortNonInteractive((error as Error).message);
+  }
+  if (!plan) return { state: null, providerMenuOptionCount: input.providerMenuOptionCount };
+  if (!input.deps.isNonInteractive()) {
+    input.deps.abortNonInteractive("The local model profile requires non-interactive onboarding.");
+  }
+  const state = input.createSelectionState();
+  const result = await input.integration.onboard(
+    plan,
+    {
+      hasVllmImage: input.hasVllmImage,
+      sparkHost: input.gpu?.platform === "spark" || input.gpu?.spark === true,
+      vllmProfile: input.vllmProfile,
+      vllmRunning: input.vllmRunning,
+    },
+    state,
+  );
+  if (result === "retry-selection") {
+    input.deps.abortNonInteractive("The local model profile could not be configured.");
+  }
+  return { state, providerMenuOptionCount: 0 };
+}
+
+async function handleEndpointProviderSelection(input: {
+  deps: SetupNimFlowDeps;
+  selected: ProviderMenuChoice;
+  state: SetupNimSelectionState;
+  requestedModel: string | null;
+  recoveredFromSandbox: boolean;
+  recoveredModel: string | null;
+  sandboxName: string | null;
+  gatewayName: string | null;
+  recoverySessionId: string | null | undefined;
+  agent: AgentDefinition | null;
+  recoveredRegistryRoute: RegistryInferenceRoute | null;
+}): Promise<SetupNimSelectionResult> {
+  const {
+    deps,
+    selected,
+    state,
+    requestedModel,
+    recoveredFromSandbox,
+    recoveredModel,
+    sandboxName,
+    gatewayName,
+    recoverySessionId,
+    agent,
+    recoveredRegistryRoute,
+  } = input;
+  if (selected.key === "llama-cpp") {
+    return deps.handleLlamaCppSelection(
+      state,
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+    );
+  }
+  const remoteConfig = deps.remoteProviderConfig[selected.key];
+  if (!remoteConfig) throw new Error(`Missing remote provider config for '${selected.key}'.`);
+  return deps.handleRemoteProviderSelection(
+    {
+      selected,
+      requestedModel,
+      recoveredFromSandbox,
+      recoveredModel,
+      sandboxName,
+      gatewayName,
+      recoverySessionId,
+      intendedInferenceApi: resolveValidationInferenceApi(
+        selected.key,
+        remoteConfig.providerName,
+        agent,
+      ),
+    },
+    state,
+    recoveredRegistryRoute,
+  );
+}
+
+function vllmPortConflictMessage(
+  platform: InferenceProviderHostGpu["platform"],
+  port: number,
+): string {
+  if (platform === "n1x") {
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+  }
+  return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
+}
+
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
   overrides: Partial<SetupNimFlowDeps> = {},
 ): SetupNim {
   const deps: SetupNimFlowDeps = { ...defaults, ...overrides };
+  const localModelProfileIntegration =
+    deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
   return async function setupNimWithDeps(
     gpu: SetupNimGpu,
@@ -372,6 +653,11 @@ export function createSetupNim(
       gpuNimCapable,
     } = providerHostState;
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
+    const { options: managedLlamaCppOptions } = prepareManagedLlamaCppMenu({
+      deps,
+      platform: gpu?.platform,
+      requestedProvider,
+    });
 
     const blueprintRouterCfg = deps.loadRoutedProfile();
     const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
@@ -379,6 +665,7 @@ export function createSetupNim(
       agentProviderOptions,
       experimental: deps.experimental,
       gpuNimCapable,
+      nvidiaPlatform: gpu?.platform,
       hasOllama,
       ollamaRunning,
       ollamaHost,
@@ -396,6 +683,7 @@ export function createSetupNim(
       ollamaInstallEntry: ollamaInstallMenu.entry,
       vllmEntries,
       routedEnabled: blueprintRouterCfg?.router?.enabled === true,
+      managedLlamaCppOptions,
     });
 
     function rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean {
@@ -407,9 +695,39 @@ export function createSetupNim(
     }
 
     let recoveredFromSandbox = false;
-    if (options.length > 1) {
+    const localModelProfile = await runDedicatedLocalModelProfile({
+      deps,
+      integration: localModelProfileIntegration,
+      gpu,
+      hasVllmImage,
+      vllmProfile,
+      vllmRunning,
+      providerMenuOptionCount: options.length,
+      createSelectionState,
+    });
+    const localModelState = localModelProfile.state;
+    ({
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi,
+      nimContainer,
+      allowToolsIncompatible,
+    } = localModelState ?? {
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi,
+      nimContainer,
+      allowToolsIncompatible,
+    });
+    vllmModelIdentity = localModelState?.vllmModelIdentity;
+    if (localModelProfile.providerMenuOptionCount > 1) {
       selectionLoop: while (true) {
         let selected: ProviderMenuChoice | undefined;
+        let selectedFromInteractiveMenu = false;
         recoveredFromSandbox = false;
         let recoveredModel: string | null = null;
         let preparedVllmState: SetupNimSelectionState | null = null;
@@ -423,6 +741,7 @@ export function createSetupNim(
             remoteProviderConfig: deps.remoteProviderConfig,
             isWsl: isWslHost,
             isWindowsHostOllama,
+            ollamaRunning,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             hermesProviderAvailable,
             preferManagedVllmDefault: gpu?.platform === "spark",
@@ -431,6 +750,7 @@ export function createSetupNim(
           if (providerSelection.kind === "failure") {
             reportProviderSelectionFailure({
               reason: providerSelection.reason,
+              availableProviderKeys: options.map((option) => option.key),
               isWindowsHostOllama,
               rejectWindowsHostOllama,
               writeError: deps.error,
@@ -446,6 +766,7 @@ export function createSetupNim(
               : `  [non-interactive] Provider: ${selected.key}`,
           );
         } else {
+          selectedFromInteractiveMenu = true;
           selected = await promptForInferenceProviderSelection({
             options,
             vllmRunning,
@@ -462,26 +783,21 @@ export function createSetupNim(
           hermesToolGateways = [];
         }
 
-        if (deps.remoteProviderConfig[selected.key]) {
+        if (isEndpointProviderSelection(deps, selected.key)) {
           const state = createSelectionState();
-          const result = await deps.handleRemoteProviderSelection(
-            {
-              selected,
-              requestedModel,
-              recoveredFromSandbox,
-              recoveredModel,
-              sandboxName,
-              gatewayName,
-              recoverySessionId,
-              intendedInferenceApi: resolveValidationInferenceApi(
-                selected.key,
-                deps.remoteProviderConfig[selected.key].providerName,
-                agent,
-              ),
-            },
+          const result = await handleEndpointProviderSelection({
+            deps,
+            selected,
             state,
+            requestedModel,
+            recoveredFromSandbox,
+            recoveredModel,
+            sandboxName,
+            gatewayName,
+            recoverySessionId,
+            agent,
             recoveredRegistryRoute,
-          );
+          });
           ({
             model,
             provider,
@@ -498,6 +814,59 @@ export function createSetupNim(
           compatibleEndpointReasoning = reasoningState.reasoning;
           compatibleEndpointReasoningEffort = reasoningState.effort;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
+          if (result === "retry-selection") continue selectionLoop;
+          break;
+        } else if (selected.key === "install-llama-cpp") {
+          if (!sandboxName) {
+            const message = "Managed llama.cpp requires a selected sandbox name.";
+            deps.error(`  ${message}`);
+            if (deps.isNonInteractive()) deps.abortNonInteractive(message);
+            continue selectionLoop;
+          }
+          // Menu discovery is advisory. Re-read the canonical readiness/catalog
+          // inputs immediately before any install effect so a delayed interactive
+          // choice cannot activate against stale host state.
+          const selectedRecipeId = selected.managedLlamaCppRecipeId;
+          const resolved = resolveSelectedManagedLlamaCpp({
+            deps,
+            selectedFromInteractiveMenu,
+            selectedRecipeId,
+          });
+          if (resolved.kind === "rejected") {
+            deps.error(`  Managed llama.cpp selection failed: ${resolved.reason}`);
+            if (deps.isNonInteractive()) deps.abortNonInteractive(resolved.reason);
+            continue selectionLoop;
+          }
+          const state = createSelectionState();
+          state.provider = LLAMA_CPP_PROVIDER_NAME;
+          state.model = resolved.selection.recipe.spec.model.servedName;
+          state.endpointUrl = LLAMA_CPP_HOST_OPENAI_BASE_URL;
+          state.credentialEnv = LLAMA_CPP_CREDENTIAL_ENV;
+          state.preferredInferenceApi = "openai-completions";
+          state.assertRouteCompatible?.();
+          const installed = await (deps.installManagedLlamaCpp ?? installManagedLlamaCpp)(
+            resolved.selection,
+            {
+              sandboxName,
+              gatewayPort: deps.getGatewayPort(),
+              runtimeProvider: deps.getRuntimeProvider(),
+            },
+          );
+          if (!installed.ok) {
+            deps.error(`  Managed llama.cpp install failed: ${installed.reason}`);
+            if (deps.isNonInteractive()) deps.abortNonInteractive(installed.reason);
+            continue selectionLoop;
+          }
+          state.model = installed.model;
+          const result = await deps.handleLlamaCppSelection(state, installed.model, null);
+          ({
+            model,
+            provider,
+            endpointUrl,
+            credentialEnv,
+            preferredInferenceApi,
+            allowToolsIncompatible,
+          } = state);
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "nim-local") {
@@ -524,13 +893,15 @@ export function createSetupNim(
             continue selectionLoop;
           }
           const state = createSelectionState();
-          const result = await deps.handleRunningOllamaSelection(
+          const result = await handleSelectedOllama(deps, {
             gpu,
             requestedModel,
-            recoveredFromSandbox ? recoveredModel : null,
+            recoveredModel: recoveredFromSandbox ? recoveredModel : null,
             ollamaRunning,
+            isWindowsHostOllama,
             state,
-          );
+            ollamaInstallMenu,
+          });
           ({
             model,
             provider,
@@ -591,9 +962,7 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const message =
-              "vLLM is already running on this host. " +
-              "Select Local vLLM, or stop the existing server before selecting the managed install path.";
+            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort);
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);
@@ -708,4 +1077,27 @@ export function createSetupNim(
       inferenceCapabilityCache,
     };
   };
+}
+
+/**
+ * Bind the serving-port probe to the vLLM installer (#8685).
+ *
+ * The installer declares the probe it needs instead of importing the preflight
+ * layer, because `src/lib/inference/vllm.ts` sits at its recorded fan-out
+ * budget. The wiring lives here rather than in `onboard.ts`, which the codebase
+ * growth guardrail keeps net-neutral.
+ */
+export function withServingPortGuard<
+  Options,
+  Install extends (
+    profile: VllmProfile,
+    options: Options & {
+      checkServingPort?: (port: number) => Promise<{ ok: boolean; reason?: string }>;
+    },
+  ) => Promise<{ ok: boolean }>,
+>(
+  install: Install,
+  checkServingPort: (port: number) => Promise<{ ok: boolean; reason?: string }>,
+): (profile: VllmProfile, options: Options) => Promise<{ ok: boolean }> {
+  return (profile, options) => install(profile, { ...options, checkServingPort });
 }

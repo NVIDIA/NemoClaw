@@ -22,7 +22,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 // registry/gateway/policy/in-sandbox state, then remove Telegram and rebuild
 // back to a clean state.
 
-const TEST_SANDBOX_PREFIX = "e2e-channels-add-remove";
+const TEST_SANDBOX_PREFIX = "e2e-ch-add-remove";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 validateSandboxName(SANDBOX_NAME);
 
@@ -363,7 +363,6 @@ async function telegramEgressProbe(
   return { result, status: "inconclusive" };
 }
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "channels add/remove telegram updates registry, gateway, policy, and sandbox state",
   {

@@ -113,4 +113,145 @@ describe("Docker GPU patch diagnostics", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("omits cleanup after rollback confirms that the replacement is absent (#7996)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-rollback-"));
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "removed-container-id",
+            rolledBack: true,
+            replacementStopConfirmed: true,
+            replacementRemovalConfirmed: true,
+            replacementPresence: "absent",
+          },
+        },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
+      expect(diagnostics?.cleanupCommands).toEqual([]);
+      expect(diagnostics?.cleanupDisposition).toBe("not_required");
+      expect(summary).toContain("cleanup_required=no");
+      expect(summary).not.toContain("openshell sandbox delete");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps cleanup unknown when rollback cannot confirm replacement absence (#7996)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-unknown-"));
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "unconfirmed-container-id",
+            rolledBack: true,
+            replacementStopConfirmed: false,
+            replacementRemovalConfirmed: false,
+            replacementPresence: "unknown",
+          },
+        },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:01Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
+      expect(diagnostics?.cleanupCommands).toEqual([]);
+      expect(diagnostics?.cleanupDisposition).toBe("unknown");
+      expect(summary).toContain("replacement_presence=unknown");
+      expect(summary).toContain("cleanup_required=unknown");
+      expect(summary).not.toContain("openshell sandbox delete");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps cleanup unknown when a present replacement lacks an exact ID (#7996)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-invalid-id-"));
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "short-container-id",
+            rolledBack: true,
+            replacementStopConfirmed: false,
+            replacementRemovalConfirmed: false,
+            replacementPresence: "present",
+          },
+        },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:02Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
+      expect(diagnostics?.cleanupCommands).toEqual([]);
+      expect(diagnostics?.cleanupDisposition).toBe("unknown");
+      expect(summary).toContain("replacement_presence=present");
+      expect(summary).toContain("cleanup_required=unknown");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses exact-ID cleanup when post-rollback inspection finds the replacement (#7996)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-inspect-"));
+    const replacementId = "b".repeat(64);
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: replacementId,
+            rolledBack: true,
+            replacementStopConfirmed: false,
+            replacementRemovalConfirmed: false,
+            replacementPresence: "unknown",
+          },
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "inspect" && args[1] === replacementId
+              ? JSON.stringify([{ Id: replacementId }])
+              : "",
+          ),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:02Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
+      expect(diagnostics?.cleanupCommands).toEqual([
+        `docker rm -f ${JSON.stringify(replacementId)}`,
+      ]);
+      expect(diagnostics?.cleanupDisposition).toBe("manual");
+      expect(summary).toContain("replacement_presence=present");
+      expect(summary).toContain("cleanup_required=yes");
+      expect(summary).not.toContain("openshell sandbox delete");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

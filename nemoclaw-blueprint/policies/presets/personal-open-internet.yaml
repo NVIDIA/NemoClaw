@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: personal-open-internet
+  description: "Broad TCP egress on destination ports 80 and 443 for trusted personal sandboxes"
+
+network_policies:
+  personal_open_internet:
+    name: personal_open_internet
+    endpoints:
+      # OpenShell treats a hostless endpoint with allowed_ips as matching any
+      # requested host on these ports. It resolves the requested host and checks
+      # every address against the listed ranges. Omitting protocol keeps the
+      # connection at L4, without application protocol, HTTP method, or path
+      # inspection.
+      - ports: [80, 443]
+        allowed_ips:
+          - 1.0.0.0/8
+          - 2.0.0.0/7
+          - 4.0.0.0/6
+          - 8.0.0.0/5
+          - 16.0.0.0/4
+          - 32.0.0.0/3
+          - 64.0.0.0/3
+          - 96.0.0.0/4
+          - 112.0.0.0/5
+          - 120.0.0.0/6
+          - 124.0.0.0/7
+          - 126.0.0.0/8
+          - 128.0.0.0/3
+          - 160.0.0.0/5
+          - 168.0.0.0/8
+          - 169.0.0.0/9
+          - 169.128.0.0/10
+          - 169.192.0.0/11
+          - 169.224.0.0/12
+          - 169.240.0.0/13
+          - 169.248.0.0/14
+          - 169.252.0.0/15
+          - 169.255.0.0/16
+          - 170.0.0.0/7
+          - 172.0.0.0/6
+          - 176.0.0.0/4
+          - 192.0.0.0/2
+          - 2000::/3
+          - fc00::/7
+    binaries:
+      - { path: "/**" }

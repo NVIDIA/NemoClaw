@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Google Chat outbound-auth bridge provider profile.
+#
+# Lets the OpenShell gateway MINT the Google Chat bot access token from the
+# service-account key (ProviderCredentialRefreshStrategy google_service_account_jwt)
+# and inject it as `Authorization: Bearer <token>` on outbound chat.googleapis.com
+# requests. The service-account private key stays gateway-side; the sandbox only
+# ever sees the `openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN` placeholder, which
+# the L7 proxy rewrites to the minted token.
+#
+# Paired with the googlechat-outbound-auth runtime preload, which rewrites the
+# plugin's token producer to return that placeholder instead of signing in-process.
+#
+# The refresh material VALUES are supplied at onboard/rebuild time by
+# src/lib/onboard/messaging-bridge-provider.ts. Non-secret values use `--material`;
+# the private key uses `--secret-material-env` so it never appears in argv. The
+# block below declares their shape so the gateway knows which keys are secret.
+id: google-chat-bridge
+display_name: Google Chat Bridge
+description: Gateway-minted Google Chat bot token (service-account JWT) for outbound chat.googleapis.com
+category: agent
+credentials:
+  - name: access_token
+    description: Google Chat bot OAuth access token (gateway-minted via service-account JWT)
+    env_vars:
+      - GOOGLE_CHAT_ACCESS_TOKEN
+    required: true
+    auth_style: bearer
+    header_name: Authorization
+    query_param: ''
+    refresh:
+      strategy: google-service-account-jwt
+      scopes:
+        - https://www.googleapis.com/auth/chat.bot
+      material:
+        - name: client_email
+          description: Service-account client email (JWT issuer)
+          required: true
+        - name: private_key
+          description: Service-account RSA private key (PEM); signs the JWT assertion
+          required: true
+          secret: true
+        - name: scope
+          description: OAuth scope(s) to mint the token for
+endpoints:
+  - host: chat.googleapis.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+inference_capable: false

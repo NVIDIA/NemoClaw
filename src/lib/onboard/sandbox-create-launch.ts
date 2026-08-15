@@ -6,13 +6,16 @@ import { formatEnvAssignment } from "../core/url-utils";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
+import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import {
   createManagedBootstrapIdentity,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
+import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
@@ -23,6 +26,12 @@ import {
 
 type OpenshellShellCommand = (args: string[]) => string;
 type OpenshellArgv = (args: string[]) => string[];
+
+export const OPENSHELL_SANDBOX_SUPERVISOR_ARGV = Object.freeze([
+  "/opt/openshell/bin/openshell-sandbox",
+  "--workdir",
+  "/sandbox",
+] as const);
 
 // These non-secret scheduler controls are intentionally forwarded for bounded
 // live-test and operator tuning. Keep this as an exact allowlist: the host's
@@ -36,16 +45,64 @@ const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
 ] as const;
 
+// This opt-in emits MCP success timing events from the reviewed OpenClaw
+// dist patch. Accept only the literal enabled value, and only for OpenClaw, so
+// the broader host environment never becomes sandbox runtime input.
+const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
+const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
+const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
+const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
+
 function appendOpenClawAutoPairRuntimeEnvArgs(
   envArgs: string[],
   agent: AgentDefinition | null,
   env: NodeJS.ProcessEnv,
 ): void {
+  // A null definition is the legacy OpenClaw path; keep this aligned with
+  // appendOpenClawRuntimeEnvArgs and the auto-pair compatibility settings.
   if (agent && agent.name !== "openclaw") return;
   for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
     const value = env[key]?.trim();
     if (value) envArgs.push(formatEnvAssignment(key, value));
   }
+}
+
+function appendOpenClawDiagnosticRuntimeEnvArgs(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  for (const key of OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS) {
+    if (env[key]?.trim() === "1") envArgs.push(formatEnvAssignment(key, "1"));
+  }
+}
+
+function appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  const raw = env[OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV];
+  if (raw === undefined || raw.trim() === "") return;
+  const value = raw.trim();
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(
+      `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
+    );
+  }
+  const timeoutMs = Number(value);
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS ||
+    timeoutMs > OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS
+  ) {
+    throw new Error(
+      `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
+    );
+  }
+  envArgs.push(formatEnvAssignment(OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV, String(timeoutMs)));
 }
 
 export interface SandboxCreateLaunchInput {
@@ -58,11 +115,19 @@ export interface SandboxCreateLaunchInput {
   extraPlaceholderKeys: readonly string[];
   getDashboardForwardPort(chatUiUrl: string): string;
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Reserved host port for this Hermes sandbox's OpenAI-compatible API. */
+  hermesApiPort?: number | null;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
-  /** Dormant until a complete runtime bundle and durable authority store are selected. */
+  /**
+   * Intentional partial migration: remains unset until production selects a
+   * complete runtime bundle with supported bootstrap after epic #7744's durable
+   * lifecycle, recovery, and rollback gates plus exact-head/base protected
+   * all-agent amd64/arm64, GPU/local-inference, and regression matrix pass.
+   * https://github.com/NVIDIA/NemoClaw/issues/7744
+   */
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 
@@ -101,13 +166,40 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
+function managedBootstrapCreateArgs(
+  createArgs: readonly string[],
+  bootstrapIdentity: string | null,
+): string[] {
+  if (!bootstrapIdentity) return [...createArgs];
+  // OpenShell runs the command after `--` as an exec session while its OCI
+  // supervisor retains `sleep infinity`. Persist the transaction identity on
+  // the sandbox spec so each runtime provider can bind the idle workload to
+  // the exact authorized bootstrap without depending on driver internals.
+  const assignmentPrefix = `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=`;
+  if (
+    createArgs.some(
+      (argument) =>
+        argument.startsWith(assignmentPrefix) || argument.startsWith(`--env=${assignmentPrefix}`),
+    )
+  ) {
+    throw new Error(
+      `OpenShell create arguments must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}.`,
+    );
+  }
+  return [...createArgs, "--env", `${assignmentPrefix}${bootstrapIdentity}`];
+}
+
 export interface SandboxRuntimeEnvArgsInput {
   agent: AgentDefinition | null;
   chatUiUrl: string;
   manageDashboard: boolean;
   getDashboardForwardPort(chatUiUrl: string): string;
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Host port this sandbox exposes its OpenAI-compatible API on. */
+  hermesApiPort?: number | null;
   extraPlaceholderKeys: readonly string[];
+  /** Allow a create/recreate launch to replace a registered Hermes API port. */
+  allowHermesApiPortOverride?: boolean;
   observabilityEnabled?: boolean;
   sandboxName?: string;
   env: NodeJS.ProcessEnv;
@@ -139,7 +231,21 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
 
   appendOpenClawRuntimeEnvArgs(envArgs, agent);
   appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
+  appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
+  appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
+  // The sandbox and its host forward share the API port number, so the
+  // allocated value has to reach start.sh before the socat relay binds.
+  if (agent?.name === "hermes" && input.sandboxName) {
+    const apiPort =
+      input.hermesApiPort ??
+      resolveOnboardHermesApiPort(input.sandboxName, {
+        env,
+        warn: console.warn,
+        allowRegisteredOverride: input.allowHermesApiPortOverride,
+      });
+    envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));
+  }
   appendHostProxyEnvArgs(envArgs, env, {
     dropCredentialBearingProxyUrls:
       agent?.name === "langchain-deepagents-code" || input.omitCredentialEnv === true,
@@ -197,9 +303,11 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     manageDashboard,
     getDashboardForwardPort: input.getDashboardForwardPort,
     hermesDashboardState: input.hermesDashboardState,
+    hermesApiPort: input.hermesApiPort,
     extraPlaceholderKeys: input.extraPlaceholderKeys,
     observabilityEnabled: input.observabilityEnabled,
     sandboxName: input.sandboxName,
+    allowHermesApiPortOverride: true,
     env,
   });
 
@@ -213,7 +321,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const intendedSandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
   const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
   const managedBootstrapIdentity = managedStartupRootApplyRequest
     ? createManagedBootstrapIdentity()
@@ -228,9 +336,10 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
           ),
         ]
       : intendedSandboxStartupCommand;
-  const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
+  const createArgs = managedBootstrapCreateArgs(input.createArgs, managedBootstrapIdentity);
+  const openshellArgs = ["sandbox", "create", ...createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
-    input.createArgs,
+    createArgs,
     sandboxStartupCommand,
     input.openshellShellCommand,
   );
@@ -256,9 +365,13 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
+  const requiresLocalBuildKit =
+    prebuildInput.origin === "generated" &&
+    (input.agent == null || input.agent.name === "openclaw" || input.agent.name === "hermes");
   const prebuild = await prebuildSandboxImageIfEligible({
     ...prebuildInput,
     createArgs: input.createArgs,
+    requiresLocalBuildKit,
     sandboxName: input.sandboxName,
   });
   return {

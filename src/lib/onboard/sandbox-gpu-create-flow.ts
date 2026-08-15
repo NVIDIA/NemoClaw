@@ -1,39 +1,122 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { AgentDefinition } from "../agent/defs";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
-import type { SandboxGpuProofResult } from "../state/registry";
+import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
+import { parsePortableRuntimeAuthority } from "../state/onboard/portable-runtime-authority";
+import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import type {
-  ManagedBootstrapAdapter,
-  ManagedBootstrapAgentIdentity,
-  ManagedBootstrapAuthorityStore,
-  ManagedBootstrapImageIdentity,
+import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
+import {
+  type ManagedBootstrapAdapter,
+  type ManagedBootstrapAgentIdentity,
+  type ManagedBootstrapAuthorityStore,
+  type ManagedBootstrapImageIdentity,
+  ManagedBootstrapRecoveryBlockedError,
 } from "./managed-bootstrap/adapter";
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
+import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/onboard-orchestration";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
-import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
-import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
-import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import type {
   RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
 } from "./runtime-provider/contract";
+import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
+import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 
+export function resolvePortableLifecycleMode(
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw";
+}
+
+/** Resolve the checkpoint-owned authority required by exported portable creation helpers. */
+export function resolveExportedPortableRuntimeAuthority(
+  env: NodeJS.ProcessEnv,
+  loadSession: () =>
+    | {
+        checkpoint?: {
+          profile: { kind: "selected"; value: "default" | "portable" };
+          runtimeAuthority:
+            | { kind: "unset" }
+            | { kind: "selected"; value: CheckpointPortableRuntimeAuthority };
+        } | null;
+      }
+    | null,
+): CheckpointPortableRuntimeAuthority | null {
+  if (!isPortableExperimentalProfile(env)) return null;
+  const checkpoint = loadSession()?.checkpoint;
+  const authority =
+    checkpoint?.profile.value === "portable" && checkpoint.runtimeAuthority.kind === "selected"
+      ? parsePortableRuntimeAuthority(checkpoint.runtimeAuthority.value)
+      : null;
+  if (authority) return authority;
+  throw new Error(
+    "Portable sandbox creation requires checkpoint-owned Podman runtime authority before creation begins.",
+  );
+}
+
+export function resolveAgentCreateInput(
+  agent: AgentDefinition | null,
+  dockerDriverGateway: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return {
+    ...resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
+    portableLifecycle: resolvePortableLifecycleMode(agent, env),
+  };
+}
+
+/*
+ * Keep recovery rendering at this public command boundary. Providers own the
+ * detail and remediation; central orchestration only renders their bounded,
+ * identity-bound evidence and never branches on provider IDs or error codes.
+ */
+function exitForManagedBootstrapRecovery(error: ManagedBootstrapRecoveryBlockedError): never {
+  console.error("");
+  console.error(
+    `  Managed bootstrap recovery stopped before sandbox '${error.sandboxName}' was created.`,
+  );
+  for (const failure of error.failures) {
+    const scope = failure.sandbox
+      ? `sandbox '${failure.sandbox.sandboxName}' (durable sandbox ID ${failure.sandbox.sandboxId}, provider ${failure.providerId})`
+      : "a sandbox whose durable identity could not be recovered";
+    console.error(
+      `  Transaction ${failure.bootstrapIdentity} requires ${failure.retryable ? "a provider retry after its recovery condition is resolved" : "operator recovery"} for ${scope}.`,
+    );
+    console.error(`  ${redactFull(failure.detail)}`);
+    if (failure.sandbox) {
+      console.error(
+        `  Before any provider action, query that exact name with OpenShell's sandbox get command and verify it returns durable sandbox ID ${failure.sandbox.sandboxId}.`,
+      );
+    }
+  }
+  console.error(
+    "  Preserve every durable recovery record. Act only on exact provider, sandbox, and runtime IDs from the provider guidance; never delete a runtime by mutable sandbox name.",
+  );
+  process.exit(1);
+}
+
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
+type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
@@ -46,14 +129,20 @@ export interface SandboxGpuCreateFlowInput {
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
+  /** Host-side runtime environment used only by the selected lifecycle provider. */
+  hostEnv?: NodeJS.ProcessEnv;
+  portableLifecycle?: boolean;
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
+  lifecycleGeneration?: SandboxEntry["lifecycleGeneration"];
+  portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
   managedBootstrap?: {
     readonly bootstrapIdentity: string;
+    readonly stateRoot: string;
     readonly runtimeProvider: RuntimeProviderBundle & {
       readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
     };
@@ -73,12 +162,10 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
-  /**
-   * Protected failure-injection tests wrap the real driver adapter at one
-   * named transaction boundary. Production callers omit this factory and use
-   * the adapter selected by the managed-bootstrap runtime provider.
-   */
-  createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
+  /** Production callers configure the hidden portable lifecycle through the default implementation. */
+  installPortableDemoLifecycle?: typeof installPortableDemoSandboxLifecycle;
+  /** Production callers omit this factory and use the runtime provider's adapter. */
+  createManagedBootstrapAdapter?: (stateRoot: string) => ManagedBootstrapAdapter;
 }
 
 export interface SandboxGpuCreateFlowResult {
@@ -88,6 +175,7 @@ export interface SandboxGpuCreateFlowResult {
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
+  lifecycleRegistrationFields: LifecycleRegistrationFields;
 }
 
 /**
@@ -106,11 +194,14 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  assertPortableManagedBootstrapNotSelected(
+    input.portableLifecycle === true,
+    input.managedBootstrap != null,
+  );
   let registryImageRef: string | null = input.prebuild.imageRef;
   const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
-  const gpuCreateOutcome = await sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(
-    input.gpuRoutePlan,
-    {
+  const gpuCreateOutcome = await sandboxGpuCreateAttempt
+    .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
       runAttempt: attemptRunner.runAttempt,
       captureNativeFailure: (failure) => {
         const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
@@ -196,8 +287,13 @@ export async function runSandboxGpuCreateFlow(
         input.sandboxGpuConfig.sandboxGpuProof = null;
       },
       traceEvent: addTraceEvent,
-    },
-  );
+    })
+    .catch((error: unknown) => {
+      if (error instanceof ManagedBootstrapRecoveryBlockedError) {
+        exitForManagedBootstrapRecovery(error);
+      }
+      throw error;
+    });
   if (!gpuCreateOutcome.ok) {
     console.error("");
     console.error("  Operator-authorized GPU fallback stopped before compatibility retry.");
@@ -215,10 +311,36 @@ export async function runSandboxGpuCreateFlow(
     process.exit(1);
   }
 
+  let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
+  if (!input.portableLifecycle && !portableLifecycleGeneration) {
+    try {
+      portableLifecycleGeneration =
+        (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
+          input.sandboxName,
+          input.sandboxStartupCommand,
+          process.env,
+          {
+            ...(input.lifecycleGeneration ? { registryGeneration: input.lifecycleGeneration } : {}),
+            runtimeAuthority: input.portableRuntimeAuthority ?? null,
+          },
+        ) ?? null;
+    } catch (error) {
+      const detail = redactFull(error instanceof Error ? error.message : String(error)).slice(
+        0,
+        500,
+      );
+      console.warn(`  Portable demo lifecycle setup did not complete: ${detail}`);
+    }
+  }
+
   return {
     ...gpuCreateOutcome.value,
     route: gpuCreateOutcome.route,
     firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
+    lifecycleRegistrationFields: {
+      ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
+      ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
+    },
   };
 }

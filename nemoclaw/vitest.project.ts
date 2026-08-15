@@ -4,11 +4,16 @@
 import path from "node:path";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const canonicalBannerBoundary = path.resolve(import.meta.dirname, "src/shared/banner-boundary.cts");
 const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
 );
 const canonicalSandboxName = path.resolve(import.meta.dirname, "src/shared/sandbox-name.cts");
+const canonicalSnapshotSanitizerBoundary = path.resolve(
+  import.meta.dirname,
+  "src/shared/snapshot-sanitizer-boundary.cts",
+);
 
 type PluginVitestProjectOptions = {
   root: string;
@@ -40,12 +45,20 @@ const pluginVitestProjectOptions = {
     // possibly-stale build artifact.
     alias: [
       {
+        find: /^.*banner-boundary\.cjs$/,
+        replacement: canonicalBannerBoundary,
+      },
+      {
         find: /^.*openshell-policy-boundary\.cjs$/,
         replacement: canonicalOpenShellPolicyBoundary,
       },
       {
         find: /^.*sandbox-name\.cjs$/,
         replacement: canonicalSandboxName,
+      },
+      {
+        find: /^.*snapshot-sanitizer-boundary\.cjs$/,
+        replacement: canonicalSnapshotSanitizerBoundary,
       },
     ],
     env: {

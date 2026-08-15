@@ -18,11 +18,9 @@ import {
   mcpBridgeCompatibilityRiskSignal,
   recordMcpBridgeRuntimeCompatibility,
 } from "../../../tools/e2e/mcp-bridge-runtime-compatibility.mts";
-import { classifyPrGateEvidence } from "../../../tools/e2e/pr-e2e-gate.mts";
 import { RISK_SIGNAL_FILE } from "../../../tools/e2e/risk-signal.ts";
 
 const EXPECTED_SHA = "a".repeat(40);
-const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 
 function riskSignalEnv(artifactDirectory: string): NodeJS.ProcessEnv {
@@ -32,7 +30,6 @@ function riskSignalEnv(artifactDirectory: string): NodeJS.ProcessEnv {
     GITHUB_WORKSPACE: "/test/workspace",
     NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
     NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
-    NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
     NEMOCLAW_E2E_SHARD: "hermes",
   };
 }
@@ -95,7 +92,7 @@ describe("MCP bridge dev runtime compatibility", () => {
     }
   });
 
-  it("reports an exact unsupported-version rejection as passing compatibility evidence (#6426)", () => {
+  it("reports an exact unsupported-version rejection without a plan hash (#6426)", () => {
     const result = classifyMcpBridgeRuntimeCompatibility(
       assertRuntimeVersion("0.0.78-dev.6+ga7271169"),
     );
@@ -147,7 +144,6 @@ describe("MCP bridge dev runtime compatibility", () => {
         shardId: "hermes",
         expectedSha: EXPECTED_SHA,
         testedSha: EXPECTED_SHA,
-        planHash: PLAN_HASH,
         correlationId: CORRELATION_ID,
         passed: 1,
         failed: 0,
@@ -157,18 +153,6 @@ describe("MCP bridge dev runtime compatibility", () => {
         runReason: "passed",
       });
       expect(fs.statSync(path.join(directory, RISK_SIGNAL_FILE)).mode & 0o777).toBe(0o600);
-      expect(
-        classifyPrGateEvidence({
-          workflowConclusion: "success",
-          expectedJobs: ["mcp-bridge-dev"],
-          expectedShards: { "mcp-bridge-dev": ["hermes"] },
-          signals: [riskSignal!],
-        }),
-      ).toEqual({
-        conclusion: "success",
-        title: "All selected E2E checks passed",
-        summary: "Every expected E2E check shard passed with no skips or pending tests.",
-      });
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }

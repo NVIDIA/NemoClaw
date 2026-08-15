@@ -103,11 +103,19 @@ export function createRuntimeHarness(initialSession: Session) {
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
-    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
-    markStepSkipped: () => cloneSession(session),
+    markStepSkipped: (stepName) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+          return current;
+        step.status = "skipped";
+        step.startedAt = null;
+        step.completedAt = null;
+        step.error = null;
+        return current;
+      }),
     markStepFailed: () => cloneSession(session),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -184,6 +192,7 @@ export function createPhases(
         order.push("agent-forward");
         return 45123;
       }),
+      persistDashboardPort: vi.fn(),
       recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
       isOpenclawReady: () => false,
       skippedStepMessage: vi.fn(),
@@ -205,6 +214,7 @@ export function createPhases(
       getActiveSandbox: () => null,
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
+      detectUnconfiguredMessagingChannels: () => [],
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
       preparePolicyPresetResumeSelection: () => ({
         policyPresets: ["balanced"],
@@ -234,6 +244,7 @@ export function createPhases(
       stagedLegacyKeys: [],
       migratedLegacyKeys: new Set(),
       webSearchEnabled: () => false,
+      webSearchProvider: (config) => (config.provider === "tavily" ? "tavily" : "brave"),
     },
     finalizationDeps: {
       ensureAgentDashboardForward: vi.fn(() => {

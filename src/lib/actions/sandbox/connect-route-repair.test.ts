@@ -105,19 +105,20 @@ function makeRepairDeps(
 }
 
 describe("sandbox connect route repair unit flow", () => {
-  it("skips work when route repair is disabled", () => {
-    const { calls, deps } = makeRepairDeps([], {
+  it("still probes and fails closed when route repair is disabled (#8502)", () => {
+    const { calls, deps } = makeRepairDeps([broken()], {
       isRepairDisabled: () => true,
     });
 
     const result = repairSandboxInferenceRouteWithDeps("demo", sandbox(), {}, deps);
 
     expect(result).toEqual({
-      healthy: true,
+      healthy: false,
       repairAttempted: false,
-      detail: "route repair disabled",
+      detail: "route repair disabled; BROKEN 503",
     });
-    expect(calls.probeOptions).toEqual([]);
+    expect(calls.probeOptions).toEqual([undefined]);
+    expect(calls.legacyRepairs).toEqual([]);
   });
 
   it("does not repair a healthy initial probe", () => {

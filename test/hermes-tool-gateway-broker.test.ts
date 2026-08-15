@@ -270,6 +270,106 @@ describe("Hermes managed-tool gateway broker", () => {
     }
   });
 
+  it("uses the current Node runtime for private control requests without a curl dependency", {
+    timeout: BROKER_TEST_TIMEOUT_MS,
+  }, async ({ resources }) => {
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
+    const home = resources.ownDirectory(fs.mkdtempSync("/tmp/nc-hermes-node-control-"));
+    try {
+      process.env.HOME = home;
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+      const broker = require(BROKER_WRAPPER);
+      broker.persistHermesToolGatewayProviderState(
+        "sandbox",
+        "test-only-refresh",
+        "test-only-broker",
+        "sandbox-hermes-inference",
+      );
+      const capturePath = path.join(home, "control-request.json");
+      const serverSource = [
+        'const fs = require("node:fs");',
+        'const http = require("node:http");',
+        "const [socketPath, capturePath] = process.argv.slice(1);",
+        "const server = http.createServer((request, response) => {",
+        "  const chunks = [];",
+        '  request.on("data", (chunk) => chunks.push(chunk));',
+        '  request.on("end", () => {',
+        '    const body = Buffer.concat(chunks).toString("utf8");',
+        "    fs.writeFileSync(capturePath, JSON.stringify({",
+        "      path: request.url,",
+        "      body,",
+        "    }));",
+        '    response.writeHead(body.includes("reject-refresh") ? 503 : 200, {',
+        '      "content-type": "application/json",',
+        "    });",
+        '    response.end("{\\\"registered\\\":true}");',
+        "  });",
+        "});",
+        "server.listen(socketPath, () => {",
+        "  fs.chmodSync(socketPath, 0o600);",
+        '  process.stdout.write("ready\\n");',
+        "});",
+        'process.once("SIGTERM", () => server.close(() => process.exit(0)));',
+      ].join("\n");
+      const server = resources.ownChild(
+        spawn(
+          process.execPath,
+          [
+            "--input-type=commonjs",
+            "--eval",
+            serverSource,
+            broker.HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH,
+            capturePath,
+          ],
+          { stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      );
+      let output = "";
+      server.stdout?.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      server.stderr?.on("data", (chunk) => {
+        output += chunk.toString();
+      });
+      await waitForBrokerCondition(
+        "native Node control server",
+        server,
+        () => output,
+        () => output.includes("ready"),
+      );
+
+      process.env.PATH = "/path-with-no-curl";
+      expect(
+        broker.registerHermesToolGatewayRuntimeCredential("test-only-refresh", "sandbox"),
+      ).toBe(true);
+      expect(JSON.parse(fs.readFileSync(capturePath, "utf8"))).toEqual({
+        path: "/credentials/register",
+        body: JSON.stringify({
+          sandbox: "sandbox",
+          refresh_token: "test-only-refresh",
+        }),
+      });
+      broker.persistHermesToolGatewayProviderState(
+        "sandbox",
+        "reject-refresh",
+        "test-only-broker",
+        "sandbox-hermes-inference",
+      );
+      expect(broker.registerHermesToolGatewayRuntimeCredential("reject-refresh", "sandbox")).toBe(
+        false,
+      );
+    } finally {
+      previousHome === undefined
+        ? Reflect.deleteProperty(process.env, "HOME")
+        : Reflect.set(process.env, "HOME", previousHome);
+      previousPath === undefined
+        ? Reflect.deleteProperty(process.env, "PATH")
+        : Reflect.set(process.env, "PATH", previousPath);
+      delete require.cache[require.resolve(BROKER_WRAPPER)];
+    }
+  });
+
   it("restores a prior destination broker binding and reports cleanup failure", () => {
     delete require.cache[require.resolve(BROKER_WRAPPER)];
     const broker = require(BROKER_WRAPPER);
@@ -311,6 +411,7 @@ describe("Hermes managed-tool gateway broker", () => {
     );
     expect(removeState).not.toHaveBeenCalled();
 
+    const cleanupWriteState = vi.fn();
     expect(() =>
       broker.activateHermesToolGatewayCloneBinding(
         "new-destination",
@@ -324,9 +425,11 @@ describe("Hermes managed-tool gateway broker", () => {
           }),
           controlRequest: () => ({ state: "discarded" }),
           removeState: () => false,
+          writeState: cleanupWriteState,
         },
       ),
     ).toThrow("activation cleanup failed");
+    expect(cleanupWriteState).not.toHaveBeenCalled();
   });
 
   it("removes broker state only for the exact registry identity", () => {

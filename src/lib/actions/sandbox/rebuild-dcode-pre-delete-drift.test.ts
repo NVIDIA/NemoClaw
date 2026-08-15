@@ -1,23 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   configureDcodeSession,
   expectNoDcodeMutation,
   makeDcodeSandboxEntry,
-} from "../../../../test/helpers/rebuild-dcode-flow-support";
+} from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
-} from "../../../../test/helpers/rebuild-flow-harness";
+  installRebuildFlowTestHooks,
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import { revalidateDcodeReplacementAtMutationEdge } from "./rebuild-dcode-preflight";
 
 describe("rebuildSandbox DCode flow: pre-delete drift", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it("rejects prepared-image tool-disclosure drift before gateway or mutation work", async () => {
     const checkGatewaySchema = vi.fn(() => true);

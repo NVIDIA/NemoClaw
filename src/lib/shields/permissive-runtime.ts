@@ -4,7 +4,29 @@
 import fs from "node:fs";
 import YAML from "yaml";
 
+export {
+  type ExactManagedMcpPolicy,
+  hasManagedMcpPolicyClaims,
+  inspectExactManagedMcpPolicies,
+  inspectProvableManagedMcpPoliciesForDeadline,
+  type ManagedMcpPolicyOmission,
+} from "../actions/sandbox/mcp-bridge-policy";
+
+import type {
+  ExactManagedMcpPolicy,
+  ManagedMcpPolicyOmission,
+} from "../actions/sandbox/mcp-bridge-policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
+
+export {
+  assertLegacyMcpPolicyRestoreSafe,
+  isManagedMcpPolicyKey,
+} from "./mcp-policy-transition";
+
+import {
+  composeDeadlineManagedMcpPolicies,
+  composeManagedMcpPolicies,
+} from "./mcp-policy-transition";
 
 const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
 
@@ -18,6 +40,11 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  * (e.g. `include_workdir`) are preserved verbatim from the static base —
  * the bug class this helper exists for is path removal on a live sandbox,
  * not policy shape changes.
+ *
+ * The live `landlock` stanza is carried through as well when the live policy
+ * has one (#8461). OpenShell applies Landlock at startup and rejects any
+ * later policy that changes it, so the emitted document must restate the
+ * value the sandbox is already running rather than the static base's.
  *
  * Background (#3942, #3957, #3168): OpenShell refuses to remove a
  * `filesystem_policy.read_only` or `filesystem_policy.read_write` entry
@@ -40,9 +67,9 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  *   path is not already granted `read_write` (either by base or by live).
  *
  * Returns the path to a freshly created temp YAML file when the live
- * policy carries a filesystem section that needs merging. Falls back to
- * the static base path when the live policy is empty / has no filesystem
- * lists, when the base YAML cannot be parsed, or when temp-file I/O
+ * policy carries filesystem paths or a Landlock stanza that must be
+ * preserved. Falls back to the static base path when the live policy has
+ * neither, when the base YAML cannot be parsed, or when temp-file I/O
  * fails — degrading to the existing static apply path rather than
  * aborting shields-down with an I/O error.
  */
@@ -60,6 +87,10 @@ export interface PermissiveRuntimeDeps {
   // secureTempFile when omitted. Exposed so tests can drive the
   // write-failure fallback path without monkey-patching node:fs.
   writeTempPolicy?: (yaml: string) => string;
+  // Exact, live-matching generated MCP policies resolved by the Shields
+  // coordinator. These entries remain active while the static policy replaces
+  // the rest of the complete gateway policy.
+  managedMcpPolicies?: readonly ExactManagedMcpPolicy[];
 }
 
 export function buildRuntimePermissivePolicy(
@@ -69,21 +100,36 @@ export function buildRuntimePermissivePolicy(
   const live = deps.livePolicyYaml ? safeYamlObject(deps.livePolicyYaml) : null;
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
+  const managedMcpPolicies = deps.managedMcpPolicies ?? [];
 
-  // No live filesystem section to merge — keep the static path so the
-  // caller's apply path is unchanged.
-  if (liveRw.length === 0 && liveRo.length === 0) {
+  // No live startup-sealed or filesystem state to carry forward — keep the
+  // static path so the caller's apply path is unchanged unless exact managed
+  // MCP entries must survive the complete-policy replacement.
+  if (
+    liveRw.length === 0 &&
+    liveRo.length === 0 &&
+    live?.landlock === undefined &&
+    managedMcpPolicies.length === 0
+  ) {
     return basePermissivePath;
   }
 
   let baseYaml: string;
   try {
     baseYaml = deps.readBasePolicy();
-  } catch {
+  } catch (error) {
+    if (managedMcpPolicies.length > 0) {
+      throw new Error("Cannot read the Shields-down policy while managed MCP policies are active", {
+        cause: error,
+      });
+    }
     return basePermissivePath;
   }
   const base = safeYamlObject(baseYaml);
   if (!base) {
+    if (managedMcpPolicies.length > 0) {
+      throw new Error("Cannot parse the Shields-down policy while managed MCP policies are active");
+    }
     return basePermissivePath;
   }
   const fsPolicy =
@@ -108,11 +154,28 @@ export function buildRuntimePermissivePolicy(
   fsPolicy.read_write = [...baseRw];
   fsPolicy.read_only = [...baseRo];
 
-  const yaml = YAML.stringify(base);
+  // OpenShell applies Landlock at sandbox startup and rejects a policy whose
+  // stanza differs from the one the sandbox started with. An agent that ships
+  // no permissive policy of its own falls back to the OpenClaw document. Its
+  // `best_effort` then contradicts a baseline such as Deep Agents Code's
+  // `strict`, and OpenShell refuses the policy (#8461). Carry the live stanza
+  // through so the emitted document proposes no Landlock change. This can only
+  // ever restate what the sandbox is already running.
+  if (live?.landlock !== undefined) {
+    base.landlock = live.landlock;
+  }
+
+  const yaml = composeManagedMcpPolicies(YAML.stringify(base), managedMcpPolicies);
   if (deps.writeTempPolicy) {
     try {
       return deps.writeTempPolicy(yaml);
-    } catch {
+    } catch (error) {
+      if (managedMcpPolicies.length > 0) {
+        throw new Error(
+          "Cannot stage the Shields-down policy while managed MCP policies are active",
+          { cause: error },
+        );
+      }
       return basePermissivePath;
     }
   }
@@ -121,12 +184,119 @@ export function buildRuntimePermissivePolicy(
     tmpPath = secureTempFile(TEMP_FILE_PREFIX, ".yaml");
     fs.writeFileSync(tmpPath, yaml, { mode: 0o600 });
     return tmpPath;
-  } catch {
+  } catch (error) {
     // secureTempFile may have created an mkdtemp directory before
     // writeFileSync failed. Clean it up so we do not leak a 0700 dir
     // on /tmp every time the write path errors.
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
+    if (managedMcpPolicies.length > 0) {
+      throw new Error(
+        "Cannot stage the Shields-down policy while managed MCP policies are active",
+        { cause: error },
+      );
+    }
     return basePermissivePath;
+  }
+}
+
+export interface ManagedMcpRuntimePolicyDeps {
+  managedMcpPolicies: readonly ExactManagedMcpPolicy[];
+  readBasePolicy: () => string;
+  snapshotManagedPolicyKeys?: readonly string[];
+  writeTempPolicy?: (yaml: string) => string;
+}
+
+/**
+ * Reconcile current generated MCP policies into a custom Shields-down policy
+ * or a saved restrictive snapshot. Unlike the legacy filesystem-only fallback,
+ * this path must fail closed: returning the unmodified base could silently
+ * discard a managed entry or restore one that was removed during the
+ * shields-down window.
+ */
+export function buildRuntimeManagedMcpPolicy(
+  _basePolicyPath: string,
+  deps: ManagedMcpRuntimePolicyDeps,
+): string {
+  const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
+
+  let baseYaml: string;
+  try {
+    baseYaml = deps.readBasePolicy();
+  } catch (error) {
+    throw new Error("Cannot read the Shields policy for managed MCP reconciliation", {
+      cause: error,
+    });
+  }
+  const yaml = composeManagedMcpPolicies(
+    baseYaml,
+    deps.managedMcpPolicies,
+    snapshotManagedPolicyKeys,
+  );
+  if (deps.writeTempPolicy) {
+    try {
+      return deps.writeTempPolicy(yaml);
+    } catch (error) {
+      throw new Error("Cannot stage the Shields policy for managed MCP reconciliation", {
+        cause: error,
+      });
+    }
+  }
+
+  let tmpPath: string | null = null;
+  try {
+    tmpPath = secureTempFile(TEMP_FILE_PREFIX, ".yaml");
+    fs.writeFileSync(tmpPath, yaml, { mode: 0o600 });
+    return tmpPath;
+  } catch (error) {
+    if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
+    throw new Error("Cannot stage the Shields policy for managed MCP reconciliation", {
+      cause: error,
+    });
+  }
+}
+
+export interface DeadlineManagedMcpRuntimePolicy {
+  path: string;
+  omissions: ManagedMcpPolicyOmission[];
+}
+
+export function buildDeadlineRuntimeManagedMcpPolicy(
+  basePolicyPath: string,
+  deps: ManagedMcpRuntimePolicyDeps,
+): DeadlineManagedMcpRuntimePolicy {
+  const baseYaml = deps.readBasePolicy();
+  const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
+  const composition = composeDeadlineManagedMcpPolicies(
+    baseYaml,
+    deps.managedMcpPolicies,
+    snapshotManagedPolicyKeys,
+  );
+  // With no saved or current managed MCP entries, composition records every
+  // reserved snapshot key as an omission. No omissions means the snapshot is
+  // valid without modification, so restoration does not need temporary storage.
+  if (
+    deps.managedMcpPolicies.length === 0 &&
+    snapshotManagedPolicyKeys.length === 0 &&
+    composition.omissions.length === 0
+  ) {
+    return { path: basePolicyPath, omissions: composition.omissions };
+  }
+  let runtimePath: string | null = null;
+  try {
+    runtimePath = deps.writeTempPolicy
+      ? deps.writeTempPolicy(composition.yaml)
+      : secureTempFile(TEMP_FILE_PREFIX, ".yaml");
+    if (!deps.writeTempPolicy) {
+      fs.writeFileSync(runtimePath, composition.yaml, { mode: 0o600 });
+    }
+    return { path: runtimePath, omissions: composition.omissions };
+  } catch (error) {
+    if (runtimePath && !deps.writeTempPolicy) {
+      cleanupTempDir(runtimePath, TEMP_FILE_PREFIX);
+    }
+    throw new Error("Cannot stage the deadline Shields policy for managed MCP reconciliation", {
+      cause: error,
+    });
   }
 }
 

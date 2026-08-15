@@ -39,20 +39,31 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Deep Agents">
-    Select Deep Agents, then run the hosted installer.
+    Run the hosted installer.
 
     ```bash
-    export NEMOCLAW_AGENT=langchain-deepagents-code
-    export NEMOCLAW_SANDBOX_NAME=my-deepagents
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_SANDBOX_NAME=my-deepagents bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers Express, you can accept it to use managed local inference for that platform.
-    Otherwise, choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-deepagents` as the sandbox name.
-    Accept the suggested network policy tier for a first run.
+    The explicit `NEMOCLAW_AGENT=langchain-deepagents-code` setting keeps Deep Agents selected through interactive or Express setup.
+
+    <Note>
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
+      Press Enter to use the recommended express install mode for that platform.
+      This mode applies preset settings and runs the remaining onboarding non-interactively.
+      Express install mode preserves the explicit Deep Agents selection in the install command.
+      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
+      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+    </Note>
+
+    The install command creates the `my-deepagents` sandbox used in the commands that follow.
+    If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
+    For that interactive path, accept the suggested network policy tier on a first run.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -64,7 +75,17 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 
   <Step title="Run Your First Prompt">
-    Connect to the sandbox and launch the Deep Agents terminal UI.
+    Start the Deep Agents terminal UI from the host.
+
+    ```bash
+    nemo-deepagents launch my-deepagents
+    ```
+
+    `nemo-deepagents launch` runs the complete preflight or, on Linux, validates an existing fixed 24-hour launch-readiness lease before it starts `dcode` in your terminal.
+    On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+    On Linux, if the recorded configuration or live runtime has changed, NemoClaw durably invalidates prior evidence before it runs the complete preflight.
+    If old evidence might remain acceptable and cannot be invalidated, `launch` stops before preflight or recovery and tells you to repair the secure OS per-user runtime authority or NemoClaw state permissions.
+    To open a sandbox shell first and start `dcode` yourself, run these commands instead.
 
     ```bash
     nemo-deepagents my-deepagents connect
@@ -86,8 +107,16 @@ Use these details when you need more control during setup or after the first san
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
-    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    DGX Spark, qualifying DGX Station, and Windows Subsystem for Linux (WSL) hosts can offer the recommended express install mode after the third-party software notice.
+    N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
+    N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
+    Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
+    On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
+    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
+    Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
+
+    The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
@@ -110,8 +139,21 @@ nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The wizard asks for an inference provider, model, required credential, sandbox name, and policy tier before it prints the review summary.
-At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+The wizard asks for an inference provider, model, required credential, and sandbox name before it prints the review summary.
+The review offers these actions:
+
+- **Apply configuration** continues to provider registration.
+- **Edit inference provider or model** returns to provider and model selection.
+- **Edit sandbox name** prompts for the sandbox name again.
+- **Exit onboarding** stops onboarding before provider registration.
+
+When you edit inference, NemoClaw clears the credential staged for the discarded selection.
+NemoClaw preserves the sandbox name.
+When you edit the sandbox name, NemoClaw preserves the inference selection.
+The sandbox prompt shows the prior name as its default.
+After you apply the configuration, routine editing ends.
+If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
+Provider registration, inference setup, policy selection, and sandbox creation then continue forward.
 The default Deep Agents sandbox name is `deepagents-code`.
 Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
 Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider-specific prompts.
@@ -132,7 +174,7 @@ NemoClaw/OpenShell keeps real provider credentials in credential handling and do
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
 Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
-The image includes `ripgrep`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
+The image includes `ripgrep` and `dos2unix`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
 
   </Accordion>
 

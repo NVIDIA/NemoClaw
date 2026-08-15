@@ -39,6 +39,9 @@ const requireFromHere = createRequire(import.meta.url);
 const { createInferenceSelectionValidationHelpers } = requireFromHere(
   path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
 );
+const { MIN_OLLAMA_VERSION } = requireFromHere(
+  path.join(REPO_ROOT, "src", "lib", "inference", "ollama-version.ts"),
+);
 const localInference = requireFromHere(path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"));
 
 function assertStrictPayload(payload) {
@@ -122,8 +125,32 @@ function plainTextResponse() {
   return { choices: [{ message: { role: "assistant", content: "OK" } }] };
 }
 
-function responseForChatRequest() {
+function reasoningOnlyLengthResponse() {
+  return {
+    choices: [
+      {
+        finish_reason: "length",
+        message: {
+          role: "assistant",
+          content: "",
+          reasoning_content: "Planning the tool call.",
+          tool_calls: null,
+        },
+      },
+    ],
+  };
+}
+
+function responseForChatRequest(requestBody) {
   if (mode === "success") return { status: 200, body: toolCallResponse() };
+  if (mode === "reasoning-length") {
+    const maxTokens = requestBody && typeof requestBody.max_tokens === "number"
+      ? requestBody.max_tokens
+      : 0;
+    return maxTokens >= 4096
+      ? { status: 200, body: toolCallResponse() }
+      : { status: 200, body: reasoningOnlyLengthResponse() };
+  }
   if (mode === "transient-502") {
     return chatCount === 1
       ? { status: 502, body: { error: { message: "transient upstream failure" } } }
@@ -155,7 +182,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     chatCount += 1;
-    const response = responseForChatRequest();
+    const response = responseForChatRequest(parsedBody);
     res.writeHead(response.status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(response.body));
   });
@@ -249,6 +276,9 @@ runner.runShell = () => ({ status: 0 });
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("command -v") && cmd.includes("ollama")) return "";
+  if (cmd.includes("/api/version")) {
+    return JSON.stringify({ version: "${MIN_OLLAMA_VERSION}" });
+  }
   if (cmd.includes("/api/tags")) {
     return JSON.stringify({ models: [{ name: "mock-tool-model" }] });
   }
@@ -361,15 +391,36 @@ function assertChatCompletionRequests(requests, expectedCount) {
     console.log("[PASS] strict validation retries a transient 502 and keeps bounded payloads");
   });
 
+  await withMockEndpoint("reasoning-length", async (endpoint, readRequests) => {
+    const result = await validate(endpoint);
+    assert.deepEqual(result, { ok: true, api: "openai-completions" });
+    const requests = readRequests();
+    assert.equal(requests.length, 4);
+    assertCalibrationRequest(requests[0]);
+    const chatRequests = requests.filter((request) => request.url === "/v1/chat/completions");
+    assert.deepEqual(
+      chatRequests.map((request) => request.body.max_tokens),
+      [256, 1024, 4096],
+    );
+    for (const request of chatRequests) {
+      assert.equal(request.body.tool_choice, "required");
+    }
+    console.log(
+      "[PASS] strict validation escalates the reasoning-only budget ladder to 4096 tokens",
+    );
+  });
+
   await withMockEndpoint("plain-text", async (endpoint, readRequests) => {
     const recoveryCalls = [];
     const result = await validate(endpoint, recoveryCalls);
     assert.deepEqual(result, { ok: false, retry: "retry" });
     const requests = readRequests();
-    assert.equal(requests.length, 2);
-    assertChatCompletionRequests(requests, 1);
+    assert.equal(requests.length, 5);
+    assertChatCompletionRequests(requests, 4);
     assert.equal(recoveryCalls.length, 1);
-    console.log("[PASS] strict validation fails closed when no structured tool_call is returned");
+    console.log(
+      "[PASS] strict validation retries three times and stops after four responses omit structured tool calls",
+    );
   });
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : error);

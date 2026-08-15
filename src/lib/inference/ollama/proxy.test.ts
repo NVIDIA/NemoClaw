@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
+import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -34,6 +36,7 @@ function loadProxyWithMocks(setup: MockSetup): {
   const originalPrompt = creds.prompt;
   const originalProbeOllamaModelCapabilities = local.probeOllamaModelCapabilities;
   const originalRun = runner.run;
+  const originalRunCapture = runner.runCapture;
   const originalValidateOllamaModel = local.validateOllamaModel;
   const spawnSync =
     setup.pullStatus === undefined
@@ -77,6 +80,9 @@ function loadProxyWithMocks(setup: MockSetup): {
     runCalls.push({ command, options });
     return { status: 0 };
   };
+  // pullOllamaModel asks whether a local `ollama` binary exists before choosing
+  // the CLI or the HTTP pull path (#7472). These cases exercise the CLI path.
+  runner.runCapture = () => "/usr/bin/ollama";
 
   delete require.cache[PROXY_DIST];
   const proxy = require(PROXY_DIST);
@@ -93,6 +99,7 @@ function loadProxyWithMocks(setup: MockSetup): {
       creds.prompt = originalPrompt;
       local.probeOllamaModelCapabilities = originalProbeOllamaModelCapabilities;
       runner.run = originalRun;
+      runner.runCapture = originalRunCapture;
       local.validateOllamaModel = originalValidateOllamaModel;
       spawnSync?.mockRestore();
     },
@@ -361,5 +368,96 @@ describe("prepareOllamaModel post-pull discovery", () => {
     });
     expect(attempts).toBe(8);
     expect(sleeps).toEqual([250, 500, 1_000, 2_000, 2_000, 2_000, 2_000]);
+  });
+});
+
+describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
+  function loadProxyForDispatch(setup: { host: string; hasLocalCli: boolean }) {
+    const local = require(LOCAL_DIST);
+    const runner = require(RUNNER_DIST);
+    const childProcess = require(CHILD_PROCESS_DIST) as typeof import("node:child_process");
+    const originalRunCapture = runner.runCapture;
+    const cliCommands: string[][] = [];
+    const httpCommands: string[][] = [];
+
+    runner.runCapture = () => (setup.hasLocalCli ? "/usr/bin/ollama" : "");
+
+    const spawnSync = vi
+      .spyOn(childProcess, "spawnSync")
+      .mockImplementation((file: unknown, args: unknown) => {
+        cliCommands.push([String(file), ...(((args as string[]) ?? []) as string[]).map(String)]);
+        return { status: 0, signal: null, output: [], pid: 1, stdout: "", stderr: "" } as never;
+      });
+    const spawn = vi.spyOn(childProcess, "spawn").mockImplementation((file: unknown, args) => {
+      httpCommands.push([String(file), ...(((args as string[]) ?? []) as string[]).map(String)]);
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+      };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      process.nextTick(() => {
+        child.stdout.end('{"status":"success"}\n', () => {
+          setImmediate(() => child.emit("close", 0));
+        });
+      });
+      return child as never;
+    });
+
+    local.setResolvedOllamaHost(setup.host);
+    delete require.cache[PROXY_DIST];
+    const proxy = require(PROXY_DIST) as typeof import("./proxy");
+    return {
+      proxy,
+      cliCommands,
+      httpCommands,
+      restore() {
+        delete require.cache[PROXY_DIST];
+        runner.runCapture = originalRunCapture;
+        spawnSync.mockRestore();
+        spawn.mockRestore();
+        local.setResolvedOllamaHost(null);
+      },
+    };
+  }
+
+  let active: ReturnType<typeof loadProxyForDispatch> | null = null;
+
+  afterEach(() => {
+    active?.restore();
+    active = null;
+    vi.restoreAllMocks();
+  });
+
+  it("pulls over HTTP when the daemon resolves on the Windows host", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    active = loadProxyForDispatch({ host: "host.docker.internal", hasLocalCli: true });
+
+    await active.proxy.pullOllamaModel("qwen3.5:9b");
+
+    expect(active.httpCommands.map((command) => command[0])).toContain("curl");
+    expect(active.cliCommands.map((command) => command[0])).not.toContain("bash");
+  });
+
+  it("pulls over HTTP when a loopback daemon has no local ollama binary (#7472)", async () => {
+    // WSL mirrored networking: the Windows daemon answers on 127.0.0.1, so the
+    // resolved host reads local while WSL still has no `ollama` to shell out to.
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    active = loadProxyForDispatch({ host: "127.0.0.1", hasLocalCli: false });
+
+    await active.proxy.pullOllamaModel("qwen3.5:9b");
+
+    expect(active.httpCommands.map((command) => command[0])).toContain("curl");
+    expect(active.cliCommands.map((command) => command[0])).not.toContain("bash");
+  });
+
+  it("keeps the CLI pull when a local ollama binary is installed", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    active = loadProxyForDispatch({ host: "127.0.0.1", hasLocalCli: true });
+
+    await active.proxy.pullOllamaModel("qwen3.5:9b");
+
+    expect(active.cliCommands.map((command) => command[0])).toContain("bash");
+    expect(active.httpCommands.map((command) => command[0])).not.toContain("curl");
   });
 });

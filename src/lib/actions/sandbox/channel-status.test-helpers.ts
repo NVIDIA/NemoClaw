@@ -39,8 +39,8 @@ vi.mock("./process-recovery", () => ({
 }));
 
 import type { AgentDefinition } from "../../agent/defs";
-import type { SandboxMessagingInputReference } from "../../messaging/manifest";
 import type { DiagnosticSignal } from "../../messaging/channels/channel-health";
+import type { SandboxMessagingInputReference } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
 
 type ShowSandboxChannelStatus = typeof import("./channel-status").showSandboxChannelStatus;
@@ -79,6 +79,7 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
         configFile: name === "openclaw" ? "openclaw.json" : "config.yaml",
         envFile: name === "hermes" ? ".env" : null,
         format: name === "openclaw" ? "json" : "yaml",
+        shieldsFiles: name === "hermes" ? [".env"] : [],
       };
     },
     get inferenceProviderOptions() {
@@ -173,6 +174,8 @@ export function makeDeps(opts: {
   agentName?: "openclaw" | "hermes";
   sandbox?: SandboxEntry | undefined;
   out?: (line: string) => void;
+  nowMs?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
 }) {
   const calls: string[] = [];
   const out = opts.out ?? ((line: string) => calls.push(line));
@@ -186,6 +189,8 @@ export function makeDeps(opts: {
         opts.gatewayPresets === undefined ? ["whatsapp"] : opts.gatewayPresets,
       execSandbox: vi.fn(opts.exec),
       now: () => PROBED_AT,
+      nowMs: opts.nowMs,
+      sleep: opts.sleep,
       out,
     },
     out_lines: calls,

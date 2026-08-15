@@ -108,9 +108,30 @@ assert_capability_projection() {
 
 assert_status_mode() {
   local expected_mode="$1"
-  local status_json
-  status_json="$("$CLI" "$SANDBOX_NAME" status --json)" \
-    || fail "nemoclaw status failed while checking '$expected_mode'"
+  local attempt attempts retry_delay_seconds status status_json
+  attempts="${NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS:-3}"
+  retry_delay_seconds="${NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS:-3}"
+  is_positive_integer "$attempts" \
+    || fail "status attempt count must be a positive integer"
+  [[ "$retry_delay_seconds" =~ ^[0-9]+$ ]] \
+    || fail "status retry delay must be a non-negative integer"
+
+  status=1
+  status_json=""
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if status_json="$("$CLI" "$SANDBOX_NAME" status --json)"; then
+      status=0
+      break
+    else
+      status=$?
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      info "Retrying NemoClaw status after a non-success health probe (attempt $attempt/$attempts)" >&2
+      sleep "$retry_delay_seconds"
+    fi
+  done
+  [ "$status" -eq 0 ] \
+    || fail "nemoclaw status failed while checking '$expected_mode' after $attempts attempts: ${status_json:-<no stdout>}"
   STATUS_JSON="$status_json" EXPECTED_MODE="$expected_mode" SANDBOX_NAME="$SANDBOX_NAME" node -e '
 const status = JSON.parse(process.env.STATUS_JSON);
 if (status.name !== process.env.SANDBOX_NAME ||

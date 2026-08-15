@@ -20,11 +20,13 @@ It also improves onboarding recovery, lifecycle cleanup, Hermes image builds, ru
   For more information, refer to [Quickstart with Deep Agents](/user-guide/deepagents/get-started/quickstart) and [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities).
 - `rebuild` and same-name onboarding replacement now record a transaction before the first destructive mutation.
   Recovery binds the source, replacement, registry generation, and OpenShell gateway, then continues the recorded operation or fails closed when those identities drift.
+  After the registry proves the replacement identity and generation, NemoClaw removes an obsolete owned source image unless the source is shared or the replacement reuses it.
   For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Compatible-endpoint onboarding now limits the Responses API streaming-event probe to 5 seconds while preserving the Chat Completions API fallback.
   Onboarding reuses a successful Chat Completions validation result instead of sending the immediate host-side validation request when the public endpoint, model, authentication mode, and request requirements match.
   The validated IP address set must also match, so onboarding sends another validation request after the DNS pin changes.
   NemoClaw still sends a separate validation request for an operator-trusted private endpoint.
+  Final in-sandbox route verification for OpenClaw and Hermes now requires `inference.local` to return an HTTP response within 2 seconds per attempt, which leaves client overhead before OpenClaw's 2.5-second provider preflight limit.
   Host interruptions during an active onboarding step produce the existing resumable recovery path instead of an invalid state transition.
   DGX Station Express also preserves its owner-only resume receipt when automatic dual-Station discovery selects the single-Station fallback.
   For more information, refer to [Choose a Compatible Inference API](/user-guide/openclaw/inference/custom-endpoints/choose-compatible-inference-api), [Quickstart](/user-guide/openclaw/get-started/quickstart), and [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).

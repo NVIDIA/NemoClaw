@@ -10,6 +10,7 @@ import {
   MANAGED_STARTUP_PROFILE_MAX_BYTES,
   MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES,
 } from "../../onboard/managed-startup/profile";
+import { parseNativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { SandboxWorkloadReceipt } from "./types";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
@@ -72,6 +73,13 @@ export function cloneSandboxWorkloadReceipt(
   value: SandboxWorkloadReceipt | undefined,
 ): SandboxWorkloadReceipt | undefined {
   if (!value || value.schemaVersion !== 1) return undefined;
+  if (value.kind === "native-artifact") {
+    try {
+      return parseNativeArtifactWorkloadReceiptV1(value);
+    } catch {
+      return undefined;
+    }
+  }
   if (value.kind === "legacy-dockerfile") {
     if (value.shared !== false || (value.reference !== null && !nonEmptyString(value.reference))) {
       return undefined;

@@ -63,6 +63,21 @@ describe("root help", () => {
     }
   });
 
+  it("shows the supported policy acknowledgement flags", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toMatch(
+      /nemoclaw <name> policy exclude <key>[^\n]*\(--force, --yes, -y, --dry-run\)/,
+    );
+    expect(output).toMatch(
+      /nemoclaw <name> policy restore <key>[^\n]*\(--force, --yes, -y, --dry-run\)/,
+    );
+    expect(output).not.toContain("(--force, -f, --yes, -y, --dry-run)");
+  });
+
   it("lists --destroy-user-data under uninstall flags without unsupported --keep flags", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 

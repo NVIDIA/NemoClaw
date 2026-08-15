@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     listSandboxPolicies: vi.fn(),
     rebuildSandbox: vi.fn().mockResolvedValue(undefined),
     restartSandboxGateway: vi.fn().mockReturnValue({ ok: true }),
+    recoverSandboxWithHermesCronRestore: vi.fn().mockResolvedValue(undefined),
     runSandboxDoctor: vi.fn().mockResolvedValue(undefined),
     shieldsDown: vi.fn(),
     shieldsStatus: vi.fn(),
@@ -43,6 +44,10 @@ vi.mock("../../lib/actions/sandbox/connect", () => ({
 
 vi.mock("../../lib/actions/sandbox/destroy", () => ({
   destroySandbox: mocks.destroySandbox,
+}));
+
+vi.mock("../../lib/actions/sandbox/runtime/hermes-cron-restore-recovery", () => ({
+  recoverSandboxWithHermesCronRestore: mocks.recoverSandboxWithHermesCronRestore,
 }));
 
 vi.mock("../../lib/actions/sandbox/rebuild", () => ({
@@ -117,6 +122,7 @@ describe("sandbox oclif command adapters", () => {
     delete process.env.NEMOCLAW_CLEANUP_GATEWAY;
     try {
       await ConnectCliCommand.run(["alpha", "--probe-only"], rootDir);
+      await RecoverCliCommand.run(["alpha"], rootDir);
       await DestroyCliCommand.run(["alpha", "--yes"], rootDir);
       await RebuildCliCommand.run(
         [
@@ -134,6 +140,7 @@ describe("sandbox oclif command adapters", () => {
       await GatewayRestartCliCommand.run(["alpha", "--quiet"], rootDir);
 
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
+      expect(mocks.recoverSandboxWithHermesCronRestore).toHaveBeenCalledWith("alpha");
       expect(mocks.destroySandbox).toHaveBeenCalledWith("alpha", { force: false, yes: true });
       expect(mocks.rebuildSandbox).toHaveBeenCalledWith("alpha", {
         dcodeAutoApprovalMode: "thread-opt-in",

@@ -5,7 +5,16 @@ import type fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import {
+  createRunnerFsStore,
+  createStdoutCapture,
+  FAKE_HOME,
+  FIXED_RUN_UUID,
+  inMemoryFsMethods,
+  resolvedEndpointFor,
+} from "./runner-mock-fixtures.js";
+import {
   blueprintWithPolicyAdditions,
+  failureResult,
   minimalBlueprint,
   resultForCommandFailure,
   routedBlueprint,
@@ -13,62 +22,26 @@ import {
 
 // ── In-memory filesystem ────────────────────────────────────────
 
-interface FsEntry {
-  type: "file" | "dir";
-  content?: string;
-}
-
-const store = new Map<string, FsEntry>();
-
-function addFile(p: string, content: string): void {
-  store.set(p, { type: "file", content });
-}
-
-function addDir(p: string): void {
-  store.set(p, { type: "dir" });
-}
-
-const FAKE_HOME = "/fakehome";
+const { store, addFile, addDir } = createRunnerFsStore();
 
 vi.mock("node:os", () => ({
   homedir: () => FAKE_HOME,
 }));
 
 vi.mock("node:crypto", () => ({
-  randomUUID: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  randomUUID: () => FIXED_RUN_UUID,
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
+  const memory = inMemoryFsMethods(store, { spy: vi.fn });
   return {
     ...original,
-    existsSync: (p: string) => store.has(p),
-    mkdirSync: vi.fn((p: string) => {
-      addDir(p);
-    }),
-    readFileSync: (p: string) => {
-      const entry = store.get(p);
-      if (entry?.type !== "file") throw new Error(`ENOENT: ${p}`);
-      return entry.content ?? "";
-    },
-    writeFileSync: vi.fn((p: string, data: string) => {
-      store.set(p, { type: "file", content: data });
-    }),
-    readdirSync: (p: string) => {
-      const prefix = p.endsWith("/") ? p : p + "/";
-      const entries = new Set<string>();
-      for (const k of store.keys()) {
-        if (k.startsWith(prefix)) {
-          const rest = k.slice(prefix.length);
-          const first = rest.split("/")[0];
-          if (first) entries.add(first);
-        }
-      }
-      if (entries.size === 0 && !store.has(p)) {
-        throw new Error(`ENOENT: ${p}`);
-      }
-      return [...entries].sort();
-    },
+    existsSync: memory.existsSync,
+    mkdirSync: memory.mkdirSync,
+    readFileSync: memory.readFileSync,
+    writeFileSync: memory.writeFileSync,
+    readdirSync: memory.readdirSync,
   };
 });
 
@@ -81,13 +54,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./ssrf.js")>();
   return {
     ...actual,
-    validateEndpointUrl: vi.fn(async (url: string) => ({
-      url,
-      pinnedUrl: url,
-      protocol: url.startsWith("http:") ? "http:" : "https:",
-      hostname: new URL(url).hostname,
-      dnsResolved: false,
-    })),
+    validateEndpointUrl: vi.fn(async (url: string) => resolvedEndpointFor(url)),
   };
 });
 
@@ -99,25 +66,12 @@ const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionR
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-const stdoutChunks: string[] = [];
+const stdoutCapture = createStdoutCapture();
+const stdoutText = stdoutCapture.text;
+const capturedJsonOutput = stdoutCapture.jsonOutput;
 
 function captureStdout(): void {
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-    stdoutChunks.push(String(chunk));
-    return true;
-  });
-}
-
-function stdoutText(): string {
-  return stdoutChunks.join("");
-}
-
-function capturedJsonOutput<T = unknown>(): T {
-  const json = stdoutText()
-    .split("\n")
-    .filter((line) => line && !line.startsWith("RUN_ID:") && !line.startsWith("PROGRESS:"))
-    .join("\n");
-  return JSON.parse(json) as T;
+  vi.spyOn(process.stdout, "write").mockImplementation(stdoutCapture.write);
 }
 
 function seedBlueprintFile(bp?: Record<string, unknown>): void {
@@ -143,7 +97,7 @@ function mockCurrentPolicy(stdout: string): void {
 describe("runner", () => {
   beforeEach(() => {
     store.clear();
-    stdoutChunks.length = 0;
+    stdoutCapture.reset();
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
   });
@@ -480,7 +434,9 @@ describe("runner", () => {
       process.env.SECRET_KEY = "real-secret-value";
       try {
         const plan = await actionPlan("secrets", bp);
-        const rendered = capturedJsonOutput<{ inference: Record<string, unknown> }>();
+        const rendered = capturedJsonOutput<{
+          inference: Record<string, unknown>;
+        }>();
         const out = stdoutText();
 
         expect(plan.inference).not.toHaveProperty("credential_env");
@@ -839,7 +795,7 @@ describe("runner", () => {
     });
 
     it("reuses sandbox when 'already exists' error", async () => {
-      mockExeca.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "already exists" });
+      mockExeca.mockResolvedValueOnce(failureResult("already exists"));
       // Subsequent calls succeed
       mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
 
@@ -848,7 +804,7 @@ describe("runner", () => {
     });
 
     it("throws when sandbox creation fails with other error", async () => {
-      mockExeca.mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "disk full" });
+      mockExeca.mockResolvedValueOnce(failureResult("disk full"));
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to create sandbox.*disk full/,

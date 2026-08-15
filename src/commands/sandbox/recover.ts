@@ -3,7 +3,7 @@
 
 import { Args } from "@oclif/core";
 
-import { connectSandbox } from "../../lib/actions/sandbox/connect";
+import { recoverSandboxWithHermesCronRestore } from "../../lib/actions/sandbox/runtime/hermes-cron-restore-recovery";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class RecoverCliCommand extends NemoClawCommand {
@@ -11,7 +11,7 @@ export default class RecoverCliCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Repair a stopped sandbox gateway and host forwards";
   static description =
-    "Probe sandbox gateway health and repair stopped gateways or host forwards without opening an SSH session. A healthy gateway is not restarted; use `gateway restart` when you need a forced runtime reload.";
+    "Probe sandbox gateway health and repair stopped gateways or host forwards without opening an SSH session. For Hermes, also validate and release a NemoClaw cron restore gate left by an interrupted rebuild. A healthy gateway is not restarted; use `gateway restart` when you need a forced runtime reload.";
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox recover alpha"];
   static args = {
@@ -21,6 +21,6 @@ export default class RecoverCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(RecoverCliCommand);
-    await connectSandbox(args.sandboxName, { probeOnly: true });
+    await recoverSandboxWithHermesCronRestore(args.sandboxName);
   }
 }

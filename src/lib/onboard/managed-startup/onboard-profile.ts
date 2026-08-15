@@ -45,6 +45,7 @@ const PROFILE_ENVIRONMENT_INPUTS = {
     "NEMOCLAW_PROXY_PORT",
     "NEMOCLAW_REASONING_EFFORT",
   ],
+  pi: ["NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
 } as const satisfies Record<ManagedStartupAgent, readonly string[]>;
 
 const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
@@ -116,6 +117,13 @@ function dashboardForInput(
   if (agent === "langchain-deepagents-code") {
     if (input.manageDashboard) {
       throw new ManagedStartupOnboardProfileError("DCode must not enable a dashboard");
+    }
+    return { agent, mode: "disabled" };
+  }
+
+  if (agent === "pi") {
+    if (input.manageDashboard) {
+      throw new ManagedStartupOnboardProfileError("Pi must not enable a dashboard");
     }
     return { agent, mode: "disabled" };
   }

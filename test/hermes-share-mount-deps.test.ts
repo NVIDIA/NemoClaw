@@ -197,6 +197,10 @@ function runHermesInstallLayer(
     '    mkdir -p "${prefix}/node_modules"',
     "  fi",
     "}",
+    "node() {",
+    '  printf "node %s\\n" "$*" >> "$call_log"',
+    '  [ "$*" = "--experimental-test-module-mocks --test scripts/whatsapp-bridge/proxy-agent.test.mjs" ]',
+    "}",
     'rm() { printf "rm %s\\n" "$*" >> "$call_log"; command rm "$@"; }',
     'ln() { printf "ln %s\\n" "$*" >> "$call_log"; }',
     'export HERMES_SEMVER="0.16.0"',
@@ -225,12 +229,14 @@ describe("Hermes share mount package parity (#2947)", () => {
     const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
     const checksumFile = `${downloadedTarball}.sha256`;
     const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
+    const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
     const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
 
     try {
       fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
       fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
       fs.writeFileSync(securityPatch, "test patch fixture\n");
+      fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
       fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
       fs.writeFileSync(
         path.join(archiveRoot, "tests", "security-fixture.txt"),
@@ -245,6 +251,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
       const command = extractHermesArchiveCommand(dockerfile)
         .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
+        .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
         .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
         .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
         .replaceAll("/opt/hermes", targetRoot);
@@ -264,14 +271,15 @@ describe("Hermes share mount package parity (#2947)", () => {
           "}",
           `target_root=${JSON.stringify(targetRoot)}`,
           `security_patch=${JSON.stringify(securityPatch)}`,
+          `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
           "git() {",
           '  [ "$1" = "-C" ]',
           '  [ "$2" = "$target_root" ]',
           '  [ "$3" = "apply" ]',
           '  if [ "$4" = "--check" ]; then',
-          '    [ "$5" = "$security_patch" ]',
+          '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
           "  else",
-          '    [ "$4" = "$security_patch" ]',
+          '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
           "  fi",
           "}",
           'export HERMES_VERSION="vtest"',
@@ -522,7 +530,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it("pre-installs the WhatsApp bridge node_modules with npm ci when a lockfile ships (#4764)", () => {
+  it("pre-installs the WhatsApp bridge and runs its proxy regression test (#4764, #8087)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wa-bridge-"));
     const bridgeNodeModules = path.join(
@@ -545,6 +553,9 @@ describe("Hermes share mount package parity (#2947)", () => {
       // never needs to mkdir node_modules under read-only /opt/hermes.
       expect(calls).toContain(
         "npm ci --prefix scripts/whatsapp-bridge --prefer-offline --no-audit --no-fund",
+      );
+      expect(calls).toContain(
+        "node --experimental-test-module-mocks --test scripts/whatsapp-bridge/proxy-agent.test.mjs",
       );
       expect(fs.existsSync(bridgeNodeModules)).toBe(true);
       expect(fs.existsSync(webNodeModules)).toBe(false);

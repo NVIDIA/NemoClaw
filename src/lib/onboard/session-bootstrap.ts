@@ -1,15 +1,256 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ServingProfileProvenance } from "../inference/serving/types";
+import { redactSensitiveText } from "../security/redact";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
-import { loadResumeCheckpoint } from "../state/onboard-checkpoint-migrate";
-import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
+import {
+  deriveCheckpointFromSession,
+  loadResumeCheckpoint,
+  ONBOARD_CHECKPOINT_SESSION_FILE,
+} from "../state/onboard-checkpoint-migrate";
+import type {
+  CheckpointLoadResult,
+  CheckpointOnboardProfile,
+  CheckpointPortableRuntimeAuthority,
+} from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
-import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
+import {
+  DEFAULT_TOOL_DISCLOSURE,
+  TOOL_DISCLOSURE_ENV,
+  type ToolDisclosure,
+} from "../tool-disclosure";
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
+import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
+import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
+import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
+import {
+  assertLockedResumeIntentSnapshot as assertLockedResumeIntentSnapshotAtPath,
+  isOnboardResumeIntentRaceError,
+  OnboardResumeIntentError,
+  OnboardResumeIntentRaceError,
+  resolveOnboardResumeIntent as resolveOnboardResumeIntentAtPath,
+  type OnboardResumeIntentSnapshot,
+  type ResolvedOnboardResumeIntent,
+} from "./resume/portable-resume-intent";
+
+export { preparePortableExperimentalHost } from "./experimental/portable-host-preparation";
+
+export {
+  beginHostMountScope,
+  isDockerBindMountsEnabled,
+  reportReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
+} from "./host-mount";
+export { requireReadOnlyHostMountRuntimeSupport };
+export {
+  isOnboardResumeIntentRaceError,
+  OnboardResumeIntentError,
+  OnboardResumeIntentRaceError,
+  type OnboardResumeIntentSnapshot,
+  type ResolvedOnboardResumeIntent,
+};
+
+export function resolveOnboardResumeIntent(options: {
+  readonly explicitResume: boolean;
+  readonly fresh: boolean;
+  readonly explicitProfile: CheckpointOnboardProfile | null;
+  readonly sessionFile?: string;
+}): ResolvedOnboardResumeIntent {
+  return resolveOnboardResumeIntentAtPath({
+    ...options,
+    sessionFile: options.sessionFile ?? ONBOARD_CHECKPOINT_SESSION_FILE,
+  });
+}
+
+export function assertLockedResumeIntentSnapshot(
+  expected: OnboardResumeIntentSnapshot,
+  sessionFile: string = ONBOARD_CHECKPOINT_SESSION_FILE,
+): void {
+  assertLockedResumeIntentSnapshotAtPath(expected, sessionFile);
+}
+
+export const PORTABLE_RUNTIME_ENV_KEYS = [
+  EXPERIMENTAL_PROFILE_ENV,
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "DOCKER_TLS",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "XDG_CONFIG_HOME",
+  "CONTAINERS_CONF",
+  "NETAVARK_FW",
+  "CONTAINER_HOST",
+  "CONTAINER_CONNECTION",
+  "CONTAINER_SSHKEY",
+] as const;
+
+const PORTABLE_DEFAULT_ENV_KEYS = [
+  TOOL_DISCLOSURE_ENV,
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_ENDPOINT_URL",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+  "NEMOCLAW_POLICY_MODE",
+  "NEMOCLAW_POLICY_PRESETS",
+  "NEMOCLAW_POLICY_TIER",
+] as const;
+
+const PORTABLE_OWNED_ENV_KEYS = [
+  ...PORTABLE_RUNTIME_ENV_KEYS,
+  ...PORTABLE_DEFAULT_ENV_KEYS,
+] as const;
+
+interface PreviousEnvironmentValue {
+  readonly present: boolean;
+  readonly value: string | undefined;
+}
+
+export interface PortableOnboardEnvironmentScope {
+  readonly env: NodeJS.ProcessEnv;
+  installRuntime(input: { containersConf: string; socketPath: string }): void;
+  restore(): void;
+}
+
+export function createDefaultResumeProfileEnvironmentScope(
+  env: NodeJS.ProcessEnv,
+): PortableOnboardEnvironmentScope {
+  const present = Object.prototype.hasOwnProperty.call(env, EXPERIMENTAL_PROFILE_ENV);
+  const value = env[EXPERIMENTAL_PROFILE_ENV];
+  delete env[EXPERIMENTAL_PROFILE_ENV];
+  let restored = false;
+  return {
+    env,
+    installRuntime() {
+      throw new Error("Default onboarding resume cannot install portable runtime authority.");
+    },
+    restore() {
+      if (restored) return;
+      restored = true;
+      if (present) env[EXPERIMENTAL_PROFILE_ENV] = value ?? "";
+      else delete env[EXPERIMENTAL_PROFILE_ENV];
+    },
+  };
+}
+
+const ONBOARD_DEFERRED_EXIT_ERROR = Symbol.for("nemoclaw.onboard.deferred-exit-error");
+
+export class OnboardDeferredExitError extends Error {
+  readonly [ONBOARD_DEFERRED_EXIT_ERROR] = true;
+  readonly code: number;
+
+  constructor(code: number) {
+    super(`Onboarding requested exit ${String(code)}.`);
+    this.name = "OnboardDeferredExitError";
+    this.code = code;
+  }
+}
+
+export function isOnboardDeferredExitError(error: unknown): error is OnboardDeferredExitError {
+  const candidate = error as
+    | (Error & { code?: unknown; [ONBOARD_DEFERRED_EXIT_ERROR]?: unknown })
+    | null;
+  return (
+    candidate instanceof Error &&
+    candidate[ONBOARD_DEFERRED_EXIT_ERROR] === true &&
+    candidate.name === "OnboardDeferredExitError" &&
+    typeof candidate.code === "number" &&
+    Number.isInteger(candidate.code)
+  );
+}
+
+interface DeferredExitOptions {
+  readonly deferProcessExit?: boolean;
+}
+
+export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
+  run: (options?: TOptions) => Promise<void>,
+): (options?: TOptions) => Promise<void> {
+  return async (options?: TOptions): Promise<void> => {
+    const resolvedOptions = options ?? ({} as TOptions);
+    const originalProcessExit = process.exit;
+    let deferredExit: OnboardDeferredExitError | null = null;
+    process.exit = ((code?: number): never => {
+      throw new OnboardDeferredExitError(code ?? 0);
+    }) as typeof process.exit;
+    try {
+      await run(resolvedOptions);
+    } catch (error) {
+      if (!isOnboardDeferredExitError(error)) throw error;
+      deferredExit = error;
+    } finally {
+      process.exit = originalProcessExit;
+    }
+    if (!deferredExit) return;
+    if (resolvedOptions.deferProcessExit === true) throw deferredExit;
+    originalProcessExit(deferredExit.code);
+  };
+}
+
+export function redactOnboardDiagnosticText(message: string): string {
+  return redactSensitiveText(message) ?? "";
+}
+
+export function createPortableOnboardEnvironmentScope(
+  env: NodeJS.ProcessEnv,
+  activation: PortableInferenceActivation | null,
+  options: { readonly resume?: boolean } = {},
+): PortableOnboardEnvironmentScope {
+  const previous = new Map<string, PreviousEnvironmentValue>();
+  for (const key of PORTABLE_OWNED_ENV_KEYS) {
+    previous.set(key, {
+      present: Object.prototype.hasOwnProperty.call(env, key),
+      value: env[key],
+    });
+  }
+  for (const key of PORTABLE_OWNED_ENV_KEYS) delete env[key];
+  env[EXPERIMENTAL_PROFILE_ENV] = "portable";
+  env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+  if (activation) {
+    env.NEMOCLAW_PROVIDER = "custom";
+    env.NEMOCLAW_MODEL = activation.model;
+    env.NEMOCLAW_ENDPOINT_URL = activation.baseUrl;
+    env.NEMOCLAW_PREFERRED_API = "openai-completions";
+  }
+  if (!options.resume) {
+    env[TOOL_DISCLOSURE_ENV] = "direct";
+    env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
+    env.NEMOCLAW_MODEL = activation?.model ?? "qwen3-vl:4b";
+    env.NEMOCLAW_POLICY_MODE = "custom";
+    env.NEMOCLAW_POLICY_PRESETS =
+      previous.get("NEMOCLAW_POLICY_PRESETS")?.value ?? "personal-open-internet";
+    env.NEMOCLAW_POLICY_TIER = "personal";
+  } else {
+    const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value?.trim();
+    if (requestedPolicyPresets) {
+      env.NEMOCLAW_POLICY_MODE = "custom";
+      env.NEMOCLAW_POLICY_PRESETS = requestedPolicyPresets;
+    }
+  }
+
+  let restored = false;
+  return {
+    env,
+    installRuntime({ containersConf, socketPath }) {
+      env.NETAVARK_FW = "iptables";
+      env.CONTAINERS_CONF = containersConf;
+      env.DOCKER_HOST = `unix://${socketPath}`;
+    },
+    restore() {
+      if (restored) return;
+      restored = true;
+      for (const [key, value] of previous) {
+        if (value.present) env[key] = value.value ?? "";
+        else delete env[key];
+      }
+    },
+  };
+}
 
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
@@ -24,6 +265,10 @@ export interface OnboardSessionBootstrapInput {
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
+  requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
+  servingProfileProvenance?: ServingProfileProvenance | null;
+  checkpointProfile?: CheckpointOnboardProfile;
+  portableRuntimeAuthority?: CheckpointPortableRuntimeAuthority | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -31,7 +276,7 @@ export interface OnboardSessionBootstrapDeps {
   clearSession(): void;
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
-  updateSession(mutator: (session: Session) => Session | void): Session;
+  updateSession(mutator: (session: Session) => Session | void): Session | Promise<Session>;
   applySessionRecovery(session: Session): void;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
@@ -43,6 +288,7 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
+      hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -51,6 +297,10 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
+  requireHostMountRuntimeSupport(
+    mounts: readonly import("../state/registry/types").SandboxHostMount[] | undefined,
+    checkpointProfile?: CheckpointOnboardProfile,
+  ): void;
   resolveResumeCheckpoint(): CheckpointLoadResult;
 }
 
@@ -61,20 +311,16 @@ export interface OnboardSessionBootstrapResult {
 
 export const defaultResolveResumeCheckpoint: () => CheckpointLoadResult = loadResumeCheckpoint;
 
-export function checkpointSandboxName(
+export async function checkpointSandboxName(
   sandboxName: string,
   agent: { name?: string } | null,
   updateSession: OnboardSessionBootstrapDeps["updateSession"],
-): void {
-  if (agent?.name && agent.name !== "openclaw") return;
-  updateSession((current) => {
+): Promise<void> {
+  await updateSession((current) => {
+    const checkpointAgent = agent?.name ?? current.agent ?? "openclaw";
     current.sandboxName = sandboxName;
     current.sandboxPromptProgress.sandboxName = true;
-    recordCheckpointSandboxIdentity(
-      current,
-      sandboxName,
-      current.agent ?? agent?.name ?? "openclaw",
-    );
+    recordCheckpointSandboxIdentity(current, sandboxName, checkpointAgent);
     return current;
   });
 }
@@ -90,10 +336,7 @@ export function getCheckpointedSandboxName(
       ? session.checkpoint.sandboxIdentity.value.name
       : null;
   }
-  return (!agent?.name || agent.name === "openclaw") &&
-    session?.sandboxPromptProgress?.sandboxName === true
-    ? session.sandboxName
-    : null;
+  return session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
 }
 
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
@@ -128,6 +371,14 @@ function reportCorruptResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never
   deps.exitProcess(1);
 }
 
+function reportLegacyResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never {
+  deps.error(
+    "  This onboarding checkpoint predates recorded runtime authority and cannot be resumed safely.",
+  );
+  deps.error(`  Start a new attempt: ${deps.cliName()} onboard --fresh`);
+  deps.exitProcess(1);
+}
+
 function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
   const result = deps.resolveResumeCheckpoint();
   if (result?.status === "unsupported_future") {
@@ -136,12 +387,8 @@ function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
   if (result?.status === "corrupt") {
     reportCorruptResumeCheckpoint(deps);
   }
-  if (result?.status === "migrated") {
-    const migratedCheckpoint = result.checkpoint;
-    deps.updateSession((current) => {
-      current.checkpoint = migratedCheckpoint;
-      return current;
-    });
+  if (result?.status === "legacy") {
+    reportLegacyResumeCheckpoint(deps);
   }
 }
 
@@ -210,8 +457,7 @@ function assertRecoverableResumeSandboxName(
   const nameRecoverable = checkpoint
     ? checkpointProvesSandboxStepComplete(session) || isDecisionSelected(checkpoint.sandboxIdentity)
     : session?.steps?.sandbox?.status === "complete" ||
-      ((!session?.agent || session.agent === "openclaw") &&
-        session?.sandboxPromptProgress?.sandboxName === true);
+      session?.sandboxPromptProgress?.sandboxName === true;
   const checkpointedSandboxName =
     checkpoint && isDecisionSelected(checkpoint.sandboxIdentity)
       ? checkpoint.sandboxIdentity.value.name
@@ -235,6 +481,10 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  deps.requireHostMountRuntimeSupport(
+    input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
+    input.checkpointProfile,
+  );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
@@ -254,6 +504,7 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    hostMounts: input.requestedHostMounts,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -280,23 +531,34 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
   }
   const fromDockerfile = input.requestedFromDockerfile
     ? deps.resolvePath(input.requestedFromDockerfile)
     : null;
-  const session = deps.saveSession(
-    deps.createSession({
-      mode: mode(input.nonInteractive),
-      toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
-      observabilityEnabled: input.requestedObservabilityEnabled === true,
-      observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
-      stationExpressIntent: input.stationExpressIntent ?? null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
-    }),
-  );
-  return { session, fromDockerfile };
+  const session = deps.createSession({
+    mode: mode(input.nonInteractive),
+    toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+    observabilityEnabled: input.requestedObservabilityEnabled === true,
+    observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+    stationExpressIntent: input.stationExpressIntent ?? null,
+    servingProfileProvenance: input.servingProfileProvenance ?? null,
+    metadata: {
+      gatewayName: "nemoclaw",
+      fromDockerfile: fromDockerfile || null,
+      ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
+        ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
+        : {}),
+    },
+  });
+  session.checkpoint = deriveCheckpointFromSession(session, {
+    profile: input.checkpointProfile ?? "default",
+    runtimeAuthority: input.portableRuntimeAuthority ?? null,
+  });
+  const savedSession = deps.saveSession(session);
+  return { session: savedSession, fromDockerfile };
 }
 
 export async function prepareOnboardSession(
@@ -308,10 +570,17 @@ export async function prepareOnboardSession(
 
 export function prepareOnboardSessionValidated(
   input: OnboardSessionBootstrapInput,
-  deps: Omit<OnboardSessionBootstrapDeps, "resolveResumeCheckpoint">,
+  deps: Omit<
+    OnboardSessionBootstrapDeps,
+    "requireHostMountRuntimeSupport" | "resolveResumeCheckpoint"
+  >,
 ): Promise<OnboardSessionBootstrapResult> {
   return prepareOnboardSession(input, {
     ...deps,
+    requireHostMountRuntimeSupport: (mounts, checkpointProfile) =>
+      requireReadOnlyHostMountRuntimeSupport(mounts, {
+        experimentalProfile: checkpointProfile === "portable" ? "portable" : null,
+      }),
     resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
   });
 }

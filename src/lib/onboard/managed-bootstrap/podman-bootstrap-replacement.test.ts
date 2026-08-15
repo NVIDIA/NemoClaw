@@ -26,9 +26,12 @@ import {
 } from "./podman-bootstrap-replacement";
 import {
   PODMAN_MANAGED_LABEL,
+  PODMAN_SANDBOX_CONTAINER_PREFIX,
   PODMAN_SANDBOX_ID_LABEL,
   PODMAN_SANDBOX_NAME_LABEL,
   PODMAN_SANDBOX_NAMESPACE_LABEL,
+  PODMAN_SANDBOX_WORKSPACE,
+  PODMAN_SANDBOX_WORKSPACE_LABEL,
   type PodmanHeldWorkloadObservation,
 } from "./podman-held-workload";
 import {
@@ -45,9 +48,9 @@ const REPLACEMENT_IMAGE_ID = `sha256:${"6".repeat(64)}`;
 const ENGINE_AUTHORITY_ID = `podman-sha256:${"7".repeat(64)}`;
 const SANDBOX_NAME = "alpha";
 const SANDBOX_ID = "sandbox-alpha";
-const ORIGINAL_NAME = `openshell-sandbox-${SANDBOX_NAME}`;
-const STAGING_NAME = "openshell-sandbox-alpha-nemoclaw-bootstrap-111111111111";
-const STATE_VOLUME_NAME = "openshell-sandbox-alpha-nemoclaw-state-111111111111";
+const ORIGINAL_NAME = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${SANDBOX_NAME}-${SANDBOX_ID}`;
+const STAGING_NAME = `${ORIGINAL_NAME}-nemoclaw-bootstrap-111111111111`;
+const STATE_VOLUME_NAME = `${ORIGINAL_NAME}-nemoclaw-state-111111111111`;
 const STATE_VOLUME_MOUNTPOINT = `/var/lib/containers/storage/volumes/${STATE_VOLUME_NAME}/_data`;
 const SUPERVISOR_ARGV = ["/opt/openshell/bin/supervisor", "--config", "/etc/openshell.toml"];
 const ENTRYPOINT_ARGV = ["/usr/local/bin/nemoclaw-managed-bootstrap"];
@@ -61,6 +64,7 @@ const LABELS = Object.freeze({
   [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
   [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
   [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
+  [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
 });
 const STATE_VOLUME_LABELS = Object.freeze({
   [PODMAN_BOOTSTRAP_IDENTITY_LABEL]: BOOTSTRAP_IDENTITY,
@@ -334,6 +338,7 @@ function watcherLease() {
   const lease: PodmanGatewayWatcherLease = {
     record: {
       schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+      holder: { pid: 9_100, processStartIdentity: "holder-start-100" },
       leaseId: "123e4567-e89b-42d3-a456-426614174000",
       phase: "stopped",
       gatewayName: "default",
@@ -413,10 +418,53 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.capturedEnvironmentMode).toBe(0o600);
     expect(harness.capturedEnvironmentContents).toBe(`${ENVIRONMENT.join("\n")}\n`);
     expect(fs.existsSync(harness.capturedEnvironmentFile as string)).toBe(false);
-    expect(harness.calls[0]).not.toContain(ENVIRONMENT[1]);
+    expect(harness.calls.flat().join("\u0000")).not.toContain(ENVIRONMENT[1]);
     expect(JSON.stringify(prepared.journal)).not.toContain("do-not-put-this-in-process-argv");
     expect(watcher.assertStillStopped.mock.calls.length).toBeGreaterThanOrEqual(6);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
+  });
+
+  it("rejects a held workload outside NemoClaw's default OpenShell workspace", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: {
+          ...plan,
+          heldWorkload: {
+            ...heldWorkload,
+            labels: { ...LABELS, [PODMAN_SANDBOX_WORKSPACE_LABEL]: "another-workspace" },
+          },
+        },
+      }),
+    ).toThrow("exact OpenShell ownership");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("rejects a held workload whose name does not encode its exact OpenShell identity", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: {
+          ...plan,
+          heldWorkload: { ...heldWorkload, containerName: `openshell-sandbox-${SANDBOX_NAME}` },
+        },
+      }),
+    ).toThrow("container name does not match exact OpenShell ownership");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
   });
 
   it("accepts a stable Podman inspect with reordered environment entries", () => {
@@ -475,6 +523,54 @@ describe("Podman bootstrap stopped replacement", () => {
     ).toThrow("cannot set '--name'");
     expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
     expect(harness.calls).toEqual([]);
+  });
+
+  it.each([
+    "-eSECRET=1",
+    "-lcom.nvidia.nemoclaw.override=true",
+    "-d=true",
+  ])("rejects attached protected shorthand %s before invoking Podman", (argument) => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: { ...plan, runtimeArgs: [argument] },
+      }),
+    ).toThrow("cannot set");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
+  });
+
+  it("does not confuse supported long options with protected shorthand", () => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+    const runtimeArgs = [
+      ...plan.runtimeArgs,
+      "--device",
+      "nvidia.com/gpu=all",
+      "--log-driver",
+      "journald",
+      "--expose",
+      "8080",
+    ];
+
+    const prepared = prepareStoppedPodmanBootstrapReplacement({
+      engine: harness.engine,
+      journalStore: store,
+      watcherLease: watcher.lease,
+      plan: { ...plan, runtimeArgs },
+    });
+
+    expect(prepared.journal.phase).toBe("replacement-created");
+    expect(harness.calls).toContainEqual(
+      expect.arrayContaining(["container", "create", ...runtimeArgs]),
+    );
   });
 
   it("rejects runtime mounts that could shadow image transaction state", () => {

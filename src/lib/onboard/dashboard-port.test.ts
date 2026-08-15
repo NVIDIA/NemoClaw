@@ -4,20 +4,52 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
+  createDashboardPortScopedSandboxEntryPoints,
+  type DashboardPortReservationScope,
   findAvailableDashboardPort,
   findDashboardForwardOwner,
   getRegistryOccupiedDashboardPorts,
   preflightDashboardPortRangeAvailability,
+  reserveCreateSandboxDashboardPort,
+  reserveDashboardPort,
   resolveCreateSandboxDashboardPort,
   withDashboardPortReservationLock,
+  withDashboardPortReservationScope,
 } from "./dashboard-port";
+
+async function listenOnLoopback(port: number): Promise<Server> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  return server;
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+async function unusedLoopbackPort(): Promise<number> {
+  const server = await listenOnLoopback(0);
+  const address = server.address();
+  assert.ok(
+    address && typeof address !== "string",
+    "loopback listener did not report a TCP address",
+  );
+  await closeServer(server);
+  return address.port;
+}
 
 describe("findDashboardForwardOwner", () => {
   it("parses openshell forward list column format (#2169)", () => {
@@ -220,6 +252,167 @@ describe("resolveCreateSandboxDashboardPort", () => {
 
     assert.equal(result.preferredPort, 19000);
     assert.equal(result.chatUiUrl, "http://127.0.0.1:19000");
+  });
+});
+
+describe("dashboard port reservation", () => {
+  it("scopes sandbox creation and distinguishes the temporary runtime path", async () => {
+    const events: string[] = [];
+    const createSandboxWithBaseImageResolution = vi.fn(
+      async (
+        baseImageResolutionContext: { fresh: boolean },
+        portableRuntimeAuthority: { socketPath: string } | null,
+        computePlan: { sequence: number },
+        managedWorkloadRebuild: null,
+        temporaryManagedRuntime: boolean,
+        temporaryManagedRuntimeCatalog: null,
+        dashboardPortReservationScope: DashboardPortReservationScope,
+        sandboxName: string,
+      ) => {
+        events.push("create sandbox");
+        return {
+          baseImageResolutionContext,
+          portableRuntimeAuthority,
+          computePlan,
+          managedWorkloadRebuild,
+          temporaryManagedRuntime,
+          temporaryManagedRuntimeCatalog,
+          dashboardPortReservationScope,
+          sandboxName,
+        };
+      },
+    );
+    let sequence = 0;
+    const entryPoints = createDashboardPortScopedSandboxEntryPoints({
+      createBaseImageResolutionContext: () => {
+        events.push("create base-image context");
+        return { fresh: false };
+      },
+      createSandboxWithBaseImageResolution,
+      resolvePortableRuntimeAuthority: () => ({ socketPath: "/run/user/1001/podman.sock" }),
+      resolveComputePlan: () => {
+        events.push("resolve compute plan");
+        return { sequence: ++sequence };
+      },
+    });
+
+    await expect(entryPoints.createSandbox("standard")).resolves.toMatchObject({
+      baseImageResolutionContext: { fresh: false },
+      portableRuntimeAuthority: { socketPath: "/run/user/1001/podman.sock" },
+      computePlan: { sequence: 1 },
+      managedWorkloadRebuild: null,
+      temporaryManagedRuntime: false,
+      temporaryManagedRuntimeCatalog: null,
+      dashboardPortReservationScope: { current: null, release: expect.any(Function) },
+      sandboxName: "standard",
+    });
+    await expect(
+      entryPoints.createSandboxWithTemporaryManagedRuntime("temporary"),
+    ).resolves.toMatchObject({
+      baseImageResolutionContext: { fresh: false },
+      portableRuntimeAuthority: { socketPath: "/run/user/1001/podman.sock" },
+      computePlan: { sequence: 2 },
+      managedWorkloadRebuild: null,
+      temporaryManagedRuntime: true,
+      temporaryManagedRuntimeCatalog: null,
+      dashboardPortReservationScope: { current: null, release: expect.any(Function) },
+      sandboxName: "temporary",
+    });
+    expect(createSandboxWithBaseImageResolution).toHaveBeenCalledTimes(2);
+    expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[6]).not.toBe(
+      createSandboxWithBaseImageResolution.mock.calls[1]?.[6],
+    );
+    expect(events).toEqual([
+      "resolve compute plan",
+      "create base-image context",
+      "create sandbox",
+      "resolve compute plan",
+      "create base-image context",
+      "create sandbox",
+    ]);
+  });
+
+  it("rejects both entry-point promises when synchronous setup fails", async () => {
+    const setupFailure = new Error("compute plan unavailable");
+    const entryPoints = createDashboardPortScopedSandboxEntryPoints<
+      [string],
+      string,
+      { fresh: boolean },
+      null,
+      { sequence: number }
+    >({
+      createBaseImageResolutionContext: () => ({ fresh: false }),
+      createSandboxWithBaseImageResolution: async () => "unreachable",
+      resolvePortableRuntimeAuthority: () => null,
+      resolveComputePlan: () => {
+        throw setupFailure;
+      },
+    });
+
+    const standard = entryPoints.createSandbox("standard");
+    const temporary = entryPoints.createSandboxWithTemporaryManagedRuntime("temporary");
+
+    await expect(standard).rejects.toBe(setupFailure);
+    await expect(temporary).rejects.toBe(setupFailure);
+  });
+
+  it("holds the selected port during creation and releases it after failure (#8798)", async () => {
+    const port = await unusedLoopbackPort();
+
+    await assert.rejects(
+      withDashboardPortReservationScope(async (scope) => {
+        scope.current = await reserveDashboardPort(port);
+        await assert.rejects(
+          listenOnLoopback(port),
+          (error: NodeJS.ErrnoException) => error.code === "EADDRINUSE",
+        );
+        throw new Error("sandbox build failed");
+      }),
+      /sandbox build failed/,
+    );
+
+    const listener = await listenOnLoopback(port);
+    await closeServer(listener);
+  });
+
+  it("reselects before sandbox creation when a listener wins the allocation race (#8798)", async () => {
+    const attempts: number[] = [];
+    const warnings: string[] = [];
+    const released: number[] = [];
+    const result = await reserveCreateSandboxDashboardPort(
+      {
+        sandboxName: "cursor",
+        controlUiPort: null,
+        chatUiUrlEnv: null,
+        persistedPort: null,
+        agentForwardPort: null,
+        defaultPort: 18789,
+        forwardListOutput: "",
+        registryOccupiedPorts: new Map(),
+        findAvailablePort: (_sandboxName, preferredPort, _forwardList, _bound, occupied) =>
+          occupied?.has(String(preferredPort)) ? 18790 : preferredPort,
+        warn: (message) => warnings.push(message),
+      },
+      async (port) => {
+        const attempt = attempts.length;
+        attempts.push(port);
+        return attempt === 0
+          ? Promise.reject(Object.assign(new Error("address in use"), { code: "EADDRINUSE" }))
+          : Promise.resolve({
+              port,
+              release: async () => {
+                released.push(port);
+              },
+            });
+      },
+    );
+
+    assert.deepEqual(attempts, [18789, 18790]);
+    assert.equal(result.effectivePort, 18790);
+    assert.equal(result.chatUiUrl, "http://127.0.0.1:18790");
+    assert.deepEqual(warnings, ["  ! Port 18789 is taken. Using port 18790 instead."]);
+    await result.reservation?.release();
+    assert.deepEqual(released, [18790]);
   });
 });
 

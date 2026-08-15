@@ -5,6 +5,9 @@ import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import type { SandboxEntry } from "../state/registry";
 
+/** Resolve the canonical gateway name used by live inference route checks. */
+export const resolveLiveInferenceGatewayName = resolveSandboxGatewayName;
+
 export type GatewayInferenceRoute = Pick<
   SandboxEntry,
   "provider" | "model" | "endpointUrl" | "preferredInferenceApi" | "credentialEnv"
@@ -68,7 +71,11 @@ export type CurrentGatewayRouteDiscoveryPreflight = (
   },
 ) => GatewayRouteDiscoveryResult;
 
-const CUSTOM_ROUTE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
+const CUSTOM_ROUTE_PROVIDERS = new Set([
+  "compatible-endpoint",
+  "compatible-anthropic-endpoint",
+  "llama-cpp-local",
+]);
 
 const SUPPORTED_INFERENCE_APIS = new Set([
   "openai-completions",

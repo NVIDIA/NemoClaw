@@ -26,7 +26,7 @@ import type { TestProgress } from "../fixtures/progress.ts";
 
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 const DOCKER_GRPC_PROBE_IMAGE =
-  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 
 type SkipFn = (message?: string) => void;
 
@@ -615,7 +615,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   const version = run(gatewayBin, ["--version"]);
   expect(version.status, commandOutput(version)).toBe(0);
-  expect(commandOutput(version)).toContain(process.env.NEMOCLAW_CANDIDATE_VERSION || "0.0.85");
+  expect(commandOutput(version)).toContain(process.env.NEMOCLAW_CANDIDATE_VERSION || "0.0.101");
 
   await requireDockerDaemon({ dockerBin, host, skip });
 

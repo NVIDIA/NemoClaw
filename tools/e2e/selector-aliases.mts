@@ -3,6 +3,7 @@
 
 export const E2E_SELECTOR_ALIASES = Object.freeze({
   "hermes-dashboard": "hermes-e2e",
+  "sandbox-rlimits-connect": "sandbox-operations",
 } as const);
 
 export function normalizeE2eSelectorId(selector: string): string {

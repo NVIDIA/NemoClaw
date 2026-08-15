@@ -166,6 +166,56 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3]);
   });
 
+  it("keeps an empty read-only probe inconclusive after exact replacement re-registration", () => {
+    const captureOpenshellImpl = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        output: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR.trim(),
+        stdout: "",
+        stderr: OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR,
+      })
+      .mockReturnValueOnce({ status: 1, output: "", stdout: "", stderr: "" })
+      .mockReturnValueOnce({ status: 0, output: "", stdout: "", stderr: "" });
+    const beforeProbe = vi.fn(() => true);
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 6,
+      }),
+    ).toBe(true);
+    expect(beforeProbe).toHaveBeenCalledTimes(3);
+    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([3, 3]);
+  });
+
+  it("keeps an empty first OpenShell failure terminal", () => {
+    const captureOpenshellImpl = vi.fn(() => ({
+      status: 1,
+      output: "",
+      stdout: "",
+      stderr: "",
+    }));
+    const sleeps: number[] = [];
+
+    expect(
+      waitForRecreatedSandboxOpenShellReady("recreated-box", {
+        beforeProbe: () => true,
+        captureOpenshellImpl,
+        intervalSeconds: 3,
+        sleepImpl: (seconds) => sleeps.push(seconds),
+        timeoutSeconds: 30,
+      }),
+    ).toBe(false);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
+  });
+
   it("rides out a transient Error phase past the old 30s budget by default (#7227)", () => {
     // No timeoutSeconds option and no env override: the default recovery budget
     // must be large enough (120s, aligned with connect's readiness wait) to keep
@@ -497,7 +547,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("does not let the legacy gateway timeout shorten the sandbox readiness budget (#7273)", () => {
+  it("lets the recovery wait override replace an explicit readiness budget", () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "6");
     const captureOpenshellImpl = vi.fn(() => ({
@@ -516,8 +566,8 @@ describe("recreated sandbox OpenShell readiness", () => {
         timeoutSeconds: Number(process.env.NEMOCLAW_SANDBOX_READY_TIMEOUT),
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([3, 3]);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
   });
 });
 

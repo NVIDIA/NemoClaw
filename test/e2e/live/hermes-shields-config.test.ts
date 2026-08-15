@@ -26,6 +26,7 @@ const COMPATIBLE_API_KEY = "hermes-shields-e2e-key";
 const COMPATIBLE_MODEL = "hermes-shields-e2e-model";
 const CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DIR = "/sandbox/.hermes";
+const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const COMMAND_TIMEOUT_MS = 120_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -102,6 +103,97 @@ async function expectShieldsStatus(
   expect(resultText(status)).toContain(`Shields: ${expected}`);
 }
 
+async function collectStartFailureDockerLogs(
+  host: HostCliClient,
+  artifactPrefix: string,
+): Promise<string> {
+  const lookup = await host.command(
+    "docker",
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: `${artifactPrefix}-failure-container`,
+      env: commandEnv(),
+      redactionValues: [COMPATIBLE_API_KEY],
+      timeoutMs: 30_000,
+    },
+  );
+  const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
+  const result =
+    lookup.exitCode !== 0 || !containerId
+      ? lookup
+      : await host.command("docker", ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-docker-logs`,
+          env: commandEnv(),
+          redactionValues: [COMPATIBLE_API_KEY],
+          timeoutMs: 30_000,
+        });
+  return resultText(result);
+}
+
+async function expectStopStartRecovery(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  posture: "DOWN" | "UP",
+  artifactPrefix: string,
+): Promise<void> {
+  const stop = await host.nemoclaw([SANDBOX_NAME, "stop"], {
+    artifactName: `${artifactPrefix}-stop`,
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 5 * 60_000,
+  });
+  assertExitZero(stop, `stop Hermes with shields ${posture.toLowerCase()}`);
+
+  const start = await host.nemoclaw([SANDBOX_NAME, "start"], {
+    artifactName: `${artifactPrefix}-start`,
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 5 * 60_000,
+  });
+  const startFailureLogs =
+    start.exitCode === 0 ? "" : await collectStartFailureDockerLogs(host, artifactPrefix);
+  expect(
+    start.exitCode,
+    [
+      `start Hermes with shields ${posture.toLowerCase()}: ${resultText(start)}`,
+      startFailureLogs && `Docker logs:\n${startFailureLogs}`,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  ).toBe(0);
+
+  const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
+    artifactName: `${artifactPrefix}-status`,
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 5 * 60_000,
+  });
+  assertExitZero(status, `read Hermes status with shields ${posture.toLowerCase()}`);
+  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
+  await expectShieldsStatus(host, posture, `${artifactPrefix}-shields-status`);
+
+  const runtimeIdentity = await sandboxShell(
+    sandbox,
+    'printf \'pwd=%s\\nhome=%s\\nuser=%s\\ngroup=%s\\n\' "$PWD" "$HOME" "$(id -un)" "$(id -gn)"',
+    `${artifactPrefix}-runtime-identity`,
+  );
+  assertExitZero(runtimeIdentity, `inspect Hermes runtime identity with shields ${posture}`);
+  expect(runtimeIdentity.stdout).toContain("pwd=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("home=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("user=sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("group=sandbox\n");
+}
+
 async function expectMutablePosture(sandbox: SandboxClient, cycle: number): Promise<void> {
   const result = await sandboxShell(
     sandbox,
@@ -132,6 +224,30 @@ async function expectLockedPosture(sandbox: SandboxClient, cycle: number): Promi
   expect(result.stdout).toContain(`444 root:root ${HERMES_DIR}/.config-hash`);
 }
 
+async function expectImmediateInferenceRoute(sandbox: SandboxClient, cycle: number): Promise<void> {
+  const result = await sandboxShell(
+    sandbox,
+    [
+      "set -eu",
+      'response="$(mktemp)"',
+      "trap 'rm -f \"$response\"' EXIT",
+      'curl -fsS --connect-timeout 3 --max-time 10 https://inference.local/v1/models -o "$response"',
+      "python3 - \"$response\" <<'PY'",
+      "import json, pathlib, sys",
+      "payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))",
+      `assert ${JSON.stringify(COMPATIBLE_MODEL)} in {entry.get("id") for entry in payload["data"]}`,
+      "print('HERMES_SHIELDS_INFERENCE_ROUTE_READY')",
+      "PY",
+    ].join("\n"),
+    `cycle-${cycle}-immediate-inference-route`,
+  );
+  assertExitZero(
+    result,
+    `probe Hermes inference route immediately after Shields down cycle ${cycle}`,
+  );
+  expect(result.stdout).toContain("HERMES_SHIELDS_INFERENCE_ROUTE_READY");
+}
+
 async function completeShieldsCycle(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -143,6 +259,7 @@ async function completeShieldsCycle(
     `cycle-${cycle}-shields-down`,
   );
   assertExitZero(down, `unlock fresh Hermes config in cycle ${cycle}`);
+  await expectImmediateInferenceRoute(sandbox, cycle);
   await expectShieldsStatus(host, "DOWN", `cycle-${cycle}-status-down`);
   await expectMutablePosture(sandbox, cycle);
 
@@ -152,7 +269,7 @@ async function completeShieldsCycle(
   await expectLockedPosture(sandbox, cycle);
 }
 
-test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields cycles (#6381)", {
+test("hermes-shields-config: stopped Hermes restores under both Shields postures (#6381, #8112)", {
   timeout: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -160,6 +277,8 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
       "onboard non-root Hermes sandbox",
       "verify fresh Hermes runtime state",
       "complete first shields cycle",
+      "restart Hermes with shields up",
+      "unlock shields and restart Hermes",
       "complete second shields cycle",
       "verify preserved config and ready state",
     ],
@@ -167,11 +286,16 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox }) => {
   await artifacts.target.declare({
     id: "hermes-shields-config",
-    boundary: "fresh CPU-only Hermes onboard plus two real shields down/up transitions",
+    boundary:
+      "fresh CPU-only Hermes onboard plus two real shields down/up transitions and stopped-sandbox recovery",
     contracts: [
       "fresh OpenShell-managed non-root Hermes startup mints its API key",
+      "the installed state lock plan keeps skills read-only and pairing confidential",
       "the first shields-down reconciles the startup hash anchor",
       "shields-up establishes the root-owned locked posture",
+      "start restores a stopped Hermes sandbox while shields are up",
+      "start restores a stopped Hermes sandbox while shields are down",
+      "each successful shields-down returns only after inference.local serves the configured model",
       "a second down/up cycle completes without corrupting config state",
     ],
     issue: "#6381",
@@ -277,6 +401,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
       "test ! -e /run/nemoclaw/hermes-root-lifecycle",
       `grep -Eq '^API_SERVER_KEY=[0-9a-fA-F]{64}$' ${HERMES_DIR}/.env`,
       `stat -c '%a %U:%G' ${HERMES_DIR}`,
+      `python3 -c 'import json; p=json.load(open("${STATE_LOCK_PLAN_PATH}", encoding="utf-8")); assert "skills" in p["readOnlyRoots"]; assert "pairing" in p["confidentialRoots"]; print("STATE_LOCK_PLAN_MODES=skills:read-only,pairing:confidential")'`,
       `sha256sum ${CONFIG_PATH} | awk '{print $1}'`,
     ].join("\n"),
     "fresh-nonroot-trigger",
@@ -284,13 +409,35 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   assertExitZero(trigger, "prove fresh non-root Hermes startup trigger");
   const triggerLines = trigger.stdout.trim().split(/\r?\n/);
   expect(triggerLines[0]).toMatch(/^(700|3770) sandbox:sandbox$/);
+  expect(trigger.stdout).toContain("STATE_LOCK_PLAN_MODES=skills:read-only,pairing:confidential");
   const configHashBefore = triggerLines.at(-1) ?? "";
   expect(configHashBefore).toMatch(/^[0-9a-f]{64}$/);
 
   progress.phase("complete first shields cycle");
   await completeShieldsCycle(host, sandbox, 1);
+
+  progress.phase("restart Hermes with shields up");
+  await expectStopStartRecovery(host, sandbox, "UP", "cycle-1-shields-up-start-recovery");
+  await expectLockedPosture(sandbox, 1);
+
+  progress.phase("unlock shields and restart Hermes");
+  const down = await runShields(
+    host,
+    ["down", "--timeout", "15m", "--reason", "Hermes live E2E cycle 2"],
+    "cycle-2-shields-down",
+  );
+  assertExitZero(down, "unlock fresh Hermes config in cycle 2");
+  await expectImmediateInferenceRoute(sandbox, 2);
+  await expectShieldsStatus(host, "DOWN", "cycle-2-status-down");
+  await expectMutablePosture(sandbox, 2);
+  await expectStopStartRecovery(host, sandbox, "DOWN", "cycle-2-shields-down-start-recovery");
+  await expectMutablePosture(sandbox, 2);
+
   progress.phase("complete second shields cycle");
-  await completeShieldsCycle(host, sandbox, 2);
+  const up = await runShields(host, ["up"], "cycle-2-shields-up");
+  assertExitZero(up, "lock fresh Hermes config in cycle 2");
+  await expectShieldsStatus(host, "UP", "cycle-2-status-up");
+  await expectLockedPosture(sandbox, 2);
 
   progress.phase("verify preserved config and ready state");
   const configHashAfter = await sandboxShell(
@@ -316,7 +463,11 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     assertions: {
       configPreserved: true,
       freshNonrootTrigger: true,
+      stateLockPlanModes: true,
       firstCycle: true,
+      postTransitionInferenceRoute: true,
+      shieldsDownStartRecovery: true,
+      shieldsUpStartRecovery: true,
       secondCycle: true,
     },
   });

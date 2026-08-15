@@ -205,7 +205,7 @@ describe("compatible-endpoint context window", () => {
   it("probes an exactly allowlisted private endpoint with its address capability (#6861)", async () => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
     const env: NodeJS.ProcessEnv = {
-      NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "llm.corp.example",
+      NEMOCLAW_TRUSTED_PRIVATE_HOSTS: "llm.corp.example",
     };
     await applyCompatibleEndpointContextWindow("https://llm.corp.example/v1", "model-a", {
       env,
@@ -221,6 +221,35 @@ describe("compatible-endpoint context window", () => {
       expect.objectContaining({ addresses: ["10.0.0.8"] }),
     );
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+  });
+
+  it("probes an allowlisted endpoint with every mixed private and public DNS pin (#8176)", async () => {
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+    const messages: string[] = [];
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_TRUSTED_PRIVATE_HOSTS: "llm.corp.example",
+    };
+    await applyCompatibleEndpointContextWindow("https://llm.corp.example/v1", "model-a", {
+      env,
+      fetchModels,
+      resolveHost: async () => [
+        { address: "10.0.0.8", family: 4 },
+        { address: "93.184.216.34", family: 4 },
+      ],
+      logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
+    });
+
+    expect(fetchModels).toHaveBeenCalledWith(
+      "https://llm.corp.example/v1",
+      "",
+      ["10.0.0.8", "93.184.216.34"],
+      expect.objectContaining({
+        host: "llm.corp.example",
+        addresses: ["10.0.0.8", "93.184.216.34"],
+      }),
+    );
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    expect(messages).toEqual(["  ✓ Using endpoint max_model_len: 65536 tokens"]);
   });
 
   it.each([

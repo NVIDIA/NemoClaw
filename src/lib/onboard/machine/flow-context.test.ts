@@ -84,6 +84,8 @@ describe("onboard flow context helpers", () => {
       compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       webSearchConfig: null,
+      hostLocalInferenceRouteOnly: false,
+      hostLocalInferenceSandboxProofAuthority: null,
     });
 
     expect(context).toMatchObject({
@@ -141,6 +143,8 @@ describe("onboard flow context helpers", () => {
       compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       webSearchConfig: null,
+      hostLocalInferenceRouteOnly: false,
+      hostLocalInferenceSandboxProofAuthority: null,
     });
     const context = mergeSandboxCreatedContext(providerContext, {
       session: createSession(),

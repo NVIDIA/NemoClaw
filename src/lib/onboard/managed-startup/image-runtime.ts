@@ -7,16 +7,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  MANAGED_BOOTSTRAP_COMPLETION_FILE,
-  MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
-  MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
-  MANAGED_BOOTSTRAP_REQUEST_FILE,
-  type ManagedBootstrapImageCompletion,
-  parseManagedBootstrapEnvelope,
-  parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapImageCompletion,
-} from "../managed-bootstrap/envelope";
-import {
   type ManagedStartupAgentEnvironment,
   type ManagedStartupAgentMaterial,
   type ManagedStartupApplicationRuntimePlan,
@@ -70,9 +60,12 @@ const HERMES_MANAGED_CONFIG_FILES = [
   "/sandbox/.hermes/config.yaml",
   "/sandbox/.hermes/.env",
 ] as const;
+const HERMES_GENERATED_MANAGED_POLICY_FILE = "/sandbox/.hermes/managed-policy.json";
+const HERMES_INSTALLED_MANAGED_POLICY_FILE = "/usr/local/share/nemoclaw/hermes-managed-policy.json";
+const MAX_HERMES_MANAGED_POLICY_BYTES = 4 * 1024 * 1024;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
-const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
+export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
 const MAX_MANAGED_STARTUP_COMPLETION_BYTES = 4096;
 const MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES = 512 * 1024;
 
@@ -352,7 +345,7 @@ function requireSafeExistingRootTarget(target: string): void {
   }
 }
 
-function atomicWriteRootFile(target: string, contents: string | Buffer, mode: number): void {
+export function atomicWriteRootFile(target: string, contents: string | Buffer, mode: number): void {
   const parent = path.dirname(target);
   const parentStat = fs.lstatSync(parent);
   if (
@@ -447,10 +440,7 @@ function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
   return { uid: readId("-u"), gid: readId("-g") };
 }
 
-function sandboxPrefix(): readonly string[] {
-  if (trustedExecutable("/usr/local/bin/gosu")) {
-    return ["/usr/local/bin/gosu", "sandbox"];
-  }
+export function managedStartupSandboxPrefix(): readonly string[] {
   if (trustedExecutable("/usr/bin/setpriv")) {
     const identity = readSandboxIdentity();
     return [
@@ -461,7 +451,7 @@ function sandboxPrefix(): readonly string[] {
       "--",
     ];
   }
-  return fail("a trusted gosu or setpriv executable is required");
+  return fail("a trusted setpriv executable is required");
 }
 
 function commandEnvironment(
@@ -495,7 +485,7 @@ function execute(
   capture = false,
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
-  const command = runAs === "sandbox" ? [...sandboxPrefix(), ...argv] : [...argv];
+  const command = runAs === "sandbox" ? [...managedStartupSandboxPrefix(), ...argv] : [...argv];
   const result = spawnSync(command[0] as string, command.slice(1), {
     encoding: "utf8",
     env: commandEnvironment(configurationEnvironment, applicationRuntime),
@@ -534,6 +524,12 @@ function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
         "/usr/local/bin/node",
         "--experimental-strip-types",
         "/opt/nemoclaw-deepagents-code/generate-config.ts",
+      ];
+    case "pi":
+      return [
+        "/usr/local/bin/node",
+        "--experimental-strip-types",
+        "/opt/nemoclaw-pi/generate-config.ts",
       ];
   }
 }
@@ -754,7 +750,7 @@ function sealOpenClawConfiguration(
   runInternalSandboxAction("write-openclaw-hash", configurationEnvironment, applicationRuntime);
 }
 
-interface StableRegularFile {
+export interface StableRegularFile {
   readonly bytes: Buffer;
   readonly stat: fs.BigIntStats;
 }
@@ -778,7 +774,7 @@ function sameStableFileMetadata(left: fs.BigIntStats, right: fs.BigIntStats): bo
   );
 }
 
-function readStableRegularFileSnapshot(target: string, maxBytes: number): StableRegularFile {
+export function readStableRegularFileSnapshot(target: string, maxBytes: number): StableRegularFile {
   if (typeof fs.constants.O_NOFOLLOW !== "number") {
     fail("O_NOFOLLOW is unavailable for managed startup file reads");
   }
@@ -827,6 +823,20 @@ function readStableRegularFileSnapshot(target: string, maxBytes: number): Stable
 
 export function readStableRegularFile(target: string, maxBytes: number): Buffer {
   return readStableRegularFileSnapshot(target, maxBytes).bytes;
+}
+
+/** Promote the generator output to the one root-owned policy artifact used at runtime. */
+export function installHermesManagedPolicy(
+  source = HERMES_GENERATED_MANAGED_POLICY_FILE,
+  target = HERMES_INSTALLED_MANAGED_POLICY_FILE,
+): void {
+  const generated = readStableRegularFileSnapshot(source, MAX_HERMES_MANAGED_POLICY_BYTES);
+  atomicWriteRootFile(target, generated.bytes, 0o444);
+  const current = fs.lstatSync(source, { bigint: true });
+  if (!sameStableFileMetadata(generated.stat, current)) {
+    fail(`Hermes managed policy changed before source cleanup: ${source}`);
+  }
+  fs.unlinkSync(source);
 }
 
 /**
@@ -1309,6 +1319,7 @@ function applyAdapter(
       sealOpenClawConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       break;
     case "hermes":
+      installHermesManagedPolicy();
       sealHermesConfiguration(mapped.configurationEnvironment, mapped.applicationRuntime);
       // Normalize before the coordinator commits a newly applied profile so
       // the durable transaction never records generator-created 0600 files as
@@ -1484,106 +1495,6 @@ export async function applyManagedStartupRootRequest(
   };
 }
 
-export function consumeManagedBootstrapEnvelope(
-  expected: {
-    readonly agent: ManagedStartupAgent;
-    readonly profileFingerprint: string;
-    readonly bootstrapIdentity: string;
-  },
-  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
-): ManagedStartupRootApplyRequest {
-  requireRoot();
-  const { bytes, stat } = readStableRegularFileSnapshot(
-    requestFile,
-    MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
-  );
-  if (
-    stat.nlink !== 1n ||
-    stat.uid !== 0n ||
-    stat.gid !== 0n ||
-    Number(stat.mode & 0o777n) !== 0o400
-  ) {
-    fail("managed bootstrap envelope must be root:root mode 0400 with one link");
-  }
-  const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
-  if (
-    envelope.bootstrapIdentity !== expected.bootstrapIdentity ||
-    envelope.rootApplyRequest.agent !== expected.agent ||
-    envelope.rootApplyRequest.profileFingerprint !== expected.profileFingerprint
-  ) {
-    fail("managed bootstrap envelope identity does not match the replacement");
-  }
-  fs.unlinkSync(requestFile);
-  return envelope.rootApplyRequest;
-}
-
-export async function applyManagedBootstrapEnvelope(
-  expected: {
-    readonly agent: ManagedStartupAgent;
-    readonly profileFingerprint: string;
-    readonly bootstrapIdentity: string;
-  },
-  env: Environment = process.env,
-  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
-  completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
-): Promise<ManagedStartupRootApplyResult> {
-  const request = consumeManagedBootstrapEnvelope(expected, requestFile);
-  const result = await applyManagedStartupRootRequest(request, env, {
-    bootstrapIdentity: expected.bootstrapIdentity,
-  });
-  atomicWriteRootFile(
-    completionFile,
-    serializeManagedBootstrapImageCompletion({
-      agent: result.agent,
-      bootstrapIdentity: expected.bootstrapIdentity,
-      profileFingerprint: result.fingerprint,
-      transactionPending: result.transactionPending,
-    }),
-    0o444,
-  );
-  return result;
-}
-
-export function verifyManagedBootstrapImageCompletion(
-  expected: {
-    readonly agent: ManagedStartupAgent;
-    readonly profileFingerprint: string;
-    readonly bootstrapIdentity: string;
-  },
-  completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
-  startupCompletionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
-  runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
-): ManagedBootstrapImageCompletion {
-  requireRoot();
-  const { bytes, stat } = readStableRegularFileSnapshot(
-    completionFile,
-    MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
-  );
-  if (
-    stat.nlink !== 1n ||
-    stat.uid !== 0n ||
-    stat.gid !== 0n ||
-    Number(stat.mode & 0o777n) !== 0o444
-  ) {
-    fail("managed bootstrap completion must be root:root mode 0444 with one link");
-  }
-  const completion = parseManagedBootstrapImageCompletion(bytes.toString("utf8"));
-  if (
-    completion.agent !== expected.agent ||
-    completion.profileFingerprint !== expected.profileFingerprint ||
-    completion.bootstrapIdentity !== expected.bootstrapIdentity
-  ) {
-    fail("managed bootstrap completion identity does not match the replacement");
-  }
-  verifyManagedStartupImageCompletion(
-    expected.agent,
-    expected.profileFingerprint,
-    startupCompletionFile,
-    runtimeEnvironmentFile,
-  );
-  return completion;
-}
-
 function readBoundedRootApplyStdin(): string {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -1673,7 +1584,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--apply-bootstrap-file|--verify-bootstrap-completion|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1715,32 +1626,6 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       result.transactionPending
         ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
         : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
-    );
-    return;
-  }
-  if (argv.length === 7 && argv[0] === "--apply-bootstrap-file") {
-    const expected = {
-      agent: exactAgent(readCliAgent(argv, 7)),
-      profileFingerprint: readCliFingerprint(argv),
-      bootstrapIdentity: readCliBootstrapIdentity(argv),
-    } as const;
-    const result = await applyManagedBootstrapEnvelope(expected);
-    console.log(
-      result.transactionPending
-        ? `[managed-startup] applied ${result.agent} profile ${result.fingerprint}; transaction pending`
-        : `[managed-startup] ${result.agent} profile ${result.fingerprint} was already complete`,
-    );
-    return;
-  }
-  if (argv.length === 7 && argv[0] === "--verify-bootstrap-completion") {
-    const expected = {
-      agent: exactAgent(readCliAgent(argv, 7)),
-      profileFingerprint: readCliFingerprint(argv),
-      bootstrapIdentity: readCliBootstrapIdentity(argv),
-    } as const;
-    verifyManagedBootstrapImageCompletion(expected);
-    console.log(
-      `[managed-startup] verified ${expected.agent} profile ${expected.profileFingerprint} bootstrap ${expected.bootstrapIdentity}`,
     );
     return;
   }
@@ -1805,17 +1690,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     console.log(`[managed-startup] cleared ${agent} durable shared-state commit receipt`);
     return;
   }
-  if (argv.length === 7 && argv[0] === "--shared-state-transaction-status") {
+  if (
+    argv.length === 8 &&
+    argv[0] === "--shared-state-transaction-status" &&
+    argv[7] === "--read-only-receipt"
+  ) {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 7));
+    const agent = exactAgent(readCliAgent(argv, 8));
     const profileFingerprint = readCliFingerprint(argv);
     const bootstrapIdentity = readCliBootstrapIdentity(argv);
     process.stdout.write(
-      `${getManagedStartupSharedStateTransactionStatus({
-        agent,
-        profileFingerprint,
-        bootstrapIdentity,
-      })}\n`,
+      `${getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint,
+          bootstrapIdentity,
+        },
+        { readOnlyReceipt: true },
+      )}\n`,
     );
     return;
   }
@@ -1827,9 +1719,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   );
 }
 
-if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
-  main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
+// This module is the startup-profile implementation library. The composed
+// managed-bootstrap image runtime owns the one process entrypoint and delegates
+// non-bootstrap actions to main(). Keeping a second require.main guard here
+// makes an esbuild bundle execute every CLI action twice.

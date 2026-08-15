@@ -61,9 +61,9 @@ export async function reconcilePreflightGatewayReuseState(
   } else if (containerState === "stopped") {
     // #4187: a stopped legacy `openshell-cluster-*` container after a host VM
     // stop/start still holds the k3s local-path PVC volume. Attempt
-    // non-destructive recovery (openshell gateway start) before any
-    // destructive cleanup path so we never delete the PVC backing data and
-    // silently provision a fresh, empty workspace.
+    // non-destructive gateway recovery before any destructive cleanup path so
+    // we never delete the PVC backing data and silently provision a fresh,
+    // empty workspace.
     console.log(
       "  Gateway container is stopped (likely host or Docker restart). Attempting non-destructive recovery...",
     );

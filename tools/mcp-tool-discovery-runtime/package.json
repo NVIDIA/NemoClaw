@@ -15,14 +15,18 @@
     "typescript": "6.0.3"
   },
   "overrides": {
-    "@hono/node-server": "2.0.11",
-    "fast-uri": "3.1.4"
+    "@hono/node-server": "2.0.12",
+    "fast-uri": "3.1.5",
+    "hono": "4.12.34",
+    "ip-address": "10.3.1"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
     "bundle": "node --experimental-strip-types build-runtime.ts",
+    "bundle:reviewed": "node --experimental-strip-types build-reviewed-runtime.ts",
+    "bundle:reviewed:check": "node --experimental-strip-types build-reviewed-runtime.ts --check",
     "test": "node --experimental-strip-types --test streamable-http-client.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   }

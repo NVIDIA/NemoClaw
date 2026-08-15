@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -15,11 +15,12 @@ import {
 import { loadAgent, resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
+const PYTHON = process.env.PYTHON ?? "python3";
 
 function runPython(script: string): string {
-  return execFileSync("python3", ["-c", script, SCRIPT_PATH], {
+  return execFileSync(PYTHON, ["-c", script, SCRIPT_PATH], {
     encoding: "utf-8",
-  });
+  }).replace(/\r\n/g, "\n");
 }
 
 function loadGeneratorAs(name: string): string {
@@ -113,6 +114,72 @@ except ValueError as exc:
     expect(output).toContain("unknown status");
     expect(output).toContain("'shipped'");
     expect(output).not.toContain("NO_ERROR");
+  });
+
+  it("rejects malformed platform runtimes via the generator entry path", () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
+    try {
+      const cases = [
+        ["non-list", "Docker"],
+        ["empty-list", []],
+        ["non-string-item", ["Docker", 1]],
+        ["empty-string-item", ["Docker", ""]],
+        ["whitespace-string-item", ["Docker", " \t"]],
+      ] as const;
+      const outputs = cases.map(([label, runtimes]) => {
+        const matrixPath = path.join(tmp, `${label}.json`);
+        const matrixPathLiteral = JSON.stringify(matrixPath);
+        writeFileSync(
+          matrixPath,
+          JSON.stringify({
+            statuses: { tested: "Validated." },
+            owners: { engineering: "@NVIDIA/nemoclaw-maintainer" },
+            project_status: { stage: "a", label: "b", since: "c", notes: "d" },
+            platforms: [{ name: "X", runtimes, status: "tested", notes: "n" }],
+            providers: [],
+            agents: [],
+            integrations: [],
+            deployment_paths: [],
+            capabilities: [],
+            out_of_scope: [],
+          }),
+        );
+
+        const result = spawnSync(
+          PYTHON,
+          [
+            "-c",
+            `
+${loadGeneratorAs("g")}
+import pathlib
+
+module.MATRIX_PATH = pathlib.Path(${matrixPathLiteral})
+sys.argv = [sys.argv[1], "--check"]
+module.main()
+`,
+            SCRIPT_PATH,
+          ],
+          { encoding: "utf-8" },
+        );
+        expect(result.status, label).toBe(1);
+        return `${label}:${result.stdout}${result.stderr}`.replace(/\r\n/g, "\n");
+      });
+      const output = outputs.join("\n");
+      const expected =
+        "Error: ci/platform-matrix.json: platforms[0].runtimes must be a non-empty list of non-empty strings";
+      for (const label of [
+        "non-list",
+        "empty-list",
+        "non-string-item",
+        "empty-string-item",
+        "whitespace-string-item",
+      ]) {
+        expect(output).toContain(`${label}:${expected}`);
+      }
+      expect(output).not.toContain("NO_ERROR");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("rejects placeholder owner values (TBD, TODO, see PR review, empty)", () => {
@@ -337,6 +404,7 @@ print(module.generate_platform_prerequisites_block(platforms))
   it("exits non-zero for --check on a placeholder owner in the real matrix", () => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     const matrixPath = path.join(tmp, "matrix.json");
+    const matrixPathLiteral = JSON.stringify(matrixPath);
     writeFileSync(
       matrixPath,
       JSON.stringify({
@@ -353,12 +421,12 @@ print(module.generate_platform_prerequisites_block(platforms))
     );
 
     const result = spawnSync(
-      "python3",
+      PYTHON,
       [
         "-c",
         `
 ${loadGeneratorAs("g")}
-matrix = module.load_matrix.__globals__["json"].load(open("${matrixPath}"))
+matrix = module.load_matrix.__globals__["json"].load(open(${matrixPathLiteral}))
 try:
     module._validate_matrix(matrix)
     raise SystemExit(0)

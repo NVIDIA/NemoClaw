@@ -20,6 +20,24 @@ import {
 } from "../../../test/support/openshell-gateway-config-helpers";
 
 describe("docker-driver-gateway auth contract", () => {
+  it("keeps supported OpenShell gateway authentication in public security guidance", () => {
+    const publicGatewayControls = fs.readFileSync(
+      path.resolve(
+        import.meta.dirname,
+        "../../../docs/security/gateway-authentication-controls.mdx",
+      ),
+      "utf-8",
+    );
+
+    expect(publicGatewayControls).toContain("Host-side OpenShell CLI calls use local mTLS");
+    expect(publicGatewayControls).toContain(
+      "Sandbox callbacks use the guest mTLS bundle plus a sandbox-scoped JWT",
+    );
+    expect(publicGatewayControls).toContain("allow_unauthenticated_users = false");
+    expect(publicGatewayControls).toContain("OPENSHELL_DISABLE_GATEWAY_AUTH=true");
+    expect(publicGatewayControls).toContain("ttl_secs = 0");
+  });
+
   it("keeps the OpenShell gateway auth source review aligned with the generated config", () => {
     const compatibilityReview = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
     const migrationReview = fs.readFileSync(GATEWAY_MIGRATION_REVIEW_NOTE, "utf-8");

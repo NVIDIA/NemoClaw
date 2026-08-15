@@ -131,6 +131,7 @@ export function resolveSandboxCreateIntent({
   basePolicyPath,
   sandboxName,
   inferenceProvider,
+  hostLocalInferenceRouteOnly = false,
   channels,
   enabledChannels,
   disabledChannelNames,
@@ -144,6 +145,7 @@ export function resolveSandboxCreateIntent({
   sandboxGpuConfig,
   gpuCreateArgs,
   resourceCreateArgs = [],
+  hostMounts = [],
   gpuRoutePlan,
   sandboxGpuLogMessage,
   extraPlaceholderKeys = [],
@@ -190,6 +192,7 @@ export function resolveSandboxCreateIntent({
           ? { hostGpuAvailable: sandboxGpuConfig.hostGpuDetected }
           : {}),
         additionalPresets: [...hermesToolGateways],
+        ...(hostLocalInferenceRouteOnly ? { hostLocalInferenceRouteOnly: true as const } : {}),
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
         baselineExclusions: [...baselineExclusions].map((exclusion) => ({ ...exclusion })),
@@ -197,6 +200,16 @@ export function resolveSandboxCreateIntent({
     },
     gpuCreateArgs: [...gpuCreateArgs],
     resourceCreateArgs: [...resourceCreateArgs],
+    ...(hostMounts.length > 0
+      ? {
+          hostMounts: hostMounts.map(({ source, target, sourceIdentity }) => ({
+            source,
+            target,
+            readOnly: true,
+            ...(sourceIdentity ? { sourceIdentity: { ...sourceIdentity } } : {}),
+          })),
+        }
+      : {}),
     gpuRoutePlan,
     sandboxGpuLogMessage,
     disabledChannelNames: [...disabledChannelNames],

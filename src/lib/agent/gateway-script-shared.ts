@@ -81,7 +81,8 @@ export function gatewayLaunchCommand(command: string, runAsUser?: string): strin
   if (!runAsUser) {
     return `${logSelection} ${userLaunch}`;
   }
-  return `${logSelection} if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1 && id ${shellQuote(runAsUser)} >/dev/null 2>&1; then nohup gosu ${shellQuote(runAsUser)} ${command} >> "$_GATEWAY_LOG" 2>&1 & else ${userLaunch} fi;`;
+  const user = shellQuote(runAsUser);
+  return `${logSelection} if [ "$(id -u)" = "0" ]; then if [ -x /usr/bin/setpriv ] && id ${user} >/dev/null 2>&1; then nohup /usr/bin/setpriv --reuid=${user} --regid=${user} --init-groups -- ${command} >> "$_GATEWAY_LOG" 2>&1 & else echo "[gateway-recovery] ERROR: setpriv or target user unavailable; refusing root gateway launch" >&2; exit 1; fi; else ${userLaunch} fi;`;
 }
 
 export { buildGatewayGuardRecoveryLines };

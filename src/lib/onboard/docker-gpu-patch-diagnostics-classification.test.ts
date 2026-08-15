@@ -147,6 +147,41 @@ describe("Docker GPU patch diagnostics", () => {
     expect(flat).toContain("patched_create_option=--gpus all");
   });
 
+  it("explains exit code 127 when container logs prove the managed startup command is missing (#7996)", () => {
+    const result = classifyDockerGpuPatchFailure(
+      failureSnapshot("Error", { Status: "restarting", ExitCode: 127 }, "alpha   Error   1m ago"),
+      GPU_MODE,
+      { managedStartupCommandMissing: true },
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    const hints = (result.hints ?? []).join("\n");
+    expect(hints).toContain("does not provide the NemoClaw-managed `nemoclaw-start` command");
+    expect(hints).toContain("selected agent and NemoClaw release");
+    expect(hints).not.toMatch(/OpenClaw|sandbox-base/);
+    // The prose stays out of the machine-readable on-disk summary.
+    expect(result.summaryLines.join("\n")).not.toContain("selected agent");
+  });
+
+  it("does not infer a missing startup command when its child process returns 127 (#7996)", () => {
+    const result = classify(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 127 }, "alpha   Error   1m ago"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.headline).toContain("exited with code 127");
+    expect(result.hints ?? []).toEqual([]);
+  });
+
+  it("does not attach the missing-startup-command hints to other non-zero exits (#7996)", () => {
+    const result = classify(
+      failureSnapshot("Error", { Status: "exited", ExitCode: 125 }, "alpha   Error   1m ago"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.hints ?? []).toEqual([]);
+  });
+
   it("classifies an Error-phase sandbox with unknown container state as sandbox_error_phase", () => {
     const result = classify(failureSnapshot("Error", null, null));
 

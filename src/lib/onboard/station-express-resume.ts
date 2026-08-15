@@ -111,7 +111,14 @@ const STATION_EXPRESS_RECEIPT_REVISION_PATTERN = /^[0-9a-f]{40}$/;
 const STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN = /^[A-Za-z0-9]+$/;
 const STATION_EXPRESS_RECEIPT_PORT_PATTERN = /^\d+$/;
 const STATION_EXPRESS_RECEIPT_AGENTS = new Set(["openclaw", "hermes", "langchain-deepagents-code"]);
-const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set(["restricted", "balanced", "open"]);
+const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set([
+  "restricted",
+  "balanced",
+  "open",
+  "personal",
+]);
+// Mirrors validate_station_install_mode() in scripts/install.sh.
+const STATION_EXPRESS_RECEIPT_MODES = new Set(["express", "provider"]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -233,8 +240,22 @@ function lstatOrNull(candidate: string): fs.Stats | null {
 
 function assertOwnerOnlyDirectory(candidate: string, stat: fs.Stats): void {
   const uid = process.getuid?.();
-  if (!stat.isDirectory() || uid === undefined || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
-    throw new Error(`Refusing non-owner-only DGX Station Express resume directory: ${candidate}`);
+  if (!stat.isDirectory()) {
+    throw new Error(
+      `Refusing NemoClaw installer resume path that is not a directory: ${candidate}`,
+    );
+  }
+  if (uid === undefined || stat.uid !== uid) {
+    throw new Error(
+      `Refusing NemoClaw installer resume directory that is not owned by the current user: ${candidate}`,
+    );
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    const mode = (stat.mode & 0o7777).toString(8).padStart(4, "0");
+    throw new Error(
+      `NemoClaw installer resume directory has mode ${mode}; expected 0700: ${candidate}. ` +
+        'After you verify ownership, run `chmod 700 -- "$HOME/.nemoclaw"` for the default state directory.',
+    );
   }
 }
 
@@ -260,14 +281,17 @@ function assertStationExpressClearStatePathSafe(paths: StationExpressReceiptPath
     if (stat.isSymbolicLink()) {
       throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
     }
-    const isLegacyStateBase = candidate === paths.stateBase && (stat.mode & 0o7777) === 0o755;
+    const isLegacyStateBase =
+      candidate === paths.stateBase && stat.isDirectory() && (stat.mode & 0o7777) === 0o755;
     if (!isLegacyStateBase) {
       assertOwnerOnlyDirectory(candidate, stat);
       continue;
     }
     const uid = process.getuid?.();
-    if (!stat.isDirectory() || uid === undefined || stat.uid !== uid) {
-      throw new Error(`Refusing non-owner-only DGX Station Express resume directory: ${candidate}`);
+    if (uid === undefined || stat.uid !== uid) {
+      throw new Error(
+        `Refusing NemoClaw installer resume directory that is not owned by the current user: ${candidate}`,
+      );
     }
   }
 }
@@ -341,7 +365,30 @@ function readStationExpressInstallerResumeGeneration(stateFile: string): string 
       lines[7].slice("dashboard_port=".length),
       lines[8].slice("vllm_port=".length),
     );
-  if (!legacyFormat && !currentFormat && !portFormat) {
+  // The current installer appends a tenth `mode=` field after the nine
+  // port-bound fields (scripts/install.sh save_station_express_resume). Accept
+  // that exact shape so completeSession() can validate and retire the receipt
+  // the same installer wrote, while still rejecting an unknown/expanded mode.
+  const modeFormat =
+    lines.length === 11 &&
+    lines[10] === "" &&
+    lines[3]?.startsWith("agent=") &&
+    STATION_EXPRESS_RECEIPT_AGENTS.has(lines[3].slice("agent=".length)) &&
+    lines[4]?.startsWith("sandbox=") &&
+    validSandboxName(lines[4].slice("sandbox=".length)) &&
+    lines[5]?.startsWith("policy_tier=") &&
+    STATION_EXPRESS_RECEIPT_POLICY_TIERS.has(lines[5].slice("policy_tier=".length)) &&
+    lines[6]?.startsWith("gateway_port=") &&
+    lines[7]?.startsWith("dashboard_port=") &&
+    lines[8]?.startsWith("vllm_port=") &&
+    validReceiptPorts(
+      lines[6].slice("gateway_port=".length),
+      lines[7].slice("dashboard_port=".length),
+      lines[8].slice("vllm_port=".length),
+    ) &&
+    lines[9]?.startsWith("mode=") &&
+    STATION_EXPRESS_RECEIPT_MODES.has(lines[9].slice("mode=".length));
+  if (!legacyFormat && !currentFormat && !portFormat && !modeFormat) {
     throw new Error("DGX Station Express installer resume state is malformed.");
   }
   const revision = lines[0]?.startsWith("revision=") ? lines[0].slice("revision=".length) : "";
@@ -1049,7 +1096,7 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
           deps.clearInstallerResume();
         } catch (error) {
           deps.error(
-            `  Could not discard DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
+            `  Could not discard NemoClaw installer resume state: ${error instanceof Error ? error.message : String(error)}`,
           );
           deps.exitProcess(1);
         }

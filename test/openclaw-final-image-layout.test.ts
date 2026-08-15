@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -39,6 +40,7 @@ describe("OpenClaw final image layout", () => {
     const stages = dockerfile.split(/(?=^FROM )/mu).filter((stage) => stage.startsWith("FROM "));
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
+    const entrypoint = fs.readFileSync(path.join(ROOT, "scripts", "nemoclaw-start.sh"), "utf-8");
     const payloads = [
       {
         stage: "openclaw-dependency-payload",
@@ -54,6 +56,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
           "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
+          "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts",
           "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
         ],
       },
@@ -71,8 +74,12 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts",
           "COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts",
           "COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts",
+          "COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts",
+          "COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts",
           "COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts",
+          "COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts",
           "COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts",
+          "COPY scripts/openclaw/patch-gateway-daemon-dialback.mts /usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts",
           "COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver",
           "COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts",
           "COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts",
@@ -89,11 +96,13 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py",
           "COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
+          "COPY agents/openclaw/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json",
           "COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start",
           "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
-          "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
+          "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
+          "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
           "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/",
@@ -112,11 +121,25 @@ describe("OpenClaw final image layout", () => {
     const pluginCopy = "COPY --from=openclaw-plugin-payload / /";
     const patchCopy = "COPY --from=openclaw-patch-payload / /";
     const runtimeCopy = "COPY --from=openclaw-runtime-payload / /";
-    const scanCopy =
-      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(hasBuildKitRunMount(dockerfile)).toBe(false);
+    expect(hasBuildKitRunMount(finalStage)).toBe(true);
+    expect(finalStage.match(/^RUN[^\n]*--mount[^\n]*/gmu)).toEqual([
+      "RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro set -eu; \\",
+      "RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \\",
+    ]);
+    expectManagedBootstrapNativeImageContract(dockerfile);
+    expect(finalStage).not.toMatch(/^\s*ENV\b[^\n]*(?:\\\n[^\n]*)*NODE_OPTIONS=/mu);
+    expect(finalStage).toContain(
+      "RUN --network=default if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
+    );
+    expect(finalStage).toContain(
+      "    NODE_OPTIONS=--dns-result-order=ipv4first \\\n        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
+    );
+    expect(entrypoint).toContain('export NODE_OPTIONS="--dns-result-order=ipv4first"');
+    expect(
+      indexOfRequired(entrypoint, 'export NODE_OPTIONS="--dns-result-order=ipv4first"'),
+    ).toBeLessThan(indexOfRequired(entrypoint, "# managed-entrypoint-env-wrapper begin"));
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
       expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
@@ -126,20 +149,28 @@ describe("OpenClaw final image layout", () => {
       "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
       dependencyCopy,
       "COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/",
+      "COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh",
+      "COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/",
       pluginCopy,
+      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
       patchCopy,
+      "COPY --from=codex-acp-runtime /usr/local/lib/node_modules/@zed-industries/ /usr/local/lib/node_modules/@zed-industries/",
+      "COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp",
       runtimeCopy,
-      scanCopy,
     ]);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
+      "/scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",
       "/opt/nemoclaw/openclaw.plugin.json 'root:root:644'",
       "/usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755'",
+      "/usr/local/lib/nemoclaw/patch-openclaw-gateway-daemon-dialback.mts 'root:root:755'",
+      "/usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755'",
+      "/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root:700'",
       "/usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500'",
+      "/usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
-      "/scripts/checks/node-tar-image-scan.mts 'root:root:755'",
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
     }
@@ -148,23 +179,41 @@ describe("OpenClaw final image layout", () => {
     const plugin = indexOfRequired(finalStage, pluginCopy);
     const patch = indexOfRequired(finalStage, patchCopy);
     const runtime = indexOfRequired(finalStage, runtimeCopy);
-    const scan = indexOfRequired(finalStage, scanCopy);
     const tarPatch = indexOfRequired(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
     const braceExpansionPatch = indexOfRequired(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
-    const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const ipAddressPatch = indexOfRequired(
+      finalStage,
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+    );
+    const dependencyInstall = indexOfRequired(
+      finalStage,
+      "NODE_OPTIONS=--dns-result-order=ipv4first \\\n        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev",
+    );
+    const managedMessagingUnionInstall = indexOfRequired(
+      finalStage,
+      "--agent openclaw --phase managed-image-capability-union",
+    );
+    const messagingPostInstall = indexOfRequired(
+      finalStage,
+      "--agent openclaw --phase post-agent-install",
+    );
+    const neutralConfigRegeneration = indexOfRequired(
+      finalStage,
+      "# A managed image is a neutral capability carrier",
+    );
     const pluginChmod = indexOfRequired(
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/",
     );
     const wechatInstall = indexOfRequired(
       finalStage,
-      "RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime",
+      "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
     );
     const patchChmod = indexOfRequired(
       finalStage,
@@ -179,12 +228,21 @@ describe("OpenClaw final image layout", () => {
       "&& install -d -o root -g root -m 0755 /run/nemoclaw",
     );
     const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
-    const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
 
     expect(dependency).toBeLessThan(tarPatch);
     expect(tarPatch).toBeLessThan(braceExpansionPatch);
-    expect(plugin).toBeGreaterThan(pluginInstall);
+    expect(braceExpansionPatch).toBeLessThan(ipAddressPatch);
+    expect(plugin).toBeGreaterThan(dependencyInstall);
     expect(plugin).toBeLessThan(pluginChmod);
+    expect(managedMessagingUnionInstall).toBeLessThan(messagingPostInstall);
+    expect(messagingPostInstall).toBeLessThan(neutralConfigRegeneration);
+    expect(finalStage.slice(neutralConfigRegeneration)).toContain(
+      "openclaw config validate --json",
+    );
+    expect(finalStage).toContain("packageManifest.openclaw?.channel?.id");
+    expect(finalStage).toContain("if (!fs.existsSync(packagePath)) return []");
+    expect(finalStage).toContain('channelId === "imessage"');
+    expect(finalStage).toContain("bundled OpenClaw channel is not neutral");
     expect(patch).toBeGreaterThan(wechatInstall);
     expect(patch).toBeLessThan(patchChmod);
     expect(runtime).toBeGreaterThan(blueprintSetup);
@@ -192,9 +250,11 @@ describe("OpenClaw final image layout", () => {
     expect(managedRuntimeDirectory).toBeLessThan(runtimeChmod);
     expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain(
-      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+    );
+    expect(dockerfile).not.toContain(
+      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
     );
     expect(runtime).toBeLessThan(runtimeChmod);
-    expect(scan).toBeLessThan(metadataCheck);
   });
 });

@@ -11,11 +11,24 @@ import {
   validateE2EPhasePlan,
 } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
 import {
   bestEffortPreclean,
   cleanupTurnSandboxes,
   installSandbox,
+  turnLatencyInstallAttemptCount,
 } from "../live/agent-turn-latency-helpers.ts";
+
+function fakeInference(apiKey = "secret-api-key"): AgentTurnInference {
+  return {
+    mode: "internal-nvidia",
+    model: "test-model",
+    provider: "custom",
+    expectedRouteProvider: "compatible-endpoint",
+    env: (extra = {}) => ({ ...extra, COMPATIBLE_API_KEY: apiKey }),
+    redactionValues: () => [apiKey],
+  };
+}
 
 function progressHarness() {
   const state = {
@@ -74,6 +87,18 @@ function failedProbe(stderr: string, timedOut = false): ShellProbeResult {
 describe("live test progress", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("rejects invalid configured install attempt counts", () => {
+    expect(turnLatencyInstallAttemptCount(undefined)).toBe(2);
+    for (let expected = 1; expected <= 10; expected += 1) {
+      expect(turnLatencyInstallAttemptCount(String(expected))).toBe(expected);
+    }
+    for (const value of ["0", "-1", "abc", "01", "11"]) {
+      expect(() => turnLatencyInstallAttemptCount(value)).toThrow(
+        /NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS must be an integer between 1 and 10/u,
+      );
+    }
   });
 
   it("reports semantic transitions and adds command-safe evidence only after a stall", () => {
@@ -204,7 +229,7 @@ describe("live test progress", () => {
       host,
       "e2e-openclaw-turn-latency",
       "openclaw",
-      "secret-api-key",
+      fakeInference(),
       undefined,
       progress,
     );
@@ -244,7 +269,7 @@ describe("live test progress", () => {
       host,
       "e2e-openclaw-turn-latency",
       "openclaw",
-      "secret-api-key",
+      fakeInference(),
       cleanupBeforeRetry,
       progress,
     );
@@ -298,7 +323,7 @@ describe("live test progress", () => {
         host,
         "e2e-openclaw-turn-latency",
         "openclaw",
-        "secret-api-key",
+        fakeInference(),
         cleanupBeforeRetry,
         progress,
       ),
@@ -329,7 +354,7 @@ describe("live test progress", () => {
       onOutput: vi.fn(),
     };
 
-    await cleanupTurnSandboxes(host, sandbox, progress);
+    await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
 
     expect(command).toHaveBeenCalledTimes(2);
     expect(openshell).toHaveBeenCalledTimes(4);

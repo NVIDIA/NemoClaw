@@ -11,6 +11,7 @@ import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../manage
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   createManagedBootstrapPreparedAuthority,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapDurablePreparationReceipt,
@@ -18,6 +19,7 @@ import {
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapPreparedReplacementHandle,
   type ManagedBootstrapReplacementHandle,
+  sameManagedBootstrapCompletionReceipt,
 } from "./adapter";
 import type { DockerManagedBootstrapDeps } from "./docker";
 import {
@@ -26,11 +28,12 @@ import {
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalPhase,
   type DockerManagedBootstrapJournalStore,
+  serializeDockerManagedBootstrapFinalizationRecord,
 } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
-  parseManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
 
@@ -41,7 +44,7 @@ const CONFIG_ID = `sha256:${"4".repeat(64)}`;
 const MANIFEST = `sha256:${"5".repeat(64)}` as const;
 const REPOSITORY = "registry.example/nemoclaw/hermes";
 const IMAGE = `${REPOSITORY}@${MANIFEST}`;
-const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "supervise"] as const;
+const SUPERVISOR = ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"] as const;
 export const SUPPORTED_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 
 type FixtureCommandResult = {
@@ -58,6 +61,8 @@ export type DockerFixtureAcknowledgement =
   | "container:stop"
   | "journal:create"
   | "journal:cutover"
+  | "journal:completion"
+  | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
   | "journal:staged"
@@ -65,7 +70,10 @@ export type DockerFixtureAcknowledgement =
 
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
+  readonly dockerCliSerializationDefaults?: boolean;
   readonly dockerRemoveFailures?: readonly Error[];
+  readonly dockerRemoveResults?: readonly FixtureCommandResult[];
+  readonly dockerInspectUnknownIds?: readonly string[];
   readonly dockerStartResults?: Readonly<Record<string, FixtureCommandResult>>;
   readonly journalCreateFailures?: readonly Error[];
   readonly journalRemoveFailures?: readonly Error[];
@@ -74,7 +82,10 @@ export type DockerFixtureOptions = {
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
+  readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
+  readonly sharedStateCommitResult?: FixtureCommandResult;
+  readonly sharedReceiptClearFailures?: readonly Error[];
 };
 
 function agentInputs(agent: ManagedStartupAgent = "hermes") {
@@ -92,6 +103,7 @@ function agentInputs(agent: ManagedStartupAgent = "hermes") {
     request.profileFingerprint,
     "--bootstrap-identity",
     IDENTITY,
+    "--",
   ] as const;
   return {
     request,
@@ -107,10 +119,6 @@ export const sandbox = {
   driverId: "docker",
 };
 
-function shellArgv(argv: readonly string[]): string {
-  return argv.join(" ");
-}
-
 function originalInspect(inputs = agentInputs()): DockerContainerInspect {
   return {
     Id: OLD_ID,
@@ -118,7 +126,14 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
     Name: "/openshell-alpha",
     Config: {
       Image: IMAGE,
-      Env: ["A=1", `OPENSHELL_SANDBOX_COMMAND=${shellArgv(inputs.heldArgv)}`],
+      Env: [
+        "A=1",
+        `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${IDENTITY}`,
+        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
+        "OPENSHELL_OCI_IMAGE_USER=root",
+        "OPENSHELL_SANDBOX_UID=",
+        "OPENSHELL_SANDBOX_GID=",
+      ],
       Labels: {
         "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-name": "alpha",
@@ -127,8 +142,8 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
       },
       Entrypoint: [SUPERVISOR[0]],
       Cmd: SUPERVISOR.slice(1),
-      User: "root",
-      WorkingDir: "/sandbox",
+      User: "0",
+      WorkingDir: "/",
       Hostname: "alpha",
     },
     State: { Running: true, Paused: false, Restarting: false, Dead: false },
@@ -155,7 +170,7 @@ export function authority(agent: ManagedStartupAgent = "hermes") {
     image: { repository: REPOSITORY, manifestDigest: MANIFEST },
     profile: { agent, fingerprint: inputs.request.profileFingerprint },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-    intendedWorkloadArgv: ["env", "A=1", "nemoclaw-start"],
+    intendedWorkloadArgv: ["env", "A=1", "/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: SUPERVISOR,
     metadata: inputs.metadata,
   };
@@ -189,36 +204,40 @@ function failFixture(message: string): never {
   throw new Error(message);
 }
 
-function readProtectedEnvelope(source: string): ReturnType<typeof parseManagedBootstrapEnvelope> {
-  const noFollow = fs.constants.O_NOFOLLOW;
-  if (typeof noFollow !== "number") throw new Error("test requires O_NOFOLLOW");
-  const descriptor = fs.openSync(source, fs.constants.O_RDONLY | noFollow);
-  try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    expect(Number(before.mode & 0o777n)).toBe(0o400);
-    const parsed = parseManagedBootstrapEnvelope(fs.readFileSync(descriptor, "utf8"));
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    expect(after.dev).toBe(before.dev);
-    expect(after.ino).toBe(before.ino);
-    expect(after.size).toBe(before.size);
-    expect(after.mtimeNs).toBe(before.mtimeNs);
-    expect(after.ctimeNs).toBe(before.ctimeNs);
-    return parsed;
-  } finally {
-    fs.closeSync(descriptor);
-  }
+export function parseFixtureDockerUlimits(
+  args: readonly string[],
+  imageIndex: number,
+): NonNullable<DockerContainerInspect["HostConfig"]>["Ulimits"] {
+  return args.slice(0, imageIndex).flatMap((value, index) => {
+    const match =
+      value === "--ulimit"
+        ? /^([a-z][a-z0-9_]*)=(-?\d+):(-?\d+)$/u.exec(String(args[index + 1] ?? ""))
+        : null;
+    return match ? [{ Name: match[1], Soft: Number(match[2]), Hard: Number(match[3]) }] : [];
+  });
 }
 
 export function fixture(options: DockerFixtureOptions = {}) {
-  let original = originalInspect(agentInputs(options.agent));
+  let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
+  if (options.dockerCliSerializationDefaults) {
+    Object.assign(original.Config!, {
+      AttachStdin: false,
+      AttachStdout: false,
+      AttachStderr: false,
+    });
+    Object.assign(original.HostConfig!, { PortBindings: null });
+  }
   let replacement: DockerContainerInspect | null = null;
   let journal: DockerManagedBootstrapJournal | null = null;
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
   const events: string[] = [];
   const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
+  const dockerRemoveResults = [...(options.dockerRemoveResults ?? [])];
   const journalCreateFailures = [...(options.journalCreateFailures ?? [])];
   const journalRemoveFailures = [...(options.journalRemoveFailures ?? [])];
+  const sharedReceiptClearFailures = [...(options.sharedReceiptClearFailures ?? [])];
+  const dockerInspectUnknownIds = new Set(options.dockerInspectUnknownIds ?? []);
   const lostAcknowledgements = new Set(options.lostAcknowledgements ?? []);
   const losesAcknowledgement = (operation: DockerFixtureAcknowledgement) =>
     lostAcknowledgements.has(operation);
@@ -226,6 +245,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   const copyJournal = () => (journal ? structuredClone(journal) : null);
   const store: DockerManagedBootstrapJournalStore = {
     create(value) {
+      void (journal === null ? journal : failFixture("managed bootstrap journal already exists"));
       journal = structuredClone(value);
       events.push("journal:staged");
       const injectedFailure = journalCreateFailures.shift();
@@ -242,7 +262,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
-    listUnfinished: () => (journal ? [structuredClone(journal)] : []),
+    listUnfinishedIdentities: () => (journal ? [journal.bootstrapIdentity] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
@@ -265,12 +285,17 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
       if (
         journal.commitReceipt !== null &&
-        JSON.stringify(journal.commitReceipt) !== JSON.stringify(receipt)
+        !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, receipt)
       ) {
         throw new Error("completion changed");
       }
       journal = { ...journal, commitReceipt: structuredClone(receipt) };
       events.push("journal:completion");
+      if (losesAcknowledgement("journal:completion")) {
+        throw new DockerManagedBootstrapJournalAcknowledgementLostError(
+          "lost journal completion acknowledgement",
+        );
+      }
       return structuredClone(journal);
     },
     remove(_identity, expected) {
@@ -294,7 +319,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     recordFinalization(value) {
-      if (finalization && JSON.stringify(finalization) !== JSON.stringify(value)) {
+      if (
+        finalization &&
+        serializeDockerManagedBootstrapFinalizationRecord(finalization) !==
+          serializeDockerManagedBootstrapFinalizationRecord(value)
+      ) {
         throw new Error("finalization changed");
       }
       finalization = structuredClone(value);
@@ -321,29 +350,45 @@ export function fixture(options: DockerFixtureOptions = {}) {
     }
   });
   const dockerRun: NonNullable<DockerManagedBootstrapDeps["dockerRun"]> = vi.fn(
-    (args: readonly string[]) => {
+    (args: readonly string[], commandOptions?: Record<string, unknown>) => {
       switch (args[0]) {
         case "create": {
           events.push("create:replacement");
+          const source =
+            original ?? failFixture("original disappeared before replacement creation");
           const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
-          const env = args.flatMap((value, index) =>
+          const dockerOptions = args.slice(0, imageIndex);
+          const env = dockerOptions.flatMap((value, index) =>
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
+          const ulimits = parseFixtureDockerUlimits(args, imageIndex);
           replacement = {
-            ...structuredClone(original),
+            ...structuredClone(source),
             Id: NEW_ID,
             Name: `/${name}`,
             Config: {
-              ...structuredClone(original.Config),
+              ...structuredClone(source.Config),
               Image: IMAGE,
-              Env: env,
+              Env: [...(options.replacementEnvironment?.(env) ?? env)],
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
             },
+            HostConfig: {
+              ...structuredClone(source.HostConfig),
+              Ulimits: ulimits,
+            },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };
+          if (options.dockerCliSerializationDefaults) {
+            Object.assign(replacement.Config!, {
+              AttachStdin: args.includes("stdin"),
+              AttachStdout: true,
+              AttachStderr: true,
+            });
+            Object.assign(replacement.HostConfig!, { PortBindings: {} });
+          }
           return losesAcknowledgement("container:create")
             ? { status: 1, stdout: "", stderr: "lost create acknowledgement" }
             : ok(NEW_ID);
@@ -352,6 +397,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
           return ok(original ? OLD_ID : "");
         case "inspect": {
           const id = String(args[3] ?? "");
+          if (dockerInspectUnknownIds.has(id)) {
+            return { status: 1, stderr: `injected unknown inspect state for ${id}` };
+          }
           try {
             inspect(id);
             return ok(`[{"Id":"${id}"}]`);
@@ -365,7 +413,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const destination = String(args[sourceIndex + 1] ?? "");
           const copyIntoContainer = () => {
             events.push("stage:envelope");
-            expect(readProtectedEnvelope(source).bootstrapIdentity).toBe(IDENTITY);
+            expect(args).toEqual(["cp", "-", `${NEW_ID}:/`]);
+            expect(commandOptions?.stdio).toEqual(["pipe", "pipe", "pipe"]);
+            expect(commandOptions?.input).toEqual(
+              serializeManagedBootstrapEnvelopeTar({
+                bootstrapIdentity: IDENTITY,
+                rootApplyRequest: agentInputs(options.agent).request,
+              }),
+            );
             return ok();
           };
           const copyFromContainer = () => {
@@ -409,11 +464,17 @@ export function fixture(options: DockerFixtureOptions = {}) {
           break;
         case "exec":
           switch (true) {
-            case args.includes("--commit-shared-state-transaction"):
-              sharedState = "committed";
+            case args.includes("--commit-shared-state-transaction"): {
+              const result = options.sharedStateCommitResult ?? ok();
+              sharedState = result.status === 0 ? "committed" : sharedState;
               events.push("shared:commit");
-              return ok();
+              return result;
+            }
             case args.includes("--clear-shared-state-commit-receipt"):
+              {
+                const injectedFailure = sharedReceiptClearFailures.shift();
+                if (injectedFailure) throw injectedFailure;
+              }
               sharedState = "none";
               events.push("shared:clear");
               return ok();
@@ -433,7 +494,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       [target]
         .filter((value): value is DockerContainerInspect => value?.State !== undefined)
         .forEach((value) => {
-          value.State = { ...value.State, Running: false };
+          value.State = { ...value.State, Running: false, Restarting: false };
         });
       return losesAcknowledgement("container:stop")
         ? { status: 1, stderr: "lost stop acknowledgement" }
@@ -476,17 +537,21 @@ export function fixture(options: DockerFixtureOptions = {}) {
         default:
           throw injectedFailure;
       }
-      switch (id) {
-        case OLD_ID:
-          original = null as unknown as DockerContainerInspect;
-          break;
-        case NEW_ID:
-          replacement = null;
-          break;
+      const result = dockerRemoveResults.shift() ?? ok();
+      switch (result.status) {
+        case 0:
+          switch (id) {
+            case OLD_ID:
+              original = null;
+              break;
+            case NEW_ID:
+              replacement = null;
+              break;
+          }
       }
       return losesAcknowledgement("container:remove")
         ? { status: 1, stderr: "lost rm acknowledgement" }
-        : ok();
+        : result;
     }),
     runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
     runOpenshell: vi.fn(() => ok()),
@@ -509,6 +574,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
     },
     get sharedState() {
       return sharedState;
+    },
+    removeOriginalExternally() {
+      original = null as unknown as DockerContainerInspect;
+      events.push(`external-rm:${OLD_ID}`);
+    },
+    setDockerInspectUnknown(runtimeId: string, indeterminate: boolean) {
+      if (indeterminate) dockerInspectUnknownIds.add(runtimeId);
+      else dockerInspectUnknownIds.delete(runtimeId);
     },
   };
 }

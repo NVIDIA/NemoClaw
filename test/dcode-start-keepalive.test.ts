@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+
 const START_SCRIPT = path.join(
   import.meta.dirname,
   "..",
@@ -14,16 +16,7 @@ const START_SCRIPT = path.join(
   "langchain-deepagents-code",
   "start.sh",
 );
-const ENTRYPOINT_ENV_WRAPPER = path.join(
-  import.meta.dirname,
-  "..",
-  "scripts",
-  "lib",
-  "entrypoint-env-wrapper.sh",
-);
 
-// start.sh hardcodes this runtime-env path; clean it up so the test is hermetic.
-const RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
 const tempDirs: string[] = [];
 
 type RlimitHelperInstaller = (helperPath: string, markerPath: string, tempDir: string) => void;
@@ -67,46 +60,19 @@ function makeStartFixture(options: { installRlimitHelper?: RlimitHelperInstaller
 } {
   const installRlimitHelper = options.installRlimitHelper ?? installDefaultRlimitHelper;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-keepalive-"));
-  const scriptPath = path.join(tempDir, "start.sh");
-  const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
   const rlimitMarker = path.join(tempDir, "rlimits-hardened");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
-  const fixture = fs
-    .readFileSync(START_SCRIPT, "utf8")
-    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER)
-    .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
-    )
-    .replace("../../scripts/lib/sandbox-rlimits.sh", "missing-dev-sandbox-rlimits.sh");
-  fs.writeFileSync(hostFile, "10.200.0.1\n");
-  fs.writeFileSync(portFile, "3128\n");
-  installRlimitHelper(rlimitLib, rlimitMarker, tempDir);
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
-  fs.writeFileSync(scriptPath, fixture);
-  fs.chmodSync(scriptPath, 0o755);
+  const { scriptPath } = makeStartScriptFixture(tempDir, {
+    installRlimitHelper: (rlimitLib) => installRlimitHelper(rlimitLib, rlimitMarker, tempDir),
+  });
   tempDirs.push(tempDir);
   return { scriptPath, rlimitMarker };
 }
 
 afterEach(() => {
-  fs.rmSync(RUNTIME_ENV_FILE, { force: true });
   for (const tempDir of tempDirs.splice(0)) fs.rmSync(tempDir, { force: true, recursive: true });
 });
 
 describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
-  // source-shape-contract: compatibility -- Executes the shipped entrypoint to protect no-command sandbox liveness
   it("stays alive as a long-running process when invoked with no command", () => {
     // The terminal-runtime sandbox runs this entrypoint with no args as its
     // sole foreground process. It must NOT exit on its own — a self-exiting
@@ -134,7 +100,6 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\nverified\n");
   });
 
-  // source-shape-contract: compatibility -- Executes the shipped entrypoint to protect explicit command delegation
   it("execs an explicitly supplied command instead of idling", () => {
     const { scriptPath, rlimitMarker } = makeStartFixture();
     const result = spawnSync(scriptPath, ["printf", "RAN_CMD"], {
@@ -147,7 +112,6 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\nverified\n");
   });
 
-  // source-shape-contract: security -- Executes the shipped entrypoint to prove missing rlimit enforcement fails closed
   it("refuses to launch when the required rlimit helper is missing (#6545)", () => {
     const { scriptPath, rlimitMarker } = makeStartFixture({
       installRlimitHelper: () => undefined,
@@ -166,7 +130,6 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.existsSync(rlimitMarker)).toBe(false);
   });
 
-  // source-shape-contract: security -- Executes the shipped entrypoint to prove ineffective rlimits fail closed
   it("refuses to launch when effective rlimits fail verification (#6545)", () => {
     const { scriptPath, rlimitMarker } = makeStartFixture({
       installRlimitHelper: installFailingVerificationRlimitHelper,

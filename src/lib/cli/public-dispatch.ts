@@ -128,12 +128,19 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   );
 }
 
+function registeredSandboxNames(): string[] {
+  const registryApi = registry();
+  // Suggestions must use the same registered sandbox inventory as `list` and global `status`.
+  // Onboarding retains route-only reservations so an interrupted onboarding session can resume,
+  // but these reservations are not registered sandboxes.
+  return registryApi
+    .listSandboxes()
+    .sandboxes.filter((sandbox) => !registryApi.isRouteOnlySandboxReservation(sandbox))
+    .map((sandbox) => sandbox.name);
+}
+
 function findRegisteredSandboxName(tokens: string[]): string | null {
-  const registered = new Set(
-    registry()
-      .listSandboxes()
-      .sandboxes.map((s: { name: string }) => s.name),
-  );
+  const registered = new Set(registeredSandboxNames());
   return tokens.find((token) => registered.has(token)) || null;
 }
 
@@ -279,9 +286,7 @@ async function recoverRequestedSandboxIfNeeded(
   }
 
   console.error(`  Sandbox '${sandboxName}' does not exist.`);
-  const allNames = registry()
-    .listSandboxes()
-    .sandboxes.map((s: { name: string }) => s.name);
+  const allNames = registeredSandboxNames();
   if (allNames.length > 0) {
     const nameSuggestion = suggestSandboxName(sandboxName, allNames);
     if (nameSuggestion) {
@@ -454,9 +459,7 @@ function printUnknownSandboxOrCommand(cmd: string): never {
   console.error("");
 
   // Check if it looks like a sandbox name with missing action
-  const allNames = registry()
-    .listSandboxes()
-    .sandboxes.map((s: { name: string }) => s.name);
+  const allNames = registeredSandboxNames();
   if (allNames.length > 0) {
     const nameSuggestion = suggestSandboxName(cmd, allNames);
     if (nameSuggestion) {

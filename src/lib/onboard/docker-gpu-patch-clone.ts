@@ -10,6 +10,12 @@ import type {
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
+const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
+const OPENSHELL_V0_0_99_WORKDIR_COMMAND = ["--workdir", "/sandbox"] as const;
+const OPENSHELL_OCI_IMAGE_USER_ENV = "OPENSHELL_OCI_IMAGE_USER";
+const OPENSHELL_SANDBOX_UID_ENV = "OPENSHELL_SANDBOX_UID";
+const OPENSHELL_SANDBOX_GID_ENV = "OPENSHELL_SANDBOX_GID";
+const NEMOCLAW_STARTUP_EXECUTABLES = new Set(["nemoclaw-start", "/usr/local/bin/nemoclaw-start"]);
 const GPU_ENV_KEYS = new Set([
   "NVIDIA_VISIBLE_DEVICES",
   "NVIDIA_DRIVER_CAPABILITIES",
@@ -242,6 +248,12 @@ function pushNumberFlag(args: string[], flag: string, value: unknown): void {
   }
 }
 
+function pushNonZeroIntegerFlag(args: string[], flag: string, value: unknown): void {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value !== 0) {
+    args.push(flag, String(value));
+  }
+}
+
 function dockerCpusFromNanoCpus(nanoCpus: number): string {
   return (nanoCpus / 1_000_000_000).toFixed(3).replace(/\.?0+$/, "");
 }
@@ -299,6 +311,14 @@ export function sameContainerId(
   return left.startsWith(right) || right.startsWith(left);
 }
 
+/** Return only a complete Docker container ID that is safe for exact-ID cleanup. */
+export function fullDockerContainerId(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
 function dockerNetworkAliases(
   inspect: DockerContainerInspect,
   networkMode: string | null | undefined,
@@ -317,6 +337,112 @@ function dockerNetworkAliases(
     .map((alias) => alias.trim())
     .filter(Boolean)
     .filter((alias) => !sameContainerId(alias, containerId));
+}
+
+function exactArrayEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function exactEnvironmentEntries(environment: readonly string[], key: string): string[] {
+  return environment.filter((entry) => envKey(entry) === key);
+}
+
+function isExactNemoClawOciWorkspaceBoundary(
+  config: NonNullable<DockerContainerInspect["Config"]>,
+  intendedWorkloadArgv: readonly string[] | null | undefined,
+): boolean {
+  const entrypoint = stringArray(config.Entrypoint);
+  const configuredCommand = stringArray(config.Cmd);
+  const labels = config.Labels ?? {};
+  const startupExecutable = intendedWorkloadArgv?.at(-1);
+  return (
+    config.User === "0" &&
+    config.WorkingDir === "/" &&
+    exactArrayEqual(entrypoint, [OPENSHELL_SANDBOX_ENTRYPOINT]) &&
+    (configuredCommand.length === 0 ||
+      exactArrayEqual(configuredCommand, OPENSHELL_V0_0_99_WORKDIR_COMMAND)) &&
+    labels["openshell.ai/managed-by"] === "openshell" &&
+    typeof startupExecutable === "string" &&
+    NEMOCLAW_STARTUP_EXECUTABLES.has(startupExecutable)
+  );
+}
+
+function validateOpenShellOciIdentityMetadata(environment: readonly string[]): boolean {
+  const ociUsers = exactEnvironmentEntries(environment, OPENSHELL_OCI_IMAGE_USER_ENV);
+  const sandboxUids = exactEnvironmentEntries(environment, OPENSHELL_SANDBOX_UID_ENV);
+  const sandboxGids = exactEnvironmentEntries(environment, OPENSHELL_SANDBOX_GID_ENV);
+  if (ociUsers.length === 0 && sandboxUids.length === 0 && sandboxGids.length === 0) {
+    // OpenShell through v0.0.85 did not publish OCI identity metadata.
+    return false;
+  }
+  if (
+    ociUsers.length === 0 &&
+    sandboxUids.length === 1 &&
+    sandboxUids[0] === `${OPENSHELL_SANDBOX_UID_ENV}=` &&
+    sandboxGids.length === 1 &&
+    sandboxGids[0] === `${OPENSHELL_SANDBOX_GID_ENV}=`
+  ) {
+    // A prior reviewed recreation already removed only the OCI-user marker.
+    return false;
+  }
+  const ociUserPrefix = `${OPENSHELL_OCI_IMAGE_USER_ENV}=`;
+  if (
+    ociUsers.length !== 1 ||
+    !ociUsers[0]?.startsWith(ociUserPrefix) ||
+    ociUsers[0] === ociUserPrefix ||
+    sandboxUids.length !== 1 ||
+    sandboxUids[0] !== `${OPENSHELL_SANDBOX_UID_ENV}=` ||
+    sandboxGids.length !== 1 ||
+    sandboxGids[0] !== `${OPENSHELL_SANDBOX_GID_ENV}=`
+  ) {
+    throw new Error(
+      "OpenShell workspace identity metadata is not the reviewed Docker compatibility contract.",
+    );
+  }
+  return true;
+}
+
+/**
+ * OpenShell 0.0.99 began using `OPENSHELL_OCI_IMAGE_USER` presence to prepare
+ * its default workspace. That preparation changes the `/sandbox` owner before
+ * the workload starts, which breaks NemoClaw's Shields parent ownership
+ * requirement. The recreated Docker supervisor retains NemoClaw's explicit
+ * sandbox policy, so omitting only this marker replays the pre-0.0.99 workspace
+ * behavior without changing the process identity selected by policy.
+ */
+export function shouldOmitOpenShellOciImageUser(
+  inspect: DockerContainerInspect,
+  intendedWorkloadArgv: readonly string[] | null | undefined,
+): boolean {
+  const config: NonNullable<DockerContainerInspect["Config"]> = inspect.Config ?? {};
+  return isExactNemoClawOciWorkspaceBoundary(config, intendedWorkloadArgv)
+    ? validateOpenShellOciIdentityMetadata(stringArray(config.Env))
+    : false;
+}
+
+function dockerContainerCommandArgs(
+  entrypoint: readonly string[],
+  configuredCommand: readonly string[],
+  sandboxCommand: string | null,
+  commandOverride: readonly string[] | null | undefined,
+): string[] {
+  if (commandOverride != null) return [...commandOverride];
+  if (!sandboxCommand) return [...entrypoint.slice(1), ...configuredCommand];
+
+  // OpenShell through v0.0.85 cleared the image command, while v0.0.99
+  // requires this exact supervisor workdir tuple. Preserve only the reviewed
+  // release contract: replaying arbitrary image-controlled command arguments
+  // at the root supervisor boundary would widen the recreation trust surface.
+  if (!exactArrayEqual(entrypoint, [OPENSHELL_SANDBOX_ENTRYPOINT])) {
+    throw new Error(
+      "OpenShell sandbox supervisor command is not a reviewed restart-safe contract.",
+    );
+  }
+  if (configuredCommand.length === 0) return [];
+  if (exactArrayEqual(configuredCommand, OPENSHELL_V0_0_99_WORKDIR_COMMAND)) {
+    return [...configuredCommand];
+  }
+  throw new Error("OpenShell sandbox supervisor command is not a reviewed restart-safe contract.");
 }
 
 export function buildDockerGpuCloneRunArgs(
@@ -356,11 +482,24 @@ export function buildDockerGpuCloneRunArgs(
   pushStringFlag(args, "--workdir", config.WorkingDir);
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
+  for (const stream of [
+    ...(config.AttachStdin ? ["stdin"] : []),
+    ...(config.AttachStdout ? ["stdout"] : []),
+    ...(config.AttachStderr ? ["stderr"] : []),
+  ]) {
+    args.push("--attach", stream);
+  }
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
+  const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+    inspect,
+    options.openshellSandboxCommand,
+  );
   let sawSandboxCommand = false;
   for (const env of stringArray(config.Env).filter(
-    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
+    (entry) =>
+      (!gpuAugment || !GPU_ENV_KEYS.has(envKey(entry))) &&
+      (!omitOciImageUser || envKey(entry) !== OPENSHELL_OCI_IMAGE_USER_ENV),
   )) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {
@@ -432,6 +571,7 @@ export function buildDockerGpuCloneRunArgs(
   pushNumberFlag(args, "--cpu-quota", host.CpuQuota);
   pushNumberFlag(args, "--cpu-period", host.CpuPeriod);
   pushNumberFlag(args, "--shm-size", host.ShmSize);
+  pushNonZeroIntegerFlag(args, "--pids-limit", host.PidsLimit);
   if (typeof host.NanoCpus === "number" && host.NanoCpus > 0) {
     args.push("--cpus", dockerCpusFromNanoCpus(host.NanoCpus));
   }
@@ -449,11 +589,12 @@ export function buildDockerGpuCloneRunArgs(
   } else if (entrypoint.length > 0) {
     args.push("--entrypoint", entrypoint[0]);
   }
-  const commandArgs = options.containerCommand
-    ? [...options.containerCommand]
-    : sandboxCommand
-      ? []
-      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  const commandArgs = dockerContainerCommandArgs(
+    entrypoint,
+    stringArray(config.Cmd),
+    sandboxCommand,
+    options.containerCommand,
+  );
   args.push(image, ...commandArgs);
   return args;
 }

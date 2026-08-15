@@ -202,7 +202,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 25,
       usage: "nemoclaw <name> channels status",
       description: "Messaging channel status",
-      flags: "[--channel <channel>] [--json]",
+      flags: "[--channel <channel>] [--wait] [--timeout <seconds>] [--json]",
     },
   ],
   ...SANDBOX_MCP_DISPLAY_LAYOUT,
@@ -360,7 +360,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Policy Presets",
       order: 17,
-      flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
+      flags:
+        "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>, --trusted-private-host <host>)",
     },
   ],
   "sandbox:policy:explain": [
@@ -390,16 +391,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Policy Presets",
       order: 21,
+      usage: "nemoclaw <name> policy exclude <key>",
       description: "Exclude a baseline policy entry (persisted, replayed on rebuild)",
-      flags: "(--force, -f, --yes, -y, --dry-run)",
+      flags: "(--force, --yes, -y, --dry-run)",
     },
   ],
   "sandbox:policy:restore": [
     {
       group: "Policy Presets",
       order: 22,
+      usage: "nemoclaw <name> policy restore <key>",
       description: "Restore a previously excluded baseline entry",
-      flags: "(--dry-run)",
+      flags: "(--force, --yes, -y, --dry-run)",
     },
   ],
   "sandbox:rebuild": [
@@ -584,11 +587,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--json]",
     },
   ],
+  launch: [
+    {
+      group: "Sandbox Management",
+      order: 2.6,
+      usage: "nemoclaw launch <name>",
+    },
+  ],
   update: [
     {
       group: "Upgrade",
       order: 40,
-      flags: "(--check, --fresh, --yes|-y)",
+      flags: "(--check, --fresh, --allow-downgrade, --yes|-y)",
     },
   ],
   "upgrade-sandboxes": [
