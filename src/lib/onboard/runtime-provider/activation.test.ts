@@ -267,9 +267,15 @@ describe("runtime provider activation catalog", () => {
     ).toEqual(CANDIDATE_TOPOLOGIES.map(({ providerId }) => providerId));
     expect(
       CANDIDATE_TOPOLOGIES.map(({ providerId }) =>
-        Object.isFrozen(catalog[providerId]?.qualificationAuthority.source.protectedJobs),
+        Object.isFrozen(catalog[providerId]!.qualificationAuthority.source.protectedJobs),
       ),
     ).toEqual([true, true, true]);
+    expect(() => {
+      (
+        catalog[CANDIDATE_TOPOLOGIES[1].providerId]!.qualificationAuthority.source
+          .protectedJobs as unknown as unknown[]
+      ).push({});
+    }).toThrow(TypeError);
   });
 
   it("keeps production selection limited to Docker and Kubernetes (#9143)", () => {
@@ -367,26 +373,26 @@ describe("runtime provider activation catalog", () => {
     );
   });
 
-  it.each(["candidateSha", "baseSha", "workflowSha"] as const)(
-    "rejects qualification authority with different %s source identity (#9143)",
-    (field) => {
-      const candidate = registration();
-      const mismatched = {
-        ...candidate,
-        qualificationAuthority: {
-          ...candidate.qualificationAuthority,
-          source: {
-            ...candidate.qualificationAuthority.source,
-            [field]: "e".repeat(40),
-          },
+  it.each([
+    ["candidate commit", { candidateSha: "e".repeat(40) }],
+    ["trusted base and workflow commit", { baseSha: "e".repeat(40), workflowSha: "e".repeat(40) }],
+  ])("rejects qualification authority with a different %s (#9143)", (_label, sourceOverride) => {
+    const candidate = registration();
+    const mismatched = {
+      ...candidate,
+      qualificationAuthority: {
+        ...candidate.qualificationAuthority,
+        source: {
+          ...candidate.qualificationAuthority.source,
+          ...sourceOverride,
         },
-      } as RuntimeProviderActivationRegistration;
+      },
+    } as RuntimeProviderActivationRegistration;
 
-      expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
-        "does not match the required source identity",
-      );
-    },
-  );
+    expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
+      "does not match the required source identity",
+    );
+  });
 
   it("rejects qualification authority from a different producer workflow (#9143)", () => {
     const candidate = registration();
