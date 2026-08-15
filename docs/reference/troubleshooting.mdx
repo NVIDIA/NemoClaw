@@ -2111,6 +2111,16 @@ Onboarding ends with:
 This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`.
 It covers the readiness wait that follows sandbox creation, including in-sandbox boot, OpenClaw start, and policy load.
 It does not cover the inference probe.
+
+<AgentOnly variant="openclaw,hermes">
+
+For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal.
+Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`.
+NemoClaw keeps waiting only when OpenShell returns its exact `sandbox is not ready` response.
+A missing or malformed ID, or another command failure, stops the wait and follows the ordinary failed-creation cleanup path.
+
+</AgentOnly>
+
 The 180-second default fits typical workstations but can be exceeded when:
 
 - The host is building or uploading the sandbox image for the first time (cold caches, slow link).

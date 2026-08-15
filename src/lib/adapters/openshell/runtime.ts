@@ -28,6 +28,7 @@ type RunnerOptions = {
   includeStderr?: boolean;
   includeStreams?: boolean;
   timeout?: number;
+  killSignal?: NodeJS.Signals;
   maxBuffer?: number;
 };
 
@@ -55,6 +56,7 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     input: opts.input,
     ignoreError: opts.ignoreError,
     timeout: opts.timeout,
+    killSignal: opts.killSignal,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
   });

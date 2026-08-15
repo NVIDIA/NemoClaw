@@ -34,6 +34,7 @@ import type {
   SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
+import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
@@ -110,13 +111,23 @@ type OpenShellSandboxIdentityProbe =
   | { state: "not_ready" }
   | { state: "failed" };
 
+function remainingReadinessProbeTimeout(getRemainingMs: () => number): number | null {
+  const remainingMs = Math.floor(getRemainingMs());
+  return remainingMs > 0 ? Math.min(SANDBOX_RECREATE_PROBE_TIMEOUT_MS, remainingMs) : null;
+}
+
 function probeExactOpenShellSandboxId(
   sandboxName: string,
   deps: SandboxGpuCreateFlowDeps,
+  getRemainingMs: () => number = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
 ): OpenShellSandboxIdentityProbe {
+  const timeout = remainingReadinessProbeTimeout(getRemainingMs);
+  if (timeout === null) return { state: "not_ready" };
   const result = deps.runOpenshell(["sandbox", "get", sandboxName], {
     ignoreError: true,
     suppressOutput: true,
+    timeout,
+    killSignal: "SIGKILL",
   });
   if (result.status === 0 && !result.error) {
     const sandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
@@ -131,14 +142,38 @@ function checkRecreatedSandboxReadyIdentity(
   sandboxName: string,
   expectedSandboxId: string,
   deps: SandboxGpuCreateFlowDeps,
+  getRemainingMs: () => number,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
-  const identity = probeExactOpenShellSandboxId(sandboxName, deps);
+  const identity = probeExactOpenShellSandboxId(sandboxName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
   if (identity.sandboxId !== expectedSandboxId) return "identity_changed";
+  return checkSandboxExecutableReadiness(sandboxName, deps, getRemainingMs);
+}
+
+function checkCreatedSandboxReadyIdentity(
+  sandboxName: string,
+  deps: SandboxGpuCreateFlowDeps,
+  getRemainingMs: () => number,
+): ReturnType<CreatedSandboxReadyIdentityCheck> {
+  const identity = probeExactOpenShellSandboxId(sandboxName, deps, getRemainingMs);
+  if (identity.state === "not_ready") return "not_ready";
+  if (identity.state === "failed") return "probe_failed";
+  return checkSandboxExecutableReadiness(sandboxName, deps, getRemainingMs);
+}
+
+function checkSandboxExecutableReadiness(
+  sandboxName: string,
+  deps: SandboxGpuCreateFlowDeps,
+  getRemainingMs: () => number,
+): ReturnType<CreatedSandboxReadyIdentityCheck> {
+  const timeout = remainingReadinessProbeTimeout(getRemainingMs);
+  if (timeout === null) return "not_ready";
   const result = deps.runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
     ignoreError: true,
     suppressOutput: true,
+    timeout,
+    killSignal: "SIGKILL",
   });
   if (result.status === 0 && !result.error) return "ready";
   return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
@@ -489,9 +524,17 @@ export function createSandboxGpuCreateAttemptRunner(
           ? REPLACEMENT_STABLE_READY_POLLS
           : 1,
       checkReadyIdentity: expectedRecreatedSandboxId
-        ? () =>
-            checkRecreatedSandboxReadyIdentity(input.sandboxName, expectedRecreatedSandboxId, deps)
-        : undefined,
+        ? (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
+            checkRecreatedSandboxReadyIdentity(
+              input.sandboxName,
+              expectedRecreatedSandboxId,
+              deps,
+              getRemainingMs,
+            )
+        : input.terminalAgent
+          ? undefined
+          : (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
+              checkCreatedSandboxReadyIdentity(input.sandboxName, deps, getRemainingMs),
       sleep: deps.sleep,
     });
     if (!readiness.ready) {
