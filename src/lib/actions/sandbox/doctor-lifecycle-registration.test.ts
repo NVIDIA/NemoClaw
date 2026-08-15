@@ -41,6 +41,30 @@ const FAILED_PORTABLE_RUNTIME = {
   timing: { mode: "cold", activationMs: 21, apiMs: 9, totalMs: 30 },
 } satisfies PortablePodmanReadinessResult;
 
+const PORTABLE_ONBOARDING_FAILURES = [
+  {
+    name: "invalid",
+    result: {
+      ok: false,
+      stage: "socket authority",
+      detail: "The portable lifecycle receipt is unsafe or invalid; rerun onboarding.",
+      recovery: "portable-onboarding",
+      timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
+    } satisfies PortablePodmanReadinessResult,
+  },
+  {
+    name: "legacy",
+    result: {
+      ok: false,
+      stage: "socket authority",
+      detail:
+        "The lifecycle receipt predates recorded portable Podman authority; rerun onboarding.",
+      recovery: "portable-onboarding",
+      timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
+    } satisfies PortablePodmanReadinessResult,
+  },
+] as const;
+
 function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
   return {
     name: "alpha",
@@ -88,6 +112,36 @@ describe("doctor lifecycle registration checks", () => {
       hint: "repair the recorded current-user Podman endpoint, then retry",
     });
     expect(receiptReadinessMocks.inspect).toHaveBeenCalledWith("alpha");
+  });
+
+  it.each(PORTABLE_ONBOARDING_FAILURES)(
+    "sends a $name receipt failure to portable onboarding without endpoint repair",
+    ({ result }) => {
+      receiptReadinessMocks.inspect.mockReturnValue(result);
+
+      const check = buildPortableRuntimeCheck("alpha");
+
+      expect(check).toMatchObject({
+        status: "fail",
+        detail: expect.not.stringContaining("Recorded socket"),
+        hint: "rerun portable onboarding with `nemoclaw onboard --experimental-profile portable`, then retry",
+      });
+      expect(check?.hint).not.toContain("endpoint");
+    },
+  );
+
+  it("routes a current-user authority mismatch to its recorded user or current-user onboarding", () => {
+    receiptReadinessMocks.inspect.mockReturnValue({
+      ok: false,
+      stage: "socket authority",
+      detail: "The recorded portable Podman authority does not match the current Linux user.",
+      recovery: "current-user-authority",
+      timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
+    } satisfies PortablePodmanReadinessResult);
+
+    expect(buildPortableRuntimeCheck("alpha")).toMatchObject({
+      hint: "run NemoClaw as the user who created the portable state, or rerun portable onboarding as the current user",
+    });
   });
 
   it("reports a complete managed sandbox registration as ok", () => {

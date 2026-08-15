@@ -66,6 +66,8 @@ export interface PortablePodmanReadinessTiming {
   readonly totalMs: number;
 }
 
+export type PortablePodmanReadinessRecovery = "portable-onboarding" | "current-user-authority";
+
 export type PortablePodmanReadinessResult =
   | {
       readonly ok: true;
@@ -79,6 +81,7 @@ export type PortablePodmanReadinessResult =
       readonly stage: PortablePodmanReadinessStage;
       readonly detail: string;
       readonly socketPath?: string;
+      readonly recovery?: PortablePodmanReadinessRecovery;
       readonly timing: PortablePodmanReadinessTiming;
     };
 
@@ -171,12 +174,14 @@ function failure(
   apiMs: number,
   totalMs: number,
   socketPath?: string,
+  recovery?: PortablePodmanReadinessRecovery,
 ): PortablePodmanReadinessResult {
   return {
     ok: false,
     stage,
     detail,
     ...(socketPath ? { socketPath } : {}),
+    ...(recovery ? { recovery } : {}),
     timing: timing(mode, activationMs, apiMs, totalMs),
   };
 }
@@ -291,6 +296,8 @@ export function inspectPortablePodmanReadiness(
       0,
       0,
       elapsed(now, startedAt),
+      undefined,
+      "current-user-authority",
     );
   }
 

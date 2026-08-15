@@ -528,6 +528,7 @@ function inspectReceiptRuntimeReadiness(
       stage: "socket authority",
       detail:
         "The lifecycle receipt predates recorded portable Podman authority; rerun onboarding.",
+      recovery: "portable-onboarding",
       timing: { mode: "warm", activationMs: 0, apiMs: 0, totalMs: 0 },
     };
   }

@@ -337,6 +337,19 @@ export function printDockerRuntimeDownGuidance(
       `  The receipt-owned Podman endpoint for sandbox '${sandboxName}' is not ready; no Docker or named-connection fallback was used.`,
     );
     writer("  Recovery:");
+    if (!portable.socketPath) {
+      if (portable.recovery === "current-user-authority") {
+        writer(
+          "    1. Run NemoClaw as the user who created the portable state, or rerun portable onboarding as the current user.",
+        );
+      } else {
+        writer(
+          `    1. Rerun portable onboarding: ${CLI_NAME} onboard --experimental-profile portable`,
+        );
+      }
+      writer(`    2. Retry: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
+      return;
+    }
     writer(
       "    1. Check the reported readiness stage and the current user's Podman socket service.",
     );
