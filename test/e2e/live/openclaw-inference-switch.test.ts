@@ -1087,10 +1087,16 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     gatewayRestartExpected ? "anthropic-messages" : "openai-completions",
   );
   const pidBefore = await openclawGatewayPid(sandbox, home);
-  const switchInference = () =>
-    runOpenClawInferenceSetWithRetry(host, home, redactionValues, switchBinding, artifacts);
+  const switchInference = (commandHost: HostCliClient = host) =>
+    runOpenClawInferenceSetWithRetry(
+      commandHost,
+      home,
+      redactionValues,
+      switchBinding,
+      artifacts,
+    );
   const switchResult = mockProvider
-    ? await withHostVerificationLoopbackAlias(host, cleanup, switchInference)
+    ? await withHostVerificationLoopbackAlias(host, switchInference)
     : await switchInference();
   expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
   expect(

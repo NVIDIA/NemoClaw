@@ -191,14 +191,14 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   progress.phase("switch Hermes inference provider");
   const compatibleMetadataArgs = compatibleAnthropicMetadataArgs(switchEndpointUrl);
-  const switchInference = () =>
-    runHermesInferenceSetWithRetry(host, redactionValues, compatibleMetadataArgs, {
+  const switchInference = (commandHost: HostCliClient = host) =>
+    runHermesInferenceSetWithRetry(commandHost, redactionValues, compatibleMetadataArgs, {
       artifacts,
       compatibleBinding: switchBinding,
     });
   const switched =
     switchBinding && mockAnthropicSwitchEnabled()
-      ? await withHostVerificationLoopbackAlias(host, cleanup, switchInference)
+      ? await withHostVerificationLoopbackAlias(host, switchInference)
       : await switchInference();
   expect(switched.exitCode, resultText(switched)).toBe(0);
   expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");

@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { randomBytes } from "node:crypto";
-import fs from "node:fs";
-
 import type { HostCliClient } from "./clients/host.ts";
 import { resultText } from "./clients/index.ts";
 
@@ -11,85 +8,37 @@ export const COMPATIBLE_ANTHROPIC_PROVIDER = "compatible-anthropic-endpoint";
 export const COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const DEFAULT_COMPATIBLE_ANTHROPIC_CREDENTIAL = "test-compatible-anthropic-key";
 const HOST_VERIFICATION_HOSTS_PATH = "/etc/hosts";
-const HOST_VERIFICATION_LOCK_PATH = "/run/lock/nemoclaw-compatible-endpoint-hosts.lock";
-const HOST_VERIFICATION_COMMAND_TIMEOUT_MS = 60_000;
 
-export const HOST_VERIFICATION_ALIAS_SCRIPT = [
+export const HOST_VERIFICATION_NAMESPACE_SCRIPT = [
   "set -euo pipefail",
   "",
-  'operation="$1"',
-  'hosts_path="$2"',
-  'lock_path="$3"',
-  'owner_pid="$4"',
-  'owner_start="$5"',
-  'owner_token="$6"',
+  'hosts_path="$1"',
+  'run_uid="$2"',
+  'run_gid="$3"',
+  "shift 3",
   'alias_name="host.openshell.internal"',
   "",
-  'case "$operation" in',
-  "  add | remove) ;;",
-  '  *) echo "unsupported host verifier alias operation: $operation" >&2; exit 2 ;;',
-  "esac",
-  '[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || { echo "invalid host verifier owner PID" >&2; exit 2; }',
-  '[[ "$owner_start" =~ ^[1-9][0-9]*$ ]] || { echo "invalid host verifier owner start time" >&2; exit 2; }',
-  '[[ "$owner_token" =~ ^[a-f0-9]{32}$ ]] || { echo "invalid host verifier owner token" >&2; exit 2; }',
+  '[[ "$run_uid" =~ ^[0-9]+$ ]] || { echo "invalid host verifier user ID" >&2; exit 2; }',
+  '[[ "$run_gid" =~ ^[0-9]+$ ]] || { echo "invalid host verifier group ID" >&2; exit 2; }',
+  '[[ "$#" -gt 0 ]] || { echo "host verifier command is required" >&2; exit 2; }',
   '[[ -f "$hosts_path" && ! -L "$hosts_path" ]] || { echo "host resolver file is not a regular file" >&2; exit 2; }',
-  '[[ ! -L "$lock_path" ]] || { echo "host resolver lock path must not be a symbolic link" >&2; exit 2; }',
-  'command -v flock >/dev/null 2>&1 || { echo "flock is required for host resolver fixture ownership" >&2; exit 2; }',
+  'command -v mount >/dev/null 2>&1 || { echo "mount is required for scoped host resolution" >&2; exit 2; }',
+  'command -v setpriv >/dev/null 2>&1 || { echo "setpriv is required for scoped host resolution" >&2; exit 2; }',
   "",
-  "owner_is_alive() {",
-  '  local pid="$1" expected_start="$2" stat remainder',
-  '  [[ -r "/proc/${pid}/stat" ]] || return 1',
-  '  IFS= read -r stat < "/proc/${pid}/stat"',
-  '  remainder="${stat##*) }"',
-  "  set -- $remainder",
-  '  [[ "${20:-}" == "$expected_start" ]]',
-  "}",
+  'private_hosts="$(mktemp)"',
+  "trap 'rm -f \"$private_hosts\"' EXIT",
+  'cp --preserve=mode,ownership,timestamps -- "$hosts_path" "$private_hosts"',
+  "printf '\\n127.0.0.1 %s\\n' \"$alias_name\" >> \"$private_hosts\"",
   "",
-  'if [[ "$operation" == "add" ]] && ! owner_is_alive "$owner_pid" "$owner_start"; then',
-  '  echo "host verifier owner process is not alive" >&2',
-  "  exit 2",
-  "fi",
+  "# The private mount keeps the fixture alias inside this command's mount namespace.",
+  "# The host resolver file remains available to unrelated writers.",
+  'mount --make-rprivate /',
+  'mount --bind "$private_hosts" "$hosts_path"',
   "",
-  "umask 077",
-  'exec 9>>"$lock_path"',
-  'chmod 0600 "$lock_path"',
-  'flock -x -w 30 9 || { echo "timed out waiting for host resolver fixture ownership" >&2; exit 3; }',
-  "",
-  'marker="# nemoclaw-host-verifier:${owner_pid}:${owner_start}:${owner_token}"',
-  'owned_line="127.0.0.1 ${alias_name} ${marker}"',
-  'snapshot="$(mktemp "${hosts_path}.nemoclaw-snapshot.XXXXXX")"',
-  'replacement="$(mktemp "${hosts_path}.nemoclaw-replacement.XXXXXX")"',
-  "trap 'rm -f \"$snapshot\" \"$replacement\"' EXIT",
-  'cp --preserve=all -- "$hosts_path" "$snapshot"',
-  'cp --preserve=all -- "$hosts_path" "$replacement"',
-  ': > "$replacement"',
-  "",
-  'while IFS= read -r line || [[ -n "$line" ]]; do',
-  '  if [[ "$line" == "$owned_line" ]]; then',
-  "    continue",
-  "  fi",
-  '  if [[ "$line" =~ ^127\\.0\\.0\\.1[[:space:]]+host\\.openshell\\.internal[[:space:]]+#[[:space:]]nemoclaw-host-verifier:([1-9][0-9]*):([1-9][0-9]*):([a-f0-9]{32})$ ]]; then',
-  '    if owner_is_alive "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then',
-  "      printf '%s\\n' \"$line\" >> \"$replacement\"",
-  "    fi",
-  "    continue",
-  "  fi",
-  "  printf '%s\\n' \"$line\" >> \"$replacement\"",
-  'done < "$snapshot"',
-  "",
-  'if [[ "$operation" == "add" ]]; then',
-  "  printf '%s\\n' \"$owned_line\" >> \"$replacement\"",
-  "fi",
-  "",
-  "# The kernel lock serializes every cooperative fixture writer. Replacing the",
-  "# file in one rename prevents readers from observing a partial resolver file.",
-  'mv -f -- "$replacement" "$hosts_path"',
-  "trap 'rm -f \"$snapshot\"' EXIT",
-  "",
-  'if [[ "$operation" == "add" ]]; then',
-  '  grep -Fqx -- "$owned_line" "$hosts_path" || { echo "host verifier alias was not installed" >&2; exit 4; }',
+  'if [[ "$(id -u)" == "$run_uid" && "$(id -g)" == "$run_gid" ]]; then',
+  '  "$@"',
   "else",
-  '  ! grep -Fqx -- "$owned_line" "$hosts_path" || { echo "host verifier alias was not removed" >&2; exit 4; }',
+  '  setpriv --reuid="$run_uid" --regid="$run_gid" --init-groups -- "$@"',
   "fi",
 ].join("\n");
 
@@ -124,80 +73,43 @@ export function compatibleAnthropicSwitchEnv(
   return binding ? { [COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV]: binding.credentialValue } : {};
 }
 
-function hostVerificationOwnerStartTime(): string {
-  const stat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
-  const close = stat.lastIndexOf(") ");
-  const fields = close >= 0 ? stat.slice(close + 2).trim().split(/\s+/u) : [];
-  const startTime = fields[19];
-  if (!startTime || !/^[1-9][0-9]*$/u.test(startTime)) {
-    throw new Error("could not read the host verifier owner process start time");
-  }
-  return startTime;
-}
-
-interface HostVerificationOwner {
-  pid: number;
-  startTime: string;
-  token: string;
-}
-
-function createHostVerificationOwner(): HostVerificationOwner {
-  return {
-    pid: process.pid,
-    startTime: hostVerificationOwnerStartTime(),
-    token: randomBytes(16).toString("hex"),
-  };
-}
-
-async function updateHostVerificationAlias(
-  host: HostCliClient,
-  operation: "add" | "remove",
-  owner: HostVerificationOwner,
-): Promise<void> {
-  const artifactName = `${operation === "add" ? "map" : "restore"}-host-verifier-alias`;
-  const result = await host.command(
-    "sudo",
-    [
-      "bash",
-      "-ceu",
-      HOST_VERIFICATION_ALIAS_SCRIPT,
-      artifactName,
-      operation,
-      HOST_VERIFICATION_HOSTS_PATH,
-      HOST_VERIFICATION_LOCK_PATH,
-      String(owner.pid),
-      owner.startTime,
-      owner.token,
-    ],
-    { artifactName, timeoutMs: HOST_VERIFICATION_COMMAND_TIMEOUT_MS },
-  );
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `could not ${operation === "add" ? "install" : "remove"} the host verifier alias: ${resultText(result)}`,
-    );
-  }
-}
-
 export async function withHostVerificationLoopbackAlias<T>(
   host: HostCliClient,
-  cleanup: { trackDisposable(name: string, run: () => Promise<void> | void): void },
-  run: () => Promise<T>,
+  run: (scopedHost: HostCliClient) => Promise<T>,
 ): Promise<T> {
-  const owner = createHostVerificationOwner();
-  let restored = false;
-  const restore = async (): Promise<void> => {
-    if (restored) return;
-    await updateHostVerificationAlias(host, "remove", owner);
-    restored = true;
-  };
-  cleanup.trackDisposable("restore the host verifier alias mapping", restore);
-
-  try {
-    await updateHostVerificationAlias(host, "add", owner);
-    return await run();
-  } finally {
-    await restore();
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    throw new Error("scoped host verification requires Linux user and group IDs");
   }
+  const scopedHost = {
+    command: (
+      command: string,
+      args: string[] = [],
+      options: Parameters<HostCliClient["command"]>[2] = {},
+    ) =>
+      host.command(
+        "sudo",
+        [
+          "--preserve-env",
+          "unshare",
+          "--mount",
+          "--fork",
+          "--",
+          "bash",
+          "-ceu",
+          HOST_VERIFICATION_NAMESPACE_SCRIPT,
+          "host-verifier-namespace",
+          HOST_VERIFICATION_HOSTS_PATH,
+          String(uid),
+          String(gid),
+          command,
+          ...args,
+        ],
+        options,
+      ),
+  } as HostCliClient;
+  return await run(scopedHost);
 }
 
 export async function requireCompatibleAnthropicProviderAbsent(

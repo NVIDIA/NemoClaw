@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,20 +14,13 @@ import {
   COMPATIBLE_ANTHROPIC_PROVIDER,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
-  HOST_VERIFICATION_ALIAS_SCRIPT,
+  HOST_VERIFICATION_NAMESPACE_SCRIPT,
   requireCompatibleAnthropicProviderAbsent,
   withHostVerificationLoopbackAlias,
 } from "../fixtures/compatible-anthropic-switch.ts";
 
 describe("compatible Anthropic inference switch setup", () => {
   afterEach(() => vi.restoreAllMocks());
-
-  function mockOwnerStartTime(): void {
-    const fields = ["S", ...Array.from({ length: 18 }, () => "0"), "12345"];
-    vi.spyOn(fs, "readFileSync").mockReturnValue(
-      `${process.pid} (node fixture) ${fields.join(" ")}`,
-    );
-  }
 
   it("passes the direct binding credential only to the inference-set command", () => {
     const binding = compatibleAnthropicSwitchBinding("http://host.openshell.internal:18766", {
@@ -60,70 +53,45 @@ describe("compatible Anthropic inference switch setup", () => {
     ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
   });
 
-  it("removes its host alias when verification fails", async () => {
-    mockOwnerStartTime();
-    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
-    const trackDisposable = vi.fn();
+  it("runs host verification inside a private resolver mount namespace", async () => {
+    const result = { exitCode: 0, stderr: "", stdout: "verified" };
+    const command = vi.fn().mockResolvedValue(result);
+    const commandEnv = { COMPATIBLE_ANTHROPIC_API_KEY: "fixture-key" };
 
     await expect(
       withHostVerificationLoopbackAlias(
         { command } as unknown as HostCliClient,
-        { trackDisposable },
-        async () => {
-          throw new Error("verification failed");
-        },
+        (scopedHost) =>
+          scopedHost.command("node", ["nemoclaw.js", "inference", "set"], {
+            artifactName: "inference-set",
+            env: commandEnv,
+            redactionValues: ["fixture-key"],
+          }),
       ),
-    ).rejects.toThrow("verification failed");
+    ).resolves.toBe(result);
 
-    expect(command).toHaveBeenCalledTimes(2);
-    expect(command.mock.calls.map(([program, args]) => [program, args?.[0], args?.[4]])).toEqual([
-      ["sudo", "bash", "add"],
-      ["sudo", "bash", "remove"],
-    ]);
-    expect(trackDisposable.mock.invocationCallOrder[0]).toBeLessThan(
-      command.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    expect(command).toHaveBeenCalledOnce();
+    const [program, args, options] = command.mock.calls[0] ?? [];
+    expect(program).toBe("sudo");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--preserve-env",
+        "unshare",
+        "--mount",
+        "--fork",
+        "/etc/hosts",
+        "node",
+        "nemoclaw.js",
+        "inference",
+        "set",
+      ]),
     );
-  });
-
-  it("retries a failed owned-alias removal through tracked cleanup", async () => {
-    mockOwnerStartTime();
-    const command = vi
-      .fn()
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" })
-      .mockResolvedValueOnce({ exitCode: 1, stderr: "permission denied", stdout: "" })
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
-    const trackDisposable = vi.fn();
-
-    await expect(
-      withHostVerificationLoopbackAlias(
-        { command } as unknown as HostCliClient,
-        { trackDisposable },
-        async () => undefined,
-      ),
-    ).rejects.toThrow("could not remove the host verifier alias: permission denied");
-
-    const trackedCleanup = trackDisposable.mock.calls[0]?.[1] as () => Promise<void>;
-    await expect(trackedCleanup()).resolves.toBeUndefined();
-    expect(command.mock.calls.map(([, args]) => args?.[4])).toEqual(["add", "remove", "remove"]);
-  });
-
-  it("removes a possible alias after the mapping runner disconnects", async () => {
-    mockOwnerStartTime();
-    const command = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("mapping runner disconnected"))
-      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
-
-    await expect(
-      withHostVerificationLoopbackAlias(
-        { command } as unknown as HostCliClient,
-        { trackDisposable: vi.fn() },
-        async () => undefined,
-      ),
-    ).rejects.toThrow("mapping runner disconnected");
-
-    expect(command).toHaveBeenCalledTimes(2);
-    expect(command.mock.calls.map(([, args]) => args?.[4])).toEqual(["add", "remove"]);
+    expect(args).not.toContain("fixture-key");
+    expect(options).toEqual({
+      artifactName: "inference-set",
+      env: commandEnv,
+      redactionValues: ["fixture-key"],
+    });
   });
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {
@@ -178,118 +146,63 @@ describe("compatible Anthropic inference switch setup", () => {
 
 const linuxIt = process.platform === "linux" ? it : it.skip;
 
-describe("host verifier alias file ownership", () => {
-  function processStartTime(pid: number): string {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const close = stat.lastIndexOf(") ");
-    const fields = stat.slice(close + 2).trim().split(/\s+/u);
-    const startTime = fields[19];
-    expect(startTime, `process start time for ${pid}`).toBeDefined();
-    return startTime as string;
-  }
-
-  function runAliasScript(
-    operation: "add" | "remove",
-    hostsPath: string,
-    lockPath: string,
-    owner: { pid: number; startTime: string; token: string },
-  ): void {
-    const result = spawnSync(
-      "bash",
-      [
-        "-ceu",
-        HOST_VERIFICATION_ALIAS_SCRIPT,
-        "host-verifier-alias-test",
-        operation,
-        hostsPath,
-        lockPath,
-        String(owner.pid),
-        owner.startTime,
-        owner.token,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(result.status, result.stderr).toBe(0);
-  }
-
-  function testFiles(): { directory: string; hostsPath: string; lockPath: string } {
+describe("host verifier resolver namespace", () => {
+  function testFiles(): { directory: string; hostsPath: string; capturedPath: string } {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-verifier-test-"));
     const hostsPath = path.join(directory, "hosts");
-    const lockPath = path.join(directory, "hosts.lock");
+    const capturedPath = path.join(directory, "hosts.private");
     fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", { mode: 0o644 });
-    return { directory, hostsPath, lockPath };
+    return { directory, hostsPath, capturedPath };
   }
 
-  linuxIt("preserves a concurrent resolver update while removing its owned alias", () => {
+  linuxIt("preserves an unrelated resolver write during private mount setup (#9166)", () => {
     const files = testFiles();
-    const owner = {
-      pid: process.pid,
-      startTime: processStartTime(process.pid),
-      token: "a".repeat(32),
-    };
+    const fakeBin = path.join(files.directory, "bin");
+    const fakeMount = path.join(fakeBin, "mount");
     try {
-      runAliasScript("add", files.hostsPath, files.lockPath, owner);
-      fs.appendFileSync(files.hostsPath, "192.0.2.10 concurrent.example.test\n");
-      runAliasScript("remove", files.hostsPath, files.lockPath, owner);
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        fakeMount,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          '[[ "$1" == "--make-rprivate" ]] && exit 0',
+          '[[ "$1" == "--bind" ]]',
+          "printf '192.0.2.10 concurrent.example.test\\n' >> \"$NEMOCLAW_TEST_RESOLVER_SOURCE\"",
+          'cp -- "$2" "$NEMOCLAW_TEST_RESOLVER_COPY"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-ceu",
+          HOST_VERIFICATION_NAMESPACE_SCRIPT,
+          "host-verifier-namespace-test",
+          files.hostsPath,
+          String(process.getuid?.()),
+          String(process.getgid?.()),
+          "true",
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_TEST_RESOLVER_COPY: files.capturedPath,
+            NEMOCLAW_TEST_RESOLVER_SOURCE: files.hostsPath,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
 
       expect(fs.readFileSync(files.hostsPath, "utf8")).toBe(
         "127.0.0.1 localhost\n192.0.2.10 concurrent.example.test\n",
       );
+      const privateResolver = fs.readFileSync(files.capturedPath, "utf8");
+      expect(privateResolver).toContain("127.0.0.1 host.openshell.internal");
+      expect(privateResolver).not.toContain("concurrent.example.test");
     } finally {
-      fs.rmSync(files.directory, { force: true, recursive: true });
-    }
-  });
-
-  linuxIt("serializes active owners through a persistent kernel-lock file", () => {
-    const files = testFiles();
-    const startTime = processStartTime(process.pid);
-    const first = { pid: process.pid, startTime, token: "b".repeat(32) };
-    const second = { pid: process.pid, startTime, token: "c".repeat(32) };
-    try {
-      fs.writeFileSync(files.lockPath, "stale lock inode\n", { mode: 0o600 });
-      runAliasScript("add", files.hostsPath, files.lockPath, first);
-      runAliasScript("add", files.hostsPath, files.lockPath, second);
-      runAliasScript("remove", files.hostsPath, files.lockPath, first);
-      expect(fs.readFileSync(files.hostsPath, "utf8")).toContain(second.token);
-      runAliasScript("remove", files.hostsPath, files.lockPath, second);
-      expect(fs.readFileSync(files.hostsPath, "utf8")).not.toContain(
-        "host.openshell.internal",
-      );
-    } finally {
-      fs.rmSync(files.directory, { force: true, recursive: true });
-    }
-  });
-
-  linuxIt("removes an alias whose owner process was killed", async () => {
-    const files = testFiles();
-    const killed = spawn("sleep", ["30"], { stdio: "ignore" });
-    expect(killed.pid, "killed-owner fixture PID").toBeDefined();
-    const killedPid = killed.pid as number;
-    const killedExit = new Promise<void>((resolve) => killed.once("exit", () => resolve()));
-    const killedOwner = {
-      pid: killedPid,
-      startTime: processStartTime(killedPid),
-      token: "d".repeat(32),
-    };
-    const currentOwner = {
-      pid: process.pid,
-      startTime: processStartTime(process.pid),
-      token: "e".repeat(32),
-    };
-    try {
-      runAliasScript("add", files.hostsPath, files.lockPath, killedOwner);
-      killed.kill("SIGKILL");
-      await killedExit;
-      runAliasScript("add", files.hostsPath, files.lockPath, currentOwner);
-      const recovered = fs.readFileSync(files.hostsPath, "utf8");
-      expect(recovered).not.toContain(killedOwner.token);
-      expect(recovered).toContain(currentOwner.token);
-      runAliasScript("remove", files.hostsPath, files.lockPath, currentOwner);
-      expect(fs.readFileSync(files.hostsPath, "utf8")).not.toContain(
-        "host.openshell.internal",
-      );
-    } finally {
-      killed.kill("SIGKILL");
       fs.rmSync(files.directory, { force: true, recursive: true });
     }
   });
