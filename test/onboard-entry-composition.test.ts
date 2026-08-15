@@ -267,10 +267,79 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ choose: 1 });
   });
 
+  it("resolves a property alias through its receiver alias", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const api = gateway; const start = api.start; function choose(enabled: boolean) { if (enabled) start(); }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each(["api.start()", 'api["start"]()'])(
+    "resolves the receiver alias in the gateway call %s",
+    (call) => {
+      const actual = collectOnboardEntryDecisions(
+        `const api = gateway; function choose(enabled: boolean) { if (enabled) ${call}; }`,
+      );
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it.each(["api.running()", "api.state"])(
+    "resolves a receiver alias in the gateway condition %s",
+    (condition) => {
+      const actual = collectOnboardEntryDecisions(
+        `const api = gateway; function choose() { if (${condition}) start(); }`,
+      );
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it("resolves a destructured alias through its receiver alias", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const tools = messaging; const { configure: apply } = tools; function choose(enabled: boolean) { if (enabled) apply(); }",
+    );
+
+    expect(actual.messaging).toEqual({ choose: 1 });
+  });
+
   it("does not resolve a property member through a same-name alias", () => {
     const actual = collectOnboardEntryDecisions(
       "const start = startGateway; function choose(enabled: boolean) { if (enabled) logger.start(); }",
     );
+
+    expect(actual.gateway).toEqual({});
+  });
+
+  it.each([
+    [
+      "parameter",
+      "const start = startGateway; function choose(start: () => void, enabled: boolean) { if (enabled) start(); }",
+    ],
+    [
+      "mutable local",
+      "const start = startGateway; function choose(enabled: boolean) { let start = reportError; if (enabled) start(); }",
+    ],
+    [
+      "non-alias constant",
+      "const start = startGateway; function choose(enabled: boolean) { const start = () => reportError(); if (enabled) start(); }",
+    ],
+    [
+      "function-scoped variable",
+      "const start = startGateway; function choose(enabled: boolean) { if (enabled) { var start = reportError; } if (enabled) start(); }",
+    ],
+    [
+      "local function",
+      "const start = startGateway; function choose(enabled: boolean) { function start() {} if (enabled) start(); }",
+    ],
+    [
+      "named class expression",
+      "const action = startGateway; const Entry = class action { choose(enabled: boolean) { if (enabled) action(); } };",
+    ],
+  ])("does not resolve an outer alias through a %s shadow", (_binding, source) => {
+    const actual = collectOnboardEntryDecisions(source);
 
     expect(actual.gateway).toEqual({});
   });
@@ -281,6 +350,30 @@ describe("onboarding entry composition boundary", () => {
     );
 
     expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it.each(["gateway?.start()", 'gateway?.["start"]()'])(
+    "checks the receiver-side optional gateway call %s",
+    (call) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${call}; }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it("keeps static aliases within their lexical scope", () => {
+    const actual = collectOnboardEntryDecisions(`
+      function chooseStart(enabled: boolean) {
+        const start = startGateway;
+        if (enabled) start();
+      }
+      function reportOnly(enabled: boolean) {
+        const start = reportError;
+        if (enabled) start();
+      }
+    `);
+
+    expect(actual.gateway).toEqual({ chooseStart: 1 });
   });
 
   it.each([
@@ -388,6 +481,17 @@ describe("onboarding entry composition boundary", () => {
     );
 
     expect(actual.provider).toEqual({});
+  });
+
+  it("does not resolve a recovery method name through a local alias", () => {
+    const actual = collectOnboardEntryDecisions(`
+      function choose() {
+        const execute = reportError;
+        gatewayRecovery.execute();
+      }
+    `);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
   });
 
   it("counts a direct promise recovery handler", () => {

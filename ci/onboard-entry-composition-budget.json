@@ -8,7 +8,7 @@
   "messaging": {
     "createSandboxWithBaseImageResolution": 9,
     "createSandboxWithBaseImageResolution.plan.rebindMessagingTokenDefs": 1,
-    "getOpenShellInstallDeps.hasRequiredOpenshellMessagingFeatures": 1,
+    "getOpenShellInstallDeps.hasRequiredOpenshellMessagingFeatures": 4,
     "runOnboard": 1,
     "runOnboard.finalizationDeps.verifyDeployment.getMessagingChannels": 1
   },

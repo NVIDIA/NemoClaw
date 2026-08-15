@@ -152,11 +152,12 @@ type DecisionScope = NamedScope & {
   readonly prunedNodes: ReadonlySet<ts.Node>;
 };
 
-type StaticAlias = Readonly<{
-  target: string;
-  context: ts.Node;
+type StaticAliasBinding = Readonly<{
+  target: string | null;
+  declaration: ts.Node;
 }>;
-type StaticAliases = ReadonlyMap<ts.Node, ReadonlyMap<string, StaticAlias>>;
+
+type StaticAliases = ReadonlyMap<ts.Node, ReadonlyMap<string, StaticAliasBinding>>;
 
 function emptyDecisionCounts(): Record<string, number> {
   return Object.create(null) as Record<string, number>;
@@ -295,11 +296,13 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
 function identifierCategories(
   identifier: string,
   aliases: StaticAliases,
-  context?: ts.Node,
+  location?: ts.Node,
 ): ReadonlySet<OnboardDecisionCategory> {
   const categories = new Set<OnboardDecisionCategory>();
-  const resolved = context ? resolveStaticAlias(identifier, aliases, context) : identifier;
-  for (const candidate of new Set([identifier, resolved])) {
+  const resolved = location ? resolveStaticAlias(identifier, aliases, location) : identifier;
+  const candidates = new Set([identifier, resolved]);
+  for (const candidate of [...candidates]) candidates.add(candidate.replaceAll(".", ""));
+  for (const candidate of candidates) {
     if (isGatewayLifecycleIdentifier(candidate)) categories.add("gateway");
     if (/messaging|channel/i.test(candidate)) categories.add("messaging");
     if (/policy|preset/i.test(candidate)) categories.add("policy");
@@ -353,62 +356,116 @@ function staticReferenceName(expression: ts.Expression): string | null {
   return null;
 }
 
-function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
-  const aliases = new Map<ts.Node, Map<string, StaticAlias>>();
+function isAliasScope(node: ts.Node): boolean {
+  return (
+    ts.isSourceFile(node) ||
+    ts.isBlock(node) ||
+    ts.isModuleBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isCatchClause(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isFunctionLike(node)
+  );
+}
 
-  function declarationScope(declaration: ts.VariableDeclaration): ts.Node {
-    const declarationList = declaration.parent;
-    const declarationParent = declarationList.parent;
+function nearestAliasScope(node: ts.Node, functionScoped = false): ts.Node {
+  let candidate: ts.Node | undefined = node.parent;
+  while (candidate) {
     if (
-      ts.isForStatement(declarationParent) ||
-      ts.isForInStatement(declarationParent) ||
-      ts.isForOfStatement(declarationParent)
+      ts.isSourceFile(candidate) ||
+      (functionScoped ? ts.isFunctionLike(candidate) : isAliasScope(candidate))
     ) {
-      return declarationParent;
+      return candidate;
     }
-    let current: ts.Node | undefined = declarationParent;
-    while (current) {
-      if (
-        ts.isSourceFile(current) ||
-        ts.isBlock(current) ||
-        ts.isModuleBlock(current) ||
-        ts.isCaseBlock(current)
-      ) {
-        return current;
-      }
-      current = current.parent;
-    }
-    return sourceFile;
+    candidate = candidate.parent;
+  }
+  return candidate ?? node.getSourceFile();
+}
+
+function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
+  const aliases = new Map<ts.Node, Map<string, StaticAliasBinding>>();
+
+  function record(
+    scope: ts.Node,
+    identifier: string,
+    target: string | null,
+    declaration: ts.Node,
+  ): void {
+    const bindings = aliases.get(scope) ?? new Map<string, StaticAliasBinding>();
+    bindings.set(identifier, { target, declaration });
+    aliases.set(scope, bindings);
   }
 
-  function recordAlias(declaration: ts.VariableDeclaration, name: string, target: string): void {
-    const scope = declarationScope(declaration);
-    const scopedAliases = aliases.get(scope) ?? new Map<string, StaticAlias>();
-    scopedAliases.set(name, { target, context: declaration.initializer ?? declaration });
-    aliases.set(scope, scopedAliases);
-  }
-
-  function recordDeclaration(declaration: ts.VariableDeclaration): void {
-    if (!declaration.initializer) return;
-    const target = staticReferenceName(declaration.initializer);
-    if (!target) return;
-    if (ts.isIdentifier(declaration.name)) {
-      recordAlias(declaration, declaration.name.text, target);
+  function recordBindingName(
+    name: ts.BindingName,
+    target: string | null,
+    declaration: ts.Node,
+    scope: ts.Node,
+  ): void {
+    if (ts.isIdentifier(name)) {
+      record(scope, name.text, target, declaration);
       return;
     }
-    if (!ts.isObjectBindingPattern(declaration.name)) return;
-    for (const element of declaration.name.elements) {
-      if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+    if (ts.isArrayBindingPattern(name)) {
+      for (const element of name.elements) {
+        if (ts.isBindingElement(element)) {
+          recordBindingName(element.name, null, declaration, scope);
+        }
+      }
+      return;
+    }
+    for (const element of name.elements) {
       const member = element.propertyName
         ? staticPropertyName(element.propertyName)
-        : element.name.text;
-      if (member) recordAlias(declaration, element.name.text, `${target}.${member}`);
+        : ts.isIdentifier(element.name)
+          ? element.name.text
+          : null;
+      recordBindingName(
+        element.name,
+        target && member && !element.dotDotDotToken ? `${target}.${member}` : null,
+        declaration,
+        scope,
+      );
     }
   }
 
   function visit(node: ts.Node): void {
-    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Const) !== 0) {
-      for (const declaration of node.declarations) recordDeclaration(declaration);
+    if (ts.isVariableDeclarationList(node)) {
+      const isConst = (node.flags & ts.NodeFlags.Const) !== 0;
+      const functionScoped = (node.flags & (ts.NodeFlags.Const | ts.NodeFlags.Let)) === 0;
+      for (const declaration of node.declarations) {
+        const target =
+          isConst && declaration.initializer
+            ? staticReferenceName(declaration.initializer)
+            : null;
+        recordBindingName(
+          declaration.name,
+          target,
+          declaration,
+          nearestAliasScope(declaration, functionScoped),
+        );
+      }
+    }
+    if (ts.isFunctionLike(node)) {
+      for (const parameter of node.parameters) {
+        recordBindingName(parameter.name, null, parameter, node);
+      }
+    }
+    if (ts.isCatchClause(node) && node.variableDeclaration) {
+      recordBindingName(
+        node.variableDeclaration.name,
+        null,
+        node.variableDeclaration,
+        node,
+      );
+    }
+    if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+      record(nearestAliasScope(node), node.name.text, null, node);
+    }
+    if ((ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name) {
+      record(node, node.name.text, null, node);
     }
     ts.forEachChild(node, visit);
   }
@@ -417,20 +474,33 @@ function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
   return aliases;
 }
 
-function resolveStaticAlias(identifier: string, aliases: StaticAliases, context: ts.Node): string {
+function findStaticAlias(
+  identifier: string,
+  aliases: StaticAliases,
+  location: ts.Node,
+): StaticAliasBinding | undefined {
+  let scope: ts.Node | undefined = location;
+  while (scope) {
+    const binding = aliases.get(scope)?.get(identifier);
+    if (binding) return binding;
+    scope = scope.parent;
+  }
+  return undefined;
+}
+
+function resolveStaticAlias(identifier: string, aliases: StaticAliases, location: ts.Node): string {
   let resolved = identifier;
-  const visited = new Set<StaticAlias>();
+  let resolutionLocation = location;
+  const visited = new Set<StaticAliasBinding>();
   while (true) {
-    let alias: StaticAlias | undefined;
-    let current: ts.Node | undefined = context;
-    while (current && !alias) {
-      alias = aliases.get(current)?.get(resolved);
-      current = current.parent;
-    }
-    if (!alias || visited.has(alias)) break;
-    visited.add(alias);
-    resolved = alias.target;
-    context = alias.context;
+    const separator = resolved.indexOf(".");
+    const root = separator === -1 ? resolved : resolved.slice(0, separator);
+    const suffix = separator === -1 ? "" : resolved.slice(separator);
+    const binding = findStaticAlias(root, aliases, resolutionLocation);
+    if (!binding?.target || visited.has(binding)) break;
+    visited.add(binding);
+    resolved = `${binding.target}${suffix}`;
+    resolutionLocation = binding.declaration;
   }
   return resolved;
 }
@@ -469,7 +539,7 @@ function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is Re
   const boundReceiver = immediatelyBoundReceiver(expression);
   if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
   const callee = unwrapTransparentExpression(expression);
-  const called = calledName(expression);
+  const called = calledName(callee);
   const name =
     called && ts.isIdentifier(callee) ? resolveStaticAlias(called, aliases, callee) : called;
   if (name === null || (RECOVERY_FACTORY_NAME.test(name) && !RECOVERY_COMPOUND_ACTION.test(name))) {
@@ -486,8 +556,19 @@ function isCatchHandlerInvocation(node: ts.Node): node is ts.CallExpression {
   return ts.isCallExpression(node) && calledName(node.expression) === "catch";
 }
 
+function hasOptionalAccess(expression: ts.Expression): boolean {
+  const candidate = unwrapTransparentExpression(expression);
+  if (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) {
+    return candidate.questionDotToken !== undefined || hasOptionalAccess(candidate.expression);
+  }
+  return false;
+}
+
 function isOptionalCall(node: ts.Node): node is ts.CallExpression {
-  return ts.isCallExpression(node) && node.questionDotToken !== undefined;
+  return (
+    ts.isCallExpression(node) &&
+    (node.questionDotToken !== undefined || hasOptionalAccess(node.expression))
+  );
 }
 
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and
@@ -525,9 +606,11 @@ function decisionNodeCategories(
       const name = staticElementName(candidate);
       if (name) {
         for (const category of identifierCategories(name, aliases)) categories.add(category);
+        const reference = staticReferenceName(candidate);
         for (const category of identifierCategories(
-          `${candidate.expression.getText()}${name}`,
+          reference ?? `${candidate.expression.getText()}.${name}`,
           aliases,
+          candidate,
         )) {
           categories.add(category);
         }
@@ -537,9 +620,11 @@ function decisionNodeCategories(
       return;
     }
     if (ts.isPropertyAccessExpression(candidate)) {
+      const reference = staticReferenceName(candidate);
       for (const category of identifierCategories(
-        `${candidate.expression.getText()}${candidate.name.text}`,
+        reference ?? `${candidate.expression.getText()}.${candidate.name.text}`,
         aliases,
+        candidate,
       )) {
         categories.add(category);
       }
