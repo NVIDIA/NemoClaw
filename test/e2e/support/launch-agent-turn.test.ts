@@ -211,6 +211,7 @@ exec "$@"
 
     const result = spawnSync("bash", ["-c", LAUNCH_TURN_SCRIPT], {
       encoding: "utf8",
+      killSignal: "SIGKILL",
       env: {
         ...process.env,
         NEMOCLAW_FIXTURE_MODE: mode,
