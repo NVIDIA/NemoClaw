@@ -46,6 +46,7 @@ function fixture(
     sshHostError?: string;
     sshHostProbeStatus?: number;
     sshReadyAfter?: number;
+    sshAliasQueryStatus?: number;
     sourceRepository?: string;
     sourcePath?: string;
     timeoutBlockCommand?: "brev refresh" | "ssh-host";
@@ -201,6 +202,7 @@ esac
 set -euo pipefail
 if [ "\${1:-}" = -G ]; then
   touch "$FAKE_DIAGNOSTIC_PHASE"
+  [ "$FAKE_SSH_ALIAS_QUERY_STATUS" -eq 0 ] || exit "$FAKE_SSH_ALIAS_QUERY_STATUS"
   alias="\${2:-}"
   configured=0
   if [ "$alias" = "$INSTANCE_NAME" ]; then
@@ -304,6 +306,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_SSH_DEFAULT_ERROR:
       "default SSH safe detail; kex_exchange_identification; password=default-secret; host=default.hidden.internal",
     FAKE_SSH_DEFAULT_STATUS: String(options.sshDefaultStatus ?? 33),
+    FAKE_SSH_ALIAS_QUERY_STATUS: String(options.sshAliasQueryStatus ?? 0),
     FAKE_SSH_HOST_ERROR:
       options.sshHostError ??
       "ssh: Could not resolve hostname host.hidden.internal: host SSH safe detail; password=ssh-secret; identityfile=/hidden/private-key",
@@ -598,7 +601,23 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("distinguishes unavailable and unobserved SSH aliases", () => {
+  it("reports unavailable when SSH alias lookup fails", () => {
+    const { env, state, workDir } = fixture({
+      sshAliasQueryStatus: 42,
+      sshReadyAfter: Number.MAX_SAFE_INTEGER,
+    });
+    const result = run({ ...env, BREV_HOST_SSH_TIMEOUT_SECONDS: "1" });
+    expect(result.status).not.toBe(0);
+    const output = emittedOutput(result, workDir);
+    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
+    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1-host: unavailable");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("reports not checked when the SSH alias diagnostic budget expires", () => {
     const { env, state, workDir } = fixture({
       sshReadyAfter: Number.MAX_SAFE_INTEGER,
       timeoutBlockDiagnostics: true,
@@ -610,7 +629,6 @@ describe("focused staging Brev Launchable lane", () => {
     });
     expect(result.status).not.toBe(0);
     const output = emittedOutput(result, workDir);
-    expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1: unavailable");
     expect(output).toContain("Readiness SSH alias nclaw-e2e-test-1-host: not checked");
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
