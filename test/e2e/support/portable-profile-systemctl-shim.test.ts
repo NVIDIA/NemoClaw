@@ -244,15 +244,33 @@ function spawnUnrelatedProcess(): ReturnType<typeof spawn> {
 }
 
 async function stopUnrelatedProcess(child: ReturnType<typeof spawn> | undefined): Promise<void> {
-  if (!child?.pid || child.exitCode !== null) return;
-  if (pidIsActive(child.pid)) child.kill("SIGKILL");
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(resolve, 5_000);
-    child.once("close", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
+  await Promise.all(
+    [child]
+      .filter(
+        (candidate): candidate is ReturnType<typeof spawn> =>
+          candidate?.pid !== undefined && candidate.exitCode === null,
+      )
+      .map(
+        (candidate) =>
+          new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, 5_000);
+            candidate.once("close", () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+            candidate.kill("SIGKILL");
+          }),
+      ),
+  );
+}
+
+function restoreFixtureProcessRecord(
+  pidFile: string,
+  record: FixtureProcessRecord | undefined,
+): void {
+  [record]
+    .filter((candidate): candidate is FixtureProcessRecord => candidate !== undefined)
+    .forEach((candidate) => fs.writeFileSync(pidFile, `${candidate.value}\n`));
 }
 
 async function cleanFixture(scope: FixtureScope): Promise<void> {
@@ -584,7 +602,7 @@ describe("portable profile systemctl fixture", () => {
         expect(fs.existsSync(scope.socketPath)).toBe(true);
         expect(fs.existsSync(scope.directory)).toBe(true);
       } finally {
-        if (originalRecord) fs.writeFileSync(activatorPidFile, `${originalRecord.value}\n`);
+        restoreFixtureProcessRecord(activatorPidFile, originalRecord);
         await stopUnrelatedProcess(unrelated);
         await cleanFixture(scope);
       }
@@ -649,7 +667,7 @@ describe("portable profile systemctl fixture", () => {
         expect(pidIsActive(servicePid)).toBe(true);
         expect(readFixtureProcessRecord(servicePidFile).pid).toBe(servicePid);
       } finally {
-        if (originalRecord) fs.writeFileSync(activatorPidFile, `${originalRecord.value}\n`);
+        restoreFixtureProcessRecord(activatorPidFile, originalRecord);
         await stopUnrelatedProcess(unrelated);
         await cleanFixture(scope);
       }
@@ -723,7 +741,7 @@ describe("portable profile systemctl fixture", () => {
         expectProcessActive(originalRecord.pid);
         expect(fs.existsSync(servicePidFile)).toBe(true);
       } finally {
-        if (originalRecord) fs.writeFileSync(servicePidFile, `${originalRecord.value}\n`);
+        restoreFixtureProcessRecord(servicePidFile, originalRecord);
         await stopUnrelatedProcess(unrelated);
         await cleanFixture(scope);
       }
