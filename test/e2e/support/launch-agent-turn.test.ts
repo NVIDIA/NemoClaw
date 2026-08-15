@@ -26,11 +26,15 @@ import {
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
-  | "delayed-duplicate"
-  | "delayed-input"
+  | "delayed-input-attachment"
+  | "delayed-recording"
+  | "input-mode-timeout"
   | "invalid-order"
+  | "late-extra"
+  | "multiple-tui-processes"
   | "nonzero"
   | "nonzero-cleanup-failure"
+  | "recording-timeout"
   | "valid";
 
 function message(role: "assistant" | "user", content = "nonempty"): string {
@@ -62,9 +66,7 @@ function runEvidenceFixture(input: {
   after: SessionRecords;
   afterFinalNewline?: boolean;
   before?: SessionRecords;
-  expectedInput?: string;
   expectedTurns: number;
-  mode?: "qualify" | "qualify-input";
 }) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-evidence-"));
   const baselinePath = join(fixtureRoot, "baseline.json");
@@ -83,11 +85,10 @@ function runEvidenceFixture(input: {
       [
         "-e",
         OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        input.mode ?? "qualify",
+        "qualify",
         sessionRoot,
         baselinePath,
         String(input.expectedTurns),
-        input.expectedInput ?? "",
       ],
       { encoding: "utf8" },
     );
@@ -132,15 +133,18 @@ function runBaselineMutationFixture(mutation: "invalid" | "removed" | "rewritten
   }
 }
 
-function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "ansi" | "plain") {
+function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "ansi" | "reordered") {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-turn-"));
-  const fakeLaunch = join(fixtureRoot, "fake-launch.cjs");
+  const fakeLaunch = join(fixtureRoot, "openclaw");
   const fakeOpenshell = join(fixtureRoot, "openshell");
   const sessionRoot = join(fixtureRoot, "sessions");
+  const tuiInputMarkerRoot = join(fixtureRoot, "tui-input");
+  const tuiPidsPath = join(fixtureRoot, "tui-pids");
   const ttyMarker = join(fixtureRoot, "tty-observed");
   const runId = basename(fixtureRoot).replaceAll(/[^a-zA-Z0-9]/gu, "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   mkdirSync(sessionRoot);
+  mkdirSync(tuiInputMarkerRoot);
 
   try {
     writeFileSync(
@@ -148,45 +152,101 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "ansi" | "plai
       String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
 const readline = require("node:readline");
+const childProcess = require("node:child_process");
 
-if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(64);
-fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
-const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
 const mode = process.env.NEMOCLAW_FIXTURE_MODE;
-const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-const ask = () => new Promise((resolve) => rl.question("", resolve));
-const append = (role, content) => fs.appendFileSync(
-  sessionFile,
-  JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
-);
-
-(async () => {
-  if (mode === "delayed-input") {
-    await ask();
+if (process.argv[2] !== "tui") {
+  if (mode !== "multiple-tui-processes") {
+    const child = childProcess.spawnSync(process.execPath, [__filename, "tui"], { stdio: "inherit" });
+    process.exit(child.status ?? 66);
   }
+  const children = Array.from({ length: 2 }, () =>
+    childProcess.spawn(process.execPath, [__filename, "tui"], { stdio: "inherit" }),
+  );
+  fs.writeFileSync(
+    process.env.NEMOCLAW_FIXTURE_TUI_PIDS,
+    children.map((child) => child.pid).join("\n") + "\n",
+  );
+  const stopChildren = () => {
+    for (const child of children) {
+      try { child.kill("SIGTERM"); } catch {}
+    }
+  };
+  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      stopChildren();
+      setTimeout(() => process.exit(0), 100);
+    });
+  }
+  let activeChildren = children.length;
+  for (const child of children) {
+    child.once("exit", () => {
+      activeChildren -= 1;
+      if (activeChildren === 0) process.exit(0);
+    });
+  }
+}
+
+if (process.argv[2] === "tui") (async () => {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(64);
+  fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
+  const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
+  const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
+  const append = (role, content) => fs.appendFileSync(
+    sessionFile,
+    JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
+  );
+  if (mode === "multiple-tui-processes") {
+    let observedPtyInput = "";
+    process.stdin.on("data", (chunk) => {
+      observedPtyInput += chunk.toString();
+      if (observedPtyInput.includes(process.env.NEMOCLAW_LAUNCH_FIRST_INPUT)) {
+        fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT + "/" + process.pid, "");
+      }
+    });
+  }
+  if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
+    let inputBeforeAttachment = false;
+    const recordEarlyInput = () => { inputBeforeAttachment = true; };
+    process.stdin.on("data", recordEarlyInput);
+    await new Promise((resolve) => setTimeout(resolve, mode === "input-mode-timeout" ? 10_000 : 1_500));
+    process.stdin.off("data", recordEarlyInput);
+    if (inputBeforeAttachment) process.exit(67);
+  }
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  const ask = () => new Promise((resolve) => rl.question("", resolve));
+  if (terminalCopy === "ansi") process.stdout.write("\u001b[2Kgateway connected | idle\r");
+  if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
   const first = await ask();
+  const delayedInputs = [];
+  if (mode === "delayed-recording") {
+    const recordDelayedInput = (line) => delayedInputs.push(line);
+    rl.on("line", recordDelayedInput);
+    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    rl.off("line", recordDelayedInput);
+  }
+  if (mode === "recording-timeout") {
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
   if (mode === "invalid-order") {
     append("assistant", "response before input");
     append("user", first);
   } else {
     append("user", first);
-    process.stdout.write(terminalCopy === "ansi" ? "\u001b[2Kignored repaint\r" : "ignored plain copy\n");
     append("assistant", "first response");
   }
 
-  if (mode === "delayed-duplicate") {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    append("user", first);
-    await new Promise((resolve) => setTimeout(resolve, 10000));
-    return;
+  for (const duplicate of delayedInputs) {
+    append("user", duplicate);
+    append("assistant", "duplicate response");
   }
 
   const second = await ask();
   append("user", second);
   append("assistant", "second response");
   const exitCommand = await ask();
+  if (mode === "late-extra") append("user", first);
   rl.close();
   if (exitCommand !== "/exit") process.exit(65);
   process.exit(mode.includes("nonzero") ? 23 : 0);
@@ -217,6 +277,8 @@ exec "$@"
         NEMOCLAW_FIXTURE_MODE: mode,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
         NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
+        NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT: tuiInputMarkerRoot,
+        NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
         NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
         NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
         NEMOCLAW_LAUNCH_ENTRYPOINT: "",
@@ -224,6 +286,7 @@ exec "$@"
         NEMOCLAW_LAUNCH_FIRST_INPUT: "first input",
         NEMOCLAW_LAUNCH_RUN_ID: runId,
         NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
+        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: mode.endsWith("-timeout") ? "2" : "230",
         NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
         NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
         NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
@@ -233,9 +296,24 @@ exec "$@"
       timeout: 15_000,
     });
 
+    const tuiProcessIds = existsSync(tuiPidsPath)
+      ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
+      : [];
+    const processExitDeadline = Date.now() + 1_000;
+    while (
+      tuiProcessIds.some((pid) => existsSync(`/proc/${pid}`)) &&
+      Date.now() < processExitDeadline
+    ) {
+      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 25)"], { timeout: 100 });
+    }
     return {
       baselineRemoved: !existsSync(baselinePath),
+      orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
+      recordedTuiInputProcessIds: tuiProcessIds.filter((pid) =>
+        existsSync(join(tuiInputMarkerRoot, pid)),
+      ),
       result,
+      tuiProcessIds,
       ttyObserved: existsSync(ttyMarker),
     };
   } finally {
@@ -270,45 +348,6 @@ it("keeps a partial structured turn pending (#9160)", () => {
 
   expect(baseline.status).toBe(0);
   expect(qualification.status).toBe(1);
-});
-
-it("qualifies PTY input from the structured user record before the assistant reply (#9160)", () => {
-  const accepted = runEvidenceFixture({
-    after: { "session-a": [message("user", "first input")] },
-    expectedInput: "first input",
-    expectedTurns: 1,
-    mode: "qualify-input",
-  });
-  const pending = runEvidenceFixture({
-    after: { "session-a": [message("user"), message("assistant")] },
-    expectedInput: "second input",
-    expectedTurns: 2,
-    mode: "qualify-input",
-  });
-
-  expect(accepted.baseline.status).toBe(0);
-  expect(accepted.qualification.status).toBe(0);
-  expect(pending.baseline.status).toBe(0);
-  expect(pending.qualification.status).toBe(1);
-});
-
-it("rejects a prior turn duplicate as evidence for the next PTY input (#9160)", () => {
-  const { baseline, qualification } = runEvidenceFixture({
-    after: {
-      "session-a": [
-        message("user", "first input"),
-        message("assistant"),
-        message("user", "first input"),
-      ],
-    },
-    expectedInput: "second input",
-    expectedTurns: 2,
-    mode: "qualify-input",
-  });
-
-  expect(baseline.status).toBe(0);
-  expect(qualification.status).toBe(2);
-  expect(qualification.stderr).toContain('"reason":"input_content_mismatch"');
 });
 
 it("does not qualify structured turns recorded before the baseline (#9160)", () => {
@@ -369,13 +408,13 @@ it("rejects an invalid baseline or a removed, rewritten, or truncated session (#
 it.runIf(process.platform === "linux")(
   "sends two inputs and exit through a real PTY without using terminal copy as evidence (#9160)",
   () => {
-    for (const terminalCopy of ["ansi", "plain"] as const) {
+    for (const terminalCopy of ["absent", "ansi", "reordered"] as const) {
       const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
         "valid",
         terminalCopy,
       );
 
-      expect(ttyObserved).toBe(true);
+      expect(ttyObserved, result.stderr).toBe(true);
       expect(baselineRemoved).toBe(true);
       expect(result.signal).toBeNull();
       expect(result.status).toBe(0);
@@ -384,11 +423,11 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "retries PTY input until structured user evidence is recorded (#9160)",
+  "waits for the OpenClaw TUI input mode before submitting PTY input (#9160)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "delayed-input",
-      "plain",
+      "delayed-input-attachment",
+      "absent",
     );
 
     expect(ttyObserved).toBe(true);
@@ -399,18 +438,74 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "rejects a delayed duplicate before recording the distinct second PTY input (#9160)",
+  "rejects multiple OpenClaw TUI processes before submitting PTY input (#9160)",
+  () => {
+    const {
+      baselineRemoved,
+      orphanedTuiProcessIds,
+      recordedTuiInputProcessIds,
+      result,
+      tuiProcessIds,
+      ttyObserved,
+    } = runLaunchSessionFixture("multiple-tui-processes", "absent");
+
+    expect(ttyObserved).toBe(true);
+    expect(tuiProcessIds).toHaveLength(2);
+    expect(recordedTuiInputProcessIds).toEqual([]);
+    expect(orphanedTuiProcessIds).toEqual([]);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('"reason":"multiple_tui_processes"');
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "submits each PTY turn once while structured recording is delayed (#9160)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "delayed-duplicate",
-      "plain",
+      "delayed-recording",
+      "absent",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(0);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "reports a missing OpenClaw input mode before the PTY child timeout (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "input-mode-timeout",
+      "absent",
     );
 
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('"reason":"input_content_mismatch"');
+    expect(result.stderr).toContain(
+      "launch PTY did not enter input mode before the session deadline",
+    );
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "reports missing structured turns before the PTY child timeout (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "recording-timeout",
+      "absent",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("launch did not record the required structured session turns");
   },
 );
 
@@ -419,7 +514,7 @@ it.runIf(process.platform === "linux")(
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
       "invalid-order",
-      "plain",
+      "absent",
     );
 
     expect(ttyObserved).toBe(true);
@@ -430,9 +525,28 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
+  "rejects a late extra structured record before baseline cleanup (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "late-extra",
+      "absent",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "launch final structured session evidence did not qualify (status 2)",
+    );
+    expect(result.stderr).toContain('"reason":"extra_message"');
+  },
+);
+
+it.runIf(process.platform === "linux")(
   "propagates a nonzero TUI exit after two structured turns (#9160)",
   () => {
-    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture("nonzero", "plain");
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture("nonzero", "absent");
 
     expect(ttyObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
@@ -446,7 +560,7 @@ it.runIf(process.platform === "linux")(
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
       "cleanup-failure",
-      "plain",
+      "absent",
     );
 
     expect(ttyObserved).toBe(true);
@@ -461,7 +575,7 @@ it.runIf(process.platform === "linux")(
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
       "nonzero-cleanup-failure",
-      "plain",
+      "absent",
     );
 
     expect(ttyObserved).toBe(true);

@@ -13,10 +13,11 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 // baseline. Session content never moves to the host.
 export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
 const crypto = require("node:crypto");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText, expectedInput] = process.argv.slice(1);
+const [mode, sessionRoot, baselinePath, expectedTurnsText] = process.argv.slice(1);
 
 function finish(exitCode, reason, detail = {}) {
   if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
@@ -41,6 +42,57 @@ function sessionFileNames() {
     if (error && error.code === "ENOENT") return [];
     finish(2, "session_store_unreadable");
   }
+}
+
+function openClawTuiProcessIds() {
+  let names;
+  try {
+    names = fs.readdirSync("/proc");
+  } catch {
+    finish(2, "process_table_unreadable");
+  }
+  const pids = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    let args;
+    try {
+      args = fs
+        .readFileSync(path.join("/proc", name, "cmdline"))
+        .toString("utf8")
+        .split("\0")
+        .filter(Boolean);
+    } catch {
+      continue;
+    }
+    if (!args.includes("tui")) continue;
+    if (!args.some((arg) => ["openclaw", "openclaw.mjs"].includes(path.basename(arg)))) continue;
+    pids.push(name);
+  }
+  return pids;
+}
+
+function qualifyTuiInputMode() {
+  const pids = openClawTuiProcessIds();
+  if (pids.length === 0) finish(1);
+  if (pids.length > 1) finish(2, "multiple_tui_processes");
+  let ttyPath;
+  try {
+    ttyPath = fs.realpathSync(path.join("/proc", pids[0], "fd", "0"));
+  } catch {
+    finish(2, "tui_stdin_unavailable");
+  }
+  if (!/^\/dev\/pts\/\d+$/.test(ttyPath)) finish(2, "tui_stdin_not_pty");
+  let state;
+  try {
+    state = childProcess.execFileSync("stty", ["-F", ttyPath, "-a"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    finish(2, "tui_termios_unavailable");
+  }
+  if (!/(^|[\s;])-icanon([\s;]|$)/.test(state)) finish(1);
+  finish(0);
 }
 
 function readCompleteSession(fileName) {
@@ -108,13 +160,6 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
-function containsExactInput(message, input) {
-  if (typeof message.content === "string") return message.content === input;
-  return Array.isArray(message.content) && message.content.some((part) =>
-    part && typeof part === "object" && typeof part.text === "string" && part.text === input
-  );
-}
-
 function appendedMessages(fileName, baseline) {
   const { offset, complete, raw } = readCompleteSession(fileName);
   const prior = baseline[fileName];
@@ -139,22 +184,15 @@ function appendedMessages(fileName, baseline) {
     if (!record || record.type !== "message" || !record.message) continue;
     const role = record.message.role;
     if (role !== "user" && role !== "assistant") continue;
-    messages.push({
-      role,
-      hasStructuredContent: hasStructuredContent(record.message),
-      containsExpectedInput: containsExactInput(record.message, expectedInput),
-    });
+    messages.push({ role, hasStructuredContent: hasStructuredContent(record.message) });
   }
   return messages;
 }
 
-function qualifyTurns(requireAssistant) {
+function qualifyTurns() {
   const expectedTurns = Number(expectedTurnsText);
   if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
     finish(2, "expected_turn_count_invalid");
-  }
-  if (!requireAssistant && (!expectedInput || expectedInput.includes("\n") || expectedInput.includes("\r"))) {
-    finish(2, "expected_input_invalid");
   }
 
   const baseline = readBaseline();
@@ -183,18 +221,14 @@ function qualifyTurns(requireAssistant) {
     }
     if (!message.hasStructuredContent) finish(2, "message_content_empty", { sessionId });
   }
-  const requiredMessages = expectedRoles.length - (requireAssistant ? 0 : 1);
-  if (messages.length < requiredMessages) finish(1);
-  if (!requireAssistant && !messages[requiredMessages - 1].containsExpectedInput) {
-    finish(2, "input_content_mismatch", { sessionId });
-  }
+  if (messages.length < expectedRoles.length) finish(1);
   finish(0);
 }
 
 try {
   if (mode === "baseline") recordBaseline();
-  if (mode === "qualify") qualifyTurns(true);
-  if (mode === "qualify-input") qualifyTurns(false);
+  if (mode === "input-mode") qualifyTuiInputMode();
+  if (mode === "qualify") qualifyTurns();
 } catch {
   finish(2, "verifier_failed");
 }
@@ -212,6 +246,7 @@ evidence_error="$session_dir/session-evidence.err"
 input="$session_dir/input"
 baseline_path="/tmp/nemoclaw-launch-session-$NEMOCLAW_LAUNCH_RUN_ID.json"
 session_pid=""
+session_deadline=""
 
 remove_session_baseline() {
   "$NEMOCLAW_OPENSHELL_COMMAND" sandbox exec \
@@ -267,27 +302,33 @@ fail_launch_session() {
 session_evidence() {
   local mode="$1"
   local expected_turns=""
-  local expected_input=""
+  local command_timeout=10
   if [[ "$#" -gt 1 ]]; then
     expected_turns="$2"
   fi
-  if [[ "$#" -gt 2 ]]; then
-    expected_input="$3"
+  if [[ -n "$session_deadline" ]]; then
+    local remaining=$((session_deadline - SECONDS))
+    if (( remaining <= 0 )); then
+      return 1
+    fi
+    if (( remaining < command_timeout )); then
+      command_timeout="$remaining"
+    fi
   fi
-  "$NEMOCLAW_OPENSHELL_COMMAND" sandbox exec \
+  timeout --kill-after=1s "$command_timeout"s \
+    "$NEMOCLAW_OPENSHELL_COMMAND" sandbox exec \
     --name "$NEMOCLAW_LAUNCH_SANDBOX" -- \
     node -e "$NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT" \
     "$mode" \
     "$NEMOCLAW_LAUNCH_SESSION_ROOT" \
     "$baseline_path" \
-    "$expected_turns" \
-    "$expected_input"
+    "$expected_turns"
 }
 
 wait_for_turn_count() {
   local expected_turns="$1"
   local evidence_status
-  for _ in {1..180}; do
+  while (( SECONDS < session_deadline )); do
     if session_evidence qualify "$expected_turns" >/dev/null 2>"$evidence_error"; then
       return 0
     else
@@ -304,33 +345,23 @@ wait_for_turn_count() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
-submit_turn() {
-  local expected_turns="$1"
-  local content="$2"
+wait_for_pty_input_mode() {
   local evidence_status
-  for _ in {1..90}; do
+  while (( SECONDS < session_deadline )); do
+    if session_evidence input-mode >/dev/null 2>"$evidence_error"; then
+      return 0
+    else
+      evidence_status=$?
+    fi
+    if [[ "$evidence_status" != 1 ]]; then
+      fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
+    fi
     if ! kill -0 "$session_pid" 2>/dev/null; then
       break
     fi
-    if ! printf '%s\r' "$content" >&3; then
-      break
-    fi
-    for _ in {1..2}; do
-      if session_evidence qualify-input "$expected_turns" "$content" >/dev/null 2>"$evidence_error"; then
-        return 0
-      else
-        evidence_status=$?
-      fi
-      if [[ "$evidence_status" != 1 ]]; then
-        fail_launch_session "structured session input evidence was invalid or unavailable (status $evidence_status)"
-      fi
-      if ! kill -0 "$session_pid" 2>/dev/null; then
-        break 2
-      fi
-      sleep 1
-    done
+    sleep 0.1
   done
-  fail_launch_session "launch did not record PTY input in the structured session"
+  fail_launch_session "launch PTY did not enter input mode before the session deadline"
 }
 
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
@@ -352,9 +383,11 @@ timeout --kill-after=5s 250s \
   <"$input" >/dev/null 2>"$driver_error" &
 session_pid=$!
 exec 3>"$input"
+session_budget_seconds="$NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS"
+session_deadline=$((SECONDS + session_budget_seconds))
 
 capture_ready=0
-for _ in {1..100}; do
+while (( SECONDS < session_deadline )); do
   if [[ -f "$capture" ]]; then
     capture_ready=1
     break
@@ -368,9 +401,14 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-submit_turn 1 "$NEMOCLAW_LAUNCH_FIRST_INPUT"
+wait_for_pty_input_mode
+if ! printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3; then
+  fail_launch_session "launch exited before the first PTY input was submitted"
+fi
 wait_for_turn_count 1
-submit_turn 2 "$NEMOCLAW_LAUNCH_SECOND_INPUT"
+if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
+  fail_launch_session "launch exited before the second PTY input was submitted"
+fi
 wait_for_turn_count 2
 
 if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
@@ -397,6 +435,12 @@ if [[ "$launch_status" != 0 ]]; then
   echo "launch exited with status $launch_status" >&2
   terminal_diagnostic
   exit "$launch_status"
+fi
+if session_evidence qualify 2 >/dev/null 2>"$evidence_error"; then
+  :
+else
+  evidence_status=$?
+  fail_launch_session "launch final structured session evidence did not qualify (status $evidence_status)"
 fi
 if ! remove_session_baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not remove the structured session baseline"
@@ -440,6 +484,7 @@ export async function runOpenClawLaunchSession(
       NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
       NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
+      NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
       NEMOCLAW_LAUNCH_SECOND_INPUT: inputs.second,
       NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
       NEMOCLAW_LAUNCH_SESSION_ROOT: "/sandbox/.openclaw/agents/main/sessions",
