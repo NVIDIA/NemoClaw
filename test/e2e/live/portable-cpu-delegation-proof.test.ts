@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
+import { it } from "vitest";
+
 import {
   inspectPortableCpuDelegation,
   type CpuDelegationPreflight,
@@ -15,7 +17,13 @@ type ExpectedState = "missing" | "delegated";
 
 function expectedState(value: string | undefined): ExpectedState {
   if (value === "missing" || value === "delegated") return value;
-  throw new Error("CPU delegation proof requires the missing or delegated state.");
+  throw new Error("E2E_CPU_DELEGATION_STATE must be missing or delegated.");
+}
+
+function expectedUid(): number {
+  const value = Number(process.env.E2E_CPU_DELEGATION_UID);
+  assert.ok(Number.isInteger(value) && value >= 0, "E2E_CPU_DELEGATION_UID must be a user ID");
+  return value;
 }
 
 function artifactDirectory(): string {
@@ -58,10 +66,14 @@ function proveFailureBeforeEffects(preflight: CpuDelegationPreflight): void {
   assert.deepEqual(effects, []);
 }
 
-function main(): void {
+const proof = process.env.E2E_TARGET_ID === "portable-cpu-delegation" ? it : it.skip;
+
+proof("records portable CPU delegation evidence for the configured hierarchy (#9188)", () => {
   assert.equal(process.platform, "linux", "CPU delegation proof requires Linux");
-  assert.notEqual(process.getuid?.(), 0, "CPU delegation proof requires a non-root user");
-  const state = expectedState(process.argv[2]);
+  const uid = expectedUid();
+  assert.notEqual(uid, 0, "CPU delegation proof requires a non-root user");
+  assert.equal(process.getuid?.(), uid, "CPU delegation proof must run as the configured user");
+  const state = expectedState(process.env.E2E_CPU_DELEGATION_STATE);
   const preflight = inspectPortableCpuDelegation();
   if (state === "missing") {
     proveFailureBeforeEffects(preflight);
@@ -75,6 +87,7 @@ function main(): void {
       schemaVersion: 1,
       sourceRevision: sourceRevision(),
       state,
+      uid,
       ok: preflight.ok,
       failure: preflight.failure ?? null,
       detail: preflight.detail,
@@ -82,6 +95,4 @@ function main(): void {
     })}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
-}
-
-main();
+});

@@ -27,7 +27,7 @@ on:
       - "test/e2e/live/podman-cpu-lifecycle.test.ts"
       - "test/e2e/registry/native-runtime-qualification.ts"
       - "test/e2e/support/native-runtime-qualification.test.ts"
-      - "test/e2e/live/portable-cpu-delegation-proof.ts"
+      - "test/e2e/live/portable-cpu-delegation-proof.test.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.test.ts"
       - "test/e2e/support/podman-cpu-proof-workflow.test.ts"
 
@@ -45,6 +45,7 @@ jobs:
     timeout-minutes: 15
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-cpu-delegation
+      E2E_CPU_DELEGATION_USER: nemoclaw-e2e
       E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Checkout
@@ -66,20 +67,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uid="$(id -u)"
-          linger="$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)"
-          if [ "$linger" = "yes" ]; then
-            had_linger=1
-          else
-            had_linger=0
-            sudo loginctl enable-linger "$USER"
+          if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
+            printf 'Proof user already exists: %s\n' "$E2E_CPU_DELEGATION_USER" >&2
+            exit 1
           fi
+          sudo useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"
+          uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
+          gid="$(id -g "$E2E_CPU_DELEGATION_USER")"
+          home="/home/${E2E_CPU_DELEGATION_USER}"
+          sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
           sudo systemctl start "user@${uid}.service"
-          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          sudo install -d -m 0700 -o "$uid" -g "$gid" "$E2E_ARTIFACT_DIR"
           {
-            printf 'E2E_CPU_DELEGATION_HAD_LINGER=%s\n' "$had_linger"
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
-            printf 'XDG_RUNTIME_DIR=/run/user/%s\n' "$uid"
+            printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
+            printf 'E2E_CPU_DELEGATION_RUNTIME_DIR=/run/user/%s\n' "$uid"
           } >>"$GITHUB_ENV"
 
       - name: Prove missing delegation fails before effects
@@ -91,9 +93,29 @@ jobs:
           printf '[Service]\nDelegate=memory pids\n' \
             | sudo tee "$drop_in_dir/90-nemoclaw-cpu-delegation.conf" >/dev/null
           sudo systemctl daemon-reload
-          sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"
-          systemctl --user start app.slice
-          npx --no-install tsx test/e2e/live/portable-cpu-delegation-proof.ts missing
+          if ! sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"; then
+            {
+              sudo systemctl --no-pager --full status \
+                "user@${E2E_CPU_DELEGATION_UID}.service" || true
+              sudo journalctl --no-pager --unit \
+                "user@${E2E_CPU_DELEGATION_UID}.service" --lines 200 || true
+            } | python3 test/e2e/lib/redact-text.py >&2
+            exit 1
+          fi
+          sudo --user "$E2E_CPU_DELEGATION_USER" env \
+            XDG_RUNTIME_DIR="$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+            systemctl --user start app.slice
+          sudo --user "$E2E_CPU_DELEGATION_USER" env \
+            HOME="$E2E_CPU_DELEGATION_HOME" \
+            XDG_RUNTIME_DIR="$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+            PATH="$PATH" \
+            E2E_ARTIFACT_DIR="$E2E_ARTIFACT_DIR" \
+            E2E_CPU_DELEGATION_STATE=missing \
+            E2E_CPU_DELEGATION_UID="$E2E_CPU_DELEGATION_UID" \
+            E2E_SOURCE_REVISION="$E2E_SOURCE_REVISION" \
+            E2E_TARGET_ID=portable-cpu-delegation \
+            sh -c 'cd "$1" && NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/portable-cpu-delegation-proof.test.ts' \
+            sh "$GITHUB_WORKSPACE"
 
       - name: Apply administrator delegation and prove admission
         shell: bash
@@ -102,23 +124,54 @@ jobs:
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "$drop_in" >/dev/null
           sudo systemctl daemon-reload
-          sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"
-          systemctl --user start app.slice
-          npx --no-install tsx test/e2e/live/portable-cpu-delegation-proof.ts delegated
+          if ! sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"; then
+            {
+              sudo systemctl --no-pager --full status \
+                "user@${E2E_CPU_DELEGATION_UID}.service" || true
+              sudo journalctl --no-pager --unit \
+                "user@${E2E_CPU_DELEGATION_UID}.service" --lines 200 || true
+            } | python3 test/e2e/lib/redact-text.py >&2
+            exit 1
+          fi
+          sudo --user "$E2E_CPU_DELEGATION_USER" env \
+            XDG_RUNTIME_DIR="$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+            systemctl --user start app.slice
+          sudo --user "$E2E_CPU_DELEGATION_USER" env \
+            HOME="$E2E_CPU_DELEGATION_HOME" \
+            XDG_RUNTIME_DIR="$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+            PATH="$PATH" \
+            E2E_ARTIFACT_DIR="$E2E_ARTIFACT_DIR" \
+            E2E_CPU_DELEGATION_STATE=delegated \
+            E2E_CPU_DELEGATION_UID="$E2E_CPU_DELEGATION_UID" \
+            E2E_SOURCE_REVISION="$E2E_SOURCE_REVISION" \
+            E2E_TARGET_ID=portable-cpu-delegation \
+            sh -c 'cd "$1" && NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/portable-cpu-delegation-proof.test.ts' \
+            sh "$GITHUB_WORKSPACE"
 
       - name: Restore the user manager boundary
         if: always()
         shell: bash
         run: |
           set -euo pipefail
+          cleanup_status=0
           sudo rm -f /etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf
           sudo systemctl daemon-reload
-          if [ -n "${E2E_CPU_DELEGATION_UID:-}" ]; then
-            sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service" || true
+          if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
+            uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
+            if ! sudo systemctl stop "user@${uid}.service"; then
+              {
+                sudo systemctl --no-pager --full status "user@${uid}.service" || true
+                sudo journalctl --no-pager --unit "user@${uid}.service" --lines 200 || true
+              } | python3 test/e2e/lib/redact-text.py >&2
+              cleanup_status=1
+            fi
+            sudo loginctl disable-linger "$E2E_CPU_DELEGATION_USER" || cleanup_status=1
+            sudo userdel --remove "$E2E_CPU_DELEGATION_USER" || cleanup_status=1
           fi
-          if [ "${E2E_CPU_DELEGATION_HAD_LINGER:-0}" = "0" ]; then
-            sudo loginctl disable-linger "$USER"
+          if [ -d "$E2E_ARTIFACT_DIR" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR" || cleanup_status=1
           fi
+          exit "$cleanup_status"
 
       - name: Upload CPU delegation evidence
         if: always()
