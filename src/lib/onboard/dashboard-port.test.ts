@@ -261,6 +261,7 @@ describe("dashboard port reservation", () => {
     const createSandboxWithBaseImageResolution = vi.fn(
       async (
         baseImageResolutionContext: { fresh: boolean },
+        portableRuntimeAuthority: { socketPath: string } | null,
         computePlan: { sequence: number },
         managedWorkloadRebuild: null,
         temporaryManagedRuntime: boolean,
@@ -271,6 +272,7 @@ describe("dashboard port reservation", () => {
         events.push("create sandbox");
         return {
           baseImageResolutionContext,
+          portableRuntimeAuthority,
           computePlan,
           managedWorkloadRebuild,
           temporaryManagedRuntime,
@@ -287,6 +289,7 @@ describe("dashboard port reservation", () => {
         return { fresh: false };
       },
       createSandboxWithBaseImageResolution,
+      resolvePortableRuntimeAuthority: () => ({ socketPath: "/run/user/1001/podman.sock" }),
       resolveComputePlan: () => {
         events.push("resolve compute plan");
         return { sequence: ++sequence };
@@ -295,6 +298,7 @@ describe("dashboard port reservation", () => {
 
     await expect(entryPoints.createSandbox("standard")).resolves.toMatchObject({
       baseImageResolutionContext: { fresh: false },
+      portableRuntimeAuthority: { socketPath: "/run/user/1001/podman.sock" },
       computePlan: { sequence: 1 },
       managedWorkloadRebuild: null,
       temporaryManagedRuntime: false,
@@ -306,6 +310,7 @@ describe("dashboard port reservation", () => {
       entryPoints.createSandboxWithTemporaryManagedRuntime("temporary"),
     ).resolves.toMatchObject({
       baseImageResolutionContext: { fresh: false },
+      portableRuntimeAuthority: { socketPath: "/run/user/1001/podman.sock" },
       computePlan: { sequence: 2 },
       managedWorkloadRebuild: null,
       temporaryManagedRuntime: true,
@@ -314,8 +319,8 @@ describe("dashboard port reservation", () => {
       sandboxName: "temporary",
     });
     expect(createSandboxWithBaseImageResolution).toHaveBeenCalledTimes(2);
-    expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[5]).not.toBe(
-      createSandboxWithBaseImageResolution.mock.calls[1]?.[5],
+    expect(createSandboxWithBaseImageResolution.mock.calls[0]?.[6]).not.toBe(
+      createSandboxWithBaseImageResolution.mock.calls[1]?.[6],
     );
     expect(events).toEqual([
       "resolve compute plan",
@@ -333,10 +338,12 @@ describe("dashboard port reservation", () => {
       [string],
       string,
       { fresh: boolean },
+      null,
       { sequence: number }
     >({
       createBaseImageResolutionContext: () => ({ fresh: false }),
       createSandboxWithBaseImageResolution: async () => "unreachable",
+      resolvePortableRuntimeAuthority: () => null,
       resolveComputePlan: () => {
         throw setupFailure;
       },
