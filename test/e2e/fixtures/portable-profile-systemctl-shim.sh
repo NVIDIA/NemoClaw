@@ -26,6 +26,30 @@ gateway_tls_dir="${state_home}/openshell/tls"
 gateway_state_dir="${state_home}/openshell/gateway"
 gateway_pid_file="${runtime_dir}/nemoclaw-openshell-gateway.pid"
 gateway_log_file="${runtime_dir}/nemoclaw-openshell-gateway.log"
+gateway_environment_keys=(
+  CONTAINERS_CONF
+  DOCKER_HOST
+  OPENSHELL_DRIVERS
+  OPENSHELL_BIND_ADDRESS
+  OPENSHELL_SERVER_PORT
+  OPENSHELL_DISABLE_TLS
+  OPENSHELL_DISABLE_GATEWAY_AUTH
+  OPENSHELL_LOCAL_TLS_DIR
+  OPENSHELL_DB_URL
+  OPENSHELL_GRPC_ENDPOINT
+  OPENSHELL_SSH_GATEWAY_HOST
+  OPENSHELL_SSH_GATEWAY_PORT
+  OPENSHELL_DOCKER_NETWORK_NAME
+  OPENSHELL_DOCKER_SUPERVISOR_IMAGE
+  OPENSHELL_DOCKER_SUPERVISOR_BIN
+  OPENSHELL_PODMAN_SOCKET
+  OPENSHELL_GATEWAY_CONFIG
+  OPENSHELL_VM_DRIVER_STATE_DIR
+  OPENSHELL_DRIVER_DIR
+  NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE
+  NETAVARK_FW
+)
 process_identity_env="NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID"
 process_identity_failure_role="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE:-}"
 process_identity_failure_record="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD:-}"
@@ -450,6 +474,10 @@ validate_gateway_unit() {
 }
 
 load_gateway_environment() {
+  local key
+  for key in "${gateway_environment_keys[@]}"; do
+    unset "$key"
+  done
   export OPENSHELL_LOCAL_TLS_DIR="$gateway_tls_dir"
   [[ -e "$gateway_env_file" || -L "$gateway_env_file" ]] || return 0
   if [[ ! -f "$gateway_env_file" || -L "$gateway_env_file" || ! -r "$gateway_env_file" ]]; then
@@ -457,7 +485,7 @@ load_gateway_environment() {
     return 1
   fi
 
-  local line key value
+  local line value managed_key managed_key_candidate
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "$line" && "$line" != \#* ]] || continue
     [[ "$line" == *=* ]] || {
@@ -466,21 +494,17 @@ load_gateway_environment() {
     }
     key="${line%%=*}"
     value="${line#*=}"
-    case "$key" in
-      CONTAINERS_CONF | DOCKER_HOST | OPENSHELL_DRIVERS | OPENSHELL_BIND_ADDRESS | \
-        OPENSHELL_SERVER_PORT | OPENSHELL_DISABLE_TLS | OPENSHELL_DISABLE_GATEWAY_AUTH | \
-        OPENSHELL_LOCAL_TLS_DIR | OPENSHELL_DB_URL | OPENSHELL_GRPC_ENDPOINT | \
-        OPENSHELL_SSH_GATEWAY_HOST | OPENSHELL_SSH_GATEWAY_PORT | \
-        OPENSHELL_DOCKER_NETWORK_NAME | OPENSHELL_DOCKER_SUPERVISOR_IMAGE | \
-        OPENSHELL_DOCKER_SUPERVISOR_BIN | OPENSHELL_PODMAN_SOCKET | \
-        OPENSHELL_GATEWAY_CONFIG | OPENSHELL_VM_DRIVER_STATE_DIR | OPENSHELL_DRIVER_DIR | \
-        NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS | NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE | \
-        NETAVARK_FW) ;;
-      *)
-        echo "Portable profile fixture rejected gateway environment key ${key}." >&2
-        return 1
-        ;;
-    esac
+    managed_key=false
+    for managed_key_candidate in "${gateway_environment_keys[@]}"; do
+      if [[ "$key" == "$managed_key_candidate" ]]; then
+        managed_key=true
+        break
+      fi
+    done
+    if [[ "$managed_key" != true ]]; then
+      echo "Portable profile fixture rejected gateway environment key ${key}." >&2
+      return 1
+    fi
     if [[ "$value" == \'* || "$value" == *\' ]]; then
       if [[ "$value" != \'*\' || "${#value}" -lt 2 ]]; then
         echo "Portable profile fixture rejected an invalid gateway environment value for ${key}." >&2
@@ -490,7 +514,6 @@ load_gateway_environment() {
     fi
     export "${key}=${value}"
   done <"$gateway_env_file"
-  export OPENSHELL_LOCAL_TLS_DIR="$gateway_tls_dir"
 }
 
 gateway_service_is_active() {
@@ -504,8 +527,8 @@ stop_gateway_service() {
 start_gateway_service() {
   validate_gateway_unit
   load_gateway_environment
-  install -d -m 700 "$gateway_tls_dir" "$gateway_state_dir"
-  if ! "$gateway_binary_path" generate-certs --output-dir "$gateway_tls_dir" \
+  install -d -m 700 "$OPENSHELL_LOCAL_TLS_DIR" "$gateway_state_dir"
+  if ! "$gateway_binary_path" generate-certs --output-dir "$OPENSHELL_LOCAL_TLS_DIR" \
     --server-san host.openshell.internal >>"$gateway_log_file" 2>&1; then
     cat "$gateway_log_file" >&2 || true
     return 1

@@ -23,6 +23,7 @@ interface FixtureScope {
   readonly gatewayBin: string;
   readonly gatewayCommandLog: string;
   readonly gatewayPidFile: string;
+  readonly gatewayTlsDir: string;
   readonly gatewayUnitPath: string;
   readonly homeDir: string;
   readonly runtimeDir: string;
@@ -61,6 +62,14 @@ function createFixture(): FixtureScope {
   const gatewayBin = path.join(homeDir, ".local", "bin", "openshell-gateway");
   const gatewayCommandLog = path.join(directory, "gateway-commands.jsonl");
   const gatewayPidFile = path.join(runtimeDir, "nemoclaw-openshell-gateway.pid");
+  const gatewayTlsDir = path.join(
+    homeDir,
+    ".local",
+    "state",
+    "nemoclaw",
+    "openshell-docker-gateway",
+    "tls",
+  );
   const gatewayUnitPath = path.join(
     homeDir,
     ".config",
@@ -140,6 +149,10 @@ if (
 }
 if (args.length !== 0) process.exit(64);
 record({
+  bindAddress: process.env.OPENSHELL_BIND_ADDRESS ?? null,
+  bindMounts: process.env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS ?? null,
+  disableGatewayAuth: process.env.OPENSHELL_DISABLE_GATEWAY_AUTH ?? null,
+  disableTls: process.env.OPENSHELL_DISABLE_TLS ?? null,
   dockerHost: process.env.DOCKER_HOST,
   drivers: process.env.OPENSHELL_DRIVERS,
   kind: "serve",
@@ -157,7 +170,7 @@ setInterval(() => undefined, 1000);
   fs.mkdirSync(path.dirname(gatewayEnvFile), { recursive: true, mode: 0o700 });
   fs.writeFileSync(
     gatewayEnvFile,
-    `DOCKER_HOST='unix://${socketPath}'\nOPENSHELL_DRIVERS=podman\n`,
+    `DOCKER_HOST='unix://${socketPath}'\nOPENSHELL_DRIVERS=podman\nOPENSHELL_LOCAL_TLS_DIR=${gatewayTlsDir}\n`,
     { mode: 0o600 },
   );
   return {
@@ -170,12 +183,17 @@ setInterval(() => undefined, 1000);
       FAKE_PODMAN_PID_LOG: path.join(directory, "podman-pids.log"),
       FAKE_PODMAN_SOCKET: socketPath,
       HOME: homeDir,
+      NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS: "1",
+      OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+      OPENSHELL_DISABLE_GATEWAY_AUTH: "1",
+      OPENSHELL_DISABLE_TLS: "1",
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
       XDG_RUNTIME_DIR: runtimeDir,
     },
     gatewayBin,
     gatewayCommandLog,
     gatewayPidFile,
+    gatewayTlsDir,
     gatewayUnitPath,
     homeDir,
     runtimeDir,
@@ -583,10 +601,24 @@ describe("portable profile systemctl fixture", () => {
           .split("\n")
           .map((line) => JSON.parse(line) as Record<string, unknown>);
         expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        expect(commands[0]).toMatchObject({
+          args: [
+            "generate-certs",
+            "--output-dir",
+            scope.gatewayTlsDir,
+            "--server-san",
+            "host.openshell.internal",
+          ],
+          tls: scope.gatewayTlsDir,
+        });
         expect(commands[1]).toMatchObject({
+          bindAddress: null,
+          bindMounts: null,
+          disableGatewayAuth: null,
+          disableTls: null,
           dockerHost: `unix://${scope.socketPath}`,
           drivers: "podman",
-          tls: path.join(scope.homeDir, ".local", "state", "openshell", "tls"),
+          tls: scope.gatewayTlsDir,
         });
         expect(fs.readFileSync(scope.env.FAKE_GATEWAY_CERT_MARKER!, "utf8")).toBe("generated\n");
 
