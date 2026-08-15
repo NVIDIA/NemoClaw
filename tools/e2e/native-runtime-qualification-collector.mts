@@ -161,10 +161,10 @@ function validatePullRequest(
   input: NativeRuntimeQualificationCollectorInput,
 ): PullRequestIdentity {
   const pull = record(value, "pull request");
-  const head = record(pull.head, "pull request head");
-  const base = record(pull.base, "pull request base");
-  const headRepository = record(head.repo, "pull request head repository");
-  const baseRepository = record(base.repo, "pull request base repository");
+  const head = record(pull.head, "candidate commit");
+  const base = record(pull.base, "target-branch base");
+  const headRepository = record(head.repo, "candidate repository");
+  const baseRepository = record(base.repo, "target repository");
   if (
     pull.number !== input.pullRequestNumber ||
     pull.state !== "open" ||
@@ -174,12 +174,14 @@ function validatePullRequest(
     baseRepository.full_name !== input.repository ||
     typeof headRepository.full_name !== "string"
   ) {
-    fail("pull request head, base, repository, or state does not match controller inputs");
+    fail(
+      "candidate commit, candidate repository, target-branch base SHA, or pull request state does not match controller inputs",
+    );
   }
   return {
     candidateRepository: headRepository.full_name,
-    headSha: exactSha(head.sha, "pull request head SHA"),
-    baseSha: exactSha(base.sha, "pull request base SHA"),
+    headSha: exactSha(head.sha, "candidate commit SHA"),
+    baseSha: exactSha(base.sha, "target-branch base SHA"),
   };
 }
 

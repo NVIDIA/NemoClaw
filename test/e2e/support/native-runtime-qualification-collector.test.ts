@@ -219,7 +219,11 @@ function changeArtifactDigestOnConfirmation(fixture: QualificationFixture): void
 }
 
 const CONFIRMATION_DRIFT_CASES = [
-  ["PR head", changePullHeadOnConfirmation, "pull request head, base"],
+  [
+    "candidate commit",
+    changePullHeadOnConfirmation,
+    "candidate commit, candidate repository, target-branch base SHA",
+  ],
   ["main revision", changeMainRevisionOnConfirmation, "current main SHA"],
   ["workflow run attempt", changeRunAttemptOnConfirmation, "protected source changed"],
   [
@@ -271,18 +275,15 @@ describe("native runtime qualification protected evidence collector", () => {
   );
 
   it.each([
-    ["head", { headSha: "e".repeat(40), baseSha: "f".repeat(40) }],
-    ["base", { headSha: "f".repeat(40), baseSha: "e".repeat(40) }],
-  ])(
-    "rejects replayed evidence with an internally consistent wrong %s identity",
-    async (_name, pair) => {
-      const fixture = githubFixture(nativeQualificationEvidence(pair));
+    ["candidate commit", { headSha: "e".repeat(40), baseSha: "f".repeat(40) }],
+    ["target-branch base SHA", { headSha: "f".repeat(40), baseSha: "e".repeat(40) }],
+  ])("rejects replayed evidence with an internally consistent wrong %s", async (_name, pair) => {
+    const fixture = githubFixture(nativeQualificationEvidence(pair));
 
-      await expect(
-        collectNativeRuntimeQualificationEvidence(fixture.api, collectorInput()),
-      ).rejects.toThrow("externally expected protected source");
-    },
-  );
+    await expect(
+      collectNativeRuntimeQualificationEvidence(fixture.api, collectorInput()),
+    ).rejects.toThrow("externally expected protected source");
+  });
 
   it("rejects a successful run at candidate code instead of the target-branch base SHA", async () => {
     const fixture = githubFixture();

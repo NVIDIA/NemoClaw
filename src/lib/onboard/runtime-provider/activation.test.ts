@@ -345,7 +345,7 @@ describe("runtime provider activation catalog", () => {
     ).toThrow("does not match");
   });
 
-  it("rejects a missing canonical qualification authority", () => {
+  it("rejects a missing validated qualification authority", () => {
     const candidate = registration();
     const { qualificationAuthority: _authority, ...incomplete } = candidate;
 
