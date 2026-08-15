@@ -185,7 +185,7 @@ describe("E2E artifact uploads", () => {
     );
   });
 
-  it("requires the aggregate native qualification upload", () => {
+  it("requires one aggregate native runtime qualification upload", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["native-runtime-qualification"];
     const upload = job.steps?.find(
@@ -199,7 +199,7 @@ describe("E2E artifact uploads", () => {
     );
   });
 
-  it("rejects a duplicate aggregate native qualification upload", () => {
+  it("rejects a duplicate aggregate native runtime qualification upload", () => {
     const workflow = mutableWorkflow();
     const job = workflow.jobs["native-runtime-qualification"];
     const upload = job.steps?.find(
