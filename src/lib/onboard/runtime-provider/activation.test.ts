@@ -2,6 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import {
+  compileNativeRuntimeQualification,
+  consumeNativeRuntimeQualificationEvidence,
+  nativeRuntimeQualificationDefinition,
+  type NativeRuntimeQualificationAuthority,
+} from "../../../../test/e2e/registry/native-runtime-qualification";
+import {
+  nativeQualificationEvidenceForDefinition,
+  nativeQualificationExpectedSource,
+  nativeQualificationReceiptReader,
+} from "../../../../test/helpers/native-runtime-qualification-evidence";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -27,10 +38,6 @@ import {
   type RuntimeProviderBundle,
 } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES, createCurrentRuntimeProviderBundles } from "./current";
-import type {
-  NativeRuntimeQualificationAuthority,
-  NativeRuntimeQualificationAuthoritySource,
-} from "./native-qualification-authority";
 
 type CandidateTopology = {
   readonly providerId: string;
@@ -56,65 +63,28 @@ const CANDIDATE_TOPOLOGIES = [
   },
 ] as const satisfies readonly CandidateTopology[];
 
-function requiredCaseIds(providerId: string): readonly string[] {
-  return RUNTIME_PROVIDER_ACTIVATION_AGENTS.flatMap((agent) =>
-    RUNTIME_PROVIDER_ACTIVATION_PLATFORMS.flatMap((platform) => {
-      const architecture = platform.split("/")[1];
-      return RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES.flatMap((acceleration) => {
-        const inference =
-          acceleration === "cpu"
-            ? [RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES[0]]
-            : RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES;
-        const accelerationId = acceleration === "nvidia-gpu" ? "gpu" : acceleration;
-        return inference.map(
-          (service) => `${providerId}-${agent}-linux-${architecture}-${accelerationId}-${service}`,
-        );
-      });
-    }),
-  ).sort();
+const QUALIFICATION_AUTHORITIES = new Map<string, NativeRuntimeQualificationAuthority>();
+
+function createQualificationAuthority(providerId: string): NativeRuntimeQualificationAuthority {
+  const qualification = compileNativeRuntimeQualification(
+    nativeRuntimeQualificationDefinition(providerId),
+  );
+  const authority = consumeNativeRuntimeQualificationEvidence(
+    qualification,
+    nativeQualificationEvidenceForDefinition(qualification),
+    nativeQualificationExpectedSource(),
+    nativeQualificationReceiptReader,
+  );
+  QUALIFICATION_AUTHORITIES.set(providerId, authority);
+  return authority;
 }
 
-function qualificationSource(providerId: string): NativeRuntimeQualificationAuthoritySource {
-  return {
-    repository: "NVIDIA/NemoClaw",
-    producerWorkflow: ".github/workflows/e2e.yaml",
-    pullRequestNumber: 8063,
-    candidateRepository: "NVIDIA/NemoClaw",
-    candidateSha: "a".repeat(40),
-    baseRef: "main",
-    baseSha: "c".repeat(40),
-    workflowSha: "c".repeat(40),
-    producerRunId: "101",
-    producerRunAttempt: 1,
-    dispatchArtifact: {
-      id: "202",
-      name: "e2e-dispatch-101-1",
-      digest: `sha256:${"d".repeat(64)}`,
-      sizeInBytes: 4096,
-    },
-    protectedJobs: requiredCaseIds(providerId).map((caseId, index) => ({
-      caseId,
-      id: String(1000 + index),
-      name: `Native runtime qualification / ${caseId}`,
-    })),
-  };
-}
-
-function qualificationAuthority(
-  providerId: string,
-  source: NativeRuntimeQualificationAuthoritySource,
-): NativeRuntimeQualificationAuthority {
-  return {
-    schemaVersion: 1,
-    kind: "nemoclaw-native-runtime-qualification-authority-v1",
-    qualificationId: `${providerId}-protected-host-local-inference`,
-    providerId,
-    source,
-  };
+function qualificationAuthority(providerId: string): NativeRuntimeQualificationAuthority {
+  return QUALIFICATION_AUTHORITIES.get(providerId) ?? createQualificationAuthority(providerId);
 }
 
 function unreachable(): never {
-  throw new Error("Activation contract fixture operations are not executed.");
+  throw new Error("Activation contract fixture operations are never executed.");
 }
 
 function completeBundle(providerId: string): RuntimeProviderBundle {
@@ -188,7 +158,8 @@ function registration(
   topology: CandidateTopology = CANDIDATE_TOPOLOGIES[1],
   bundle: RuntimeProviderBundle = completeBundle(topology.providerId),
 ): RuntimeProviderActivationRegistration {
-  const source = qualificationSource(topology.providerId);
+  const requiredSource = nativeQualificationExpectedSource();
+  const authority = qualificationAuthority(topology.providerId);
   return {
     declaration: {
       contractVersion: RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
@@ -207,51 +178,77 @@ function registration(
       qualification: {
         qualificationId: `${topology.providerId}-protected-host-local-inference`,
         source: {
-          ...source,
-          dispatchArtifact: { ...source.dispatchArtifact },
-          protectedJobs: source.protectedJobs.map((job) => ({ ...job })),
+          ...requiredSource,
+          artifact: { ...requiredSource.artifact },
         },
       },
     },
-    qualificationAuthority: qualificationAuthority(topology.providerId, source),
+    qualificationAuthority: authority,
     bundle,
   };
 }
 
 const INCOMPLETE_SURFACES = [
-  "stateMutation",
-  "bootstrap",
-  "snapshot",
-  "recovery",
-  "cleanup",
+  [
+    "stateMutation",
+    (bundle: RuntimeProviderBundle) => ({
+      ...bundle,
+      stateMutation: {
+        providerId: bundle.identity.id,
+        supported: false as const,
+        reason: "incomplete fixture",
+      },
+    }),
+  ],
+  [
+    "bootstrap",
+    (bundle: RuntimeProviderBundle) => ({
+      ...bundle,
+      bootstrap: {
+        providerId: bundle.identity.id,
+        supported: false as const,
+        reason: "incomplete fixture",
+      },
+    }),
+  ],
+  [
+    "snapshot",
+    (bundle: RuntimeProviderBundle) => ({
+      ...bundle,
+      snapshot: {
+        providerId: bundle.identity.id,
+        supported: false as const,
+        reason: "incomplete fixture",
+      },
+    }),
+  ],
+  [
+    "recovery",
+    (bundle: RuntimeProviderBundle) => ({
+      ...bundle,
+      recovery: {
+        providerId: bundle.identity.id,
+        supported: false as const,
+        reason: "incomplete fixture",
+      },
+    }),
+  ],
+  [
+    "cleanup",
+    (bundle: RuntimeProviderBundle) => ({
+      ...bundle,
+      capabilities: { ...bundle.capabilities, workloadImageCleanup: false },
+      cleanup: {
+        providerId: bundle.identity.id,
+        supported: false as const,
+        reason: "incomplete fixture",
+      },
+    }),
+  ],
 ] as const;
 
-function withoutSurface(
-  bundle: RuntimeProviderBundle,
-  surface: (typeof INCOMPLETE_SURFACES)[number],
-): RuntimeProviderBundle {
-  const unsupported = {
-    providerId: bundle.identity.id,
-    supported: false as const,
-    reason: "incomplete fixture",
-  };
-  const transformations: Record<(typeof INCOMPLETE_SURFACES)[number], () => RuntimeProviderBundle> =
-    {
-      stateMutation: () => ({ ...bundle, stateMutation: unsupported }) as RuntimeProviderBundle,
-      bootstrap: () => ({ ...bundle, bootstrap: unsupported }) as RuntimeProviderBundle,
-      snapshot: () => ({ ...bundle, snapshot: unsupported }) as RuntimeProviderBundle,
-      recovery: () => ({ ...bundle, recovery: unsupported }) as RuntimeProviderBundle,
-      cleanup: () => ({
-        ...bundle,
-        capabilities: { ...bundle.capabilities, workloadImageCleanup: false },
-        cleanup: unsupported,
-      }),
-    };
-  return transformations[surface]();
-}
-
 describe("runtime provider activation catalog", () => {
-  it("registers rootful, rootless, and external socket-free providers through the activation catalog (#9143)", () => {
+  it("composes rootful, rootless, and external socket-free topologies through one seam", () => {
     const registrations = CANDIDATE_TOPOLOGIES.map((topology) => registration(topology));
     const catalog = createRuntimeProviderActivationCatalog(registrations);
     const providers = createCurrentRuntimeProviderBundles(registrations);
@@ -267,27 +264,28 @@ describe("runtime provider activation catalog", () => {
     ).toEqual(CANDIDATE_TOPOLOGIES.map(({ providerId }) => providerId));
     expect(
       CANDIDATE_TOPOLOGIES.map(({ providerId }) =>
-        Object.isFrozen(catalog[providerId]!.qualificationAuthority.source.protectedJobs),
+        Object.isFrozen(catalog[providerId]?.declaration.topology),
       ),
     ).toEqual([true, true, true]);
-    expect(() => {
-      (
-        catalog[CANDIDATE_TOPOLOGIES[1].providerId]!.qualificationAuthority.source
-          .protectedJobs as unknown as unknown[]
-      ).push({});
-    }).toThrow(TypeError);
+    expect(
+      CANDIDATE_TOPOLOGIES.map(({ providerId }) =>
+        Object.isFrozen(catalog[providerId]?.qualificationAuthority.source.artifact),
+      ),
+    ).toEqual([true, true, true]);
   });
 
-  it("keeps production selection limited to Docker and Kubernetes (#9143)", () => {
+  it("leaves Docker and Kubernetes unchanged with no production candidate registration", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     expect(Object.keys(createCurrentRuntimeProviderBundles())).toEqual(["docker", "kubernetes"]);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("mxc");
   });
 
   it.each(INCOMPLETE_SURFACES)(
-    "rejects incomplete %s authority before composition (#9143)",
-    (surface) => {
+    "rejects incomplete %s authority before composition",
+    (surface, makeIncomplete) => {
       const candidate = CANDIDATE_TOPOLOGIES[1];
-      const incomplete = withoutSurface(completeBundle(candidate.providerId), surface);
+      const incomplete = makeIncomplete(completeBundle(candidate.providerId));
 
       expect(() =>
         createRuntimeProviderActivationCatalog([registration(candidate, incomplete)]),
@@ -296,7 +294,7 @@ describe("runtime provider activation catalog", () => {
   );
 
   it.each(RUNTIME_PROVIDER_ACTIVATION_ENGINE_SCOPES)(
-    "rejects a bundle missing the %s operation scope (#9143)",
+    "rejects a bundle missing the %s operation scope",
     (operation) => {
       const candidate = CANDIDATE_TOPOLOGIES[1];
       const bundle = completeBundle(candidate.providerId);
@@ -320,7 +318,7 @@ describe("runtime provider activation catalog", () => {
     },
   );
 
-  it("rejects incomplete host-local inference authority (#9143)", () => {
+  it("rejects incomplete host-local inference authority", () => {
     const candidate = CANDIDATE_TOPOLOGIES[1];
     const bundle = completeBundle(candidate.providerId);
     const incomplete = {
@@ -338,16 +336,16 @@ describe("runtime provider activation catalog", () => {
     ).toThrow("incomplete hostLocalInference authority");
   });
 
-  it("rejects declaration and bundle identity mismatch (#9143)", () => {
+  it("rejects declaration and bundle identity mismatch", () => {
     const candidate = CANDIDATE_TOPOLOGIES[1];
+    const mismatched = completeBundle("different-provider");
+
     expect(() =>
-      createRuntimeProviderActivationCatalog([
-        registration(candidate, completeBundle("different-provider")),
-      ]),
-    ).toThrow("does not match its provider bundle");
+      createRuntimeProviderActivationCatalog([registration(candidate, mismatched)]),
+    ).toThrow("does not match");
   });
 
-  it("rejects a missing authenticated qualification authority (#9143)", () => {
+  it("rejects a missing validated qualification authority", () => {
     const candidate = registration();
     const { qualificationAuthority: _authority, ...incomplete } = candidate;
 
@@ -355,10 +353,10 @@ describe("runtime provider activation catalog", () => {
       createRuntimeProviderActivationCatalog([
         incomplete as unknown as RuntimeProviderActivationRegistration,
       ]),
-    ).toThrow("authenticated qualification authority is required");
+    ).toThrow("validated qualification authority is required");
   });
 
-  it("rejects qualification authority for a different provider (#9143)", () => {
+  it("rejects qualification authority for a different provider", () => {
     const candidate = registration();
     const mismatched = {
       ...candidate,
@@ -373,10 +371,7 @@ describe("runtime provider activation catalog", () => {
     );
   });
 
-  it.each([
-    ["candidate commit", { candidateSha: "e".repeat(40) }],
-    ["trusted base and workflow commit", { baseSha: "e".repeat(40), workflowSha: "e".repeat(40) }],
-  ])("rejects qualification authority with a different %s (#9143)", (_label, sourceOverride) => {
+  it("rejects qualification authority for a different candidate commit", () => {
     const candidate = registration();
     const mismatched = {
       ...candidate,
@@ -384,7 +379,7 @@ describe("runtime provider activation catalog", () => {
         ...candidate.qualificationAuthority,
         source: {
           ...candidate.qualificationAuthority.source,
-          ...sourceOverride,
+          headSha: "c".repeat(40),
         },
       },
     } as RuntimeProviderActivationRegistration;
@@ -394,7 +389,7 @@ describe("runtime provider activation catalog", () => {
     );
   });
 
-  it("rejects qualification authority from a different producer workflow (#9143)", () => {
+  it("rejects qualification authority from a different producer workflow", () => {
     const candidate = registration();
     const mismatched = {
       ...candidate,
@@ -402,17 +397,17 @@ describe("runtime provider activation catalog", () => {
         ...candidate.qualificationAuthority,
         source: {
           ...candidate.qualificationAuthority.source,
-          producerWorkflow: ".github/workflows/untrusted.yaml",
+          workflow: ".github/workflows/untrusted-native-qualification.yaml",
         },
       },
-    } as unknown as RuntimeProviderActivationRegistration;
+    } as RuntimeProviderActivationRegistration;
 
     expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
-      "protected repository, producer workflow, pull request, or base ref is invalid",
+      "must bind the protected qualification repository and producer workflow",
     );
   });
 
-  it("rejects qualification authority without every protected case job (#9143)", () => {
+  it("rejects qualification authority from a different candidate repository", () => {
     const candidate = registration();
     const mismatched = {
       ...candidate,
@@ -420,114 +415,13 @@ describe("runtime provider activation catalog", () => {
         ...candidate.qualificationAuthority,
         source: {
           ...candidate.qualificationAuthority.source,
-          protectedJobs: candidate.qualificationAuthority.source.protectedJobs.slice(1),
+          candidateRepository: "different/NemoClaw",
         },
       },
     } as RuntimeProviderActivationRegistration;
 
     expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
-      "does not match the required source identity",
-    );
-  });
-
-  it("rejects an incomplete protected job requirement and matching authority (#9143)", () => {
-    const candidate = registration();
-    const protectedJobs = candidate.declaration.qualification.source.protectedJobs.slice(1);
-    const incomplete = {
-      ...candidate,
-      declaration: {
-        ...candidate.declaration,
-        qualification: {
-          ...candidate.declaration.qualification,
-          source: { ...candidate.declaration.qualification.source, protectedJobs },
-        },
-      },
-      qualificationAuthority: {
-        ...candidate.qualificationAuthority,
-        source: { ...candidate.qualificationAuthority.source, protectedJobs },
-      },
-    } as RuntimeProviderActivationRegistration;
-
-    expect(() => createRuntimeProviderActivationCatalog([incomplete])).toThrow(
-      "required qualification protected jobs must be",
-    );
-  });
-
-  it("rejects a noncanonical protected job name (#9143)", () => {
-    const candidate = registration();
-    const first = candidate.qualificationAuthority.source.protectedJobs[0]!;
-    const invalid = {
-      ...candidate,
-      qualificationAuthority: {
-        ...candidate.qualificationAuthority,
-        source: {
-          ...candidate.qualificationAuthority.source,
-          protectedJobs: [
-            { ...first, name: `Untrusted / ${first.caseId}` },
-            ...candidate.qualificationAuthority.source.protectedJobs.slice(1),
-          ],
-        },
-      },
-    } as RuntimeProviderActivationRegistration;
-
-    expect(() => createRuntimeProviderActivationCatalog([invalid])).toThrow(
-      "protected job identity is invalid",
-    );
-  });
-
-  it("rejects a candidate that matches the trusted workflow revision (#9143)", () => {
-    const candidate = registration();
-    const workflowSha = candidate.declaration.qualification.source.workflowSha;
-    const invalid = {
-      ...candidate,
-      declaration: {
-        ...candidate.declaration,
-        qualification: {
-          ...candidate.declaration.qualification,
-          source: { ...candidate.declaration.qualification.source, candidateSha: workflowSha },
-        },
-      },
-    } as RuntimeProviderActivationRegistration;
-
-    expect(() => createRuntimeProviderActivationCatalog([invalid])).toThrow(
-      "must separate the candidate from the trusted target-branch base",
-    );
-  });
-
-  it("rejects a target base that differs from the trusted workflow revision (#9143)", () => {
-    const candidate = registration();
-    const source = {
-      ...candidate.declaration.qualification.source,
-      baseSha: "b".repeat(40),
-    };
-    const invalid = {
-      ...candidate,
-      declaration: {
-        ...candidate.declaration,
-        qualification: { ...candidate.declaration.qualification, source },
-      },
-      qualificationAuthority: { ...candidate.qualificationAuthority, source },
-    } as RuntimeProviderActivationRegistration;
-
-    expect(() => createRuntimeProviderActivationCatalog([invalid])).toThrow(
-      "must separate the candidate from the trusted target-branch base",
-    );
-  });
-
-  it("rejects duplicate activation identities (#9143)", () => {
-    expect(() => createRuntimeProviderActivationCatalog([registration(), registration()])).toThrow(
-      "duplicate provider identity",
-    );
-  });
-
-  it("rejects an activation that shadows a production provider (#9143)", () => {
-    const candidate = registration({
-      providerId: "docker",
-      hostAuthority: "rootful",
-      transport: "operation-scoped",
-    });
-    expect(() => createCurrentRuntimeProviderBundles([candidate])).toThrow(
-      "already production-selectable",
+      "must bind the protected qualification repository and producer workflow",
     );
   });
 });

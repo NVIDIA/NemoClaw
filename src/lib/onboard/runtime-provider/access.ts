@@ -2,6 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type {
+  RuntimeProviderActivationCatalog,
+  RuntimeProviderActivationDeclaration,
+  RuntimeProviderActivationRegistration,
+} from "./activation";
+export {
+  composeActivatedRuntimeProviderBundles,
+  createRuntimeProviderActivationCatalog,
+  RuntimeProviderActivationError,
+} from "./activation";
+export type {
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationExpectedSource,
+  NativeRuntimeQualificationProtectedRun,
+} from "./native-qualification-authority";
+export type {
   RuntimeProviderBundle,
   RuntimeProviderBundleRegistry,
   RuntimeProviderChannelStopTransport,
@@ -20,24 +35,7 @@ export type {
   RuntimeProviderWorkloadCleanupResult,
   RuntimeProviderWorkloadProfile,
 } from "./contract";
-export {
-  composeActivatedRuntimeProviderBundles,
-  createRuntimeProviderActivationCatalog,
-  RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
-  RuntimeProviderActivationError,
-} from "./activation";
-export type {
-  RuntimeProviderActivationCatalog,
-  RuntimeProviderActivationDeclaration,
-  RuntimeProviderActivationRegistration,
-} from "./activation";
-export type {
-  NativeRuntimeQualificationArtifactIdentity,
-  NativeRuntimeQualificationAuthority,
-  NativeRuntimeQualificationAuthoritySource,
-  NativeRuntimeQualificationPlanSource,
-  NativeRuntimeQualificationProtectedJobIdentity,
-} from "./native-qualification-authority";
+export { RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION } from "./activation";
 export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   createCurrentRuntimeProviderBundles,
