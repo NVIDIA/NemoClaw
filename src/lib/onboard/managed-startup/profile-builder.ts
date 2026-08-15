@@ -67,6 +67,7 @@ const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
+  pi: "195e7f361cf83f2fee7b896579c3ceb680498645368920b42e3b951244e5e08a",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -647,7 +648,9 @@ function assertEnvironmentConsistency(
     NEMOCLAW_INFERENCE_API: profile.inference.api,
     NEMOCLAW_TOOL_DISCLOSURE: profile.tools.disclosure,
     CHAT_UI_URL:
-      profile.dashboard.agent === "langchain-deepagents-code" ? null : profile.dashboard.url,
+      profile.dashboard.agent === "openclaw" || profile.dashboard.agent === "hermes"
+        ? profile.dashboard.url
+        : null,
   };
   for (const [name, expected] of Object.entries(stringValues)) {
     const raw = presentEnvironmentValue(environment, name);
@@ -787,7 +790,7 @@ function assertEnvironmentConsistency(
         profile.tools.enabledGateways,
       );
     }
-  } else {
+  } else if (profile.agentConfig.agent === "langchain-deepagents-code") {
     const config = profile.agentConfig;
     const approval = presentEnvironmentValue(environment, "NEMOCLAW_DCODE_AUTO_APPROVAL");
     if (approval !== null) {
@@ -905,6 +908,14 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
         minimum: MIN_HERMES_CONTEXT_WINDOW,
         maximum: MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
       }),
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    };
+  } else if (input.agent === "pi") {
+    agentConfig = { agent: "pi" };
+    tuning = {
+      contextWindow: null,
       maxTokens: null,
       reasoning: null,
       reasoningEffort: null,
