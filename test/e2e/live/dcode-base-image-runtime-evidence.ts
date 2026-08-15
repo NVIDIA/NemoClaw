@@ -56,6 +56,17 @@ function positiveInteger(value: unknown, label: string): number {
   return Number(value);
 }
 
+function expectedCandidateSha(environment: NodeJS.ProcessEnv): string | undefined {
+  const configured = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const githubActions = environment.GITHUB_ACTIONS === "true";
+  const candidateSha = configured || (githubActions ? (environment.GITHUB_SHA?.trim() ?? "") : "");
+  if (!candidateSha && !githubActions) return undefined;
+  if (!REVISION_PATTERN.test(candidateSha)) {
+    throw new Error("Deep Agents Code expected candidate SHA is invalid");
+  }
+  return candidateSha;
+}
+
 function exactKeys(value: Record<string, unknown>, expected: readonly string[], label: string) {
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
     throw new Error(`${label} has unexpected fields`);
@@ -131,8 +142,14 @@ export function parseDcodeBaseImagePublicationEvidence(
   if (evidence.contractVersion !== 1) {
     throw new Error("Deep Agents Code base evidence contract version must be 1");
   }
-  if (typeof evidence.candidateSha !== "string" || !/^[0-9a-f]{40}$/u.test(evidence.candidateSha)) {
+  if (typeof evidence.candidateSha !== "string" || !REVISION_PATTERN.test(evidence.candidateSha)) {
     throw new Error("Deep Agents Code base evidence candidate SHA is invalid");
+  }
+  const expected = expectedCandidateSha(environment);
+  if (expected && evidence.candidateSha !== expected) {
+    throw new Error(
+      "Deep Agents Code base evidence candidate SHA does not match the selected candidate",
+    );
   }
   const contract = parseDcodeBaseImageContract(evidence.base);
   if (requireDcodeBaseImageReference(environment) !== contract.reference) {

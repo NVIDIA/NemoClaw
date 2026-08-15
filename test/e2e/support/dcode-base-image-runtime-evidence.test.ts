@@ -21,6 +21,13 @@ const ARM64_REFERENCE = `${DCODE_BASE_IMAGE}@${ARM64_DIGEST}`;
 const CANDIDATE_REVISION = "d".repeat(40);
 const PUBLICATION_REVISION = "e".repeat(40);
 
+function publicationEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
+    ...overrides,
+  };
+}
+
 function publicationEvidence() {
   return {
     contractVersion: 1,
@@ -68,9 +75,10 @@ function resolutionMetadata(
 
 describe("Deep Agents Code published base runtime evidence", () => {
   it("records the completed sandbox image only when its platform digest matches publication", () => {
-    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), {
-      [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
-    });
+    const contract = parseDcodeBaseImagePublicationEvidence(
+      publicationEvidence(),
+      publicationEnvironment(),
+    );
 
     expect(
       verifyDcodeBaseImageRuntimeEvidence(
@@ -93,10 +101,81 @@ describe("Deep Agents Code published base runtime evidence", () => {
 
   it("rejects a valid official reference that differs from the publication contract", () => {
     expect(() =>
-      parseDcodeBaseImagePublicationEvidence(publicationEvidence(), {
-        [DCODE_BASE_IMAGE_ENV]: `${DCODE_BASE_IMAGE}@sha256:${"f".repeat(64)}`,
-      }),
+      parseDcodeBaseImagePublicationEvidence(
+        publicationEvidence(),
+        publicationEnvironment({
+          [DCODE_BASE_IMAGE_ENV]: `${DCODE_BASE_IMAGE}@sha256:${"f".repeat(64)}`,
+        }),
+      ),
     ).toThrow(/does not match the published base contract/);
+  });
+
+  it("prefers the selected manual candidate over the trusted workflow SHA", () => {
+    expect(
+      parseDcodeBaseImagePublicationEvidence(
+        publicationEvidence(),
+        publicationEnvironment({
+          GITHUB_ACTIONS: "true",
+          GITHUB_SHA: "f".repeat(40),
+          NEMOCLAW_E2E_EXPECTED_SHA: CANDIDATE_REVISION,
+        }),
+      ),
+    ).toMatchObject({ reference: INDEX_REFERENCE });
+  });
+
+  it("uses the workflow SHA for trusted main qualification", () => {
+    expect(
+      parseDcodeBaseImagePublicationEvidence(
+        publicationEvidence(),
+        publicationEnvironment({
+          GITHUB_ACTIONS: "true",
+          GITHUB_SHA: CANDIDATE_REVISION,
+          NEMOCLAW_E2E_EXPECTED_SHA: "",
+        }),
+      ),
+    ).toMatchObject({ reference: INDEX_REFERENCE });
+  });
+
+  it.each([
+    [
+      "a manual candidate",
+      {
+        GITHUB_ACTIONS: "true",
+        GITHUB_SHA: CANDIDATE_REVISION,
+        NEMOCLAW_E2E_EXPECTED_SHA: "f".repeat(40),
+      },
+    ],
+    [
+      "a trusted main candidate",
+      {
+        GITHUB_ACTIONS: "true",
+        GITHUB_SHA: "f".repeat(40),
+        NEMOCLAW_E2E_EXPECTED_SHA: "",
+      },
+    ],
+  ])("rejects stale publication evidence for %s", (_label, environment) => {
+    expect(() =>
+      parseDcodeBaseImagePublicationEvidence(
+        publicationEvidence(),
+        publicationEnvironment(environment),
+      ),
+    ).toThrow(/candidate SHA does not match the selected candidate/);
+  });
+
+  it.each([
+    ["a missing workflow SHA", undefined],
+    ["a malformed workflow SHA", "main"],
+  ])("rejects %s in GitHub Actions", (_label, githubSha) => {
+    expect(() =>
+      parseDcodeBaseImagePublicationEvidence(
+        publicationEvidence(),
+        publicationEnvironment({
+          GITHUB_ACTIONS: "true",
+          GITHUB_SHA: githubSha,
+          NEMOCLAW_E2E_EXPECTED_SHA: "",
+        }),
+      ),
+    ).toThrow(/expected candidate SHA is invalid/);
   });
 
   it("rejects a platform reference that does not match its published digest", () => {
@@ -104,9 +183,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
     evidence.base.platformReferences["linux/amd64"] = INDEX_REFERENCE;
 
     expect(() =>
-      parseDcodeBaseImagePublicationEvidence(evidence, {
-        [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
-      }),
+      parseDcodeBaseImagePublicationEvidence(evidence, publicationEnvironment()),
     ).toThrow(/linux\/amd64 base contract identity is invalid/);
   });
 
@@ -166,9 +243,10 @@ describe("Deep Agents Code published base runtime evidence", () => {
       /used unsupported platform/,
     ],
   ])("rejects %s", (_label, metadata, expectedError) => {
-    const contract = parseDcodeBaseImagePublicationEvidence(publicationEvidence(), {
-      [DCODE_BASE_IMAGE_ENV]: INDEX_REFERENCE,
-    });
+    const contract = parseDcodeBaseImagePublicationEvidence(
+      publicationEvidence(),
+      publicationEnvironment(),
+    );
 
     expect(() =>
       verifyDcodeBaseImageRuntimeEvidence(
