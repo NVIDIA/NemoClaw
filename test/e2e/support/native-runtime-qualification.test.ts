@@ -120,6 +120,23 @@ describe("native runtime qualification contract", () => {
   });
 
   it.each([
+    ["duplicate", [...NATIVE_RUNTIME_QUALIFICATION_AGENTS, "openclaw"]],
+    ["unknown", [...NATIVE_RUNTIME_QUALIFICATION_AGENTS.slice(0, -1), "unknown-agent"]],
+  ])("rejects %s candidate agents before runtime construction", (_label, agents) => {
+    const constructRuntime = vi.fn();
+    const evidence = {
+      ...candidateEvidence(),
+      agents,
+    } as unknown as NativeRuntimeCandidateEvidence;
+
+    expect(() => {
+      consumeNativeRuntimeCandidateEvidence(evidence, SOURCE_REVISION);
+      constructRuntime();
+    }).toThrow("Native runtime candidate agents is incomplete");
+    expect(constructRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["null evidence", null],
     ["an invalid agent list", { ...candidateEvidence(), agents: "openclaw" }],
     ["invalid Docker evidence", { ...candidateEvidence(), dockerUnavailable: null }],
