@@ -1221,7 +1221,7 @@ describe("adapter recovery lock (#6141)", () => {
     expect(sleep).toHaveBeenCalledWith(25);
   });
 
-  it("does not probe a terminated adapter when the attempt budget is zero (#9218)", async () => {
+  it("does not probe or sleep when the adapter exit attempt budget is zero (#9218)", async () => {
     const isRunning = vi.fn(() => true);
     const sleep = vi.fn(async () => {});
 

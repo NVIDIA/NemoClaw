@@ -303,7 +303,7 @@ describe("onboard prepared DCode build context", () => {
   });
 
 
-  it("binds the production Docker GPU patch to the seconds-based sleeper (#9218)", {
+  it("onboarding passes sleepSeconds to the Docker GPU patch (#9218)", {
     timeout: 90_000,
   }, () => {
     const result = runPreparedContextScenario("create");
