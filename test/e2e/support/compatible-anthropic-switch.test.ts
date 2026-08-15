@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,7 +14,7 @@ import {
   COMPATIBLE_ANTHROPIC_PROVIDER,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
-  hostVerificationHostsFile,
+  HOST_VERIFICATION_ALIAS_SCRIPT,
   requireCompatibleAnthropicProviderAbsent,
   withHostVerificationLoopbackAlias,
 } from "../fixtures/compatible-anthropic-switch.ts";
@@ -19,15 +22,11 @@ import {
 describe("compatible Anthropic inference switch setup", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  function mockHostsFixture(reads: string[]) {
-    vi.spyOn(fs, "mkdtempSync").mockReturnValue("/tmp/nemoclaw-compatible-endpoint-hosts-test");
-    vi.spyOn(fs, "openSync").mockReturnValue(42);
-    const close = vi.spyOn(fs, "closeSync").mockImplementation(() => {});
-    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {});
-    vi.spyOn(fs, "readFileSync").mockImplementation(() => reads.shift() ?? "");
-    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
-    const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {});
-    return { close, remove, unlink };
+  function mockOwnerStartTime(): void {
+    const fields = ["S", ...Array.from({ length: 18 }, () => "0"), "12345"];
+    vi.spyOn(fs, "readFileSync").mockReturnValue(
+      `${process.pid} (node fixture) ${fields.join(" ")}`,
+    );
   }
 
   it("passes the direct binding credential only to the inference-set command", () => {
@@ -61,22 +60,8 @@ describe("compatible Anthropic inference switch setup", () => {
     ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
   });
 
-  it("maps the sandbox host alias to loopback for host-side verification", () => {
-    expect(hostVerificationHostsFile("127.0.0.1 localhost\n")).toBe(
-      "127.0.0.1 host.openshell.internal\n127.0.0.1 localhost\n",
-    );
-  });
-
-  it("restores the host resolver file when verification fails", async () => {
-    const originalHosts = "127.0.0.1 localhost\n";
-    const mappedHosts = hostVerificationHostsFile(originalHosts);
-    const { close, remove, unlink } = mockHostsFixture([
-      originalHosts,
-      mappedHosts,
-      mappedHosts,
-      mappedHosts,
-      originalHosts,
-    ]);
+  it("removes its host alias when verification fails", async () => {
+    mockOwnerStartTime();
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
     const trackDisposable = vi.fn();
 
@@ -91,96 +76,39 @@ describe("compatible Anthropic inference switch setup", () => {
     ).rejects.toThrow("verification failed");
 
     expect(command).toHaveBeenCalledTimes(2);
-    expect(
-      command.mock.calls.map(([program, args]) => [program, args?.[0], args?.at(-2), args?.at(-1)]),
-    ).toEqual([
-      [
-        "sudo",
-        "bash",
-        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.original",
-        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.mapped",
-      ],
-      [
-        "sudo",
-        "bash",
-        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.mapped",
-        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.original",
-      ],
+    expect(command.mock.calls.map(([program, args]) => [program, args?.[0], args?.[4]])).toEqual([
+      ["sudo", "bash", "add"],
+      ["sudo", "bash", "remove"],
     ]);
     expect(trackDisposable.mock.invocationCallOrder[0]).toBeLessThan(
       command.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(remove).toHaveBeenCalledWith("/tmp/nemoclaw-compatible-endpoint-hosts-test", {
-      force: true,
-      recursive: true,
-    });
-    expect(close).toHaveBeenCalledWith(42);
-    expect(unlink).toHaveBeenCalledTimes(1);
   });
 
-  it("does not discard a concurrent host resolver update", async () => {
-    const originalHosts = "127.0.0.1 localhost\n";
-    const mappedHosts = hostVerificationHostsFile(originalHosts);
-    const concurrentHosts = `${mappedHosts}192.0.2.10 concurrent.example.test\n`;
-    const { close, remove, unlink } = mockHostsFixture([
-      originalHosts,
-      mappedHosts,
-      mappedHosts,
-      concurrentHosts,
-    ]);
-    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
-
-    await expect(
-      withHostVerificationLoopbackAlias(
-        { command } as unknown as HostCliClient,
-        { trackDisposable: vi.fn() },
-        async () => undefined,
-      ),
-    ).rejects.toThrow("refusing to overwrite concurrent resolver state");
-
-    expect(command).toHaveBeenCalledTimes(1);
-    expect(remove).not.toHaveBeenCalled();
-    expect(close).toHaveBeenCalledWith(42);
-    expect(unlink).toHaveBeenCalledTimes(1);
-  });
-
-  it("reports a failed owned resolver restoration", async () => {
-    const originalHosts = "127.0.0.1 localhost\n";
-    const mappedHosts = hostVerificationHostsFile(originalHosts);
-    const { close, remove, unlink } = mockHostsFixture([
-      originalHosts,
-      mappedHosts,
-      mappedHosts,
-      mappedHosts,
-    ]);
+  it("retries a failed owned-alias removal through tracked cleanup", async () => {
+    mockOwnerStartTime();
     const command = vi
       .fn()
       .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" })
-      .mockResolvedValueOnce({ exitCode: 1, stderr: "permission denied", stdout: "" });
+      .mockResolvedValueOnce({ exitCode: 1, stderr: "permission denied", stdout: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
+    const trackDisposable = vi.fn();
 
     await expect(
       withHostVerificationLoopbackAlias(
         { command } as unknown as HostCliClient,
-        { trackDisposable: vi.fn() },
+        { trackDisposable },
         async () => undefined,
       ),
-    ).rejects.toThrow("could not restore /etc/hosts: permission denied");
+    ).rejects.toThrow("could not remove the host verifier alias: permission denied");
 
-    expect(command).toHaveBeenCalledTimes(2);
-    expect(remove).not.toHaveBeenCalled();
-    expect(close).toHaveBeenCalledWith(42);
-    expect(unlink).toHaveBeenCalledTimes(1);
+    const trackedCleanup = trackDisposable.mock.calls[0]?.[1] as () => Promise<void>;
+    await expect(trackedCleanup()).resolves.toBeUndefined();
+    expect(command.mock.calls.map(([, args]) => args?.[4])).toEqual(["add", "remove", "remove"]);
   });
 
-  it("restores an observed mapping after the mapping runner fails", async () => {
-    const originalHosts = "127.0.0.1 localhost\n";
-    const mappedHosts = hostVerificationHostsFile(originalHosts);
-    const { close, remove, unlink } = mockHostsFixture([
-      originalHosts,
-      mappedHosts,
-      mappedHosts,
-      originalHosts,
-    ]);
+  it("removes a possible alias after the mapping runner disconnects", async () => {
+    mockOwnerStartTime();
     const command = vi
       .fn()
       .mockRejectedValueOnce(new Error("mapping runner disconnected"))
@@ -195,12 +123,7 @@ describe("compatible Anthropic inference switch setup", () => {
     ).rejects.toThrow("mapping runner disconnected");
 
     expect(command).toHaveBeenCalledTimes(2);
-    expect(remove).toHaveBeenCalledWith("/tmp/nemoclaw-compatible-endpoint-hosts-test", {
-      force: true,
-      recursive: true,
-    });
-    expect(close).toHaveBeenCalledWith(42);
-    expect(unlink).toHaveBeenCalledTimes(1);
+    expect(command.mock.calls.map(([, args]) => args?.[4])).toEqual(["add", "remove"]);
   });
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {
@@ -250,5 +173,123 @@ describe("compatible Anthropic inference switch setup", () => {
     await expect(requireCompatibleAnthropicProviderAbsent(host, options)).rejects.toThrow(
       "Could not prove",
     );
+  });
+});
+
+const linuxIt = process.platform === "linux" ? it : it.skip;
+
+describe("host verifier alias file ownership", () => {
+  function processStartTime(pid: number): string {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(") ");
+    const fields = stat.slice(close + 2).trim().split(/\s+/u);
+    const startTime = fields[19];
+    if (!startTime) throw new Error(`could not read process start time for ${pid}`);
+    return startTime;
+  }
+
+  function runAliasScript(
+    operation: "add" | "remove",
+    hostsPath: string,
+    lockPath: string,
+    owner: { pid: number; startTime: string; token: string },
+  ): void {
+    const result = spawnSync(
+      "bash",
+      [
+        "-ceu",
+        HOST_VERIFICATION_ALIAS_SCRIPT,
+        "host-verifier-alias-test",
+        operation,
+        hostsPath,
+        lockPath,
+        String(owner.pid),
+        owner.startTime,
+        owner.token,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  }
+
+  function testFiles(): { directory: string; hostsPath: string; lockPath: string } {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-verifier-test-"));
+    const hostsPath = path.join(directory, "hosts");
+    const lockPath = path.join(directory, "hosts.lock");
+    fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", { mode: 0o644 });
+    return { directory, hostsPath, lockPath };
+  }
+
+  linuxIt("preserves a concurrent resolver update while removing its owned alias", () => {
+    const files = testFiles();
+    const owner = {
+      pid: process.pid,
+      startTime: processStartTime(process.pid),
+      token: "a".repeat(32),
+    };
+    try {
+      runAliasScript("add", files.hostsPath, files.lockPath, owner);
+      fs.appendFileSync(files.hostsPath, "192.0.2.10 concurrent.example.test\n");
+      runAliasScript("remove", files.hostsPath, files.lockPath, owner);
+
+      expect(fs.readFileSync(files.hostsPath, "utf8")).toBe(
+        "127.0.0.1 localhost\n192.0.2.10 concurrent.example.test\n",
+      );
+    } finally {
+      fs.rmSync(files.directory, { force: true, recursive: true });
+    }
+  });
+
+  linuxIt("serializes active owners through a persistent kernel-lock file", () => {
+    const files = testFiles();
+    const startTime = processStartTime(process.pid);
+    const first = { pid: process.pid, startTime, token: "b".repeat(32) };
+    const second = { pid: process.pid, startTime, token: "c".repeat(32) };
+    try {
+      fs.writeFileSync(files.lockPath, "stale lock inode\n", { mode: 0o600 });
+      runAliasScript("add", files.hostsPath, files.lockPath, first);
+      runAliasScript("add", files.hostsPath, files.lockPath, second);
+      runAliasScript("remove", files.hostsPath, files.lockPath, first);
+      expect(fs.readFileSync(files.hostsPath, "utf8")).toContain(second.token);
+      runAliasScript("remove", files.hostsPath, files.lockPath, second);
+      expect(fs.readFileSync(files.hostsPath, "utf8")).not.toContain(
+        "host.openshell.internal",
+      );
+    } finally {
+      fs.rmSync(files.directory, { force: true, recursive: true });
+    }
+  });
+
+  linuxIt("removes an alias whose owner process was killed", async () => {
+    const files = testFiles();
+    const killed = spawn("sleep", ["30"], { stdio: "ignore" });
+    if (!killed.pid) throw new Error("could not start killed-owner fixture");
+    const killedExit = new Promise<void>((resolve) => killed.once("exit", () => resolve()));
+    const killedOwner = {
+      pid: killed.pid,
+      startTime: processStartTime(killed.pid),
+      token: "d".repeat(32),
+    };
+    const currentOwner = {
+      pid: process.pid,
+      startTime: processStartTime(process.pid),
+      token: "e".repeat(32),
+    };
+    try {
+      runAliasScript("add", files.hostsPath, files.lockPath, killedOwner);
+      killed.kill("SIGKILL");
+      await killedExit;
+      runAliasScript("add", files.hostsPath, files.lockPath, currentOwner);
+      const recovered = fs.readFileSync(files.hostsPath, "utf8");
+      expect(recovered).not.toContain(killedOwner.token);
+      expect(recovered).toContain(currentOwner.token);
+      runAliasScript("remove", files.hostsPath, files.lockPath, currentOwner);
+      expect(fs.readFileSync(files.hostsPath, "utf8")).not.toContain(
+        "host.openshell.internal",
+      );
+    } finally {
+      killed.kill("SIGKILL");
+      fs.rmSync(files.directory, { force: true, recursive: true });
+    }
   });
 });

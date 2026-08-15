@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import type { HostCliClient } from "./clients/host.ts";
 import { resultText } from "./clients/index.ts";
@@ -11,13 +10,88 @@ import { resultText } from "./clients/index.ts";
 export const COMPATIBLE_ANTHROPIC_PROVIDER = "compatible-anthropic-endpoint";
 export const COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const DEFAULT_COMPATIBLE_ANTHROPIC_CREDENTIAL = "test-compatible-anthropic-key";
-const OPENSHELL_HOST_ALIAS = "host.openshell.internal";
-const HOST_VERIFICATION_LOCK_PATH = path.join(
-  os.tmpdir(),
-  "nemoclaw-compatible-endpoint-hosts.lock",
-);
-const HOST_VERIFICATION_LOCK_TIMEOUT_MS = 5 * 60_000;
-const HOST_VERIFICATION_LOCK_POLL_MS = 100;
+const HOST_VERIFICATION_HOSTS_PATH = "/etc/hosts";
+const HOST_VERIFICATION_LOCK_PATH = "/run/lock/nemoclaw-compatible-endpoint-hosts.lock";
+const HOST_VERIFICATION_COMMAND_TIMEOUT_MS = 60_000;
+
+export const HOST_VERIFICATION_ALIAS_SCRIPT = [
+  "set -euo pipefail",
+  "",
+  'operation="$1"',
+  'hosts_path="$2"',
+  'lock_path="$3"',
+  'owner_pid="$4"',
+  'owner_start="$5"',
+  'owner_token="$6"',
+  'alias_name="host.openshell.internal"',
+  "",
+  'case "$operation" in',
+  "  add | remove) ;;",
+  '  *) echo "unsupported host verifier alias operation: $operation" >&2; exit 2 ;;',
+  "esac",
+  '[[ "$owner_pid" =~ ^[1-9][0-9]*$ ]] || { echo "invalid host verifier owner PID" >&2; exit 2; }',
+  '[[ "$owner_start" =~ ^[1-9][0-9]*$ ]] || { echo "invalid host verifier owner start time" >&2; exit 2; }',
+  '[[ "$owner_token" =~ ^[a-f0-9]{32}$ ]] || { echo "invalid host verifier owner token" >&2; exit 2; }',
+  '[[ -f "$hosts_path" && ! -L "$hosts_path" ]] || { echo "host resolver file is not a regular file" >&2; exit 2; }',
+  '[[ ! -L "$lock_path" ]] || { echo "host resolver lock path must not be a symbolic link" >&2; exit 2; }',
+  'command -v flock >/dev/null 2>&1 || { echo "flock is required for host resolver fixture ownership" >&2; exit 2; }',
+  "",
+  "owner_is_alive() {",
+  '  local pid="$1" expected_start="$2" stat remainder',
+  '  [[ -r "/proc/${pid}/stat" ]] || return 1',
+  '  IFS= read -r stat < "/proc/${pid}/stat"',
+  '  remainder="${stat##*) }"',
+  "  set -- $remainder",
+  '  [[ "${20:-}" == "$expected_start" ]]',
+  "}",
+  "",
+  'if [[ "$operation" == "add" ]] && ! owner_is_alive "$owner_pid" "$owner_start"; then',
+  '  echo "host verifier owner process is not alive" >&2',
+  "  exit 2",
+  "fi",
+  "",
+  "umask 077",
+  'exec 9>>"$lock_path"',
+  'chmod 0600 "$lock_path"',
+  'flock -x -w 30 9 || { echo "timed out waiting for host resolver fixture ownership" >&2; exit 3; }',
+  "",
+  'marker="# nemoclaw-host-verifier:${owner_pid}:${owner_start}:${owner_token}"',
+  'owned_line="127.0.0.1 ${alias_name} ${marker}"',
+  'snapshot="$(mktemp "${hosts_path}.nemoclaw-snapshot.XXXXXX")"',
+  'replacement="$(mktemp "${hosts_path}.nemoclaw-replacement.XXXXXX")"',
+  "trap 'rm -f \"$snapshot\" \"$replacement\"' EXIT",
+  'cp --preserve=all -- "$hosts_path" "$snapshot"',
+  'cp --preserve=all -- "$hosts_path" "$replacement"',
+  ': > "$replacement"',
+  "",
+  'while IFS= read -r line || [[ -n "$line" ]]; do',
+  '  if [[ "$line" == "$owned_line" ]]; then',
+  "    continue",
+  "  fi",
+  '  if [[ "$line" =~ ^127\\.0\\.0\\.1[[:space:]]+host\\.openshell\\.internal[[:space:]]+#[[:space:]]nemoclaw-host-verifier:([1-9][0-9]*):([1-9][0-9]*):([a-f0-9]{32})$ ]]; then',
+  '    if owner_is_alive "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; then',
+  "      printf '%s\\n' \"$line\" >> \"$replacement\"",
+  "    fi",
+  "    continue",
+  "  fi",
+  "  printf '%s\\n' \"$line\" >> \"$replacement\"",
+  'done < "$snapshot"',
+  "",
+  'if [[ "$operation" == "add" ]]; then',
+  "  printf '%s\\n' \"$owned_line\" >> \"$replacement\"",
+  "fi",
+  "",
+  "# The kernel lock serializes every cooperative fixture writer. Replacing the",
+  "# file in one rename prevents readers from observing a partial resolver file.",
+  'mv -f -- "$replacement" "$hosts_path"',
+  "trap 'rm -f \"$snapshot\"' EXIT",
+  "",
+  'if [[ "$operation" == "add" ]]; then',
+  '  grep -Fqx -- "$owned_line" "$hosts_path" || { echo "host verifier alias was not installed" >&2; exit 4; }',
+  "else",
+  '  ! grep -Fqx -- "$owned_line" "$hosts_path" || { echo "host verifier alias was not removed" >&2; exit 4; }',
+  "fi",
+].join("\n");
 
 export interface CompatibleAnthropicSwitchBinding {
   endpointUrl: string;
@@ -50,155 +124,80 @@ export function compatibleAnthropicSwitchEnv(
   return binding ? { [COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV]: binding.credentialValue } : {};
 }
 
-export function hostVerificationHostsFile(source: string): string {
-  const existing = source.endsWith("\n") ? source : `${source}\n`;
-  return `127.0.0.1 ${OPENSHELL_HOST_ALIAS}\n${existing}`;
-}
-
-function errorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error
-    ? String(error.code)
-    : undefined;
-}
-
-async function withHostVerificationHostsLock<T>(run: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + HOST_VERIFICATION_LOCK_TIMEOUT_MS;
-  let descriptor: number;
-  while (true) {
-    try {
-      descriptor = fs.openSync(HOST_VERIFICATION_LOCK_PATH, "wx", 0o600);
-      break;
-    } catch (error) {
-      if (errorCode(error) !== "EEXIST") throw error;
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `timed out waiting for exclusive host resolver fixture ownership: ${HOST_VERIFICATION_LOCK_PATH}`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, HOST_VERIFICATION_LOCK_POLL_MS));
-    }
+function hostVerificationOwnerStartTime(): string {
+  const stat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
+  const close = stat.lastIndexOf(") ");
+  const fields = close >= 0 ? stat.slice(close + 2).trim().split(/\s+/u) : [];
+  const startTime = fields[19];
+  if (!startTime || !/^[1-9][0-9]*$/u.test(startTime)) {
+    throw new Error("could not read the host verifier owner process start time");
   }
-
-  try {
-    return await run();
-  } finally {
-    fs.closeSync(descriptor);
-    fs.unlinkSync(HOST_VERIFICATION_LOCK_PATH);
-  }
+  return startTime;
 }
 
-const REPLACE_HOSTS_IF_UNCHANGED = [
-  "set -euo pipefail",
-  'expected="$1"',
-  'replacement="$2"',
-  'if ! cmp -s -- "$expected" /etc/hosts; then',
-  '  echo "/etc/hosts changed while the NemoClaw host verifier alias was active" >&2',
-  "  exit 3",
-  "fi",
-  'cp -- "$replacement" /etc/hosts',
-].join("\n");
+interface HostVerificationOwner {
+  pid: number;
+  startTime: string;
+  token: string;
+}
+
+function createHostVerificationOwner(): HostVerificationOwner {
+  return {
+    pid: process.pid,
+    startTime: hostVerificationOwnerStartTime(),
+    token: randomBytes(16).toString("hex"),
+  };
+}
+
+async function updateHostVerificationAlias(
+  host: HostCliClient,
+  operation: "add" | "remove",
+  owner: HostVerificationOwner,
+): Promise<void> {
+  const artifactName = `${operation === "add" ? "map" : "restore"}-host-verifier-alias`;
+  const result = await host.command(
+    "sudo",
+    [
+      "bash",
+      "-ceu",
+      HOST_VERIFICATION_ALIAS_SCRIPT,
+      artifactName,
+      operation,
+      HOST_VERIFICATION_HOSTS_PATH,
+      HOST_VERIFICATION_LOCK_PATH,
+      String(owner.pid),
+      owner.startTime,
+      owner.token,
+    ],
+    { artifactName, timeoutMs: HOST_VERIFICATION_COMMAND_TIMEOUT_MS },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `could not ${operation === "add" ? "install" : "remove"} the host verifier alias: ${resultText(result)}`,
+    );
+  }
+}
 
 export async function withHostVerificationLoopbackAlias<T>(
   host: HostCliClient,
   cleanup: { trackDisposable(name: string, run: () => Promise<void> | void): void },
   run: () => Promise<T>,
 ): Promise<T> {
-  const fixtureDirectory = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nemoclaw-compatible-endpoint-hosts-"),
-  );
-  const originalPath = path.join(fixtureDirectory, "hosts.original");
-  const mappedPath = path.join(fixtureDirectory, "hosts.mapped");
-
+  const owner = createHostVerificationOwner();
   let restored = false;
-  let originalHosts: string | null = null;
-  let mappedHosts: string | null = null;
-  let mappingMayNeedRecovery = false;
-  const restoreWhileLocked = async (): Promise<void> => {
-    if (restored) return;
-    if (!mappingMayNeedRecovery || originalHosts === null || mappedHosts === null) {
-      restored = true;
-      fs.rmSync(fixtureDirectory, { force: true, recursive: true });
-      return;
-    }
-    const currentHosts = fs.readFileSync("/etc/hosts", "utf8");
-    if (currentHosts === originalHosts) {
-      restored = true;
-      fs.rmSync(fixtureDirectory, { force: true, recursive: true });
-      return;
-    }
-    if (currentHosts !== mappedHosts) {
-      throw new Error(
-        "/etc/hosts changed while the host verifier alias was active; refusing to overwrite concurrent resolver state",
-      );
-    }
-    const result = await host.command(
-      "sudo",
-      [
-        "bash",
-        "-ceu",
-        REPLACE_HOSTS_IF_UNCHANGED,
-        "restore-host-verifier-alias",
-        mappedPath,
-        originalPath,
-      ],
-      {
-        artifactName: "restore-host-verifier-alias",
-        timeoutMs: 30_000,
-      },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(`could not restore /etc/hosts: ${resultText(result)}`);
-    }
-    if (fs.readFileSync("/etc/hosts", "utf8") !== originalHosts) {
-      throw new Error("/etc/hosts differs after host verifier alias restoration");
-    }
-    restored = true;
-    fs.rmSync(fixtureDirectory, { force: true, recursive: true });
-  };
   const restore = async (): Promise<void> => {
     if (restored) return;
-    await withHostVerificationHostsLock(restoreWhileLocked);
+    await updateHostVerificationAlias(host, "remove", owner);
+    restored = true;
   };
   cleanup.trackDisposable("restore the host verifier alias mapping", restore);
 
-  return await withHostVerificationHostsLock(async () => {
-    originalHosts = fs.readFileSync("/etc/hosts", "utf8");
-    mappedHosts = hostVerificationHostsFile(originalHosts);
-    fs.writeFileSync(originalPath, originalHosts, { mode: 0o600 });
-    fs.writeFileSync(mappedPath, mappedHosts, { mode: 0o600 });
-
-    try {
-      let mapped: Awaited<ReturnType<HostCliClient["command"]>>;
-      try {
-        mapped = await host.command(
-          "sudo",
-          [
-            "bash",
-            "-ceu",
-            REPLACE_HOSTS_IF_UNCHANGED,
-            "map-host-verifier-alias",
-            originalPath,
-            mappedPath,
-          ],
-          {
-            artifactName: "map-host-verifier-alias",
-            timeoutMs: 30_000,
-          },
-        );
-      } finally {
-        mappingMayNeedRecovery = fs.readFileSync("/etc/hosts", "utf8") !== originalHosts;
-      }
-      if (mapped.exitCode !== 0) {
-        throw new Error(`could not map the host verifier alias: ${resultText(mapped)}`);
-      }
-      if (fs.readFileSync("/etc/hosts", "utf8") !== mappedHosts) {
-        throw new Error("/etc/hosts differs after host verifier alias installation");
-      }
-      return await run();
-    } finally {
-      await restoreWhileLocked();
-    }
-  });
+  try {
+    await updateHostVerificationAlias(host, "add", owner);
+    return await run();
+  } finally {
+    await restore();
+  }
 }
 
 export async function requireCompatibleAnthropicProviderAbsent(
