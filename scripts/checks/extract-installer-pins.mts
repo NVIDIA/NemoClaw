@@ -34,11 +34,22 @@ type TrustedSandboxBuildPin = SandboxBuildPin & {
   required: boolean;
 };
 
+type SupervisorManifestPin = {
+  image: string;
+  manifestDigest: string;
+  version: string;
+};
+
+type TrustedSupervisorManifestPin = SupervisorManifestPin & {
+  required: boolean;
+};
+
 type CliOptions = {
   blueprint: string;
   brevInstaller: string;
   format: "json" | "tsv";
   installer: string;
+  supervisorRuntime: string;
 };
 
 const FUNCTION_LOCAL_SOURCE_PATTERN =
@@ -123,6 +134,51 @@ const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [
     sha256: "88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4",
     version: "0.0.101",
   },
+  {
+    required: false,
+    sha256: "412dc28fa288938373aca0a95c6be3f890066c377992bb75b3ca078d92dbef00",
+    version: "0.0.103",
+  },
+  {
+    required: false,
+    sha256: "fc1454705fad9cc0890297a84d2b7869670a364d01d5398685e3c987d2b6c123",
+    version: "0.0.103",
+  },
+] as const;
+const OPENSHELL_SUPERVISOR_IMAGE = "ghcr.io/nvidia/openshell/supervisor";
+// These are the reviewed OCI index identities for the OpenShell supervisor
+// image. Existing mappings remain required so a candidate cannot silently
+// remove downgrade or upgrade coverage. Add a future release here first while
+// it remains unselected; a later selector PR may then add only that exact
+// version/digest pair to the runtime map.
+const TRUSTED_SUPERVISOR_MANIFEST_PINS: readonly TrustedSupervisorManifestPin[] = [
+  {
+    image: OPENSHELL_SUPERVISOR_IMAGE,
+    manifestDigest: "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+    required: true,
+    version: "0.0.72",
+  },
+  {
+    image: OPENSHELL_SUPERVISOR_IMAGE,
+    manifestDigest: "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6",
+    required: true,
+    version: "0.0.99",
+  },
+  {
+    image: OPENSHELL_SUPERVISOR_IMAGE,
+    manifestDigest: "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
+    required: true,
+    version: "0.0.101",
+  },
+  {
+    image: OPENSHELL_SUPERVISOR_IMAGE,
+    manifestDigest: "sha256:96228f110362ffd415bb12d3b7f584063c3c52c0c93f3ccf59faada1dc2dd5d3",
+    required: false,
+    version: "0.0.103",
+  },
+] as const;
+const TRUSTED_SUPERVISOR_RUNTIME_TEMPLATE_SHA256_ALLOWLIST: readonly string[] = [
+  "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
 ] as const;
 
 function fail(message: string): never {
@@ -678,7 +734,7 @@ function extractSandboxBuildPins(source: string): SandboxBuildPin[] {
 // owns the inner-binary fallback used by its downstream installer.
 // regressionTest: installer-sandbox-build-trust.test.ts rejects arbitrary,
 // remapped, missing, and self-authorized identities while accepting a
-// prerequisite that adds only the exact extracted v0.0.101 binary digests.
+// prerequisite that adds only exact digest/version pairs from a reviewed release.
 // removalCondition: remove this check only when the standalone sandbox exposes
 // a reliable authenticated build identity on every supported host.
 function assertTrustedSandboxBuildPins(pins: SandboxBuildPin[], releaseVersion: string): void {
@@ -704,6 +760,101 @@ function assertTrustedSandboxBuildPins(pins: SandboxBuildPin[], releaseVersion: 
   if (missing.length > 0 || unexpected.length > 0) {
     fail(
       `pinned_sandbox_build_version must use only base-trusted binary identities; ` +
+        `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
+    );
+  }
+}
+
+function extractSupervisorManifestPins(source: string): SupervisorManifestPin[] {
+  const mapHeader =
+    "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n";
+  const mapStart = source.indexOf(mapHeader);
+  if (mapStart === -1 || source.indexOf(mapHeader, mapStart + mapHeader.length) !== -1) {
+    fail("supervisor runtime must contain exactly one literal manifest digest map");
+  }
+  const bodyStart = mapStart + mapHeader.length;
+  const mapEnd = source.indexOf("\n};", bodyStart);
+  if (mapEnd === -1) fail("supervisor runtime manifest digest map is unterminated");
+
+  const pins = source
+    .slice(bodyStart, mapEnd)
+    .split("\n")
+    .map((line) => {
+      const match = /^  "([0-9]+\.[0-9]+\.[0-9]+)": "(sha256:[a-f0-9]{64})",$/u.exec(line);
+      if (!match) fail("supervisor runtime manifest digest map must contain only literal pins");
+      return {
+        image: OPENSHELL_SUPERVISOR_IMAGE,
+        manifestDigest: match[2] ?? "",
+        version: match[1] ?? "",
+      };
+    });
+  if (pins.length === 0) fail("supervisor runtime manifest digest map must not be empty");
+  const duplicateVersions = pins
+    .map((pin) => pin.version)
+    .filter((version, index, versions) => versions.indexOf(version) !== index);
+  if (duplicateVersions.length > 0) {
+    fail(
+      `supervisor runtime manifest digest map contains duplicate versions: ${[
+        ...new Set(duplicateVersions),
+      ].join(", ")}`,
+    );
+  }
+  const normalized = `${source.slice(0, bodyStart)}<normalized-supervisor-manifest-pins>${source.slice(
+    mapEnd,
+  )}`;
+  const templateSha256 = createHash("sha256").update(normalized).digest("hex");
+  if (!TRUSTED_SUPERVISOR_RUNTIME_TEMPLATE_SHA256_ALLOWLIST.includes(templateSha256)) {
+    fail(
+      `supervisor runtime operational template is not base-trusted; ` +
+        `expected_sha256=[${TRUSTED_SUPERVISOR_RUNTIME_TEMPLATE_SHA256_ALLOWLIST.join(", ")}], ` +
+        `actual_sha256=${templateSha256}`,
+    );
+  }
+  return pins;
+}
+
+// invalidState: a selector PR adds or remaps a supervisor OCI digest and then
+// changes its own dependency checker to label that candidate-controlled image
+// as reviewed.
+// sourceBoundary: this exact image/version/index allowlist and whole-file
+// template lock execute from the base-trusted parser; only the strictly parsed
+// PR runtime map body is normalized as inert release data.
+// whyNotSourceFix: the upstream registry publishes the index, while NemoClaw
+// owns the downstream version-to-image selection contract.
+// regressionTest: installer-supervisor-manifest-trust.test.ts covers dormant,
+// wrong-digest, remapped, missing, decoy/shadow, mutation, resolver-drift, and
+// self-authorization paths.
+// removalCondition: remove this check only when an authenticated upstream
+// manifest directly drives the runtime selector without PR-authored identity data.
+function assertTrustedSupervisorManifestPins(
+  pins: SupervisorManifestPin[],
+  releaseVersion: string,
+): void {
+  const pinKey = (pin: SupervisorManifestPin): string =>
+    `${pin.image}|${pin.version}|${pin.manifestDigest}`;
+  const trustedKeys = new Set(TRUSTED_SUPERVISOR_MANIFEST_PINS.map(pinKey));
+  const actualKeys = new Set(pins.map(pinKey));
+  const selectedPins = TRUSTED_SUPERVISOR_MANIFEST_PINS.filter(
+    (pin) => pin.version === releaseVersion,
+  );
+  if (selectedPins.length !== 1) {
+    fail(
+      `release ${releaseVersion} must have exactly one base-trusted supervisor manifest identity`,
+    );
+  }
+
+  const missing = TRUSTED_SUPERVISOR_MANIFEST_PINS.filter(
+    (pin) => (pin.required || pin.version === releaseVersion) && !actualKeys.has(pinKey(pin)),
+  )
+    .map(pinKey)
+    .sort();
+  const unexpected = pins
+    .filter((pin) => !trustedKeys.has(pinKey(pin)))
+    .map(pinKey)
+    .sort();
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(
+      `OpenShell supervisor manifest map must use only base-trusted identities; ` +
         `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
     );
   }
@@ -991,7 +1142,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     const value = argv[index + 1] ?? "";
     if (!option.startsWith("--") || !value) {
       fail(
-        "usage: extract-installer-pins.mts --blueprint PATH --installer PATH --brev-installer PATH [--format json|tsv]",
+        "usage: extract-installer-pins.mts --blueprint PATH --installer PATH --brev-installer PATH --supervisor-runtime PATH [--format json|tsv]",
       );
     }
     if (values.has(option)) {
@@ -1002,19 +1153,27 @@ function parseCliOptions(argv: string[]): CliOptions {
   const blueprint = values.get("--blueprint") ?? "";
   const installer = values.get("--installer") ?? "";
   const brevInstaller = values.get("--brev-installer") ?? "";
+  const supervisorRuntime = values.get("--supervisor-runtime") ?? "";
   const format = values.get("--format") ?? "json";
-  const allowedOptions = new Set(["--blueprint", "--brev-installer", "--format", "--installer"]);
+  const allowedOptions = new Set([
+    "--blueprint",
+    "--brev-installer",
+    "--format",
+    "--installer",
+    "--supervisor-runtime",
+  ]);
   const unknownOptions = [...values.keys()].filter((option) => !allowedOptions.has(option));
   if (
     unknownOptions.length > 0 ||
     !blueprint ||
     !installer ||
     !brevInstaller ||
+    !supervisorRuntime ||
     (format !== "json" && format !== "tsv")
   ) {
     fail(`invalid CLI options${unknownOptions.length > 0 ? `: ${unknownOptions.join(", ")}` : ""}`);
   }
-  return { blueprint, brevInstaller, format, installer };
+  return { blueprint, brevInstaller, format, installer, supervisorRuntime };
 }
 
 function runCli(): void {
@@ -1022,6 +1181,10 @@ function runCli(): void {
   const blueprintSource = readInstallerInput(options.blueprint, "blueprint");
   const installerSource = readInstallerInput(options.installer, "installer");
   const brevInstallerSource = readInstallerInput(options.brevInstaller, "Brev launchable");
+  const supervisorRuntimeSource = readInstallerInput(
+    options.supervisorRuntime,
+    "supervisor runtime",
+  );
   const installerPins = extractInstallerPins(installerSource, {
     functionName: "openshell_pinned_sha256",
     sourceLabel: "installer",
@@ -1042,6 +1205,8 @@ function runCli(): void {
   const releaseVersion = releaseVersions[0] ?? fail("installer pin tables contain no release");
   const sandboxBuildPins = extractSandboxBuildPins(installerSource);
   assertTrustedSandboxBuildPins(sandboxBuildPins, releaseVersion);
+  const supervisorManifestPins = extractSupervisorManifestPins(supervisorRuntimeSource);
+  assertTrustedSupervisorManifestPins(supervisorManifestPins, releaseVersion);
   assertTrustedTemplate(
     installerSource,
     ["openshell_pinned_sha256", "pinned_sandbox_build_version"],
