@@ -127,10 +127,14 @@ describe("Pi candidate managed rebuild", () => {
   let previousEnv: NodeJS.ProcessEnv;
   let fixture: CandidateQualificationFixture | null = null;
 
-  function qualify(publish = true): void {
+  function qualify(): CandidateQualificationFixture {
     fixture = candidateQualificationEnvironment();
     Object.assign(process.env, fixture.env);
-    if (publish) authority.digests.push(fixture.receiptDigest);
+    return fixture;
+  }
+
+  function qualifyPublished(): void {
+    authority.digests.push(qualify().receiptDigest);
   }
 
   beforeEach(() => {
@@ -146,7 +150,7 @@ describe("Pi candidate managed rebuild", () => {
   });
 
   it("restores the accepted candidate image without the release catalog (#7927)", async () => {
-    qualify();
+    qualifyPublished();
     const releaseCatalog = vi.fn(ORIGINAL_PREPARE);
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = releaseCatalog;
 
@@ -185,7 +189,7 @@ describe("Pi candidate managed rebuild", () => {
   });
 
   it("refuses a candidate rebuild from a receipt the repository never published (#7927)", async () => {
-    qualify(false);
+    qualify();
 
     await expect(
       prepareManagedWorkloadRebuildHandoff(piEntry(), {

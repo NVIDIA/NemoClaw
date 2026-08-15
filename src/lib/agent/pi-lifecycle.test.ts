@@ -176,6 +176,30 @@ describe("Pi candidate lifecycle integration", () => {
     }
   });
 
+  it("refuses a public --agent pi selection when the candidate flag has no receipt (#7927)", () => {
+    vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", "1");
+    vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT", "");
+    try {
+      expect(() => resolveAgent({ agentFlag: "pi" })).toThrow("Unknown agent 'pi'");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("resolves Pi from public flag and session boundaries with qualification (#7927)", () => {
+    vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", String(CANDIDATE_ENV.NEMOCLAW_CANDIDATE_AGENTS));
+    vi.stubEnv(
+      "NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT",
+      String(CANDIDATE_ENV.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT),
+    );
+    try {
+      expect(resolveAgent({ agentFlag: "pi" })?.name).toBe("pi");
+      expect(resolveAgent({ session: { agent: "pi" } })?.name).toBe("pi");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("resolves Pi as a terminal runtime without a dashboard or MCP surface (#7927)", () => {
     const agent = loadAgent("pi", CANDIDATE_ENV);
 

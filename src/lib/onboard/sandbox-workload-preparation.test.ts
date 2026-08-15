@@ -434,7 +434,7 @@ describe("sandbox workload preparation", () => {
 
     await expect(
       prepareSandboxWorkloadSource(
-        { ...input("pi"), candidateAgentsEnabled: true },
+        { ...input("pi"), acceptedCandidateContract: contract("pi", 3) },
         { resolveCatalog },
       ),
     ).rejects.toThrow("requires an exact managed image catalog file");
@@ -448,7 +448,7 @@ describe("sandbox workload preparation", () => {
     fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
 
     const prepared = await prepareSandboxWorkloadSource(
-      { ...input("pi"), candidateAgentsEnabled: true, catalogPath },
+      { ...input("pi"), acceptedCandidateContract: piContract, catalogPath },
       { resolveCatalog: async () => CATALOG },
     );
 
@@ -458,13 +458,42 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("refuses a candidate catalog that differs from the accepted receipt (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const acceptedContract = contract("pi", 3);
+    const differentDigest = `sha256:${"5".repeat(64)}` as const;
+    const differentContract = {
+      ...acceptedContract,
+      digest: differentDigest,
+      reference: `${acceptedContract.image}@${differentDigest}` as const,
+    };
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: differentContract }), { mode: 0o600 });
+
+    try {
+      await expect(
+        prepareSandboxWorkloadSource({
+          ...input("pi"),
+          acceptedCandidateContract: acceptedContract,
+          catalogPath,
+        }),
+      ).rejects.toThrow("does not match the accepted qualification receipt");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("refuses a candidate catalog entry that claims a shipped agent (#7927)", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(catalogPath, JSON.stringify({ pi: contract("hermes", 1) }), { mode: 0o600 });
 
     await expect(
-      prepareSandboxWorkloadSource({ ...input("pi"), candidateAgentsEnabled: true, catalogPath }),
+      prepareSandboxWorkloadSource({
+        ...input("pi"),
+        acceptedCandidateContract: contract("pi", 3),
+        catalogPath,
+      }),
     ).rejects.toThrow(SandboxWorkloadPreparationError);
   });
 

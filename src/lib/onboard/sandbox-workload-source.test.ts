@@ -248,19 +248,15 @@ describe("sandbox workload source resolution", () => {
 
   it.each(
     CANDIDATE_MANAGED_IMAGE_AGENTS,
-  )("refuses the managed image for candidate %s while the gate is off (#7927)", (agent) => {
-    const source = resolveSandboxWorkloadSource({
-      agentName: agent,
-      legacyDockerfilePath: `agents/${agent}/Dockerfile`,
-      runtime: managedRuntime("docker"),
-      catalog: { ...CATALOG, [agent]: contractFor(agent) },
-    });
-
-    expect(source).toEqual({
-      kind: "legacy-dockerfile",
-      dockerfilePath: `agents/${agent}/Dockerfile`,
-      reason: "agent-not-managed",
-    });
+  )("refuses candidate %s while candidate selection is disabled (#7927)", (agent) => {
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: agent,
+        legacyDockerfilePath: `agents/${agent}/Dockerfile`,
+        runtime: managedRuntime("docker"),
+        catalog: { ...CATALOG, [agent]: contractFor(agent) },
+      }),
+    ).toThrow("candidate selection is disabled");
   });
 
   it.each(

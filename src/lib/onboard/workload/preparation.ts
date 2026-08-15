@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   ManagedImageCatalogUnavailableError,
@@ -39,7 +40,8 @@ export interface PrepareSandboxWorkloadSourceInput {
   readonly version: string;
   readonly policy?: ManagedImageSelectionPolicy;
   readonly catalogPath?: string | null;
-  readonly candidateAgentsEnabled?: boolean;
+  /** Contract from the repository-accepted candidate qualification receipt. */
+  readonly acceptedCandidateContract?: ManagedImageContractV1 | null;
 }
 
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
@@ -122,7 +124,7 @@ function unavailableResult(
     runtime: input.runtime,
     catalog: {},
     policy: input.policy ?? input.runtime.managedImageSelectionPolicy,
-    candidateAgentsEnabled: input.candidateAgentsEnabled,
+    candidateAgentsEnabled: input.acceptedCandidateContract != null,
   });
   return {
     source,
@@ -178,6 +180,7 @@ function requireCandidateManagedImageCatalog(
   catalog: ManagedImageContractCatalog,
   agent: string,
   expectedPlatform: ManagedImagePlatform,
+  acceptedContract: ManagedImageContractV1,
 ): void {
   const candidate = catalog[agent];
   if (candidate === undefined) {
@@ -189,8 +192,10 @@ function requireCandidateManagedImageCatalog(
     throw new SandboxWorkloadPreparationError(`'${agent}' is not a managed-image agent`);
   }
   let contract: ReturnType<typeof parseManagedImageContractV1>;
+  let accepted: ReturnType<typeof parseManagedImageContractV1>;
   try {
     contract = parseManagedImageContractV1(candidate, agent, expectedPlatform);
+    accepted = parseManagedImageContractV1(acceptedContract, agent, expectedPlatform);
   } catch (error) {
     throw new SandboxWorkloadPreparationError(
       `managed image catalog contract for '${agent}' failed closed validation`,
@@ -200,6 +205,11 @@ function requireCandidateManagedImageCatalog(
   if (isShippedManagedImageAgent(contract.agent)) {
     throw new SandboxWorkloadPreparationError(
       `'${contract.agent}' is already shipped and cannot resolve a candidate contract`,
+    );
+  }
+  if (!isDeepStrictEqual(contract, accepted)) {
+    throw new SandboxWorkloadPreparationError(
+      `managed image catalog contract for '${agent}' does not match the accepted qualification receipt`,
     );
   }
 }
@@ -216,8 +226,10 @@ export async function prepareSandboxWorkloadSource(
   dependencies: PrepareSandboxWorkloadSourceDependencies = {},
 ): Promise<PreparedSandboxWorkloadSource> {
   const policy = input.policy ?? input.runtime.managedImageSelectionPolicy;
-  const candidateSelection =
-    isCandidateManagedImageAgent(input.agentName) && input.candidateAgentsEnabled === true;
+  const acceptedCandidateContract = isCandidateManagedImageAgent(input.agentName)
+    ? (input.acceptedCandidateContract ?? null)
+    : null;
+  const candidateSelection = acceptedCandidateContract !== null;
   const cannotSelectManaged =
     input.customDockerfilePath != null ||
     !isManagedImageAgent(input.agentName) ||
@@ -232,7 +244,7 @@ export async function prepareSandboxWorkloadSource(
         runtime: input.runtime,
         catalog: {},
         policy,
-        candidateAgentsEnabled: input.candidateAgentsEnabled,
+        candidateAgentsEnabled: candidateSelection,
       }),
       release: null,
       fallbackDiagnostic: null,
@@ -281,7 +293,12 @@ export async function prepareSandboxWorkloadSource(
     );
   }
   if (candidateSelection) {
-    requireCandidateManagedImageCatalog(catalog, input.agentName, platform);
+    requireCandidateManagedImageCatalog(
+      catalog,
+      input.agentName,
+      platform,
+      acceptedCandidateContract,
+    );
   } else {
     requireCompleteManagedImageCatalog(catalog, release, platform);
   }
@@ -294,7 +311,7 @@ export async function prepareSandboxWorkloadSource(
       runtime: input.runtime,
       catalog,
       policy,
-      candidateAgentsEnabled: input.candidateAgentsEnabled,
+      candidateAgentsEnabled: candidateSelection,
     }),
     release,
     fallbackDiagnostic: null,
