@@ -495,6 +495,10 @@ export function resolveAgentName({
     const available = listAgents();
     const resolved = resolveAgentNameAlias(session.agent, available);
     if (!resolved) {
+      // A recorded release candidate must fail closed. Falling back to OpenClaw
+      // would silently change the agent a resumed session was created with and
+      // strand its agent-scoped state.
+      requireCandidateAgentSelectable(session.agent);
       console.error(
         `  Warning: session references unknown agent '${session.agent}', falling back to openclaw.`,
       );

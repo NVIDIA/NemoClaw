@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -104,15 +104,16 @@ describe("Pi candidate lifecycle integration", () => {
   });
 
   it("refuses a public --agent pi selection without qualification authority (#7927)", () => {
-    const previous = { ...process.env };
+    vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", "");
+    vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT", "");
+    vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256", "");
     try {
-      delete process.env.NEMOCLAW_CANDIDATE_AGENTS;
-      delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT;
-      delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256;
       expect(() => resolveAgent({ agentFlag: "pi" })).toThrow("Unknown agent 'pi'");
-      expect(() => resolveAgent({ session: { agent: "pi" } })).not.toThrow();
+      expect(() => resolveAgent({ session: { agent: "pi" } })).toThrow(
+        "Agent 'pi' is a release candidate and is not selectable in this release",
+      );
     } finally {
-      process.env = previous;
+      vi.unstubAllEnvs();
     }
   });
 
