@@ -301,6 +301,13 @@ function launchContract(
       authentication: recipe.spec.serve.authentication,
       batchSize: recipe.spec.serve.batchSize,
       chatTemplate: recipe.spec.serve.chatTemplate,
+      ...(recipe.spec.serve.chatTemplateFile
+        ? { chatTemplateFile: recipe.spec.serve.chatTemplateFile }
+        : {}),
+      ...(recipe.spec.serve.chatTemplateArguments
+        ? { chatTemplateArguments: recipe.spec.serve.chatTemplateArguments }
+        : {}),
+      ...(recipe.spec.serve.reasoning ? { reasoning: recipe.spec.serve.reasoning } : {}),
       contextSize: recipe.spec.serve.contextSize,
       flashAttention: recipe.spec.serve.flashAttention,
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
@@ -377,7 +384,7 @@ export function resolveManagedLlamaCppOwnerSelection(
   const recipe = catalog.recipes.find(({ metadata }) => metadata.id === owner.recipeId);
   const candidatePresets = catalog.presets.filter(
     ({ spec }) =>
-      spec.selection === "explicit-only" &&
+      spec.selection !== "disabled" &&
       spec.plan.backend === "install-llama-cpp" &&
       spec.plan.recipeRef === owner.recipeId,
   );
@@ -512,15 +519,13 @@ export function rehydrateManagedLlamaCppLifecycle(
   const receipt = loadManagedLlamaCppReceipt(paths);
   if (!receipt) throw new Error("Managed llama.cpp private receipt is unavailable.");
   const selection = resolveManagedLlamaCppOwnerSelection(owner);
-  const operation =
-    options.operation ??
-    requireRuntimeProviderHostLocalInferenceOperation(options.runtimeProvider, "llama-cpp", {
-      env: options.env ?? process.env,
-    });
+  const operation = requireRuntimeProviderHostLocalInferenceOperation(
+    options.runtimeProvider,
+    "llama-cpp",
+    { env: options.env ?? process.env },
+    options.operation,
+  );
   operation.assertAuthority();
-  if (operation.providerId !== options.runtimeProvider.identity.id) {
-    throw new Error("Managed llama.cpp runtime provider changed during lifecycle rehydration.");
-  }
   const current = currentManagedLlamaCppArtifact(selection, homeDir);
   return Object.freeze({
     lifecycle: lifecycleFor({

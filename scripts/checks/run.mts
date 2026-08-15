@@ -54,6 +54,11 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/dependency-pins.mts"],
   },
   {
+    name: "pi-candidate-artifacts",
+    command: TSX,
+    args: ["scripts/checks/pi-candidate-artifacts.mts"],
+  },
+  {
     name: "no-defaulted-dependent-flags",
     command: TSX,
     args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
@@ -77,6 +82,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "source-architecture",
     command: TSX,
     args: ["scripts/checks/source-architecture.mts"],
+  },
+  {
+    name: "onboard-entry-composition",
+    command: TSX,
+    args: ["scripts/checks/onboard-entry-composition.mts"],
   },
   {
     name: "no-test-dist-imports",

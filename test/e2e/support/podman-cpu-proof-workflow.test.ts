@@ -33,8 +33,8 @@ function namedStep(name: string): WorkflowStep {
 }
 
 describe("native Podman CPU proof workflow", () => {
-  // source-shape-contract: security -- Exact checkout and package pins bind the credential-free Podman proof to the reported PR head and reviewed runtime bytes
-  it("runs as a credential-free exact-head PR workflow", () => {
+  // source-shape-contract: security -- Checkout binding and package pins bind the credential-free Podman proof to the commit under review and its runtime bytes
+  it("runs as a credential-free PR workflow bound to the commit under review", () => {
     const parsed = workflow();
     const job = proofJob();
 
@@ -46,6 +46,12 @@ describe("native Podman CPU proof workflow", () => {
     expect(parsed.on.pull_request.paths).toContain(
       "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
     );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/runtime-provider/container-state-mutation.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
+    );
     expect(parsed.on.pull_request.paths).toContain("scripts/install-openshell.sh");
     expect(parsed.on.pull_request.paths).toContain(
       "test/e2e/live/podman-cpu-lifecycle-artifacts.ts",
@@ -54,10 +60,14 @@ describe("native Podman CPU proof workflow", () => {
     expect(parsed.on.pull_request.paths).toContain(
       "test/e2e/live/podman-cpu-lifecycle-policy.yaml",
     );
+    expect(parsed.on.pull_request.paths).toContain(
+      "test/e2e/registry/native-runtime-qualification.ts",
+    );
     expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
     expect(job.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(job.env?.E2E_SOURCE_REVISION).toBe("${{ github.event.pull_request.head.sha }}");
     expect(job.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.101");
     expect(job.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
     expect(namedStep("Checkout").with).toMatchObject({
@@ -93,6 +103,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(disableDocker).toContain("systemctl stop docker.service docker.socket");
     expect(disableDocker).toContain("pkill -TERM -x dockerd");
     expect(disableDocker).toContain("docker-absence-boundary.json");
+    expect(disableDocker).toContain('source_revision="$(git rev-parse HEAD)"');
+    expect(disableDocker).toContain('test "$source_revision" = "$E2E_SOURCE_REVISION"');
+    expect(disableDocker).toContain("candidate-execution-prerequisites.json");
     expect(disableDocker).toContain("Docker socket remained available after Docker shutdown");
     const correctPastaPolicy = namedStep("Apply Ubuntu pasta signal policy correction").run ?? "";
     expect(correctPastaPolicy).toContain("/etc/apparmor.d/usr.bin.pasta");
@@ -122,6 +135,12 @@ describe("native Podman CPU proof workflow", () => {
     expect(proof.run).toBe(
       "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
     );
+    const liveSource = readRepoText("test/e2e/live/podman-cpu-lifecycle.test.ts");
+    const authorityIndex = liveSource.indexOf("expect(candidateAuthority())");
+    const enginesIndex = liveSource.indexOf("let runtimeEngines = engines()");
+    expect(authorityIndex).toBeGreaterThanOrEqual(0);
+    expect(enginesIndex).toBeGreaterThanOrEqual(0);
+    expect(authorityIndex).toBeLessThan(enginesIndex);
     expect(scripts).not.toContain("podman create");
     expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
     expect(scripts).not.toContain("openshell.sandbox-name");

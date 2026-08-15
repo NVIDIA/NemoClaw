@@ -4,7 +4,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 
-import type { ContainerEngineCommandCapture } from "../../adapters/container-engine";
+import type {
+  ContainerEngine,
+  ContainerEngineCommandCapture,
+  ContainerEngineOperationScope,
+} from "../../adapters/container-engine";
 import { resolveShieldsStateDir, withShieldsTransitionLock } from "../../shields/transition-lock";
 import type {
   RuntimeProviderPreparedStateMutationPlan,
@@ -18,7 +22,6 @@ import { RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION } from "./contract";
 import {
   createDockerOperationAuthority,
   type DockerOperationAuthority,
-  dockerOperationBindingSha256,
 } from "./docker-operation-authority";
 import {
   createFilePersistedEngineAuthorityStore,
@@ -43,7 +46,7 @@ import {
 } from "./persisted-engine-lifecycle";
 import { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";
 
-const PROVIDER_ID = "docker";
+const DOCKER_PROVIDER_ID = "docker";
 const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
@@ -59,14 +62,12 @@ const INSPECT_FORMAT =
   '[{{json .Id}},{{json .State.Running}},{{json .State.Status}},{{json .State.Paused}},{{json .State.Restarting}},{{json .State.Dead}},{{json .State.Pid}},{{json (index .Config.Labels "openshell.ai/managed-by")}},{{json (index .Config.Labels "openshell.ai/sandbox-name")}},{{json (index .Config.Labels "openshell.ai/sandbox-id")}},{{json .HostConfig.PidMode}},{{json .HostConfig.Privileged}},{{json .Mounts}}]';
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CONTAINER_ID = /^[a-f0-9]{64}$/u;
+const PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
 const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const LIFECYCLE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:/=+-]{0,511}$/u;
 const MOUNT_NAMESPACE = /^mnt:\[[1-9][0-9]*\]$/u;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
-const PROVIDER_HANDLE = /^docker-state-mutation-v1:([a-f0-9]{64}):([a-f0-9]{64})$/u;
-const ACTIVATION_PROVIDER_HANDLE =
-  /^docker-state-mutation-activation-v1:([a-f0-9]{64}):([a-f0-9]{64})$/u;
 
 type HelperAction =
   | "acquire"
@@ -105,6 +106,7 @@ interface DockerMountIdentity {
 }
 
 interface DockerRuntimeObservation {
+  readonly providerDisplayName: string;
   readonly runtimeId: string;
   readonly runtimePid: number;
   readonly pidMode: "";
@@ -123,7 +125,7 @@ interface DockerStateMutationHelperReceipt {
   readonly schemaVersion: 1;
   readonly phase: HelperPhase;
   readonly transactionId: string;
-  readonly providerId: typeof PROVIDER_ID;
+  readonly providerId: string;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly engineBindingSha256: string;
@@ -147,17 +149,32 @@ interface DockerStateMutationHelperReceipt {
   readonly activationProviderHandle?: string;
 }
 
-export interface DockerStateMutationOwnerOptions {
+export interface ContainerStateMutationAuthority {
+  readonly assertAuthority: () => void;
+  readonly engine: ContainerEngine;
+}
+
+export interface ContainerStateMutationOwnerOptions {
+  readonly providerId: string;
+  readonly providerDisplayName: string;
+  readonly engineOperation: ContainerEngineOperationScope;
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   /** SHA-256 of the raw OpenShell sandbox ID recorded with this generation. */
   readonly lifecycleLiveIdentityFingerprint?: string;
-  /** Full immutable Docker container ID. Names and short IDs are not accepted. */
+  /** Full immutable container ID. Names and short IDs are not accepted. */
   readonly runtimeId: string;
-  readonly authority: DockerOperationAuthority;
+  readonly authority: ContainerStateMutationAuthority;
   readonly engineAuthorityStore: PersistedEngineAuthorityStore;
   readonly lifecycleStore: PersistedEngineLifecycleStore;
 }
+
+export type DockerStateMutationOwnerOptions = Omit<
+  ContainerStateMutationOwnerOptions,
+  "providerId" | "providerDisplayName" | "engineOperation" | "authority"
+> & {
+  readonly authority: DockerOperationAuthority;
+};
 
 export interface DockerStateMutationSurfaceOptions {
   /** Test seam for the fixed Docker executable; production uses the real capture adapter. */
@@ -171,7 +188,22 @@ export interface DockerStateMutationSurfaceOptions {
   ) => T;
 }
 
-function resolveDockerStateMutationStateDir(environment: NodeJS.ProcessEnv): string {
+export interface ContainerStateMutationSurfaceOptions {
+  readonly providerId: string;
+  readonly providerDisplayName: string;
+  readonly engineOperation: ContainerEngineOperationScope;
+  readonly createAuthority: (
+    input: RuntimeProviderStateMutationContext,
+  ) => ContainerStateMutationAuthority;
+  readonly resolveStateDir?: (environment: NodeJS.ProcessEnv) => string;
+  readonly withDirectSandboxExecutionExclusion?: <T>(
+    sandboxName: string,
+    operation: string,
+    fn: () => T,
+  ) => T;
+}
+
+function resolveContainerStateMutationStateDir(environment: NodeJS.ProcessEnv): string {
   if (
     environment.VITEST === "true" &&
     (environment.HOME ?? "") === environment.NEMOCLAW_TEST_BASE_HOME &&
@@ -183,7 +215,7 @@ function resolveDockerStateMutationStateDir(environment: NodeJS.ProcessEnv): str
   return resolveShieldsStateDir(environment.HOME?.trim() || undefined);
 }
 
-export interface DockerStateMutationOwner {
+export interface ContainerStateMutationOwner {
   acquire(
     input: RuntimeProviderStateMutationContext & {
       readonly plan: RuntimeProviderPreparedStateMutationPlan;
@@ -215,8 +247,33 @@ export interface DockerStateMutationOwner {
   ): void;
 }
 
+export type DockerStateMutationOwner = ContainerStateMutationOwner;
+
 function fail(message: string): never {
-  throw new Error(`Docker state mutation failed: ${message}`);
+  throw new Error(`Runtime provider state mutation failed: ${message}`);
+}
+
+function providerHandlePattern(providerId: string): RegExp {
+  return new RegExp(`^${providerId}-state-mutation-v1:([a-f0-9]{64}):([a-f0-9]{64})$`, "u");
+}
+
+function activationProviderHandlePattern(providerId: string): RegExp {
+  return new RegExp(
+    `^${providerId}-state-mutation-activation-v1:([a-f0-9]{64}):([a-f0-9]{64})$`,
+    "u",
+  );
+}
+
+function operationBindingSha256(engine: ContainerEngine): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        operation: engine.operation,
+        engineId: engine.engineId,
+        authorityId: engine.authorityId,
+      }),
+    )
+    .digest("hex");
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -288,7 +345,9 @@ function canonicalAbsolutePath(value: unknown, label: string): string {
 function canonicalStateRoot(value: unknown): string {
   const stateRoot = canonicalAbsolutePath(value, "state root");
   if (!stateRoot.startsWith("/sandbox/")) fail("state root is outside /sandbox");
-  if (stateRoot !== SUPPORTED_STATE_ROOT) fail("state root is unsupported by the Docker helper");
+  if (stateRoot !== SUPPORTED_STATE_ROOT) {
+    fail("state root is unsupported by the runtime-provider helper");
+  }
   return stateRoot;
 }
 
@@ -298,23 +357,23 @@ function exactOptionalText(value: unknown, label: string): string | null {
 }
 
 function parseMount(value: unknown, index: number): DockerMountIdentity {
-  const source = record(value, `Docker mount ${String(index)}`);
-  const type = exactText(source.Type, `Docker mount ${String(index)} type`, 128);
-  const mountSource = exactText(source.Source, `Docker mount ${String(index)} source`);
+  const source = record(value, `container mount ${String(index)}`);
+  const type = exactText(source.Type, `container mount ${String(index)} type`, 128);
+  const mountSource = exactText(source.Source, `container mount ${String(index)} source`);
   const destination = canonicalAbsolutePath(
     source.Destination,
-    `Docker mount ${String(index)} destination`,
+    `container mount ${String(index)} destination`,
   );
-  const name = exactOptionalText(source.Name, `Docker mount ${String(index)} name`);
-  const driver = exactOptionalText(source.Driver, `Docker mount ${String(index)} driver`);
-  const mode = exactText(source.Mode, `Docker mount ${String(index)} mode`, 1024);
+  const name = exactOptionalText(source.Name, `container mount ${String(index)} name`);
+  const driver = exactOptionalText(source.Driver, `container mount ${String(index)} driver`);
+  const mode = exactText(source.Mode, `container mount ${String(index)} mode`, 1024);
   const propagation = exactText(
     source.Propagation,
-    `Docker mount ${String(index)} propagation`,
+    `container mount ${String(index)} propagation`,
     1024,
   );
   if (type.length === 0 || mountSource.length === 0 || typeof source.RW !== "boolean") {
-    fail(`Docker mount ${String(index)} is malformed`);
+    fail(`container mount ${String(index)} is malformed`);
   }
   return Object.freeze({
     type,
@@ -359,13 +418,17 @@ function bindStateRoot(
   const owners = observation.mounts.filter((mount) =>
     isPathAtOrBelow(stateRoot, mount.destination),
   );
-  if (owners.length === 0) fail("state root has no durable Docker mount");
+  if (owners.length === 0) {
+    fail(`state root has no durable ${observation.providerDisplayName} mount`);
+  }
   const deepestLength = Math.max(...owners.map((mount) => mount.destination.length));
   const deepest = owners.filter((mount) => mount.destination.length === deepestLength);
   if (deepest.length !== 1 || !["bind", "volume"].includes(deepest[0]?.type ?? "")) {
-    fail("state root Docker mount is ambiguous or not durable");
+    fail(`state root ${observation.providerDisplayName} mount is ambiguous or not durable`);
   }
-  if (!deepest[0]?.readWrite) fail("state root Docker mount is not writable");
+  if (!deepest[0]?.readWrite) {
+    fail(`state root ${observation.providerDisplayName} mount is not writable`);
+  }
   const related = observation.mounts.filter(
     (mount) =>
       isPathAtOrBelow(stateRoot, mount.destination) ||
@@ -378,22 +441,23 @@ function parseInspection(
   output: string,
   expectedRuntimeId: string,
   expectedSandboxName: string,
+  providerDisplayName: string,
 ): DockerRuntimeObservation {
   if (
     output.length === 0 ||
     Buffer.byteLength(output, "utf8") > MAX_INSPECTION_BYTES ||
     output.includes("\0")
   ) {
-    fail("Docker container inspection output is empty or too large");
+    fail(`${providerDisplayName} container inspection output is empty or too large`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch {
-    fail("Docker container inspection returned unreadable JSON");
+    fail(`${providerDisplayName} container inspection returned unreadable JSON`);
   }
   if (!Array.isArray(parsed) || parsed.length !== 13) {
-    fail("Docker container inspection schema is unsupported");
+    fail(`${providerDisplayName} container inspection schema is unsupported`);
   }
   const [
     runtimeIdInput,
@@ -410,8 +474,12 @@ function parseInspection(
     privileged,
     mountsInput,
   ] = parsed;
-  const runtimeId = boundedString(runtimeIdInput, CONTAINER_ID, "Docker container identity");
-  if (runtimeId !== expectedRuntimeId) fail("Docker container identity changed");
+  const runtimeId = boundedString(
+    runtimeIdInput,
+    CONTAINER_ID,
+    `${providerDisplayName} container identity`,
+  );
+  if (runtimeId !== expectedRuntimeId) fail(`${providerDisplayName} container identity changed`);
   if (
     running !== true ||
     status !== "running" ||
@@ -421,18 +489,18 @@ function parseInspection(
     !Number.isSafeInteger(runtimePid) ||
     (runtimePid as number) <= 0
   ) {
-    fail("Docker container is not one stable running runtime");
+    fail(`${providerDisplayName} container is not one stable running runtime`);
   }
   if (managedBy !== "openshell" || sandboxName !== expectedSandboxName) {
-    fail("Docker container does not belong to the exact OpenShell sandbox");
+    fail(`${providerDisplayName} container does not belong to the exact OpenShell sandbox`);
   }
   if (pidMode !== "" || privileged !== false) {
-    fail("Docker container does not have one private unprivileged PID namespace");
+    fail(`${providerDisplayName} container does not have one private unprivileged PID namespace`);
   }
   const sandboxId = exactText(sandboxIdInput, "OpenShell sandbox identity", 512);
   if (sandboxId.length === 0) fail("OpenShell sandbox identity is missing");
   if (!Array.isArray(mountsInput) || mountsInput.length > MAX_MOUNTS) {
-    fail("Docker container mounts are malformed");
+    fail(`${providerDisplayName} container mounts are malformed`);
   }
   const mounts = mountsInput
     .map(parseMount)
@@ -444,7 +512,7 @@ function parseInspection(
           : left.source.localeCompare(right.source),
     );
   if (new Set(mounts.map((mount) => mount.destination)).size !== mounts.length) {
-    fail("Docker container has ambiguous mount destinations");
+    fail(`${providerDisplayName} container has ambiguous mount destinations`);
   }
   if (
     mounts.some(
@@ -454,10 +522,11 @@ function parseInspection(
         mount.destination.startsWith("/proc/"),
     )
   ) {
-    fail("Docker container overlays the trusted private procfs");
+    fail(`${providerDisplayName} container overlays the trusted private procfs`);
   }
   const sandboxIdentitySha256 = sha256(sandboxId);
   return Object.freeze({
+    providerDisplayName,
     runtimeId,
     runtimePid: runtimePid as number,
     pidMode: "",
@@ -476,7 +545,10 @@ function exactPosture(
   return value;
 }
 
-function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
+function parseHelperReceipt(
+  output: string,
+  expectedProviderId: string,
+): DockerStateMutationHelperReceipt {
   if (
     output.length === 0 ||
     !output.endsWith("\n") ||
@@ -553,7 +625,7 @@ function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
           healthSha256: boundedString(receipt.healthSha256, SHA256, "helper health digest"),
           activationProviderHandle: boundedString(
             receipt.activationProviderHandle,
-            ACTIVATION_PROVIDER_HANDLE,
+            activationProviderHandlePattern(expectedProviderId),
             "helper activation provider handle",
           ),
         }
@@ -562,11 +634,7 @@ function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
     schemaVersion: 1,
     phase: receipt.phase,
     transactionId: boundedString(receipt.transactionId, SHA256, "helper transaction identity"),
-    providerId: boundedString(
-      receipt.providerId,
-      /^docker$/u,
-      "helper provider identity",
-    ) as typeof PROVIDER_ID,
+    providerId: boundedString(receipt.providerId, SAFE_NAME, "helper provider identity"),
     sandboxName: boundedString(receipt.sandboxName, SAFE_NAME, "helper sandbox name"),
     lifecycleGeneration: boundedString(
       receipt.lifecycleGeneration,
@@ -618,6 +686,9 @@ function parseHelperReceipt(output: string): DockerStateMutationHelperReceipt {
     rollback: exactPosture(receipt.rollback, "helper rollback posture"),
     ...activation,
   });
+  if (normalized.providerId !== expectedProviderId) {
+    fail("root helper receipt changed the provider identity");
+  }
   if (output !== `${fullReceiptTransport(normalized)}\n`) {
     fail("root helper receipt is not canonical");
   }
@@ -669,7 +740,7 @@ function receiptWithPhase(
 }
 
 function providerHandle(receipt: DockerStateMutationHelperReceipt): string {
-  return `docker-state-mutation-v1:${receipt.transactionId}:${sha256(receiptTransport(receipt))}`;
+  return `${receipt.providerId}-state-mutation-v1:${receipt.transactionId}:${sha256(receiptTransport(receipt))}`;
 }
 
 function activationProviderHandleFor(
@@ -701,7 +772,7 @@ function activationProviderHandleFor(
       ["fenceProviderHandle", fenceProviderHandle],
     ]),
   );
-  return `docker-state-mutation-activation-v1:${transactionId}:${digest}`;
+  return `${evidence.providerId}-state-mutation-activation-v1:${transactionId}:${digest}`;
 }
 
 function expectedActivationProviderHandle(
@@ -778,7 +849,7 @@ function normalizeActivationProof(
   );
   const handle =
     typeof proof.providerHandle === "string"
-      ? proof.providerHandle.match(ACTIVATION_PROVIDER_HANDLE)
+      ? proof.providerHandle.match(activationProviderHandlePattern(fence.providerId))
       : null;
   if (
     proof.schemaVersion !== 1 ||
@@ -794,7 +865,7 @@ function normalizeActivationProof(
   }
   const normalized = Object.freeze({
     schemaVersion: 1,
-    providerId: PROVIDER_ID,
+    providerId: fence.providerId,
     sandboxName: fence.sandboxName,
     lifecycleGeneration: fence.lifecycleGeneration,
     runtimeId: fence.runtimeId,
@@ -812,7 +883,7 @@ function normalizeActivationProof(
     healthSha256: boundedString(proof.healthSha256, SHA256, "activation health digest"),
     providerHandle: boundedString(
       proof.providerHandle,
-      ACTIVATION_PROVIDER_HANDLE,
+      activationProviderHandlePattern(fence.providerId),
       "activation provider handle",
     ),
   });
@@ -826,7 +897,7 @@ function normalizeActivationProof(
 }
 
 function runtimeStateSha256(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   stateRoot: DockerStateRootBinding,
@@ -834,7 +905,7 @@ function runtimeStateSha256(
   return sha256(
     canonicalRecord([
       ["schemaVersion", 1],
-      ["providerId", PROVIDER_ID],
+      ["providerId", options.providerId],
       ["sandboxName", options.sandboxName],
       ["lifecycleGeneration", options.lifecycleGeneration],
       ["engineBindingSha256", bindingSha256],
@@ -873,13 +944,13 @@ function transactionId(
 }
 
 function requireContext(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   input: RuntimeProviderStateMutationContext,
 ): void {
   if (
     input.sandboxName !== options.sandboxName ||
     input.sandbox.name !== options.sandboxName ||
-    input.sandbox.openshellDriver !== PROVIDER_ID
+    input.sandbox.openshellDriver !== options.providerId
   ) {
     fail("sandbox provider identity changed");
   }
@@ -892,25 +963,32 @@ function requireContext(
 }
 
 function requireRegistryLiveIdentity(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   observation: DockerRuntimeObservation,
 ): void {
   const expected = options.lifecycleLiveIdentityFingerprint;
   if (expected === undefined) return;
   boundedString(expected, SHA256, "sandbox live identity fingerprint");
   if (observation.sandboxIdentitySha256 !== expected) {
-    fail("Docker sandbox identity does not match the registered live identity");
+    fail(
+      `${options.providerDisplayName} sandbox identity does not match the registered live identity`,
+    );
   }
 }
 
 function requireCurrentEngineAuthority(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
 ): void {
   options.authority.assertAuthority();
-  const persisted = options.engineAuthorityStore.load("sandbox-lifecycle");
-  if (!persisted) fail("persisted sandbox-lifecycle engine authority is missing");
-  requirePersistedEngineAuthority(persisted, PROVIDER_ID, options.authority.engine, bindingSha256);
+  const persisted = options.engineAuthorityStore.load(options.engineOperation);
+  if (!persisted) fail(`persisted ${options.engineOperation} engine authority is missing`);
+  requirePersistedEngineAuthority(
+    persisted,
+    options.providerId,
+    options.authority.engine,
+    bindingSha256,
+  );
 }
 
 function inspectCommand(runtimeId: string) {
@@ -954,7 +1032,7 @@ function requireCommandSuccess(
 }
 
 function inspectDirect(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
 ): DockerRuntimeObservation {
   requireCurrentEngineAuthority(options, bindingSha256);
@@ -964,9 +1042,10 @@ function inspectDirect(
   );
   requireCurrentEngineAuthority(options, bindingSha256);
   const observation = parseInspection(
-    requireCommandSuccess(result, "Docker container inspection"),
+    requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
     options.sandboxName,
+    options.providerDisplayName,
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -974,13 +1053,14 @@ function inspectDirect(
 
 function inspectAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
 ): DockerRuntimeObservation {
   const result = scope.captureExact("target", inspectCommand, INSPECT_TIMEOUT_MS);
   const observation = parseInspection(
-    requireCommandSuccess(result, "Docker container inspection"),
+    requireCommandSuccess(result, `${options.providerDisplayName} container inspection`),
     options.runtimeId,
     options.sandboxName,
+    options.providerDisplayName,
   );
   requireRegistryLiveIdentity(options, observation);
   return observation;
@@ -998,7 +1078,9 @@ function sameObservation(
     expected.sandboxIdentitySha256 !== actual.sandboxIdentitySha256 ||
     expected.containerMountsSha256 !== actual.containerMountsSha256
   ) {
-    fail("Docker runtime changed while the state mutation fence was established");
+    fail(
+      `${expected.providerDisplayName} runtime changed while the state mutation fence was established`,
+    );
   }
 }
 
@@ -1012,6 +1094,7 @@ function helperInput(fields: readonly (readonly [string, unknown])[]): Buffer {
 
 function invokeHelperAuthorized(
   scope: AuthorizedPersistedEngineLifecycle,
+  providerId: string,
   action: HelperAction,
   input: Buffer,
 ): DockerStateMutationHelperReceipt {
@@ -1021,11 +1104,11 @@ function invokeHelperAuthorized(
     helperTimeoutMs(action),
     input,
   );
-  return parseHelperReceipt(requireCommandSuccess(result, `root helper ${action}`));
+  return parseHelperReceipt(requireCommandSuccess(result, `root helper ${action}`), providerId);
 }
 
 function lifecycleInput(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   record: Pick<
     PersistedEngineLifecycleRecord,
@@ -1038,7 +1121,7 @@ function lifecycleInput(
     sandboxName: record.sandboxName,
     resources: record.resources,
     runtimeStateSha256: record.runtimeStateSha256,
-    providerId: PROVIDER_ID,
+    providerId: options.providerId,
     bindingSha256,
     engine: options.authority.engine,
     engineAuthorityStore: options.engineAuthorityStore,
@@ -1063,7 +1146,7 @@ function normalizePreparedPlan(
     fail("prepared state mutation plan changed after validation");
   }
   if (normalized.plan.intent !== "protection-transition") {
-    fail("Docker adapter does not implement restore publication");
+    fail("container state-mutation adapter does not implement restore publication");
   }
   if (normalized.plan.target === normalized.plan.rollback) {
     fail("protection transition target must differ from its rollback posture");
@@ -1094,7 +1177,7 @@ function preparedPlanFromPersistedIntent(
 }
 
 function acquireRequest(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   stateRoot: DockerStateRootBinding,
@@ -1106,7 +1189,7 @@ function acquireRequest(
     ["schemaVersion", 1],
     ["action", "acquire"],
     ["transactionId", exactTransactionId],
-    ["providerId", PROVIDER_ID],
+    ["providerId", options.providerId],
     ["sandboxName", options.sandboxName],
     ["lifecycleGeneration", options.lifecycleGeneration],
     ["engineBindingSha256", bindingSha256],
@@ -1127,7 +1210,7 @@ function acquireRequest(
 
 function statusRequest(
   action: Exclude<HelperAction, "acquire">,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   exactTransactionId: string,
@@ -1139,7 +1222,7 @@ function statusRequest(
     ["schemaVersion", 1],
     ["action", action],
     ["transactionId", exactTransactionId],
-    ["providerId", PROVIDER_ID],
+    ["providerId", options.providerId],
     ["sandboxName", options.sandboxName],
     ["lifecycleGeneration", options.lifecycleGeneration],
     ["engineBindingSha256", bindingSha256],
@@ -1161,14 +1244,14 @@ function statusRequest(
 
 function validateReceipt(
   receipt: DockerStateMutationHelperReceipt,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   observation: DockerRuntimeObservation,
   record: PersistedEngineLifecycleRecord,
 ): DockerStateRootBinding {
   const stateRoot = bindStateRoot(observation, receipt.stateRoot);
   if (
-    receipt.providerId !== PROVIDER_ID ||
+    receipt.providerId !== options.providerId ||
     receipt.sandboxName !== options.sandboxName ||
     receipt.lifecycleGeneration !== options.lifecycleGeneration ||
     receipt.engineBindingSha256 !== bindingSha256 ||
@@ -1179,7 +1262,9 @@ function validateReceipt(
     receipt.stateRootMountsSha256 !== stateRoot.stateRootMountsSha256 ||
     receipt.target === receipt.rollback
   ) {
-    fail("root helper receipt does not match the exact Docker runtime binding");
+    fail(
+      `root helper receipt does not match the exact ${options.providerDisplayName} runtime binding`,
+    );
   }
   const expectedRuntimeState = runtimeStateSha256(options, bindingSha256, observation, stateRoot);
   const expectedTransactionId = transactionId(
@@ -1236,7 +1321,7 @@ function fenceFromReceipt(
 
 function normalizeFence(
   fence: RuntimeProviderStateMutationFence,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
 ): RuntimeProviderStateMutationFence {
   const source = record(fence, "state mutation fence");
@@ -1267,7 +1352,9 @@ function normalizeFence(
     "state mutation fence",
   );
   const handle =
-    typeof fence.providerHandle === "string" ? fence.providerHandle.match(PROVIDER_HANDLE) : null;
+    typeof fence.providerHandle === "string"
+      ? fence.providerHandle.match(providerHandlePattern(options.providerId))
+      : null;
   if (
     fence.schemaVersion !== 1 ||
     fence.intent !== "protection-transition" ||
@@ -1275,7 +1362,7 @@ function normalizeFence(
       fence.phase !== "published" &&
       fence.phase !== "rolled-back" &&
       fence.phase !== "activation-proven") ||
-    fence.providerId !== PROVIDER_ID ||
+    fence.providerId !== options.providerId ||
     fence.sandboxName !== options.sandboxName ||
     fence.lifecycleGeneration !== options.lifecycleGeneration ||
     fence.runtimeId !== options.runtimeId ||
@@ -1284,7 +1371,7 @@ function normalizeFence(
     fence.target === fence.rollback ||
     !handle
   ) {
-    fail("state mutation fence does not match the bound Docker runtime");
+    fail(`state mutation fence does not match the bound ${options.providerDisplayName} runtime`);
   }
   return Object.freeze({
     ...fence,
@@ -1345,7 +1432,7 @@ function requireFenceReceipt(
 }
 
 function unfinishedRecord(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
 ): PersistedEngineLifecycleRecord | null {
   const matches = options.lifecycleStore
     .listUnfinished()
@@ -1357,7 +1444,9 @@ function unfinishedRecord(
   if (!match) return null;
   const targetRuntime = match.resources.find((resource) => resource.role === "target")?.runtimeId;
   if (targetRuntime !== options.runtimeId) {
-    fail("durable state mutation target does not match the exact labeled Docker runtime");
+    fail(
+      `durable state mutation target does not match the exact labeled ${options.providerDisplayName} runtime`,
+    );
   }
   return match;
 }
@@ -1384,7 +1473,7 @@ function validateAcquireReceipt(
 
 function acquireAuthorizedReceipt(
   scope: AuthorizedPersistedEngineLifecycle,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   plan: ReturnType<typeof normalizePreparedPlan>,
   nonce: string,
@@ -1402,7 +1491,9 @@ function acquireAuthorizedReceipt(
     stateRoot,
   );
   if (observedRuntimeStateSha256 !== expectedRuntimeStateSha256) {
-    fail("Docker runtime changed before the state mutation fence was established");
+    fail(
+      `${options.providerDisplayName} runtime changed before the state mutation fence was established`,
+    );
   }
   if (
     transactionId(
@@ -1418,6 +1509,7 @@ function acquireAuthorizedReceipt(
   }
   const receipt = invokeHelperAuthorized(
     scope,
+    options.providerId,
     "acquire",
     acquireRequest(options, bindingSha256, observation, stateRoot, plan, nonce, exactTransactionId),
   );
@@ -1429,7 +1521,7 @@ function acquireAuthorizedReceipt(
 }
 
 function queryEstablishedReceipt(
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   execution: PersistedEngineLifecycleExecutionInput,
   action: "assert" | "publish" | "recover" | "rollback" | "activate",
@@ -1453,7 +1545,9 @@ function queryEstablishedReceipt(
         currentRecord.runtimeStateSha256 !==
           runtimeStateSha256(options, bindingSha256, before, stateRoot)
       ) {
-        fail("Docker runtime changed after the state mutation fence was established");
+        fail(
+          `${options.providerDisplayName} runtime changed after the state mutation fence was established`,
+        );
       }
     }
     guard();
@@ -1470,7 +1564,10 @@ function queryEstablishedReceipt(
       ),
     );
     guard();
-    const receipt = parseHelperReceipt(requireCommandSuccess(result, `root helper ${action}`));
+    const receipt = parseHelperReceipt(
+      requireCommandSuccess(result, `root helper ${action}`),
+      options.providerId,
+    );
     validateReceipt(receipt, options, bindingSha256, before, currentRecord);
     if (expectedFence) requireFenceReceipt(expectedFence, receipt);
     const after = inspectDirect(options, bindingSha256);
@@ -1497,7 +1594,7 @@ function executionRecord(
 function requireRecordMatchesFence(
   record: PersistedEngineLifecycleRecord,
   fence: RuntimeProviderStateMutationFence,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
 ): void {
   const targetRuntime = record.resources.find((resource) => resource.role === "target")?.runtimeId;
   if (
@@ -1534,7 +1631,7 @@ function sameActivationProof(
 
 function releaseAuthorizedFence(
   scope: AuthorizedPersistedEngineLifecycle,
-  options: DockerStateMutationOwnerOptions,
+  options: ContainerStateMutationOwnerOptions,
   bindingSha256: string,
   fence: RuntimeProviderStateMutationFence,
   proof: RuntimeProviderStateMutationActivationProof,
@@ -1543,6 +1640,7 @@ function releaseAuthorizedFence(
   const before = inspectAuthorized(scope, options);
   const receipt = invokeHelperAuthorized(
     scope,
+    options.providerId,
     "release",
     statusRequest(
       "release",
@@ -1563,13 +1661,15 @@ function releaseAuthorizedFence(
 }
 
 /**
- * Own Docker's durable state-mutation fence without accepting a shell command,
- * helper path, runtime alias, or caller-authored provider receipt.
+ * Own one container provider's durable state-mutation fence without accepting
+ * a shell command, helper path, runtime alias, or caller-authored receipt.
  */
-export function createDockerStateMutationOwner(
-  optionsInput: DockerStateMutationOwnerOptions,
-): DockerStateMutationOwner {
+export function createContainerStateMutationOwner(
+  optionsInput: ContainerStateMutationOwnerOptions,
+): ContainerStateMutationOwner {
   const options = Object.freeze({ ...optionsInput });
+  boundedString(options.providerId, PROVIDER_ID, "provider identity");
+  boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   boundedString(options.sandboxName, SAFE_NAME, "sandbox name");
   boundedString(options.lifecycleGeneration, LIFECYCLE_GENERATION, "lifecycle generation");
   if (options.lifecycleLiveIdentityFingerprint !== undefined) {
@@ -1579,16 +1679,18 @@ export function createDockerStateMutationOwner(
       "sandbox live identity fingerprint",
     );
   }
-  boundedString(options.runtimeId, CONTAINER_ID, "Docker runtime identity");
+  boundedString(options.runtimeId, CONTAINER_ID, `${options.providerDisplayName} runtime identity`);
   if (
-    options.authority.engine.operation !== "sandbox-lifecycle" ||
-    options.authority.engine.engineId !== PROVIDER_ID
+    options.authority.engine.operation !== options.engineOperation ||
+    options.authority.engine.engineId !== options.providerId
   ) {
-    fail("Docker authority does not own sandbox-lifecycle operations");
+    fail(
+      `${options.providerDisplayName} authority does not own ${options.engineOperation} operations`,
+    );
   }
-  const bindingSha256 = dockerOperationBindingSha256(options.authority.engine);
+  const bindingSha256 = operationBindingSha256(options.authority.engine);
 
-  const owner: DockerStateMutationOwner = {
+  const owner: ContainerStateMutationOwner = {
     acquire(input) {
       requireContext(options, input);
       if (
@@ -1604,7 +1706,7 @@ export function createDockerStateMutationOwner(
       const plan = normalizePreparedPlan(input.plan);
       options.authority.assertAuthority();
       options.engineAuthorityStore.record(
-        createPersistedEngineAuthority(PROVIDER_ID, options.authority.engine, bindingSha256),
+        createPersistedEngineAuthority(options.providerId, options.authority.engine, bindingSha256),
       );
       const before = inspectDirect(options, bindingSha256);
       const stateRoot = bindStateRoot(before, plan.plan.stateRoot);
@@ -1774,6 +1876,7 @@ export function createDockerStateMutationOwner(
           const before = inspectAuthorized(scope, options);
           const receipt = invokeHelperAuthorized(
             scope,
+            options.providerId,
             "activate",
             statusRequest(
               "activate",
@@ -1822,6 +1925,7 @@ export function createDockerStateMutationOwner(
           const before = inspectAuthorized(scope, options);
           const recovered = invokeHelperAuthorized(
             scope,
+            options.providerId,
             "recover",
             statusRequest("recover", options, bindingSha256, before, record.transactionId),
           );
@@ -1872,6 +1976,17 @@ export function createDockerStateMutationOwner(
   return Object.freeze(owner);
 }
 
+export function createDockerStateMutationOwner(
+  options: DockerStateMutationOwnerOptions,
+): DockerStateMutationOwner {
+  return createContainerStateMutationOwner({
+    ...options,
+    providerId: DOCKER_PROVIDER_ID,
+    providerDisplayName: "Docker",
+    engineOperation: "sandbox-lifecycle",
+  });
+}
+
 function lifecycleGeneration(input: RuntimeProviderStateMutationContext): string {
   return boundedString(
     input.sandbox.lifecycleGeneration,
@@ -1880,11 +1995,14 @@ function lifecycleGeneration(input: RuntimeProviderStateMutationContext): string
   );
 }
 
-function requireSurfaceContext(input: RuntimeProviderStateMutationContext): void {
+function requireSurfaceContext(
+  input: RuntimeProviderStateMutationContext,
+  providerId: string,
+): void {
   const sandboxName = boundedString(input.sandboxName, SAFE_NAME, "sandbox name");
   if (
     input.sandbox.name !== sandboxName ||
-    input.sandbox.openshellDriver !== PROVIDER_ID ||
+    input.sandbox.openshellDriver !== providerId ||
     typeof input.environment !== "object" ||
     input.environment === null
   ) {
@@ -1894,8 +2012,9 @@ function requireSurfaceContext(input: RuntimeProviderStateMutationContext): void
 }
 
 function resolveExactLabeledRuntimeId(
-  authority: DockerOperationAuthority,
+  authority: ContainerStateMutationAuthority,
   sandboxName: string,
+  providerDisplayName: string,
 ): string {
   const result = authority.engine.capture(
     [
@@ -1911,59 +2030,63 @@ function resolveExactLabeledRuntimeId(
     ],
     INSPECT_TIMEOUT_MS,
   );
-  const output = requireCommandSuccess(result, "Docker labeled runtime resolution");
+  const output = requireCommandSuccess(result, `${providerDisplayName} labeled runtime resolution`);
   if (Buffer.byteLength(output, "utf8") > 4096 || output.includes("\0") || output.includes("\r")) {
-    fail("Docker labeled runtime resolution returned malformed output");
+    fail(`${providerDisplayName} labeled runtime resolution returned malformed output`);
   }
   const ids = output
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   if (ids.length !== 1 || !CONTAINER_ID.test(ids[0] as string)) {
-    fail("Docker labeled runtime resolution requires one exact full container identity");
+    fail(
+      `${providerDisplayName} labeled runtime resolution requires one exact full container identity`,
+    );
   }
   authority.assertAuthority();
   return ids[0] as string;
 }
 
 function requireExistingSurfaceAuthority(
-  authority: DockerOperationAuthority,
+  authority: ContainerStateMutationAuthority,
   engineAuthorityStore: PersistedEngineAuthorityStore,
+  options: ContainerStateMutationSurfaceOptions,
 ): void {
   authority.assertAuthority();
-  const persisted = engineAuthorityStore.load("sandbox-lifecycle");
-  if (!persisted) fail("persisted sandbox-lifecycle engine authority is missing");
+  const persisted = engineAuthorityStore.load(options.engineOperation);
+  if (!persisted) fail(`persisted ${options.engineOperation} engine authority is missing`);
   requirePersistedEngineAuthority(
     persisted,
-    PROVIDER_ID,
+    options.providerId,
     authority.engine,
-    dockerOperationBindingSha256(authority.engine),
+    operationBindingSha256(authority.engine),
   );
 }
 
 function createSurfaceOwner(
   input: RuntimeProviderStateMutationContext,
-  options: DockerStateMutationSurfaceOptions,
+  options: ContainerStateMutationSurfaceOptions,
   phase: "acquire" | "existing",
-): DockerStateMutationOwner {
-  requireSurfaceContext(input);
+): ContainerStateMutationOwner {
+  requireSurfaceContext(input, options.providerId);
 
-  // The operation-qualified endpoint is established from this invocation's
-  // environment before any mutable-name lookup occurs.
-  const authority = createDockerOperationAuthority(
-    "sandbox-lifecycle",
-    input.environment,
-    options.capture,
-  );
-  const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+  const authority = options.createAuthority(input);
+  const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
     input.environment,
   );
   const engineAuthorityStore = createFilePersistedEngineAuthorityStore(stateDir);
   if (phase === "existing") {
-    requireExistingSurfaceAuthority(authority, engineAuthorityStore);
+    requireExistingSurfaceAuthority(authority, engineAuthorityStore, options);
   }
-  const runtimeId = resolveExactLabeledRuntimeId(authority, input.sandboxName);
-  return createDockerStateMutationOwner({
+  const runtimeId = resolveExactLabeledRuntimeId(
+    authority,
+    input.sandboxName,
+    options.providerDisplayName,
+  );
+  return createContainerStateMutationOwner({
+    providerId: options.providerId,
+    providerDisplayName: options.providerDisplayName,
+    engineOperation: options.engineOperation,
     sandboxName: input.sandboxName,
     lifecycleGeneration: lifecycleGeneration(input),
     ...(input.sandbox.lifecycleLiveIdentityFingerprint === undefined
@@ -1980,10 +2103,10 @@ function createSurfaceOwner(
 
 function recoverSurface(
   input: RuntimeProviderStateMutationContext,
-  options: DockerStateMutationSurfaceOptions,
+  options: ContainerStateMutationSurfaceOptions,
 ): RuntimeProviderStateMutationFence | null {
-  requireSurfaceContext(input);
-  const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+  requireSurfaceContext(input, options.providerId);
+  const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
     input.environment,
   );
   const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
@@ -1999,20 +2122,20 @@ function releaseSurface(
   fence: RuntimeProviderStateMutationFence,
   proof: RuntimeProviderStateMutationActivationProof,
   completedLedgerSha256: string,
-  options: DockerStateMutationSurfaceOptions,
+  options: ContainerStateMutationSurfaceOptions,
 ): void {
-  requireSurfaceContext(input);
+  requireSurfaceContext(input, options.providerId);
   const source = record(fence, "state mutation fence");
   const transactionId = boundedString(source.transactionId, SHA256, "fence transaction identity");
   const resultSha256 = boundedString(completedLedgerSha256, SHA256, "completed ledger digest");
   if (
-    source.providerId !== PROVIDER_ID ||
+    source.providerId !== options.providerId ||
     source.sandboxName !== input.sandboxName ||
     source.lifecycleGeneration !== input.sandbox.lifecycleGeneration
   ) {
     fail("state mutation fence does not match the sandbox release context");
   }
-  const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+  const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
     input.environment,
   );
   const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
@@ -2020,10 +2143,12 @@ function releaseSurface(
   createSurfaceOwner(input, options, "existing").release(input, fence, proof, resultSha256);
 }
 
-/** Production Docker provider surface for one exact, durable runtime fence. */
-export function createDockerStateMutationSurface(
-  options: DockerStateMutationSurfaceOptions = {},
+/** One exact, durable container-provider runtime fence. */
+export function createContainerStateMutationSurface(
+  options: ContainerStateMutationSurfaceOptions,
 ): Extract<RuntimeProviderStateMutationSurface, { readonly supported: true }> {
+  boundedString(options.providerId, PROVIDER_ID, "provider identity");
+  boundedString(options.providerDisplayName, SAFE_NAME, "provider display name");
   const withDirectSandboxExecutionExclusion =
     options.withDirectSandboxExecutionExclusion ?? withShieldsTransitionLock;
   const acquireSurface = (
@@ -2031,8 +2156,8 @@ export function createDockerStateMutationSurface(
       readonly plan: RuntimeProviderPreparedStateMutationPlan;
     },
   ): RuntimeProviderStateMutationFence => {
-    requireSurfaceContext(input);
-    const stateDir = (options.resolveStateDir ?? resolveDockerStateMutationStateDir)(
+    requireSurfaceContext(input, options.providerId);
+    const stateDir = (options.resolveStateDir ?? resolveContainerStateMutationStateDir)(
       input.environment,
     );
     const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
@@ -2043,13 +2168,13 @@ export function createDockerStateMutationSurface(
     return createSurfaceOwner(input, options, "acquire").acquire(input);
   };
   const surface: Extract<RuntimeProviderStateMutationSurface, { readonly supported: true }> = {
-    providerId: PROVIDER_ID,
+    providerId: options.providerId,
     supported: true,
     contractVersion: RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
     acquire: (input) =>
       withDirectSandboxExecutionExclusion(
         input.sandboxName,
-        "Docker runtime-provider state mutation acquire",
+        `${options.providerDisplayName} runtime-provider state mutation acquire`,
         () => acquireSurface(input),
       ),
     assertFenced: (input, fence) =>
@@ -2064,9 +2189,28 @@ export function createDockerStateMutationSurface(
     recover: (input) =>
       withDirectSandboxExecutionExclusion(
         input.sandboxName,
-        "Docker runtime-provider state mutation recovery",
+        `${options.providerDisplayName} runtime-provider state mutation recovery`,
         () => recoverSurface(input, options),
       ),
   };
   return Object.freeze(surface);
+}
+
+/** Production Docker provider surface for one exact, durable runtime fence. */
+export function createDockerStateMutationSurface(
+  options: DockerStateMutationSurfaceOptions = {},
+): Extract<RuntimeProviderStateMutationSurface, { readonly supported: true }> {
+  return createContainerStateMutationSurface({
+    providerId: DOCKER_PROVIDER_ID,
+    providerDisplayName: "Docker",
+    engineOperation: "sandbox-lifecycle",
+    createAuthority: (input) =>
+      createDockerOperationAuthority("sandbox-lifecycle", input.environment, options.capture),
+    ...(options.resolveStateDir ? { resolveStateDir: options.resolveStateDir } : {}),
+    ...(options.withDirectSandboxExecutionExclusion
+      ? {
+          withDirectSandboxExecutionExclusion: options.withDirectSandboxExecutionExclusion,
+        }
+      : {}),
+  });
 }

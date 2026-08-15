@@ -79,6 +79,7 @@ const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperat
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
+  "state-mutation",
   "workload-cleanup",
 ]);
 const HOST_LOCAL_INFERENCE_SERVICES = new Set<HostLocalInferenceService>([
@@ -730,6 +731,7 @@ export function requireRuntimeProviderHostLocalInferenceOperation(
   bundle: RuntimeProviderBundle,
   service: HostLocalInferenceService,
   input: HostLocalInferenceOperationInput,
+  candidate?: HostLocalInferenceOperation,
 ): HostLocalInferenceOperation {
   const surface = bundle.hostLocalInference;
   if (
@@ -749,7 +751,7 @@ export function requireRuntimeProviderHostLocalInferenceOperation(
       `Runtime provider '${bundle.identity.id}' does not provide an operation-scoped host-local-inference engine for ${service}.`,
     );
   }
-  const operation = surface.createOperation(input);
+  const operation = candidate ?? surface.createOperation(input);
   if (
     operation.providerId !== bundle.identity.id ||
     operation.engine.operation !== "host-local-inference" ||

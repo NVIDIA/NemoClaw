@@ -44,6 +44,36 @@ NemoClaw validates the selected provider and model before creating the sandbox.
 NemoClaw validates Gemini inference through its OpenAI-compatible Chat Completions path.
 When you enter a custom Gemini model ID, NemoClaw checks Google's native model catalog and accepts IDs with or without the `models/` prefix.
 It skips the Responses API probe because Gemini does not support `/v1/responses`.
+When NemoClaw reads the native Google model catalog, it keeps only models that support `generateContent`.
+Embedding-only models are filtered out of the catalog, so they do not appear as onboarding choices.
+
+## Troubleshooting
+
+Model validation can fail with these messages:
+
+- `Could not validate model against https://generativelanguage.googleapis.com/v1beta/models: <reason>`
+  NemoClaw could not read the Google model catalog.
+  The `<reason>` value identifies an authentication, network, response, or pagination failure.
+  Verify `GEMINI_API_KEY`, host access to `generativelanguage.googleapis.com`, and the reported response.
+- `Model '<model>' is not available from Google Gemini. Checked https://generativelanguage.googleapis.com/v1beta/models.`
+  The catalog did not contain the model ID.
+  This message also appears when the catalog omits `models`, because NemoClaw treats the response as an empty catalog.
+  Check the ID for typing errors.
+  Custom IDs can include or omit the `models/` prefix.
+  Embedding-only models do not appear because they do not support `generateContent`.
+- `Unexpected Gemini model catalog response: expected a top-level models array`
+  The Google model catalog returned a non-null `models` value that is not an array.
+  Retry the request, then inspect the Google service or proxy response if the error continues.
+- `Gemini model catalog pagination repeated page token '<token>'`
+  The catalog repeated a `nextPageToken`, so NemoClaw stopped reading pages.
+  Retry the request, then inspect the Google service or proxy response if the error continues.
+- `Gemini model catalog pagination exceeded <count> pages`
+  The catalog exhausted the 25-page `GEMINI_MODEL_CATALOG_MAX_PAGES` limit.
+  Retry the request, then inspect the Google service or proxy response if the error continues.
+- `Onboard inference smoke check failed.`
+  The validation request failed.
+  The output shows the provider, model, and API base URL.
+  Compare these values with your configuration.
 
 ## Related Topics
 

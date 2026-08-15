@@ -61,6 +61,24 @@ it("builds a changed PR base locally and fails closed on comparison errors", () 
 set -euo pipefail
 printf '%s\\n' "$*" >> "$DOCKER_LOG"
 if [ "\${1:-} \${2:-}" = "buildx build" ]; then
+  docker_archive=""
+  oci_archive=""
+  for argument in "$@"; do
+    case "$argument" in
+      type=docker,dest=*) docker_archive="\${argument#*dest=}" ;;
+      type=oci,dest=*) oci_archive="\${argument#*dest=}" ;;
+    esac
+  done
+  [ -n "$docker_archive" ] && [ -n "$oci_archive" ] || exit 91
+  : > "$docker_archive"
+  oci_root="$RUNNER_TEMP/fake-oci"
+  oci_digest="sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  mkdir -p "$oci_root"
+  printf '{"manifests":[{"digest":"%s"}]}\n' "$oci_digest" > "$oci_root/index.json"
+  tar -C "$oci_root" -cf "$oci_archive" index.json
+  exit 0
+fi
+if [ "\${1:-} \${2:-}" = "load --input" ]; then
   exit 0
 fi
 exit 90
@@ -90,11 +108,15 @@ exit 90
       env: environment,
     });
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(output, "utf8")).toBe("ref=nemoclaw-managed-pr/openclaw-base:test\n");
-    expect(fs.readFileSync(dockerLog, "utf8")).toContain(
-      "buildx build --platform linux/amd64 --load --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test .",
+    expect(fs.readFileSync(output, "utf8")).toBe(
+      `ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
     );
-    expect(fs.readFileSync(dockerLog, "utf8")).not.toContain("imagetools inspect");
+    const dockerCommands = fs.readFileSync(dockerLog, "utf8");
+    expect(dockerCommands).toContain(
+      `buildx build --platform linux/amd64 --provenance=false --sbom=false --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test --output type=docker,dest=${temporaryRoot}/pr-base.docker.tar --output type=oci,dest=${temporaryRoot}/pr-base.oci.tar .`,
+    );
+    expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
+    expect(dockerCommands).not.toContain("imagetools inspect");
 
     const invalidRevision = spawnSync("bash", ["-c", resolver], {
       cwd: temporaryRoot,

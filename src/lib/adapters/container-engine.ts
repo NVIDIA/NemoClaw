@@ -10,6 +10,7 @@ export type ContainerEngineOperationScope =
   | "gateway-inspection"
   | "managed-bootstrap"
   | "sandbox-lifecycle"
+  | "state-mutation"
   | "workload-cleanup";
 
 export interface ContainerEngineCommandResult {

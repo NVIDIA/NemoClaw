@@ -43,6 +43,12 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
       running: false,
     },
   ]);
+  const hasPortableLifecycleReceipt = vi.fn<
+    DockerRuntimeProviderDependencies["hasPortableLifecycleReceipt"]
+  >(() => false);
+  const recoverPortableSandbox = vi.fn<
+    DockerRuntimeProviderDependencies["recoverPortableSandbox"]
+  >(() => ({ kind: "not-installed" }));
   const recoverDockerDriverSandbox = vi.fn<DockerRuntimeProviderDependencies["recoverSandbox"]>(
     () => ({
       recovered: true,
@@ -68,9 +74,11 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
       "docker",
       createDockerRuntimeProviderBundle({
         findLabeledSandboxContainers,
+        hasPortableLifecycleReceipt,
         isRuntimeDown: isDockerRuntimeDown,
         printRuntimeDownGuidance: printDockerRuntimeDownGuidance,
         recoverSandbox: recoverDockerDriverSandbox,
+        recoverPortableSandbox,
         unpauseContainer: dockerUnpause,
       }),
     ],
@@ -90,10 +98,12 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     dockerUnpause,
     findLabeledSandboxContainers,
     getSandbox,
+    hasPortableLifecycleReceipt,
     isDockerRuntimeDown,
     log,
     printDockerRuntimeDownGuidance,
     recoverDockerDriverSandbox,
+    recoverPortableSandbox,
     restoreStartupState,
     waitForManagedGatewaySupervisor,
     verifyGateway,
@@ -406,6 +416,31 @@ describe("startSandbox", () => {
 
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
     expect(output).toContain("openshell-my-sandbox");
+  });
+
+  it("uses recorded Podman authority instead of ambient Docker for a portable receipt (#9070)", async () => {
+    const h = harness();
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-alpha",
+        openshellDriver: "docker",
+      }),
+    );
+    h.hasPortableLifecycleReceipt.mockReturnValue(true);
+    h.recoverPortableSandbox.mockReturnValue({ kind: "recovered" });
+
+    await expect(startSandbox("my-sandbox", h.deps)).resolves.toEqual({ exitCode: 0 });
+
+    expect(h.isDockerRuntimeDown).not.toHaveBeenCalled();
+    expect(h.recoverPortableSandbox).toHaveBeenCalledWith(
+      "my-sandbox",
+      expect.objectContaining({ lifecycleGeneration: "generation-alpha" }),
+      expect.objectContaining({ env: process.env }),
+    );
+    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
   });
 
   it("still probes when the container was already running (#6026)", async () => {

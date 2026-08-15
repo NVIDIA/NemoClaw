@@ -3243,7 +3243,7 @@ ${onboardChildRuntimeSource}
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"]);
+const { messages } = installPromptQueue(credentials, ["4", "https://proxy.example.com/v1/chat/completions", "custom-model", "retry", "proxy-good", "custom-model"]);
 runner.runCapture = () => "";
 
 const { setupNim } = require(${onboardPath});

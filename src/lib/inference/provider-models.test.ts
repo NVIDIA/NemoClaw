@@ -266,6 +266,78 @@ describe("provider model helpers", () => {
     });
   });
 
+  it("reports an unavailable Gemini model when the catalog omits models (#8971)", () => {
+    const result = validateOpenAiLikeModel(
+      "Google Gemini",
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "gemini-2.5-flash",
+      "AIzaFakeKey123",
+      {
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({}),
+          stderr: "",
+          message: "",
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      message: `Model 'gemini-2.5-flash' is not available from Google Gemini. Checked ${GEMINI_NATIVE_MODELS_ENDPOINT_URL}.`,
+    });
+  });
+
+  it("reports an unavailable Gemini model when the catalog models value is null (#8971)", () => {
+    const result = validateOpenAiLikeModel(
+      "Google Gemini",
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "gemini-2.5-flash",
+      "AIzaFakeKey123",
+      {
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({ models: null }),
+          stderr: "",
+          message: "",
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      message: `Model 'gemini-2.5-flash' is not available from Google Gemini. Checked ${GEMINI_NATIVE_MODELS_ENDPOINT_URL}.`,
+    });
+  });
+
+  it("rejects a Gemini catalog whose models value is not an array (#8971)", () => {
+    const result = fetchGeminiModels("AIzaFakeKey123", {
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: JSON.stringify({ models: {} }),
+        stderr: "",
+        message: "",
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      httpStatus: 200,
+      curlStatus: 0,
+      message: "Unexpected Gemini model catalog response: expected a top-level models array",
+    });
+  });
+
   it("fails Gemini native catalog pagination after the bounded page budget (#6975)", () => {
     const requestedUrls: string[] = [];
 

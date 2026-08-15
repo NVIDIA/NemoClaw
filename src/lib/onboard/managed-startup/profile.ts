@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
@@ -92,6 +93,7 @@ export type ManagedStartupReasoningEffort = (typeof MANAGED_STARTUP_REASONING_EF
 export const MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES = ["disabled", "thread-opt-in"] as const;
 export type ManagedStartupDcodeAutoApprovalMode =
   (typeof MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES)[number];
+
 export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
   "nous-web",
   "nous-image",
@@ -1632,6 +1634,10 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
   const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");
+  const upstreamProvider = requireBoundedString(
+    inference.upstreamProvider,
+    "inference.upstreamProvider",
+  );
   const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
@@ -1678,14 +1684,19 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (agent === "hermes" && upstreamEndpointUrl !== null) {
       invalid("inference.upstreamEndpointUrl must be null for hermes");
     }
+    if (
+      agent === "langchain-deepagents-code" &&
+      !isValidDcodeUpstreamProvider(upstreamProvider)
+    ) {
+      invalid(
+        "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
+      );
+    }
   }
 
   return {
     routeProvider,
-    upstreamProvider: requireBoundedString(
-      inference.upstreamProvider,
-      "inference.upstreamProvider",
-    ),
+    upstreamProvider,
     model,
     routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
     upstreamEndpointUrl,
