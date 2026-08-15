@@ -9,6 +9,11 @@ import path from "node:path";
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
+import {
+  teardownPortableRuntime,
+  type PortableTeardownInput,
+  type PortableTeardownResult,
+} from "./portable-teardown";
 import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
@@ -120,6 +125,7 @@ export interface UninstallRunDeps {
   runHuggingFaceCacheDataCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup?: (sandboxName: string, gatewayPort: number) => RunResult;
+  runPortableTeardown?: (input: PortableTeardownInput) => PortableTeardownResult;
   stderrHasColors?: boolean;
   stderrIsTty?: boolean;
 }
@@ -457,6 +463,7 @@ interface UninstallRuntime {
   runHuggingFaceCacheDataCleanup: (options?: SpawnSyncOptions) => RunResult;
   runLocalModelRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
   runManagedLlamaCppRuntimeCleanup: (sandboxName: string, gatewayPort: number) => RunResult;
+  runPortableTeardown: (input: PortableTeardownInput) => PortableTeardownResult;
   stderrHasColors: boolean;
   stderrIsTty: boolean;
   warn: (message: string) => void;
@@ -564,6 +571,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
               stderr: result.reason,
             };
       }),
+    runPortableTeardown:
+      deps.runPortableTeardown ??
+      ((input) => teardownPortableRuntime({ ...input, env: input.env ?? env })),
     stderrHasColors:
       deps.stderrHasColors ??
       (typeof process.stderr.hasColors === "function" && process.stderr.hasColors()),
@@ -2430,6 +2440,31 @@ function executePlan(
         }
         for (const action of step.actions)
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
+      }
+      // The portable profile's runtime is rootless Podman, which the
+      // docker-compat availability probe above does not cover. A full
+      // uninstall must still consume the portable lifecycle receipt, delete
+      // the receipt-owned sandbox and registry containers by ID, and clear
+      // the NemoClaw-set user-manager selectors -- otherwise uninstall exits
+      // 0 while the stale CONTAINERS_CONF breaks the next reinstall (gh #9189).
+      if (!scopedToSelectedGateway) {
+        const portable = runtime.runPortableTeardown({
+          env: runtime.env,
+          run: (command, args, childEnv) => runtime.run(command, args, { env: childEnv }),
+          log: (message) => runtime.log(message),
+          warn: (message) => runtime.warn(message),
+        });
+        if (portable.removedContainerIds.length > 0) {
+          runtime.log(
+            `Removed ${portable.removedContainerIds.length} portable runtime container(s): ${portable.removedContainerIds.join(", ")}`,
+          );
+        }
+        if (portable.removedReceiptFiles.length > 0) {
+          runtime.log(
+            `Removed ${portable.removedReceiptFiles.length} portable lifecycle receipt file(s)`,
+          );
+        }
+        if (!portable.ok) ok = false;
       }
     } else if (step.name === "Model stores") {
       if (!removeHostModelStores(paths, options, runtime, scopedToSelectedGateway)) ok = false;
