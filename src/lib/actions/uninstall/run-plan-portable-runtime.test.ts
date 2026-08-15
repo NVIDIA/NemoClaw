@@ -50,14 +50,24 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
   it("completes exact cleanup when the generic sandbox delete fails (#9189)", () => {
     const order: string[] = [];
     const logs: string[] = [];
-    const run = vi.fn((command: string, args: string[]) => {
-      if (command === "pgrep" || command === "lsof") return notFound();
-      if (command === "openshell" && args.join(" ") === "sandbox delete --all") {
-        order.push("generic-delete-failed");
-        return { status: 1, stdout: "", stderr: "gateway delete failed" };
-      }
-      return okWithKnownGatewayList(command, args);
-    });
+    const runHandlers = new Map<string, () => RunResult>([
+      ["pgrep", notFound],
+      ["lsof", notFound],
+      [
+        "openshell sandbox delete --all",
+        () => {
+          order.push("generic-delete-failed");
+          return { status: 1, stdout: "", stderr: "gateway delete failed" };
+        },
+      ],
+    ]);
+    const run = vi.fn((command: string, args: string[]) =>
+      (
+        runHandlers.get(`${command} ${args.join(" ")}`) ??
+        runHandlers.get(command) ??
+        (() => okWithKnownGatewayList(command, args))
+      )(),
+    );
     const removeSandbox = vi.fn(() => {
       order.push("exact-sandbox");
       return 1;
@@ -97,10 +107,9 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
   it("preserves retry evidence after an exact cleanup failure with destroy data (#9189)", () => {
     const removed: string[] = [];
     const errors: string[] = [];
-    const run = vi.fn((command: string, args: string[]) => {
-      if (command === "pgrep" || command === "lsof") return notFound();
-      return okWithKnownGatewayList(command, args);
-    });
+    const run = vi.fn((command: string, args: string[]) =>
+      ["pgrep", "lsof"].includes(command) ? notFound() : okWithKnownGatewayList(command, args),
+    );
     const result = runUninstallPlan(
       {
         assumeYes: true,
@@ -207,12 +216,12 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
           removePortableSandboxContainers: removeSandbox,
           removePortableSharedResources: removeShared,
           rmSync: fs.rmSync,
-          run: (command, args) => {
-            if (command === "pgrep" || command === "lsof") return notFound();
-            return command === "openshell" && args.join(" ") === "gateway list -o json"
-              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9000" }]))
-              : ok();
-          },
+          run: (command, args) =>
+            ["pgrep", "lsof"].includes(command)
+              ? notFound()
+              : command === "openshell" && args.join(" ") === "gateway list -o json"
+                ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9000" }]))
+                : ok(),
           runDocker: () => ok(""),
         },
       );

@@ -17,6 +17,7 @@ on:
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
       - "src/lib/onboard/experimental/portable-runtime-*.ts"
       - "src/lib/actions/uninstall/portable-runtime-cleanup.ts"
+      - "src/lib/actions/uninstall/run-plan.ts"
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"

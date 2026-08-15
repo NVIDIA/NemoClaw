@@ -114,43 +114,61 @@ function fixture() {
   });
   const podmanCalls: string[][] = [];
   const podmanEnvironments: NodeJS.ProcessEnv[] = [];
+  const podmanHandlers = new Map<
+    string,
+    (args: readonly string[]) => { status: number; stdout?: string; stderr?: string }
+  >([
+    [
+      "ps",
+      (args) => {
+        const joined = args.join(" ");
+        const sandbox = /openshell\.ai\/sandbox-name=([^ ]+)/u.exec(joined)?.[1];
+        const matchesPortableRegistry = joined.includes("com.nvidia.nemoclaw.portable=1");
+        const matches = [...containers.values()].filter((container) =>
+          matchesPortableRegistry
+            ? container.labels["com.nvidia.nemoclaw.portable"] === "1"
+            : sandbox !== undefined && container.labels["openshell.ai/sandbox-name"] === sandbox,
+        );
+        return { status: 0, stdout: matches.map(({ id }) => id).join("\n") };
+      },
+    ],
+    [
+      "inspect",
+      (args) => {
+        const target = String(args[1]);
+        const record =
+          containers.get(target) ?? [...containers.values()].find(({ name }) => name === target);
+        return record === undefined
+          ? { status: 1, stderr: `Error: no such container ${target}` }
+          : {
+              status: 0,
+              stdout: JSON.stringify([
+                {
+                  Id: record.id,
+                  Name: record.name,
+                  Config: { Labels: record.labels },
+                  State: { Running: record.running },
+                },
+              ]),
+            };
+      },
+    ],
+    [
+      "rm",
+      (args) => {
+        containers.delete(String(args[2]));
+        return { status: 0 };
+      },
+    ],
+  ]);
+  const unexpectedPodmanCommand = (args: readonly string[]) => {
+    throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+  };
   const podman = vi.fn((rawArgs: readonly string[], env?: NodeJS.ProcessEnv) => {
     podmanEnvironments.push({ ...(env ?? {}) });
     const args = rawArgs[0] === "--url" ? rawArgs.slice(2) : rawArgs;
     podmanCalls.push([...args]);
-    if (args[0] === "ps") {
-      const joined = args.join(" ");
-      const matches = [...containers.values()].filter((container) => {
-        if (joined.includes("com.nvidia.nemoclaw.portable=1")) {
-          return container.labels["com.nvidia.nemoclaw.portable"] === "1";
-        }
-        const sandbox = /openshell\.ai\/sandbox-name=([^ ]+)/u.exec(joined)?.[1];
-        return sandbox !== undefined && container.labels["openshell.ai/sandbox-name"] === sandbox;
-      });
-      return { status: 0, stdout: matches.map(({ id }) => id).join("\n") };
-    }
-    if (args[0] === "inspect") {
-      const target = String(args[1]);
-      const record =
-        containers.get(target) ?? [...containers.values()].find(({ name }) => name === target);
-      if (!record) return { status: 1, stderr: `Error: no such container ${target}` };
-      return {
-        status: 0,
-        stdout: JSON.stringify([
-          {
-            Id: record.id,
-            Name: record.name,
-            Config: { Labels: record.labels },
-            State: { Running: record.running },
-          },
-        ]),
-      };
-    }
-    if (args[0] === "rm") {
-      containers.delete(String(args[2]));
-      return { status: 0 };
-    }
-    throw new Error(`Unexpected Podman command: ${args.join(" ")}`);
+    return (podmanHandlers.get(String(args[0])) ?? unexpectedPodmanCommand)(args);
   });
   const selectors = new Map<string, string>([
     ["CONTAINERS_CONF", path.join(authority.configHome, "nemoclaw/portable/containers.conf")],
@@ -161,19 +179,31 @@ function fixture() {
     ["UNRELATED", "keep"],
   ]);
   const systemctlCalls: string[][] = [];
-  const systemctl = vi.fn((args: readonly string[]) => {
-    systemctlCalls.push([...args]);
-    if (args[1] === "show-environment") {
-      return {
+  const systemctlHandlers = new Map<
+    string,
+    (args: readonly string[]) => { status: number; stdout?: string }
+  >([
+    [
+      "show-environment",
+      () => ({
         status: 0,
         stdout: [...selectors].map(([name, value]) => `${name}=${value}`).join("\n"),
-      };
-    }
-    if (args[1] === "unset-environment") {
-      for (const name of args.slice(2)) selectors.delete(name);
-      return { status: 0 };
-    }
+      }),
+    ],
+    [
+      "unset-environment",
+      (args) => {
+        for (const name of args.slice(2)) selectors.delete(name);
+        return { status: 0 };
+      },
+    ],
+  ]);
+  const unexpectedSystemctlCommand = (args: readonly string[]) => {
     throw new Error(`Unexpected systemctl command: ${args.join(" ")}`);
+  };
+  const systemctl = vi.fn((args: readonly string[]) => {
+    systemctlCalls.push([...args]);
+    return (systemctlHandlers.get(String(args[1])) ?? unexpectedSystemctlCommand)(args);
   });
   const input: PortableRuntimeCleanupInput = {
     env: {
@@ -315,8 +345,9 @@ describe("portable runtime uninstall cleanup", () => {
     const test = fixture();
     test.deps.podman = vi.fn((rawArgs: readonly string[], env?: NodeJS.ProcessEnv) => {
       const args = rawArgs[0] === "--url" ? rawArgs.slice(2) : rawArgs;
-      if (args[0] === "rm") return { status: 1, stderr: "permission denied" };
-      return test.podman(rawArgs, env);
+      return args[0] === "rm"
+        ? { status: 1, stderr: "permission denied" }
+        : test.podman(rawArgs, env);
     });
 
     expect(() => removePortableSandboxContainers(test.input, test.deps)).toThrow(/still has/);
@@ -331,10 +362,9 @@ describe("portable runtime uninstall cleanup", () => {
       ...test.deps,
       podman: vi.fn((rawArgs: readonly string[], env?: NodeJS.ProcessEnv) => {
         const args = rawArgs[0] === "--url" ? rawArgs.slice(2) : rawArgs;
-        if (args[0] === "rm" && args[2] === REGISTRY_ID) {
-          return { status: 1, stderr: "registry removal denied" };
-        }
-        return test.podman(rawArgs, env);
+        return args[0] === "rm" && args[2] === REGISTRY_ID
+          ? { status: 1, stderr: "registry removal denied" }
+          : test.podman(rawArgs, env);
       }),
     };
 

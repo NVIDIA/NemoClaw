@@ -71,6 +71,38 @@ function unrelatedCreateArgs(): string[] {
   ];
 }
 
+function writePortableUninstallSummary(artifactDir: string | undefined, uid: number): void {
+  const writeSummary = artifactDir
+    ? () => {
+        fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(
+          path.join(artifactDir, "portable-uninstall-summary.json"),
+          `${JSON.stringify(
+            {
+              schemaVersion: 1,
+              command: ["nemoclaw", ...UNINSTALL_ARGS],
+              dockerUnavailable: true,
+              rootlessUid: uid,
+              sandboxRemoved: true,
+              unrelatedContainerPreserved: true,
+              registryRemoved: true,
+              receiptRetired: true,
+              configRetired: true,
+              exactSelectorsCleared: true,
+              userSelectorsPreserved: true,
+              socketRestarted: true,
+              reinstallRuntimeSelectionBegan: true,
+            },
+            null,
+            2,
+          )}\n`,
+          { mode: 0o600 },
+        );
+      }
+    : () => undefined;
+  writeSummary();
+}
+
 test(
   "runs full portable uninstall before a clean socket restart and reinstall start (#9189)",
   { meta: { e2ePhases: E2E_PHASES }, timeout: 300_000 },
@@ -93,7 +125,7 @@ test(
     expect(fs.existsSync(stateDir)).toBe(false);
     expect(fs.existsSync(configDir)).toBe(false);
     const createdContainerIds: string[] = [];
-    let selectorsProjected = false;
+    let releaseProjectedSelectors = async (): Promise<void> => undefined;
     try {
       progress.phase("create receipt-owned and unrelated resources");
       const sandboxCreate = engine.capture(sandboxCreateArgs());
@@ -202,7 +234,22 @@ test(
         ],
         { artifactName: "podman-uninstall-project-selectors" },
       );
-      selectorsProjected = true;
+      releaseProjectedSelectors = async () => {
+        await runCommand(
+          shellProbe,
+          "systemctl",
+          [
+            "--user",
+            "unset-environment",
+            "CONTAINERS_CONF",
+            "NETAVARK_FW",
+            "CONTAINER_HOST",
+            "CONTAINER_CONNECTION",
+            "CONTAINER_SSHKEY",
+          ],
+          { allowFailure: true, artifactName: "podman-uninstall-clear-selectors" },
+        );
+      };
 
       progress.phase("run the exact full uninstall command");
       await runCommand(shellProbe, nemoclawBin, UNINSTALL_ARGS, {
@@ -247,7 +294,7 @@ test(
         ],
         { artifactName: "podman-uninstall-release-test-selectors" },
       );
-      selectorsProjected = false;
+      releaseProjectedSelectors = async (): Promise<void> => undefined;
 
       progress.phase("restart the user Podman socket");
       await runCommand(
@@ -306,50 +353,9 @@ test "$DOCKER_HOST" = "unix://$2"
         { artifactName: "podman-uninstall-begin-reinstall", timeoutMs: 60_000 },
       );
 
-      const artifactDir = process.env.E2E_ARTIFACT_DIR;
-      if (artifactDir) {
-        fs.mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
-        fs.writeFileSync(
-          path.join(artifactDir, "portable-uninstall-summary.json"),
-          `${JSON.stringify(
-            {
-              schemaVersion: 1,
-              command: ["nemoclaw", ...UNINSTALL_ARGS],
-              dockerUnavailable: true,
-              rootlessUid: uid,
-              sandboxRemoved: true,
-              unrelatedContainerPreserved: true,
-              registryRemoved: true,
-              receiptRetired: true,
-              configRetired: true,
-              exactSelectorsCleared: true,
-              userSelectorsPreserved: true,
-              socketRestarted: true,
-              reinstallRuntimeSelectionBegan: true,
-            },
-            null,
-            2,
-          )}\n`,
-          { mode: 0o600 },
-        );
-      }
+      writePortableUninstallSummary(process.env.E2E_ARTIFACT_DIR, uid);
     } finally {
-      if (selectorsProjected) {
-        await runCommand(
-          shellProbe,
-          "systemctl",
-          [
-            "--user",
-            "unset-environment",
-            "CONTAINERS_CONF",
-            "NETAVARK_FW",
-            "CONTAINER_HOST",
-            "CONTAINER_CONNECTION",
-            "CONTAINER_SSHKEY",
-          ],
-          { allowFailure: true, artifactName: "podman-uninstall-clear-selectors" },
-        );
-      }
+      await releaseProjectedSelectors();
       try {
         const cleanupAuthority = capturePodmanSocketAuthority(SOCKET_PATH);
         const cleanupEngine = createPodmanContainerEngine({

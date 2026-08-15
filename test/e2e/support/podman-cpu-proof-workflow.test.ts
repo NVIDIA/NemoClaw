@@ -52,6 +52,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(parsed.on.pull_request.paths).toContain(
       "src/lib/actions/uninstall/portable-runtime-cleanup.ts",
     );
+    expect(parsed.on.pull_request.paths).toContain("src/lib/actions/uninstall/run-plan.ts");
     expect(parsed.on.pull_request.paths).toContain(
       "src/lib/onboard/runtime-provider/container-state-mutation.ts",
     );
