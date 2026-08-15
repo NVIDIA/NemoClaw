@@ -443,6 +443,27 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
+  it("rejects removing the trusted OpenShell installer (#9051)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      const job = workflow.jobs["mcp-bridge-dev"];
+      job.steps = job.steps.filter(
+        (step) => step.name !== "Install immutable OpenShell dev artifact",
+      );
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects skipping post-install dependency preparation (#9051)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

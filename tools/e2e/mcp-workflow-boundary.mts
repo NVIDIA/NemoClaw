@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 
 import YAML from "yaml";
@@ -10,6 +9,14 @@ import {
   OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
   UPLOAD_E2E_ARTIFACTS_ACTION,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  contentSha256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
+  MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
+  MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256,
+} from "./mcp-dev-workflow-boundary-digests.mts";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
@@ -47,17 +54,7 @@ const DEV_ARTIFACT_ENV = {
   OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: DEV_ARTIFACT_MANIFEST_OUTPUT,
   OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: DEV_ARTIFACT_SOURCE_OUTPUT,
 } as const;
-const DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
-  "052c49d5e8688266dbf38fa911733132d33e4470a29a61deb6e7a11067737559";
-const DEV_JOB_EXECUTION_CONTEXT_SHA256 =
-  "9f9983804a29816d7e1b35e9e791f453f4e9e83f4ec41b906953e976d372353e";
 const DEV_TRUSTED_NODE_SETUP_NAME = "Set up Node.js for trusted OpenShell verification";
-const DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 =
-  "504821ad93c57971d0281ef1130ed6008fadd331bd56acb1a6b5e6a3358f3e49";
-const DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
-  "c559e6cd5bf076bed8d359bbca397d4e31fbf3c11123389425917b865544940d";
-const DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256 =
-  "62cf2ee01ac7192f41fc7b2b071de729da8bacec1e4f693da1ec6f0b1f4723c0";
 const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-checksums-sha256.txt",
@@ -127,12 +124,6 @@ function asString(value: unknown): string {
 function asSteps(job: UnknownRecord): UnknownRecord[] {
   const steps = job.steps;
   return Array.isArray(steps) ? steps.map(asRecord) : [];
-}
-
-function contentSha256(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(value) ?? "")
-    .digest("hex");
 }
 
 function namedStep(job: UnknownRecord, name: string): UnknownRecord {
@@ -292,7 +283,7 @@ function validateJobSecurity(
 ): void {
   if (jobName === "mcp-bridge-dev") {
     const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (contentSha256(jobExecutionContext) !== DEV_JOB_EXECUTION_CONTEXT_SHA256) {
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
       errors.push(
         "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
       );
@@ -344,7 +335,7 @@ function validateJobSecurity(
   const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
   if (
     jobName === "mcp-bridge-dev" &&
-    (contentSha256(trustedNodeSetup) !== DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
+    (contentSha256(trustedNodeSetup) !== MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
       trustedNodeSetupIndex !== checkoutIndex - 1)
   ) {
     errors.push(
@@ -602,18 +593,19 @@ function validateJobExecution(
       );
     }
     if (
-      installIndex >= 0 &&
-      contentSha256(steps.slice(0, installIndex + 1)) !== DEV_TRUSTED_PREFIX_CONTENT_SHA256
+      installIndex < 0 ||
+      contentSha256(steps.slice(0, installIndex + 1)) !==
+        MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
     ) {
       errors.push(
         "mcp-bridge-dev must preserve every reviewed step through trusted installation",
       );
     }
     if (
-      prepareIndex >= 0 &&
-      restoreCliIndex >= prepareIndex &&
+      prepareIndex < 0 ||
+      restoreCliIndex < prepareIndex ||
       contentSha256(steps.slice(prepareIndex, restoreCliIndex + 1)) !==
-        DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
+        MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
     ) {
       errors.push(
         "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
@@ -1072,7 +1064,7 @@ export function validateMcpOpenShellWorkflowBoundary(
 
   if (
     contentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
-    DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
+    MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
   ) {
     errors.push(
       "workflow must preserve the reviewed execution environment before candidate activation",

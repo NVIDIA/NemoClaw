@@ -513,7 +513,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     };
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation",
     );
   });
 
@@ -525,7 +525,25 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     };
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "workflow must preserve the reviewed execution environment before candidate activation",
+      "workflow must not set process startup hooks before CLI artifact restore",
+    );
+  });
+
+  it("scans the complete job for process hooks when trusted installation is missing (#9051)", () => {
+    const workflow = workflowFixture();
+    const job = workflow.jobs["mcp-bridge-dev"];
+    const steps = job.steps!;
+    job.steps = steps.filter(
+      (step) => step.name !== "Install immutable OpenShell dev artifact",
+    );
+    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
+    prepare.env = { NODE_OPTIONS: "--require=./candidate-preload.cjs" };
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation",
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+      ]),
     );
   });
 

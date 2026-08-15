@@ -13,6 +13,14 @@ import {
   PREPARE_E2E_NO_BUILD_JOBS,
   PREPARE_E2E_TRUSTED_BUILD_JOBS,
 } from "./prepare-e2e-workflow-boundary.mts";
+import {
+  contentSha256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
+  MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
+  MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256,
+} from "./mcp-dev-workflow-boundary-digests.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 export const CLI_ARTIFACT_DOWNLOAD_ACTION =
@@ -38,17 +46,6 @@ const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
-const MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
-  "052c49d5e8688266dbf38fa911733132d33e4470a29a61deb6e7a11067737559";
-const MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256 =
-  "9f9983804a29816d7e1b35e9e791f453f4e9e83f4ec41b906953e976d372353e";
-const MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 =
-  "504821ad93c57971d0281ef1130ed6008fadd331bd56acb1a6b5e6a3358f3e49";
-const MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
-  "c559e6cd5bf076bed8d359bbca397d4e31fbf3c11123389425917b865544940d";
-const MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256 =
-  "62cf2ee01ac7192f41fc7b2b071de729da8bacec1e4f693da1ec6f0b1f4723c0";
-
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
@@ -69,17 +66,14 @@ function steps(value: unknown): WorkflowStep[] {
   return Array.isArray(value) ? (value as WorkflowStep[]) : [];
 }
 
-function hasUnsafeShellHook(value: unknown): boolean {
+function hasUnsafeProcessHook(value: unknown): boolean {
   const environment = record(value);
-  return ["BASH_ENV", "ENV"].some(
-    (name) => Object.hasOwn(environment, name) && environment[name] !== "/dev/null",
+  return (
+    Object.hasOwn(environment, "NODE_OPTIONS") ||
+    ["BASH_ENV", "ENV"].some(
+      (name) => Object.hasOwn(environment, name) && environment[name] !== "/dev/null",
+    )
   );
-}
-
-function workflowContentSha256(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(value) ?? "")
-    .digest("hex");
 }
 
 function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
@@ -353,7 +347,7 @@ function validateConsumer(
   if (jobName === "mcp-bridge-dev") {
     const { steps: _jobSteps, ...jobExecutionContext } = job;
     if (
-      workflowContentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256
+      contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256
     ) {
       errors.push(
         "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
@@ -368,7 +362,7 @@ function validateConsumer(
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
   const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>
-    workflowContentSha256(step) === CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 ? [index] : [],
+    contentSha256(step) === CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 ? [index] : [],
   );
   if (candidateCheckoutIndexes.length !== 1) {
     errors.push(
@@ -395,15 +389,21 @@ function validateConsumer(
   const trustedInstallIndex = jobSteps.findIndex(
     (step) => step.name === "Install immutable OpenShell dev artifact",
   );
+  const securityBoundaryIndex =
+    jobName === "mcp-bridge-dev"
+      ? trustedInstallIndex >= 0
+        ? trustedInstallIndex
+        : jobSteps.length - 1
+      : restoreIndex;
   const stepsThroughSecurityBoundary = jobSteps.slice(
     0,
-    (jobName === "mcp-bridge-dev" ? trustedInstallIndex : restoreIndex) + 1,
+    securityBoundaryIndex + 1,
   );
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
   const unsafePreRestoreStep = stepsThroughSecurityBoundary.some(
     (step) =>
-      hasUnsafeShellHook(step.env) ||
+      hasUnsafeProcessHook(step.env) ||
       step.uses?.startsWith("./") ||
       (jobName !== "hermes-gpu-startup" &&
         (/GITHUB_WORKSPACE/u.test(step.run ?? "") ||
@@ -411,17 +411,17 @@ function validateConsumer(
             step.run ?? "",
           ))),
   );
-  if (hasUnsafeShellHook(jobEnv) || defaultShell !== undefined || unsafePreRestoreStep) {
+  if (hasUnsafeProcessHook(jobEnv) || defaultShell !== undefined || unsafePreRestoreStep) {
     errors.push(
       jobName === "mcp-bridge-dev"
-        ? "mcp-bridge-dev must not use candidate-controlled shell hooks before trusted installation"
-        : `${jobName} must not use candidate-controlled shell hooks before CLI artifact restore`,
+        ? "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation"
+        : `${jobName} must not use candidate-controlled process hooks before CLI artifact restore`,
     );
   }
   const candidateCheckoutIndex = candidateCheckoutIndexes[0] ?? -1;
   if (jobName === "mcp-bridge-dev") {
     const trustedNodeSetupIndexes = jobSteps.flatMap((step, index) =>
-      workflowContentSha256(step) === MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ? [index] : [],
+      contentSha256(step) === MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ? [index] : [],
     );
     if (
       trustedNodeSetupIndexes.length !== 1 ||
@@ -440,9 +440,9 @@ function validateConsumer(
   }
   if (
     jobName === "mcp-bridge-dev" &&
-    trustedInstallIndex >= 0 &&
-    workflowContentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
-      MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+    (trustedInstallIndex < 0 ||
+      contentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
+        MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256)
   ) {
     errors.push(
       "mcp-bridge-dev must preserve every reviewed step through trusted installation",
@@ -450,10 +450,10 @@ function validateConsumer(
   }
   if (
     jobName === "mcp-bridge-dev" &&
-    prepareIndex >= 0 &&
-    restoreIndex >= prepareIndex &&
-    workflowContentSha256(jobSteps.slice(prepareIndex, restoreIndex + 1)) !==
-      MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
+    (prepareIndex < 0 ||
+      restoreIndex < prepareIndex ||
+      contentSha256(jobSteps.slice(prepareIndex, restoreIndex + 1)) !==
+        MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256)
   ) {
     errors.push(
       "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
@@ -495,15 +495,15 @@ export function validateCliArtifactWorkflowBoundary(
   const errors = validateCliArtifactRestoreAction(actionPath);
   const workflowEnv = record(workflow.env);
   if (
-    workflowContentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
+    contentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
     MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
   ) {
     errors.push(
       "workflow must preserve the reviewed execution environment before candidate activation",
     );
   }
-  if (hasUnsafeShellHook(workflowEnv)) {
-    errors.push("workflow must not set shell startup hooks before CLI artifact restore");
+  if (hasUnsafeProcessHook(workflowEnv)) {
+    errors.push("workflow must not set process startup hooks before CLI artifact restore");
   }
   const jobs = record(workflow.jobs);
   const producer = record(jobs[CLI_ARTIFACT_PRODUCER_JOB]);
