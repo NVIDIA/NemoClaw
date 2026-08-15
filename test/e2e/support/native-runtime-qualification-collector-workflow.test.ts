@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync } from "node:fs";
+import { dirname, extname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   readRepoText,
@@ -14,6 +17,36 @@ type CollectorWorkflow = Workflow & {
   readonly on: { readonly workflow_dispatch: { readonly inputs: Record<string, unknown> } };
   readonly permissions: Record<string, string>;
 };
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const COLLECTOR_ENTRYPOINT = "tools/e2e/native-runtime-qualification-collector.mts";
+
+function resolveLocalModule(importer: string, specifier: string): string {
+  const unresolved = normalize(join(dirname(importer), specifier));
+  const candidates =
+    extname(unresolved).length > 0
+      ? [unresolved]
+      : [`${unresolved}.ts`, `${unresolved}.mts`, join(unresolved, "index.ts")];
+  const resolved = candidates.find((candidate) => existsSync(join(REPO_ROOT, candidate)));
+  expect(resolved, `cannot resolve '${specifier}' imported by '${importer}'`).toBeDefined();
+  return resolved!;
+}
+
+function localImportClosure(entrypoint: string): string[] {
+  const pending = [entrypoint];
+  const visited = new Set<string>();
+  for (let index = 0; index < pending.length; index += 1) {
+    const modulePath = pending[index]!;
+    const imports = visited.has(modulePath)
+      ? []
+      : [
+          ...readRepoText(modulePath).matchAll(/(?:from\s+|import\s*)["'](\.{1,2}\/[^"']+)["']/gu),
+        ].map((match) => resolveLocalModule(modulePath, match[1]!));
+    visited.add(modulePath);
+    pending.push(...imports.filter((candidate) => !visited.has(candidate)));
+  }
+  return [...visited].sort();
+}
 
 function workflow(): CollectorWorkflow {
   return readYaml(
@@ -64,7 +97,7 @@ describe("native runtime qualification collector workflow", () => {
     ).not.toMatch(/\$\{\{\s*secrets\./u);
   });
 
-  it("checks out only trusted evaluator files and never executes candidate code", () => {
+  it("checks out the exact trusted import closure and never executes candidate code", () => {
     const checkout = namedStep("Check out trusted collector revision");
     const collect = namedStep("Authenticate and consume protected qualification evidence");
     const steps = collectorJob().steps ?? [];
@@ -78,13 +111,9 @@ describe("native runtime qualification collector workflow", () => {
       "persist-credentials": false,
       "sparse-checkout-cone-mode": false,
     });
-    expect(String(checkout.with?.["sparse-checkout"])).toContain(
-      "tools/e2e/native-runtime-qualification-collector.mts",
+    expect(String(checkout.with?.["sparse-checkout"]).trim().split(/\s+/u).sort()).toEqual(
+      localImportClosure(COLLECTOR_ENTRYPOINT),
     );
-    expect(String(checkout.with?.["sparse-checkout"])).toContain(
-      "test/e2e/registry/native-runtime-qualification.ts",
-    );
-    expect(String(checkout.with?.["sparse-checkout"])).not.toContain("src/");
     expect(
       (collect as WorkflowStep & { readonly "working-directory"?: string })["working-directory"],
     ).toBe("trusted");
