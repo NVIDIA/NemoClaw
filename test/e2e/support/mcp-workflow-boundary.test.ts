@@ -303,7 +303,7 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must complete trusted Node setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
+        "mcp-bridge-dev must complete trusted Node.js setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -318,9 +318,9 @@ describe("MCP workflow artifact boundary", () => {
         jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
       };
       const setupNode = workflow.jobs["mcp-bridge-dev"].steps.find(
-        (step) => step.name === "Set up Node for trusted OpenShell verification",
+        (step) => step.name === "Set up Node.js for trusted OpenShell verification",
       );
-      requireFixture(setupNode, "trusted Node setup fixture is missing");
+      requireFixture(setupNode, "trusted Node.js setup fixture is missing");
       setupNode.with = {
         ...(setupNode.with as Record<string, unknown>),
         "package-manager-cache": true,
@@ -328,7 +328,7 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+        "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -344,19 +344,19 @@ describe("MCP workflow artifact boundary", () => {
       };
       const steps = workflow.jobs["mcp-bridge-dev"].steps;
       const setupNodeIndex = steps.findIndex(
-        (step) => step.name === "Set up Node for trusted OpenShell verification",
+        (step) => step.name === "Set up Node.js for trusted OpenShell verification",
       );
       const candidateCheckoutIndex = steps.findIndex((step) =>
         String(step.uses ?? "").startsWith("actions/checkout@"),
       );
-      requireFixture(setupNodeIndex >= 0, "trusted Node setup fixture is missing");
+      requireFixture(setupNodeIndex >= 0, "trusted Node.js setup fixture is missing");
       requireFixture(candidateCheckoutIndex >= 0, "candidate checkout fixture is missing");
       const [setupNode] = steps.splice(setupNodeIndex, 1);
       steps.splice(candidateCheckoutIndex, 0, setupNode);
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+        "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -512,7 +512,7 @@ describe("MCP workflow artifact boundary", () => {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge-dev must complete trusted Node setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
+        "mcp-bridge-dev must complete trusted Node.js setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

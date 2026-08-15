@@ -43,9 +43,9 @@ const MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256 =
 const MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256 =
   "9f9983804a29816d7e1b35e9e791f453f4e9e83f4ec41b906953e976d372353e";
 const MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 =
-  "de1d00d57a7d2f45717d88ef19b05f9e93db1929af1d4ae847aa6b1ece1ab0f6";
+  "504821ad93c57971d0281ef1130ed6008fadd331bd56acb1a6b5e6a3358f3e49";
 const MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256 =
-  "bc50da3bba4625943d61187c87e8ba62eb8dbc62216c404b63a70c37b9650d7a";
+  "c559e6cd5bf076bed8d359bbca397d4e31fbf3c11123389425917b865544940d";
 const MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256 =
   "62cf2ee01ac7192f41fc7b2b071de729da8bacec1e4f693da1ec6f0b1f4723c0";
 
@@ -428,7 +428,7 @@ function validateConsumer(
       trustedNodeSetupIndexes[0] !== candidateCheckoutIndex - 1
     ) {
       errors.push(
-        "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+        "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
       );
     }
   }

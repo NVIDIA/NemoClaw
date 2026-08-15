@@ -445,12 +445,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     const setupNode = requireStep(
       workflow,
       "mcp-bridge-dev",
-      "Set up Node for trusted OpenShell verification",
+      "Set up Node.js for trusted OpenShell verification",
     );
     setupNode.with = { ...setupNode.with, "package-manager-cache": true };
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
     );
   });
 
@@ -460,7 +460,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     const setupNode = requireStep(
       workflow,
       "mcp-bridge-dev",
-      "Set up Node for trusted OpenShell verification",
+      "Set up Node.js for trusted OpenShell verification",
     );
     const [movedSetupNode] = steps.splice(steps.indexOf(setupNode), 1);
     const candidateCheckoutIndex = steps.findIndex((step) =>
@@ -469,7 +469,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     steps.splice(candidateCheckoutIndex + 1, 0, movedSetupNode!);
 
     expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must set up Node without dependency caching before candidate checkout",
+      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
     );
   });
 

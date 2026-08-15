@@ -1957,7 +1957,7 @@ jobs:
     steps:
       # setup-node probes package managers in the workspace.
       # Run it before candidate checkout with automatic caching disabled.
-      - name: Set up Node for trusted OpenShell verification
+      - name: Set up Node.js for trusted OpenShell verification
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
