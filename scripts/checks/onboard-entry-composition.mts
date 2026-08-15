@@ -763,16 +763,20 @@ export function resolveCompositionMergeBase(
   return mergeBase.stdout.trim();
 }
 
-function mergeBaseCompositionCeiling(): OnboardEntryCompositionCeiling {
-  const revision = resolveCompositionMergeBase();
+export function mergeBaseCompositionCeiling(
+  git: CompositionGitRunner = runGit,
+  baseBranch = process.env.GITHUB_BASE_REF?.trim(),
+): OnboardEntryCompositionCeiling {
+  const revision = resolveCompositionMergeBase(git, baseBranch);
   function readBaseFile(relativePath: string): string {
-    const source = spawnSync("git", ["show", `${revision}:${relativePath}`], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      timeout: 5_000,
-    });
+    const source = git(["show", `${revision}:${relativePath}`]);
+    if (source.error) {
+      throw new Error(
+        `could not run git to read ${relativePath} from composition merge base ${revision} (${source.error})`,
+      );
+    }
     if (source.status !== 0) {
-      throw new Error(`could not read ${relativePath} from merge base ${revision}`);
+      throw new Error(`could not read ${relativePath} from composition merge base ${revision}`);
     }
     return source.stdout;
   }

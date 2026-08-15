@@ -9,6 +9,7 @@ import {
   collectOnboardEntryDecisions,
   evaluateOnboardEntryComposition,
   evaluateOnboardEntryCompositionBudgetExpansion,
+  mergeBaseCompositionCeiling,
   parseOnboardEntryCompositionBudget,
   resolveCompositionMergeBase,
   type OnboardEntryCompositionBudget,
@@ -535,7 +536,7 @@ describe("onboarding entry composition boundary", () => {
     ]);
   });
 
-  it("permits detector recalibration but rejects allowance above the merge-base source", () => {
+  it("permits reassigned allowance up to the merge-base source", () => {
     const baseBudget = {
       ...EMPTY_BUDGET,
       gateway: { runOnboard: 1 },
@@ -579,7 +580,7 @@ describe("onboarding entry composition boundary", () => {
     ]);
   });
 
-  it("rejects duplicated allowance when detector recalibration moves a decision", () => {
+  it("rejects duplicated allowance after owner reassignment", () => {
     const baseline = combineOnboardEntryCompositionCeiling(
       { ...EMPTY_BUDGET, messaging: { oldOwner: 1 } },
       { ...EMPTY_BUDGET, messaging: { newOwner: 1 } },
@@ -605,7 +606,7 @@ describe("onboarding entry composition boundary", () => {
     ]);
   });
 
-  it("rejects duplicated allowance when detector recalibration moves a category", () => {
+  it("rejects duplicated allowance after category reassignment", () => {
     const baseline = combineOnboardEntryCompositionCeiling(
       { ...EMPTY_BUDGET, provider: { oldOwner: 1 } },
       { ...EMPTY_BUDGET, messaging: { newOwner: 1 } },
@@ -646,6 +647,27 @@ describe("onboarding entry composition boundary", () => {
   it("fails closed when the composition merge-base history is unavailable", () => {
     expect(() => resolveCompositionMergeBase(() => ({ status: 128, stdout: "" }), "")).toThrow(
       "could not resolve the composition merge base against origin/main; fetch the base ref with sufficient history",
+    );
+  });
+
+  it.each([
+    "ci/onboard-entry-composition-budget.json",
+    "src/lib/onboard.ts",
+  ])("fails closed when %s is unavailable at the composition merge base", (missingPath) => {
+    const revision = "base-revision";
+    const baseBudget = JSON.stringify(EMPTY_BUDGET);
+    const git = (args: readonly string[]) => {
+      if (args[0] === "merge-base") return { status: 0, stdout: revision };
+      const relativePath = args[1]?.slice(`${revision}:`.length);
+      if (relativePath === missingPath) return { status: 128, stdout: "" };
+      if (relativePath === "ci/onboard-entry-composition-budget.json") {
+        return { status: 0, stdout: baseBudget };
+      }
+      return { status: 0, stdout: "function runOnboard() {}" };
+    };
+
+    expect(() => mergeBaseCompositionCeiling(git, "")).toThrow(
+      `could not read ${missingPath} from composition merge base ${revision}`,
     );
   });
 });
