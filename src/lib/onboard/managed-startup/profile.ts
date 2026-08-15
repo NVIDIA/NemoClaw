@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
@@ -27,7 +28,6 @@ const MAX_JSON_DEPTH = 32;
 const MAX_TUNING_INTEGER = 1_000_000_000;
 const MIN_HERMES_CONTEXT_WINDOW = 64_000;
 const SHA256_RE = /^[a-f0-9]{64}$/;
-const DCODE_UPSTREAM_PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f-\u009f]/u;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const RAW_CA_PEM_RE = /-----BEGIN (?:TRUSTED )?CERTIFICATE-----/iu;
@@ -93,6 +93,7 @@ export type ManagedStartupReasoningEffort = (typeof MANAGED_STARTUP_REASONING_EF
 export const MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES = ["disabled", "thread-opt-in"] as const;
 export type ManagedStartupDcodeAutoApprovalMode =
   (typeof MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES)[number];
+
 export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
   "nous-web",
   "nous-image",
@@ -1685,7 +1686,7 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     }
     if (
       agent === "langchain-deepagents-code" &&
-      !DCODE_UPSTREAM_PROVIDER_RE.test(upstreamProvider)
+      !isValidDcodeUpstreamProvider(upstreamProvider)
     ) {
       invalid(
         "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
