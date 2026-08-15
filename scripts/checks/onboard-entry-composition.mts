@@ -287,7 +287,7 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
     return false;
   }
   return (
-    /^(?:chooseGateway|gatewayState)$/i.test(identifier) ||
+    /^(?:chooseGateway|gateway[.]?State)$/i.test(identifier) ||
     GATEWAY_AFTER_LIFECYCLE.test(identifier) ||
     GATEWAY_BEFORE_LIFECYCLE_OR_STATE.test(identifier)
   );
@@ -472,17 +472,41 @@ function findStaticAlias(
 }
 
 function resolveStaticAlias(identifier: string, aliases: StaticAliases, location: ts.Node): string {
-  let resolved = identifier;
-  let resolutionLocation = location;
-  const visited = new Set<string>();
-  while (!visited.has(resolved)) {
-    visited.add(resolved);
-    const binding = findStaticAlias(resolved, aliases, resolutionLocation);
-    if (!binding?.target) break;
-    resolved = binding.target;
-    resolutionLocation = binding.declaration;
+  function resolve(reference: string, resolutionLocation: ts.Node, visited: Set<string>): string {
+    const separator = reference.indexOf(".");
+    if (separator >= 0) {
+      const receiver = reference.slice(0, separator);
+      return `${resolve(receiver, resolutionLocation, visited)}${reference.slice(separator)}`;
+    }
+    if (visited.has(reference)) return reference;
+    visited.add(reference);
+    const binding = findStaticAlias(reference, aliases, resolutionLocation);
+    if (!binding?.target) return reference;
+    return resolve(binding.target, binding.declaration, visited);
   }
-  return resolved;
+
+  return resolve(identifier, location, new Set());
+}
+
+function resolvedStaticReferenceName(
+  expression: ts.Expression,
+  aliases: StaticAliases,
+): string | null {
+  const reference = unwrapTransparentExpression(expression);
+  if (ts.isIdentifier(reference)) {
+    return resolveStaticAlias(reference.text, aliases, reference);
+  }
+  if (ts.isPrivateIdentifier(reference)) return reference.text;
+  if (ts.isPropertyAccessExpression(reference)) {
+    const receiver = resolvedStaticReferenceName(reference.expression, aliases);
+    return receiver ? `${receiver}.${reference.name.text}` : null;
+  }
+  if (ts.isElementAccessExpression(reference)) {
+    const receiver = resolvedStaticReferenceName(reference.expression, aliases);
+    const member = staticElementName(reference);
+    return receiver && member ? `${receiver}.${member}` : null;
+  }
+  return null;
 }
 
 function calledName(expression: ts.Expression): string | null {
@@ -517,7 +541,8 @@ function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is Re
   if (!ts.isCallExpression(node) && !ts.isTaggedTemplateExpression(node)) return false;
   const expression = recoveryInvocationExpression(node);
   const boundReceiver = immediatelyBoundReceiver(expression);
-  if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
+  const boundName = boundReceiver ? resolvedStaticReferenceName(boundReceiver, aliases) : null;
+  if (boundName && RECOVERY_NAME.test(boundName)) return true;
   const callee = unwrapTransparentExpression(expression);
   const called = calledName(callee);
   const name =
@@ -527,8 +552,9 @@ function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is Re
   }
   if (RECOVERY_NAME.test(name)) return true;
   const receiver = calledReceiver(expression);
+  const receiverName = receiver ? resolvedStaticReferenceName(receiver, aliases) : null;
   return (
-    receiver !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiver.getText())
+    receiverName !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiverName)
   );
 }
 
@@ -585,17 +611,16 @@ function decisionNodeCategories(
       const name = staticElementName(candidate);
       if (name) {
         for (const category of identifierCategories(name, aliases)) categories.add(category);
-        for (const category of identifierCategories(
-          `${candidate.expression.getText()}${name}`,
-          aliases,
-        )) {
+        const reference = resolvedStaticReferenceName(candidate, aliases);
+        for (const category of identifierCategories(reference ?? name, aliases)) {
           categories.add(category);
         }
       }
     }
     if (ts.isPropertyAccessExpression(candidate)) {
+      const reference = resolvedStaticReferenceName(candidate, aliases);
       for (const category of identifierCategories(
-        `${candidate.expression.getText()}${candidate.name.text}`,
+        reference ?? `${candidate.expression.getText()}${candidate.name.text}`,
         aliases,
       )) {
         categories.add(category);
@@ -986,14 +1011,18 @@ export function resolveCompositionMergeBase(
   return mergeBase.stdout.trim();
 }
 
-function mergeBaseCompositionCeiling(): OnboardEntryCompositionCeiling {
-  const revision = resolveCompositionMergeBase();
+export function mergeBaseCompositionCeiling(
+  git: CompositionGitRunner = runGit,
+  baseBranch = process.env.GITHUB_BASE_REF?.trim(),
+): OnboardEntryCompositionCeiling {
+  const revision = resolveCompositionMergeBase(git, baseBranch);
   function readBaseFile(relativePath: string): string {
-    const source = spawnSync("git", ["show", `${revision}:${relativePath}`], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      timeout: 5_000,
-    });
+    const source = git(["show", `${revision}:${relativePath}`]);
+    if (source.error) {
+      throw new Error(
+        `could not run git to read ${relativePath} from merge base ${revision} (${source.error})`,
+      );
+    }
     if (source.status !== 0) {
       throw new Error(`could not read ${relativePath} from merge base ${revision}`);
     }

@@ -9,6 +9,7 @@ import {
   collectOnboardEntryDecisions,
   evaluateOnboardEntryComposition,
   evaluateOnboardEntryCompositionBudgetExpansion,
+  mergeBaseCompositionCeiling,
   parseOnboardEntryCompositionBudget,
   resolveCompositionMergeBase,
   type OnboardEntryCompositionBudget,
@@ -246,6 +247,38 @@ describe("onboarding entry composition boundary", () => {
     `);
 
     expect(actual.gateway).toEqual({ chooseStart: 1 });
+  });
+
+  it.each([
+    ["receiver", "const service = gateway;", "if (enabled) service.start();"],
+    ["optional receiver", "const service = gateway;", "service?.start();"],
+    [
+      "member",
+      "const service = gateway; const action = service.start;",
+      "if (enabled) action();",
+    ],
+    ["recovery receiver", "const service = gatewayRecovery;", "service.execute();"],
+  ])("checks a gateway action through a static %s alias", (_form, aliases, action) => {
+    const actual = collectOnboardEntryDecisions(`
+      function choose(enabled: boolean) {
+        ${aliases}
+        ${action}
+      }
+    `);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it("keeps a shadowed receiver alias out of gateway classification", () => {
+    const actual = collectOnboardEntryDecisions(`
+      const service = gateway;
+      function reportOnly(enabled: boolean) {
+        const service = reporter;
+        if (enabled) service.start();
+      }
+    `);
+
+    expect(actual.gateway).toEqual({});
   });
 
   it.each([
@@ -762,5 +795,23 @@ describe("onboarding entry composition boundary", () => {
     expect(() => resolveCompositionMergeBase(() => ({ status: 128, stdout: "" }), "")).toThrow(
       "could not resolve the composition merge base against origin/main; fetch the base ref with sufficient history",
     );
+  });
+
+  it("reports a Git execution failure while reading the merge-base budget", () => {
+    const calls: string[][] = [];
+
+    expect(() =>
+      mergeBaseCompositionCeiling((args) => {
+        calls.push([...args]);
+        if (args[0] === "merge-base") return { status: 0, stdout: "base-revision\n" };
+        return { status: null, stdout: "", error: "spawnSync git ETIMEDOUT" };
+      }, ""),
+    ).toThrow(
+      "could not run git to read ci/onboard-entry-composition-budget.json from merge base base-revision (spawnSync git ETIMEDOUT)",
+    );
+    expect(calls).toEqual([
+      ["merge-base", "HEAD", "origin/main"],
+      ["show", "base-revision:ci/onboard-entry-composition-budget.json"],
+    ]);
   });
 });
