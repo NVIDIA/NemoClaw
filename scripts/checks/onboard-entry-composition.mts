@@ -19,12 +19,24 @@ export type OnboardEntryCompositionViolation = {
   readonly actualCount: number;
   readonly budgetCount: number;
 };
-export type OnboardEntryCompositionBudgetExpansion = {
-  readonly category: OnboardDecisionCategory;
-  readonly declaration: string;
-  readonly budgetCount: number;
-  readonly baselineCount: number;
+export type OnboardEntryCompositionCeiling = {
+  readonly declarations: OnboardEntryCompositionBudget;
+  readonly categoryTotals: Readonly<Record<OnboardDecisionCategory, number>>;
 };
+export type OnboardEntryCompositionBudgetExpansion =
+  | {
+      readonly kind: "declaration";
+      readonly category: OnboardDecisionCategory;
+      readonly declaration: string;
+      readonly budgetCount: number;
+      readonly baselineCount: number;
+    }
+  | {
+      readonly kind: "category";
+      readonly category: OnboardDecisionCategory;
+      readonly budgetCount: number;
+      readonly baselineCount: number;
+    };
 export type CompositionGitResult = Readonly<{
   status: number | null;
   stdout: string;
@@ -624,10 +636,10 @@ export function evaluateOnboardEntryComposition(
 export function combineOnboardEntryCompositionCeiling(
   baseBudget: OnboardEntryCompositionBudget,
   baseActual: OnboardEntryCompositionBudget,
-): OnboardEntryCompositionBudget {
-  return Object.fromEntries(
+): OnboardEntryCompositionCeiling {
+  const declarations = Object.fromEntries(
     CATEGORIES.map((category) => {
-      const declarations = new Set([
+      const names = new Set([
         ...Object.keys(baseBudget[category]),
         ...Object.keys(baseActual[category]),
       ]);
@@ -635,7 +647,7 @@ export function combineOnboardEntryCompositionCeiling(
         category,
         sortCounts(
           Object.fromEntries(
-            [...declarations].map((declaration) => [
+            [...names].map((declaration) => [
               declaration,
               Math.max(
                 baseBudget[category][declaration] ?? 0,
@@ -647,18 +659,30 @@ export function combineOnboardEntryCompositionCeiling(
       ];
     }),
   ) as Record<OnboardDecisionCategory, OnboardDecisionCounts>;
+  const categoryTotals = Object.fromEntries(
+    CATEGORIES.map((category) => [
+      category,
+      Math.max(totalDecisions(baseBudget[category]), totalDecisions(baseActual[category])),
+    ]),
+  ) as Record<OnboardDecisionCategory, number>;
+  return { declarations, categoryTotals };
 }
 
 export function evaluateOnboardEntryCompositionBudgetExpansion(
   budget: OnboardEntryCompositionBudget,
-  baseline: OnboardEntryCompositionBudget,
+  ceiling: OnboardEntryCompositionCeiling,
 ): OnboardEntryCompositionBudgetExpansion[] {
   const expansions: OnboardEntryCompositionBudgetExpansion[] = [];
   for (const category of CATEGORIES) {
     for (const [declaration, budgetCount] of Object.entries(budget[category])) {
-      const baselineCount = baseline[category][declaration] ?? 0;
+      const baselineCount = ceiling.declarations[category][declaration] ?? 0;
       if (budgetCount <= baselineCount) continue;
-      expansions.push({ category, declaration, budgetCount, baselineCount });
+      expansions.push({ kind: "declaration", category, declaration, budgetCount, baselineCount });
+    }
+    const budgetCount = totalDecisions(budget[category]);
+    const baselineCount = ceiling.categoryTotals[category];
+    if (budgetCount > baselineCount) {
+      expansions.push({ kind: "category", category, budgetCount, baselineCount });
     }
   }
   return expansions.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -703,7 +727,7 @@ export function resolveCompositionMergeBase(
   return mergeBase.stdout.trim();
 }
 
-function mergeBaseCompositionCeiling(): OnboardEntryCompositionBudget {
+function mergeBaseCompositionCeiling(): OnboardEntryCompositionCeiling {
   const revision = resolveCompositionMergeBase();
   function readBaseFile(relativePath: string): string {
     const source = spawnSync("git", ["show", `${revision}:${relativePath}`], {
@@ -730,9 +754,10 @@ function formatBudgetExpansions(
   return [
     "Onboarding entry composition budget must not expand relative to the merge base.",
     "",
-    ...expansions.map(
-      ({ declaration, category, baselineCount, budgetCount }) =>
-        `- ${declaration}: ${category} budget increased from ${baselineCount} to ${budgetCount}.`,
+    ...expansions.map((expansion) =>
+      expansion.kind === "declaration"
+        ? `- ${expansion.declaration}: ${expansion.category} budget increased from ${expansion.baselineCount} to ${expansion.budgetCount}.`
+        : `- ${expansion.category}: total budget increased from ${expansion.baselineCount} to ${expansion.budgetCount}.`,
     ),
   ].join("\n");
 }
