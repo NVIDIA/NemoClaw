@@ -1,15 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { normalizeCustomEndpointUrl } from "../../../src/lib/actions/inference-set.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV,
   COMPATIBLE_ANTHROPIC_PROVIDER,
+  GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT,
   compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
+  installGatewayHostVerificationAlias,
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 
@@ -47,8 +55,43 @@ describe("compatible Anthropic inference switch setup", () => {
     ).toThrow("COMPATIBLE_ANTHROPIC_API_KEY is required");
   });
 
-  it("advertises the mock on the gateway host loopback (#9166)", () => {
-    expect(compatibleAnthropicMockEndpointUrl(18_766)).toBe("http://127.0.0.1:18766");
+  it("passes the mock bridge through endpoint validation without DNS rewriting (#9166)", async () => {
+    const endpointUrl = compatibleAnthropicMockEndpointUrl(18_766);
+    const rewrite = vi.fn();
+
+    await expect(normalizeCustomEndpointUrl(endpointUrl, rewrite)).resolves.toBe(endpointUrl);
+    expect(rewrite).not.toHaveBeenCalled();
+  });
+
+  it("mounts the resolver alias only inside the active gateway namespace (#9166)", async () => {
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "ActiveState=active\nMainPID=4242\n",
+      })
+      .mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    const add = vi.fn();
+
+    await installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, { add });
+    const cleanupMount = add.mock.calls[0]?.[1] as () => Promise<void>;
+    await cleanupMount();
+
+    expect(command.mock.calls[0]?.slice(0, 2)).toEqual([
+      "systemctl",
+      [
+        "--user",
+        "show",
+        "nemoclaw-openshell-gateway",
+        "--property=ActiveState",
+        "--property=MainPID",
+      ],
+    ]);
+    for (const call of command.mock.calls.slice(1)) {
+      expect(call[0]).toBe("sudo");
+      expect(call[1]).toEqual(expect.arrayContaining(["4242", GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT]));
+    }
   });
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {
@@ -98,5 +141,82 @@ describe("compatible Anthropic inference switch setup", () => {
     await expect(requireCompatibleAnthropicProviderAbsent(host, options)).rejects.toThrow(
       "Could not prove",
     );
+  });
+});
+
+const linuxIt = process.platform === "linux" ? it : it.skip;
+
+describe("gateway resolver mount", () => {
+  linuxIt("preserves a resolver write that overlaps mount installation (#9166)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-resolver-test-"));
+    const hostsPath = path.join(directory, "hosts");
+    const underlayPath = path.join(directory, "hosts.underlay");
+    const resolverSource = path.join(directory, "resolver-source");
+    const fakeBin = path.join(directory, "bin");
+    const token = "a".repeat(32);
+    const ownedLine =
+      `127.0.0.1 host.openshell.internal # nemoclaw-gateway-host-verifier:${token}`;
+    try {
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", { mode: 0o644 });
+      fs.writeFileSync(resolverSource, `${ownedLine}\n127.0.0.1 localhost\n`, { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(fakeBin, "mount"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          '[[ "$1" == "--make-rprivate" ]] && exit 0',
+          '[[ "$1" == "--bind" ]]',
+          "printf '192.0.2.10 concurrent.example.test\\n' >> \"$3\"",
+          'mv -- "$3" "$NEMOCLAW_TEST_RESOLVER_UNDERLAY"',
+          'ln -s -- "$2" "$3"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(fakeBin, "umount"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'rm -- "$1"',
+          'mv -- "$NEMOCLAW_TEST_RESOLVER_UNDERLAY" "$1"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const run = (operation: "add" | "remove") =>
+        spawnSync(
+          "bash",
+          [
+            "-ceu",
+            GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT,
+            "gateway-resolver-mount-test",
+            operation,
+            resolverSource,
+            token,
+            hostsPath,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              NEMOCLAW_TEST_RESOLVER_UNDERLAY: underlayPath,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            },
+          },
+        );
+
+      const added = run("add");
+      expect(added.status, added.stderr).toBe(0);
+      expect(fs.readFileSync(hostsPath, "utf8")).toContain(ownedLine);
+      expect(fs.readFileSync(underlayPath, "utf8")).toContain("concurrent.example.test");
+
+      const removed = run("remove");
+      expect(removed.status, removed.stderr).toBe(0);
+      expect(fs.readFileSync(hostsPath, "utf8")).toBe(
+        "127.0.0.1 localhost\n192.0.2.10 concurrent.example.test\n",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 });

@@ -21,6 +21,7 @@ import {
   compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
+  installGatewayHostVerificationAlias,
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -542,6 +543,7 @@ export async function prepareCompatibleAnthropicSwitchBinding(
     return null;
   const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
+  if (mock) await installGatewayHostVerificationAlias(host, cleanup);
   const binding = compatibleAnthropicSwitchBinding(
     process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "",
   );
