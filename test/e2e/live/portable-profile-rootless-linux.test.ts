@@ -14,6 +14,10 @@ import * as importedPortableHostPreparation from "../../../src/lib/onboard/exper
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import {
+  cleanupPortableProfileRootlessFixture,
+  installPortableProfileSystemctlShim,
+} from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
 
@@ -96,53 +100,6 @@ async function waitForRegistry(attempt = 0): Promise<void> {
       );
 }
 
-function writeSystemctlShim(binDir: string): void {
-  const shim = path.join(binDir, "systemctl");
-  fs.writeFileSync(
-    shim,
-    `#!/usr/bin/env bash
-set -euo pipefail
-runtime_dir="\${XDG_RUNTIME_DIR:?}"
-service_dir="\${runtime_dir}/podman"
-socket_path="\${service_dir}/podman.sock"
-pid_file="\${runtime_dir}/nemoclaw-podman-service.pid"
-log_file="\${runtime_dir}/nemoclaw-podman-service.log"
-
-case "$*" in
-  "--user set-environment NETAVARK_FW=iptables CONTAINERS_CONF="*)
-    exit 0
-    ;;
-  "--user try-restart podman.service")
-    if [[ -f "\${pid_file}" ]]; then
-      kill "$(<"\${pid_file}")" 2>/dev/null || true
-      rm -f "\${pid_file}" "\${socket_path}"
-    fi
-    exit 0
-    ;;
-  "--user enable --now podman.socket")
-    install -d -m 755 "\${service_dir}"
-    nohup podman system service --time=0 "unix://\${socket_path}" >"\${log_file}" 2>&1 &
-    echo $! >"\${pid_file}"
-    for _ in $(seq 1 100); do
-      if [[ -S "\${socket_path}" ]]; then
-        chmod 660 "\${socket_path}"
-        exit 0
-      fi
-      sleep 0.1
-    done
-    cat "\${log_file}" >&2 || true
-    exit 1
-    ;;
-  *)
-    echo "unexpected user-service command: $*" >&2
-    exit 64
-    ;;
-esac
-`,
-    { encoding: "utf-8", mode: 0o700 },
-  );
-}
-
 function selectInstallerPodmanRuntime(repoRoot: string): string {
   const payload = path.join(repoRoot, "scripts", "install.sh");
   const script = [
@@ -165,7 +122,7 @@ async function main(progress: TestProgress): Promise<void> {
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
-  writeSystemctlShim(binDir);
+  installPortableProfileSystemctlShim(binDir);
 
   Object.assign(process.env, {
     HOME: home,
@@ -305,25 +262,17 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
-    const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
-    const pid = fs.existsSync(pidFile)
-      ? Number(fs.readFileSync(pidFile, "utf-8").trim())
-      : Number.NaN;
-    const terminateService = Number.isInteger(pid)
-      ? () => process.kill(pid, "SIGTERM")
-      : () => undefined;
-    terminateService();
-    try {
-      fs.rmSync(root, { recursive: true, force: true });
-    } catch (error) {
-      console.warn(`Portable E2E temporary cleanup was incomplete: ${String(error)}`);
-    }
+    await cleanupPortableProfileRootlessFixture(runtimeDir, root);
   }
 }
 
-test("portable profile rootless environment completes the local image and fixed-host route contracts", {
-  meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
-  timeout: 120_000,
-}, async ({ progress }) => {
-  await main(progress);
-});
+test(
+  "portable profile rootless environment completes the local image and fixed-host route contracts",
+  {
+    meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
+    timeout: 120_000,
+  },
+  async ({ progress }) => {
+    await main(progress);
+  },
+);
