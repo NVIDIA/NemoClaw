@@ -252,7 +252,6 @@ export function createPortableOnboardEnvironmentScope(
   };
 }
 
-
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;
@@ -277,7 +276,7 @@ export interface OnboardSessionBootstrapDeps {
   clearSession(): void;
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
-  updateSession(mutator: (session: Session) => Session | void): Session;
+  updateSession(mutator: (session: Session) => Session | void): Session | Promise<Session>;
   applySessionRecovery(session: Session): void;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
@@ -300,6 +299,7 @@ export interface OnboardSessionBootstrapDeps {
   exitProcess(code: number): never;
   requireHostMountRuntimeSupport(
     mounts: readonly import("../state/registry/types").SandboxHostMount[] | undefined,
+    checkpointProfile?: CheckpointOnboardProfile,
   ): void;
   resolveResumeCheckpoint(): CheckpointLoadResult;
 }
@@ -311,20 +311,16 @@ export interface OnboardSessionBootstrapResult {
 
 export const defaultResolveResumeCheckpoint: () => CheckpointLoadResult = loadResumeCheckpoint;
 
-export function checkpointSandboxName(
+export async function checkpointSandboxName(
   sandboxName: string,
   agent: { name?: string } | null,
   updateSession: OnboardSessionBootstrapDeps["updateSession"],
-): void {
-  if (agent?.name && agent.name !== "openclaw") return;
-  updateSession((current) => {
+): Promise<void> {
+  await updateSession((current) => {
+    const checkpointAgent = agent?.name ?? current.agent ?? "openclaw";
     current.sandboxName = sandboxName;
     current.sandboxPromptProgress.sandboxName = true;
-    recordCheckpointSandboxIdentity(
-      current,
-      sandboxName,
-      current.agent ?? agent?.name ?? "openclaw",
-    );
+    recordCheckpointSandboxIdentity(current, sandboxName, checkpointAgent);
     return current;
   });
 }
@@ -340,10 +336,7 @@ export function getCheckpointedSandboxName(
       ? session.checkpoint.sandboxIdentity.value.name
       : null;
   }
-  return (!agent?.name || agent.name === "openclaw") &&
-    session?.sandboxPromptProgress?.sandboxName === true
-    ? session.sandboxName
-    : null;
+  return session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
 }
 
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
@@ -464,8 +457,7 @@ function assertRecoverableResumeSandboxName(
   const nameRecoverable = checkpoint
     ? checkpointProvesSandboxStepComplete(session) || isDecisionSelected(checkpoint.sandboxIdentity)
     : session?.steps?.sandbox?.status === "complete" ||
-      ((!session?.agent || session.agent === "openclaw") &&
-        session?.sandboxPromptProgress?.sandboxName === true);
+      session?.sandboxPromptProgress?.sandboxName === true;
   const checkpointedSandboxName =
     checkpoint && isDecisionSelected(checkpoint.sandboxIdentity)
       ? checkpoint.sandboxIdentity.value.name
@@ -491,6 +483,7 @@ async function prepareResumeSession(
   let session = deps.loadSession();
   deps.requireHostMountRuntimeSupport(
     input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
+    input.checkpointProfile,
   );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
@@ -538,7 +531,7 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
-  deps.requireHostMountRuntimeSupport(input.requestedHostMounts);
+  deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
   }
@@ -584,7 +577,10 @@ export function prepareOnboardSessionValidated(
 ): Promise<OnboardSessionBootstrapResult> {
   return prepareOnboardSession(input, {
     ...deps,
-    requireHostMountRuntimeSupport: requireReadOnlyHostMountRuntimeSupport,
+    requireHostMountRuntimeSupport: (mounts, checkpointProfile) =>
+      requireReadOnlyHostMountRuntimeSupport(mounts, {
+        experimentalProfile: checkpointProfile === "portable" ? "portable" : null,
+      }),
     resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
   });
 }

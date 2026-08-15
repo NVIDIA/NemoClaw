@@ -34,13 +34,15 @@ export interface ManagedStartupRootOwnedFileMaterial {
     | "NEMOCLAW_INFERENCE_BASE_URL"
     | "NEMOCLAW_PROXY_HOST"
     | "NEMOCLAW_PROXY_PORT"
-    | "NEMOCLAW_REASONING_EFFORT";
+    | "NEMOCLAW_REASONING_EFFORT"
+    | "NEMOCLAW_UPSTREAM_PROVIDER";
   readonly path:
     | "/usr/local/share/nemoclaw/dcode-auto-approval"
     | "/usr/local/share/nemoclaw/dcode-inference-base-url"
     | "/usr/local/share/nemoclaw/dcode-proxy-host"
     | "/usr/local/share/nemoclaw/dcode-proxy-port"
-    | "/usr/local/share/nemoclaw/dcode-reasoning-effort";
+    | "/usr/local/share/nemoclaw/dcode-reasoning-effort"
+    | "/usr/local/share/nemoclaw/dcode-upstream-provider";
   readonly contents: string;
   readonly owner: "root";
   readonly group: "root";
@@ -76,15 +78,13 @@ interface ManagedStartupApplyMessagingActionBase {
   readonly phase: "runtime-setup" | "post-agent-install";
 }
 
-export interface ManagedStartupApplyMessagingRuntimeAction
-  extends ManagedStartupApplyMessagingActionBase {
+export interface ManagedStartupApplyMessagingRuntimeAction extends ManagedStartupApplyMessagingActionBase {
   readonly phase: "runtime-setup";
   /** Writes the reduced, root-owned messaging runtime-plan artifact. */
   readonly runAs: "root";
 }
 
-export interface ManagedStartupApplyMessagingConfigAction
-  extends ManagedStartupApplyMessagingActionBase {
+export interface ManagedStartupApplyMessagingConfigAction extends ManagedStartupApplyMessagingActionBase {
   readonly phase: "post-agent-install";
   /** Renders only sandbox-owned agent configuration from preinstalled assets. */
   readonly runAs: "sandbox";
@@ -495,6 +495,7 @@ function mapDcodeProfile(
   // consumed by managed-dcode-runtime.py.
   delete runtimeEnvironment.NEMOCLAW_INFERENCE_BASE_URL;
   delete runtimeEnvironment.NEMOCLAW_REASONING_EFFORT;
+  delete runtimeEnvironment.NEMOCLAW_UPSTREAM_PROVIDER;
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -516,6 +517,11 @@ function mapDcodeProfile(
       "NEMOCLAW_INFERENCE_BASE_URL",
       "/usr/local/share/nemoclaw/dcode-inference-base-url",
       profile.inference.routedBaseUrl,
+    ),
+    rootOwnedFile(
+      "NEMOCLAW_UPSTREAM_PROVIDER",
+      "/usr/local/share/nemoclaw/dcode-upstream-provider",
+      profile.inference.upstreamProvider,
     ),
     rootOwnedFile(
       "NEMOCLAW_PROXY_HOST",

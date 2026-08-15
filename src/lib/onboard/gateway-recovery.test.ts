@@ -35,7 +35,6 @@ function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecove
   return {
     assertGatewayStartAllowed: vi.fn(),
     getGatewayClusterContainerState: () => "missing",
-    getGatewayStartEnv: () => ({ OPENSHELL_DRIVERS: "docker" }),
     runCaptureOpenshell: vi.fn(() => "Disconnected"),
     runOpenshell: vi.fn(() => ({ status: 0 })),
     getContainerRuntime: () => "docker",
@@ -78,22 +77,13 @@ describe("gateway recovery", () => {
     );
 
     expect(deps.startGatewayWithOptions).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["gateway", "start", "--name", "nemoclaw-8090", "--port", "8090"],
-      {
-        ignoreError: true,
-        env: {
-          OPENSHELL_DRIVERS: "docker",
-          OPENSHELL_SERVER_PORT: "8090",
-          OPENSHELL_SSH_GATEWAY_PORT: "8090",
-        },
-        suppressOutput: true,
-      },
-    );
-    expect(deps.runOpenshell).toHaveBeenNthCalledWith(2, ["gateway", "select", "nemoclaw-8090"], {
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(1, ["gateway", "select", "nemoclaw-8090"], {
       ignoreError: true,
     });
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["gateway", "start"]),
+      expect.anything(),
+    );
   });
 
   it("derives the canonical gateway name when only a non-default port is supplied", async () => {
@@ -104,16 +94,9 @@ describe("gateway recovery", () => {
       "Gateway 'nemoclaw-8091' did not become ready",
     );
 
-    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["gateway", "start", "--name", "nemoclaw-8091", "--port", "8091"],
-      expect.objectContaining({
-        env: expect.objectContaining({
-          OPENSHELL_SERVER_PORT: "8091",
-          OPENSHELL_SSH_GATEWAY_PORT: "8091",
-        }),
-      }),
-    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(1, ["gateway", "select", "nemoclaw-8091"], {
+      ignoreError: true,
+    });
   });
 
   it("polls until the configured recovery deadline and reports it in the timeout (#3768)", async () => {
@@ -313,8 +296,8 @@ describe("gateway lifecycle authority during recovery", () => {
       }),
     });
 
-    // The cross-port, non-default-name target is the branch that reaches a raw
-    // `openshell gateway start` without going through startGatewayWithOptions.
+    // The cross-port, non-default-name target is the branch that reselects the
+    // gateway without going through startGatewayWithOptions.
     await expect(
       startGatewayForRecovery({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 }, deps),
     ).rejects.toThrow(ownershipError);

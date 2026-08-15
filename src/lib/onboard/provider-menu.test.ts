@@ -99,6 +99,27 @@ describe("buildInferenceProviderMenu", () => {
     );
   });
 
+  it("preserves the priority order and identity of managed llama.cpp profiles", () => {
+    const managedLlamaCppOptions = [
+      {
+        key: "install-llama-cpp",
+        label: "Managed llama.cpp: Recommended model (recommended)",
+        managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+      },
+      {
+        key: "install-llama-cpp",
+        label: "Managed llama.cpp: Alternate model",
+        managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+      },
+    ];
+
+    const result = buildMenu({ managedLlamaCppOptions });
+
+    expect(result.options.filter(({ key }) => key === "install-llama-cpp")).toEqual(
+      managedLlamaCppOptions,
+    );
+  });
+
   it("keeps Local NVIDIA NIM unavailable on N1x while retaining managed vLLM (#8574)", () => {
     const menu = buildMenu({
       experimental: true,

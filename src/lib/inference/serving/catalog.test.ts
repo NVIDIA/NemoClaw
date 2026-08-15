@@ -620,13 +620,13 @@ describe("managed inference serving catalog compiler", () => {
     ).toThrow("unknown readiness contract test.readiness/v1");
   });
 
-  it("rejects automatic selection for a llama.cpp recipe (#8181)", () => {
-    expect(() => compile([llamaCppRecipeSource(), llamaCppPresetSource("automatic")])).toThrow(
-      "must not use automatic selection for llama.cpp recipe",
-    );
+  it("accepts automatic selection for a llama.cpp recipe", () => {
+    const catalog = compile([llamaCppRecipeSource(), llamaCppPresetSource("automatic")]);
+
+    expect(catalog.presets[0]?.spec.selection).toBe("automatic");
   });
 
-  it("requires readiness requirements for an explicit llama.cpp preset (#8181)", () => {
+  it("requires readiness requirements for a llama.cpp preset (#8181)", () => {
     const presetWithoutReadiness = replaceSource(
       llamaCppPresetSource(),
       /  requirements:[\s\S]*?  plan:/u,
@@ -646,6 +646,81 @@ describe("managed inference serving catalog compiler", () => {
     );
 
     expect(() => compile([llamaCppRecipeSource(), arm64Preset])).not.toThrow();
+  });
+
+  it("accepts an owned in-container chat template and typed reasoning flags", () => {
+    const recipe = replaceSource(
+      llamaCppRecipeSource(),
+      "    chatTemplate: nemotron-v3-embedded",
+      `    chatTemplate: container-jinja-file
+    chatTemplateFile: /usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja
+    reasoning:
+      format: deepseek
+      mode: auto`,
+    );
+
+    expect(() => compile([recipe, llamaCppPresetSource()])).not.toThrow();
+  });
+
+  it("accepts a model-embedded Jinja template with typed reasoning strength", () => {
+    const recipe = replaceSource(
+      llamaCppRecipeSource(),
+      "    chatTemplate: nemotron-v3-embedded",
+      `    chatTemplate: model-embedded-jinja
+    chatTemplateArguments:
+      reasoningStrength: low`,
+    );
+
+    expect(() => compile([recipe, llamaCppPresetSource()])).not.toThrow();
+  });
+
+  it.each([
+    ["a missing template file", "    chatTemplate: container-jinja-file"],
+    [
+      "a template outside the owned directory",
+      `    chatTemplate: container-jinja-file
+    chatTemplateFile: /run/secrets/model-canonical.jinja`,
+    ],
+    [
+      "a traversing template path",
+      `    chatTemplate: container-jinja-file
+    chatTemplateFile: /usr/local/share/nemoclaw/llama-cpp/chat-templates/../model.jinja`,
+    ],
+    [
+      "an external file with the embedded template",
+      `    chatTemplate: nemotron-v3-embedded
+    chatTemplateFile: /usr/local/share/nemoclaw/llama-cpp/chat-templates/model-canonical.jinja`,
+    ],
+    [
+      "reasoning flags with the embedded template",
+      `    chatTemplate: nemotron-v3-embedded
+    reasoning:
+      format: deepseek
+      mode: auto`,
+    ],
+    ["missing arguments for embedded Jinja", "    chatTemplate: model-embedded-jinja"],
+    [
+      "an unsupported embedded-Jinja reasoning strength",
+      `    chatTemplate: model-embedded-jinja
+    chatTemplateArguments:
+      reasoningStrength: maximum`,
+    ],
+    [
+      "embedded-Jinja arguments on the Nemotron template",
+      `    chatTemplate: nemotron-v3-embedded
+    chatTemplateArguments:
+      reasoningStrength: low`,
+    ],
+  ])("rejects %s", (_case, replacement) => {
+    const recipe = replaceSource(
+      llamaCppRecipeSource(),
+      "    chatTemplate: nemotron-v3-embedded",
+      replacement,
+    );
+
+    expect(() => compile([recipe, llamaCppPresetSource()])).toThrow(
+      "does not satisfy the ServingRecipe schema",
+    );
   });
 
   it.each([

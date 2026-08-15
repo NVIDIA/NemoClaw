@@ -46,6 +46,7 @@ import {
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
+import { decisionUnset } from "./onboard-checkpoint-decision";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   assignSafeToolDisclosureUpdate,
@@ -519,13 +520,11 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
         !hasUnsafeHostMountTerminalText(candidate.target) &&
         candidate.readOnly === true,
     )
-      ? value.hostMounts.map(
-          (candidate): SandboxHostMount => ({
-            source: (candidate as { source: string }).source,
-            target: (candidate as { target: string }).target,
-            readOnly: true,
-          }),
-        )
+      ? value.hostMounts.map((candidate): SandboxHostMount => ({
+          source: (candidate as { source: string }).source,
+          target: (candidate as { target: string }).target,
+          readOnly: true,
+        }))
       : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
@@ -906,13 +905,19 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     const providerBound = Boolean(
       intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
+    const incompleteProviderStateValid =
+      (normalized.provider === null && normalized.model === null) ||
+      (intent.kind === "spark" &&
+        normalized.provider === "vllm-local" &&
+        normalized.model !== null &&
+        normalized.model.trim().length > 0);
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
         (intent.kind === "spark" ||
           normalized.provider !== "vllm-local" ||
           normalized.model !== intent.servedModel)) ||
-      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+      (!providerComplete && !incompleteProviderStateValid)
     ) {
       return null;
     }
@@ -1482,6 +1487,36 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
+export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
+
+/**
+ * Mutate the current session while this process owns the onboarding lock.
+ *
+ * Reuse the process-local `LOCK_FILE` lock when the caller already holds it.
+ * Otherwise, acquire the lock without waiting and return `busy` when another
+ * onboarding writer owns it.
+ */
+export function compareAndSwapSession(
+  matches: (session: Session) => boolean,
+  mutator: (session: Session) => Session | void,
+  command = "nemoclaw session compare-and-swap",
+): CompareAndSwapSessionResult {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) return "busy";
+  }
+  try {
+    const current = loadSession();
+    if (!current || !matches(current)) return "mismatch";
+    const next = mutator(current) || current;
+    saveSession(next);
+    return "updated";
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
+}
+
 export function markStepStarted(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1541,6 +1576,44 @@ export function markStepSkipped(stepName: string): Session {
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
+    if (session.lastStepStarted === stepName) session.lastStepStarted = null;
+    return session;
+  });
+}
+
+export function markStepRejected(stepName: string): Session {
+  return updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    step.status = "skipped";
+    step.startedAt = null;
+    step.completedAt = null;
+    step.error = null;
+    if (session.lastStepStarted === stepName) session.lastStepStarted = null;
+    if (stepName === "provider_selection") {
+      session.provider = null;
+      session.model = null;
+      session.endpointUrl = null;
+      session.credentialEnv = null;
+      session.hermesAuthMethod = null;
+      session.preferredInferenceApi = null;
+      session.compatibleEndpointReasoning = null;
+      session.compatibleEndpointReasoningEffort = null;
+      session.nimContainer = null;
+      session.hermesToolGateways = null;
+      session.sandboxName = null;
+      session.sandboxPromptProgress.sandboxName = false;
+      session.resumable = false;
+      session.status = "failed";
+      session.failure = null;
+      if (session.checkpoint) {
+        session.checkpoint = {
+          ...session.checkpoint,
+          sandboxIdentity: decisionUnset(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
     return session;
   });
 }

@@ -57,10 +57,53 @@ function cleanupStaleAtomicFileTemps(dir: string, basename: string): void {
 }
 
 export function gatewayIdForStateDir(stateDir: string): string {
-  const canonical = path.resolve(stateDir);
-  const digest = createHash("sha256").update(canonical).digest("hex").slice(0, 12);
-  const leaf = path.basename(canonical).replace(/[^A-Za-z0-9_.-]/g, "-");
-  return `nemoclaw-${leaf || "gateway"}-${digest}`;
+  const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
+  const scope = `${String(process.getuid?.() ?? "unknown")}\0${path.resolve(stateDir)}`;
+  const suffix = createHash("sha256").update(scope).digest("hex").slice(0, 12);
+  return `nemoclaw-${leaf || "gateway"}-${suffix}`;
+}
+
+/** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
+export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
+  if (typeof process.getuid !== "function" || typeof fs.constants.O_NOFOLLOW !== "number") {
+    return false;
+  }
+  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  let descriptor: number | undefined;
+  try {
+    const state = fs.lstatSync(stateDir);
+    descriptor = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const config = fs.fstatSync(descriptor);
+    if (
+      !state.isDirectory() ||
+      state.isSymbolicLink() ||
+      !config.isFile() ||
+      config.nlink !== 1 ||
+      state.uid !== process.getuid() ||
+      config.uid !== state.uid ||
+      config.size > 64 * 1024
+    ) {
+      return false;
+    }
+    const expected = `sandbox_namespace = ${tomlString(gatewayIdForStateDir(stateDir))}`;
+    let inDriverTable = false;
+    const matches = fs
+      .readFileSync(descriptor, "utf-8")
+      .split(/\r?\n/)
+      .filter((line) => {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+          inDriverTable = trimmed === "[openshell.drivers.docker]";
+          return false;
+        }
+        return inDriverTable && trimmed.startsWith("sandbox_namespace =");
+      });
+    return matches.length === 1 && matches[0]?.trim() === expected;
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
 }
 
 function gatewayLocalTlsDir(gatewayEnv: Record<string, string>): string {
@@ -84,9 +127,10 @@ export function buildDockerDriverGatewayConfigToml(
     ["sandbox_namespace", driver === "docker" ? gatewayId : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
+    ["socket_path", driver === "podman" ? gatewayEnv.OPENSHELL_PODMAN_SOCKET : undefined],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
-    // OpenShell 0.0.85 accepts supervisor_bin only for the Docker driver.
+    // OpenShell 0.0.99 accepts supervisor_bin only for the Docker driver.
     // The Podman schema rejects the entire driver table when this Docker-only
     // field is present, so portable onboarding must rely on supervisor_image.
     ["supervisor_bin", driver === "docker" ? (sandboxBin ?? undefined) : undefined],

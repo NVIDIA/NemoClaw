@@ -3,7 +3,7 @@
 
 name: Runtime / Podman CPU Proof
 
-run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }}"
+run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} commit ${{ github.event.pull_request.head.sha }}"
 
 on:
   pull_request:
@@ -15,12 +15,16 @@ on:
       - "src/lib/onboard/docker-driver-gateway-*.ts"
       - "src/lib/onboard/managed-bootstrap/podman-*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
+      - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
+      - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
       - "test/e2e/live/podman-cpu-lifecycle-artifacts.ts"
       - "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
       - "test/e2e/live/podman-cpu-lifecycle-policy.yaml"
       - "test/e2e/live/podman-cpu-lifecycle.test.ts"
+      - "test/e2e/registry/native-runtime-qualification.ts"
+      - "test/e2e/support/native-runtime-qualification.test.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.test.ts"
       - "test/e2e/support/podman-cpu-proof-workflow.test.ts"
 
@@ -40,6 +44,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/podman-cpu-proof
       E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
       E2E_TARGET_ID: podman-cpu-lifecycle
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
@@ -179,6 +184,28 @@ jobs:
               dockerSocketPresent: false,
               dockerCandidate: $dockerCandidate
             }' >"$E2E_ARTIFACT_DIR/docker-absence-boundary.json"
+          source_revision="$(git rev-parse HEAD)"
+          test "$source_revision" = "$E2E_SOURCE_REVISION"
+          jq -n \
+            --arg sourceRevision "$source_revision" \
+            '{
+              schemaVersion: 1,
+              claim: "candidate-execution-prerequisites",
+              candidateId: "podman-cpu-lifecycle",
+              providerId: "podman",
+              sourceRevision: $sourceRevision,
+              executionPath: "runtime-provider-bundle",
+              architecture: "amd64",
+              acceleration: "cpu",
+              agents: ["openclaw", "hermes", "langchain-deepagents-code"],
+              socketFree: true,
+              dockerUnavailable: {
+                service: true,
+                socket: true,
+                daemon: true,
+                invocationGuard: true
+              }
+            }' >"$E2E_ARTIFACT_DIR/candidate-execution-prerequisites.json"
 
       - name: Start exact rootless Podman API socket
         shell: bash

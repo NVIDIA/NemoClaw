@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
-
 import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
@@ -39,7 +38,6 @@ import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclu
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
-import { normalizePersistedSandboxHostMounts } from "../../state/registry/host-mount";
 import {
   buildGatewayInferenceGetArgs,
   canSandboxGatewayRouteRealign,
@@ -63,10 +61,6 @@ import {
   probeTerminalRuntimeCgroupOom,
   type TerminalRuntimeOomProbeResult,
 } from "./terminal-runtime-health";
-
-function normalizeSandboxStatusHostMounts(hostMounts: unknown) {
-  return normalizePersistedSandboxHostMounts(hostMounts).map((mount) => ({ ...mount }));
-}
 
 type ProbeProviderHealth = (
   provider: string,
@@ -125,6 +119,36 @@ export function isInferenceHealthFailing(inferenceHealth: ProviderHealthStatus |
   return Boolean(inferenceHealth && (!inferenceHealth.probed || !inferenceHealth.ok));
 }
 
+/** Validate user-editable mount state before it reaches JSON or terminal output. */
+export function normalizeSandboxStatusHostMounts(value: unknown): registry.SandboxHostMount[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Persisted host mount state must be an array; repair the local state first.");
+  }
+  return value.map((candidate) => {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      typeof (candidate as Record<string, unknown>).source !== "string" ||
+      typeof (candidate as Record<string, unknown>).target !== "string" ||
+      (candidate as Record<string, unknown>).readOnly !== true
+    ) {
+      throw new Error(
+        "Persisted state contains an invalid read-only host mount; repair the local state first.",
+      );
+    }
+    const { source, target } = candidate as { source: string; target: string };
+    if (
+      registry.hasUnsafeHostMountTerminalText(source) ||
+      registry.hasUnsafeHostMountTerminalText(target)
+    ) {
+      throw new Error(
+        "Persisted state contains a host mount with unsafe terminal control characters; repair the local state first.",
+      );
+    }
+    return { source, target, readOnly: true };
+  });
+}
 
 export interface SandboxStatusReport {
   schemaVersion: 1;

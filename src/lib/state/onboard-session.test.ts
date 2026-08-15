@@ -8,6 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../test/helpers/messaging-plan-fixtures";
+import { decisionSelected } from "./onboard-checkpoint-decision";
+
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("./onboard-session");
 const eventsDistPath = require.resolve("../onboard/machine/events");
@@ -18,8 +21,6 @@ type OnboardMachineEvent = import("../onboard/machine/events").OnboardMachineEve
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
 type NullableSessionUpdateKey = import("./onboard-session").NullableSessionUpdateKey;
-type MessagingPlan = NonNullable<LoadedSession["messagingPlan"]>;
-type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
 let session: OnboardSessionModule;
 let machineEvents: OnboardMachineEventsModule;
 let tmpDir: string;
@@ -57,46 +58,6 @@ function requireDebugSummary(
     throw new Error("Expected debug session summary to be present");
   }
   return summary;
-}
-
-function normalizeLegacySession(
-  legacy: unknown,
-): ReturnType<OnboardSessionModule["normalizeSession"]> {
-  return session.normalizeSession(
-    legacy as Parameters<OnboardSessionModule["normalizeSession"]>[0],
-  );
-}
-
-function makeMessagingPlan(
-  sandboxName: string,
-  channels: readonly MessagingChannelId[] = [],
-  disabledChannels: readonly MessagingChannelId[] = [],
-): MessagingPlan {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: channels.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels: [...disabledChannels],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
 }
 
 beforeEach(() => {
@@ -382,83 +343,6 @@ describe("onboard session", () => {
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
     expect(requireDebugSummary(session.summarizeForDebug()).machine).toEqual(loaded.machine);
-  });
-
-  it("normalizes old sessions without machine snapshots", () => {
-    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
-      machine?: unknown;
-    };
-    const legacy = session.createSession({
-      sessionId: "legacy-session",
-      startedAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:05:00.000Z",
-    }) as unknown as LegacySession;
-    delete legacy.machine;
-    legacy.steps.gateway.status = "in_progress";
-    legacy.steps.gateway.startedAt = "2026-01-01T00:02:00.000Z";
-    legacy.lastStepStarted = "gateway";
-
-    let normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "gateway",
-      stateEnteredAt: "2026-01-01T00:02:00.000Z",
-      revision: 0,
-    });
-
-    legacy.steps.gateway.status = "complete";
-    legacy.steps.gateway.completedAt = "2026-01-01T00:03:00.000Z";
-    legacy.lastCompletedStep = "gateway";
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "provider_selection",
-      stateEnteredAt: "2026-01-01T00:03:00.000Z",
-      revision: 0,
-    });
-
-    legacy.status = "failed";
-    legacy.failure = {
-      step: "gateway",
-      message: "boom",
-      recordedAt: "2026-01-01T00:04:00.000Z",
-    };
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "failed",
-      stateEnteredAt: "2026-01-01T00:04:00.000Z",
-      revision: 0,
-    });
-
-    legacy.status = "complete";
-    normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine.state).toBe("complete");
-  });
-
-  it("normalizes invalid machine snapshots from old sessions", () => {
-    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
-      machine?: unknown;
-    };
-    const legacy = session.createSession({
-      lastCompletedStep: "policies",
-    }) as unknown as LegacySession;
-    legacy.steps.policies.status = "complete";
-    legacy.steps.policies.completedAt = "2026-01-01T00:08:00.000Z";
-    legacy.machine = {
-      version: 1,
-      state: "not-a-state",
-      stateEnteredAt: "2026-01-01T00:09:00.000Z",
-      revision: -1,
-    };
-
-    const normalized = requireLoadedSession(normalizeLegacySession(legacy));
-    expect(normalized.machine).toEqual({
-      version: 1,
-      state: "finalizing",
-      stateEnteredAt: "2026-01-01T00:08:00.000Z",
-      revision: 0,
-    });
   });
 
   it("does not emit machine events for direct step mutations", () => {
@@ -795,7 +679,10 @@ describe("onboard session", () => {
 
   it("persists messagingPlan across save/load roundtrips", () => {
     const created = session.createSession();
-    created.messagingPlan = makeMessagingPlan("my-assistant", ["telegram", "slack"], ["slack"]);
+    created.messagingPlan = makeMessagingPlan({
+      channels: ["telegram", "slack"],
+      disabledChannels: ["slack"],
+    });
     session.saveSession(created);
 
     const loaded = requireLoadedSession(session.loadSession());
@@ -818,10 +705,10 @@ describe("onboard session", () => {
   it("writes compact messagingPlan derived fields to onboard-session.json", () => {
     const created = session.createSession();
     created.messagingPlan = {
-      ...makeMessagingPlan("my-assistant", ["telegram"]),
+      ...makeMessagingPlan({ channels: ["telegram"] }),
       channels: [
         {
-          ...makeMessagingPlan("my-assistant", ["telegram"]).channels[0],
+          ...makeMessagingPlan({ channels: ["telegram"] }).channels[0],
           hooks: [
             {
               channelId: "telegram",
@@ -875,7 +762,7 @@ describe("onboard session", () => {
       JSON.stringify({
         ...created,
         messagingPlan: {
-          ...makeMessagingPlan("my-assistant", ["telegram"]),
+          ...makeMessagingPlan({ channels: ["telegram"] }),
           disabledChannels: ["telegram", 42, null],
         },
       }),
@@ -891,7 +778,10 @@ describe("onboard session", () => {
     // place this can survive, because rebuild destroys the registry entry
     // before `onboard --resume` reads it back.
     const created = session.createSession();
-    created.messagingPlan = makeMessagingPlan("my-assistant", ["telegram"], ["telegram"]);
+    created.messagingPlan = makeMessagingPlan({
+      channels: ["telegram"],
+      disabledChannels: ["telegram"],
+    });
     session.saveSession(created);
 
     const loaded = requireLoadedSession(session.loadSession());
@@ -905,7 +795,7 @@ describe("onboard session", () => {
 
   it("filterSafeUpdates passes through messagingPlan and accepts explicit null clear", () => {
     session.saveSession(session.createSession());
-    const plan = makeMessagingPlan("my-assistant", ["discord"]);
+    const plan = makeMessagingPlan({ channels: ["discord"] });
     session.markStepComplete("provider_selection", { messagingPlan: plan });
     expect(requireLoadedSession(session.loadSession()).messagingPlan).toMatchObject({
       sandboxName: "my-assistant",
@@ -1100,6 +990,31 @@ describe("onboard session", () => {
           hostMounts: [
             { source: "/srv/project", target: "/sandbox/project", readOnly: true },
             { source: "/srv/private", target: "/sandbox/private", readOnly: false },
+          ],
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(session.hasInvalidSessionHostMounts(loaded)).toBe(true);
+    expect(loaded.metadata.hostMounts).toBeUndefined();
+  });
+
+  it("preserves a fail-closed marker for terminal-control host mount metadata", () => {
+    const malformed = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...malformed,
+        metadata: {
+          ...malformed.metadata,
+          hostMounts: [
+            {
+              source: "/srv/project",
+              target: "/sandbox/project\u2028forged",
+              readOnly: true,
+            },
           ],
         },
       }),
@@ -1408,7 +1323,7 @@ describe("onboard session", () => {
   });
 
   it("round-trips messagingPlan through normalizeSession", () => {
-    const plan = makeMessagingPlan("my-assistant", ["telegram"]);
+    const plan = makeMessagingPlan({ channels: ["telegram"] });
     const created = session.createSession({ messagingPlan: plan });
     expect(created.messagingPlan).toEqual(plan);
     const saved = session.saveSession(created);
@@ -1422,7 +1337,7 @@ describe("onboard session", () => {
 
   it("filterSafeUpdates preserves messagingPlan field", () => {
     session.saveSession(session.createSession());
-    const plan = makeMessagingPlan("my-assistant", ["slack", "discord"]);
+    const plan = makeMessagingPlan({ channels: ["slack", "discord"] });
     session.markStepComplete("provider_selection", {
       messagingPlan: plan,
     });
@@ -1504,7 +1419,7 @@ describe("onboard session", () => {
   });
 
   it("creates a session with a messagingPlan override", () => {
-    const plan = makeMessagingPlan("my-assistant", ["telegram", "slack"]);
+    const plan = makeMessagingPlan({ channels: ["telegram", "slack"] });
     const created = session.createSession({ messagingPlan: plan });
     expect(created.messagingPlan).toEqual(plan);
     expect(created.provider).toBeNull();

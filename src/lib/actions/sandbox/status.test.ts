@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 import type { ProviderHealthProbeOptions } from "../../inference/health";
 import {
@@ -93,16 +96,41 @@ describe("sandbox status DCode auto-approval (#6478)", () => {
 
 describe("sandbox status host mounts", () => {
   it("projects durable read-only host mounts into JSON status", async () => {
-    const hostMounts = [
-      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
-    ];
-    const report = await getSandboxStatusReport("alpha", {
-      getSandbox: () => ({ name: "alpha", hostMounts }) as never,
-      reconcile: async () => ({ state: "missing" as const, output: "not found" }),
-    });
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".status-host-mount-test-"));
+    const hostMounts = [{ source, target: "/sandbox/project", readOnly: true as const }];
+    try {
+      const report = await getSandboxStatusReport("alpha", {
+        getSandbox: () => ({ name: "alpha", hostMounts }) as never,
+        reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+      });
 
-    expect(report.hostMounts).toEqual(hostMounts);
-    expect(report.hostMounts).not.toBe(hostMounts);
+      expect(report.hostMounts).toEqual(hostMounts);
+      expect(report.hostMounts).not.toBe(hostMounts);
+      expect(report.hostMounts?.[0]).not.toBe(hostMounts[0]);
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed and terminal-control host mounts before JSON rendering", async () => {
+    const reportFor = (hostMounts: unknown) =>
+      getSandboxStatusReport("alpha", {
+        getSandbox: () => ({ name: "alpha", hostMounts }) as never,
+        reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+      });
+
+    await expect(reportFor("not-an-array")).rejects.toThrow(
+      "Persisted host mount state must be an array",
+    );
+    await expect(
+      reportFor([
+        {
+          source: "/srv/project\u202e",
+          target: "/sandbox/project",
+          readOnly: true,
+        },
+      ]),
+    ).rejects.toThrow("unsafe terminal control characters");
   });
 });
 

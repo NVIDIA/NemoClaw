@@ -67,7 +67,7 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(result.reason).toBe("probe_unavailable");
   });
 
-  it("probes the requested port and host alias in the docker run args", async () => {
+  it("routes native Docker bridge probes through the inspected numeric gateway", async () => {
     let capturedArgs: readonly string[] = [];
     await probeHostServiceSandboxReachability({
       port: 4000,
@@ -84,6 +84,51 @@ describe("probeHostServiceSandboxReachability", () => {
     expect(capturedArgs).toContain("nc");
     expect(capturedArgs).toContain("host.openshell.internal");
     expect(capturedArgs).toContain("4000");
+  });
+
+  it("routes portable profile probes through the sandbox host gateway", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    let capturedArgs: readonly string[] = [];
+
+    const result = await probeHostServiceSandboxReachability({
+      port: 11435,
+      inspectNetworkImpl: () => ({ subnet: "10.89.0.0/24" }),
+      runImpl: (args) => {
+        capturedArgs = args;
+        return { status: 0 };
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, reason: "ok" });
+    expect(capturedArgs).toContain("host.openshell.internal:169.254.1.2");
+    expect(capturedArgs).not.toContain("host.openshell.internal:host-gateway");
+    expect(capturedArgs).not.toContain("host.openshell.internal:10.89.0.1");
+  });
+
+  it("keeps portable host-gateway failures credential-free and inconclusive", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    const credential = "nvapi-regression-secret";
+
+    const result = await probeHostServiceSandboxReachability({
+      port: 11435,
+      inspectNetworkImpl: () =>
+        makeNetwork({
+          subnet: "10.89.0.0/24",
+          gatewayIp: "10.89.0.1",
+        }),
+      runImpl: () => ({ status: 1, stderr: `nc failed with ${credential}` }),
+    });
+    const message = formatHostServiceUnreachableMessage(result, {
+      serviceLabel: "Ollama auth proxy",
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "probe_unavailable" });
+    expect(result.detail).toBe("portable host-gateway probe did not connect");
+    expect(result.detail).not.toContain(credential);
+    expect(message).toBe("");
+    expect(message).not.toContain(credential);
   });
 });
 

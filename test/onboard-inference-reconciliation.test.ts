@@ -983,3 +983,180 @@ console.log(JSON.stringify({
     });
   });
 });
+
+describe("re-onboard Ollama GPU release (#9110)", () => {
+  const priorEntry = { name: "test-box", provider: "ollama-local", model: "llama3" };
+
+  function releaseHarness(options: {
+    getSandbox: () => typeof priorEntry | null;
+    sandboxes: (typeof priorEntry)[];
+    unloadOllamaModels: (onlyModels: readonly string[]) => void;
+    applyLocalInferenceRoute?: () => Promise<boolean>;
+  }) {
+    return createDirectSetupInferenceHarness({
+      runOpenshell: (args) =>
+        args.slice(0, 2).join(" ") === "provider get"
+          ? { status: 1, stdout: "", stderr: "" }
+          : undefined,
+      overrides: {
+        shouldFrontOllamaWithProxy: () => true,
+        ensureOllamaAuthProxy: () => {},
+        isProxyHealthy: () => true,
+        getOllamaProxyToken: () => "proxy-token",
+        persistAndProbeOllamaProxy: async () => {},
+        applyLocalInferenceRoute: options.applyLocalInferenceRoute,
+        getSandbox: options.getSandbox,
+        listSandboxes: () => ({ sandboxes: options.sandboxes, defaultSandbox: null }),
+        unloadOllamaModels: options.unloadOllamaModels,
+      },
+    });
+  }
+
+  it("releases the superseded model after a re-onboard onto a different model (#9110)", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("keeps the successful route when the superseded model unload fails (#9110)", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
+      throw new Error("synthetic unload failure");
+    });
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(result).toEqual({ ok: true });
+    expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("keeps the model when the re-onboard selects the same one (#9110)", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const prior = { ...priorEntry, model: "qwen3.5:9b" };
+    const harness = releaseHarness({
+      getSandbox: () => prior,
+      sandboxes: [prior],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("keeps a model a sibling Ollama sandbox records with a latest tag (#9110)", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const peer = { name: "peer", provider: "ollama-local", model: "llama3:latest" };
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry, peer],
+      unloadOllamaModels,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("reads the prior route and releases the model inside the sandbox mutation lock (#9110)", async () => {
+    const events: string[] = [];
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>(() => {
+      events.push("unload");
+    });
+    const getSandbox = vi.fn(() => {
+      events.push("read-prior-route");
+      return priorEntry;
+    });
+    const harness = createDirectSetupInferenceHarness({
+      runOpenshell: (args) =>
+        args.slice(0, 2).join(" ") === "provider get"
+          ? { status: 1, stdout: "", stderr: "" }
+          : undefined,
+      overrides: {
+        shouldFrontOllamaWithProxy: () => true,
+        ensureOllamaAuthProxy: () => {},
+        isProxyHealthy: () => true,
+        getOllamaProxyToken: () => "proxy-token",
+        persistAndProbeOllamaProxy: async () => {},
+        getSandbox,
+        listSandboxes: () => {
+          events.push("peer-scan");
+          return { sandboxes: [priorEntry], defaultSandbox: null };
+        },
+        unloadOllamaModels,
+        withOllamaModelOwnershipLock: (operation) => {
+          events.push("ownership-lock-enter");
+          const value = operation();
+          events.push("ownership-lock-exit");
+          return value;
+        },
+        withSandboxMutationLock: async <T,>(_name: string, operation: () => Promise<T> | T) => {
+          events.push("lock-enter");
+          const value = await operation();
+          events.push("lock-exit");
+          return value;
+        },
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    // A serialized re-onboard can neither replace the row under the read nor
+    // select the captured model before this cleanup runs.
+    expect(events).toEqual([
+      "lock-enter",
+      "read-prior-route",
+      "ownership-lock-enter",
+      "peer-scan",
+      "unload",
+      "ownership-lock-exit",
+      "lock-exit",
+    ]);
+  });
+
+  it("skips the release when the route returns to selection (#9110)", async () => {
+    const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+      applyLocalInferenceRoute: async () => true,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let result: Awaited<ReturnType<SetupInference>>;
+    try {
+      result = await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    assert.deepEqual(result, { retry: "selection" });
+    expect(unloadOllamaModels).not.toHaveBeenCalled();
+  });
+});

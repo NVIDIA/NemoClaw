@@ -253,6 +253,10 @@ Use finding IDs to handle gateway failures without parsing summaries:
 | `gateway.port.inconclusive` | Warning | NemoClaw could not establish gateway port ownership. |
 
 The report includes bounded evidence for the resolved owner and applicable attachment, port, collection, or stale-observation failures.
+When NemoClaw resolves the complete listener set, port-conflict evidence lists every listener by process name and PID, or by PID when no name is available.
+A stop command targets only listeners that fail ownership verification.
+NemoClaw does not provide a stop command for a verified managed listener.
+If NemoClaw resolves no listener, the diagnostic provides an `lsof` inspection command.
 It omits the gateway state directory, removes process environments, redacts credential-shaped content, bounds diagnostic length, and renders control characters visibly.
 
 Managed gateway metadata is reusable only when its endpoint is bound to loopback on the configured gateway port.

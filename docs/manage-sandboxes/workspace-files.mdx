@@ -26,7 +26,7 @@ The runtime provider and host platform determine whether NemoClaw can create the
 | Docker | Linux or Windows Subsystem for Linux 2 (WSL2) | Supported with a NemoClaw-managed Docker-driver gateway. |
 | Docker | macOS or native Windows | Unsupported. |
 | Kubernetes | Any host | Unsupported because host directories are node-local and require separately qualified scheduling, policy, and security rules. |
-| Podman | Any host | Unsupported because read-only host mounts have not been qualified for the Podman runtime provider. |
+| Podman | Any host | Unsupported because read-only host mounts have not passed runtime-provider qualification. |
 | OpenShell MXC | Any host | Unsupported because OpenShell MXC does not expose a qualified native host-sharing contract. |
 
 When you request `--host-mount`, NemoClaw checks the selected runtime provider and host platform before it records onboarding state or changes runtime resources.

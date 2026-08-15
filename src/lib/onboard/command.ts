@@ -38,13 +38,13 @@ import {
 } from "./experimental/portable-inference-descriptor";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
-import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
   resolveLocalModelProfilePlan,
 } from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
+import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -190,28 +190,11 @@ function resolveSandboxGpu(flags: OnboardFlags): "enable" | "disable" | null {
   return null;
 }
 
-function resolveToolDisclosure(
-  requested: string | undefined,
-  deps: ResolveOnboardOptionsDeps,
-): ToolDisclosure | null {
-  try {
-    return resolveToolDisclosureRequest(requested, deps.env);
-  } catch (error) {
-    return fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
 function resolveHostMounts(
   values: readonly string[] | undefined,
-  deps: ResolveOnboardOptionsDeps,
   experimentalProfile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
 ): import("../state/registry/types").SandboxHostMount[] {
-  if ((values?.length ?? 0) > 0 && experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
-    fail(
-      deps,
-      "  --host-mount requires the OpenShell Docker driver and cannot be used with --experimental-profile portable.",
-    );
-  }
   let mounts: import("../state/registry/types").SandboxHostMount[];
   try {
     mounts = parseReadOnlyHostMounts(values ?? []);
@@ -389,8 +372,13 @@ export function resolveOnboardOptions(
   const agent = resolveAgent(flags.agent, deps);
   const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps, resume);
   validateObservabilityAgent(flags.observability, agent, deps);
-  const toolDisclosure = resolveToolDisclosure(flags["tool-disclosure"], deps);
-  const hostMounts = resolveHostMounts(flags["host-mount"], deps, experimentalProfile);
+  let toolDisclosure: ToolDisclosure | null;
+  try {
+    toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
     tempManagedRuntimeCatalog: resolveFileOption(

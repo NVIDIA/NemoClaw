@@ -23,6 +23,9 @@ export function createPolicyHandlerDeps(
       (selected: string[], recorded: string[], active: string[] | null | undefined) =>
         selected.length > 0 ? selected : (active ?? recorded),
     ),
+    unconfiguredChannels: vi.fn(
+      (_planChannels: readonly string[], _selectedChannels: readonly string[]) => [] as string[],
+    ),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (
@@ -62,6 +65,7 @@ export function createPolicyHandlerDeps(
       loadSession: calls.load,
       getActiveSandbox: calls.activeSandbox,
       mergePolicyMessagingChannels: calls.mergeChannels,
+      detectUnconfiguredMessagingChannels: calls.unconfiguredChannels,
       verifyCompatibleEndpointSandboxSmoke: calls.smoke,
       preparePolicyPresetResumeSelection: calls.prepareResume,
       arePolicyPresetsApplied: calls.appliedCheck,

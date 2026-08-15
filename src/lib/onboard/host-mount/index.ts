@@ -24,6 +24,7 @@ import {
 import { PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON } from "../runtime-provider/podman";
 
 export {
+  hasUnsafeHostMountTerminalText,
   normalizePersistedSandboxHostMounts,
   parseReadOnlyHostMount,
   parseReadOnlyHostMounts,

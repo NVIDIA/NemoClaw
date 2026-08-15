@@ -36,7 +36,6 @@ import {
 import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
-import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
@@ -53,7 +52,11 @@ import {
   classifyDestroySandboxPresence,
   isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
-import { prepareSandboxDestroy, stopSandboxInferenceResources } from "./destroy-preflight";
+import {
+  prepareSandboxDestroy,
+  stopModelRouterForDestroyedSandbox,
+  stopSandboxInferenceResources,
+} from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
@@ -469,6 +472,7 @@ async function destroySandboxUnlocked(
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
+  const destroySession = onboardSession.loadSession();
 
   const inspectContainerIdentity = () =>
     assertUnambiguousDestroyContainerIdentity(sandboxName, {
@@ -684,12 +688,52 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
   }
-  const session = onboardSession.loadSession();
-  if (session && session.sandboxName === sandboxName) {
-    onboardSession.updateSession((s: Session) => {
-      s.sandboxName = null;
-      return s;
-    });
+  let routedSessionCleanupHandled = false;
+  if (deleteSucceededOrAlreadyGone && removed) {
+    try {
+      // The gateway route lock nests the current-user router-port lock inside
+      // stopModelRouterForDestroyedSandbox. Routed onboarding takes the same
+      // lock order and holds both through registry publication, including
+      // when the competing sandbox belongs to another gateway.
+      routedSessionCleanupHandled = await withGatewayRouteMutationLock(cleanupGatewayName, () =>
+        stopModelRouterForDestroyedSandbox(sandbox, {
+          acquireOnboardLock: onboardSession.acquireOnboardLock,
+          compareAndSwapSession: onboardSession.compareAndSwapSession,
+          expectedSession: destroySession,
+          loadSession: onboardSession.loadSession,
+          releaseOnboardLock: onboardSession.releaseOnboardLock,
+          warn: defaultDestroyWarn,
+        }),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      defaultDestroyWarn(
+        `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
+          `Inspect the listener before the next Model Router onboarding and stop only a process ` +
+          `that still owns the matching port and model-router command line.`,
+      );
+    }
+  }
+  if (!routedSessionCleanupHandled && destroySession?.sandboxName === sandboxName) {
+    const cleanupResult = onboardSession.compareAndSwapSession(
+      (current) =>
+        current.sessionId === destroySession.sessionId &&
+        current.updatedAt === destroySession.updatedAt &&
+        current.sandboxName === destroySession.sandboxName &&
+        current.endpointUrl === destroySession.endpointUrl &&
+        current.routerPid === destroySession.routerPid &&
+        current.routerCredentialHash === destroySession.routerCredentialHash,
+      (current) => {
+        current.sandboxName = null;
+        return current;
+      },
+      "nemoclaw destroy sandbox session cleanup",
+    );
+    if (cleanupResult === "busy") {
+      defaultDestroyWarn(
+        "Another onboarding run owns the session lock. Keeping its replacement session unchanged.",
+      );
+    }
   }
   if (
     shouldCleanupGatewayAfterConfirmedFinalDestroy({

@@ -150,7 +150,7 @@ describe("prepareOnboardSession", () => {
       ),
     ).rejects.toThrow("unsupported runtime provider");
 
-    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts);
+    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts, undefined);
     expect(deps.clearSession).not.toHaveBeenCalled();
     expect(deps.saveSession).not.toHaveBeenCalled();
   });
@@ -311,7 +311,7 @@ describe("prepareOnboardSession", () => {
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });
 
-  it("rejects unsupported persisted host mounts before mutating a resumed session", async () => {
+  it("rejects unsupported persisted host mounts before changing a resumed session", async () => {
     const mounts = [
       { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
     ];
@@ -332,12 +332,13 @@ describe("prepareOnboardSession", () => {
           requestedSandboxName: null,
           cannotPrompt: true,
           nonInteractive: true,
+          checkpointProfile: "portable",
         },
         deps,
       ),
     ).rejects.toThrow("unsupported runtime provider");
 
-    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts);
+    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts, "portable");
     expect(deps.updateSession).not.toHaveBeenCalled();
     expect(deps.applySessionRecovery).not.toHaveBeenCalled();
   });
