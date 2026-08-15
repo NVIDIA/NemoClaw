@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -281,6 +285,58 @@ describe("native Podman CPU proof workflow", () => {
     expect(delegationProof).toContain("process.getuid?.()");
     expect(delegationProof).not.toContain("process.argv");
     expect(delegationProof).not.toContain("main();");
+  });
+
+  it("preserves the workspace mode receipt when preparation rollback cannot restore a mode", () => {
+    const prepare =
+      namedDelegationStep("Prepare app.slice CPU setting without service delegation").run ?? "";
+    const functionStart = prepare.indexOf("cleanup_failed_prepare() {");
+    const functionEnd = prepare.indexOf("\ntrap cleanup_failed_prepare EXIT", functionStart);
+    expect(functionStart).toBeGreaterThanOrEqual(0);
+    expect(functionEnd).toBeGreaterThan(functionStart);
+    const cleanupFunction = prepare.slice(functionStart, functionEnd);
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-workspace-mode-retry-"));
+    const marker = path.join(fixture, "workspace-modes");
+    fs.writeFileSync(marker, "755\t/checkout-parent\n", { mode: 0o600 });
+
+    const script = [
+      "set -u",
+      cleanupFunction,
+      "created_user=0",
+      'E2E_CPU_DELEGATION_USER="nemoclaw-e2e"',
+      'user_comment="proof-owner"',
+      'uid=""',
+      'slice_drop_in_temp=""',
+      'drop_in_temp=""',
+      'app_slice_drop_in_temp=""',
+      'source_cache_id=""',
+      'drop_in_id=""',
+      'app_slice_drop_in_id=""',
+      'slice_drop_in_id=""',
+      "created_app_slice_drop_in_dir=0",
+      "created_slice_drop_in_dir=0",
+      'drop_in_dir_id=""',
+      'workspace_traverse_marker="$1"',
+      "sudo() {",
+      '  if [ "$1" = chmod ]; then',
+      "    return 75",
+      "  fi",
+      "  return 0",
+      "}",
+      "(false)",
+      "cleanup_failed_prepare",
+    ].join("\n");
+
+    try {
+      const result = spawnSync("bash", ["-c", script, "bash", marker], {
+        encoding: "utf8",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Preserving the workspace mode receipt");
+      expect(fs.readFileSync(marker, "utf8")).toBe("755\t/checkout-parent\n");
+    } finally {
+      fs.rmSync(fixture, { force: true, recursive: true });
+    }
   });
 
   it("pins one rootless socket and fails closed on Docker use", () => {
