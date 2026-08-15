@@ -384,7 +384,7 @@ describe("focused staging Brev Launchable lane", () => {
     expect(commands).not.toContain("nvapi-test-value");
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
     expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).not.toMatch(
-      /last failure|readiness diagnostics|Readiness classification/u,
+      /last failure|Readiness probe|Readiness SSH alias|Readiness classification/u,
     );
     expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
       "Waiting up to 900 seconds for host SSH access",
@@ -564,6 +564,7 @@ describe("focused staging Brev Launchable lane", () => {
   it.each([
     ["default container reachable but host unreachable", { brevContainerStatus: 0 }],
     ["Brev host execution works but direct host SSH fails", { brevHostStatus: 0 }],
+    ["mixed connectivity failure; inspect bounded probe results", { sshHostProbeStatus: 0 }],
     ["neither target reachable", {}],
   ])("classifies %s after the shared readiness deadline", (classification, probeOptions) => {
     const { calls, env, state, workDir } = fixture({
