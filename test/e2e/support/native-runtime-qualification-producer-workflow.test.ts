@@ -87,6 +87,8 @@ describe("native runtime qualification producer workflow", () => {
     const upload = step(producer, "Upload the qualification case evidence");
     const cleanup = step(producer, "Remove qualification resources");
     const source = JSON.stringify(producer);
+    const boundaryRun = boundary.run ?? "";
+    const installerRun = installer.run ?? "";
 
     expect(producer.name).toBe("${{ matrix.jobName }}");
     expect(producer["runs-on"]).toBe("${{ matrix.runner }}");
@@ -95,13 +97,13 @@ describe("native runtime qualification producer workflow", () => {
     expect(source).not.toMatch(/NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u);
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
-    expect(boundary.run.indexOf("printf 'account=%s")).toBeLessThan(
-      boundary.run.indexOf("useradd --create-home"),
+    expect(boundaryRun.indexOf("printf 'account=%s")).toBeLessThan(
+      boundaryRun.indexOf("useradd --create-home"),
     );
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(installer.run).toContain("run-native-runtime-installer-qualification.sh");
-    expect(installer.run.indexOf("pkill -KILL -u")).toBeLessThan(
-      installer.run.indexOf("chown -R -h root:root"),
+    expect(installerRun.indexOf("pkill -KILL -u")).toBeLessThan(
+      installerRun.indexOf("chown -R -h root:root"),
     );
     expect(installer.run).toContain('[[ -d "$INSTALLER_RECEIPT_PARENT/receipts" && ! -L');
     expect(execute.run).toContain('sudo -u "$ACCOUNT" env -i');
