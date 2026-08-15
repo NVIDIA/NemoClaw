@@ -36,7 +36,6 @@ import {
 import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
-import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
@@ -473,6 +472,7 @@ async function destroySandboxUnlocked(
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
+  const destroySession = onboardSession.loadSession();
 
   const inspectContainerIdentity = () =>
     assertUnambiguousDestroyContainerIdentity(sandboxName, {
@@ -688,16 +688,20 @@ async function destroySandboxUnlocked(
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {
     await revokeDestroyedSandboxHttpsPinRoute(cleanupGatewayName, priorHttpsPinRouteId);
   }
+  let routedSessionCleanupHandled = false;
   if (deleteSucceededOrAlreadyGone && removed) {
     try {
-      // The routed-peer scan and router stop are one critical section with
-      // routed onboarding's route registration, which runs under the same
-      // gateway route lock. Otherwise concurrent onboarding can register a
-      // routed sandbox after the scan and then lose its shared router.
-      await withGatewayRouteMutationLock(cleanupGatewayName, () =>
+      // The gateway route lock nests the current-user router-port lock inside
+      // stopModelRouterForDestroyedSandbox. Routed onboarding takes the same
+      // lock order and holds both through registry publication, including
+      // when the competing sandbox belongs to another gateway.
+      routedSessionCleanupHandled = await withGatewayRouteMutationLock(cleanupGatewayName, () =>
         stopModelRouterForDestroyedSandbox(sandbox, {
+          acquireOnboardLock: onboardSession.acquireOnboardLock,
+          compareAndSwapSession: onboardSession.compareAndSwapSession,
+          expectedSession: destroySession,
           loadSession: onboardSession.loadSession,
-          updateSession: onboardSession.updateSession,
+          releaseOnboardLock: onboardSession.releaseOnboardLock,
           warn: defaultDestroyWarn,
         }),
       );
@@ -705,16 +709,31 @@ async function destroySandboxUnlocked(
       const detail = error instanceof Error ? error.message : String(error);
       defaultDestroyWarn(
         `Sandbox deletion succeeded, but the Model Router teardown did not complete: ${detail}. ` +
-          `Stop the Model Router process manually before the next Model Router onboarding.`,
+          `Inspect the listener before the next Model Router onboarding and stop only a process ` +
+          `that still owns the matching port and model-router command line.`,
       );
     }
   }
-  const session = onboardSession.loadSession();
-  if (session && session.sandboxName === sandboxName) {
-    onboardSession.updateSession((s: Session) => {
-      s.sandboxName = null;
-      return s;
-    });
+  if (!routedSessionCleanupHandled && destroySession?.sandboxName === sandboxName) {
+    const cleanupResult = onboardSession.compareAndSwapSession(
+      (current) =>
+        current.sessionId === destroySession.sessionId &&
+        current.updatedAt === destroySession.updatedAt &&
+        current.sandboxName === destroySession.sandboxName &&
+        current.endpointUrl === destroySession.endpointUrl &&
+        current.routerPid === destroySession.routerPid &&
+        current.routerCredentialHash === destroySession.routerCredentialHash,
+      (current) => {
+        current.sandboxName = null;
+        return current;
+      },
+      "nemoclaw destroy sandbox session cleanup",
+    );
+    if (cleanupResult === "busy") {
+      defaultDestroyWarn(
+        "Another onboarding run owns the session lock. Keeping its replacement session unchanged.",
+      );
+    }
   }
   if (
     shouldCleanupGatewayAfterConfirmedFinalDestroy({
