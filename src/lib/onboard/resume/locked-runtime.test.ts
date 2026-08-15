@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { decisionSelected, decisionUnset } from "../../state/onboard-checkpoint-decision";
+import { decisionUnset } from "../../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
   type OnboardCheckpoint,
@@ -66,7 +66,7 @@ describe("locked onboarding runtime preparation", () => {
     const preparePortableHost = vi.fn();
     const checkpoint: OnboardCheckpoint = {
       ...portableCheckpointWithoutAuthority,
-      runtimeAuthority: decisionSelected(portableAuthority),
+      runtimeAuthority: { kind: "selected", value: portableAuthority },
     };
 
     await expect(
