@@ -33,6 +33,8 @@ import {
   isHermesTransientAgentFailure,
   parseChatContent,
   parseOpenClawAgentText,
+  runHermesAgentAssertionRetry,
+  runOpenClawAgentAssertionRetry,
 } from "./common-egress-agent-helpers.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
@@ -447,73 +449,89 @@ async function runOpenClawAgentAssertion(
   );
 
   let lastFailure = "";
-  for (let attempt = 1; attempt <= OPENCLAW_AGENT_ATTEMPTS; attempt += 1) {
-    const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
-    const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
-    const remoteCommand = [
-      `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl.lock`)} ${shellQuote(
-        `${sessionRoot}/${sessionId}.trajectory.jsonl`,
-      )} 2>/dev/null || true`,
-      `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-        sessionId,
-      )} -m ${shellQuote(args.prompt)}`,
-    ].join("; ");
-    const agent = await host.command(
-      "ssh",
-      [
-        "-F",
-        sshConfigPath,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "LogLevel=ERROR",
-        `openshell-${args.sandboxName}.default`,
-        remoteCommand,
-      ],
-      {
-        artifactName: `${args.label}-openclaw-agent-attempt-${attempt}`,
-        env: commandEnv(),
-        redactionValues: [args.apiKey],
-        timeoutMs: AGENT_TURN_TIMEOUT_MS,
-      },
-    );
-    const combined = text(agent);
-    if (isOpenClawPolicyBlock(combined)) {
-      throw new Error(`${args.label}: agent hit policy block: ${combined.slice(0, 600)}`);
-    }
-
-    const reply = parseOpenClawAgentText(agent.stdout);
-    if (agent.exitCode === 0 && agentReplyContainsToken(reply, args.expected)) {
-      return;
-    }
-    lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
-      0,
-      240,
-    )}' stderr='${agent.stderr.slice(0, 240)}'`;
-
-    if (attempt < OPENCLAW_AGENT_ATTEMPTS && isOpenClawScopeUpgradePending(combined)) {
+  const execution = await runOpenClawAgentAssertionRetry({
+    attempts: OPENCLAW_AGENT_ATTEMPTS,
+    delayMs: (attempt) => attempt * 15_000,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
+    },
+    run: async (attempt) => {
+      const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
+      const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
+      const remoteCommand = [
+        `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl.lock`)} ${shellQuote(
+          `${sessionRoot}/${sessionId}.trajectory.jsonl`,
+        )} 2>/dev/null || true`,
+        `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
+          sessionId,
+        )} -m ${shellQuote(args.prompt)}`,
+      ].join("; ");
+      const agent = await host.command(
+        "ssh",
+        [
+          "-F",
+          sshConfigPath,
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "UserKnownHostsFile=/dev/null",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "LogLevel=ERROR",
+          `openshell-${args.sandboxName}.default`,
+          remoteCommand,
+        ],
+        {
+          artifactName: `${args.label}-openclaw-agent-attempt-${attempt}`,
+          env: commandEnv(),
+          redactionValues: [args.apiKey],
+          timeoutMs: AGENT_TURN_TIMEOUT_MS,
+        },
+      );
+      const combined = text(agent);
+      const reply = parseOpenClawAgentText(agent.stdout);
+      if (agent.exitCode === 0 && agentReplyContainsToken(reply, args.expected)) {
+        return { passed: true };
+      }
+      lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
+        0,
+        240,
+      )}' stderr='${agent.stderr.slice(0, 240)}'`;
+      if (isOpenClawPolicyBlock(combined)) {
+        return { passed: false, failureClass: "policy-denial" };
+      }
+      if (/\b401\b|unauthorized|authentication failed|invalid api key/iu.test(combined)) {
+        return { passed: false, failureClass: "authentication" };
+      }
+      if (/\b403\b|forbidden/iu.test(combined)) {
+        return { passed: false, failureClass: "authorization" };
+      }
+      const recoveryRequired = isOpenClawScopeUpgradePending(combined);
+      return {
+        passed: false,
+        failureClass:
+          recoveryRequired || isOpenClawTransientAgentError(combined)
+            ? "transient-external"
+            : "deterministic",
+        recoveryRequired,
+      };
+    },
+    reconcile: async (attempt, attemptNumber) => {
+      if (!attempt.recoveryRequired) return true;
       const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
-        artifactName: `${args.label}-recover-after-attempt-${attempt}`,
+        artifactName: `${args.label}-recover-after-attempt-${attemptNumber}`,
         env: commandEnv(),
         timeoutMs: 120_000,
       });
-      if (recover.exitCode !== 0) break;
-      await sleep(attempt * 15_000);
-      continue;
-    }
-
-    if (attempt < OPENCLAW_AGENT_ATTEMPTS && isOpenClawTransientAgentError(combined)) {
-      await sleep(attempt * 15_000);
-      continue;
-    }
-
-    break;
-  }
-
+      if (recover.exitCode !== 0) {
+        lastFailure = `recovery exit=${recover.exitCode}`;
+        return false;
+      }
+      return true;
+    },
+  });
+  if (execution.outcome === "passed") return;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
@@ -534,6 +552,7 @@ After the command completes, reply exactly HERMES_REFERENCE_AGENT_OK if that exa
 
 async function runHermesAgentAssertion(
   sandbox: SandboxClient,
+  artifacts: ArtifactSink,
   args: {
     expected: string;
     label: string;
@@ -564,39 +583,49 @@ async function runHermesAgentAssertion(
   ].join("; ");
 
   let lastFailure = "";
-  for (let attempt = 1; attempt <= HERMES_AGENT_ATTEMPTS; attempt += 1) {
-    const agent = await sandbox.execShell(args.sandboxName, trustedSandboxShellScript(remote), {
-      artifactName: `${args.label}-hermes-agent-attempt-${attempt}`,
-      env: commandEnv(),
-      timeoutMs: HERMES_AGENT_TIMEOUT_MS,
-    });
-    const response = text(agent);
-    const httpStatus = httpStatusFromResponse(response);
-    const body = httpBodyFromResponse(response);
-    let reply = "";
-    try {
-      reply = parseChatContent(body);
-    } catch {
-      reply = "";
-    }
-    if (
-      agent.exitCode === 0 &&
-      httpStatus === "200" &&
-      agentReplyContainsToken(reply, args.expected)
-    ) {
-      return;
-    }
-    lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
-      0,
-      240,
-    )}' body='${body.slice(0, 240)}'`;
-    if (attempt < HERMES_AGENT_ATTEMPTS && isHermesTransientAgentFailure(httpStatus, response)) {
-      await sleep(attempt * 5_000);
-      continue;
-    }
-    break;
-  }
-
+  const execution = await runHermesAgentAssertionRetry({
+    attempts: HERMES_AGENT_ATTEMPTS,
+    delayMs: () => 5_000,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
+    },
+    run: async (attempt) => {
+      const agent = await sandbox.execShell(args.sandboxName, trustedSandboxShellScript(remote), {
+        artifactName: `${args.label}-hermes-agent-attempt-${attempt}`,
+        env: commandEnv(),
+        timeoutMs: HERMES_AGENT_TIMEOUT_MS,
+      });
+      const response = text(agent);
+      const httpStatus = httpStatusFromResponse(response);
+      const body = httpBodyFromResponse(response);
+      let reply = "";
+      try {
+        reply = parseChatContent(body);
+      } catch {
+        reply = "";
+      }
+      if (
+        agent.exitCode === 0 &&
+        httpStatus === "200" &&
+        agentReplyContainsToken(reply, args.expected)
+      ) {
+        return { passed: true };
+      }
+      lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
+        0,
+        240,
+      )}' body='${body.slice(0, 240)}'`;
+      if (httpStatus === "401") return { passed: false, failureClass: "authentication" };
+      if (httpStatus === "403") return { passed: false, failureClass: "authorization" };
+      return {
+        passed: false,
+        failureClass: isHermesTransientAgentFailure(httpStatus, response)
+          ? "transient-external"
+          : "deterministic",
+      };
+    },
+  });
+  if (execution.outcome === "passed") return;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
@@ -855,7 +884,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         "/modal",
       ]);
       progress.phase("fetch Wikidata with Hermes agent");
-      await runHermesAgentAssertion(sandbox, {
+      await runHermesAgentAssertion(sandbox, artifacts, {
         expected: "HERMES_REFERENCE_AGENT_OK",
         label: "c3-agent-reference",
         prompt: buildHermesReferencePrompt(),

@@ -8,6 +8,12 @@
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  runBoundedRetry,
+  type BoundedRetryResult,
+  type RetryEvidence,
+  type RetryFailureClass,
+} from "../fixtures/retry-policy.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 export const COMMON_EGRESS_TEST_TIMEOUT_MS = 40 * 60_000;
@@ -32,6 +38,70 @@ export interface CommonEgressProviderValidationSkip {
   matches: boolean;
   sanitizedEndpointValidationFailure: boolean;
   transientProviderValidationFailure: boolean;
+}
+
+export interface AgentAssertionAttempt {
+  failureClass?: RetryFailureClass;
+  passed: boolean;
+  recoveryRequired?: boolean;
+}
+
+interface AgentAssertionRetryOptions {
+  attempts: number;
+  delayMs: (attempt: number) => number;
+  onEvidence: (evidence: RetryEvidence) => Promise<void> | void;
+  run: (attempt: number) => Promise<AgentAssertionAttempt>;
+  sleep?: (milliseconds: number) => Promise<void>;
+}
+
+export function runHermesAgentAssertionRetry(
+  options: AgentAssertionRetryOptions,
+): Promise<BoundedRetryResult<AgentAssertionAttempt>> {
+  return runBoundedRetry({
+    operation: "common-egress.hermes-agent",
+    owner: "hermes-agent",
+    idempotence: "read-only",
+    maxAttempts: options.attempts,
+    delayMs: options.delayMs,
+    onEvidence: options.onEvidence,
+    run: options.run,
+    sleep: options.sleep,
+    classify: (value, error) => {
+      if (error !== undefined) return { outcome: "failed", failureClass: "deterministic" };
+      if (value?.passed) return { outcome: "passed" };
+      return { outcome: "failed", failureClass: value?.failureClass ?? "deterministic" };
+    },
+  });
+}
+
+export function runOpenClawAgentAssertionRetry(
+  options: AgentAssertionRetryOptions & {
+    reconcile: (attempt: AgentAssertionAttempt, attemptNumber: number) => Promise<boolean>;
+  },
+): Promise<BoundedRetryResult<AgentAssertionAttempt>> {
+  return runBoundedRetry({
+    operation: "common-egress.openclaw-agent",
+    owner: "openclaw-agent",
+    idempotence: "reconciled-mutation",
+    maxAttempts: options.attempts,
+    delayMs: options.delayMs,
+    onEvidence: options.onEvidence,
+    run: options.run,
+    sleep: options.sleep,
+    classify: (value, error) => {
+      if (error !== undefined) return { outcome: "failed", failureClass: "deterministic" };
+      if (value?.passed) return { outcome: "passed" };
+      return { outcome: "failed", failureClass: value?.failureClass ?? "deterministic" };
+    },
+    reconcile: async (value, _error, attemptNumber) => {
+      if (!value) return false;
+      try {
+        return await options.reconcile(value, attemptNumber);
+      } catch {
+        return false;
+      }
+    },
+  });
 }
 
 export function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   agentReplyContainsToken,
@@ -9,6 +9,8 @@ import {
   isHermesTransientAgentFailure,
   parseChatContent,
   parseOpenClawAgentText,
+  runHermesAgentAssertionRetry,
+  runOpenClawAgentAssertionRetry,
 } from "../live/common-egress-agent-helpers.ts";
 
 describe("common-egress agent parsing and classification helpers", () => {
@@ -53,6 +55,79 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(isHermesTransientAgentFailure("401", "unauthorized")).toBe(false);
     expect(isHermesTransientAgentFailure("200", "wrong deterministic answer")).toBe(false);
     expect(isHermesTransientAgentFailure("200", "reply mentions fetch failed")).toBe(false);
+  });
+
+  it("records recovered OpenClaw success after reconciliation", async () => {
+    const onEvidence = vi.fn();
+    const reconcile = vi.fn().mockResolvedValue(true);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        passed: false,
+        failureClass: "transient-external",
+        recoveryRequired: true,
+      })
+      .mockResolvedValueOnce({ passed: true });
+
+    const result = await runOpenClawAgentAssertionRetry({
+      attempts: 3,
+      delayMs: () => 0,
+      onEvidence,
+      reconcile,
+      run,
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(onEvidence).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "common-egress.openclaw-agent",
+      owner: "openclaw-agent",
+      idempotence: "reconciled-mutation",
+      maxAttempts: 3,
+      outcome: "passed-after-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "transient-external",
+          reconciled: true,
+          retryScheduled: true,
+        },
+        { attempt: 2, outcome: "passed", retryScheduled: false },
+      ],
+    });
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ recoveryRequired: true }), 1);
+  });
+
+  it("records a deterministic Hermes failure without retrying", async () => {
+    const onEvidence = vi.fn();
+    const run = vi.fn().mockResolvedValue({ passed: false, failureClass: "deterministic" });
+
+    const result = await runHermesAgentAssertionRetry({
+      attempts: 3,
+      delayMs: () => 0,
+      onEvidence,
+      run,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(onEvidence).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      operation: "common-egress.hermes-agent",
+      owner: "hermes-agent",
+      idempotence: "read-only",
+      maxAttempts: 3,
+      outcome: "failed-no-retry",
+      attempts: [
+        {
+          attempt: 1,
+          outcome: "failed",
+          failureClass: "deterministic",
+          retryScheduled: false,
+        },
+      ],
+    });
   });
 
   it("classifies pre-contract provider validation skips", () => {
