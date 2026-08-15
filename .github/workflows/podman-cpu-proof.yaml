@@ -92,8 +92,6 @@ jobs:
             printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
           } >>"$GITHUB_ENV"
-          sudo loginctl enable-linger "$proof_user"
-          sudo systemctl start "user@${uid}.service"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$E2E_ARTIFACT_DIR"
           {
             printf 'XDG_RUNTIME_DIR=/run/user/%s\n' "$uid"
@@ -109,7 +107,8 @@ jobs:
           printf '[Service]\nDelegate=memory pids\n' \
             | sudo tee "$drop_in_dir/90-nemoclaw-cpu-delegation.conf" >/dev/null
           sudo systemctl daemon-reload
-          sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"
+          sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
+          sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"
           sudo --user "$E2E_CPU_DELEGATION_USER" \
             env \
               "HOME=$E2E_CPU_DELEGATION_HOME" \
@@ -134,9 +133,10 @@ jobs:
         run: |
           set -euo pipefail
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          sudo systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"
           printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "$drop_in" >/dev/null
           sudo systemctl daemon-reload
-          sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"
+          sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"
           sudo --user "$E2E_CPU_DELEGATION_USER" \
             env \
               "HOME=$E2E_CPU_DELEGATION_HOME" \
