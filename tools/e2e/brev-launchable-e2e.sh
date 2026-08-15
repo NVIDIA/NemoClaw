@@ -9,6 +9,7 @@ IMAGE_REPOSITORY=brevdev/nemoclaw-image
 IMAGE_WORKFLOW=build-launchable-e2e-image.yml
 cleanup_required=0
 diagnostic_capture=""
+raw_log=""
 SSH_PROBE_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1
   -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR)
 
@@ -289,7 +290,7 @@ finish() {
   local status=$?
   trap - EXIT INT TERM
   if [ "$cleanup_required" -eq 1 ] && ! cleanup; then status=1; fi
-  rm -f "${diagnostic_capture:-}"
+  rm -f "${diagnostic_capture:-}" "${raw_log:-}"
   exit "$status"
 }
 
@@ -526,13 +527,17 @@ REMOTE
   "${INSTANCE_NAME}-host" 'bash -s' >"$raw_log" 2>&1
 e2e_status=$?
 set -e
-python3 - "$raw_log" "$WORK_DIR/full-e2e.log" "$NVIDIA_INFERENCE_API_KEY" <<'PY'
+NEMOCLAW_REDACTION_SECRET="$NVIDIA_INFERENCE_API_KEY" \
+  python3 - "$raw_log" "$WORK_DIR/full-e2e.log" <<'PY'
+import os
 import sys
 from pathlib import Path
-source, target, secret = sys.argv[1:]
+source, target = sys.argv[1:]
+secret = os.environ["NEMOCLAW_REDACTION_SECRET"]
 Path(target).write_bytes(Path(source).read_bytes().replace(secret.encode(), b"[REDACTED]"))
 Path(source).unlink(missing_ok=True)
 PY
+raw_log=""
 if [ "$e2e_status" -ne 0 ] || ! grep -q '^NEMOCLAW_FULL_E2E_PASSED$' "$WORK_DIR/full-e2e.log"; then
   die "full E2E failed"
 fi

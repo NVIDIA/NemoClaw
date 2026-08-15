@@ -648,6 +648,13 @@ The Launchable image job retains `launchable-image.json` with the candidate SHA,
 Manual web, runtime, and inference validation is advisory while issue #8924 remains open.
 It does not block the release tag and must not be reported as an automated E2E pass.
 
+This is a temporary NemoClaw maintainer policy owned while #8924 remains open.
+Each release candidate still requires the successful exact image-publication job and `launchable-image.json` through `Release qualification`; GitHub keeps its logs and artifact under the repository's normal Actions retention policy.
+The accepted temporary risk is that a tag can proceed without automated or manual proof of the Launchable web deployment, environment access, exact booted image, baked runtime, inference, or workspace cleanup.
+A missing, partial, or failed manual validation needs no per-release waiver, but an image-publication failure remains release-blocking unless an administrator uses the existing job-waiver mechanism.
+Restore automated validation only after NemoClaw checksum-pins a published Brev CLI release containing both required fixes and a trusted `main` run passes deployment, access, exact image and runtime identity, hosted and sandbox inference, and verified workspace cleanup.
+Closing #8924 records the end of the temporary policy.
+
 Manual ordinary and full runs exclude the Jetson nvmap and DGX Spark llama.cpp
 jobs unless their independent opt-in flags are `true`.
 Set `allow_jetson_dispatch=true` to select `jetson-nvmap-gpu` after the

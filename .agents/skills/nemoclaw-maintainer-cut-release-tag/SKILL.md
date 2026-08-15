@@ -180,6 +180,7 @@ After image publication succeeds, present this advisory manual validation:
 This manual validation is advisory while the automated Launchable path is blocked by issue #8924.
 Its absence, partial result, or failure does not block the signing preflight, confirmation prompt, or release tag.
 Do not describe successful image publication as successful Launchable, runtime, or inference validation.
+Apply the temporary policy in [Pre-Tag E2E Evidence](../nemoclaw-maintainer-policies/references/release-train.md#temporary-staging-launchable-qualification-policy): NemoClaw maintainers own it while #8924 remains open, the successful exact image-publication job and artifact remain required release evidence under normal Actions retention, and the full automated lane returns only after a checksum-pinned Brev release passes deployment through verified cleanup on trusted `main`.
 
 Run the release script's signing preflight before asking for confirmation:
 

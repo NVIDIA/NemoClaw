@@ -51,6 +51,22 @@ The release candidate is the full `origin/main` commit SHA captured by the gener
 
 Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check from a pre-tag manual run at that SHA.
 
+### Temporary Staging Launchable Qualification Policy
+
+Issue #8924 temporarily limits the trusted staging Launchable job to exact image publication.
+NemoClaw maintainers own this policy while that issue remains open.
+For each release candidate, the required automated evidence is a successful `Publish staging Brev Launchable image` job and its `launchable-image.json` artifact, bound to the exact candidate SHA through the successful `Release qualification` check.
+GitHub retains the workflow logs and artifact under the repository's normal Actions retention policy.
+An image-publication failure still blocks release qualification unless a repository administrator uses the existing documented job-waiver mechanism.
+
+The temporary risk acceptance permits a release tag without automated or manual proof of the staging Launchable web deployment, environment access, exact booted image, baked runtime, inference, or workspace cleanup.
+Manual validation remains advisory, and a missing, partial, or failed result needs no per-release waiver.
+It must not be reported as an automated E2E pass.
+
+Restore the automated deployment lane when a published Brev CLI release contains the Launchable image-forwarding fix and the host-route fix tracked by #8924.
+NemoClaw must checksum-pin that release and complete a trusted `main` run that verifies deployment, environment access, exact image and runtime identity, hosted and sandbox inference, and workspace cleanup.
+That successful run is the reactivation evidence; closing #8924 records the end of this temporary policy.
+
 - `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
 - Push runs publish `Relevant E2E`; only full manual runs dispatched against `main` with empty selectors publish `Release qualification`.
 - By default, the check requires every default-required workflow result to succeed, including `Publish staging Brev Launchable image`.

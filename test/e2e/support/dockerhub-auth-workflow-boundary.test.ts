@@ -18,7 +18,7 @@ import {
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { testTimeout } from "../../helpers/timeouts";
 
-const NO_IMAGE_E2E_JOBS = ["shared-e2e"] as const;
+const NO_IMAGE_E2E_JOBS = ["staging-brev-launchable", "shared-e2e"] as const;
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const CLEANUP_STEP_NAME = "Clean up Docker auth";
 const CLEANUP_HELPER_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -308,13 +308,16 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       const [routingAuth] = routingSteps.splice(routingAuthIndex, 1);
       routingSteps.splice(routingSteps.length - 1, 0, routingAuth);
 
-      workflow.jobs["shared-e2e"].steps!.push({ ...canonicalAuth });
+      for (const jobName of NO_IMAGE_E2E_JOBS) {
+        workflow.jobs[jobName].steps!.push({ ...canonicalAuth });
+      }
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
         "messaging-providers Docker Hub auth must reuse the canonical workflow alias",
         "openclaw-plugin-runtime-exdev Docker Hub auth must run immediately after checkout",
+        "staging-brev-launchable no-image job must not receive Docker Hub authentication",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),
     );
