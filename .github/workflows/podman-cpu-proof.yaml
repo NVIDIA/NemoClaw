@@ -76,6 +76,7 @@ jobs:
           drop_in_dir="$(dirname "$drop_in")"
           drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-created"
           slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-slice-drop-in-created"
+          workspace_traverse_marker="$RUNNER_TEMP/nemoclaw-workspace-traverse-modes"
           uid=""
           created_user=0
           drop_in_temp=""
@@ -130,6 +131,12 @@ jobs:
               sudo loginctl terminate-user "$E2E_CPU_DELEGATION_USER"
               sudo userdel --remove "$E2E_CPU_DELEGATION_USER"
             fi
+            if [ -e "$workspace_traverse_marker" ]; then
+              while IFS=$'\t' read -r original_mode workspace_path; do
+                sudo chmod "$original_mode" -- "$workspace_path"
+              done <"$workspace_traverse_marker"
+              rm -f -- "$workspace_traverse_marker"
+            fi
             exit "$status"
           }
           trap cleanup_failed_prepare EXIT
@@ -139,6 +146,7 @@ jobs:
             printf 'E2E_CPU_DELEGATION_DROP_IN_MARKER=%s\n' "$drop_in_marker"
             printf 'E2E_CPU_SLICE_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
             printf 'E2E_CPU_SLICE_DROP_IN_DIR_CREATED=0\n'
+            printf 'E2E_WORKSPACE_TRAVERSE_MARKER=%s\n' "$workspace_traverse_marker"
           } >>"$GITHUB_ENV"
           if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
             echo "::error::CPU delegation proof user already exists" >&2
@@ -156,10 +164,37 @@ jobs:
             echo "::error::CPU slice proof ownership marker already exists" >&2
             exit 1
           fi
+          if [ -e "$workspace_traverse_marker" ] || [ -L "$workspace_traverse_marker" ]; then
+            echo "::error::Workspace traversal ownership marker already exists" >&2
+            exit 1
+          fi
           sudo useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"
           created_user=1
           uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
           home="$(getent passwd "$E2E_CPU_DELEGATION_USER" | cut -d: -f6)"
+          workspace_path="$GITHUB_WORKSPACE"
+          workspace_ancestors=()
+          while [ "$workspace_path" != "/" ]; do
+            workspace_ancestors+=("$workspace_path")
+            workspace_path="$(dirname "$workspace_path")"
+          done
+          : >"$workspace_traverse_marker"
+          chmod 0600 "$workspace_traverse_marker"
+          for ((index = ${#workspace_ancestors[@]} - 1; index >= 0; index--)); do
+            workspace_path="${workspace_ancestors[$index]}"
+            if ! sudo --user "$E2E_CPU_DELEGATION_USER" test -x "$workspace_path"; then
+              original_mode="$(stat -c '%a' -- "$workspace_path")"
+              printf '%s\t%s\n' "$original_mode" "$workspace_path" \
+                >>"$workspace_traverse_marker"
+              sudo chmod o+x -- "$workspace_path"
+            fi
+          done
+          if ! sudo --user "$E2E_CPU_DELEGATION_USER" \
+            test -x "$GITHUB_WORKSPACE/node_modules/.bin/vitest"; then
+            echo "::error::Dedicated proof user cannot execute the Vitest entrypoint" >&2
+            namei -l "$GITHUB_WORKSPACE/node_modules/.bin/vitest" >&2 || true
+            exit 1
+          fi
           slice_drop_in_dir="/run/systemd/system/user-${uid}.slice.d"
           slice_drop_in="$slice_drop_in_dir/90-nemoclaw-cpu-controller.conf"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$E2E_ARTIFACT_DIR"
@@ -414,6 +449,18 @@ jobs:
           fi
           if [ -d "$E2E_ARTIFACT_DIR" ]; then
             sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR" || cleanup_failed=1
+          fi
+          workspace_traverse_marker="${E2E_WORKSPACE_TRAVERSE_MARKER:-}"
+          if [ -n "$workspace_traverse_marker" ] && [ -e "$workspace_traverse_marker" ]; then
+            while IFS=$'\t' read -r original_mode workspace_path; do
+              if [[ ! "$original_mode" =~ ^[0-7]{3,4}$ ]] || [ -z "$workspace_path" ]; then
+                echo "::error::Workspace traversal ownership marker is invalid" >&2
+                cleanup_failed=1
+                continue
+              fi
+              sudo chmod "$original_mode" -- "$workspace_path" || cleanup_failed=1
+            done <"$workspace_traverse_marker"
+            rm -f -- "$workspace_traverse_marker" || cleanup_failed=1
           fi
           exit "$cleanup_failed"
 

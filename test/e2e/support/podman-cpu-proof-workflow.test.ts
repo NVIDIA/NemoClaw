@@ -142,6 +142,11 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain('test -L "$drop_in"');
     expect(prepare).toContain("E2E_CPU_DELEGATION_USER_CREATED=1");
     expect(prepare).toContain("E2E_CPU_DELEGATION_HOME");
+    expect(prepare).toContain("E2E_WORKSPACE_TRAVERSE_MARKER");
+    expect(prepare).toContain('sudo chmod o+x -- "$workspace_path"');
+    expect(prepare).toContain(
+      'test -x "$GITHUB_WORKSPACE/node_modules/.bin/vitest"',
+    );
     expect(prepare).toContain("E2E_CPU_SLICE_DROP_IN_DIR_CREATED=1");
     expect(prepare).toContain('mktemp "$slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"');
     expect(prepare).toContain('ln -- "$slice_drop_in_temp" "$slice_drop_in"');
@@ -218,6 +223,8 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain(
       'sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR"',
     );
+    expect(cleanup.run).toContain("E2E_WORKSPACE_TRAVERSE_MARKER");
+    expect(cleanup.run).toContain('sudo chmod "$original_mode" -- "$workspace_path"');
     const delegationProof = readRepoText(
       "test/e2e/live/portable-cpu-delegation-proof.test.ts",
     );
