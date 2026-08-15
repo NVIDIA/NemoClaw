@@ -228,6 +228,7 @@ describe("preparePortableExperimentalHost", () => {
         runtimeReadiness: {
           uid: 1001,
           home,
+          now: () => 0,
           hardenSocketDirectory: vi.fn(),
           captureSocketAuthority: (socketPath) => socketAuthority(socketPath),
           assertSocketAuthority: vi.fn(),
