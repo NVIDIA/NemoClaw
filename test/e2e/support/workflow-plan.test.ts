@@ -87,10 +87,14 @@ describe("E2E workflow plan", () => {
     expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
     expect(plan.hermesSelected).toBe(true);
-    expect(plan.explicitOnlyJobs).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(plan.explicitOnlyJobs).toEqual([
+      "native-runtime-qualification",
+      "llama-cpp-dgx-spark-qualification",
+    ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
     expect(releaseRequiredWorkflowJobs()).toContain("staging-brev-launchable");
     expect(releaseRequiredWorkflowJobs()).not.toContain("llama-cpp-dgx-spark-qualification");
+    expect(releaseRequiredWorkflowJobs()).not.toContain("native-runtime-qualification");
   });
 
   it("waives only named release-required E2E jobs", () => {
