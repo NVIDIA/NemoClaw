@@ -136,6 +136,23 @@ describe("wait utility", () => {
     expect(operation).toHaveBeenCalledOnce();
   });
 
+  it("retryUntilAsync returns the first accepted result without sleeping (#9218)", async () => {
+    const sleep = vi.fn(async () => {});
+    const operation = vi.fn(async () => "ready");
+
+    const result = await retryUntilAsync(operation, {
+      accept: (value) => value === "ready",
+      retryDelaysMs: [10, 20],
+      sleep,
+    });
+
+    expect(result).toBe("ready");
+    expect(operation).toHaveBeenCalledOnce();
+    expect(operation).toHaveBeenCalledWith(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+
   it("retryUntilAsync uses each scheduled delay before accepting the third result (#9218)", async () => {
     const sleep = vi.fn(async () => {});
 
