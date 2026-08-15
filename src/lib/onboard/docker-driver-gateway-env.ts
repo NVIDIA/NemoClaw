@@ -280,7 +280,7 @@ export function buildDockerDriverGatewayEnv({
     // The installer sets this only after a strict pre-upgrade backup. OpenShell
     // 0.0.44 had a database but no authenticated config or JWT identity, so
     // prepared recovery may safely attach the first scoped identity to it.
-    allowPreAuthGatewayDatabase:
+    allowOpenShell0044PreAuthDatabase:
       process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1",
   });
   return env;

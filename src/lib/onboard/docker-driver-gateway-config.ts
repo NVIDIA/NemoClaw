@@ -18,6 +18,7 @@ import {
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-jwt-bundle";
 import { PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
+import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -26,6 +27,7 @@ export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-
 export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
 const LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
+const PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION = "0.0.44";
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 type DockerDriverGatewayDriver = "docker" | "podman";
@@ -229,6 +231,43 @@ function gatewayStateHasDurableIdentityEvidence(
   return false;
 }
 
+function hasOwnedPreAuthGatewayDatabaseState(stateDir: string, state: fs.Stats): boolean {
+  if (
+    typeof process.getuid !== "function" ||
+    state.uid !== process.getuid() ||
+    (state.mode & 0o777) !== 0o700
+  ) {
+    return false;
+  }
+
+  const databasePath = path.join(stateDir, "openshell.db");
+  const markerPath = path.join(stateDir, "runtime.json");
+  let database: OpenRegularFile | null = null;
+  let marker: OpenRegularFile | null = null;
+  try {
+    database = openRegularFileNoFollow(databasePath);
+    marker = openRegularFileNoFollow(markerPath);
+    const databaseState = fs.lstatSync(databasePath);
+    const markerState = fs.lstatSync(markerPath);
+    if (
+      databaseState.uid !== state.uid ||
+      markerState.uid !== state.uid ||
+      (markerState.mode & 0o077) !== 0
+    ) {
+      return false;
+    }
+    return (
+      parseDockerDriverGatewayRuntimeMarker(marker.readUtf8(64 * 1024))?.openshellVersion ===
+      PRE_AUTH_DOCKER_DRIVER_GATEWAY_VERSION
+    );
+  } catch {
+    return false;
+  } finally {
+    database?.close();
+    marker?.close();
+  }
+}
+
 function ambiguousGatewayConfig(configPath: string, detail: string): Error {
   return new Error(
     `Refusing to rewrite ${configPath}: NemoClaw cannot prove its generated gateway identity (${detail})`,
@@ -317,7 +356,7 @@ function isNonEmptyString(value: unknown): value is string {
 function existingGatewayIdentityFromConfig(
   stateDir: string,
   driver: DockerDriverGatewayDriver,
-  allowPreAuthGatewayDatabase = false,
+  allowOpenShell0044PreAuthDatabase = false,
 ): DockerDriverGatewayIdentity | null {
   const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
   let configFile: OpenRegularFile | null = null;
@@ -339,10 +378,12 @@ function existingGatewayIdentityFromConfig(
     config = fs.lstatSync(configPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const approvedPreAuthDatabase =
+      allowOpenShell0044PreAuthDatabase && hasOwnedPreAuthGatewayDatabaseState(stateDir, state);
     if (
       gatewayStateHasDurableIdentityEvidence(
         stateDir,
-        allowPreAuthGatewayDatabase ? ["jwt"] : ["jwt", "openshell.db"],
+        approvedPreAuthDatabase ? ["jwt"] : ["jwt", "openshell.db"],
       )
     ) {
       throw ambiguousGatewayConfig(configPath, "durable gateway state exists without a config");
@@ -531,14 +572,14 @@ function existingGatewayIdentityFromConfig(
 function resolveDockerDriverGatewayIdentity(
   stateDir: string,
   gatewayEnv: Record<string, string>,
-  allowPreAuthGatewayDatabase = false,
+  allowOpenShell0044PreAuthDatabase = false,
 ): DockerDriverGatewayIdentity {
   const driver: DockerDriverGatewayDriver =
     gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const existing = existingGatewayIdentityFromConfig(
     stateDir,
     driver,
-    allowPreAuthGatewayDatabase,
+    allowOpenShell0044PreAuthDatabase,
   );
   if (existing) return existing;
   const gatewayId = gatewayIdForStateDir(stateDir);
@@ -727,12 +768,12 @@ export function prepareDockerDriverGatewayConfigEnv(
   gatewayEnv: Record<string, string>,
   stateDir: string,
   sandboxBin?: string | null,
-  options: { allowPreAuthGatewayDatabase?: boolean } = {},
+  options: { allowOpenShell0044PreAuthDatabase?: boolean } = {},
 ): Record<string, string> {
   const identity = resolveDockerDriverGatewayIdentity(
     stateDir,
     gatewayEnv,
-    options.allowPreAuthGatewayDatabase === true,
+    options.allowOpenShell0044PreAuthDatabase === true,
   );
   gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,

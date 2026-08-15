@@ -25,6 +25,10 @@ import {
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
+import {
+  buildDockerDriverGatewayRuntimeMarker,
+  writeDockerDriverGatewayRuntimeMarker,
+} from "./docker-driver-gateway-runtime-marker";
 
 const SCOPED_NAMESPACE_PROOF_DRIVER = path.join(
   process.cwd(),
@@ -414,11 +418,20 @@ describe("docker-driver-gateway config TOML", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-v0-0-55-"));
     try {
       fs.writeFileSync(path.join(stateDir, "openshell.db"), "legacy-database", { mode: 0o600 });
-      fs.writeFileSync(path.join(stateDir, "runtime.json"), "legacy-runtime", { mode: 0o600 });
+      writeDockerDriverGatewayRuntimeMarker(
+        path.join(stateDir, "runtime.json"),
+        buildDockerDriverGatewayRuntimeMarker({
+          pid: 12_345,
+          desiredEnv: { OPENSHELL_DISABLE_GATEWAY_AUTH: "true" },
+          endpoint: "http://127.0.0.1:8080",
+          gatewayBin: "/usr/local/bin/openshell-gateway",
+          openshellVersion: "0.0.44",
+        }),
+      );
       const env = baseGatewayEnv(stateDir);
 
       prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
-        allowPreAuthGatewayDatabase: true,
+        allowOpenShell0044PreAuthDatabase: true,
       });
 
       const config = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
@@ -427,6 +440,33 @@ describe("docker-driver-gateway config TOML", () => {
       expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
         "legacy-database",
       );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat a prepared authenticated-era database as pre-auth state", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-auth-era-"));
+    try {
+      fs.writeFileSync(path.join(stateDir, "openshell.db"), "current-database", { mode: 0o600 });
+      writeDockerDriverGatewayRuntimeMarker(
+        path.join(stateDir, "runtime.json"),
+        buildDockerDriverGatewayRuntimeMarker({
+          pid: 12_345,
+          desiredEnv: { OPENSHELL_DISABLE_GATEWAY_AUTH: "false" },
+          endpoint: "https://127.0.0.1:8080",
+          gatewayBin: "/usr/local/bin/openshell-gateway",
+          openshellVersion: "0.0.101",
+        }),
+      );
+      const env = baseGatewayEnv(stateDir);
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+          allowOpenShell0044PreAuthDatabase: true,
+        }),
+      ).toThrow(/durable gateway state exists without a config/);
+      expect(fs.existsSync(path.join(stateDir, "openshell-gateway.toml"))).toBe(false);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
