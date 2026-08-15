@@ -396,6 +396,53 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/duplicate id/u);
   });
 
+  it("restarts collection after a concurrent workflow-run count change", async () => {
+    const entries = Array.from({ length: 102 }, (_, index) => ({ id: index + 1 }));
+    const pages = [
+      { total_count: 101, workflow_runs: entries.slice(0, 100) },
+      { total_count: 102, workflow_runs: entries.slice(100) },
+      { total_count: 102, workflow_runs: entries.slice(0, 100) },
+      { total_count: 102, workflow_runs: entries.slice(100) },
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      collectPaginated(
+        async (requestPath) => {
+          requests.push(requestPath);
+          return pages.shift();
+        },
+        "/runs?per_page=100",
+        "workflow_runs",
+      ),
+    ).resolves.toMatchObject({ total_count: 102, workflow_runs: entries });
+    expect(requests).toEqual([
+      "/runs?per_page=100&page=1",
+      "/runs?per_page=100&page=2",
+      "/runs?per_page=100&page=1",
+      "/runs?per_page=100&page=2",
+    ]);
+  });
+
+  it("fails closed after three unstable pagination attempts", async () => {
+    const entries = Array.from({ length: 101 }, (_, index) => ({ id: index + 1 }));
+    let requests = 0;
+
+    await expect(
+      collectPaginated(
+        async (requestPath) => {
+          requests += 1;
+          return requestPath.endsWith("page=1")
+            ? { total_count: 101, workflow_runs: entries.slice(0, 100) }
+            : { total_count: 102, workflow_runs: entries.slice(100) };
+        },
+        "/runs?per_page=100",
+        "workflow_runs",
+      ),
+    ).rejects.toThrow(/total_count changed during 3 pagination attempts/u);
+    expect(requests).toBe(6);
+  });
+
   it("accepts a batch-push tip that descends from the newest changed input (#7372)", () => {
     const selection = selectPublicationRun(
       runsPayload([workflowRun({ head_sha: EXPECTED_SHA })]),
