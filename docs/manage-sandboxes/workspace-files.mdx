@@ -30,8 +30,8 @@ The runtime provider and host platform determine whether NemoClaw can create the
 | OpenShell MXC | Any host | Unsupported because OpenShell MXC does not expose a qualified native host-sharing contract. |
 
 When you request `--host-mount`, NemoClaw checks the selected runtime provider and host platform before it records onboarding state or changes runtime resources.
-An unsupported provider reports its declared reason.
-A supported provider on an unqualified host reports that the host platform is not qualified.
+NemoClaw reports the reason that the unsupported provider declares.
+For a supported provider on an unqualified host, NemoClaw reports that the host platform is not qualified.
 NemoClaw does not fall back to Docker bind-mount configuration.
 
 A runtime-provider implementation must meet these requirements before it can declare support:
