@@ -24,6 +24,7 @@ import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
+import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 import {
@@ -44,6 +45,7 @@ export {
   reportReadOnlyHostMounts,
   verifyReadOnlyHostMountSources,
 } from "./host-mount";
+export { requireReadOnlyHostMountRuntimeSupport };
 export {
   isOnboardResumeIntentRaceError,
   OnboardResumeIntentError,
@@ -295,6 +297,10 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
+  requireHostMountRuntimeSupport(
+    mounts: readonly import("../state/registry/types").SandboxHostMount[] | undefined,
+    checkpointProfile?: CheckpointOnboardProfile,
+  ): void;
   resolveResumeCheckpoint(): CheckpointLoadResult;
 }
 
@@ -475,6 +481,10 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  deps.requireHostMountRuntimeSupport(
+    input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
+    input.checkpointProfile,
+  );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
@@ -521,6 +531,7 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
   }
@@ -559,10 +570,17 @@ export async function prepareOnboardSession(
 
 export function prepareOnboardSessionValidated(
   input: OnboardSessionBootstrapInput,
-  deps: Omit<OnboardSessionBootstrapDeps, "resolveResumeCheckpoint">,
+  deps: Omit<
+    OnboardSessionBootstrapDeps,
+    "requireHostMountRuntimeSupport" | "resolveResumeCheckpoint"
+  >,
 ): Promise<OnboardSessionBootstrapResult> {
   return prepareOnboardSession(input, {
     ...deps,
+    requireHostMountRuntimeSupport: (mounts, checkpointProfile) =>
+      requireReadOnlyHostMountRuntimeSupport(mounts, {
+        experimentalProfile: checkpointProfile === "portable" ? "portable" : null,
+      }),
     resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
   });
 }

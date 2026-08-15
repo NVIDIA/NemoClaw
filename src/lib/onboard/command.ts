@@ -44,7 +44,7 @@ import {
   resolveLocalModelProfilePlan,
 } from "./local-model-profile/plan";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
-import { parseReadOnlyHostMounts } from "./host-mount";
+import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -91,6 +91,8 @@ export interface OnboardCommandOptions {
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  runtimeProviders?: import("./runtime-provider/access").RuntimeProviderBundleRegistry;
   listAgents?: () => string[];
   listServingProfiles?: () => ServingProfileListEntry[];
   loadServingCatalog?: () => CompiledServingCatalog;
@@ -193,20 +195,16 @@ function resolveHostMounts(
   experimentalProfile: ExperimentalOnboardProfile | null,
   deps: ResolveOnboardOptionsDeps,
 ): import("../state/registry/types").SandboxHostMount[] {
-  if ((values?.length ?? 0) > 0 && experimentalProfile === PORTABLE_EXPERIMENTAL_PROFILE) {
-    fail(
-      deps,
-      "  --host-mount requires the OpenShell Docker driver and cannot be used with --experimental-profile portable.",
-    );
-  }
   let mounts: import("../state/registry/types").SandboxHostMount[];
   try {
     mounts = parseReadOnlyHostMounts(values ?? []);
   } catch (error) {
     return fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (mounts.length > 0 && (deps.platform ?? process.platform) !== "linux") {
-    fail(deps, "  --host-mount is currently supported only on Linux and WSL2 hosts.");
+  try {
+    requireReadOnlyHostMountRuntimeSupport(mounts, { ...deps, experimentalProfile });
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return mounts;
 }

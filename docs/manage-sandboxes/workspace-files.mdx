@@ -14,9 +14,33 @@ You can also expose selected host directories for live, read-only access when co
 
 ## Mount a Host Directory for Read-Only Access
 
-On Linux and Windows Subsystem for Linux 2 (WSL2), onboarding can expose an existing host directory inside a sandbox.
-This operation is supported only with a NemoClaw-managed Docker-driver gateway.
+Onboarding can expose an existing host directory inside a sandbox when the selected runtime provider and host platform support read-only host mounts.
 The same command works with OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
+
+### Runtime Support
+
+The runtime provider and host platform determine whether NemoClaw can create the mount:
+
+| Runtime Provider | Host Platform | Status |
+|---|---|---|
+| Docker | Linux or Windows Subsystem for Linux 2 (WSL2) | Supported with a NemoClaw-managed Docker-driver gateway. |
+| Docker | macOS or native Windows | Unsupported. |
+| Kubernetes | Any host | Unsupported because host directories are node-local and require separately qualified scheduling, policy, and security rules. |
+| Podman | Any host | Unsupported because read-only host mounts have not passed runtime-provider qualification. |
+| OpenShell MXC | Any host | Unsupported because OpenShell MXC does not expose a qualified native host-sharing contract. |
+
+When you request `--host-mount`, NemoClaw checks the selected runtime provider and host platform before it records onboarding state or changes runtime resources.
+NemoClaw reports the reason that the unsupported provider declares.
+For a supported provider on an unqualified host, NemoClaw reports that the host platform is not qualified.
+NemoClaw does not fall back to Docker bind-mount configuration.
+
+A runtime-provider implementation must meet these requirements before it can declare support:
+
+- Declare qualified host platforms when supported, or declare an explicit reason when unsupported.
+- Preserve the source, target, symbolic-link, duplication, and read-only validation described on this page.
+- Revalidate the source path identity immediately before sandbox creation.
+- Implement provider-specific create configuration and host-side activation without a Docker fallback.
+- Test requested and persisted mounts across onboarding, resume, rebuild, and failure paths.
 
 <Warning>
 The mount crosses the sandbox boundary and gives every sandbox process read access to the complete host directory tree.

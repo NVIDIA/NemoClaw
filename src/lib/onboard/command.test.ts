@@ -290,7 +290,7 @@ describe("onboard command options", () => {
     });
   });
 
-  it("maps repeated Linux host mounts and rejects unsupported host platforms", () => {
+  it("maps repeated host mounts when the selected runtime provider supports them", () => {
     const first = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
     const second = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
     const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
@@ -309,27 +309,52 @@ describe("onboard command options", () => {
           sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
         },
       ]);
-      expect(() => resolve({ "host-mount": values }, { platform: "darwin" })).toThrow("exit:1");
     } finally {
       fs.rmSync(first, { recursive: true, force: true });
       fs.rmSync(second, { recursive: true, force: true });
     }
   });
 
-  it("rejects host mounts for the portable Podman profile before path or runtime effects", () => {
+  it("reports the Podman capability reason for portable host mounts", () => {
     const errors: string[] = [];
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
 
-    expect(() =>
-      resolve(
-        {
-          "experimental-profile": "portable",
-          "host-mount": ["/path/that/need/not/exist:/sandbox/project"],
-        },
-        { platform: "linux", error: (message = "") => errors.push(message) },
-      ),
-    ).toThrow("exit:1");
-    expect(errors.join("\n")).toContain("requires the OpenShell Docker driver");
+    try {
+      expect(() =>
+        resolve(
+          {
+            "experimental-profile": "portable",
+            "host-mount": [`${source}:/sandbox/project`],
+          },
+          { platform: "linux", error: (message = "") => errors.push(message) },
+        ),
+      ).toThrow("exit:1");
+      expect(errors.join("\n")).toContain("Runtime provider 'podman'");
+      expect(errors.join("\n")).toContain("not qualified for the Podman runtime provider");
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
   });
+
+  it.each([
+    ["darwin", "arm64", "docker", "has not qualified read-only host mounts"],
+    ["win32", "x64", "kubernetes", "Kubernetes hostPath semantics"],
+  ] as const)(
+    "reports why the runtime provider selected for %s rejects host mounts",
+    (platform, arch, provider, reason) => {
+      const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+      const error = vi.fn();
+      try {
+        expect(() =>
+          resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform, arch, error }),
+        ).toThrow("exit:1");
+        expect(error.mock.calls.flat().join("\n")).toContain(`Runtime provider '${provider}'`);
+        expect(error.mock.calls.flat().join("\n")).toContain(reason);
+      } finally {
+        fs.rmSync(source, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("resolves the portable profile to deterministic unattended defaults", () => {
     expect(resolve({ "experimental-profile": "portable" })).toMatchObject({

@@ -68,11 +68,22 @@ export interface RuntimeProviderPlanDefinition {
   readonly gatewayLauncher: RuntimeProviderGatewayLauncher;
 }
 
+export type RuntimeProviderReadOnlyHostMountCapability =
+  | {
+      readonly supported: true;
+      readonly hostPlatforms: readonly NodeJS.Platform[];
+    }
+  | {
+      readonly supported: false;
+      readonly reason: string;
+    };
+
 export interface RuntimeProviderNormalizedCapabilities {
   readonly hostLocalInference: boolean;
   readonly directLifecycle: boolean;
   readonly legacyGatewayContainerInspection: boolean;
   readonly workloadImageCleanup: boolean;
+  readonly readOnlyHostMounts: RuntimeProviderReadOnlyHostMountCapability;
 }
 
 export type RuntimeProviderManagedImageSupport = {
