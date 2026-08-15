@@ -90,10 +90,15 @@ exec "$@"
     path.join(bin, "python3"),
     `#!/usr/bin/env bash
 set -euo pipefail
-if [ "\${1:-}" = "-" ] && [[ "\${2:-}" == *brev-launchable-e2e-*.raw ]]; then
+if [ "\${1:-}" = "-" ] && [[ "\${2:-}" == */brev-launchable-e2e.*/full-e2e.raw ]]; then
   [ "$#" -eq 3 ]
   [ -n "\${NEMOCLAW_REDACTION_SECRET:-}" ]
-  printf 'python redactor arg-count %s with environment secret\n' "$#" >> "$FAKE_CALLS"
+  raw_mode="$(stat -c '%a' "$2" 2>/dev/null || stat -f '%Lp' "$2")"
+  directory_mode="$(stat -c '%a' "$(dirname "$2")" 2>/dev/null || stat -f '%Lp' "$(dirname "$2")")"
+  [ "$raw_mode" = "600" ]
+  [ "$directory_mode" = "700" ]
+  printf 'python redactor arg-count %s with environment secret and modes %s/%s\n' \
+    "$#" "$raw_mode" "$directory_mode" >> "$FAKE_CALLS"
 fi
 exec ${JSON.stringify(REAL_PYTHON3)} "$@"
 `,
@@ -510,18 +515,21 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("keeps the inference credential out of redactor arguments and removes failed raw evidence", () => {
+  it("protects and removes raw inference evidence without passing the credential to redactor arguments", () => {
     const { calls, env, state, workDir } = fixture();
     fs.mkdirSync(path.join(workDir, "full-e2e.log"));
-    const rawLog = path.join(String(env.RUNNER_TEMP), "brev-launchable-e2e-789.raw");
     const result = run(env);
 
     expect(result.status).not.toBe(0);
     expect(fs.readFileSync(calls, "utf8")).toContain(
-      "python redactor arg-count 3 with environment secret",
+      "python redactor arg-count 3 with environment secret and modes 600/700",
     );
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("nvapi-test-value");
-    expect(fs.existsSync(rawLog)).toBe(false);
+    expect(
+      fs
+        .readdirSync(String(env.RUNNER_TEMP))
+        .filter((entry) => entry.startsWith("brev-launchable-e2e.")),
+    ).toEqual([]);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",

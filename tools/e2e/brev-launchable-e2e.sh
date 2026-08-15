@@ -10,6 +10,7 @@ IMAGE_WORKFLOW=build-launchable-e2e-image.yml
 cleanup_required=0
 diagnostic_capture=""
 raw_log=""
+raw_log_directory=""
 SSH_PROBE_OPTIONS=(-T -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1
   -o NumberOfPasswordPrompts=0 -o RequestTTY=no -o LogLevel=ERROR)
 
@@ -291,6 +292,10 @@ finish() {
   trap - EXIT INT TERM
   if [ "$cleanup_required" -eq 1 ] && ! cleanup; then status=1; fi
   rm -f "${diagnostic_capture:-}" "${raw_log:-}"
+  if [ -n "${raw_log_directory:-}" ]; then
+    rm -f "$raw_log_directory/full-e2e.raw"
+    rmdir "$raw_log_directory" 2>/dev/null || true
+  fi
   exit "$status"
 }
 
@@ -506,7 +511,10 @@ jq --argjson identity "$identity" '.boot += $identity' \
 mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.
-raw_log="${RUNNER_TEMP:-/tmp}/brev-launchable-e2e-${GITHUB_RUN_ID}.raw"
+raw_log_directory="$(mktemp -d "${RUNNER_TEMP:-/tmp}/brev-launchable-e2e.XXXXXX")"
+chmod 700 "$raw_log_directory"
+raw_log="$raw_log_directory/full-e2e.raw"
+(umask 077 && : >"$raw_log")
 set +e
 {
   printf 'export NVIDIA_INFERENCE_API_KEY=%q\n' "$NVIDIA_INFERENCE_API_KEY"
