@@ -62,7 +62,7 @@ Model validation can fail with these messages:
   Custom IDs can include or omit the `models/` prefix.
   Embedding-only models do not appear because they do not support `generateContent`.
 - `Unexpected Gemini model catalog response: expected a top-level models array`
-  The Google model catalog returned a `models` value that is not an array.
+  The Google model catalog returned a non-null `models` value that is not an array.
   Retry the request, then inspect the Google service or proxy response if the error continues.
 - `Gemini model catalog pagination repeated page token '<token>'`
   The catalog repeated a `nextPageToken`, so NemoClaw stopped reading pages.
