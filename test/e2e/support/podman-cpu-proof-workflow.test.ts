@@ -142,11 +142,17 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain('test -L "$drop_in"');
     expect(prepare).toContain("E2E_CPU_DELEGATION_USER_CREATED=1");
     expect(prepare).toContain("E2E_CPU_DELEGATION_HOME");
+    expect(prepare).toContain("E2E_SOURCE_CACHE_DIR");
+    expect(prepare).toContain("E2E_SOURCE_CACHE_MARKER");
     expect(prepare).toContain("E2E_WORKSPACE_TRAVERSE_MARKER");
     expect(prepare).toContain('sudo chmod o+x -- "$workspace_path"');
     expect(prepare).toContain(
       'test -x "$GITHUB_WORKSPACE/node_modules/.bin/vitest"',
     );
+    expect(prepare).toContain('source_cache_parent="$GITHUB_WORKSPACE/node_modules/.cache"');
+    expect(prepare).toContain("cannot traverse the source-loader cache parent");
+    expect(prepare).toContain('sudo install -d -o "$uid" -g "$uid" -m 0700');
+    expect(prepare).toContain("Source-loader cache already exists");
     expect(prepare).toContain("E2E_CPU_SLICE_DROP_IN_DIR_CREATED=1");
     expect(prepare).toContain('mktemp "$slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"');
     expect(prepare).toContain('ln -- "$slice_drop_in_temp" "$slice_drop_in"');
@@ -214,6 +220,10 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain('loginctl disable-linger "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('loginctl terminate-user "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('userdel --remove "$E2E_CPU_DELEGATION_USER"');
+    expect(cleanup.run).toContain("Source-loader cache ownership marker is invalid");
+    expect(cleanup.run).toContain("source-loader cache whose identity changed");
+    expect(cleanup.run).toContain('sudo rm -rf --one-file-system -- "$source_cache_dir"');
+    expect(cleanup.run).toContain("Source-loader cache remained after cleanup");
     expect(cleanup.run).toContain('"CPU delegation proof drop-in"');
     expect(cleanup.run).toContain('"CPU slice proof drop-in"');
     expect(cleanup.run).toContain(

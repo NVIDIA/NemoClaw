@@ -76,6 +76,7 @@ jobs:
           drop_in_dir="$(dirname "$drop_in")"
           drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-created"
           slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-slice-drop-in-created"
+          source_cache_marker="$RUNNER_TEMP/nemoclaw-source-require-cache-created"
           workspace_traverse_marker="$RUNNER_TEMP/nemoclaw-workspace-traverse-modes"
           uid=""
           created_user=0
@@ -86,11 +87,14 @@ jobs:
           slice_drop_in_temp=""
           slice_drop_in_id=""
           created_slice_drop_in_dir=0
+          source_cache_dir=""
+          source_cache_id=""
 
           cleanup_failed_prepare() {
             local status=$?
             local current_drop_in_id=""
             local current_slice_drop_in_id=""
+            local current_source_cache_id=""
             trap - EXIT
             set +e
             if [ "$created_user" = 1 ] && id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
@@ -103,6 +107,14 @@ jobs:
             fi
             if [ -n "$drop_in_temp" ]; then
               sudo rm -f -- "$drop_in_temp"
+            fi
+            if [ -n "$source_cache_id" ]; then
+              current_source_cache_id="$(sudo stat -Lc '%d:%i' -- "$source_cache_dir" 2>/dev/null)"
+              if [ "$current_source_cache_id" = "$source_cache_id" ]; then
+                sudo rm -rf --one-file-system -- "$source_cache_dir"
+              elif sudo test -e "$source_cache_dir" || sudo test -L "$source_cache_dir"; then
+                echo "::error::Refusing to remove a source-loader cache whose identity changed" >&2
+              fi
             fi
             if [ -n "$drop_in_id" ]; then
               current_drop_in_id="$(sudo stat -Lc '%d:%i' -- "$drop_in" 2>/dev/null)"
@@ -146,6 +158,7 @@ jobs:
             printf 'E2E_CPU_DELEGATION_DROP_IN_MARKER=%s\n' "$drop_in_marker"
             printf 'E2E_CPU_SLICE_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
             printf 'E2E_CPU_SLICE_DROP_IN_DIR_CREATED=0\n'
+            printf 'E2E_SOURCE_CACHE_MARKER=%s\n' "$source_cache_marker"
             printf 'E2E_WORKSPACE_TRAVERSE_MARKER=%s\n' "$workspace_traverse_marker"
           } >>"$GITHUB_ENV"
           if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
@@ -162,6 +175,10 @@ jobs:
           fi
           if [ -e "$slice_drop_in_marker" ] || [ -L "$slice_drop_in_marker" ]; then
             echo "::error::CPU slice proof ownership marker already exists" >&2
+            exit 1
+          fi
+          if [ -e "$source_cache_marker" ] || [ -L "$source_cache_marker" ]; then
+            echo "::error::Source-loader cache ownership marker already exists" >&2
             exit 1
           fi
           if [ -e "$workspace_traverse_marker" ] || [ -L "$workspace_traverse_marker" ]; then
@@ -195,6 +212,27 @@ jobs:
             namei -l "$GITHUB_WORKSPACE/node_modules/.bin/vitest" >&2 || true
             exit 1
           fi
+          source_cache_parent="$GITHUB_WORKSPACE/node_modules/.cache"
+          source_cache_dir="$source_cache_parent/nemoclaw-source-require"
+          if [ -L "$source_cache_parent" ] \
+            || { [ -e "$source_cache_parent" ] && [ ! -d "$source_cache_parent" ]; }; then
+            echo "::error::Source-loader cache parent has an unexpected type" >&2
+            exit 1
+          fi
+          if [ ! -d "$source_cache_parent" ]; then
+            install -d -m 0755 -- "$source_cache_parent"
+          fi
+          if ! sudo --user "$E2E_CPU_DELEGATION_USER" test -x "$source_cache_parent"; then
+            echo "::error::Dedicated proof user cannot traverse the source-loader cache parent" >&2
+            exit 1
+          fi
+          if sudo test -e "$source_cache_dir" || sudo test -L "$source_cache_dir"; then
+            echo "::error::Source-loader cache already exists" >&2
+            exit 1
+          fi
+          sudo install -d -o "$uid" -g "$uid" -m 0700 -- "$source_cache_dir"
+          source_cache_id="$(sudo stat -Lc '%d:%i' -- "$source_cache_dir")"
+          printf '%s\n' "$source_cache_id" >"$source_cache_marker"
           slice_drop_in_dir="/run/systemd/system/user-${uid}.slice.d"
           slice_drop_in="$slice_drop_in_dir/90-nemoclaw-cpu-controller.conf"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$E2E_ARTIFACT_DIR"
@@ -203,6 +241,7 @@ jobs:
             printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
             printf 'E2E_CPU_DELEGATION_RUNTIME_DIR=/run/user/%s\n' "$uid"
+            printf 'E2E_SOURCE_CACHE_DIR=%s\n' "$source_cache_dir"
             printf 'E2E_CPU_SLICE_DROP_IN=%s\n' "$slice_drop_in"
             printf 'E2E_CPU_SLICE_DROP_IN_DIR=%s\n' "$slice_drop_in_dir"
           } >>"$GITHUB_ENV"
@@ -416,6 +455,35 @@ jobs:
             "${E2E_CPU_SLICE_DROP_IN:-}" \
             "${E2E_CPU_SLICE_DROP_IN_MARKER:-}" \
             "CPU slice proof drop-in"
+          source_cache_dir="${E2E_SOURCE_CACHE_DIR:-}"
+          source_cache_marker="${E2E_SOURCE_CACHE_MARKER:-}"
+          if [ -n "$source_cache_marker" ] && [ -e "$source_cache_marker" ]; then
+            expected_source_cache_id="$(cat "$source_cache_marker")"
+            if [[ ! "$expected_source_cache_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+              echo "::error::Source-loader cache ownership marker is invalid" >&2
+              cleanup_failed=1
+            elif [ -z "$source_cache_dir" ]; then
+              echo "::error::Source-loader cache path is unavailable during cleanup" >&2
+              cleanup_failed=1
+            elif ! sudo test -e "$source_cache_dir" && ! sudo test -L "$source_cache_dir"; then
+              :
+            elif sudo test -L "$source_cache_dir" || ! sudo test -d "$source_cache_dir"; then
+              echo "::error::Refusing to remove a source-loader cache with an unexpected type" >&2
+              cleanup_failed=1
+            elif [ "$(sudo stat -Lc '%d:%i' -- "$source_cache_dir" 2>/dev/null)" \
+              = "$expected_source_cache_id" ]; then
+              sudo rm -rf --one-file-system -- "$source_cache_dir" || cleanup_failed=1
+            else
+              echo "::error::Refusing to remove a source-loader cache whose identity changed" >&2
+              cleanup_failed=1
+            fi
+            if [ -n "$source_cache_dir" ] \
+              && { sudo test -e "$source_cache_dir" || sudo test -L "$source_cache_dir"; }; then
+              echo "::error::Source-loader cache remained after cleanup" >&2
+              cleanup_failed=1
+            fi
+            rm -f -- "$source_cache_marker" || cleanup_failed=1
+          fi
           sudo systemctl daemon-reload || cleanup_failed=1
           if [ "${E2E_CPU_SLICE_DROP_IN_DIR_CREATED:-0}" = "1" ]; then
             slice_drop_in_dir="${E2E_CPU_SLICE_DROP_IN_DIR:-}"

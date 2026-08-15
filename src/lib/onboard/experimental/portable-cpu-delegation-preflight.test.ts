@@ -26,14 +26,13 @@ function unreadableAt(
   unreadableFile: string,
   contents: Record<string, string>,
 ): (file: string) => string {
-  return (file: string) => {
-    if (file === unreadableFile) {
-      throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), {
-        code: "EACCES",
-      });
-    }
-    return files(contents)(file);
+  const readFile = files(contents);
+  const throwUnreadable = (file: string): never => {
+    throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), {
+      code: "EACCES",
+    });
   };
+  return (file: string) => (file === unreadableFile ? throwUnreadable(file) : readFile(file));
 }
 
 const UID = 1001;
