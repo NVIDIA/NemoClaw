@@ -186,14 +186,11 @@ jobs:
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"
 
   generate-matrix:
-    needs: base-image-publication
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
-      dcode_base_contract: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
-      dcode_base_ref: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
@@ -907,7 +904,7 @@ jobs:
             ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   live:
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -917,7 +914,7 @@ jobs:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
-      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.dcode_base_ref }}
+      NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -974,7 +971,7 @@ jobs:
       - name: Record immutable Deep Agents Code base evidence
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
         env:
-          BASE_CONTRACT: ${{ needs.generate-matrix.outputs.dcode_base_contract }}
+          BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
           TARGET_ID: ${{ matrix.id }}
         shell: bash
