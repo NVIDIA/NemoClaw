@@ -31,6 +31,7 @@ type FixtureMode =
   | "input-mode-timeout"
   | "invalid-order"
   | "late-extra"
+  | "multiple-tui-processes"
   | "nonzero"
   | "nonzero-cleanup-failure"
   | "recording-timeout"
@@ -137,6 +138,8 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const fakeLaunch = join(fixtureRoot, "openclaw");
   const fakeOpenshell = join(fixtureRoot, "openshell");
   const sessionRoot = join(fixtureRoot, "sessions");
+  const inputMarker = join(fixtureRoot, "input-observed");
+  const duplicateMarker = join(fixtureRoot, "duplicate-ready");
   const ttyMarker = join(fixtureRoot, "tty-observed");
   const runId = basename(fixtureRoot).replaceAll(/[^a-zA-Z0-9]/gu, "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
@@ -166,6 +169,25 @@ const append = (role, content) => fs.appendFileSync(
 );
 
 (async () => {
+  let duplicate;
+  if (mode === "multiple-tui-processes") {
+    duplicate = childProcess.spawn(
+      process.execPath,
+      [
+        "-e",
+        'const fs = require("node:fs"); fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER, ""); setInterval(() => { if (process.ppid === 1) process.exit(0); }, 20);',
+        __filename,
+        "tui",
+      ],
+      { env: process.env, stdio: "ignore" },
+    );
+    process.once("exit", () => duplicate.kill("SIGKILL"));
+    for (let attempt = 0; attempt < 200 && !fs.existsSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER)) process.exit(68);
+  }
+  process.stdin.once("data", () => fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_INPUT_MARKER, ""));
   if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
     let inputBeforeAttachment = false;
     const recordEarlyInput = () => { inputBeforeAttachment = true; };
@@ -236,6 +258,8 @@ exec "$@"
       env: {
         ...process.env,
         NEMOCLAW_FIXTURE_MODE: mode,
+        NEMOCLAW_FIXTURE_DUPLICATE_MARKER: duplicateMarker,
+        NEMOCLAW_FIXTURE_INPUT_MARKER: inputMarker,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
         NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
         NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
@@ -257,6 +281,7 @@ exec "$@"
 
     return {
       baselineRemoved: !existsSync(baselinePath),
+      inputObserved: existsSync(inputMarker),
       result,
       ttyObserved: existsSync(ttyMarker),
     };
@@ -378,6 +403,23 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "rejects multiple OpenClaw TUI processes before submitting PTY input (#9160)",
+  () => {
+    const { baselineRemoved, inputObserved, result, ttyObserved } = runLaunchSessionFixture(
+      "multiple-tui-processes",
+      "absent",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(inputObserved).toBe(false);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("multiple_tui_processes");
   },
 );
 
