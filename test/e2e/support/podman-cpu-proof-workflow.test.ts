@@ -134,9 +134,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain(
       'useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"',
     );
-    expect(prepare).toContain("CPUAccounting=yes");
+    expect(prepare).toContain("CPUWeight=100");
     expect(prepare).toContain(
-      'systemctl set-property --runtime "user-${uid}.slice" CPUAccounting=yes',
+      'systemctl set-property --runtime "user-${uid}.slice" CPUWeight=100',
     );
     expect(prepare).toContain("/run/systemd/system.control/user-${uid}.slice.d");
     expect(prepare).toContain('grep -qw cpu "$user_slice_controllers"');
@@ -165,15 +165,15 @@ describe("native Podman CPU proof workflow", () => {
       'drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"',
     );
     expect(cleanup.run).toContain('sudo rm -f "$drop_in"');
-    expect(cleanup.run).toContain('sudo rm -f "$E2E_CPU_ACCOUNTING_DROP_IN"');
-    expect(cleanup.run).toContain('sudo rmdir "$E2E_CPU_ACCOUNTING_DROP_IN_DIR"');
+    expect(cleanup.run).toContain('sudo rm -f "$E2E_CPU_WEIGHT_DROP_IN"');
+    expect(cleanup.run).toContain('sudo rmdir "$E2E_CPU_WEIGHT_DROP_IN_DIR"');
     expect(cleanup.run).toContain('loginctl disable-linger "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('loginctl terminate-user "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('userdel --remove "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain("CPU delegation proof drop-in remained after cleanup");
-    expect(cleanup.run).toContain("CPU accounting proof drop-in remained after cleanup");
+    expect(cleanup.run).toContain("CPU weight proof drop-in remained after cleanup");
     expect(cleanup.run).toContain(
-      "CPU accounting proof drop-in directory remained after cleanup",
+      "CPU weight proof drop-in directory remained after cleanup",
     );
     expect(cleanup.run).toContain("CPU delegation proof user remained after cleanup");
     const delegationProof = readRepoText(

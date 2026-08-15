@@ -74,13 +74,13 @@ jobs:
           set -euo pipefail
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-created"
-          slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-accounting-drop-in-created"
-          slice_drop_in_dir_marker="$RUNNER_TEMP/nemoclaw-cpu-accounting-drop-in-dir-created"
+          slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-weight-drop-in-created"
+          slice_drop_in_dir_marker="$RUNNER_TEMP/nemoclaw-cpu-weight-drop-in-dir-created"
           {
             printf 'E2E_CPU_DELEGATION_USER_CREATED=0\n'
             printf 'E2E_CPU_DELEGATION_DROP_IN_MARKER=%s\n' "$drop_in_marker"
-            printf 'E2E_CPU_ACCOUNTING_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
-            printf 'E2E_CPU_ACCOUNTING_DROP_IN_DIR_MARKER=%s\n' "$slice_drop_in_dir_marker"
+            printf 'E2E_CPU_WEIGHT_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
+            printf 'E2E_CPU_WEIGHT_DROP_IN_DIR_MARKER=%s\n' "$slice_drop_in_dir_marker"
           } >>"$GITHUB_ENV"
           if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
             echo "::error::CPU delegation proof user already exists" >&2
@@ -94,12 +94,12 @@ jobs:
           printf 'E2E_CPU_DELEGATION_USER_CREATED=1\n' >>"$GITHUB_ENV"
           uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
           slice_drop_in_dir="/run/systemd/system.control/user-${uid}.slice.d"
-          slice_drop_in="$slice_drop_in_dir/50-CPUAccounting.conf"
+          slice_drop_in="$slice_drop_in_dir/50-CPUWeight.conf"
           {
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
             printf 'E2E_CPU_DELEGATION_RUNTIME_DIR=/run/user/%s\n' "$uid"
-            printf 'E2E_CPU_ACCOUNTING_DROP_IN=%s\n' "$slice_drop_in"
-            printf 'E2E_CPU_ACCOUNTING_DROP_IN_DIR=%s\n' "$slice_drop_in_dir"
+            printf 'E2E_CPU_WEIGHT_DROP_IN=%s\n' "$slice_drop_in"
+            printf 'E2E_CPU_WEIGHT_DROP_IN_DIR=%s\n' "$slice_drop_in_dir"
           } >>"$GITHUB_ENV"
           sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
           sudo systemctl start "user@${uid}.service"
@@ -112,12 +112,12 @@ jobs:
           fi
           touch "$slice_drop_in_marker"
           # GitHub's Ubuntu runner does not activate the CPU controller for fresh
-          # user slices. Apply the runtime property to the active dedicated slice
-          # so the negative phase isolates the stock user@.service boundary.
-          sudo systemctl set-property --runtime "user-${uid}.slice" CPUAccounting=yes
+          # user slices. Apply systemd's default CPU weight to the active dedicated
+          # slice so the negative phase isolates the stock user@.service boundary.
+          sudo systemctl set-property --runtime "user-${uid}.slice" CPUWeight=100
           if ! sudo test -f "$slice_drop_in" \
-            || ! sudo grep -q '^CPUAccounting=yes$' "$slice_drop_in"; then
-            echo "::error::CPU accounting runtime property was not recorded as expected" >&2
+            || ! sudo grep -q '^CPUWeight=100$' "$slice_drop_in"; then
+            echo "::error::CPU weight runtime property was not recorded as expected" >&2
             exit 1
           fi
           user_slice_controllers="/sys/fs/cgroup/user.slice/user-${uid}.slice/cgroup.controllers"
@@ -209,19 +209,19 @@ jobs:
               cleanup_failed=1
             fi
           fi
-          if [ -n "${E2E_CPU_ACCOUNTING_DROP_IN_MARKER:-}" ] \
-            && [ -e "$E2E_CPU_ACCOUNTING_DROP_IN_MARKER" ]; then
-            sudo rm -f "$E2E_CPU_ACCOUNTING_DROP_IN" || cleanup_failed=1
-            if sudo test -e "$E2E_CPU_ACCOUNTING_DROP_IN"; then
-              echo "::error::CPU accounting proof drop-in remained after cleanup" >&2
+          if [ -n "${E2E_CPU_WEIGHT_DROP_IN_MARKER:-}" ] \
+            && [ -e "$E2E_CPU_WEIGHT_DROP_IN_MARKER" ]; then
+            sudo rm -f "$E2E_CPU_WEIGHT_DROP_IN" || cleanup_failed=1
+            if sudo test -e "$E2E_CPU_WEIGHT_DROP_IN"; then
+              echo "::error::CPU weight proof drop-in remained after cleanup" >&2
               cleanup_failed=1
             fi
           fi
-          if [ -n "${E2E_CPU_ACCOUNTING_DROP_IN_DIR_MARKER:-}" ] \
-            && [ -e "$E2E_CPU_ACCOUNTING_DROP_IN_DIR_MARKER" ]; then
-            sudo rmdir "$E2E_CPU_ACCOUNTING_DROP_IN_DIR" || cleanup_failed=1
-            if sudo test -d "$E2E_CPU_ACCOUNTING_DROP_IN_DIR"; then
-              echo "::error::CPU accounting proof drop-in directory remained after cleanup" >&2
+          if [ -n "${E2E_CPU_WEIGHT_DROP_IN_DIR_MARKER:-}" ] \
+            && [ -e "$E2E_CPU_WEIGHT_DROP_IN_DIR_MARKER" ]; then
+            sudo rmdir "$E2E_CPU_WEIGHT_DROP_IN_DIR" || cleanup_failed=1
+            if sudo test -d "$E2E_CPU_WEIGHT_DROP_IN_DIR"; then
+              echo "::error::CPU weight proof drop-in directory remained after cleanup" >&2
               cleanup_failed=1
             fi
           fi
