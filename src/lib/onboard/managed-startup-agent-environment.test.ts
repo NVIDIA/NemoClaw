@@ -400,25 +400,26 @@ describe("managed startup agent environment", () => {
     ).toThrow(message);
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("derives every unsupported $0 runtime unset from the closed contract", (agent) => {
-    const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent](), {
-      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
-      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
-      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
-      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
-    });
-    const unsets = new Set(result.applicationRuntime.unsetEnvironment);
-    for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
-      expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
-    }
-    for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
-      expect(unsets.has(name)).toBe(agent !== "openclaw");
-    }
-  });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "derives every unsupported $0 runtime unset from the closed contract",
+    (agent) => {
+      const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent](), {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+      });
+      const unsets = new Set(result.applicationRuntime.unsetEnvironment);
+      for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
+        expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
+      }
+      for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
+        expect(unsets.has(name)).toBe(agent !== "openclaw");
+      }
+    },
+  );
 
   it("keeps the profile mapper independent from mutable process-global runtime input", () => {
     const name = "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS";
@@ -514,7 +515,7 @@ describe("managed startup agent environment", () => {
     });
   });
 
-  it("keeps DCode routing and auto-approval in root-owned files instead of ambient runtime env", () => {
+  it("keeps DCode routing, provider identity, and auto-approval in root-owned files", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile(), {
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "not-a-number",
     });
@@ -538,6 +539,7 @@ describe("managed startup agent environment", () => {
     const expectedDcodeRuntime = { ...result.configurationEnvironment };
     delete expectedDcodeRuntime.NEMOCLAW_INFERENCE_BASE_URL;
     delete expectedDcodeRuntime.NEMOCLAW_REASONING_EFFORT;
+    delete expectedDcodeRuntime.NEMOCLAW_UPSTREAM_PROVIDER;
     for (const name of [
       "HTTP_PROXY",
       "HTTPS_PROXY",
@@ -566,6 +568,7 @@ describe("managed startup agent environment", () => {
     expect(result.runtimeEnvironment).not.toHaveProperty("HTTPS_PROXY");
     expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_INFERENCE_BASE_URL");
     expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING_EFFORT");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_UPSTREAM_PROVIDER");
 
     expect(result.materials).toEqual([
       {
@@ -587,6 +590,15 @@ describe("managed startup agent environment", () => {
         legacyInput: "NEMOCLAW_INFERENCE_BASE_URL",
         path: "/usr/local/share/nemoclaw/dcode-inference-base-url",
         contents: "https://inference.local/v1\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_UPSTREAM_PROVIDER",
+        path: "/usr/local/share/nemoclaw/dcode-upstream-provider",
+        contents: "openrouter\n",
         owner: "root",
         group: "root",
         mode: 0o444,
@@ -678,28 +690,42 @@ describe("managed startup agent environment", () => {
     });
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("represents the complete $0 Docker/start affordance inventory", (agent) => {
-    const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent]());
-    expect(representedLegacyInputs(result)).toEqual(
-      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent]
-        .map((affordance) => affordance.input)
-        .sort(),
-    );
-    const messagingActions = result.actions.filter(
-      (action) => action.kind === "apply-messaging-plan",
-    );
-    expect(messagingActions.map(({ phase, runAs }) => [phase, runAs])).toEqual(
-      agent === "langchain-deepagents-code"
-        ? []
-        : [
-            ["runtime-setup", "root"],
-            ["post-agent-install", "sandbox"],
-          ],
-    );
-    expect(messagingActions.map((action) => String(action.phase))).not.toContain("agent-install");
+  it("materializes the longest DCode upstream provider accepted by its runtime (#7112)", () => {
+    const profile = dcodeProfile();
+    const upstreamProvider = "a".repeat(64);
+    const result = mapManagedStartupProfileToAgentEnvironment({
+      ...profile,
+      inference: { ...profile.inference, upstreamProvider },
+    });
+
+    expect(
+      result.materials.find((material) => material.legacyInput === "NEMOCLAW_UPSTREAM_PROVIDER"),
+    ).toMatchObject({ contents: `${upstreamProvider}\n` });
   });
+
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "represents the complete $0 Docker/start affordance inventory",
+    (agent) => {
+      const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent]());
+      expect(representedLegacyInputs(result)).toEqual(
+        MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent]
+          .map((affordance) => affordance.input)
+          .sort(),
+      );
+      const messagingActions = result.actions.filter(
+        (action) => action.kind === "apply-messaging-plan",
+      );
+      expect(messagingActions.map(({ phase, runAs }) => [phase, runAs])).toEqual(
+        agent === "langchain-deepagents-code"
+          ? []
+          : [
+              ["runtime-setup", "root"],
+              ["post-agent-install", "sandbox"],
+            ],
+      );
+      expect(messagingActions.map((action) => String(action.phase))).not.toContain("agent-install");
+    },
+  );
 
   it("uses explicit clear states without erasing launch-only ambient proxy credentials", () => {
     const openclawBase = openClawProfile();
@@ -870,6 +896,21 @@ describe("managed startup agent environment", () => {
       /messaging.plan must be null for langchain-deepagents-code/,
     );
   });
+
+  it.each(["provider-π", `p${"x".repeat(64)}`, "-ollama-local"])(
+    "rejects unsupported DCode provider identifier %s before materialization (#7112)",
+    (upstreamProvider) => {
+      const base = dcodeProfile();
+      const profile: ManagedStartupProfile = {
+        ...base,
+        inference: { ...base.inference, upstreamProvider },
+      };
+
+      expect(() => mapManagedStartupProfileToAgentEnvironment(profile)).toThrow(
+        /must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode/u,
+      );
+    },
+  );
 
   it("revalidates typed input while keeping DCode host proxy intent outside its pinned runtime", () => {
     const dcodeBase = dcodeProfile();
