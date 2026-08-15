@@ -37,6 +37,13 @@ The downstream scheduled reconciliation remains available if the event-driven di
 
 - Tag only the commit captured in a generated release plan.
 - Do not generate the release plan until the release-prep docs PR containing `docs/changelog/YYYY-MM-DD.mdx` and the exact planned `## vX.Y.Z` heading is merged or explicitly waived.
+- Require exactly one completed, successful `Docs / Post-Merge Catch-Up` push run with exactly one
+  completed, successful `Documentation readiness` job. The run must use the exact `origin/main`
+  commit captured by the release plan. The requirement has no waiver. A result for another commit
+  is not release evidence.
+- At plan generation, preflight, and cut, require no open `automation/post-merge-docs` PR. If its
+  branch remains, its tree must equal the exact release candidate tree. This live check prevents
+  later branch or PR changes from reusing older readiness evidence.
 - Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
@@ -73,7 +80,8 @@ Release Progress:
 Start with one read-only pass that checks these prerequisites together:
 
 - refresh `origin/main` and resolve its full SHA;
-- check the target changelog heading and release-prep docs state; and
+- check the target changelog heading and release-prep docs state;
+- check documentation readiness for the same full SHA; and
 - inventory existing E2E runs for the same SHA before deciding what to dispatch.
 
 Do not wait for merges to stop. The plan captures one candidate SHA for evidence; a late drift check advances it when `origin/main` moves.
@@ -81,6 +89,11 @@ Do not dispatch or poll a workflow during this pass.
 
 Before this step, confirm release-prep docs are merged or explicitly waived.
 Return to `nemoclaw-maintainer-evening` if docs are still pending.
+
+Require the release script to accept the `Documentation readiness` result for the candidate SHA.
+If the result is missing or does not succeed, inspect `Docs / Post-Merge Catch-Up`. When that
+workflow has an open draft documentation PR, complete and merge it before generating the plan.
+The merge starts a new workflow run for the resulting `main` commit.
 
 For the planned version, inspect `origin/main` before generating the plan:
 
@@ -116,6 +129,7 @@ Read the generated `plan.json` and show the maintainer:
 - previous tag,
 - next tag,
 - target `origin/main` commit and headline,
+- `Documentation readiness` workflow and job URLs,
 - plan hash,
 - forbidden operations,
 - confirmation phrase,
@@ -173,6 +187,11 @@ Run the release script's signing preflight before asking for confirmation:
 ```bash
 npm run release:cut -- --plan <plan.json> --preflight-only
 ```
+
+The preflight queries GitHub again. It requires the observed documentation readiness receipt to
+match the workflow run, attempt, job, URLs, and candidate SHA recorded in the plan. Regenerate the
+plan when this evidence changes. It also rejects a reopened rolling documentation PR or a retained
+rolling branch whose tree differs from the candidate.
 
 For the canonical `NVIDIA/NemoClaw` remote, the script first searches completed manual `.github/workflows/e2e.yaml` runs with conclusion `success` or `failure` at the exact planned commit.
 It accepts the first successful run with exactly one completed, successful `Release qualification` job.
@@ -322,6 +341,9 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
+- `Documentation readiness` is missing, duplicated, incomplete, or unsuccessful for the candidate
+  SHA: inspect `Docs / Post-Merge Catch-Up`. Complete its draft documentation PR when one exists,
+  then require one successful result for the resulting `main` commit. Do not waive the result.
 - Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
 - No qualifying `Release qualification` exists: inspect the GitHub result and run pre-tag E2E for the planned SHA only when no qualifying run already exists. Use a job waiver only with explicit repository administrator authorization. Do not release until the release script accepts the canonical check.

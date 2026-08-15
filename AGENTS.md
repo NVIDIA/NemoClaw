@@ -302,6 +302,15 @@ If the command trace contains no reviewer-request write, report the event as an 
   [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
   procedure.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
+- A push to `main` starts `Docs / Post-Merge Catch-Up`. The workflow reviews changes from the latest
+  reachable semver tag through the pushed commit. It creates or updates one draft documentation PR
+  with a GitHub-verified commit and bot DCO declaration when documentation work remains. Release
+  preparation can add the dated release entry to that draft PR.
+- Require the `Documentation readiness` result to succeed for the exact release candidate commit
+  before cutting a release tag. The result has no waiver. A later merge changes the candidate and
+  requires a new result.
+- During the post-merge workflow canary, continue to include user-visible documentation in the
+  code-changing PR. Continue to complete the independent documentation writer review and receipt.
 
 ## PR Requirements
 

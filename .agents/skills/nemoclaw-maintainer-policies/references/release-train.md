@@ -23,10 +23,19 @@ Daily release labels coordinate release work. They do not classify issues and th
 ## Release-Prep Docs
 
 Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
+When `Docs / Post-Merge Catch-Up` has an open `automation/post-merge-docs` draft documentation PR,
+continue that PR instead of creating a second release-prep documentation PR.
 The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx`.
 Use the required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
 This dated file is the release history for all documentation variants. Ordinary documentation pages and the post-tag Announcement do not replace it.
 Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
+The exact release candidate commit must have exactly one completed, successful
+`Docs / Post-Merge Catch-Up` push run. That run must contain exactly one completed, successful
+`Documentation readiness` job. This requirement has no waiver. A result for an earlier `main`
+commit is not release evidence.
+At plan generation and tag cut, no rolling documentation PR may be open. A retained
+`automation/post-merge-docs` branch must have the same tree as the exact release candidate. These
+live checks prevent later rolling-branch changes from reusing an older successful result.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
 ## Cutoff
@@ -39,11 +48,12 @@ At cutoff:
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
 4. Confirm the merged release-note docs PR contains the dated changelog entry for the target version, or record an explicit waiver that names the missing entry.
-5. Generate QA handoff from merged PRs.
-6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
-7. Review the candidate commit's pre-tag E2E evidence.
-8. Cut the release tag only with explicit maintainer confirmation.
-9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
+5. Require a successful documentation readiness result for the exact release candidate commit.
+6. Generate QA handoff from merged PRs.
+7. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
+8. Review the candidate commit's pre-tag E2E evidence.
+9. Cut the release tag only with explicit maintainer confirmation.
+10. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
 
 ## Pre-Tag E2E Evidence
 

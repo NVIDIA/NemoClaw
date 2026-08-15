@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { isCanonicalNemoClawRemote } from "./release/remote.mts";
+import type { DocumentationReadinessReceipt } from "./release/verify-documentation-readiness.mts";
 
 type Bump = "patch" | "minor" | "major";
 
@@ -30,6 +31,7 @@ type ReleasePlan = {
   originRemote: string;
   originMainCommit: string;
   originMainHeadline: string;
+  documentationReadiness: DocumentationReadinessReceipt | null;
   compareRange: string;
   latestBefore: RemoteTag | null;
   lkgBefore: RemoteTag | null;
@@ -167,6 +169,21 @@ function stablePlanHash(planWithoutHash: Omit<ReleasePlan, "planHash">): string 
     .digest("hex");
 }
 
+function readDocumentationReadiness(
+  originRemote: string,
+  candidateSha: string,
+): DocumentationReadinessReceipt | null {
+  if (!isCanonicalNemoClawRemote(originRemote)) {
+    return null;
+  }
+  const output = run(process.execPath, [
+    path.join(import.meta.dirname, "release", "verify-documentation-readiness.mts"),
+    "--commit",
+    candidateSha,
+  ]);
+  return JSON.parse(output) as DocumentationReadinessReceipt;
+}
+
 function main(): void {
   const options = parseArgs(process.argv.slice(2));
   const repoRoot = run("git", ["rev-parse", "--show-toplevel"]).trim();
@@ -205,6 +222,7 @@ function main(): void {
     options.output ?? path.join(repoRoot, "..", `nemoclaw-release-${nextTag}`, "plan.json"),
   );
   const planPath = output;
+  const documentationReadiness = readDocumentationReadiness(originRemote, originMainCommit);
 
   const planWithoutHash: Omit<ReleasePlan, "planHash"> = {
     schemaVersion: 1,
@@ -215,6 +233,7 @@ function main(): void {
     originRemote,
     originMainCommit,
     originMainHeadline,
+    documentationReadiness,
     compareRange: `${previousTag}...${nextTag}`,
     latestBefore: readRemoteTag("latest"),
     lkgBefore: readRemoteTag("lkg"),
@@ -222,6 +241,7 @@ function main(): void {
     planPath,
     confirmationPhrase: `CONFIRM RELEASE ${nextTag} ${originMainCommit}`,
     operations: [
+      `require Documentation readiness for ${originMainCommit}`,
       `create signed annotated ${nextTag} tag at ${originMainCommit}`,
       `push ${nextTag}`,
       "wait for release-latest-tag workflow to move latest",
@@ -252,6 +272,11 @@ function main(): void {
   console.log(`Previous tag: ${previousTag}`);
   console.log(`Next tag: ${nextTag}`);
   console.log(`Target commit: ${originMainHeadline}`);
+  if (documentationReadiness) {
+    console.log(`Documentation readiness: ${documentationReadiness.jobUrl}`);
+  } else {
+    console.log("Documentation readiness: skipped for explicitly allowed noncanonical remote");
+  }
   console.log("Confirmation phrase:");
   console.log(plan.confirmationPhrase);
 }

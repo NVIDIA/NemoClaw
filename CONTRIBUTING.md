@@ -527,6 +527,34 @@ It reports a PR as unclassified when that field is incomplete or contradictory.
 Use `--format summary` to print only aggregate metrics.
 Use `--until YYYY-MM-DD` to set the end of the reporting period.
 
+### Post-Merge Documentation Workflow
+
+A push to `main` starts the `Docs / Post-Merge Catch-Up` workflow. The workflow reviews changes from
+the latest reachable semver tag through the pushed commit. It uses merged source, tests, and
+documentation from `main` as its behavior authority.
+
+When documentation work remains, the workflow creates or updates one draft documentation PR on
+`automation/post-merge-docs`. Its automation commit is GitHub-verified and includes the bot DCO
+declaration. The `Documentation readiness` job remains unsuccessful while that work is open.
+Merging the documentation PR starts a new review for the resulting `main` commit. Release
+preparation can add the dated release entry to the same draft PR.
+
+Pull-request checks created by the built-in workflow token start in an approval-required state. A
+maintainer must approve those runs. The workflow does not approve checks or merge the draft PR.
+
+The `Documentation readiness` job succeeds when the exact `main` commit has no remaining
+documentation work. The release workflow rejects a missing or unsuccessful result. It also rejects
+a result from another commit, an open rolling documentation PR, or a retained rolling branch whose
+tree differs from that commit. This requirement has no waiver. If another PR merges, release
+preparation must use the new `main` commit and its result.
+
+The post-merge workflow is in a canary period. It does not replace these contributor requirements:
+
+- Include documentation for a user-visible change in the same code-changing PR.
+- Run the applicable docs build.
+- Complete the independent documentation writer review.
+- Record the Documentation Writer Review receipt in the PR description.
+
 To build and preview docs locally:
 
 ```console

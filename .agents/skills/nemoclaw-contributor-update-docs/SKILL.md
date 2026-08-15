@@ -17,6 +17,7 @@ Determine whether the request is:
 
 - documentation impact for one change;
 - catch-up across a supplied or inferred commit range;
+- continuation of the draft documentation PR created by the post-merge workflow;
 - pre-tag release preparation for an exact version and planned date; or
 - post-release recovery for documentation that missed the release.
 
@@ -55,6 +56,13 @@ For each candidate change:
 Ignore test-only and internal refactors unless they expose a documentation defect. Apply the
 current skip-file reporting policy. Record other evidence-backed exclusions in task evidence.
 
+When `Docs / Post-Merge Catch-Up` created a draft documentation PR, use its recorded commit range as
+candidate evidence. Identify that PR by the `automation/post-merge-docs` branch and
+the `<!-- nemoclaw-post-merge-docs:start -->` and `<!-- nemoclaw-post-merge-docs:end -->` markers.
+Verify its range against `main` before editing. Continue the existing draft PR instead of creating
+a competing documentation PR. The workflow range starts at the latest reachable semver tag and
+ends at the exact `main` commit under review.
+
 ## Update the owning content
 
 Read each complete source page before editing. Update the narrowest page that owns the behavior.
@@ -74,11 +82,12 @@ from the current documentation contributor guide and neighboring entries.
 For pre-tag work:
 
 1. Confirm the target version and planned release date.
-2. Include every intended release item or record its evidence-backed exclusion.
-3. Identify the target release label required by the current
+2. Continue the `automation/post-merge-docs` draft PR when one covers the untagged commit range.
+3. Include every intended release item or record its evidence-backed exclusion.
+4. Identify the target release label required by the current
    [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md) and verify
    that it exists.
-4. Stop before PR creation when the required release label does not exist.
+5. Stop before PR creation when the required release label does not exist.
 
 Use post-release recovery rules only when the target release already exists.
 
