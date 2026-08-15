@@ -3521,7 +3521,7 @@ describe("Telegram diagnostics (#2766)", () => {
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
-        '_nemoclaw_safe_create_tmp_file() { [ "$1" != /tmp/auto-pair.log ]; : > "$1"; chmod "$2" "$1"; }',
+        '_nemoclaw_safe_create_tmp_file() { if [ "$1" = /tmp/auto-pair.log ]; then return 97; fi; : > "$1"; chmod "$2" "$1"; }',
         `${extractShellFunctionFromSource(src, "prepare_auto_pair_log").replaceAll(
           "/tmp/auto-pair.log",
           autoPairLog,
