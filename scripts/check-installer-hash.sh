@@ -8,6 +8,7 @@
 # Checked artifacts:
 #   1. OpenShell archives/formula — scripts/install-openshell.sh release-asset table
 #   2. Brev OpenShell CLI — scripts/brev-launchable-ci-cpu.sh release-asset table
+#   3. OpenShell supervisor — version-to-OCI-index runtime map
 #
 # Usage:
 #   scripts/check-installer-hash.sh            # exit 0 if current, 1 if stale
@@ -25,11 +26,11 @@ fi
 CHECKER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Trust-anchor rollout is intentionally two-step. First land a prerequisite PR
-# that adds the reviewed manifest, formula, and standalone sandbox identities
-# while runtime selectors still name the current release. Only after that
-# commit is on the target branch may a separate pin PR select the new release.
-# Pull-request verification runs this checker and its parser from the base SHA,
-# so a pin PR can never authorize its own identities.
+# that adds the reviewed manifest, formula, standalone sandbox, and supervisor
+# OCI identities while runtime selectors still name the current release. Only
+# after that commit is on the target branch may a separate pin PR select the new
+# release. Pull-request verification runs this checker and its parser from the
+# base SHA, so a pin PR can never authorize its own identities.
 readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.72|openshell-checksums-sha256.txt|0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
   "0.0.72|openshell-gateway-checksums-sha256.txt|3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"
@@ -46,6 +47,9 @@ readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.101|openshell-checksums-sha256.txt|9c90869d00b109b5ac1062b1a9808a592c2311d3c0c4926bae44d136b979d8a9"
   "0.0.101|openshell-gateway-checksums-sha256.txt|dcb3f1917713bf2a8e8e1803ac42c5e39d9dd41e644136b05def32b077082777"
   "0.0.101|openshell-sandbox-checksums-sha256.txt|d16f7d369c54d74d36c7df036565267a960e7ce6fb143012fe9d77f257d6e8b3"
+  "0.0.103|openshell-checksums-sha256.txt|1a9016cfb9219ad6ea3dc623b3dfd517dbce062cba9484964a8ca9175c7d1c9d"
+  "0.0.103|openshell-gateway-checksums-sha256.txt|800f8501329b27b79d260f21de088d8aea36de45021eaa3d29d189c433fc04b5"
+  "0.0.103|openshell-sandbox-checksums-sha256.txt|ab7c77fe40e93b293e4d34e892824ed0cb131e8b973ba2660b155cdd0fa0f604"
 )
 
 # OpenShell's Homebrew formula is a release asset but is not included in any
@@ -58,6 +62,7 @@ readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(
   "0.0.85|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.85/openshell.rb|f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"
   "0.0.99|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.99/openshell.rb|8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"
   "0.0.101|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.101/openshell.rb|87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"
+  "0.0.103|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.103/openshell.rb|95a290f0e0e2f57d7d46ba9171fca6e99e5226875cd12e12391b7338f6c219f9"
 )
 
 case "${1:-}" in
@@ -107,6 +112,7 @@ sha256_file() {
 check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
   local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
+  local supervisor_runtime="${REPO_ROOT}/src/lib/onboard/docker-driver-gateway-runtime.ts"
   local release_base workspace manifests spec manifest expected actual source asset pinned upstream formula_asset
   local matches required_manifest required_matches formula_expected="" formula_matches=0 formula_url=""
   local pin_records parser_error parser_errors parsed_version release_version="" record_extra
@@ -138,6 +144,7 @@ check_openshell_release_assets() {
     --blueprint "${REPO_ROOT}/nemoclaw-blueprint/blueprint.yaml" \
     --installer "$installer" \
     --brev-installer "$brev_installer" \
+    --supervisor-runtime "$supervisor_runtime" \
     --format tsv 2>"$parser_errors"); then
     echo "  STALE: unable to extract the OpenShell installer pin tables with trusted parser code."
     while IFS= read -r parser_error; do

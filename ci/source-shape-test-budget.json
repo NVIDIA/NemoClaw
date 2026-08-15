@@ -407,6 +407,51 @@
       "category": "security"
     },
     {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "publishes candidate contracts outside the all-agent activation pattern",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "does not grant package write permission to pull request candidate builds",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "imports the local base into Buildx for digest-only candidate publication",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "qualifies local and published candidates through the declared entrypoint",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "builds and validates the candidate image for linux/amd64 and linux/arm64",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "publishes a Pi base image for linux/amd64 and linux/arm64",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "grants network capability only to the approved image-owned binaries",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "merges a baked corporate CA into the trust bundle Node reads",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "persists every merged CA variable into the runtime environment file",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
@@ -476,7 +521,6 @@
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
     },
-
     {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
