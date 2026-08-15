@@ -4,6 +4,8 @@
 import assert from "node:assert";
 import { createServer, type AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { retryUntil, retryUntilAsync } from "../src/lib/core/retry.js";
+
 import {
   buildLoopbackProbeEnv,
   sleepMs,
@@ -45,6 +47,167 @@ describe("wait utility", () => {
     const end = performance.now();
     const duration = end - start;
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
+  });
+
+  it("retryUntil returns the first accepted result without sleeping (#9218)", () => {
+    const sleep = vi.fn();
+    const operation = vi.fn(() => "ready");
+
+    const result = retryUntil(operation, {
+      accept: (value) => value === "ready",
+      retryDelaysMs: [10, 20],
+      sleep,
+    });
+
+    expect(result).toBe("ready");
+    expect(operation).toHaveBeenCalledOnce();
+    expect(operation).toHaveBeenCalledWith(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retryUntil applies exact delays before a later accepted result (#9218)", () => {
+    const sleep = vi.fn();
+
+    const result = retryUntil((attempt) => (attempt === 3 ? "ready" : "starting"), {
+      accept: (value) => value === "ready",
+      retryDelaysMs: [10, 20, 30],
+      sleep,
+    });
+
+    expect(result).toBe("ready");
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it("retryUntil returns the final unaccepted result after exhaustion (#9218)", () => {
+    const sleep = vi.fn();
+
+    const result = retryUntil((attempt) => `failure-${attempt}`, {
+      accept: () => false,
+      retryDelaysMs: [10, 20],
+      sleep,
+    });
+
+    expect(result).toBe("failure-3");
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it("retryUntil runs once with an empty retry schedule (#9218)", () => {
+    const operation = vi.fn(() => "failure");
+
+    const result = retryUntil(operation, {
+      accept: () => false,
+      retryDelaysMs: [],
+
+      sleep: vi.fn(),
+    });
+
+    expect(result).toBe("failure");
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it("retryUntil propagates an operation error without sleeping (#9218)", () => {
+    const sleep = vi.fn();
+    const error = new Error("operation failed");
+
+    expect(() =>
+      retryUntil(
+        () => {
+          throw error;
+        },
+        { accept: () => false, retryDelaysMs: [10], sleep },
+      ),
+    ).toThrow(error);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retryUntil propagates a sleep error without another attempt (#9218)", () => {
+    const operation = vi.fn(() => "starting");
+    const error = new Error("sleep failed");
+
+    expect(() =>
+      retryUntil(operation, {
+        accept: () => false,
+        retryDelaysMs: [10],
+        sleep: () => {
+          throw error;
+        },
+      }),
+    ).toThrow(error);
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it("retryUntilAsync applies exact delays before a later accepted result (#9218)", async () => {
+    const sleep = vi.fn(async () => {});
+
+    const result = await retryUntilAsync(
+      async (attempt) => (attempt === 3 ? "ready" : "starting"),
+      {
+        accept: (value) => value === "ready",
+        retryDelaysMs: [10, 20, 30],
+        sleep,
+      },
+    );
+
+    expect(result).toBe("ready");
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it("retryUntilAsync runs once with an empty retry schedule (#9218)", async () => {
+    const operation = vi.fn(async () => "failure");
+
+    const result = await retryUntilAsync(operation, {
+      accept: () => false,
+      retryDelaysMs: [],
+
+      sleep: vi.fn(async () => {}),
+    });
+
+    expect(result).toBe("failure");
+    expect(operation).toHaveBeenCalledOnce();
+  });
+
+  it("retryUntilAsync returns the final unaccepted result after exhaustion (#9218)", async () => {
+    const sleep = vi.fn(async () => {});
+
+    const result = await retryUntilAsync(async (attempt) => `failure-${attempt}`, {
+      accept: () => false,
+      retryDelaysMs: [10, 20],
+      sleep,
+    });
+
+    expect(result).toBe("failure-3");
+    expect(sleep.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it("retryUntilAsync propagates an operation error without sleeping (#9218)", async () => {
+    const sleep = vi.fn(async () => {});
+    const error = new Error("operation failed");
+
+    await expect(
+      retryUntilAsync(
+        async () => {
+          throw error;
+        },
+        { accept: () => false, retryDelaysMs: [10], sleep },
+      ),
+    ).rejects.toBe(error);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("retryUntilAsync propagates a sleep error without another attempt (#9218)", async () => {
+    const operation = vi.fn(async () => "starting");
+    const error = new Error("sleep failed");
+
+    await expect(
+      retryUntilAsync(operation, {
+        accept: () => false,
+        retryDelaysMs: [10],
+        sleep: async () => {
+          throw error;
+        },
+      }),
+    ).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledOnce();
   });
 
   it("waitUntil returns immediately when the condition is already true", () => {
