@@ -3523,6 +3523,8 @@ If a command fails after the manager stops, correct the failure and rerun the fa
 After the affected user signs in again, verify that systemd no longer loads this drop-in:
 
 ```bash
+drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+
 if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
   printf 'CPU delegation drop-in remains after removal: %s\n' "$drop_in" >&2
   exit 1
