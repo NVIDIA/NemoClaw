@@ -1,0 +1,224 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+
+import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
+import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
+import { DCODE_BASE_IMAGE, requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
+import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
+
+export const DCODE_BASE_IMAGE_TARGET_ID = "ubuntu-repo-cloud-langchain-deepagents-code";
+
+const DCODE_AGENT = "langchain-deepagents-code";
+const DCODE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
+
+type DcodePlatform = "linux/amd64" | "linux/arm64";
+
+export interface DcodeBaseImageContract {
+  agent: typeof DCODE_AGENT;
+  contractVersion: 1;
+  digest: string;
+  image: typeof DCODE_BASE_IMAGE;
+  platformDigests: Record<DcodePlatform, string>;
+  platformReferences: Record<DcodePlatform, string>;
+  platforms: typeof DCODE_PLATFORMS;
+  reference: string;
+  run: { attempt: number; id: number };
+  sourceRevision: string;
+}
+
+export interface DcodeBaseImageRuntimeEvidence {
+  contractReference: string;
+  digest: string;
+  image: string;
+  imageId: string;
+  platform: DcodePlatform;
+  reference: string;
+  sandboxImage: string;
+  source: "override";
+  sourceRevision: string;
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return Number(value);
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[], label: string) {
+  if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
+    throw new Error(`${label} has unexpected fields`);
+  }
+}
+
+function parseDcodeBaseImageContract(value: unknown): DcodeBaseImageContract {
+  const contract = record(value, "Deep Agents Code base contract");
+  exactKeys(
+    contract,
+    [
+      "agent",
+      "contractVersion",
+      "digest",
+      "image",
+      "platformDigests",
+      "platformReferences",
+      "platforms",
+      "reference",
+      "run",
+      "sourceRevision",
+    ],
+    "Deep Agents Code base contract",
+  );
+  if (
+    contract.contractVersion !== 1 ||
+    contract.agent !== DCODE_AGENT ||
+    contract.image !== DCODE_BASE_IMAGE ||
+    typeof contract.digest !== "string" ||
+    !DIGEST_PATTERN.test(contract.digest) ||
+    contract.reference !== `${DCODE_BASE_IMAGE}@${contract.digest}` ||
+    typeof contract.sourceRevision !== "string" ||
+    !REVISION_PATTERN.test(contract.sourceRevision) ||
+    !Array.isArray(contract.platforms) ||
+    JSON.stringify(contract.platforms) !== JSON.stringify(DCODE_PLATFORMS)
+  ) {
+    throw new Error("Deep Agents Code base contract identity is invalid");
+  }
+  const platformDigests = record(contract.platformDigests, "base contract platform digests");
+  const platformReferences = record(
+    contract.platformReferences,
+    "base contract platform references",
+  );
+  exactKeys(platformDigests, DCODE_PLATFORMS, "base contract platform digests");
+  exactKeys(platformReferences, DCODE_PLATFORMS, "base contract platform references");
+  for (const platform of DCODE_PLATFORMS) {
+    const digest = platformDigests[platform];
+    if (
+      typeof digest !== "string" ||
+      !DIGEST_PATTERN.test(digest) ||
+      platformReferences[platform] !== `${DCODE_BASE_IMAGE}@${digest}`
+    ) {
+      throw new Error(`Deep Agents Code ${platform} base contract identity is invalid`);
+    }
+  }
+  const run = record(contract.run, "Deep Agents Code base contract run");
+  exactKeys(run, ["attempt", "id"], "Deep Agents Code base contract run");
+  positiveInteger(run.attempt, "Deep Agents Code base contract run attempt");
+  positiveInteger(run.id, "Deep Agents Code base contract run id");
+  return contract as unknown as DcodeBaseImageContract;
+}
+
+export function parseDcodeBaseImagePublicationEvidence(
+  value: unknown,
+  environment: NodeJS.ProcessEnv = process.env,
+): DcodeBaseImageContract {
+  const evidence = record(value, "Deep Agents Code base evidence");
+  exactKeys(
+    evidence,
+    ["base", "candidateSha", "contractVersion"],
+    "Deep Agents Code base evidence",
+  );
+  if (evidence.contractVersion !== 1) {
+    throw new Error("Deep Agents Code base evidence contract version must be 1");
+  }
+  if (typeof evidence.candidateSha !== "string" || !/^[0-9a-f]{40}$/u.test(evidence.candidateSha)) {
+    throw new Error("Deep Agents Code base evidence candidate SHA is invalid");
+  }
+  const contract = parseDcodeBaseImageContract(evidence.base);
+  if (requireDcodeBaseImageReference(environment) !== contract.reference) {
+    throw new Error(
+      "Deep Agents Code onboarding reference does not match the published base contract",
+    );
+  }
+  return contract;
+}
+
+export function loadDcodeBaseImagePublicationEvidence(
+  targetId: string,
+  evidencePath: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): DcodeBaseImageContract | undefined {
+  if (targetId !== DCODE_BASE_IMAGE_TARGET_ID) return undefined;
+  requireDcodeBaseImageReference(environment);
+  if (!fs.existsSync(evidencePath)) {
+    if (environment.GITHUB_ACTIONS === "true") {
+      throw new Error("Deep Agents Code GitHub Actions run is missing published base evidence");
+    }
+    return undefined;
+  }
+  return parseDcodeBaseImagePublicationEvidence(
+    JSON.parse(fs.readFileSync(evidencePath, "utf8")) as unknown,
+    environment,
+  );
+}
+
+function platformFor(metadata: SandboxBaseImageResolutionMetadata): DcodePlatform {
+  const platform = `${metadata.os}/${metadata.architecture}`;
+  if (platform !== "linux/amd64" && platform !== "linux/arm64") {
+    throw new Error(`Deep Agents Code base resolution used unsupported platform '${platform}'`);
+  }
+  return platform;
+}
+
+export function verifyDcodeBaseImageRuntimeEvidence(
+  contract: DcodeBaseImageContract,
+  sandboxImage: string,
+  metadata: SandboxBaseImageResolutionMetadata | null,
+): DcodeBaseImageRuntimeEvidence {
+  if (!sandboxImage) {
+    throw new Error("Deep Agents Code registry entry is missing its completed sandbox image");
+  }
+  if (!metadata) {
+    throw new Error("Deep Agents Code sandbox image is missing base resolution metadata");
+  }
+  const platform = platformFor(metadata);
+  const expectedDigest = contract.platformDigests[platform];
+  const expectedReference = contract.platformReferences[platform];
+  if (
+    metadata.schema !== 1 ||
+    metadata.imageName !== contract.image ||
+    metadata.source !== "override" ||
+    metadata.pinnedRemoteRef !== undefined ||
+    metadata.digest !== expectedDigest ||
+    metadata.ref !== expectedReference ||
+    metadata.ref !== `${metadata.imageName}@${metadata.digest}`
+  ) {
+    throw new Error(
+      `Deep Agents Code sandbox image did not use the published ${platform} base digest`,
+    );
+  }
+  return {
+    contractReference: contract.reference,
+    digest: metadata.digest,
+    image: metadata.imageName,
+    imageId: metadata.imageId,
+    platform,
+    reference: metadata.ref,
+    sandboxImage,
+    source: metadata.source,
+    sourceRevision: contract.sourceRevision,
+  };
+}
+
+export function captureDcodeBaseImageRuntimeEvidence(
+  contract: DcodeBaseImageContract,
+  sandboxName: string,
+): DcodeBaseImageRuntimeEvidence {
+  const entry = readRegistrySandboxEntry(sandboxName);
+  const sandboxImage = typeof entry.imageTag === "string" ? entry.imageTag.trim() : "";
+  return verifyDcodeBaseImageRuntimeEvidence(
+    contract,
+    sandboxImage,
+    readSandboxBaseImageResolutionMetadata(sandboxImage),
+  );
+}
