@@ -877,6 +877,10 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_ARTIFACT_DIGEST: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}
+          DISPATCH_ARTIFACT_ID: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}
+          DISPATCH_ARTIFACT_NAME: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}
+          DISPATCH_ARTIFACT_SIZE: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
@@ -1090,11 +1094,11 @@ jobs:
               .base.repo.full_name == "NVIDIA/NemoClaw" and
               .base.sha == $baseSha
             ' <<<"$pull" >/dev/null || { echo "::error::Pull request identity changed before qualification aggregation" >&2; exit 1; }
-          dispatch_artifact="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}")"
+          dispatch_artifact="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${DISPATCH_ARTIFACT_ID}")"
           jq -e \
-            --arg name "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}" \
-            --arg digest "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}" \
-            --arg size "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}" \
+            --arg name "$DISPATCH_ARTIFACT_NAME" \
+            --arg digest "$DISPATCH_ARTIFACT_DIGEST" \
+            --arg size "$DISPATCH_ARTIFACT_SIZE" \
             --arg runId "$PRODUCER_RUN_ID" \
             --arg workflowSha "$WORKFLOW_SHA" '
               .name == $name and .digest == $digest and (.size_in_bytes | tostring) == $size and

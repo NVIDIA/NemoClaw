@@ -247,6 +247,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   it("validates manual PR dispatch inputs and the checked-out commit", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.on?.workflow_dispatch?.inputs?.review_reason;
+    delete workflow.on?.workflow_dispatch?.inputs?.native_runtime_qualification_run_id;
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
@@ -259,10 +260,22 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "workflow_dispatch review_reason must be an optional string with an empty default",
+        "workflow_dispatch native_runtime_qualification_run_id must be an optional string with an empty default",
         'Manual PR authentication must retain "$WORKFLOW_EVENT" == "workflow_dispatch"',
         'Manual PR authentication must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
         'Manual PR checkout validation must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
       ]),
+    );
+  });
+
+  it("rejects parameterized gh api requests in native qualification jobs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["native-runtime-qualification"].steps!.push({
+      run: "gh api repos/NVIDIA/NemoClaw/issues -f title=unreviewed",
+    });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "native-runtime-qualification must limit GitHub API access to the reviewed read-only contract",
     );
   });
 

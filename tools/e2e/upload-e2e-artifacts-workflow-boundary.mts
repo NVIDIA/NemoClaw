@@ -440,6 +440,14 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         "managed-image-multiarch-startup must define exactly one exact protected build-cache direct upload",
       );
     }
+    const nativeRuntimeQualificationUploads = jobSteps.filter((step) =>
+      isExactNativeRuntimeQualificationUpload(jobName, step),
+    );
+    if (jobName === "native-runtime-qualification" && nativeRuntimeQualificationUploads.length !== 1) {
+      errors.push(
+        "native-runtime-qualification must define exactly one aggregate evidence upload",
+      );
+    }
 
     for (const step of jobSteps) {
       const uses = typeof step.uses === "string" ? step.uses : "";
