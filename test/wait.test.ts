@@ -136,6 +136,24 @@ describe("wait utility", () => {
     expect(operation).toHaveBeenCalledOnce();
   });
 
+  it("retryUntil runs onRetry before sleep and propagates its error (#9218)", () => {
+    const events: string[] = [];
+    const error = new Error("retry callback failed");
+
+    expect(() =>
+      retryUntil((attempt) => `result-${attempt}`, {
+        accept: () => false,
+        retryDelaysMs: [10],
+        onRetry: (result, delayMs, attempt) => {
+          events.push(`${result}:${String(delayMs)}:${String(attempt)}`);
+          throw error;
+        },
+        sleep: () => events.push("sleep"),
+      }),
+    ).toThrow(error);
+    expect(events).toEqual(["result-1:10:1"]);
+  });
+
   it("retryUntilAsync returns the first accepted result without sleeping (#9218)", async () => {
     const sleep = vi.fn(async () => {});
     const operation = vi.fn(async () => "ready");
@@ -152,7 +170,6 @@ describe("wait utility", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-
   it("retryUntilAsync uses each scheduled delay before accepting the third result (#9218)", async () => {
     const sleep = vi.fn(async () => {});
 
@@ -167,6 +184,27 @@ describe("wait utility", () => {
 
     expect(result).toBe("ready");
     expect(sleep.mock.calls).toEqual([[10], [20]]);
+  });
+
+  it("retryUntilAsync awaits onRetry before sleep and propagates its error (#9218)", async () => {
+    const events: string[] = [];
+    const error = new Error("retry callback failed");
+
+    await expect(
+      retryUntilAsync(async (attempt) => `result-${attempt}`, {
+        accept: () => false,
+        retryDelaysMs: [10],
+        onRetry: async (result, delayMs, attempt) => {
+          await Promise.resolve();
+          events.push(`${result}:${String(delayMs)}:${String(attempt)}`);
+          throw error;
+        },
+        sleep: async () => {
+          events.push("sleep");
+        },
+      }),
+    ).rejects.toBe(error);
+    expect(events).toEqual(["result-1:10:1"]);
   });
 
   it("retryUntilAsync runs once with an empty retry schedule (#9218)", async () => {

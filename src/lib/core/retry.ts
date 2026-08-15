@@ -9,11 +9,15 @@ interface RetryUntilBaseOptions<T> {
 }
 
 export type RetryUntilOptions<T> = RetryUntilBaseOptions<T> & {
+  /** Run after `accept` returns false and before the scheduled sleep. */
+  onRetry?: (result: T, delayMs: number, attempt: number) => void;
   /** Sleep for the specified number of milliseconds between attempts. */
   sleep: (ms: number) => void;
 };
 
 export type RetryUntilAsyncOptions<T> = RetryUntilBaseOptions<T> & {
+  /** Run after `accept` returns false and before the scheduled sleep. */
+  onRetry?: (result: T, delayMs: number, attempt: number) => void | Promise<void>;
   /** Sleep for the specified number of milliseconds between attempts. */
   sleep: (ms: number) => Promise<void>;
 };
@@ -28,6 +32,8 @@ export function retryUntil<T>(operation: (attempt: number) => T, options: RetryU
   if (options.accept(result, attempt)) return result;
 
   for (const delayMs of options.retryDelaysMs) {
+    options.onRetry?.(result, delayMs, attempt);
+
     options.sleep(delayMs);
     attempt += 1;
     result = operation(attempt);
@@ -49,6 +55,8 @@ export async function retryUntilAsync<T>(
   if (options.accept(result, attempt)) return result;
 
   for (const delayMs of options.retryDelaysMs) {
+    await options.onRetry?.(result, delayMs, attempt);
+
     await options.sleep(delayMs);
     attempt += 1;
     result = await operation(attempt);
