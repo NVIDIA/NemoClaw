@@ -146,11 +146,14 @@ After an authorized delete, verify that the exact environment is absent.
 
 ## Report the Result
 
+This report is advisory manual validation. Do not use it as automated E2E evidence.
+
 Return this structure:
 
 ```markdown
 # Staging Launchable Validation
 
+- Evidence mode: advisory manual validation; not automated E2E evidence
 - Candidate repository and commit SHA:
 - Image-publication workflow and job URL:
 - Expected concrete image URI:

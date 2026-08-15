@@ -48,6 +48,10 @@ describe("staging Launchable maintainer guidance", () => {
     );
     expect(launchable).toContain("Candidate repository and commit SHA:");
     expect(launchable).toContain(
+      "Evidence mode: advisory manual validation; not automated E2E evidence",
+    );
+    expect(launchable).toContain("Do not use it as automated E2E evidence");
+    expect(launchable).toContain(
       "Inference credential exposure approval: approved / denied / not requested",
     );
     expect(launchable).toContain(
