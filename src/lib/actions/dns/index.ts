@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { retryUntil } from "../../core/retry";
 import {
   buildCoreDnsPatchJson,
   dockerHostRuntime,
@@ -686,14 +687,17 @@ export function runSetupDnsProxy(
       verificationFail += 1;
     }
 
-    let dnsResult = "";
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      dnsResult = commandOutput(
-        sbExec(["getent", "hosts", "github.com"]) ?? { status: 1, stdout: "", stderr: "" },
-      ).trim();
-      if (dnsResult) break;
-      if (attempt < 3) sleep(2000);
-    }
+    const dnsResult = retryUntil(
+      () =>
+        commandOutput(
+          sbExec(["getent", "hosts", "github.com"]) ?? { status: 1, stdout: "", stderr: "" },
+        ).trim(),
+      {
+        accept: Boolean,
+        retryDelaysMs: [2_000, 2_000],
+        sleep,
+      },
+    );
     if (dnsResult) {
       log(`  [PASS] getent hosts github.com -> ${dnsResult}`);
       verificationPass += 1;

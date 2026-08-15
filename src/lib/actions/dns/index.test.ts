@@ -162,6 +162,8 @@ describe("runSetupDnsProxy", () => {
   it("configures the DNS proxy through kubectl-in-docker argv calls", () => {
     const calls: string[][] = [];
     const log = vi.fn();
+    let getentCalls = 0;
+    const sleep = vi.fn();
     const runDocker = vi.fn((args: string[]) => {
       calls.push(args);
       const cmd = args.join(" ");
@@ -177,7 +179,10 @@ describe("runSetupDnsProxy", () => {
       if (cmd.includes("ls /run/netns/")) return ok("sandbox-ns\n");
       if (cmd.includes("test -x")) return ok();
       if (cmd.includes("cat /etc/resolv.conf")) return ok("nameserver 10.200.0.1\n");
-      if (cmd.includes("getent hosts github.com")) return ok("140.82.112.4 github.com\n");
+      if (cmd.includes("getent hosts github.com")) {
+        getentCalls += 1;
+        return getentCalls === 3 ? ok("140.82.112.4 github.com\n") : ok("");
+      }
       return ok();
     });
 
@@ -187,7 +192,7 @@ describe("runSetupDnsProxy", () => {
         env: { DOCKER_HOST: "unix:///tmp/fake-docker.sock" },
         log,
         runDocker,
-        sleep: vi.fn(),
+        sleep,
       },
     );
 
@@ -204,6 +209,8 @@ describe("runSetupDnsProxy", () => {
       ),
     ).toBe(true);
     expect(log).toHaveBeenCalledWith("  DNS verification: 4 passed, 0 failed");
+    expect(getentCalls).toBe(3);
+    expect(sleep.mock.calls.filter(([milliseconds]) => milliseconds === 2_000)).toHaveLength(2);
   });
 
   it("falls back to the CoreDNS pod endpoint when the kube-dns service IP is unavailable", () => {
