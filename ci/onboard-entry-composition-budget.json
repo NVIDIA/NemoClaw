@@ -3,7 +3,7 @@
   "gateway": {
     "preflight": 2,
     "preflightAuthoritativeRebuildTarget": 1,
-    "runOnboard": 1
+    "runOnboard": 2
   },
   "messaging": {
     "createSandboxWithBaseImageResolution": 9,
@@ -21,15 +21,15 @@
   },
   "provider": {
     "createSandboxWithBaseImageResolution": 20,
-    "handleNimLocalSelection": 32,
-    "handleRemoteProviderSelection": 74,
+    "handleNimLocalSelection": 36,
+    "handleRemoteProviderSelection": 84,
     "handleRemoteProviderSelection.providerExistsInGateway": 1,
     "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
-    "handleRoutedSelection": 15,
+    "handleRoutedSelection": 16,
     "handleVllmSelection.queryVllmModels": 1,
     "preflightAuthoritativeRebuildTarget": 1,
     "runOnboard": 8,
     "runOnboard.providerInference.deps.needsBedrockRuntimeAdapter": 1,
-    "selectAndValidateOllamaModel": 18
+    "selectAndValidateOllamaModel": 19
   }
 }

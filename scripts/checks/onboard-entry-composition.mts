@@ -77,6 +77,8 @@ const GATEWAY_LIFECYCLE_NAMES = [
   "restart",
   "launch",
   "destroy",
+  "remove",
+  "reset",
   ...RECOVERY_NAMES,
   "retire",
   "terminate",
@@ -150,6 +152,12 @@ type DecisionScope = NamedScope & {
   readonly prunedNodes: ReadonlySet<ts.Node>;
 };
 
+type StaticAliases = ReadonlyMap<string, string>;
+
+function emptyDecisionCounts(): Record<string, number> {
+  return Object.create(null) as Record<string, number>;
+}
+
 function functionBody(node: ts.Node): ts.ConciseBody | undefined {
   if (
     ts.isArrowFunction(node) ||
@@ -165,6 +173,26 @@ function functionBody(node: ts.Node): ts.ConciseBody | undefined {
   return undefined;
 }
 
+function staticPropertyName(name: ts.PropertyName): string | null {
+  if (
+    ts.isIdentifier(name) ||
+    ts.isStringLiteral(name) ||
+    ts.isNumericLiteral(name) ||
+    ts.isPrivateIdentifier(name)
+  ) {
+    return name.text;
+  }
+  const expression = unwrapTransparentExpression(name.expression);
+  if (
+    ts.isStringLiteral(expression) ||
+    ts.isNoSubstitutionTemplateLiteral(expression) ||
+    ts.isNumericLiteral(expression)
+  ) {
+    return expression.text;
+  }
+  return null;
+}
+
 function propertyName(node: ts.Node): string | null {
   if (
     !ts.isPropertyAssignment(node) &&
@@ -175,15 +203,7 @@ function propertyName(node: ts.Node): string | null {
   ) {
     return null;
   }
-  if (
-    ts.isIdentifier(node.name) ||
-    ts.isStringLiteral(node.name) ||
-    ts.isNumericLiteral(node.name)
-  ) {
-    return node.name.text;
-  }
-  if (ts.isPrivateIdentifier(node.name)) return node.name.text;
-  return "[computed]";
+  return staticPropertyName(node.name) ?? "[computed]";
 }
 
 function callableScopes(owner: string, root: ts.Node): DecisionScope[] {
@@ -267,12 +287,17 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
   );
 }
 
-function identifierCategories(identifier: string): ReadonlySet<OnboardDecisionCategory> {
+function identifierCategories(
+  identifier: string,
+  aliases: StaticAliases,
+): ReadonlySet<OnboardDecisionCategory> {
   const categories = new Set<OnboardDecisionCategory>();
-  if (isGatewayLifecycleIdentifier(identifier)) categories.add("gateway");
-  if (/messaging|channel/i.test(identifier)) categories.add("messaging");
-  if (/policy|preset/i.test(identifier)) categories.add("policy");
-  if (/provider|inference|nim|ollama|routed|model/i.test(identifier)) categories.add("provider");
+  for (const candidate of new Set([identifier, resolveStaticAlias(identifier, aliases)])) {
+    if (isGatewayLifecycleIdentifier(candidate)) categories.add("gateway");
+    if (/messaging|channel/i.test(candidate)) categories.add("messaging");
+    if (/policy|preset/i.test(candidate)) categories.add("policy");
+    if (/provider|inference|nim|ollama|routed|model/i.test(candidate)) categories.add("provider");
+  }
   return categories;
 }
 
@@ -300,6 +325,69 @@ function unwrapTransparentExpression(expression: ts.Expression): ts.Expression {
     return unwrapTransparentExpression(expression.expression);
   }
   return expression;
+}
+
+function staticReferenceName(expression: ts.Expression): string | null {
+  const reference = unwrapTransparentExpression(expression);
+  if (ts.isIdentifier(reference) || ts.isPrivateIdentifier(reference)) return reference.text;
+  if (ts.isPropertyAccessExpression(reference)) {
+    const receiver = staticReferenceName(reference.expression);
+    return receiver ? `${receiver}.${reference.name.text}` : null;
+  }
+  if (ts.isElementAccessExpression(reference)) {
+    const receiver = staticReferenceName(reference.expression);
+    const member = staticElementName(reference);
+    return receiver && member ? `${receiver}.${member}` : null;
+  }
+  if (ts.isCallExpression(reference) && calledName(reference.expression) === "bind") {
+    const receiver = calledReceiver(reference.expression);
+    return receiver ? staticReferenceName(receiver) : null;
+  }
+  return null;
+}
+
+function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
+  const aliases = new Map<string, string>();
+
+  function recordDeclaration(declaration: ts.VariableDeclaration): void {
+    if (!declaration.initializer) return;
+    const target = staticReferenceName(declaration.initializer);
+    if (!target) return;
+    if (ts.isIdentifier(declaration.name)) {
+      aliases.set(declaration.name.text, target);
+      return;
+    }
+    if (!ts.isObjectBindingPattern(declaration.name)) return;
+    for (const element of declaration.name.elements) {
+      if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+      const member = element.propertyName
+        ? staticPropertyName(element.propertyName)
+        : element.name.text;
+      if (member) aliases.set(element.name.text, `${target}.${member}`);
+    }
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Const) !== 0) {
+      for (const declaration of node.declarations) recordDeclaration(declaration);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return aliases;
+}
+
+function resolveStaticAlias(identifier: string, aliases: StaticAliases): string {
+  let resolved = identifier;
+  const visited = new Set<string>();
+  while (!visited.has(resolved)) {
+    visited.add(resolved);
+    const target = aliases.get(resolved);
+    if (!target) break;
+    resolved = target;
+  }
+  return resolved;
 }
 
 function calledName(expression: ts.Expression): string | null {
@@ -330,12 +418,13 @@ function recoveryInvocationExpression(node: RecoveryInvocation): ts.Expression {
   return ts.isCallExpression(node) ? node.expression : node.tag;
 }
 
-function isRecoveryInvocation(node: ts.Node): node is RecoveryInvocation {
+function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is RecoveryInvocation {
   if (!ts.isCallExpression(node) && !ts.isTaggedTemplateExpression(node)) return false;
   const expression = recoveryInvocationExpression(node);
   const boundReceiver = immediatelyBoundReceiver(expression);
   if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
-  const name = calledName(expression);
+  const called = calledName(expression);
+  const name = called ? resolveStaticAlias(called, aliases) : null;
   if (name === null || (RECOVERY_FACTORY_NAME.test(name) && !RECOVERY_COMPOUND_ACTION.test(name))) {
     return false;
   }
@@ -346,9 +435,17 @@ function isRecoveryInvocation(node: ts.Node): node is RecoveryInvocation {
   );
 }
 
+function isCatchHandlerInvocation(node: ts.Node): node is ts.CallExpression {
+  return ts.isCallExpression(node) && calledName(node.expression) === "catch";
+}
+
+function isOptionalCall(node: ts.Node): node is ts.CallExpression {
+  return ts.isCallExpression(node) && node.questionDotToken !== undefined;
+}
+
 // Count branches, short-circuit operators, condition-controlled loops, try statements, and
 // named recovery calls. Sequencing loops do not choose onboarding behavior.
-function isDecisionNode(node: ts.Node): boolean {
+function isDecisionNode(node: ts.Node, aliases: StaticAliases): boolean {
   return (
     ts.isIfStatement(node) ||
     ts.isSwitchStatement(node) ||
@@ -358,22 +455,30 @@ function isDecisionNode(node: ts.Node): boolean {
     ts.isWhileStatement(node) ||
     ts.isDoStatement(node) ||
     ts.isTryStatement(node) ||
-    isRecoveryInvocation(node)
+    isRecoveryInvocation(node, aliases) ||
+    isCatchHandlerInvocation(node) ||
+    isOptionalCall(node)
   );
 }
 
-function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCategory> {
+function decisionNodeCategories(
+  node: ts.Node,
+  aliases: StaticAliases,
+): ReadonlySet<OnboardDecisionCategory> {
   const categories = new Set<OnboardDecisionCategory>();
 
   function addIdentifiers(candidate: ts.Node): void {
     if (ts.isIdentifier(candidate) || ts.isPrivateIdentifier(candidate)) {
-      for (const category of identifierCategories(candidate.text)) categories.add(category);
+      for (const category of identifierCategories(candidate.text, aliases)) categories.add(category);
     }
     if (ts.isElementAccessExpression(candidate)) {
       const name = staticElementName(candidate);
       if (name) {
-        for (const category of identifierCategories(name)) categories.add(category);
-        for (const category of identifierCategories(`${candidate.expression.getText()}${name}`)) {
+        for (const category of identifierCategories(name, aliases)) categories.add(category);
+        for (const category of identifierCategories(
+          `${candidate.expression.getText()}${name}`,
+          aliases,
+        )) {
           categories.add(category);
         }
       }
@@ -381,6 +486,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
     if (ts.isPropertyAccessExpression(candidate)) {
       for (const category of identifierCategories(
         `${candidate.expression.getText()}${candidate.name.text}`,
+        aliases,
       )) {
         categories.add(category);
       }
@@ -389,7 +495,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
   }
 
   function scanCondition(candidate: ts.Node, root: boolean): void {
-    if (!root && isDecisionNode(candidate)) return;
+    if (!root && isDecisionNode(candidate, aliases)) return;
     if (
       ts.isIdentifier(candidate) ||
       ts.isPrivateIdentifier(candidate) ||
@@ -453,7 +559,7 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
   }
 
   function scanActions(candidate: ts.Node, root: boolean): void {
-    if (!root && isDecisionNode(candidate)) return;
+    if (!root && isDecisionNode(candidate, aliases)) return;
     if (ts.isIdentifier(candidate) || ts.isPrivateIdentifier(candidate)) {
       addIdentifiers(candidate);
       return;
@@ -509,8 +615,13 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
     scanActions(node.tryBlock, true);
     if (node.catchClause) scanActions(node.catchClause, true);
     if (node.finallyBlock) scanActions(node.finallyBlock, true);
-  } else if (isRecoveryInvocation(node)) {
+  } else if (isRecoveryInvocation(node, aliases)) {
     addIdentifiers(recoveryInvocationExpression(node));
+  } else if (isCatchHandlerInvocation(node)) {
+    for (const argument of node.arguments) scanActionArgument(argument);
+  } else if (isOptionalCall(node)) {
+    addIdentifiers(node.expression);
+    for (const argument of node.arguments) scanActionArgument(argument);
   }
   return categories;
 }
@@ -518,20 +629,21 @@ function decisionNodeCategories(node: ts.Node): ReadonlySet<OnboardDecisionCateg
 function decisionCounts(
   name: string,
   scope: ts.Node,
+  aliases: StaticAliases,
   prunedNodes: ReadonlySet<ts.Node> = new Set(),
 ): Record<OnboardDecisionCategory, Record<string, number>> {
-  const nameCategories = identifierCategories(name);
+  const nameCategories = identifierCategories(name, aliases);
   const counts: Record<OnboardDecisionCategory, Record<string, number>> = {
-    gateway: {},
-    messaging: {},
-    policy: {},
-    provider: {},
+    gateway: emptyDecisionCounts(),
+    messaging: emptyDecisionCounts(),
+    policy: emptyDecisionCounts(),
+    provider: emptyDecisionCounts(),
   };
 
   function visit(node: ts.Node): void {
     if (prunedNodes.has(node)) return;
-    if (isDecisionNode(node)) {
-      const categories = new Set([...nameCategories, ...decisionNodeCategories(node)]);
+    if (isDecisionNode(node, aliases)) {
+      const categories = new Set([...nameCategories, ...decisionNodeCategories(node, aliases)]);
       for (const category of categories) {
         counts[category][name] = (counts[category][name] ?? 0) + 1;
       }
@@ -557,11 +669,12 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
     true,
     ts.ScriptKind.TS,
   );
+  const aliases = collectStaticAliases(sourceFile);
   const decisions: Record<OnboardDecisionCategory, Record<string, number>> = {
-    gateway: {},
-    messaging: {},
-    policy: {},
-    provider: {},
+    gateway: emptyDecisionCounts(),
+    messaging: emptyDecisionCounts(),
+    policy: emptyDecisionCounts(),
+    provider: emptyDecisionCounts(),
   };
 
   for (const statement of sourceFile.statements) {
@@ -570,7 +683,7 @@ export function collectOnboardEntryDecisions(sourceText: string): OnboardEntryCo
       const callableBodies = new Set(callables.map((scope) => scope.node));
       const scopes: DecisionScope[] = [{ name, node, prunedNodes: callableBodies }, ...callables];
       for (const scope of scopes) {
-        const declarationCounts = decisionCounts(scope.name, scope.node, scope.prunedNodes);
+        const declarationCounts = decisionCounts(scope.name, scope.node, aliases, scope.prunedNodes);
         for (const category of CATEGORIES) {
           for (const [declaration, count] of Object.entries(declarationCounts[category])) {
             decisions[category][declaration] = (decisions[category][declaration] ?? 0) + count;

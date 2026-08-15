@@ -58,6 +58,17 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ second: 1 });
   });
 
+  it.each(["__proto__", "constructor", "toString", "hasOwnProperty"])(
+    "counts a gateway decision in the prototype-named declaration %s",
+    (declaration) => {
+      const actual = collectOnboardEntryDecisions(
+        `function ${declaration}(enabled: boolean) { if (enabled) startGateway(); }`,
+      );
+
+      expect(actual.gateway).toEqual({ [declaration]: 1 });
+    },
+  );
+
   it.each([
     [
       "object method",
@@ -91,6 +102,16 @@ describe("onboarding entry composition boundary", () => {
 
     expect(compact).toEqual(spaced);
     expect(compact.gateway).toEqual({ "Entry.[computed]": 1 });
+  });
+
+  it.each([
+    ['["startGateway"]', "Entry.startGateway", "if (enabled) run();"],
+    ["[`startGateway`]", "Entry.startGateway", "if (enabled) run();"],
+    ["[1]", "Entry.1", "if (enabled) startGateway();"],
+  ])("preserves the static computed method key %s", (key, declaration, body) => {
+    const actual = collectOnboardEntryDecisions(`class Entry { ${key}() { ${body} } }`);
+
+    expect(actual.gateway).toEqual({ [declaration]: 1 });
   });
 
   it("uses a stable static owner for a destructured call initializer", () => {
@@ -180,6 +201,27 @@ describe("onboarding entry composition boundary", () => {
     );
 
     expect(actual.messaging).toEqual({ choose: 1 });
+  });
+
+  it.each([
+    ["identifier", "const start = startGateway;"],
+    ["destructured", "const { start } = gateway;"],
+    ["stored bind", "const start = startGateway.bind(null);"],
+    ["optional-chain", "const start = gateway?.start;"],
+  ])("checks a gateway action through a static %s alias", (_form, alias) => {
+    const actual = collectOnboardEntryDecisions(
+      `${alias} function choose(enabled: boolean) { if (enabled) start(); }`,
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it("checks an optional gateway call through a static alias", () => {
+    const actual = collectOnboardEntryDecisions(
+      "const start = startGateway; function choose() { start?.(); }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
   });
 
   it.each([
@@ -287,6 +329,22 @@ describe("onboarding entry composition boundary", () => {
     );
 
     expect(actual.provider).toEqual({});
+  });
+
+  it("counts a direct promise recovery handler", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose() { operation().catch(recoverGateway); }",
+    );
+
+    expect(actual.gateway).toEqual({ choose: 1 });
+  });
+
+  it("does not count a promise handler that has no onboarding action", () => {
+    const actual = collectOnboardEntryDecisions(
+      "function choose() { operation().catch(reportError); }",
+    );
+
+    expect(actual.gateway).toEqual({});
   });
 
   it.each(["(gatewayRecovery.execute)()", 'gatewayRecovery["execute"]()'])(
@@ -490,6 +548,28 @@ describe("onboarding entry composition boundary", () => {
 
         expect(actual.gateway).toEqual({ choose: 1 });
       }
+    },
+  );
+
+  it.each(["removeDockerDriverGatewayRegistration", "resetGatewayOwnerBinding"])(
+    "classifies the gateway lifecycle action %s",
+    (action) => {
+      const actual = collectOnboardEntryDecisions(
+        `function choose(enabled: boolean) { if (enabled) ${action}(); }`,
+      );
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it.each(["removeGatewayCredential", "resetGatewayEndpoint"])(
+    "does not classify gateway configuration action %s as lifecycle",
+    (action) => {
+      const actual = collectOnboardEntryDecisions(
+        `function choose(enabled: boolean) { if (enabled) ${action}(); }`,
+      );
+
+      expect(actual.gateway).toEqual({});
     },
   );
 
