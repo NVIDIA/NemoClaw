@@ -287,7 +287,7 @@ function isGatewayLifecycleIdentifier(identifier: string): boolean {
     return false;
   }
   return (
-    /^(?:chooseGateway|gatewayState)$/i.test(identifier) ||
+    /^(?:chooseGateway|gateway[.]?State)$/i.test(identifier) ||
     GATEWAY_AFTER_LIFECYCLE.test(identifier) ||
     GATEWAY_BEFORE_LIFECYCLE_OR_STATE.test(identifier)
   );
@@ -505,6 +505,27 @@ function resolveStaticAlias(identifier: string, aliases: StaticAliases, location
   return resolved;
 }
 
+function resolvedStaticReferenceName(
+  expression: ts.Expression,
+  aliases: StaticAliases,
+): string | null {
+  const reference = unwrapTransparentExpression(expression);
+  if (ts.isIdentifier(reference)) {
+    return resolveStaticAlias(reference.text, aliases, reference);
+  }
+  if (ts.isPrivateIdentifier(reference)) return reference.text;
+  if (ts.isPropertyAccessExpression(reference)) {
+    const receiver = resolvedStaticReferenceName(reference.expression, aliases);
+    return receiver ? `${receiver}.${reference.name.text}` : null;
+  }
+  if (ts.isElementAccessExpression(reference)) {
+    const receiver = resolvedStaticReferenceName(reference.expression, aliases);
+    const member = staticElementName(reference);
+    return receiver && member ? `${receiver}.${member}` : null;
+  }
+  return null;
+}
+
 function calledName(expression: ts.Expression): string | null {
   const callee = unwrapTransparentExpression(expression);
   if (ts.isIdentifier(callee)) return callee.text;
@@ -537,7 +558,8 @@ function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is Re
   if (!ts.isCallExpression(node) && !ts.isTaggedTemplateExpression(node)) return false;
   const expression = recoveryInvocationExpression(node);
   const boundReceiver = immediatelyBoundReceiver(expression);
-  if (boundReceiver && RECOVERY_NAME.test(boundReceiver.getText())) return true;
+  const boundName = boundReceiver ? resolvedStaticReferenceName(boundReceiver, aliases) : null;
+  if (boundName && RECOVERY_NAME.test(boundName)) return true;
   const callee = unwrapTransparentExpression(expression);
   const called = calledName(callee);
   const name =
@@ -547,8 +569,9 @@ function isRecoveryInvocation(node: ts.Node, aliases: StaticAliases): node is Re
   }
   if (RECOVERY_NAME.test(name)) return true;
   const receiver = calledReceiver(expression);
+  const receiverName = receiver ? resolvedStaticReferenceName(receiver, aliases) : null;
   return (
-    receiver !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiver.getText())
+    receiverName !== null && RECOVERY_ACTION_METHOD.test(name) && RECOVERY_NAME.test(receiverName)
   );
 }
 
@@ -606,12 +629,8 @@ function decisionNodeCategories(
       const name = staticElementName(candidate);
       if (name) {
         for (const category of identifierCategories(name, aliases)) categories.add(category);
-        const reference = staticReferenceName(candidate);
-        for (const category of identifierCategories(
-          reference ?? `${candidate.expression.getText()}.${name}`,
-          aliases,
-          candidate,
-        )) {
+        const reference = resolvedStaticReferenceName(candidate, aliases);
+        for (const category of identifierCategories(reference ?? name, aliases)) {
           categories.add(category);
         }
       }
@@ -620,11 +639,10 @@ function decisionNodeCategories(
       return;
     }
     if (ts.isPropertyAccessExpression(candidate)) {
-      const reference = staticReferenceName(candidate);
+      const reference = resolvedStaticReferenceName(candidate, aliases);
       for (const category of identifierCategories(
-        reference ?? `${candidate.expression.getText()}.${candidate.name.text}`,
+        reference ?? `${candidate.expression.getText()}${candidate.name.text}`,
         aliases,
-        candidate,
       )) {
         categories.add(category);
       }
