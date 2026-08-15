@@ -671,6 +671,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
 
+    expect(harness.events).toContain("delete");
     expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
       ["rm", "-f", containerId],
       expect.anything(),
