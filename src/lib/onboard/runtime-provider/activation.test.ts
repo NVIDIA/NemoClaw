@@ -235,14 +235,19 @@ function withoutSurface(
     supported: false as const,
     reason: "incomplete fixture",
   };
-  if (surface === "cleanup") {
-    return {
-      ...bundle,
-      capabilities: { ...bundle.capabilities, workloadImageCleanup: false },
-      cleanup: unsupported,
+  const transformations: Record<(typeof INCOMPLETE_SURFACES)[number], () => RuntimeProviderBundle> =
+    {
+      stateMutation: () => ({ ...bundle, stateMutation: unsupported }) as RuntimeProviderBundle,
+      bootstrap: () => ({ ...bundle, bootstrap: unsupported }) as RuntimeProviderBundle,
+      snapshot: () => ({ ...bundle, snapshot: unsupported }) as RuntimeProviderBundle,
+      recovery: () => ({ ...bundle, recovery: unsupported }) as RuntimeProviderBundle,
+      cleanup: () => ({
+        ...bundle,
+        capabilities: { ...bundle.capabilities, workloadImageCleanup: false },
+        cleanup: unsupported,
+      }),
     };
-  }
-  return { ...bundle, [surface]: unsupported } as RuntimeProviderBundle;
+  return transformations[surface]();
 }
 
 describe("runtime provider activation catalog", () => {
