@@ -18,7 +18,7 @@ import {
 } from "./aliases";
 import {
   isCandidateAgent,
-  isCandidateAgentEnabled,
+  isCandidateAgentSelectable,
   requireCandidateAgentSelectable,
 } from "./candidate";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
@@ -128,7 +128,7 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua")
-        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentEnabled(env))
+        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];

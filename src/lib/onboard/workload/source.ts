@@ -88,6 +88,11 @@ function legacySource(
   options: ResolveSandboxWorkloadSourceOptions,
   reason: LegacyDockerfileReason,
 ): LegacyDockerfileWorkloadSource {
+  if (isCandidateManagedImageAgent(options.agentName)) {
+    throw new SandboxWorkloadSourceError(
+      `Agent '${options.agentName}' is a release candidate and must use its exact managed image digest; the legacy Dockerfile workload is not accepted for ${reason}.`,
+    );
+  }
   if (!options.runtime.legacyDockerfileBuilds) {
     throw new SandboxWorkloadSourceError(
       `Driver '${options.runtime.driverName}' cannot use the legacy Dockerfile workload for ${reason}.`,
@@ -109,7 +114,10 @@ function unavailableSource(
   reason: Exclude<LegacyDockerfileReason, "custom-dockerfile">,
   detail: string,
 ): LegacyDockerfileWorkloadSource {
-  if ((options.policy ?? options.runtime.managedImageSelectionPolicy) === "require-managed") {
+  if (
+    isCandidateManagedImageAgent(options.agentName) ||
+    (options.policy ?? options.runtime.managedImageSelectionPolicy) === "require-managed"
+  ) {
     throw new SandboxWorkloadSourceError(
       `Managed image workload is required for '${options.agentName}', but ${detail}.`,
     );
@@ -157,18 +165,12 @@ export function resolveSandboxWorkloadSource(
 ): SandboxWorkloadSource {
   if (
     isCandidateManagedImageAgent(options.agentName) &&
-    options.candidateAgentsEnabled === true
+    options.customDockerfilePath !== undefined &&
+    options.customDockerfilePath !== null
   ) {
-    if (options.customDockerfilePath !== undefined && options.customDockerfilePath !== null) {
-      throw new SandboxWorkloadSourceError(
-        `Agent '${options.agentName}' is a release candidate and must use its exact managed image digest; a custom Dockerfile is not accepted.`,
-      );
-    }
-    if (!options.runtime.managedImages) {
-      throw new SandboxWorkloadSourceError(
-        `Agent '${options.agentName}' is a release candidate and driver '${options.runtime.driverName}' does not advertise managed images.`,
-      );
-    }
+    throw new SandboxWorkloadSourceError(
+      `Agent '${options.agentName}' is a release candidate and must use its exact managed image digest; a custom Dockerfile is not accepted.`,
+    );
   }
 
   if (options.customDockerfilePath !== undefined && options.customDockerfilePath !== null) {

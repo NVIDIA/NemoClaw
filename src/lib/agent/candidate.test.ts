@@ -1,26 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
+import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { CANDIDATE_MANAGED_IMAGE_AGENTS } from "../onboard/managed-image/contract";
-import {
-  candidateQualificationContract,
-  candidateQualificationEnvironment,
-} from "./candidate-test-fixture";
+import { CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS } from "./candidate-authority";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
+  CANDIDATE_QUALIFICATION_RECEIPT_ENV,
   CandidateQualificationError,
   isCandidateAgent,
-  isCandidateAgentEnabled,
   isCandidateAgentSelectable,
   isCandidateQualificationEnabled,
   readCandidateQualificationReceipt,
   requireCandidateAgentSelectable,
   requireCandidateQualificationEnabled,
 } from "./candidate";
+import {
+  candidateQualificationContract,
+  candidateQualificationEnvironment,
+} from "./candidate-test-fixture";
+
+const receipts: Array<() => void> = [];
+
+function callerMintedReceipt(): NodeJS.ProcessEnv {
+  const fixture = candidateQualificationEnvironment();
+  receipts.push(fixture.cleanup);
+  return fixture.env;
+}
+
+afterEach(() => {
+  while (receipts.length > 0) receipts.pop()?.();
+});
 
 describe("candidate agent gate", () => {
   it("treats every declared candidate managed-image agent as a candidate (#7927)", () => {
@@ -32,8 +45,13 @@ describe("candidate agent gate", () => {
     expect(isCandidateAgent("langchain-deepagents-code")).toBe(false);
   });
 
+  it("publishes no qualified candidate receipt in this release (#7927)", () => {
+    for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+      expect(CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS[agent]).toEqual([]);
+    }
+  });
+
   it("never activates a candidate from the protected flag alone (#7927)", () => {
-    expect(isCandidateAgentEnabled({ [CANDIDATE_AGENT_FEATURE_ENV]: "1" })).toBe(false);
     expect(isCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "1" })).toBe(false);
     expect(() =>
       requireCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "1" }),
@@ -41,56 +59,45 @@ describe("candidate agent gate", () => {
   });
 
   it("stays closed for an ordinary environment without a receipt (#7927)", () => {
-    expect(isCandidateAgentEnabled({})).toBe(false);
-    expect(isCandidateAgentEnabled({ [CANDIDATE_AGENT_FEATURE_ENV]: "0" })).toBe(false);
-    expect(isCandidateAgentEnabled({ [CANDIDATE_AGENT_FEATURE_ENV]: "true" })).toBe(false);
+    expect(isCandidateAgentSelectable("pi", {})).toBe(false);
+    expect(isCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "0" })).toBe(false);
+    expect(isCandidateAgentSelectable("pi", { [CANDIDATE_AGENT_FEATURE_ENV]: "true" })).toBe(false);
   });
 
-  it("selects a candidate only with a digest-pinned receipt (#7927)", () => {
-    const env = candidateQualificationEnvironment();
+  it("refuses a receipt that the caller wrote and hashed for itself (#7927)", () => {
+    const env = callerMintedReceipt();
 
-    expect(isCandidateAgentEnabled(env)).toBe(true);
-    expect(isCandidateAgentSelectable("pi", env)).toBe(true);
-    expect(() => requireCandidateAgentSelectable("pi", env)).not.toThrow();
-  });
-
-  it("refuses a receipt that does not match its pinned digest (#7927)", () => {
-    const env = candidateQualificationEnvironment({ corruptDigest: true });
-
+    expect(isCandidateAgentSelectable("pi", env)).toBe(false);
+    expect(isCandidateQualificationEnabled("pi", env)).toBe(false);
     expect(() => readCandidateQualificationReceipt("pi", env)).toThrow(CandidateQualificationError);
     expect(() => readCandidateQualificationReceipt("pi", env)).toThrow(
-      "does not match its pinned digest",
-    );
-    expect(isCandidateQualificationEnabled("pi", env)).toBe(false);
-  });
-
-  it("refuses a receipt whose contents change after the digest is pinned (#7927)", () => {
-    const env = candidateQualificationEnvironment();
-    fs.writeFileSync(env.receiptPath, JSON.stringify(candidateQualificationContract("pi")) + " ");
-
-    expect(() => readCandidateQualificationReceipt("pi", env)).toThrow(
-      "does not match its pinned digest",
+      "no qualified receipt is published for release candidate 'pi'",
     );
   });
 
-  it("refuses a receipt that claims a shipped agent (#7927)", () => {
-    const contract = { ...candidateQualificationContract("pi"), agent: "hermes" as const };
-    const env = candidateQualificationEnvironment({ contract: contract as never });
+  it("refuses a caller-supplied digest for a receipt it also wrote (#7927)", () => {
+    const contract = candidateQualificationContract("pi");
+    const contents = JSON.stringify(contract);
+    const env = {
+      ...callerMintedReceipt(),
+      NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256: createHash("sha256")
+        .update(contents, "utf8")
+        .digest("hex"),
+    };
 
-    expect(() => readCandidateQualificationReceipt("pi", env)).toThrow(
-      "failed closed contract validation",
-    );
+    expect(isCandidateAgentSelectable("pi", env)).toBe(false);
   });
 
-  it("returns the exact accepted image identity from the receipt (#7927)", () => {
-    const env = candidateQualificationEnvironment();
-    const contract = readCandidateQualificationReceipt("pi", env);
+  it("refuses a missing receipt at the selection boundary, not only at startup (#7927)", () => {
+    const env = {
+      [CANDIDATE_AGENT_FEATURE_ENV]: "1",
+      [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: "/nonexistent/candidate-qualification.json",
+    };
 
-    expect(contract).toMatchObject({
-      agent: "pi",
-      image: "ghcr.io/nvidia/nemoclaw/pi-sandbox",
-    });
-    expect(contract.reference).toBe(`${contract.image}@${contract.digest}`);
+    expect(isCandidateAgentSelectable("pi", env)).toBe(false);
+    expect(() => requireCandidateAgentSelectable("pi", env)).toThrow(
+      "is not selectable in this release",
+    );
   });
 
   it("never refuses a shipped agent through the candidate gate (#7927)", () => {
@@ -104,8 +111,8 @@ describe("candidate agent gate", () => {
     expect(() => requireCandidateQualificationEnabled("pi", {})).toThrow(
       "is not selectable in this release",
     );
-    expect(() =>
-      requireCandidateQualificationEnabled("pi", candidateQualificationEnvironment()),
-    ).not.toThrow();
+    expect(() => requireCandidateQualificationEnabled("pi", callerMintedReceipt())).toThrow(
+      "is not selectable in this release",
+    );
   });
 });

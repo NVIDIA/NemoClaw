@@ -5,28 +5,38 @@ import { createHash } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const authority = vi.hoisted(() => ({ digests: [] as string[] }));
+
+vi.mock("../../agent/candidate-authority", () => ({
+  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
+  acceptedCandidateReceiptDigests: () => authority.digests,
+}));
+
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { createInMemoryRuntimeProviderBundle } from "../../../../test/helpers/runtime-provider-bundle";
-import { candidateQualificationEnvironment } from "../../agent/candidate-test-fixture";
-import { createOnboardAgentSelector } from "../../onboard/agent-selection";
 import {
-  MANAGED_IMAGE_REPOSITORIES,
-  managedImageRuntimeIdentity,
-} from "../../onboard/managed-image/contract";
+  type CandidateQualificationFixture,
+  candidateQualificationEnvironment,
+} from "../../agent/candidate-test-fixture";
+import { loadAgent } from "../../agent/defs";
+import { createOnboardAgentSelector } from "../../onboard/agent-selection";
+import { MANAGED_IMAGE_REPOSITORIES } from "../../onboard/managed-image/contract";
 import { encodeManagedStartupProfile } from "../../onboard/managed-startup/profile";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
-import { requireRuntimeProviderDestructiveCleanupAuthority } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry/types";
-import { resolveSandboxStatusAgent } from "./status-snapshot";
+import { requireSandboxDestructiveCleanupAuthority } from "./destroy";
+import { showSandboxLogsWithDeps } from "./logs";
+import { getSandboxStatusReport } from "./status";
 
 const PROVIDER_ID = "portable-test";
+const SANDBOX = "pi-sandbox";
 
 function piSandboxEntry(): SandboxEntry {
   const image = MANAGED_IMAGE_REPOSITORIES.pi;
   const digest = `sha256:${"1b".repeat(32)}`;
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("pi"));
   return {
-    name: "pi-sandbox",
+    name: SANDBOX,
     agent: "pi",
     openshellDriver: PROVIDER_ID,
     fromDockerfile: null,
@@ -49,71 +59,103 @@ function piSandboxEntry(): SandboxEntry {
   } as unknown as SandboxEntry;
 }
 
-function stubQualification(): void {
-  const env = candidateQualificationEnvironment();
-  vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", String(env.NEMOCLAW_CANDIDATE_AGENTS));
-  vi.stubEnv(
-    "NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT",
-    String(env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT),
-  );
-  vi.stubEnv(
-    "NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256",
-    String(env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256),
-  );
+function statusDeps(entry: SandboxEntry) {
+  return {
+    getSandbox: () => entry,
+    listSandboxes: () => ({ sandboxes: [entry], defaultSandbox: SANDBOX }),
+    reconcile: async () => ({
+      state: "present" as const,
+      output: `Name: ${SANDBOX}\nPhase: Ready\n`,
+    }),
+    captureOpenshellForStatusImpl: async () => ({ status: 0, output: "" }),
+    probeProviderHealthImpl: vi.fn(() => null),
+    probeSandboxInferenceGatewayHealthImpl: vi.fn(async () => null),
+    probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
+  };
+}
+
+let fixture: CandidateQualificationFixture | null = null;
+
+function qualify(): NodeJS.ProcessEnv {
+  fixture = candidateQualificationEnvironment();
+  authority.digests.push(fixture.receiptDigest);
+  for (const [key, value] of Object.entries(fixture.env)) vi.stubEnv(key, String(value));
+  return fixture.env;
 }
 
 describe("Pi candidate operational surfaces", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", "");
     vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT", "");
-    vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256", "");
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    authority.digests.splice(0, authority.digests.length);
+    fixture?.cleanup();
+    fixture = null;
   });
 
-  it("reports Pi separately from its compute runtime in status (#7927)", () => {
-    stubQualification();
+  it("reports Pi separately from its compute runtime in the status report (#7927)", async () => {
+    qualify();
     const entry = piSandboxEntry();
 
-    const info = resolveSandboxStatusAgent(String(entry.agent));
+    const report = await getSandboxStatusReport(SANDBOX, statusDeps(entry));
 
-    expect(info).toMatchObject({
-      agentName: "pi",
+    expect(report).toMatchObject({
+      name: SANDBOX,
+      found: true,
+      agent: "pi",
       agentDisplayName: "Pi",
       agentRuntime: "terminal",
     });
-    expect(info.agentLoadError).toBeUndefined();
-    // The compute runtime stays a separate recorded identity, and the agent
-    // identity never implies it.
+    expect(report).not.toHaveProperty("agentLoadError");
     expect(entry.openshellDriver).toBe(PROVIDER_ID);
-    expect(info.agentName).not.toBe(String(entry.openshellDriver));
+    expect(report.agent).not.toBe(String(entry.openshellDriver));
   });
 
-  it("names the withheld candidate in status diagnostics without qualification (#7927)", () => {
-    const info = resolveSandboxStatusAgent("pi");
+  it("names the withheld candidate in the status report without qualification (#7927)", async () => {
+    const report = await getSandboxStatusReport(SANDBOX, statusDeps(piSandboxEntry()));
 
-    expect(info.agentRuntime).toBe("unknown");
-    expect(info.agentLoadError).toContain("release candidate");
-    expect(info.agentDefinition).toBeNull();
+    expect(report.agent).toBe("pi");
+    expect(report.agentRuntime).toBe("unknown");
+    expect(report.agentLoadError).toContain("release candidate");
   });
 
-  it("keeps Pi inventory and log surfaces on the terminal runtime contract (#7927)", () => {
-    stubQualification();
+  it("keeps a recorded Pi sandbox off the gateway log source (#7927)", () => {
+    const env = qualify();
+    const agent = loadAgent("pi", env);
+    const runOpenshell = vi.fn((args: string[]) => ({ status: 0, stdout: args.join(" ") }));
+    const exitCodes: number[] = [];
 
-    const info = resolveSandboxStatusAgent("pi");
+    showSandboxLogsWithDeps(
+      SANDBOX,
+      { follow: false, lines: "50", since: null },
+      {
+        exit: ((code: number) => {
+          exitCodes.push(code);
+        }) as never,
+        isDockerRuntimeDown: () => false,
+        getOpenshellBinary: () => "openshell",
+        getSessionAgent: () => agent,
+        runOpenshell: runOpenshell as never,
+        writeStdout: () => {},
+      },
+    );
 
-    // Terminal agents have no gateway log source and no dashboard port, so the
-    // shared logs and inventory surfaces must not advertise one for Pi.
-    expect(info.agentRuntime).toBe("terminal");
-    expect(info.agentDefinition?.forwardPort).toBe(0);
-    expect(info.agentDefinition?.healthProbe).toBeNull();
-    expect(managedImageRuntimeIdentity("pi").workdir).toBe("/sandbox");
+    // A terminal agent advertises no gateway, so logs must read the sandbox
+    // source alone and never probe the OpenClaw gateway.
+    expect(runOpenshell).toHaveBeenCalled();
+    expect(exitCodes).toEqual([0]);
+    for (const [args] of runOpenshell.mock.calls) {
+      expect(args.join(" ")).not.toContain("openclaw");
+    }
+    expect(agent.forwardPort).toBe(0);
+    expect(agent.healthProbe).toBeNull();
   });
 
   it("resumes a recorded Pi session without changing the agent (#7927)", async () => {
-    stubQualification();
+    qualify();
     const note = vi.fn();
     const prompt = vi.fn(async () => "1");
     const selectAgent = createOnboardAgentSelector({
@@ -125,7 +167,6 @@ describe("Pi candidate operational surfaces", () => {
     const agent = await selectAgent({ resume: true, session: { agent: "pi" } });
 
     expect(agent?.name).toBe("pi");
-    // A resumed session pins its recorded agent, so the picker never runs.
     expect(prompt).not.toHaveBeenCalled();
     expect(note).toHaveBeenCalledWith(expect.stringContaining("Pi"));
   });
@@ -145,7 +186,6 @@ describe("Pi candidate operational surfaces", () => {
   });
 
   it("delegates Pi destroy cleanup to the selected compute-runtime provider (#7927)", () => {
-    const events: string[] = [];
     const bundle = createInMemoryRuntimeProviderBundle({
       providerId: PROVIDER_ID,
       workloadProfile: {
@@ -159,19 +199,19 @@ describe("Pi candidate operational surfaces", () => {
         managedImageSelectionPolicy: "require-managed",
         legacyDockerfileBuilds: false,
       },
-      recordEvent: (value: string) => events.push(value),
+      recordEvent: () => {},
     } as never);
     const registry = createRuntimeProviderBundleRegistry([[PROVIDER_ID, bundle]]);
 
-    const authority = requireRuntimeProviderDestructiveCleanupAuthority(
-      "pi-sandbox",
+    const authorityResult = requireSandboxDestructiveCleanupAuthority(
+      SANDBOX,
       piSandboxEntry(),
       registry,
     );
 
-    expect(authority.provider.identity.id).toBe(PROVIDER_ID);
+    expect(authorityResult.provider.identity.id).toBe(PROVIDER_ID);
     // A shared managed image is never deleted by destroy; cleanup stays owned
     // by the provider rather than by any Pi-specific branch.
-    expect(authority.workloadAction).toBe("retain");
+    expect(authorityResult.workloadAction).toBe("retain");
   });
 });

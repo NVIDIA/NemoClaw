@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ShippedManagedImageAgent,
-} from "../../src/lib/onboard/managed-image/contract.ts";
+import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
 
-export const PROTECTED_MANAGED_IMAGE_AGENTS: readonly ShippedManagedImageAgent[] =
-  SHIPPED_MANAGED_IMAGE_AGENTS;
+const BASE_REPOSITORIES: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze({
+  openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+  hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+  "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+});
+
+export const PROTECTED_MANAGED_IMAGE_AGENTS = Object.freeze(
+  Object.keys(BASE_REPOSITORIES),
+) as readonly ShippedManagedImageAgent[];
 
 export const PROTECTED_MANAGED_IMAGE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 export const PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID = "managed-image-multiarch-startup" as const;
@@ -65,11 +69,6 @@ const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 export const PROTECTED_MANAGED_IMAGE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const PROTECTED_MANAGED_IMAGE_COHORT_PATTERN =
   /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
-const BASE_REPOSITORIES: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze({
-  openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
-  hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
-  "langchain-deepagents-code": "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
-});
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

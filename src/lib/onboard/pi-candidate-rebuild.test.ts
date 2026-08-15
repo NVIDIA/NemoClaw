@@ -5,8 +5,18 @@ import { createHash } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const authority = vi.hoisted(() => ({ digests: [] as string[] }));
+
+vi.mock("../agent/candidate-authority", () => ({
+  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
+  acceptedCandidateReceiptDigests: () => authority.digests,
+}));
+
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
-import { candidateQualificationEnvironment } from "../agent/candidate-test-fixture";
+import {
+  type CandidateQualificationFixture,
+  candidateQualificationEnvironment,
+} from "../agent/candidate-test-fixture";
 import type { SandboxEntry } from "../state/registry/types";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -115,6 +125,13 @@ function provider(providerId = "mxc"): RuntimeProviderBundle {
 
 describe("Pi candidate managed rebuild", () => {
   let previousEnv: NodeJS.ProcessEnv;
+  let fixture: CandidateQualificationFixture | null = null;
+
+  function qualify(publish = true): void {
+    fixture = candidateQualificationEnvironment();
+    Object.assign(process.env, fixture.env);
+    if (publish) authority.digests.push(fixture.receiptDigest);
+  }
 
   beforeEach(() => {
     previousEnv = { ...process.env };
@@ -122,12 +139,14 @@ describe("Pi candidate managed rebuild", () => {
 
   afterEach(() => {
     process.env = previousEnv;
+    authority.digests.splice(0, authority.digests.length);
+    fixture?.cleanup();
+    fixture = null;
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = ORIGINAL_PREPARE;
   });
 
   it("restores the accepted candidate image without the release catalog (#7927)", async () => {
-    const qualification = candidateQualificationEnvironment();
-    Object.assign(process.env, qualification);
+    qualify();
     const releaseCatalog = vi.fn(ORIGINAL_PREPARE);
     managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource = releaseCatalog;
 
@@ -155,7 +174,6 @@ describe("Pi candidate managed rebuild", () => {
   it("refuses a candidate rebuild without qualification authority (#7927)", async () => {
     delete process.env.NEMOCLAW_CANDIDATE_AGENTS;
     delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT;
-    delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256;
 
     await expect(
       prepareManagedWorkloadRebuildHandoff(piEntry(), {
@@ -166,8 +184,8 @@ describe("Pi candidate managed rebuild", () => {
     ).rejects.toThrow(ManagedWorkloadRebuildError);
   });
 
-  it("refuses a candidate rebuild when the receipt digest does not match (#7927)", async () => {
-    Object.assign(process.env, candidateQualificationEnvironment({ corruptDigest: true }));
+  it("refuses a candidate rebuild from a receipt the repository never published (#7927)", async () => {
+    qualify(false);
 
     await expect(
       prepareManagedWorkloadRebuildHandoff(piEntry(), {

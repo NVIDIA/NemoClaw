@@ -17,11 +17,7 @@ import {
   type ManagedImageContractV1,
   type ManagedImagePlatform,
 } from "../onboard/managed-image/contract";
-import {
-  CANDIDATE_AGENT_FEATURE_ENV,
-  CANDIDATE_QUALIFICATION_RECEIPT_ENV,
-  CANDIDATE_QUALIFICATION_RECEIPT_SHA256_ENV,
-} from "./candidate";
+import { CANDIDATE_AGENT_FEATURE_ENV, CANDIDATE_QUALIFICATION_RECEIPT_ENV } from "./candidate";
 
 export function candidateQualificationContract(
   agent: CandidateManagedImageAgent = "pi",
@@ -47,31 +43,38 @@ export function candidateQualificationContract(
   };
 }
 
+export interface CandidateQualificationFixture {
+  readonly env: NodeJS.ProcessEnv;
+  readonly receiptPath: string;
+  readonly receiptDigest: string;
+  readonly cleanup: () => void;
+}
+
 /**
- * Write a qualification receipt and return the environment that authorises the
- * candidate agent. Tests use this instead of asserting the protected flag on its
- * own, because the flag alone must never activate a withheld agent.
+ * Write a qualification receipt and return the environment that locates it.
+ * The receipt only qualifies once its digest is published by the repository
+ * authority, so a suite that needs the accepted path must also stub
+ * `candidate-authority` with `receiptDigest`.
  */
 export function candidateQualificationEnvironment(
   options: {
     readonly agent?: CandidateManagedImageAgent;
     readonly contract?: ManagedImageContractV1;
-    readonly corruptDigest?: boolean;
   } = {},
-): NodeJS.ProcessEnv & { readonly receiptPath: string } {
+): CandidateQualificationFixture {
   const agent = options.agent ?? "pi";
   const contract = options.contract ?? candidateQualificationContract(agent);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-receipt-"));
   const receiptPath = path.join(directory, "candidate-qualification.json");
   const contents = JSON.stringify(contract);
   fs.writeFileSync(receiptPath, contents, { mode: 0o600 });
-  const sha256 = options.corruptDigest
-    ? "0".repeat(64)
-    : createHash("sha256").update(contents, "utf8").digest("hex");
   return {
-    [CANDIDATE_AGENT_FEATURE_ENV]: "1",
-    [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receiptPath,
-    [CANDIDATE_QUALIFICATION_RECEIPT_SHA256_ENV]: sha256,
+    env: {
+      [CANDIDATE_AGENT_FEATURE_ENV]: "1",
+      [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receiptPath,
+    },
     receiptPath,
+    receiptDigest: createHash("sha256").update(contents, "utf8").digest("hex"),
+    cleanup: () => fs.rmSync(directory, { recursive: true, force: true }),
   };
 }

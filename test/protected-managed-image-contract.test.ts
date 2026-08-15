@@ -6,6 +6,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  CANDIDATE_MANAGED_IMAGE_AGENTS,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../src/lib/onboard/managed-image/contract.ts";
+import {
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   PROTECTED_MANAGED_IMAGE_AGENTS,
   PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
@@ -185,5 +189,12 @@ describe("protected managed-image build contract", () => {
         evidenceIdentity("linux/arm64"),
       ),
     ).toThrow("does not match its exact contract");
+  });
+
+  it("stays aligned with the canonical shipped managed-image inventory (#7927)", () => {
+    expect([...PROTECTED_MANAGED_IMAGE_AGENTS]).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+    for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+      expect(PROTECTED_MANAGED_IMAGE_AGENTS).not.toContain(agent);
+    }
   });
 });

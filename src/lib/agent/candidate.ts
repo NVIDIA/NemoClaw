@@ -11,15 +11,13 @@ import {
   type ManagedImageContractV1,
   parseManagedImageContractV1,
 } from "../onboard/managed-image/contract";
+import { acceptedCandidateReceiptDigests } from "./candidate-authority";
 
 export const CANDIDATE_AGENT_FEATURE_ENV = "NEMOCLAW_CANDIDATE_AGENTS" as const;
 export const CANDIDATE_QUALIFICATION_RECEIPT_ENV =
   "NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT" as const;
-export const CANDIDATE_QUALIFICATION_RECEIPT_SHA256_ENV =
-  "NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256" as const;
 
 const MAX_RECEIPT_BYTES = 64 * 1024;
-const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
 export class CandidateQualificationError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -32,49 +30,21 @@ export function isCandidateAgent(name: string): name is CandidateManagedImageAge
   return isCandidateManagedImageAgent(name);
 }
 
-function receiptInputs(env: NodeJS.ProcessEnv): { path: string; sha256: string } | null {
+function receiptPath(env: NodeJS.ProcessEnv): string | null {
   if (env[CANDIDATE_AGENT_FEATURE_ENV] !== "1") return null;
-  const path = env[CANDIDATE_QUALIFICATION_RECEIPT_ENV];
-  const sha256 = env[CANDIDATE_QUALIFICATION_RECEIPT_SHA256_ENV];
-  if (!path || !sha256 || !SHA256_PATTERN.test(sha256)) return null;
-  return { path, sha256 };
-}
-
-/**
- * A candidate agent is selectable only when the protected flag is set and the
- * process also holds a qualification receipt. The flag alone never activates a
- * withheld agent, so ordinary user environment configuration cannot reach it.
- */
-export function isCandidateAgentEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return receiptInputs(env) !== null;
-}
-
-export function isCandidateAgentSelectable(
-  name: string,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return isCandidateAgent(name) && isCandidateAgentEnabled(env);
+  return env[CANDIDATE_QUALIFICATION_RECEIPT_ENV] || null;
 }
 
 export function candidateAgentUnavailableMessage(name: string): string {
   return `Agent '${name}' is a release candidate and is not selectable in this release`;
 }
 
-export function requireCandidateAgentSelectable(
-  name: string,
-  env: NodeJS.ProcessEnv = process.env,
-): void {
-  if (isCandidateAgent(name) && !isCandidateAgentEnabled(env)) {
-    throw new Error(candidateAgentUnavailableMessage(name));
-  }
-}
-
-function readBoundedReceipt(receiptPath: string): string {
+function readBoundedReceipt(path: string): string {
   let descriptor: number | null = null;
   try {
-    descriptor = fs.openSync(receiptPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    descriptor = fs.openSync(path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const metadata = fs.fstatSync(descriptor);
-    const pathMetadata = fs.lstatSync(receiptPath);
+    const pathMetadata = fs.lstatSync(path);
     if (
       pathMetadata.isSymbolicLink() ||
       !metadata.isFile() ||
@@ -97,28 +67,38 @@ function readBoundedReceipt(receiptPath: string): string {
 /**
  * Resolve the exact managed-image contract that authorises a candidate agent.
  *
- * The receipt is pinned by digest and revalidated through the shared
- * managed-image contract parser, so it must name the canonical NVIDIA
- * repository for that candidate and carry an exact image digest. A receipt that
- * claims a shipped agent fails closed.
+ * The caller supplies only the receipt location. Whether that receipt qualifies
+ * is decided by the repository-controlled digest list, so a caller-written
+ * receipt is refused however it is hashed or described. An accepted receipt is
+ * then revalidated through the shared managed-image contract parser, which
+ * holds it to the canonical NVIDIA repository for that candidate and an exact
+ * image digest.
  */
 export function readCandidateQualificationReceipt(
   name: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ManagedImageContractV1 {
-  const inputs = receiptInputs(env);
-  if (!inputs) {
+  if (!isCandidateAgent(name)) {
+    throw new CandidateQualificationError(`agent '${name}' is not a release candidate`);
+  }
+  const path = receiptPath(env);
+  if (!path) {
     throw new CandidateQualificationError(
       `agent '${name}' requires a protected candidate qualification receipt`,
     );
   }
-  if (!isCandidateAgent(name)) {
-    throw new CandidateQualificationError(`agent '${name}' is not a release candidate`);
+  const accepted = acceptedCandidateReceiptDigests(name);
+  if (accepted.length === 0) {
+    throw new CandidateQualificationError(
+      `no qualified receipt is published for release candidate '${name}'`,
+    );
   }
-  const contents = readBoundedReceipt(inputs.path);
-  const actual = createHash("sha256").update(contents, "utf8").digest("hex");
-  if (actual !== inputs.sha256) {
-    throw new CandidateQualificationError("the receipt does not match its pinned digest");
+  const contents = readBoundedReceipt(path);
+  const digest = createHash("sha256").update(contents, "utf8").digest("hex");
+  if (!accepted.includes(digest)) {
+    throw new CandidateQualificationError(
+      "the receipt is not a published qualification for that candidate",
+    );
   }
   let parsed: unknown;
   try {
@@ -151,6 +131,27 @@ export function isCandidateQualificationEnabled(
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * A candidate is exposed to selection only once its qualification receipt has
+ * been read, digest-matched against the repository authority, and parsed. The
+ * protected flag and a receipt path are necessary but never sufficient.
+ */
+export function isCandidateAgentSelectable(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isCandidateAgent(name) && isCandidateQualificationEnabled(name, env);
+}
+
+export function requireCandidateAgentSelectable(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (isCandidateAgent(name) && !isCandidateAgentSelectable(name, env)) {
+    throw new Error(candidateAgentUnavailableMessage(name));
   }
 }
 

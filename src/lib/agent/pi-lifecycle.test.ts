@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+
+const authority = vi.hoisted(() => ({ digests: [] as string[] }));
+
+vi.mock("./candidate-authority", () => ({
+  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
+  acceptedCandidateReceiptDigests: () => authority.digests,
+}));
 
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -21,7 +28,11 @@ import { candidateQualificationEnvironment } from "./candidate-test-fixture";
 import { loadAgent } from "./defs";
 import { resolveAgent } from "./onboard";
 
-const CANDIDATE_ENV = candidateQualificationEnvironment();
+const QUALIFICATION = candidateQualificationEnvironment();
+const CANDIDATE_ENV = QUALIFICATION.env;
+authority.digests.push(QUALIFICATION.receiptDigest);
+afterAll(() => QUALIFICATION.cleanup());
+
 const PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const DIGEST = `sha256:${"7a".repeat(32)}` as const;
 
@@ -77,6 +88,55 @@ describe("Pi candidate lifecycle integration", () => {
     }
   });
 
+  it("never falls back to a host Dockerfile for an enabled candidate (#7927)", () => {
+    const permissive = (
+      overrides: Partial<SandboxWorkloadRuntimeCapabilities>,
+    ): SandboxWorkloadRuntimeCapabilities => ({
+      ...capableRuntime("docker"),
+      managedImageSelectionPolicy: "prefer-managed",
+      legacyDockerfileBuilds: true,
+      ...overrides,
+    });
+    const resolve = (
+      runtime: SandboxWorkloadRuntimeCapabilities,
+      catalog: Record<string, ManagedImageContractV1> = { pi: piContract() },
+    ) =>
+      resolveSandboxWorkloadSource({
+        agentName: "pi",
+        legacyDockerfilePath: "agents/pi/Dockerfile",
+        runtime,
+        catalog,
+        candidateAgentsEnabled: true,
+      });
+
+    expect(() => resolve(permissive({ managedImages: null }))).toThrow(
+      "Managed image workload is required for 'pi'",
+    );
+    expect(() =>
+      resolve(
+        permissive({
+          managedImages: {
+            ...capableRuntime("docker").managedImages!,
+            exactDigestReferences: false,
+          },
+        }),
+      ),
+    ).toThrow("Managed image workload is required for 'pi'");
+    expect(() => resolve(permissive({}), {})).toThrow(
+      "Managed image workload is required for 'pi'",
+    );
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: "pi",
+        legacyDockerfilePath: "agents/pi/Dockerfile",
+        customDockerfilePath: "/tmp/Dockerfile.pi",
+        runtime: permissive({}),
+        catalog: { pi: piContract() },
+        candidateAgentsEnabled: true,
+      }),
+    ).toThrow("a custom Dockerfile is not accepted");
+  });
+
   it("keeps the Pi workload identity independent of the compute runtime (#7927)", () => {
     const identity = managedImageRuntimeIdentity("pi");
 
@@ -106,7 +166,6 @@ describe("Pi candidate lifecycle integration", () => {
   it("refuses a public --agent pi selection without qualification authority (#7927)", () => {
     vi.stubEnv("NEMOCLAW_CANDIDATE_AGENTS", "");
     vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT", "");
-    vi.stubEnv("NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256", "");
     try {
       expect(() => resolveAgent({ agentFlag: "pi" })).toThrow("Unknown agent 'pi'");
       expect(() => resolveAgent({ session: { agent: "pi" } })).toThrow(

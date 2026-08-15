@@ -6,7 +6,17 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { candidateQualificationEnvironment } from "./candidate-test-fixture";
+const authority = vi.hoisted(() => ({ digests: [] as string[] }));
+
+vi.mock("./candidate-authority", () => ({
+  CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS: { pi: authority.digests },
+  acceptedCandidateReceiptDigests: () => authority.digests,
+}));
+
+import {
+  type CandidateQualificationFixture,
+  candidateQualificationEnvironment,
+} from "./candidate-test-fixture";
 import YAML from "yaml";
 
 import {
@@ -28,9 +38,13 @@ function writeTempAgentManifest(name: string, contents: string): void {
   fs.writeFileSync(path.join(agentDir, "manifest.yaml"), contents);
 }
 
+const qualificationFixtures: CandidateQualificationFixture[] = [];
+
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_AGENT;
+  authority.digests.splice(0, authority.digests.length);
+  while (qualificationFixtures.length > 0) qualificationFixtures.pop()?.cleanup();
   while (tempAgentDirs.length > 0) {
     const agentDir = tempAgentDirs.pop();
     if (agentDir) {
@@ -83,11 +97,21 @@ describe("agent definitions", () => {
   });
 
   it("selects Pi only with protected candidate qualification authority (#7927)", () => {
-    const candidateEnv = candidateQualificationEnvironment();
+    const fixture = candidateQualificationEnvironment();
+    qualificationFixtures.push(fixture);
+    authority.digests.push(fixture.receiptDigest);
 
-    expect(listAgents(candidateEnv)).toContain("pi");
-    expect(resolveAgentNameAlias("pi", listAgents(candidateEnv))).toBe("pi");
-    expect(loadAgent("pi", candidateEnv).name).toBe("pi");
+    expect(listAgents(fixture.env)).toContain("pi");
+    expect(resolveAgentNameAlias("pi", listAgents(fixture.env))).toBe("pi");
+    expect(loadAgent("pi", fixture.env).name).toBe("pi");
+  });
+
+  it("withholds Pi from a receipt the repository has not published (#7927)", () => {
+    const fixture = candidateQualificationEnvironment();
+    qualificationFixtures.push(fixture);
+
+    expect(listAgents(fixture.env)).not.toContain("pi");
+    expect(() => loadAgent("pi", fixture.env)).toThrow("is not selectable in this release");
   });
 
   it("does not expose Pi from the protected flag alone (#7927)", () => {
