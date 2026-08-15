@@ -423,7 +423,7 @@ describe("dormant Podman runtime provider", () => {
   });
 
   it("rejects a state-mutation engine with another operation scope", () => {
-    const engines = realOperationEngines();
+    const { hostLocalInference: _hostLocalInference, ...engines } = realOperationEngines();
 
     expect(() =>
       createPodmanRuntimeProviderBundle({
@@ -436,7 +436,7 @@ describe("dormant Podman runtime provider", () => {
   });
 
   it("rejects a state-mutation engine bound to another endpoint authority", () => {
-    const engines = realOperationEngines();
+    const { hostLocalInference: _hostLocalInference, ...engines } = realOperationEngines();
     const driftedStateMutation = realOperationEngines({
       ...REAL_SOCKET_AUTHORITY,
       inode: "9002",
@@ -450,7 +450,11 @@ describe("dormant Podman runtime provider", () => {
   });
 
   it("rejects state-mutation options without a state-mutation engine", () => {
-    const { stateMutation: _stateMutation, ...engines } = realOperationEngines();
+    const {
+      hostLocalInference: _hostLocalInference,
+      stateMutation: _stateMutation,
+      ...engines
+    } = realOperationEngines();
 
     expect(() =>
       createPodmanRuntimeProviderBundle({
