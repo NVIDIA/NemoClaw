@@ -190,7 +190,7 @@ describe("portable Podman activation readiness", () => {
     expect(h.podmanCapture).toHaveBeenCalledOnce();
   });
 
-  it("uses the shorter steady-state deadline only for an active service (#9070)", () => {
+  it("uses the shorter steady-state deadline when the service reports active (#9070)", () => {
     const h = harness({ active: true });
 
     const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);

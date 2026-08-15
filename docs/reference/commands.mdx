@@ -876,11 +876,15 @@ Onboarding prints the same commands when the portable probe cannot reach the use
 The printed rerun command keeps the portable experimental profile selected.
 Portable commands reconstruct the current user's rootless Podman socket authority from NemoClaw state before they use the Docker-compatible API.
 They do not select an endpoint from ambient Docker or Podman runtime variables or named connections.
+When `podman.service` reports inactive and the recorded socket exists, NemoClaw first makes one 10-second API request through the guarded recorded authority.
+A valid server version classifies the endpoint as warm and avoids starting another socket service.
+A missing socket or a response without a valid server version enters bounded cold activation.
+Any socket authority change during this precheck fails at the socket authority stage.
 When the user-scoped socket-backed service needs activation, NemoClaw activates it and waits through a bounded startup period for a real Podman API response.
-The first API probe can cause systemd to replace the socket inode during cold activation.
+During cold activation, the first API probe can cause systemd to replace the socket inode.
 NemoClaw requalifies one such replacement and repeats the probe only when the socket path, device, mode, owner, and complete directory authority remain unchanged.
 Any other authority change or a second inode replacement fails the readiness check.
-Only a successful response permits the shorter steady-state API health deadline.
+After cold activation succeeds, later API health checks use the fixed 10-second steady-state deadline.
 Onboarding and portable sandbox lifecycle commands use this same readiness contract.
 Failures identify socket authority, service activation, startup API health, or steady-state API health without reporting credentials.
 NemoClaw does not fall back to Docker or report an absent or unreachable endpoint as healthy.

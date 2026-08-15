@@ -3335,6 +3335,11 @@ Portable commands use the current user's rootless Podman socket authority record
 They ignore ambient Docker and Podman runtime selectors, including named connections.
 Do not export another `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or `CONTAINER_CONNECTION` to bypass a readiness failure.
 
+When `podman.service` reports inactive and the recorded socket exists, NemoClaw first makes one 10-second API request through the guarded recorded authority.
+A valid server version classifies the endpoint as warm and avoids starting another socket service.
+A missing socket or a response without a valid server version enters bounded cold activation.
+Any socket authority change during this precheck fails at the socket authority stage and is not eligible for inode requalification.
+
 During cold activation, the first API probe can cause systemd to replace the socket inode.
 NemoClaw requalifies one such replacement and repeats the probe only when the socket path, device, mode, owner, and complete directory authority remain unchanged.
 Any other authority change or a second inode replacement fails at the socket authority stage.
