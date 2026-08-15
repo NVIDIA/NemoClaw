@@ -15,7 +15,8 @@ export const HOST_VERIFICATION_NAMESPACE_SCRIPT = [
   'hosts_path="$1"',
   'run_uid="$2"',
   'run_gid="$3"',
-  "shift 3",
+  'command_path="$4"',
+  "shift 4",
   'alias_name="host.openshell.internal"',
   "",
   '[[ "$run_uid" =~ ^[0-9]+$ ]] || { echo "invalid host verifier user ID" >&2; exit 2; }',
@@ -36,11 +37,21 @@ export const HOST_VERIFICATION_NAMESPACE_SCRIPT = [
   'mount --bind "$private_hosts" "$hosts_path"',
   "",
   'if [[ "$(id -u)" == "$run_uid" && "$(id -g)" == "$run_gid" ]]; then',
-  '  "$@"',
+  '  /usr/bin/env PATH="$command_path" "$@"',
   "else",
-  '  setpriv --reuid="$run_uid" --regid="$run_gid" --init-groups -- "$@"',
+  '  /usr/bin/setpriv --reuid="$run_uid" --regid="$run_gid" --init-groups -- /usr/bin/env PATH="$command_path" "$@"',
   "fi",
 ].join("\n");
+
+function hostVerificationPreservedEnvNames(env: NodeJS.ProcessEnv | undefined): string[] {
+  return Object.keys(env ?? {})
+    .filter((name) =>
+      /^(?:CI|COMPATIBLE_ANTHROPIC_API_KEY|GITHUB_ACTIONS|HOME|LANG|LC_ALL|LC_CTYPE|LOGNAME|NEMOCLAW_[A-Z0-9_]+|OPENSHELL_GATEWAY|RUNNER_OS|RUNNER_TEMP|TERM|TMPDIR|TZ|USER)$/u.test(
+        name,
+      ),
+    )
+    .sort();
+}
 
 export interface CompatibleAnthropicSwitchBinding {
   endpointUrl: string;
@@ -87,11 +98,15 @@ export async function withHostVerificationLoopbackAlias<T>(
       command: string,
       args: string[] = [],
       options: Parameters<HostCliClient["command"]>[2] = {},
-    ) =>
-      host.command(
+    ) => {
+      const preservedEnvNames = hostVerificationPreservedEnvNames(options.env);
+      const preserveEnvOption = `--preserve-env=${preservedEnvNames.join(",")}`;
+      const commandPath = options.env?.PATH ?? process.env.PATH ?? "/usr/bin:/bin";
+      const scopedCommand = command === "node" ? process.execPath : command;
+      return host.command(
         "sudo",
         [
-          "--preserve-env",
+          preserveEnvOption,
           "unshare",
           "--mount",
           "--fork",
@@ -103,11 +118,13 @@ export async function withHostVerificationLoopbackAlias<T>(
           HOST_VERIFICATION_HOSTS_PATH,
           String(uid),
           String(gid),
-          command,
+          commandPath,
+          scopedCommand,
           ...args,
         ],
         options,
-      ),
+      );
+    },
   } as HostCliClient;
   return await run(scopedHost);
 }

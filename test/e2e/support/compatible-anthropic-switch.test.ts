@@ -75,17 +75,17 @@ describe("compatible Anthropic inference switch setup", () => {
     expect(program).toBe("sudo");
     expect(args).toEqual(
       expect.arrayContaining([
-        "--preserve-env",
         "unshare",
         "--mount",
         "--fork",
         "/etc/hosts",
-        "node",
+        process.execPath,
         "nemoclaw.js",
         "inference",
         "set",
       ]),
     );
+    expect(args).toContain("--preserve-env=COMPATIBLE_ANTHROPIC_API_KEY");
     expect(args).not.toContain("fixture-key");
     expect(options).toEqual({
       artifactName: "inference-set",
@@ -182,6 +182,7 @@ describe("host verifier resolver namespace", () => {
           files.hostsPath,
           String(process.getuid?.()),
           String(process.getgid?.()),
+          process.env.PATH ?? "/usr/bin:/bin",
           "true",
         ],
         {
