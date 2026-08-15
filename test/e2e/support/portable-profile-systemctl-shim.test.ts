@@ -28,7 +28,7 @@ function portableLaunchProvisionStep(): WorkflowStep {
 
 describe("portable profile systemctl fixture", () => {
   it(
-    "reports inactive status, activates the socket, and reports active status (#9006)",
+    "reports the service inactive, starts the socket, and preserves active status across try-restart (#9006)",
     {
       timeout: 15_000,
     },
@@ -74,13 +74,17 @@ process.on("SIGTERM", stop);
         const activation = systemctl(["--user", "start", "podman.socket"]);
         expect(activation.status, activation.stderr).toBe(0);
         expect(systemctl(["--user", "is-active", "--quiet", "podman.service"]).status).toBe(0);
+        const refresh = systemctl(["--user", "try-restart", "podman.service"]);
+        expect(refresh.status, refresh.stderr).toBe(0);
+        expect(systemctl(["--user", "is-active", "--quiet", "podman.service"]).status).toBe(0);
       } finally {
         const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
-        if (fs.existsSync(pidFile)) {
+        try {
           const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
-          if (Number.isInteger(pid)) {
-            process.kill(pid, "SIGTERM");
-          }
+          expect(pid).toBeGreaterThan(0);
+          process.kill(pid, "SIGTERM");
+        } catch (error) {
+          expect(["ENOENT", "ESRCH"]).toContain((error as NodeJS.ErrnoException).code);
         }
         fs.rmSync(directory, { force: true, recursive: true });
       }
@@ -103,7 +107,7 @@ process.on("SIGTERM", stop);
     }
   });
 
-  it("binds both portable profile lanes to the same systemctl fixture (#9006)", () => {
+  it("binds the portable-launch workflow and rootless Linux test to one systemctl fixture (#9006)", () => {
     const provision = portableLaunchProvisionStep().run ?? "";
     expect(provision).toContain(
       'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
