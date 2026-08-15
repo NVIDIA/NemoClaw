@@ -117,22 +117,19 @@ function runDocumentedCommand(fixture: CommandFixture, environment: NodeJS.Proce
 }
 
 function listTemporaryDropIns(fixture: CommandFixture): string[] {
-  const temporaryFiles: string[] = [];
   const directories = new Set([
     path.dirname(fixture.delegationDropIn),
     path.dirname(fixture.appSliceDropIn),
   ]);
 
-  for (const directory of directories) {
-    if (!fs.existsSync(directory)) continue;
-    for (const entry of fs.readdirSync(directory)) {
-      if (entry.startsWith(".nemoclaw-cpu-controller.")) {
-        temporaryFiles.push(path.join(directory, entry));
-      }
-    }
-  }
-
-  return temporaryFiles;
+  return [...directories]
+    .filter((directory) => fs.existsSync(directory))
+    .flatMap((directory) =>
+      fs
+        .readdirSync(directory)
+        .filter((entry) => entry.startsWith(".nemoclaw-cpu-controller."))
+        .map((entry) => path.join(directory, entry)),
+    );
 }
 
 afterEach(() => {
