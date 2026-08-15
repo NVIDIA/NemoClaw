@@ -95,6 +95,9 @@ describe("native runtime qualification producer workflow", () => {
     expect(source).not.toMatch(/NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u);
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
+    expect(boundary.run.indexOf("printf 'account=%s")).toBeLessThan(
+      boundary.run.indexOf("useradd --create-home"),
+    );
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(installer.run).toContain("run-native-runtime-installer-qualification.sh");
     expect(installer.run.indexOf("pkill -KILL -u")).toBeLessThan(
@@ -111,7 +114,9 @@ describe("native runtime qualification producer workflow", () => {
       path: "${{ runner.temp }}/native-runtime-evidence/evidence.json",
     });
     expect(cleanup.if).toBe("always()");
+    expect(cleanup.run).toContain('account="${ACCOUNT:-nemoclawq}"');
     expect(cleanup.run).toContain("pkill -KILL -u");
     expect(cleanup.run).toContain("userdel --remove");
+    expect(cleanup.run).toContain("Qualification account still exists after cleanup");
   });
 });

@@ -1039,6 +1039,7 @@ jobs:
           ! pgrep -x dockerd >/dev/null
           [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
           account="nemoclawq"
+          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
           sudo useradd --create-home --shell /usr/sbin/nologin "$account"
           uid="$(id -u "$account")"
           home="$(getent passwd "$account" | cut -d: -f6)"
@@ -1049,7 +1050,6 @@ jobs:
           install -d -m 0700 "$guard_dir"
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
           chmod 0500 "$guard_dir/docker"
-          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
           printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
@@ -1152,9 +1152,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${ACCOUNT:-}" ]] && id "$ACCOUNT" >/dev/null 2>&1; then
-            sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
-            sudo userdel --remove "$ACCOUNT"
+          account="${ACCOUNT:-nemoclawq}"
+          if id "$account" >/dev/null 2>&1; then
+            sudo pkill -KILL -u "$(id -u "$account")" 2>/dev/null || true
+            sudo userdel --remove "$account"
+          fi
+          if id "$account" >/dev/null 2>&1; then
+            echo "::error::Qualification account still exists after cleanup" >&2
+            exit 1
           fi
 
       - name: Upload the qualification case evidence
