@@ -21,6 +21,7 @@ on:
       - "src/lib/sandbox/**"
       - "test/e2e/fixtures/availability-env.ts"
       - "test/e2e/fixtures/portable-profile-systemctl-shim.sh"
+      - "test/e2e/fixtures/portable-profile-systemctl.ts"
       - "test/e2e/live/full-e2e.test.ts"
       - "test/e2e/live/launch-agent-turn.ts"
       - "test/e2e/live/portable-profile-gateway-proof.ts"

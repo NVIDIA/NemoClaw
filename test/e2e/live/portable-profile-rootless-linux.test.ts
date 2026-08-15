@@ -14,6 +14,7 @@ import * as importedPortableHostPreparation from "../../../src/lib/onboard/exper
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { test } from "../fixtures/e2e-test.ts";
+import { installPortableProfileSystemctlShim } from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
 
@@ -96,15 +97,6 @@ async function waitForRegistry(attempt = 0): Promise<void> {
       );
 }
 
-function writeSystemctlShim(binDir: string): void {
-  const shim = path.join(binDir, "systemctl");
-  fs.copyFileSync(
-    path.join(process.cwd(), "test/e2e/fixtures/portable-profile-systemctl-shim.sh"),
-    shim,
-  );
-  fs.chmodSync(shim, 0o700);
-}
-
 function selectInstallerPodmanRuntime(repoRoot: string): string {
   const payload = path.join(repoRoot, "scripts", "install.sh");
   const script = [
@@ -127,7 +119,7 @@ async function main(progress: TestProgress): Promise<void> {
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
-  writeSystemctlShim(binDir);
+  installPortableProfileSystemctlShim(binDir);
 
   Object.assign(process.env, {
     HOME: home,

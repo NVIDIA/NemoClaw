@@ -4,14 +4,11 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { installPortableProfileSystemctlShim } from "../fixtures/portable-profile-systemctl.ts";
 import { readYaml, type Workflow, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
-
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const SHIM_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/portable-profile-systemctl-shim.sh");
 
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { encoding: "utf8", mode: 0o700 });
@@ -28,7 +25,7 @@ function portableLaunchProvisionStep(): WorkflowStep {
 
 describe("portable profile systemctl fixture", () => {
   it(
-    "reports the service inactive, starts the socket, and preserves active status across try-restart (#9006)",
+    "installs a mode-0700 shim that reports inactive status, starts the socket, and stays active across try-restart (#9006)",
     {
       timeout: 15_000,
     },
@@ -36,11 +33,10 @@ describe("portable profile systemctl fixture", () => {
       const directory = fs.mkdtempSync("/tmp/portable-systemctl-shim-");
       const binDir = path.join(directory, "bin");
       const runtimeDir = path.join(directory, "runtime");
-      const shim = path.join(binDir, "systemctl");
       fs.mkdirSync(binDir);
       fs.mkdirSync(runtimeDir);
-      fs.copyFileSync(SHIM_SOURCE, shim);
-      fs.chmodSync(shim, 0o700);
+      const shim = installPortableProfileSystemctlShim(binDir);
+      expect(fs.statSync(shim).mode & 0o777).toBe(0o700);
       writeExecutable(
         path.join(binDir, "podman"),
         `#!${process.execPath}
@@ -92,9 +88,14 @@ process.on("SIGTERM", stop);
   );
 
   it("rejects an unexpected user-service command (#9006)", () => {
-    const runtimeDir = fs.mkdtempSync("/tmp/portable-systemctl-shim-");
+    const directory = fs.mkdtempSync("/tmp/portable-systemctl-shim-");
+    const binDir = path.join(directory, "bin");
+    const runtimeDir = path.join(directory, "runtime");
     try {
-      const result = spawnSync(SHIM_SOURCE, ["--user", "restart", "podman.socket"], {
+      fs.mkdirSync(binDir);
+      fs.mkdirSync(runtimeDir);
+      const shim = installPortableProfileSystemctlShim(binDir);
+      const result = spawnSync(shim, ["--user", "restart", "podman.socket"], {
         encoding: "utf8",
         env: { ...process.env, XDG_RUNTIME_DIR: runtimeDir },
       });
@@ -103,21 +104,15 @@ process.on("SIGTERM", stop);
         "unexpected user-service command: --user restart podman.socket",
       );
     } finally {
-      fs.rmSync(runtimeDir, { force: true, recursive: true });
+      fs.rmSync(directory, { force: true, recursive: true });
     }
   });
 
-  it("binds the portable-launch workflow and rootless Linux test to one systemctl fixture (#9006)", () => {
+  it("binds the portable-launch workflow to the shared systemctl fixture (#9006)", () => {
     const provision = portableLaunchProvisionStep().run ?? "";
     expect(provision).toContain(
       'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
     );
     expect(provision).toContain("systemctl --user start podman.socket");
-    expect(
-      fs.readFileSync(
-        path.join(REPO_ROOT, "test/e2e/live/portable-profile-rootless-linux.test.ts"),
-        "utf8",
-      ),
-    ).toContain('"test/e2e/fixtures/portable-profile-systemctl-shim.sh"');
   });
 });
