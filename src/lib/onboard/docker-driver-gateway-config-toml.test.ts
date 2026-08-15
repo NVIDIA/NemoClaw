@@ -471,7 +471,7 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
-  it("creates the first authenticated config for a prepared v0.0.55 database recovery", () => {
+  it("creates the first authenticated config for a prepared OpenShell v0.0.44 pre-auth database", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-v0-0-55-"));
     try {
       writeOpenShell0044PreAuthState(stateDir);
