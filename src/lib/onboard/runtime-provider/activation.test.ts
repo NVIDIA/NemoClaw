@@ -65,9 +65,7 @@ const CANDIDATE_TOPOLOGIES = [
 
 const QUALIFICATION_AUTHORITIES = new Map<string, NativeRuntimeQualificationAuthority>();
 
-function qualificationAuthority(providerId: string): NativeRuntimeQualificationAuthority {
-  const existing = QUALIFICATION_AUTHORITIES.get(providerId);
-  if (existing) return existing;
+function createQualificationAuthority(providerId: string): NativeRuntimeQualificationAuthority {
   const qualification = compileNativeRuntimeQualification(
     nativeRuntimeQualificationDefinition(providerId),
   );
@@ -79,6 +77,10 @@ function qualificationAuthority(providerId: string): NativeRuntimeQualificationA
   );
   QUALIFICATION_AUTHORITIES.set(providerId, authority);
   return authority;
+}
+
+function qualificationAuthority(providerId: string): NativeRuntimeQualificationAuthority {
+  return QUALIFICATION_AUTHORITIES.get(providerId) ?? createQualificationAuthority(providerId);
 }
 
 function unreachable(): never {

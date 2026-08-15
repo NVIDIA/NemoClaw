@@ -54,15 +54,7 @@ type ReceiptArchiveOptions = {
   readonly tamperReceipt?: string;
 };
 
-function receiptPaths(value: unknown): string[] {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !Array.isArray((value as { readonly cases?: unknown }).cases)
-  ) {
-    return [];
-  }
-  const envelope = value as NativeRuntimeQualificationEvidenceEnvelope;
+function receiptPaths(envelope: NativeRuntimeQualificationEvidenceEnvelope): string[] {
   return [
     ...new Set(
       envelope.cases.flatMap((entry) => [
@@ -76,7 +68,10 @@ function receiptPaths(value: unknown): string[] {
   ];
 }
 
-function archiveFor(value: unknown, options: ReceiptArchiveOptions = {}): Buffer {
+function archiveFor(
+  value: NativeRuntimeQualificationEvidenceEnvelope,
+  options: ReceiptArchiveOptions = {},
+): Buffer {
   const receipts = receiptPaths(value)
     .filter((receiptPath) => receiptPath !== options.omitReceipt)
     .map((receiptPath) => ({
@@ -93,7 +88,7 @@ function archiveFor(value: unknown, options: ReceiptArchiveOptions = {}): Buffer
 }
 
 function githubFixture(
-  value: unknown = nativeQualificationEvidence(),
+  value: NativeRuntimeQualificationEvidenceEnvelope = nativeQualificationEvidence(),
   archiveOptions: ReceiptArchiveOptions = {},
 ): {
   readonly api: GitHubQualificationReader;
@@ -253,7 +248,12 @@ describe("native runtime qualification protected evidence collector", () => {
   it("rejects an artifact whose downloaded bytes do not match GitHub's immutable digest", async () => {
     const fixture = githubFixture();
     vi.mocked(fixture.api.getBytes).mockResolvedValueOnce(
-      archiveFor(nativeQualificationExpectedSource()),
+      artifactZip([
+        {
+          name: NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE,
+          contents: JSON.stringify(nativeQualificationExpectedSource()),
+        },
+      ]),
     );
 
     await expect(
