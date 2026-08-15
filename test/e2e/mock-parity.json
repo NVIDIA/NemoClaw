@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/portable-cpu-delegation-proof.test.ts",
+      "fast": [
+        "src/lib/onboard/experimental/portable-cpu-delegation-preflight.test.ts",
+        "src/lib/onboard/experimental/portable-host-preparation.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
       "fast": [
         "src/lib/onboard/command.test.ts",
