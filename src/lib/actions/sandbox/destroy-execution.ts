@@ -16,7 +16,6 @@ import {
   prepareSandboxHostLocalInferenceDestroyAuthority,
   retirePreparedHostLocalInferenceAuthority,
 } from "../../onboard/runtime-provider/host-local-inference-lifecycle";
-import { removeExactOpenShellDockerSandboxContainer } from "../../onboard/openshell-docker-sandbox-containers";
 import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
@@ -29,6 +28,7 @@ import {
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentity,
   observeDestroyContainerIdentity,
+  removeExactDestroyContainerIdentity,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
 import type { DestroyRunOpenshell } from "./destroy-gateway";
@@ -516,17 +516,13 @@ export async function executeSandboxDestroy({
 
     if (!forcedLocalCleanup && expectedContainerIdentity) {
       try {
-        removeExactOpenShellDockerSandboxContainer(
-          sandboxName,
-          expectedContainerIdentity.id,
-          console.log,
-        );
+        removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
       } catch (error) {
         const detail = redactDestroyError(error);
         return {
           ok: false as const,
           deleteOutput:
-            `OpenShell reported sandbox '${sandboxName}' absent, but exact Docker container ` +
+            `OpenShell reported sandbox '${sandboxName}' absent, but exact runtime ` +
             `cleanup failed: ${detail}. The local sandbox record was preserved for retry.`,
           exitCode: 1,
           gatewayUnreachable: false,
