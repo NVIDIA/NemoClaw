@@ -534,7 +534,7 @@ start_gateway_service() {
     return 1
   fi
 
-  local gateway_identity gateway_pid gateway_pid_file_tmp
+  local gateway_drift_identity gateway_identity gateway_pid gateway_pid_file_tmp
   gateway_identity="gateway:$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
   NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID="$gateway_identity" nohup "$gateway_binary_path" \
     >>"$gateway_log_file" 2>&1 </dev/null &
@@ -545,6 +545,16 @@ start_gateway_service() {
       >"$gateway_pid_file_tmp"
     chmod 600 "$gateway_pid_file_tmp"
     mv "$gateway_pid_file_tmp" "$gateway_pid_file"
+    if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_DRIFT:-}" == "1" ]]; then
+      cp "$gateway_pid_file" "${gateway_pid_file}.before-validation"
+      gateway_drift_identity="gateway:00000000000000000000000000000000"
+      if [[ "$gateway_drift_identity" == "$gateway_identity" ]]; then
+        gateway_drift_identity="gateway:11111111111111111111111111111111"
+      fi
+      printf '%s\t%s\t%s\n' "$gateway_pid" "$acquired_process_start_time" \
+        "$gateway_drift_identity" \
+        >"$gateway_pid_file"
+    fi
   else
     stop_unrecorded_process "$gateway_pid" "$gateway_identity" "" || true
     echo "Portable profile fixture could not create the gateway process identity record." >&2
@@ -552,10 +562,15 @@ start_gateway_service() {
     return 1
   fi
 
+  local gateway_status
   if gateway_service_is_active; then
     return 0
+  else
+    gateway_status=$?
   fi
-  rm -f "$gateway_pid_file"
+  if [[ "$gateway_status" -eq 1 ]]; then
+    rm -f "$gateway_pid_file"
+  fi
   cat "$gateway_log_file" >&2 || true
   return 1
 }
