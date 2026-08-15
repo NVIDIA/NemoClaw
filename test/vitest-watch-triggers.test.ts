@@ -64,6 +64,8 @@ const OPAQUE_INPUTS = [
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/e2e-standard-profile.yaml",
+  ".github/workflows/portable-profile-e2e.yaml",
+  "test/e2e/fixtures/portable-profile-systemctl-shim.sh",
   ".github/actions/docker-auth-setup/action.yaml",
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
@@ -166,6 +168,14 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
     ]);
+    for (const portableProfilePath of [
+      ".github/workflows/portable-profile-e2e.yaml",
+      "test/e2e/fixtures/portable-profile-systemctl-shim.sh",
+    ]) {
+      expect(triggeredBy(portableProfilePath)).toEqual([
+        "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+      ]);
+    }
     for (const authPath of [
       ".github/actions/docker-auth-setup/action.yaml",
       ".github/actions/docker-auth-cleanup/action.yaml",
