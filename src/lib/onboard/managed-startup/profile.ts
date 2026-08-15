@@ -27,6 +27,7 @@ const MAX_JSON_DEPTH = 32;
 const MAX_TUNING_INTEGER = 1_000_000_000;
 const MIN_HERMES_CONTEXT_WINDOW = 64_000;
 const SHA256_RE = /^[a-f0-9]{64}$/;
+const DCODE_UPSTREAM_PROVIDER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const CONTROL_CHARACTER_RE = /[\u0000-\u001f\u007f-\u009f]/u;
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 const RAW_CA_PEM_RE = /-----BEGIN (?:TRUSTED )?CERTIFICATE-----/iu;
@@ -1632,6 +1633,10 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
   const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");
+  const upstreamProvider = requireBoundedString(
+    inference.upstreamProvider,
+    "inference.upstreamProvider",
+  );
   const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
@@ -1678,14 +1683,17 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (agent === "hermes" && upstreamEndpointUrl !== null) {
       invalid("inference.upstreamEndpointUrl must be null for hermes");
     }
+    if (
+      agent === "langchain-deepagents-code" &&
+      !DCODE_UPSTREAM_PROVIDER_RE.test(upstreamProvider)
+    ) {
+      invalid("inference.upstreamProvider must be a DCode provider identifier");
+    }
   }
 
   return {
     routeProvider,
-    upstreamProvider: requireBoundedString(
-      inference.upstreamProvider,
-      "inference.upstreamProvider",
-    ),
+    upstreamProvider,
     model,
     routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
     upstreamEndpointUrl,

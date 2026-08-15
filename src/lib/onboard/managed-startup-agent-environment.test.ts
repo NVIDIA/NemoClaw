@@ -884,6 +884,21 @@ describe("managed startup agent environment", () => {
     );
   });
 
+  it.each(["provider-π", `p${"x".repeat(64)}`])(
+    "rejects unsupported DCode provider identifier %s before materialization (#7112)",
+    (upstreamProvider) => {
+      const base = dcodeProfile();
+      const profile: ManagedStartupProfile = {
+        ...base,
+        inference: { ...base.inference, upstreamProvider },
+      };
+
+      expect(() => mapManagedStartupProfileToAgentEnvironment(profile)).toThrow(
+        /inference\.upstreamProvider must be a DCode provider identifier/u,
+      );
+    },
+  );
+
   it("revalidates typed input while keeping DCode host proxy intent outside its pinned runtime", () => {
     const dcodeBase = dcodeProfile();
     const profile: ManagedStartupProfile = {
