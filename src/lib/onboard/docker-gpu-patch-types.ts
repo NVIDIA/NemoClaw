@@ -33,7 +33,7 @@ export type DockerGpuPatchDeps = {
   dockerLogs?: DockerLogsFn;
   runOpenshell?: (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
   runCaptureOpenshell?: (args: string[], opts?: Record<string, unknown>) => string;
-  sleep?: (seconds: number) => void;
+  sleep?: (milliseconds: number) => void;
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;

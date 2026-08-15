@@ -23,7 +23,7 @@ const {
 const DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS = 5;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS = 10;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS = 3;
-const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS = 2;
+const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_MS = 2_000;
 
 // The OpenShell inference route OpenClaw's LLM client actually uses inside the
 // sandbox. It is served by the OpenShell L7 proxy/router and routes to the
@@ -162,7 +162,7 @@ export type SandboxExecResult = {
 
 export type DockerGpuSandboxInferenceVerifyDeps = {
   execInSandbox?: (sandboxName: string, script: string) => SandboxExecResult;
-  sleep?: (seconds: number) => void;
+  sleep?: (milliseconds: number) => void;
 };
 
 export type DockerGpuSandboxInferenceVerification =
@@ -268,7 +268,7 @@ function probeSandboxRuntimeInference(
     accept: (result) => result.kind === "ok" || result.kind === "no-curl",
     retryDelaysMs: Array.from(
       { length: DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS - 1 },
-      () => DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS,
+      () => DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_MS,
     ),
     sleep: deps.sleep,
   });
@@ -311,8 +311,8 @@ export function verifyDockerGpuSandboxLocalInference(
   const execInSandbox = deps.execInSandbox ?? executeSandboxCommandForVerification;
   const sleep =
     deps.sleep ??
-    ((seconds: number) => {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
+    ((milliseconds: number) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, milliseconds));
     });
 
   const outcome = probeSandboxRuntimeInference(options.sandboxName, endpoint, {
