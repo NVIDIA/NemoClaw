@@ -280,7 +280,7 @@ afterEach(() => {
 });
 
 describe("portable CPU delegation documentation", () => {
-  it("removes recorded drop-ins and procedure-created directories (#9195)", () => {
+  it("removes recorded drop-ins and procedure-created directories (#9188)", () => {
     const fixture = makeRollbackFixture();
     const result = runDocumentedRollback(fixture);
 
@@ -297,7 +297,7 @@ describe("portable CPU delegation documentation", () => {
     );
   });
 
-  it("accepts recorded rollback resources that are already absent (#9195)", () => {
+  it("accepts recorded rollback resources that are already absent (#9188)", () => {
     const fixture = makeRollbackFixture();
     fs.rmSync(fixture.delegationDropInDirectory, { recursive: true });
     fs.rmSync(fixture.appSliceDropInDirectory, { recursive: true });
@@ -311,7 +311,7 @@ describe("portable CPU delegation documentation", () => {
     );
   });
 
-  it("preserves a drop-in whose identity changed after creation (#9195)", () => {
+  it("preserves a drop-in whose identity changed after creation (#9188)", () => {
     const fixture = makeRollbackFixture("0:0");
     const result = runDocumentedRollback(fixture);
 
@@ -328,7 +328,7 @@ describe("portable CPU delegation documentation", () => {
     );
   });
 
-  it("creates both drop-ins with their required content and mode (#9195)", () => {
+  it("creates both drop-ins with their required content and mode (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture);
 
@@ -343,7 +343,7 @@ describe("portable CPU delegation documentation", () => {
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 
-  it("does not replace a drop-in created before the publish link (#9195)", () => {
+  it("does not replace a drop-in created before the publish link (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "concurrent" });
 
@@ -362,7 +362,7 @@ describe("portable CPU delegation documentation", () => {
     { failedMkdirCall: 1, recordsFirstDirectory: false },
     { failedMkdirCall: 2, recordsFirstDirectory: true },
   ])(
-    "does not create a drop-in when mkdir call $failedMkdirCall fails (#9195)",
+    "does not create a drop-in when mkdir call $failedMkdirCall fails (#9188)",
     ({ failedMkdirCall, recordsFirstDirectory }) => {
       const fixture = makeCommandFixture();
       const result = runDocumentedCommand(fixture, {
@@ -382,7 +382,7 @@ describe("portable CPU delegation documentation", () => {
     },
   );
 
-  it("prints each creation identity before a later drop-in publish fails (#9195)", () => {
+  it("prints each creation identity before a later drop-in publish fails (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture, { FAIL_LINK_CALL: "2" });
 
@@ -399,7 +399,7 @@ describe("portable CPU delegation documentation", () => {
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 
-  it("refuses and preserves pre-existing directory metadata (#9195)", () => {
+  it("refuses and preserves pre-existing directory metadata (#9188)", () => {
     const fixture = makeCommandFixture();
     const delegationDirectory = path.dirname(fixture.delegationDropIn);
     const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
@@ -418,7 +418,7 @@ describe("portable CPU delegation documentation", () => {
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
   });
 
-  it("records valid pre-existing directories as preserved (#9195)", () => {
+  it("records valid pre-existing directories as preserved (#9188)", () => {
     const fixture = makeCommandFixture();
     const delegationDirectory = path.dirname(fixture.delegationDropIn);
     const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
@@ -436,7 +436,7 @@ describe("portable CPU delegation documentation", () => {
     expect(fs.statSync(appSliceDirectory).mode & 0o777).toBe(0o755);
   });
 
-  it("removes the temporary file after its write fails (#9195)", () => {
+  it("removes the temporary file after its write fails (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "write-failure" });
 
