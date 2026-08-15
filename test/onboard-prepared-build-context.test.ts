@@ -285,7 +285,6 @@ describe("onboard prepared DCode build context", () => {
     assert.equal(result.errorMessage, null);
     assert.equal(result.stageCalls, 0);
     assert.equal(result.patchCalls, 0);
-    assert.equal(result.patchSleepUsesSeconds, true);
     assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
     assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
     assert.equal(result.cleanupCalls, 1);
@@ -301,6 +300,16 @@ describe("onboard prepared DCode build context", () => {
       ),
       "expected the prepared build ID to determine the registered image tag",
     );
+  });
+
+
+  it("binds the production Docker GPU patch to the seconds-based sleeper (#9218)", {
+    timeout: 90_000,
+  }, () => {
+    const result = runPreparedContextScenario("create");
+
+    assert.equal(result.errorMessage, null);
+    assert.equal(result.patchSleepUsesSeconds, true);
   });
 
   it("rejects a prepared context combined with a custom Dockerfile (#6195)", {
