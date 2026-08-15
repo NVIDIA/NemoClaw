@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { parseDockerDriverGatewayRuntimeMarker } from "../../../src/lib/onboard/docker-driver-gateway-runtime-marker.ts";
+import { resolveDockerDriverGatewayStateDir } from "../../../src/lib/onboard/host-gateway-process.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import { resultText } from "./clients/index.ts";
 
@@ -14,6 +16,7 @@ export const COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY
 const DEFAULT_COMPATIBLE_ANTHROPIC_CREDENTIAL = "test-compatible-anthropic-key";
 const OPENSHELL_HOST_ALIAS = "host.openshell.internal";
 const GATEWAY_SERVICE_NAMES = ["nemoclaw-openshell-gateway", "openshell-gateway"] as const;
+const GATEWAY_STATE_FILE_LIMIT = 64 * 1024;
 
 export const GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT = [
   "set -euo pipefail",
@@ -87,7 +90,105 @@ export function compatibleAnthropicMockEndpointUrl(port: number): string {
   return `http://${OPENSHELL_HOST_ALIAS}:${port}`;
 }
 
+function pathExists(filePath: string): boolean {
+  try {
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function readOwnedGatewayStateFile(filePath: string, currentUid: number): string | null {
+  if (typeof fs.constants.O_NOFOLLOW !== "number") return null;
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
+    if (
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.uid !== currentUid ||
+      (stat.mode & 0o022) !== 0 ||
+      stat.size > GATEWAY_STATE_FILE_LIMIT
+    ) {
+      return null;
+    }
+    return fs.readFileSync(descriptor, "utf8");
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function managedOpenShellGatewayPid(): number | null {
+  const stateDirectory = resolveDockerDriverGatewayStateDir(process.env, os.homedir());
+  const pidPath = path.join(stateDirectory, "openshell-gateway.pid");
+  const markerPath = path.join(stateDirectory, "runtime.json");
+  const pidPathExists = pathExists(pidPath);
+  const markerPathExists = pathExists(markerPath);
+  if (!pidPathExists && !markerPathExists) return null;
+  if (!pidPathExists || !markerPathExists) {
+    throw new Error("Docker-driver gateway state is incomplete");
+  }
+
+  const currentUid = process.getuid?.();
+  if (currentUid === undefined) {
+    throw new Error("Docker-driver gateway state ownership is unavailable");
+  }
+  const pidText = readOwnedGatewayStateFile(pidPath, currentUid);
+  const markerText = readOwnedGatewayStateFile(markerPath, currentUid);
+  if (!pidText || !markerText) {
+    throw new Error("Docker-driver gateway state is not an owned regular file");
+  }
+  if (!/^[1-9][0-9]*\n?$/u.test(pidText)) {
+    throw new Error("Docker-driver gateway PID file is invalid");
+  }
+  const pid = Number(pidText.trim());
+  const marker = parseDockerDriverGatewayRuntimeMarker(markerText);
+  if (
+    !Number.isSafeInteger(pid) ||
+    !marker ||
+    marker.pid !== pid ||
+    marker.platform !== process.platform ||
+    marker.arch !== process.arch
+  ) {
+    throw new Error("Docker-driver gateway state does not identify the current process");
+  }
+  if (marker.endpoint !== "https://127.0.0.1:8080") {
+    throw new Error("Docker-driver gateway state does not identify the default gateway");
+  }
+
+  let processStat: fs.Stats;
+  let executable: string;
+  try {
+    processStat = fs.statSync(`/proc/${pid}`);
+    executable = fs.realpathSync(`/proc/${pid}/exe`);
+  } catch {
+    throw new Error("Docker-driver gateway process is unavailable");
+  }
+  if (processStat.uid !== currentUid || path.basename(executable) !== "openshell-gateway") {
+    throw new Error("Docker-driver gateway process identity does not match its state");
+  }
+  if (marker.gatewayBin) {
+    let recordedExecutable: string;
+    try {
+      recordedExecutable = fs.realpathSync(marker.gatewayBin);
+    } catch {
+      throw new Error("Docker-driver gateway executable is unavailable");
+    }
+    if (executable !== recordedExecutable) {
+      throw new Error("Docker-driver gateway executable does not match its state");
+    }
+  }
+  return pid;
+}
+
 async function activeOpenShellGatewayPid(host: HostCliClient): Promise<number> {
+  const managedPid = managedOpenShellGatewayPid();
+  if (managedPid !== null) return managedPid;
   for (const serviceName of GATEWAY_SERVICE_NAMES) {
     const result = await host.command(
       "systemctl",

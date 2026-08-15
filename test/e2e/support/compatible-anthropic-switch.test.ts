@@ -9,6 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { normalizeCustomEndpointUrl } from "../../../src/lib/actions/inference-set.ts";
+import {
+  writeDockerDriverGatewayPidFile,
+  writeDockerDriverGatewayRuntimeMarkerForStateDir,
+} from "../../../src/lib/onboard/docker-driver-gateway-runtime-marker.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV,
@@ -22,7 +26,10 @@ import {
 } from "../fixtures/compatible-anthropic-switch.ts";
 
 describe("compatible Anthropic inference switch setup", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
 
   it("passes the direct binding credential only to the inference-set command", () => {
     const binding = compatibleAnthropicSwitchBinding("http://host.openshell.internal:18766", {
@@ -63,7 +70,50 @@ describe("compatible Anthropic inference switch setup", () => {
     expect(rewrite).not.toHaveBeenCalled();
   });
 
-  it("mounts the resolver alias only inside the active gateway namespace (#9166)", async () => {
+  it("uses the managed Docker-driver gateway before the user service (#9166)", async () => {
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-gateway-test-"));
+    const pid = process.pid;
+    const gatewayBin = "/usr/bin/openshell-gateway";
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDirectory);
+    writeDockerDriverGatewayPidFile(path.join(stateDirectory, "openshell-gateway.pid"), pid);
+    writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDirectory, {
+      desiredEnv: {},
+      endpoint: "https://127.0.0.1:8080",
+      gatewayBin,
+      pid,
+    });
+    const realpathSync = fs.realpathSync;
+    vi.spyOn(fs, "realpathSync").mockImplementation(((target) => {
+      if (String(target) === `/proc/${pid}/exe` || String(target) === gatewayBin) {
+        return gatewayBin;
+      }
+      return realpathSync(target);
+    }) as typeof fs.realpathSync);
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    const add = vi.fn();
+
+    try {
+      await installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, { add });
+      const cleanupMount = add.mock.calls[0]?.[1] as () => Promise<void>;
+      await cleanupMount();
+
+      expect(command).toHaveBeenCalledTimes(2);
+      for (const call of command.mock.calls) {
+        expect(call[0]).toBe("sudo");
+        expect(call[1]).toEqual(
+          expect.arrayContaining([String(pid), GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT]),
+        );
+      }
+    } finally {
+      fs.rmSync(stateDirectory, { force: true, recursive: true });
+    }
+  });
+
+  it("uses the active user service when managed gateway state is absent (#9166)", async () => {
+    const stateDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-missing-gateway-state-test-"),
+    );
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDirectory);
     const command = vi
       .fn()
       .mockResolvedValueOnce({
@@ -74,25 +124,73 @@ describe("compatible Anthropic inference switch setup", () => {
       .mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
     const add = vi.fn();
 
-    await installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, { add });
-    const cleanupMount = add.mock.calls[0]?.[1] as () => Promise<void>;
-    await cleanupMount();
+    try {
+      await installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, { add });
+      const cleanupMount = add.mock.calls[0]?.[1] as () => Promise<void>;
+      await cleanupMount();
 
-    expect(command.mock.calls[0]?.slice(0, 2)).toEqual([
-      "systemctl",
-      [
-        "--user",
-        "show",
-        "nemoclaw-openshell-gateway",
-        "--property=ActiveState",
-        "--property=MainPID",
-      ],
-    ]);
-    for (const call of command.mock.calls.slice(1)) {
-      expect(call[0]).toBe("sudo");
-      expect(call[1]).toEqual(expect.arrayContaining(["4242", GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT]));
+      expect(command.mock.calls[0]?.slice(0, 2)).toEqual([
+        "systemctl",
+        [
+          "--user",
+          "show",
+          "nemoclaw-openshell-gateway",
+          "--property=ActiveState",
+          "--property=MainPID",
+        ],
+      ]);
+      for (const call of command.mock.calls.slice(1)) {
+        expect(call[0]).toBe("sudo");
+        expect(call[1]).toEqual(
+          expect.arrayContaining(["4242", GATEWAY_HOST_VERIFICATION_MOUNT_SCRIPT]),
+        );
+      }
+    } finally {
+      fs.rmSync(stateDirectory, { force: true, recursive: true });
     }
   });
+
+  it.each(["invalid", "symlinked", "stale"])(
+    "rejects %s managed gateway PID state (#9166)",
+    async (stateKind) => {
+      const stateDirectory = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-invalid-gateway-state-test-"),
+      );
+      const pidPath = path.join(stateDirectory, "openshell-gateway.pid");
+      const stalePid = 2_147_483_647;
+      const pid = stateKind === "stale" ? stalePid : process.pid;
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDirectory);
+      writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDirectory, {
+        desiredEnv: {},
+        endpoint: "https://127.0.0.1:8080",
+        gatewayBin: "/usr/bin/openshell-gateway",
+        pid,
+      });
+      if (stateKind === "invalid") {
+        fs.writeFileSync(pidPath, "not-a-pid\n", { mode: 0o600 });
+      } else if (stateKind === "symlinked") {
+        const target = path.join(stateDirectory, "pid-target");
+        fs.writeFileSync(target, `${pid}\n`, { mode: 0o600 });
+        fs.symlinkSync(target, pidPath);
+      } else {
+        writeDockerDriverGatewayPidFile(pidPath, pid);
+      }
+      const command = vi.fn();
+
+      try {
+        await expect(
+          installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, {
+            add: vi.fn(),
+          }),
+        ).rejects.toThrow(
+          /Docker-driver gateway (PID file is invalid|process is unavailable|state is not an owned regular file)/u,
+        );
+        expect(command).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(stateDirectory, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {
     const command = vi.fn().mockResolvedValue({
