@@ -9,13 +9,14 @@ import { patchStagedDockerfile } from "../src/lib/onboard/dockerfile-patch";
 import {
   cleanupPackageFixtures,
   createPackageFixture,
+  managedUpstreamProviderPath,
   patchFixture,
 } from "./helpers/langchain-deepagents-code-patch-fixture";
 
 afterEach(cleanupPackageFixtures);
 
 describe("LangChain Deep Agents Code managed provider label", () => {
-  it("keeps the managed OpenAI route while reporting the NVIDIA provider family", () => {
+  it("keeps the managed OpenAI route while reporting the NVIDIA provider family (#7112)", () => {
     const tempDir = createPackageFixture();
     const model = "nvidia/nemotron-3-super-120b-a12b";
     const stagedDockerfile = path.join(tempDir, "Dockerfile");
@@ -34,6 +35,9 @@ describe("LangChain Deep Agents Code managed provider label", () => {
     expect(stagedSource).toContain("ARG NEMOCLAW_INFERENCE_PROVIDER_ID=inference");
     expect(stagedSource).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia-prod");
     expect(stagedSource).toContain("NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER}");
+    expect(stagedSource).toContain(
+      "printf '%s\\n' \"$NEMOCLAW_UPSTREAM_PROVIDER\" > /usr/local/share/nemoclaw/dcode-upstream-provider",
+    );
     const runtimeEnv = Object.fromEntries(
       [
         "NEMOCLAW_MODEL",
@@ -76,8 +80,9 @@ from deepagents_code.tui.widgets.welcome import WelcomeBanner
 
 model = "nvidia/nemotron-3-super-120b-a12b"
 
-assert os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] == "nvidia-prod"
+assert os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] == "ambient-provider"
 _nemoclaw_managed.assert_safe_runtime()
+assert os.environ["NEMOCLAW_UPSTREAM_PROVIDER"] == "nvidia-prod"
 assert os.environ["OPENAI_BASE_URL"] == "https://inference.local/v1"
 assert os.environ["NEMOCLAW_INFERENCE_BASE_URL"] == "https://inference.local/v1"
 
@@ -125,10 +130,41 @@ assert _nemoclaw_managed.managed_display_provider("anthropic") == "anthropic"
 
 print("provider-label-ok")
 `;
+    const { NEMOCLAW_UPSTREAM_PROVIDER: _ambientProvider, ...runtimeWithoutProvider } = runtimeEnv;
     const output = execFileSync("python3", ["-c", validation], {
-      env: { PATH: process.env.PATH, PYTHONPATH: tempDir, ...runtimeEnv },
+      env: {
+        PATH: process.env.PATH,
+        PYTHONPATH: tempDir,
+        ...runtimeWithoutProvider,
+        NEMOCLAW_UPSTREAM_PROVIDER: "ambient-provider",
+      },
       encoding: "utf8",
     });
     expect(output).toContain("provider-label-ok");
+  });
+
+  it("rejects a missing root-owned upstream provider before DCode starts (#7112)", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    fs.rmSync(managedUpstreamProviderPath(tempDir));
+
+    expect(() =>
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          "from deepagents_code import _nemoclaw_managed; _nemoclaw_managed.assert_safe_runtime()",
+        ],
+        {
+          env: {
+            PATH: process.env.PATH,
+            PYTHONPATH: tempDir,
+            NEMOCLAW_UPSTREAM_PROVIDER: "ambient-provider",
+          },
+          encoding: "utf8",
+          stdio: "pipe",
+        },
+      ),
+    ).toThrow(/managed upstream provider file is missing or unsafe/u);
   });
 });
