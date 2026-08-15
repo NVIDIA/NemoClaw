@@ -143,10 +143,40 @@ print("provider-label-ok")
     expect(output).toContain("provider-label-ok");
   });
 
-  it("rejects a missing root-owned upstream provider before DCode starts (#7112)", () => {
+  it.each([
+    {
+      state: "a missing file",
+      mutate: (providerPath: string) => fs.rmSync(providerPath),
+      message: /managed upstream provider file is missing or unsafe/u,
+    },
+    {
+      state: "a symlink",
+      mutate: (providerPath: string) => {
+        const targetPath = `${providerPath}-target`;
+        fs.writeFileSync(targetPath, "openrouter\n", { mode: 0o444 });
+        fs.rmSync(providerPath);
+        fs.symlinkSync(targetPath, providerPath);
+      },
+      message: /managed upstream provider file is missing or unsafe/u,
+    },
+    {
+      state: "a writable mode",
+      mutate: (providerPath: string) => fs.chmodSync(providerPath, 0o644),
+      message: /managed upstream provider file has unsafe ownership or mode/u,
+    },
+    {
+      state: "malformed contents",
+      mutate: (providerPath: string) => {
+        fs.chmodSync(providerPath, 0o644);
+        fs.writeFileSync(providerPath, "invalid provider\n");
+        fs.chmodSync(providerPath, 0o444);
+      },
+      message: /managed upstream provider file has invalid contents/u,
+    },
+  ])("rejects $state before DCode starts (#7112)", ({ mutate, message }) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
-    fs.rmSync(managedUpstreamProviderPath(tempDir));
+    mutate(managedUpstreamProviderPath(tempDir));
 
     expect(() =>
       execFileSync(
@@ -165,6 +195,6 @@ print("provider-label-ok")
           stdio: "pipe",
         },
       ),
-    ).toThrow(/managed upstream provider file is missing or unsafe/u);
+    ).toThrow(message);
   });
 });
