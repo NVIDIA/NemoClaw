@@ -184,8 +184,8 @@ describe("host verifier alias file ownership", () => {
     const close = stat.lastIndexOf(") ");
     const fields = stat.slice(close + 2).trim().split(/\s+/u);
     const startTime = fields[19];
-    if (!startTime) throw new Error(`could not read process start time for ${pid}`);
-    return startTime;
+    expect(startTime, `process start time for ${pid}`).toBeDefined();
+    return startTime as string;
   }
 
   function runAliasScript(
@@ -263,11 +263,12 @@ describe("host verifier alias file ownership", () => {
   linuxIt("removes an alias whose owner process was killed", async () => {
     const files = testFiles();
     const killed = spawn("sleep", ["30"], { stdio: "ignore" });
-    if (!killed.pid) throw new Error("could not start killed-owner fixture");
+    expect(killed.pid, "killed-owner fixture PID").toBeDefined();
+    const killedPid = killed.pid as number;
     const killedExit = new Promise<void>((resolve) => killed.once("exit", () => resolve()));
     const killedOwner = {
-      pid: killed.pid,
-      startTime: processStartTime(killed.pid),
+      pid: killedPid,
+      startTime: processStartTime(killedPid),
       token: "d".repeat(32),
     };
     const currentOwner = {
