@@ -373,7 +373,15 @@ function existingGatewayIdentityFromConfig(
     ) {
       throw ambiguousGatewayConfig(configPath, "the config changed while it was opened");
     }
-    const originalToml = configFile.readBytes(64 * 1024).toString("utf-8");
+    let originalToml: string;
+    try {
+      originalToml = configFile.readBytes(64 * 1024).toString("utf-8");
+    } catch (error) {
+      throw ambiguousGatewayConfig(
+        configPath,
+        `the config could not be read safely: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     configProof = {
       bytes: Buffer.from(originalToml, "utf-8"),
       file: configFile,
@@ -461,7 +469,7 @@ function existingGatewayIdentityFromConfig(
       configuredSandboxBin,
       gatewayJwtBundlePaths(stateDir),
       String(configuredGatewayId),
-      driver === "docker" && namespace === undefined ? null : String(namespace),
+      typeof namespace === "string" ? namespace : null,
     );
     if (originalToml !== canonicalToml) {
       throw ambiguousGatewayConfig(

@@ -239,6 +239,23 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
+  it("does not rewrite an oversized gateway config (#8740)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-oversized-"));
+    try {
+      const env = writeGatewayConfig(stateDir);
+      const configPath = path.join(stateDir, "openshell-gateway.toml");
+      fs.appendFileSync(configPath, `# ${"x".repeat(64 * 1024)}\n`);
+      const oversizedToml = fs.readFileSync(configPath, "utf-8");
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(/cannot prove its generated gateway identity \(the config could not be read safely:/);
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(oversizedToml);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not accept a scoped namespace assignment embedded in TOML text", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-toml-text-"));
     try {

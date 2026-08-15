@@ -360,7 +360,7 @@ describe("uninstall OpenShell gateway user service", () => {
 
   it("does not delete a sandbox when a managed gateway namespace is unproven before deletion", () => {
     const test = fixture(true);
-    const configPath = writeGatewayState(test);
+    writeGatewayState(test);
     const registryPath = writeSelectedSandboxRegistry(test, "my-assistant");
     const registryBefore = fs.readFileSync(registryPath, "utf-8");
     const calls: string[][] = [];

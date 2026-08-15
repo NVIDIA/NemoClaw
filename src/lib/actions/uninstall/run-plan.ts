@@ -1440,6 +1440,7 @@ function canRemoveScopedOpenShellResources(
       if (
         inspected.status === 0 &&
         Number.isSafeInteger(mainPid) &&
+        // A stopped external unit has no live process that can prove deletion authority.
         mainPid > 0
       ) {
         const reason = externallySupervisedHostGatewayProcessOwnershipFailure(
