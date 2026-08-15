@@ -844,7 +844,7 @@ async function waitForAdapterProcessExit(
 ): Promise<boolean> {
   const isRunning = options.isRunning || ((candidatePid: number) => isAdapterProcess(candidatePid));
   const sleep = options.sleep || sleepMs;
-  const attempts = options.attempts || PROCESS_EXIT_WAIT_ATTEMPTS;
+  const attempts = options.attempts ?? PROCESS_EXIT_WAIT_ATTEMPTS;
   const intervalMs = options.intervalMs || PROCESS_EXIT_WAIT_MS;
   if (attempts <= 0) return false;
 
