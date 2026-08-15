@@ -1090,6 +1090,66 @@ describe("production pinned peer transport", () => {
     ).toEqual({ check: "rails" });
   });
 
+  it("groups the verified DGX Spark dual-controller rail pair as one QSFP port (#8520)", () => {
+    const observed = host("local");
+    const local = host("local", {
+      rails: [
+        {
+          ...observed.rails[0]!,
+          pciAddress: "0000:01:00.0",
+          physicalPortId: "pci-0000:01:00",
+        },
+        {
+          ...observed.rails[1]!,
+          pciAddress: "0002:01:00.0",
+          physicalPortId: "pci-0002:01:00",
+        },
+      ],
+    });
+
+    const base = fixture();
+    const deps: ManagedClusterDiscoveryDeps = {
+      ...base.deps,
+      probeHost: (candidate) => (candidate === base.localTransport ? local : host("peer")),
+    };
+
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
+
+    expect(detected.topology).toMatchObject({ status: "qualified" });
+  });
+
+  it("rejects a different dual-controller pair as multiple physical ports (#8520)", () => {
+    const observed = host("local");
+    const local = host("local", {
+      rails: [
+        {
+          ...observed.rails[0]!,
+          pciAddress: "0000:02:00.0",
+          physicalPortId: "pci-0000:02:00",
+        },
+        {
+          ...observed.rails[1]!,
+          pciAddress: "0002:02:00.0",
+          physicalPortId: "pci-0002:02:00",
+        },
+      ],
+    });
+    const base = fixture();
+    const deps: ManagedClusterDiscoveryDeps = {
+      ...base.deps,
+      probeHost: (candidate) => (candidate === base.localTransport ? local : host("peer")),
+    };
+
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
+      kind: "not-selected",
+      code: "no-match",
+      reason:
+        "The candidate logical rails on node 11111111111111111111111111111111 belong to more than one physical port: pci-0000:02:00, pci-0002:02:00.",
+    });
+  });
+
   it("uses strict SSH and a fixed argv executor without interpolated shell", () => {
     const calls: Array<{
       file: string;

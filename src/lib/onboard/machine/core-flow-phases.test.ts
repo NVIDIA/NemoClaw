@@ -127,6 +127,11 @@ function createPhases(
         _gatewayName: string,
         operation: () => Promise<T> | T,
       ) => await operation(),
+      withModelRouterPortLifecycleLock: async <T>(
+        _port: number,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      getModelRouterPort: () => 4000,
       normalizeHermesAuthMethod: (value) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({
@@ -143,6 +148,7 @@ function createPhases(
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
+      resolveHostLocalInferenceStartupSelection: vi.fn(() => null),
       startRecordedStep: vi.fn(async () => undefined),
       recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
         sessionWithUpdates(updates),
@@ -190,7 +196,7 @@ function createPhases(
       assessHost: () => ({ memoryGb: 64 }),
       formatSandboxBuildEstimateNote: () => null,
       formatOnboardConfigSummary: () => "summary",
-      promptYesNoOrDefault: vi.fn(async () => true),
+      prompt: vi.fn(async () => "1"),
       cliName: () => "nemoclaw",
       log: vi.fn(),
       error: vi.fn(),

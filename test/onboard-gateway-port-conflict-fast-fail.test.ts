@@ -116,6 +116,9 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       expect(combined).toMatch(
         /The gateway port is held by an incompatible or ambiguous owner|OpenShell gateway needs this port/,
       );
+      expect(combined).not.toMatch(/occupied by unknown/);
+      expect(combined).toMatch(/\(PID \d+\)/);
+      expect(combined).toMatch(/sudo kill \d+/);
     },
   );
 

@@ -54,8 +54,38 @@ describe("sandbox-create-stream ready gate", () => {
     ["terminal Docker", true, dockerEnv],
     ["terminal VM", true, vmEnv],
   ])("keeps agent and env ready gates equivalent for %s", (_label, isTerminalAgent, env) => {
-    const explicitPatterns = getReadyCheckOutputPatternsForAgent(isTerminalAgent, env);
+    const explicitPatterns = getReadyCheckOutputPatternsForAgent({
+      isTerminalAgent,
+      startupRunsDuringCreate: true,
+      env,
+    });
     expect(getReadyCheckOutputPatterns(env, explicitPatterns)).toEqual(explicitPatterns);
+  });
+
+  it.each([
+    ["Docker", dockerEnv],
+    ["VM", vmEnv],
+  ])("requires startup output for a non-terminal %s agent", (_label, env) => {
+    const patterns = getReadyCheckOutputPatternsForAgent({
+      isTerminalAgent: false,
+      startupRunsDuringCreate: true,
+      env,
+    });
+    expect(patterns).toHaveLength(1);
+    expect(patterns[0]?.test("Setting up NemoClaw (Hermes)...")).toBe(true);
+  });
+
+  it.each([
+    ["Docker", dockerEnv],
+    ["VM", vmEnv],
+  ])("does not wait when non-terminal %s startup follows create", (_label, env) => {
+    expect(
+      getReadyCheckOutputPatternsForAgent({
+        isTerminalAgent: false,
+        startupRunsDuringCreate: false,
+        env,
+      }),
+    ).toEqual([]);
   });
 
   it("ignores process env driver overrides when explicit env is supplied", () => {
@@ -63,7 +93,18 @@ describe("sandbox-create-stream ready gate", () => {
     expect(getReadyCheckOutputPatterns(dockerEnv, undefined)).toEqual([]);
   });
 
-  it("waits for startup output before detaching with the default VM gate", async () => {
+  it.each([
+    ["default VM gate", vmEnv, undefined],
+    [
+      "non-terminal Docker agent gate",
+      dockerEnv,
+      getReadyCheckOutputPatternsForAgent({
+        isTerminalAgent: false,
+        startupRunsDuringCreate: true,
+        env: dockerEnv,
+      }),
+    ],
+  ])("waits for startup output before detaching with the %s", async (_label, env, patterns) => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
@@ -71,8 +112,12 @@ describe("sandbox-create-stream ready gate", () => {
     let resolved = false;
     const promise = streamSandboxCreate(
       "echo create",
-      vmEnv,
-      makePollingOptions(child, { readyCheck: () => true, logLine }),
+      env,
+      makePollingOptions(child, {
+        readyCheck: () => true,
+        readyCheckOutputPatterns: patterns,
+        logLine,
+      }),
     ).then((result) => {
       resolved = true;
       return result;

@@ -35,8 +35,7 @@ network_policies:
           - allow: { method: DELETE, path: "/fal-queue/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
       - { path: /usr/bin/curl }
       - { path: /usr/local/bin/curl }

@@ -40,6 +40,18 @@ ${body}
   );
 }
 
+function writeNodeHeapOomTool(filePath: string): void {
+  writeExecutable(
+    filePath,
+    `#!/usr/bin/env bash
+printf '%s\\n' '<--- Last few GCs --->' >&2
+printf '%s\\n' 'FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory' >&2
+printf '%s\\n' '----- Native stack trace -----' >&2
+exit 134
+`,
+  );
+}
+
 function writeManagedCliShim(
   fakeBin: string,
   repo: string,
@@ -132,6 +144,11 @@ elif [ "\${FAKE_NPM_ROOT_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "install" ]; 
   exit 1
 elif [ "\${FAKE_NPM_PLUGIN_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "--prefix" ] && [ "\${2:-}" = "nemoclaw" ] && [ "\${3:-}" = "install" ]; then
   exit 1
+elif [ "\${FAKE_NPM_CLI_TYPECHECK_OOM:-}" = "1" ] && [ "\${1:-}" = "run" ] && [ "\${2:-}" = "typecheck:cli" ]; then
+  printf '%s\\n' '<--- Last few GCs --->' >&2
+  printf '%s\\n' 'FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory' >&2
+  printf '%s\\n' '----- Native stack trace -----' >&2
+  exit 134
 else
   echo "10.9.0"
 fi`,
@@ -340,6 +357,64 @@ describe("contributor environment doctor", () => {
     expect(result.output).toContain("Next: Run: npm run build:cli");
   });
 
+  it("names the Node.js heap limit when a type check exhausts it (#8688)", () => {
+    const fixture = createFixture();
+    writeExecutable(
+      path.join(fixture.repo, "node_modules", ".bin", "tsc"),
+      [
+        "#!/usr/bin/env bash",
+        "echo 'tsc-path-that-must-not-be-reported'",
+        "echo 'FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory' >&2",
+        "exit 134",
+      ].join("\n"),
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: ran out of Node.js heap");
+    expect(result.output).toContain("--max-old-space-size=5120");
+    expect(result.output).not.toContain("tsc-path-that-must-not-be-reported");
+  });
+
+  it("reports the heap remediation after large discarded type-check output (#8688)", () => {
+    const fixture = createFixture();
+    writeExecutable(
+      path.join(fixture.repo, "node_modules", ".bin", "tsc"),
+      [
+        "#!/usr/bin/env bash",
+        "echo 'FATAL ERROR: Allocation failed - JavaScript heap out of memory' >&2",
+        "i=0",
+        'while [ "$i" -lt 8192 ]; do',
+        "  echo 'large-tsc-path-that-must-not-be-reported'",
+        "  i=$((i + 1))",
+        "done",
+        "exit 134",
+      ].join("\n"),
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: ran out of Node.js heap");
+    expect(result.output).toContain("--max-old-space-size=5120");
+    expect(result.output).not.toContain("large-tsc-path-that-must-not-be-reported");
+  });
+
+  it("keeps the build remediation when a type check fails for another reason (#8688)", () => {
+    const fixture = createFixture();
+    writeExecutable(
+      path.join(fixture.repo, "node_modules", ".bin", "tsc"),
+      ["#!/usr/bin/env bash", "echo 'error TS2304: Cannot find name.' >&2", "exit 2"].join("\n"),
+    );
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: failed");
+    expect(result.output).toContain("Next: Run: npm run typecheck:cli");
+  });
+
   it("redacts failed GitHub and Docker command output", () => {
     const fixture = createFixture();
 
@@ -431,6 +506,34 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Plugin TypeScript dependencies: missing or not executable");
     expect(readCommandLog(fixture)).not.toMatch(/^npm .* exec(?: |$)/m);
+  });
+
+  it("reports an actionable heap-limit remedy when the CLI type check exhausts V8 memory", () => {
+    const fixture = createFixture();
+    writeNodeHeapOomTool(path.join(fixture.repo, "node_modules", ".bin", "tsc"));
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI type check: ran out of Node.js heap");
+    expect(result.output).toContain(
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm run typecheck:cli",
+    );
+    expect(result.output).not.toContain("Native stack trace");
+  });
+
+  it("reports an actionable heap-limit remedy when the plugin type check exhausts V8 memory", () => {
+    const fixture = createFixture();
+    writeNodeHeapOomTool(path.join(fixture.repo, "nemoclaw", "node_modules", ".bin", "tsc"));
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Plugin type check: ran out of Node.js heap");
+    expect(result.output).toContain(
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build",
+    );
+    expect(result.output).not.toContain("Native stack trace");
   });
 
   it("rejects a foreign PATH CLI even when the global package links to this checkout", () => {
@@ -680,6 +783,53 @@ describe("contributor repository setup", () => {
     const commands = readCommandLog(fixture);
     expect(commands).toContain("npm install --include=dev --ignore-scripts");
     expect(commands).not.toContain("npm --prefix nemoclaw install");
+  });
+
+  it("stops CLI type-check setup failures with a heap-limit remedy instead of the V8 stack", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, [], { FAKE_NPM_CLI_TYPECHECK_OOM: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Node.js exhausted its V8 heap while running this type check.");
+    expect(result.output).toContain(
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm run typecheck:cli",
+    );
+    expect(result.output).toContain("Setup stopped while attempting: Type-check the CLI");
+    expect(result.output).not.toContain("Native stack trace");
+    expect(result.output).not.toContain("Type-check the plugin without emitting files");
+    expect(readCommandLog(fixture)).toContain("npm run typecheck:cli");
+  });
+
+  it("stops plugin type-check setup failures with a heap-limit remedy instead of the V8 stack", () => {
+    const fixture = createFixture();
+    writeNodeHeapOomTool(path.join(fixture.repo, "nemoclaw", "node_modules", ".bin", "tsc"));
+
+    const result = runSetup(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Node.js exhausted its V8 heap while running this type check.");
+    expect(result.output).toContain(
+      "Next: Run: NODE_OPTIONS=--max-old-space-size=5120 npm --prefix nemoclaw run build",
+    );
+    expect(result.output).toContain(
+      "Setup stopped while attempting: Type-check the plugin without emitting files",
+    );
+    expect(result.output).not.toContain("Native stack trace");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm --prefix nemoclaw run build");
+    expect(commands).not.toContain("prek install");
+  });
+
+  it("names the setup step when the heap-check output capture cannot be created", () => {
+    const fixture = createFixture();
+    writeTool(fixture.fakeBin, "mktemp", "exit 1");
+
+    const result = runSetup(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Setup stopped while attempting: Type-check the CLI");
+    expect(result.output).not.toContain("Install repository Git hooks");
   });
 
   it.each([

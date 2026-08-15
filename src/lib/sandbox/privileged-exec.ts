@@ -292,7 +292,7 @@ function privilegedSandboxExecArgv(
       ...(stdin ? ["-i"] : []),
       ...sanitizedEnvArgs,
       "--user",
-      "root",
+      "0",
       portableTarget.containerId,
       ...cmd,
     ];

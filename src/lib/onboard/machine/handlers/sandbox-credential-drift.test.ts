@@ -27,6 +27,7 @@ import {
 // Messaging discovery is mocked at import time to isolate credential-drift resume behavior.
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
   readMessagingPlanFromEnv: vi.fn(() => null),
   getRegistrySandboxMessagingAuthority: vi.fn(() => ({
     authoritative: false,
@@ -48,9 +49,8 @@ let persistManifestChannelDisabledPlan: typeof import("../../../actions/sandbox/
 
 beforeAll(async () => {
   ({ handleSandboxState } = await import("./sandbox"));
-  ({ persistManifestChannelDisabledPlan } = await import(
-    "../../../actions/sandbox/policy-channel"
-  ));
+  ({ persistManifestChannelDisabledPlan } =
+    await import("../../../actions/sandbox/policy-channel"));
   registry = await import("../../../state/registry");
 
   const registryPath = path.relative(registryHome, registry.REGISTRY_FILE);
@@ -715,5 +715,43 @@ describe("sandbox messaging credential drift", () => {
     expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("allows rebuild recreation when manifest-derived messaging fields are rehydrated", async () => {
+    const plan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
+    const rehydratedPlan = {
+      ...plan,
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "build-arg",
+          outputId: "telegram-config",
+          required: true,
+          value: "enabled",
+        },
+      ],
+    } satisfies typeof plan;
+    let sandboxLockHeld = false;
+    const { deps, calls } = createDeps({
+      getRegistrySandboxMessagingAuthority: () => ({
+        authoritative: true,
+        plan: sandboxLockHeld ? rehydratedPlan : plan,
+      }),
+      withSandboxMutationLock: async (_sandboxName, operation) => {
+        sandboxLockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          sandboxLockHeld = false;
+        }
+      },
+    });
+
+    await handleSandboxState(baseOptions(deps));
+
+    expect(calls.error).not.toHaveBeenCalledWith(
+      expect.stringContaining("Messaging channel state"),
+    );
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
   });
 });

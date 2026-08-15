@@ -74,6 +74,13 @@ type ReportEntry = { result?: string; jobUrl?: string; wallClockRange?: WallCloc
 
 const TERMINAL_CONCLUSIONS = ["success", "failure", "cancelled", "skipped"];
 const PASSING_JOB_CONCLUSIONS = ["success", "skipped", "neutral"];
+const CATALOGUE_CREDENTIAL_BOUNDARIES = {
+  "catalogue-standard": "no provider credential",
+  "catalogue-nvidia-api": "NVIDIA API key",
+  "catalogue-nvidia-inference": "NVIDIA inference API key",
+  "catalogue-github-read": "GitHub read token",
+  "catalogue-brave-nvidia-inference": "Brave and NVIDIA inference API keys",
+} as const;
 
 export async function resolveReportPr(input: {
   github: ReportGithub;
@@ -260,10 +267,10 @@ export function renderE2eReport(input: {
     const jobName = job.name || "";
     const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
     const aggregateJobName = aggregateJobNames.find((name) => jobName.startsWith(`${name} (`));
-    const reportEntryName =
-      match?.[1] ??
-      aggregateJobName ??
-      (/^OpenShell gateway upgrade \(.+\)$/.test(jobName) ? "openshell-gateway-upgrade" : jobName);
+    const catalogueJobName = Object.entries(CATALOGUE_CREDENTIAL_BOUNDARIES).find(
+      ([name, boundary]) => needs[name] && jobName.endsWith(` / ${boundary}`),
+    )?.[0];
+    const reportEntryName = match?.[1] ?? aggregateJobName ?? catalogueJobName ?? jobName;
     recordWallClockRange(reportEntryName, job);
     recordJobLink(reportEntryName, job);
     if (!match || !selectedTestIds.has(match[1])) continue;

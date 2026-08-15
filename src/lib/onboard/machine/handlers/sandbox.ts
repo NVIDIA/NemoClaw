@@ -18,7 +18,6 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import type { RegistryMessagingAuthority } from "../../../messaging/plan-authority";
 import {
   decisionValue,
   isDecisionSelected,
@@ -108,9 +107,11 @@ import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
   hasMessagingCredentialDrift,
+  type RegistryMessagingAuthority,
   reconcileReusedSandboxMessaging,
   reconcileSandboxMessaging,
   resolveMessagingPlanAuthority,
+  sameRegistryMessagingAuthority,
 } from "./sandbox-messaging";
 import {
   decideSandboxResume,
@@ -165,8 +166,15 @@ function shouldForceMessagingProviderRegistration(
   return credentialChanged || messagingCredentialBindingsChanged(baseline, reconciled);
 }
 
-function shouldApplyCheckpointCrashRecovery(decision: SandboxResumeDecision): boolean {
-  return decision.kind === "create" && decision.validateMessagingCredentialsBeforeMutation !== true;
+function shouldApplyCheckpointCrashRecovery(
+  decision: SandboxResumeDecision,
+  recreateRequested: boolean,
+): boolean {
+  return (
+    !recreateRequested &&
+    decision.kind === "create" &&
+    decision.validateMessagingCredentialsBeforeMutation !== true
+  );
 }
 
 export interface SandboxStateOptions<
@@ -198,6 +206,7 @@ export interface SandboxStateOptions<
   sandboxName: string | null;
   model: string;
   provider: string;
+  hostLocalInferenceRouteOnly?: boolean;
   endpointUrl: string | null;
   compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
@@ -310,6 +319,7 @@ export interface SandboxStateOptions<
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
       inferenceProvider?: string | null;
+      hostLocalInferenceRouteOnly?: boolean;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
@@ -768,7 +778,9 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxReuseState: string,
   ): SandboxResumeDecision {
-    if (!shouldApplyCheckpointCrashRecovery(decision)) return decision;
+    if (!shouldApplyCheckpointCrashRecovery(decision, this.options.recreateSandbox(false))) {
+      return decision;
+    }
     const checkpoint = state.session?.checkpoint;
     const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
     const identity =
@@ -1052,12 +1064,7 @@ class SandboxStateFlow<
     expectedAuthority: RegistryMessagingAuthority,
   ): void {
     const currentAuthority = this.deps.getRegistrySandboxMessagingAuthority(sandboxName);
-    if (
-      fingerprintSandboxRecreateValue(currentAuthority) ===
-      fingerprintSandboxRecreateValue(expectedAuthority)
-    ) {
-      return;
-    }
+    if (sameRegistryMessagingAuthority(currentAuthority, expectedAuthority)) return;
     this.deps.error(
       `  Messaging channel state for sandbox '${sandboxName}' changed while onboarding was in progress.`,
     );
@@ -1540,6 +1547,7 @@ class SandboxStateFlow<
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
       inferenceProvider: this.options.provider,
+      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
       agent: this.options.agent,

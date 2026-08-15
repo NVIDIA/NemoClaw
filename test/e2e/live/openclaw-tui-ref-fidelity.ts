@@ -29,7 +29,7 @@ export function verifyNemoClawRefFidelity({
 }): NemoClawRefFidelityEvidence {
   if (!expectedRef || !COMMIT_SHA.test(expectedRef)) {
     throw new Error(
-      `NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA must be a lowercase 40-character SHA; received ${expectedRef || "<empty>"}`,
+      `NEMOCLAW_E2E_EXPECTED_SHA must be a lowercase 40-character SHA; received ${expectedRef || "<empty>"}`,
     );
   }
   if (!COMMIT_SHA.test(actualRef)) {

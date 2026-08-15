@@ -215,6 +215,27 @@ describe("onboard dashboard helpers", () => {
     ).toBe(false);
   });
 
+  it("uses the default dashboard URL when an empty environment override is passed", () => {
+    const forwardList =
+      "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => forwardList),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(helpers.ensureDashboardForward("my-sandbox", "")).toBe(18789);
+  });
+
   it("retries dashboard forward cleanup when the first owner lookup fails", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
@@ -282,7 +303,7 @@ describe("onboard dashboard helpers", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
+  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", async () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" +
       "my-sandbox 127.0.0.1 18789 12345 running\n" +
@@ -309,7 +330,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         forwardPort: 18789,
         forward_ports: [18789, 8642],
       }),
@@ -323,7 +344,7 @@ describe("onboard dashboard helpers", () => {
     ).toHaveLength(1);
   });
 
-  it("skips dashboard forwarding for terminal agents without declared ports", () => {
+  it("skips dashboard forwarding for terminal agents without declared ports", async () => {
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,
     }));
@@ -342,7 +363,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         runtime: { kind: "terminal" },
         forwardPort: 0,
         forward_ports: [],

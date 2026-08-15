@@ -4,6 +4,12 @@
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  serializedHostLocalInferenceReceipt,
+  serializedLlamaCppHostLocalInferenceReceipt,
+} from "../../../test/helpers/host-local-inference-receipt";
+import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
+
 const requireDist = createRequire(import.meta.url);
 const onboardSession = requireDist("../state/onboard-session.js");
 const {
@@ -502,8 +508,56 @@ describe("selection", () => {
 });
 
 describe("registerCreatedSandbox", () => {
+  it("persists lifecycle identity for a non-OpenClaw agent", () => {
+    const agentDefs = requireDist("../agent/defs.js") as typeof import("../agent/defs");
+    const registerSandbox = vi.fn();
+
+    const entry = registerCreatedSandbox({
+      sandboxName: "hermes-box",
+      inferenceSelection: {
+        model: "kimi",
+        provider: "hermes-provider",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: agentDefs.loadAgent("hermes"),
+      agentVersionKnown: true,
+      imageTag: null,
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      hermesApiPort: 8642,
+      dashboardPort: 0,
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
+      gatewayName: "owner-gateway",
+      gatewayPort: 8080,
+      registerSandbox,
+    });
+
+    expect(entry).toMatchObject({
+      agent: "hermes",
+      lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
+      gatewayName: "owner-gateway",
+    });
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
+    const hostLocalInferenceReceipt = serializedHostLocalInferenceReceipt("docker");
+    const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "demo",
+      hostLocalInferenceReceipt,
+    });
 
     const input = {
       sandboxName: "demo",
@@ -543,13 +597,80 @@ describe("registerCreatedSandbox", () => {
     expect(entry.name).toBe("demo");
     expect(entry.openclawImagePluginInstalls).toEqual([]);
     expect(entry.workload).toEqual(input.workload);
+    expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+    const clearedEntry = registerCreatedSandbox({
+      ...input,
+      hostLocalInferenceReceipt: null,
+    });
+    expect(clearedEntry.hostLocalInferenceReceipt).toBeNull();
+    expect(registerSandbox).toHaveBeenLastCalledWith(clearedEntry);
     expect(() =>
       registerCreatedSandbox({
         ...input,
         workload: { ...input.workload, reference: "" },
       }),
     ).toThrow(/workload ownership receipt failed closed validation/u);
-    expect(registerSandbox).toHaveBeenCalledTimes(1);
+    expect(registerSandbox).toHaveBeenCalledTimes(2);
+    getSandbox.mockRestore();
+  });
+
+  it("inherits exact llama.cpp lifecycle provenance from the pending route reservation", () => {
+    const registerSandbox = vi.fn();
+    const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
+    const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+      "original-owner",
+      hostLocalInferenceReceipt,
+    );
+    const registry = requireDist("../state/registry.js") as typeof import("../state/registry");
+    const getSandbox = vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "demo",
+      pendingRouteReservation: true,
+      provider: "llama-cpp-local",
+      model: "llama-cpp-model",
+      endpointUrl: "https://inference.local/v1",
+      endpointSource: "inference-set",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      openshellDriver: "docker",
+      hostLocalInferenceReceipt,
+      hostLocalInferenceProvenance,
+    });
+    try {
+      const entry = registerCreatedSandbox({
+        sandboxName: "demo",
+        inferenceSelection: {
+          model: "llama-cpp-model",
+          provider: "llama-cpp-local",
+          endpointUrl: "https://inference.local/v1",
+          endpointSource: "inference-set",
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        runtimeFields,
+        agent: null,
+        agentVersionKnown: true,
+        imageTag: null,
+        appliedPolicies: [],
+        plannedMessagingState: undefined,
+        hermesToolGateways: [],
+        hermesDashboardState: { enabled: false, config: null },
+        dashboardPort: 18789,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        registerSandbox,
+      });
+
+      expect(entry.hostLocalInferenceReceipt).toBe(hostLocalInferenceReceipt);
+      expect(entry.hostLocalInferenceProvenance).toEqual(hostLocalInferenceProvenance);
+      expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
+    } finally {
+      getSandbox.mockRestore();
+    }
   });
 
   it("fails before registry mutation for an unknown durable provider identity", () => {

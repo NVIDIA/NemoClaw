@@ -40,7 +40,7 @@ describe("onboard extra-provider reconciliation", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
+      writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -73,7 +73,9 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);

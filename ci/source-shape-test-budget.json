@@ -47,6 +47,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/agent-variant-docs.test.ts",
+      "test": "keeps the OpenClaw workspace inventory aligned with seeded runtime templates",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-change-considerations.test.ts",
       "test": "keeps the stage-neutral questions in one concise owner",
       "category": "compatibility"
@@ -58,7 +63,7 @@
     },
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "test": "uses conditional Node and curl trust in every final-stage registry step",
       "category": "security"
     },
     {
@@ -82,6 +87,11 @@
       "category": "security"
     },
     {
+      "file": "test/dashboard-remote-bind-lifecycle.test.ts",
+      "test": "rejects a mutated checked-in security inventory instruction (#6024)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
@@ -89,6 +99,11 @@
     {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+      "test": "retains immutable base contracts for later qualification (#9049)",
       "category": "security"
     },
     {
@@ -192,26 +207,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects channels stop/start workflow-boundary drift for secret and artifact handling",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-workflow.test.ts",
-      "test": "rejects free-standing E2E artifact uploads from raw temp paths",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
@@ -229,11 +224,6 @@
     {
       "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
       "test": "runs as a credential-free exact-head PR workflow",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
-      "test": "keeps the fixed privileged program before candidate checkout in every protected job (#7145)",
       "category": "security"
     },
     {
@@ -273,7 +263,7 @@
     },
     {
       "file": "test/hosted-runner-recovery-workflow.test.ts",
-      "test": "locks recovery identities to the source workflows' runtime names (#7140)",
+      "test": "locks recovery to the platform workflow name (#7140)",
       "category": "security"
     },
     {
@@ -289,6 +279,16 @@
     {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "binds the selected runtime to its reviewed publisher, manifest, platform, and source",
+      "category": "security"
+    },
+    {
+      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "test": "rejects %s",
       "category": "security"
     },
     {
@@ -407,6 +407,51 @@
       "category": "security"
     },
     {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "publishes candidate contracts outside the all-agent activation pattern",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "does not grant package write permission to pull request candidate builds",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "imports the local base into Buildx for digest-only candidate publication",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "qualifies local and published candidates through the declared entrypoint",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "builds and validates the candidate image for linux/amd64 and linux/arm64",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "publishes a Pi base image for linux/amd64 and linux/arm64",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "grants network capability only to the approved image-owned binaries",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "merges a baked corporate CA into the trust bundle Node reads",
+      "category": "security"
+    },
+    {
+      "file": "test/pi-candidate-runtime-artifacts.test.ts",
+      "test": "persists every merged CA variable into the runtime environment file",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
@@ -476,7 +521,6 @@
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
     },
-
     {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
@@ -595,6 +639,16 @@
     {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
       "category": "security"
     }
   ]

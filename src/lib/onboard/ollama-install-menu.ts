@@ -118,9 +118,9 @@ function osTagFor(platform: NodeJS.Platform, isWsl: boolean): string | null {
  *   1. No usable Ollama anywhere (host, running, or a Windows install the
  *      sandbox can reach) — offer a fresh install as a fallback (e.g. when the
  *      NVIDIA API server is down and cloud keys are unavailable).
- *   2. Host Ollama exists but its version is below `MIN_OLLAMA_VERSION` —
- *      offer an explicit upgrade so the express setup path doesn't reuse a
- *      daemon that crashes loading newer starter models.
+ *   2. Host Ollama exists but its version is unavailable or below
+ *      `MIN_OLLAMA_VERSION` — offer an explicit upgrade so onboarding does
+ *      not reuse a daemon that can return tool calls as message text.
  */
 export function resolveOllamaInstallMenuEntry(
   input: OllamaInstallMenuInput,

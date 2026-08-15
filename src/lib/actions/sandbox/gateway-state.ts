@@ -10,6 +10,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import { selectSandboxOwningGateway } from "./gateway-select";
@@ -23,6 +24,7 @@ const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
 
+import { dockerStart } from "../../adapters/docker/container";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -42,7 +44,7 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import { D, R } from "../../cli/terminal-style";
+import { D, G, R } from "../../cli/terminal-style";
 import {
   type DockerDriverRecoveryResult,
   recoverDockerDriverSandbox,
@@ -478,9 +480,7 @@ export function printGatewayLifecycleHint(
     writer(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
-    writer(
-      `  Start the gateway again with \`openshell gateway start --name ${targetGatewayName}\` before expecting existing sandboxes to reconnect.`,
-    );
+    writer(`  ${gatewayStartGuidance(targetGatewayName)}`);
     writer(
       "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
     );
@@ -491,11 +491,11 @@ export function printGatewayLifecycleHint(
     gatewayNamePattern(targetGatewayName).test(cleanOutput)
   ) {
     writer(
-      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
+      "  The target OpenShell gateway exists in metadata, but its API is refusing connections after restart.",
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(
-      `  Retry \`openshell gateway start --name ${targetGatewayName}\`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.`,
+      `  ${gatewayStartGuidance(targetGatewayName)} If the gateway stays in this state, rebuild it before expecting existing sandboxes to reconnect.`,
     );
     return;
   }
@@ -617,6 +617,38 @@ export async function getReconciledSandboxGatewayState(
   return lookup;
 }
 
+const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
+
+/**
+ * Start a sandbox's Docker container when it exists but is stopped, before the
+ * probe-only readiness wait begins polling. `recover` and `connect --probe-only`
+ * both advertise that they restart a stopped sandbox, but the wait loop only
+ * observes readiness. A container in `exited` cannot reach Ready. A plain
+ * `docker start` can restore the same container with its workspace state and
+ * managed configuration preserved (#8967). A nonzero or missing `docker start`
+ * status continues to the readiness wait, which surfaces the existing
+ * stopped-container guidance. The function leaves an unresolved, running, or
+ * paused container unchanged. A paused container keeps its `docker unpause`
+ * guidance. A caller that reaches this function after container startup makes
+ * no change.
+ */
+export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): void {
+  const runtime = getSandboxDockerRuntime(sandboxName);
+  if (!runtime.containerName || runtime.running || runtime.paused) return;
+  console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
+  const result = dockerStart(runtime.containerName, {
+    ignoreError: true,
+    timeout: RECOVER_CONTAINER_START_TIMEOUT_MS,
+  });
+  if (result.status === 0) {
+    console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
+  } else {
+    console.error(
+      `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
+    );
+  }
+}
+
 export async function ensureLiveSandboxOrExit(
   sandboxName: string,
   {
@@ -636,8 +668,14 @@ export async function ensureLiveSandboxOrExit(
         printDockerRuntimeDownGuidance(sandboxName);
         process.exit(1);
       }
-      const dockerRuntime = phase === "Error" ? getSandboxDockerRuntime(sandboxName) : null;
-      if (dockerRuntime?.paused && dockerRuntime.containerName) {
+      const dockerRuntime = getSandboxDockerRuntime(sandboxName);
+      if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
+        console.error(`  Sandbox '${sandboxName}' is stopped.`);
+        console.error("  Workspace state is preserved.");
+        console.error(`  Start it again with \`${CLI_NAME} ${sandboxName} start\`.`);
+        process.exit(1);
+      }
+      if (phase === "Error" && dockerRuntime.paused && dockerRuntime.containerName) {
         console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
         console.error("");
         console.error(
@@ -744,7 +782,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      `  Retry \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` and verify \`openshell status\` is healthy before reconnecting.`,
+      `  ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Check that \`openshell status\` reports the gateway healthy before reconnecting.`,
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -760,7 +798,7 @@ export async function ensureLiveSandboxOrExit(
     }
     printGatewayLifecycleHint(lookup.output, sandboxName);
     console.error(
-      `  This sandbox-scoped command will not restart the shared host gateway. Run \`openshell status\` and \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
+      `  This sandbox-scoped command will not restart the shared host gateway. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))} Then retry this command.`,
     );
     process.exit(1);
   }
@@ -771,9 +809,7 @@ export async function ensureLiveSandboxOrExit(
     if (lookup.output) {
       console.error(lookup.output);
     }
-    console.error(
-      `  Start the gateway again with \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
-    );
+    console.error(`  ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
     );

@@ -11,7 +11,7 @@ import { buildDockerDriverGatewayConfigToml } from "../src/lib/onboard/docker-dr
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const review = fs.readFileSync(
-  path.join(repoRoot, "docs", "security", "openshell-0.0.101-migration-review.md"),
+  path.join(repoRoot, "internal", "security-reviews", "openshell-0.0.101-migration-review.md"),
   "utf8",
 );
 
@@ -230,7 +230,7 @@ describe("OpenShell 0.0.101 migration review", () => {
         },
         {
           path: "agents/hermes/mcp-config-transaction.py",
-          sha256: "7c1da4cc8f5cdaa23fd23adf449f1e3d46b97a87de6a3b1f43d16d6d9ef97e9f",
+          sha256: "88988d567fd297a1d37919ad269181a7b42059c5f80cf840477322252fc89351",
         },
       ],
     });

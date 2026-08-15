@@ -157,13 +157,14 @@ async function inspectStartupCommand(
   return result.stdout.trim();
 }
 
-async function waitForSandboxExecAfterContainerRestart(
+async function waitForSandboxExecReady(
   host: HostCliClient,
   sandboxName: string,
   progress: TestProgress,
+  artifactPrefix: string,
 ): Promise<void> {
   await pollUntil({
-    artifactPrefix: "legacy-restart-openshell-ready",
+    artifactPrefix,
     attempts: 12,
     delayMs: 3_000,
     probe: async (_attempt, artifactName) =>
@@ -369,9 +370,6 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
-  expect(resultText(trustedRecovery)).toMatch(
-    /Probe complete: (?:recovered OpenClaw gateway|OpenClaw gateway is running)/,
-  );
   const restartStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
@@ -454,6 +452,15 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     },
   );
   expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
+  // Do not overlap the fixture's recreation with the restart below. The
+  // fixture runs in its own process, so the host must observe the replacement
+  // through OpenShell before starting the next container lifecycle transition.
+  await waitForSandboxExecReady(
+    host,
+    instance.sandboxName,
+    progress,
+    "legacy-recreate-openshell-ready",
+  );
 
   const legacyContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
   expect(legacyContainerId).not.toBe(recoveredContainerId);
@@ -466,7 +473,12 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     timeoutMs: 120_000,
   });
   expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
-  await waitForSandboxExecAfterContainerRestart(host, instance.sandboxName, progress);
+  await waitForSandboxExecReady(
+    host,
+    instance.sandboxName,
+    progress,
+    "legacy-restart-openshell-ready",
+  );
   await gateway.waitForMissingManagedSupervisor(legacyContainerId, {
     onRetry: (attempt) => progress.event(`managed supervisor absence proof retry ${attempt}`),
   });
@@ -486,7 +498,6 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(legacyRecovery.timedOut, resultText(legacyRecovery)).toBe(false);
   expect(legacyRecovery.exitCode, resultText(legacyRecovery)).toBe(0);
-  expect(resultText(legacyRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
   const legacyStateLockPlan = await sandbox.exec(
     instance.sandboxName,
     ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],

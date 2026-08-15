@@ -5,6 +5,10 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
+import {
+  confirmHostLocalInferenceAuthority,
+  prepareSandboxHostLocalInferenceAuthority,
+} from "../../../onboard/runtime-provider/host-local-inference-lifecycle";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
@@ -13,13 +17,19 @@ import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
 
 type SnapshotBackupAuthority = Pick<
   sandboxState.BackupOptions,
-  "runtimeSnapshot" | "workload" | "validateBeforePublish"
+  | "runtimeSnapshot"
+  | "workload"
+  | "hostLocalInferenceReceipt"
+  | "hostLocalInferenceProvenance"
+  | "validateBeforePublish"
 >;
 
 interface SnapshotBackupAuthorityDependencies {
   readonly getSandbox: (sandboxName: string) => SandboxEntry | null;
   readonly requireProvider: (sandbox: SandboxEntry) => RuntimeProviderBundle;
   readonly captureRuntime: typeof captureSandboxRuntimeSnapshot;
+  readonly prepareHostLocalInference: typeof prepareSandboxHostLocalInferenceAuthority;
+  readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly backup: typeof sandboxState.backupSandboxState;
 }
 
@@ -27,6 +37,8 @@ const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox
   requireProvider: (sandbox) =>
     requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES),
   captureRuntime: captureSandboxRuntimeSnapshot,
+  prepareHostLocalInference: prepareSandboxHostLocalInferenceAuthority,
+  confirmHostLocalInference: confirmHostLocalInferenceAuthority,
   // Keep the call late-bound so tests and alternative state stores can replace
   // the module export without this adapter retaining an import-time reference.
   backup: (...args) => sandboxState.backupSandboxState(...args),
@@ -40,7 +52,7 @@ function failure(error: unknown): sandboxState.BackupResult {
     failedDirs: [],
     backedUpFiles: [],
     failedFiles: [],
-    error: `Cannot capture managed snapshot authority: ${detail}.`,
+    error: `Cannot capture provider snapshot authority: ${detail}.`,
   };
 }
 
@@ -106,10 +118,78 @@ function captureManagedAuthority(
   };
 }
 
+function captureHostLocalInferenceAuthority(
+  entry: SandboxEntry,
+  dependencies: SnapshotBackupAuthorityDependencies,
+): Pick<
+  sandboxState.BackupOptions,
+  "hostLocalInferenceReceipt" | "hostLocalInferenceProvenance" | "validateBeforePublish"
+> | null {
+  const receipt = entry.hostLocalInferenceReceipt;
+  if (typeof receipt !== "string") return null;
+  const provider = dependencies.requireProvider(entry);
+  const prepared = dependencies.prepareHostLocalInference(provider, entry);
+  if (!prepared) {
+    if (entry.hostLocalInferenceProvenance) {
+      throw new Error("explicit host-local inference lifecycle authority cannot be reconstructed");
+    }
+    return null;
+  }
+  return {
+    hostLocalInferenceReceipt: prepared.serializedReceipt,
+    ...(entry.hostLocalInferenceProvenance
+      ? { hostLocalInferenceProvenance: entry.hostLocalInferenceProvenance }
+      : {}),
+    validateBeforePublish: () => {
+      const current = dependencies.getSandbox(entry.name);
+      if (!current) throw new Error(`sandbox '${entry.name}' is no longer registered`);
+      if (current.hostLocalInferenceReceipt !== receipt) {
+        throw new Error(`sandbox '${entry.name}' host-local inference changed during backup`);
+      }
+      if (
+        !isDeepStrictEqual(current.hostLocalInferenceProvenance, entry.hostLocalInferenceProvenance)
+      ) {
+        throw new Error(
+          `sandbox '${entry.name}' host-local inference provenance changed during backup`,
+        );
+      }
+      const currentProvider = dependencies.requireProvider(current);
+      if (currentProvider.identity.id !== provider.identity.id) {
+        throw new Error(`sandbox '${entry.name}' runtime provider changed during backup`);
+      }
+      dependencies.confirmHostLocalInference(currentProvider, current, prepared);
+    },
+  };
+}
+
+function captureSnapshotAuthority(
+  entry: SandboxEntry,
+  dependencies: SnapshotBackupAuthorityDependencies,
+): SnapshotBackupAuthority | null {
+  const managed = captureManagedAuthority(entry, dependencies);
+  const hostLocal = captureHostLocalInferenceAuthority(entry, dependencies);
+  if (!managed && !hostLocal) return null;
+  return {
+    ...(managed?.runtimeSnapshot === undefined ? {} : { runtimeSnapshot: managed.runtimeSnapshot }),
+    ...(managed?.workload === undefined ? {} : { workload: managed.workload }),
+    ...(hostLocal?.hostLocalInferenceReceipt === undefined
+      ? {}
+      : { hostLocalInferenceReceipt: hostLocal.hostLocalInferenceReceipt }),
+    ...(hostLocal?.hostLocalInferenceProvenance === undefined
+      ? {}
+      : { hostLocalInferenceProvenance: hostLocal.hostLocalInferenceProvenance }),
+    validateBeforePublish: () => {
+      managed?.validateBeforePublish?.();
+      hostLocal?.validateBeforePublish?.();
+    },
+  };
+}
+
 /**
- * Capture one managed workload and runtime authority pair around the complete
- * filesystem copy. The state layer publishes the manifest only after the
- * final callback confirms that the same provider authority remains live.
+ * Capture the provider-owned workload, runtime, and host-local inference
+ * authority around the complete filesystem copy. The state layer publishes
+ * the manifest only after the final callback confirms the same full sandbox
+ * binding and provider proof remain live.
  */
 export function backupSandboxStateWithManagedAuthority(
   sandboxName: string,
@@ -123,7 +203,7 @@ export function backupSandboxStateWithManagedAuthority(
 
   let authority: SnapshotBackupAuthority | null;
   try {
-    authority = captureManagedAuthority(entry, dependencies);
+    authority = captureSnapshotAuthority(entry, dependencies);
   } catch (error) {
     return failure(error);
   }

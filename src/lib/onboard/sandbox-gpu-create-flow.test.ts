@@ -52,6 +52,8 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
+import type { AgentDefinition } from "../agent/defs";
+import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   createGpuFlowDeps as createDeps,
@@ -79,6 +81,9 @@ import type {
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
+  resolveExportedPortableRuntimeAuthority,
+  resolveAgentCreateInput,
+  resolvePortableLifecycleMode,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowDeps,
   type SandboxGpuCreateFlowInput,
@@ -110,6 +115,35 @@ const DEFAULT_RUNTIME_SNAPSHOT = {
   nativeGpuAttachmentState: "absent" as const,
   containerId: "container-a",
 };
+
+const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
+  schemaVersion: 1,
+  kind: "podman",
+  ownership: "current-user",
+  uid: 1001,
+  homeDir: "/home/tester",
+  configHome: "/home/tester/.config",
+  runtimeDir: "/run/user/1001",
+  socketPath: "/run/user/1001/podman/podman.sock",
+};
+
+type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
+
+function readySandboxGetResult(): OpenShellResult {
+  return {
+    status: 0,
+    stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    stderr: "",
+  };
+}
+
+function createSequencedOpenShellRunner(
+  entries: Array<[string, OpenShellResult[]]>,
+): SandboxGpuCreateFlowDeps["runOpenshell"] {
+  const resultsByCommand = new Map(entries);
+  return (args) =>
+    resultsByCommand.get(args.join(" "))?.shift() ?? { status: 0, stdout: "", stderr: "" };
+}
 
 function failNativeCreate(output = "error: unexpected argument '--gpu' found"): void {
   mocks.streamSandboxCreate.mockResolvedValueOnce({ status: 1, output, sawProgress: false });
@@ -168,6 +202,55 @@ function createSourceInput(): SandboxGpuCreateFlowInput {
 
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
+
+describe("resolveAgentCreateInput", () => {
+  it("selects portable lifecycle ownership only for OpenClaw (#9068)", () => {
+    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+
+    expect(resolveAgentCreateInput(null, true, env)).toMatchObject({
+      persistStartupCommand: true,
+      portableLifecycle: true,
+    });
+    expect(
+      resolveAgentCreateInput({ name: "hermes" } as AgentDefinition, true, env),
+    ).toMatchObject({
+      persistStartupCommand: true,
+      portableLifecycle: false,
+    });
+    expect(resolvePortableLifecycleMode(null, env)).toBe(true);
+    expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
+  });
+});
+
+describe("resolveExportedPortableRuntimeAuthority", () => {
+  it("passes checkpoint-owned authority to exported portable creation (#9070)", () => {
+    expect(
+      resolveExportedPortableRuntimeAuthority(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        () => ({
+          checkpoint: {
+            profile: { kind: "selected", value: "portable" },
+            runtimeAuthority: { kind: "selected", value: PORTABLE_RUNTIME_AUTHORITY },
+          },
+        }),
+      ),
+    ).toEqual(PORTABLE_RUNTIME_AUTHORITY);
+  });
+
+  it("rejects exported portable creation before effects when authority is absent (#9070)", () => {
+    expect(() =>
+      resolveExportedPortableRuntimeAuthority(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        () => ({
+          checkpoint: {
+            profile: { kind: "selected", value: "portable" },
+            runtimeAuthority: { kind: "unset" },
+          },
+        }),
+      ),
+    ).toThrow("requires checkpoint-owned Podman runtime authority before creation begins");
+  });
+});
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
@@ -318,6 +401,8 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       expectedSupervisorArgv: ["/mxc/supervisor"],
     };
     const deps = createDeps();
+    const adapterOverride = {} as never;
+    deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
     );
@@ -340,13 +425,19 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
     expect(result).toMatchObject({ route: "none", runtimePatch: patch });
     expect(createLifecycle).toHaveBeenCalledWith(
-      expect.objectContaining({ providerId: "mxc", route: "none" }),
+      expect.objectContaining({
+        providerId: "mxc",
+        route: "none",
+        stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
+        adapterOverride,
+      }),
     );
+    expect(deps.createManagedBootstrapAdapter).toHaveBeenCalledWith("/tmp/nemoclaw-mxc-bootstrap");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
       "mxc-launch",
       input.createArgv.slice(1),
       input.sandboxEnv,
-      expect.anything(),
+      expect.objectContaining({ readyCheckOutputPatterns: [] }),
     );
     expect(recoverUnfinished.mock.invocationCallOrder[0]).toBeLessThan(
       prepareNetwork.mock.invocationCallOrder[0],
@@ -387,7 +478,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(errorOutput()).not.toContain(recoverySecret);
   });
 });
-
 describe("runSandboxGpuCreateFlow proof authorization", () => {
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {
     const deps = createDeps();
@@ -563,11 +653,164 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
     expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
     expect(createHandoff).toEqual(["poll", "create-complete", "ensure-applied"]);
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stableReadyPolls: 2,
+        checkReadyIdentity: expect.any(Function),
+      }),
+    );
   });
 
-  it("does not replace a native GPU container solely to persist its startup command", async () => {
+  it("does not delete a recreated sandbox when the exact readiness probe fails (#9050)", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        [
+          "sandbox exec --name alpha -- true",
+          [{ status: 1, stdout: "", stderr: "permission denied" }],
+        ],
+      ]),
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
+      expect(options.checkReadyIdentity?.()).toBe("probe_failed");
+      return {
+        ready: false,
+        reason: "identity_probe_failed",
+        failurePhase: null,
+      };
+    });
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(patch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
+    expect(errorOutput()).toContain(
+      "NemoClaw left the sandbox in place for inspection and recovery",
+    );
+  });
+
+  it("keeps a transient recreated-sandbox not-ready response inside the readiness wait (#9050)", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        [
+          "sandbox get alpha",
+          [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
+        ],
+        [
+          "sandbox exec --name alpha -- true",
+          [
+            {
+              status: 1,
+              stdout: "",
+              stderr:
+                `Error:   × code: 'The system is not in a state required for the operation's\n` +
+                '  │ execution\', message: "sandbox is not ready"\n',
+            },
+            { status: 0, stdout: "", stderr: "" },
+          ],
+        ],
+      ]),
+    );
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce((options) => {
+      expect(options.checkReadyIdentity?.()).toBe("not_ready");
+      expect(options.checkReadyIdentity?.()).toBe("ready");
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "none",
+    });
+
+    expect(
+      vi
+        .mocked(deps.runOpenshell)
+        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
+    ).toHaveLength(2);
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("preserves a native non-terminal startup command after create ownership ends", async () => {
+    const input = createInput();
+    const patch = createPatch();
+    const order: string[] = [];
+    input.persistStartupCommand = true;
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValueOnce(patch);
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      order.push("poll");
+      args[3].onPoll();
+      order.push("create-complete");
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    patch.ensureApplied.mockImplementationOnce(() => {
+      order.push("ensure-applied");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ route: "native", persistStartupCommand: true }),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      input.createArgv.slice(1),
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: true }),
+    );
+    expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+    expect(order).toEqual(["poll", "create-complete", "ensure-applied"]);
+  });
+
+  it("keeps a native terminal startup command on the create lifecycle", async () => {
     const input = createInput();
     input.persistStartupCommand = true;
+    input.terminalAgent = true;
 
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "native",
@@ -576,6 +819,33 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
     );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      input.createArgv.slice(1),
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: false }),
+    );
+  });
+
+  it("waits for native non-terminal startup output before detaching the create client", async () => {
+    const input = createInput();
+    input.sandboxEnv = { OPENSHELL_DRIVERS: "docker" };
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    const streamOptions = mocks.streamSandboxCreate.mock.calls[0]?.[3];
+    expect(streamOptions).toEqual(
+      expect.objectContaining({
+        readyCheckOutputPatterns: [expect.any(RegExp)],
+      }),
+    );
+    expect(
+      streamOptions?.readyCheckOutputPatterns?.some((pattern: RegExp) =>
+        pattern.test("Setting up NemoClaw (Hermes)..."),
+      ),
+    ).toBe(true);
   });
 
   it("applies exact required limits while preserving the native GPU route", async () => {
@@ -707,9 +977,10 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
   });
 
-  it("configures the portable lifecycle after sandbox creation succeeds (#8441)", async () => {
+  it("uses the provided lifecycle generation for portable setup and registration (#8942)", async () => {
     const input = createInput();
     input.lifecycleGeneration = "current-generation";
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(
       (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
@@ -726,7 +997,33 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxName,
       input.sandboxStartupCommand,
       process.env,
-      { registryGeneration: "current-generation" },
+      {
+        registryGeneration: "current-generation",
+        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
+      },
+    );
+  });
+
+  it("preserves the provided lifecycle generation when portable setup is unavailable (#8942)", async () => {
+    const input = createInput();
+    input.lifecycleGeneration = "fresh-generation";
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => null);
+
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result.lifecycleRegistrationFields).toEqual({
+      lifecycleGeneration: "fresh-generation",
+    });
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+      process.env,
+      {
+        registryGeneration: "fresh-generation",
+        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
+      },
     );
   });
 
@@ -744,6 +1041,160 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(warning).toContain("Portable demo lifecycle setup did not complete");
     expect(warning).toContain("Authorization: Bearer <REDACTED>");
     expect(warning).not.toContain("portable-secret");
+  });
+
+  it("uses the exact portable lifecycle without Docker container substitution (#9068)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
+    input.lifecycleGeneration = "checkpoint-generation";
+    input.persistStartupCommand = true;
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => "installed-generation");
+
+    const result = await runSandboxGpuCreateFlow(input, deps);
+
+    expect(result).toMatchObject({
+      route: "native",
+      lifecycleRegistrationFields: { lifecycleGeneration: "installed-generation" },
+    });
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledWith(
+      input.sandboxName,
+      input.sandboxStartupCommand,
+      input.hostEnv,
+      {
+        registryGeneration: "checkpoint-generation",
+        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
+      },
+    );
+    expect(mocks.waitForCreatedSandboxReadyWithTrace.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.installPortableDemoLifecycle).mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledWith(
+      "openshell",
+      input.createArgv.slice(1),
+      input.sandboxEnv,
+      expect.objectContaining({ waitForReadyTermination: false }),
+    );
+  });
+
+  it("keeps a Ready portable sandbox in place when lifecycle enrollment fails (#9068)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => {
+      throw new Error("portable authority changed");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "portable authority changed",
+    );
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("does not enroll portable lifecycle ownership before GPU proof succeeds (#9068)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => "current-generation");
+    vi.mocked(deps.verifyDirectSandboxGpu).mockImplementation(() => {
+      throw new Error("GPU proof failed");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("GPU proof failed");
+
+    expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-OpenClaw portable creation on the existing runtime patch (#9068)", async () => {
+    const input = createInput();
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = false;
+    input.persistStartupCommand = true;
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => null);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "native" });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledOnce();
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
+  });
+
+  it("rejects Docker compatibility before portable sandbox creation (#9068)", async () => {
+    const input = createInput();
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
+      "Docker GPU compatibility is unavailable",
+    );
+
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
+  });
+
+  it("rejects managed bootstrap before portable Docker lifecycle access (#9068)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+    const createOnboardRouting = vi.fn();
+    const createLifecycle = vi.fn();
+    input.managedBootstrap = {
+      runtimeProvider: {
+        bootstrap: { createOnboardRouting, createLifecycle },
+      },
+    } as unknown as NonNullable<SandboxGpuCreateFlowInput["managedBootstrap"]>;
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).rejects.toThrow(
+      "Portable OpenClaw onboarding cannot use managed-image bootstrap",
+    );
+
+    expect(createOnboardRouting).not.toHaveBeenCalled();
+    expect(createLifecycle).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
+    expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unready portable sandbox without lifecycle mutation (#9068)", async () => {
+    const input = createInput();
+    input.gpuRoutePlan = "native-only";
+    input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    input.portableLifecycle = true;
+    const deps = createDeps();
+    deps.installPortableDemoLifecycle = vi.fn(() => "current-generation");
+    mockReadinessFailure();
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(errorOutput()).toContain("left the portable sandbox in place");
   });
 });
 

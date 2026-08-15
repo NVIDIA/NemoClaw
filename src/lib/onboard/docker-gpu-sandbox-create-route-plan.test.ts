@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type DockerGpuRoutePlan,
+  resolveAgentPlan,
   resolveDockerGpuSandboxCreatePlan,
 } from "./docker-gpu-sandbox-create";
 
@@ -129,5 +130,67 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
 
     expect(result.gpuRoutePlan).toBe("compatibility-only");
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
+  });
+
+  it("keeps the portable profile on native GPU lifecycle operations (#9068)", () => {
+    const log = vi.fn();
+    const detectDockerDesktopWsl = vi.fn(() => true);
+
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        detectDockerDesktopWsl,
+        portableLifecycle: true,
+        env: {
+          NEMOCLAW_DOCKER_GPU_PATCH: "1",
+          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+        },
+        platform: "linux",
+        log,
+      },
+    );
+
+    expect(result.gpuRoutePlan).toBe("native-only");
+    expect(detectDockerDesktopWsl).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalledWith(expect.stringMatching(/compatibility-only/iu));
+  });
+
+  it("keeps non-OpenClaw portable agents on their existing GPU route (#9068)", () => {
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: false,
+        portableLifecycle: false,
+        env: {
+          NEMOCLAW_DOCKER_GPU_PATCH: "1",
+          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+        },
+        platform: "linux",
+      },
+    );
+
+    expect(result.gpuRoutePlan).toBe("compatibility-only");
+  });
+
+  it("selects the portable lifecycle route only for OpenClaw (#9068)", () => {
+    const env = {
+      NEMOCLAW_DOCKER_GPU_PATCH: "1",
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    };
+
+    expect(resolveAgentPlan({ sandboxGpuEnabled: true }, null, true, env, "linux").gpuRoutePlan).toBe(
+      "native-only",
+    );
+    expect(
+      resolveAgentPlan(
+        { sandboxGpuEnabled: true },
+        { name: "hermes" },
+        true,
+        env,
+        "linux",
+      ).gpuRoutePlan,
+    ).toBe("compatibility-only");
   });
 });

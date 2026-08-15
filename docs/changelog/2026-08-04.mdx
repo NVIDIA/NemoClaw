@@ -46,7 +46,6 @@ It reduces the managed single-node DGX Spark Qwen profile's default memory deman
   For more information, refer to [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp), the Hermes [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands), and [Configure Corporate CA Trust](/user-guide/deepagents/security/configure-corporate-ca-trust).
 - Managed OpenClaw, Hermes, Deep Agents Code, and MCP discovery images now carry reviewed dependency updates for the release advisory set.
   The changes update locked runtime graphs, remediate private npm dependencies during image assembly, and preserve fail-closed identity and integrity checks.
-  For more information, refer to the [OpenClaw 2026.7.1 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.7.1-dependency-review.md) and [Hermes 0.19.0 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/hermes-0.19.0-dependency-review.md).
 - Affected CLI paths now report invalid enumerated values, unresolved sandbox base images, and changed gateway authority without raw Node.js stack traces.
   Captured output from non-JSON OpenClaw agent commands is inspected for recognized embedded-fallback markers.
   When a marker is present, NemoClaw suppresses the captured transport output, exits with status `1`, and prints the documented recovery commands.

@@ -74,7 +74,7 @@ Package-specific guides:
 | Run the broad repo-wide pre-commit and coverage baseline | `npm run check` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
-| Auto-format | `npm run format` |
+| Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 
@@ -153,13 +153,15 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
-- Biome config in `biome.json`
+- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
+
+- Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately
 - Unused vars pattern: prefix with `_`
 
 ### TypeScript
 
-- Plugin code in `nemoclaw/src/` is linted and formatted by the root Biome config
+- Oxlint lints plugin code in `nemoclaw/src/`. Oxfmt formats added plugin files that it does not exclude.
 - CLI type-checking via `tsconfig.cli.json`
 - Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
   `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`
@@ -271,7 +273,8 @@ If the command trace contains no reviewer-request write, report the event as an 
 ### Gotchas
 
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`
-- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`, while sharing the root Biome config — it's a separate npm project
+- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`.
+  It is a separate npm project that shares the root Oxlint and Oxfmt configuration files.
 - SPDX headers are auto-inserted by pre-commit hooks; don't worry about adding them manually
 - Coverage thresholds are ratcheted in `ci/coverage-threshold-*.json` — new code should not decrease CLI or plugin coverage
 - The `.claude/skills` symlink points to `.agents/skills` — both paths resolve to the same content

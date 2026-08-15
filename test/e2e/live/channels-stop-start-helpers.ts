@@ -110,6 +110,7 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
     WECHAT_USER_ID: process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
     WECHAT_ALLOWED_IDS:
       process.env.WECHAT_ALLOWED_IDS ?? process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
+    WHATSAPP_MODE: "bot",
     WHATSAPP_ALLOWED_IDS: process.env.WHATSAPP_ALLOWED_IDS ?? "15551234567,15557654321",
     MSTEAMS_APP_ID: process.env.MSTEAMS_APP_ID ?? "00000000-0000-0000-0000-000000000000",
     MSTEAMS_APP_PASSWORD: tokens.teams,
@@ -273,7 +274,10 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
     wechat: {
       allowedIds: requireEnvValue(env, "WECHAT_ALLOWED_IDS"),
     },
-    whatsapp: { allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS") },
+    whatsapp: {
+      mode: requireEnvValue(env, "WHATSAPP_MODE"),
+      allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS"),
+    },
     teams: {
       appId: requireEnvValue(env, "MSTEAMS_APP_ID"),
       tenantId: requireEnvValue(env, "MSTEAMS_TENANT_ID"),
@@ -334,8 +338,10 @@ async function agentConfigContains(
       'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
     slack:
       'grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env',
+    // The DM policy is derived from the mode and the allowlist rather than
+    // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:
-      'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env',
+      'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_DM_POLICY=allowlist$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
     teams:
       'grep -Eq "^TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD$" /sandbox/.hermes/.env',
   };
@@ -628,6 +634,7 @@ export async function runChannelsStopStartTarget({
     `rebuild-stop-all-${AGENT}`,
   );
   expectExitZero(stopRebuild, "rebuild after stopping all channels");
+  expectChannelInputs(env);
   await expectAgentConfig(sandbox, "absent", redactions);
   await expectProvidersExist(host, env, redactions, "after-stop");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
@@ -638,29 +645,26 @@ export async function runChannelsStopStartTarget({
     ).toBe("inactive");
   }
 
-  progress.phase("re-enable channels and validate lifecycle state");
+  progress.phase("re-enable channels, rebuild sandbox, and validate lifecycle state");
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  if (AGENT === "openclaw") {
-    const startRebuild = await rebuildSandbox(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      `rebuild-start-all-${AGENT}`,
-    );
-    expectExitZero(startRebuild, "rebuild after starting all channels");
-    await expectAgentConfig(sandbox, "present", redactions);
-  } else {
-    await expectAgentConfig(sandbox, "absent", redactions);
-  }
+  const startRebuild = await rebuildSandbox(
+    host,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    `rebuild-start-all-${AGENT}`,
+  );
+  expectExitZero(startRebuild, "rebuild after starting all channels");
+  expectChannelInputs(env);
+  await expectAgentConfig(sandbox, "present", redactions);
   await expectProvidersExist(host, env, redactions, "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   for (const channel of CHANNELS) {
     expect(
       await policyPresetState(host, env, redactions, channel),
-      `${channel} policy active after start${AGENT === "openclaw" ? "+rebuild" : ""}`,
+      `${channel} policy active after start+rebuild`,
     ).toBe("active");
   }
 }

@@ -14,7 +14,7 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs/security/openclaw-2026.7.1-dependency-review.md",
+  "internal/security-reviews/openclaw-2026.7.1-dependency-review.md",
 );
 const LIVE_VITEST_GUARD = path.join(
   REPO_ROOT,

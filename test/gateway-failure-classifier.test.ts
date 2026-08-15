@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import {
   classifyGatewayFailure,
@@ -12,6 +16,45 @@ import {
   printDockerRuntimeDownGuidance,
   type SandboxContainerFailureRunners,
 } from "../src/lib/actions/sandbox/gateway-failure-classifier.js";
+import type { PodmanSocketAuthority } from "../src/lib/adapters/podman/index.js";
+import { portableDemoLifecycleInternals } from "../src/lib/onboard/experimental/portable-demo-lifecycle.js";
+
+const PORTABLE_SOCKET = "/run/user/1001/podman/podman.sock";
+const PORTABLE_SOCKET_AUTHORITY: PodmanSocketAuthority = {
+  directoryChain: [],
+  device: "1",
+  inode: "2",
+  mode: String(0o140600),
+  ownerUid: "1001",
+  socketPath: PORTABLE_SOCKET,
+};
+
+function writePortableReceipt(stateDir: string): void {
+  const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+  fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
+  fs.writeFileSync(
+    receiptPath,
+    `${JSON.stringify({
+      schemaVersion: 4,
+      sandboxName: "alpha",
+      sandboxId: "sandbox-id-alpha",
+      containerId: "a".repeat(64),
+      dashboardPort: 18789,
+      registryGeneration: "a".repeat(64),
+      runtimeAuthority: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: 1001,
+        homeDir: "/home/tester",
+        configHome: "/home/tester/.config",
+        runtimeDir: "/run/user/1001",
+        socketPath: PORTABLE_SOCKET,
+      },
+    })}\n`,
+    { mode: 0o600 },
+  );
+}
 
 function makeRunners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
@@ -142,6 +185,67 @@ describe("isDockerRuntimeDown", () => {
         getSandbox: dockerSandbox,
       }),
     ).toBe(false);
+  });
+
+  it("uses receipt-owned Podman readiness without probing ordinary Docker (#9070)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-readiness-"));
+    writePortableReceipt(stateDir);
+    const dockerInfo = vi.fn(() => true);
+    try {
+      expect(
+        isDockerRuntimeDown("alpha", {
+          runners: { dockerInfo },
+          getSandbox: dockerSandbox,
+          portableLifecycle: {
+            platform: "linux",
+            stateDir,
+            runtimeReadiness: {
+              uid: 1001,
+              home: "/home/tester",
+              systemctl: () => ({ status: 0 }),
+              hardenSocketDirectory: vi.fn(),
+              captureSocketAuthority: () => PORTABLE_SOCKET_AUTHORITY,
+              assertSocketAuthority: vi.fn(),
+              podmanCapture: () => ({ status: 1, stdout: "", stderr: "" }),
+            },
+          },
+        }),
+      ).toBe(true);
+      expect(dockerInfo).not.toHaveBeenCalled();
+      const out: string[] = [];
+      printDockerRuntimeDownGuidance("alpha", { writer: (line) => out.push(line) });
+      expect(out.join("\n")).toContain("steady-state API health");
+      expect(out.join("\n")).toContain(
+        `Recorded socket: ${PORTABLE_SOCKET_AUTHORITY.socketPath}`,
+      );
+      expect(out.join("\n")).toContain("no Docker or named-connection fallback was used");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies an unsafe portable receipt without exposing its contents (#9070)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-readiness-"));
+    const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
+    fs.writeFileSync(receiptPath, '{"credential":"super-secret"}\n', { mode: 0o600 });
+    const dockerInfo = vi.fn(() => true);
+    try {
+      expect(
+        isDockerRuntimeDown("alpha", {
+          runners: { dockerInfo },
+          getSandbox: dockerSandbox,
+          portableLifecycle: { stateDir },
+        }),
+      ).toBe(true);
+      expect(dockerInfo).not.toHaveBeenCalled();
+      const out: string[] = [];
+      printDockerRuntimeDownGuidance("alpha", { writer: (line) => out.push(line) });
+      expect(out.join("\n")).toContain("socket authority");
+      expect(out.join("\n")).not.toContain("super-secret");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it("returns false for the vm driver even when docker info fails", () => {
