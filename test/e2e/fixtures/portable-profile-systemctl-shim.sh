@@ -21,7 +21,9 @@ pid_is_active() {
 }
 
 service_is_active() {
-  pid_is_active "$service_pid_file" && [[ -S "$socket_path" ]]
+  ! pid_is_active "$activator_pid_file" \
+    && pid_is_active "$service_pid_file" \
+    && [[ -S "$socket_path" ]]
 }
 
 socket_is_ready() {

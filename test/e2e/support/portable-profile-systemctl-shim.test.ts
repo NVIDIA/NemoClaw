@@ -6,7 +6,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { installPortableProfileSystemctlShim } from "../fixtures/portable-profile-systemctl.ts";
 import { readYaml, type Workflow, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
@@ -96,10 +96,7 @@ function activateThroughSocket(socketPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const client = net.createConnection(socketPath);
     let output = "";
-    let settled = false;
     const finish = (): void => {
-      if (settled) return;
-      settled = true;
       clearTimeout(timeout);
       resolve(output);
     };
@@ -113,35 +110,23 @@ function activateThroughSocket(socketPath: string): Promise<string> {
       output += chunk;
     });
     client.once("close", finish);
-    client.once("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "ECONNRESET") {
-        finish();
-        return;
-      }
-      clearTimeout(timeout);
-      reject(error);
-    });
+    client.once("error", finish);
   });
 }
 
 async function waitForServiceStatus(scope: FixtureScope, expected: number): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (serviceStatus(scope) === expected) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  expect(serviceStatus(scope)).toBe(expected);
+  await vi.waitFor(() => expect(serviceStatus(scope)).toBe(expected), {
+    interval: 50,
+    timeout: 5_000,
+  });
 }
 
 function readFixturePids(scope: FixtureScope): number[] {
-  return ["nemoclaw-podman-socket-activator.pid", "nemoclaw-podman-service.pid"].flatMap((name) => {
-    try {
-      const pid = Number(fs.readFileSync(path.join(scope.runtimeDir, name), "utf8").trim());
-      return Number.isInteger(pid) && pid > 0 ? [pid] : [];
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
-  });
+  return ["nemoclaw-podman-socket-activator.pid", "nemoclaw-podman-service.pid"]
+    .map((name) => path.join(scope.runtimeDir, name))
+    .filter((pidFile) => fs.existsSync(pidFile))
+    .map((pidFile) => Number(fs.readFileSync(pidFile, "utf8").trim()))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
 function pidIsActive(pid: number): boolean {
@@ -149,16 +134,16 @@ function pidIsActive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-    throw error;
+    expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
+    return false;
   }
 }
 
 async function waitForExit(pid: number): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (!pidIsActive(pid)) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  await vi.waitFor(() => expect(pidIsActive(pid)).toBe(false), {
+    interval: 20,
+    timeout: 2_000,
+  });
 }
 
 async function cleanFixture(scope: FixtureScope): Promise<void> {
@@ -169,10 +154,6 @@ async function cleanFixture(scope: FixtureScope): Promise<void> {
     } catch (error) {
       expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
     }
-  }
-  await Promise.all(pids.map(waitForExit));
-  for (const pid of pids) {
-    if (pidIsActive(pid)) process.kill(pid, "SIGKILL");
   }
   await Promise.all(pids.map(waitForExit));
   expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
