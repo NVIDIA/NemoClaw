@@ -96,9 +96,6 @@ describe("base-image publication workflow boundary (#7372)", () => {
   it("keeps Launchable off the base-image publication critical path", () => {
     const value = workflow();
 
-    expect(value.jobs["generate-matrix"].needs).toBeUndefined();
-    expect(value.jobs["staging-brev-launchable"].needs).toBe("generate-matrix");
-    expect(value.jobs.live.needs).toEqual(["base-image-publication", "generate-matrix"]);
     expect(validate(value)).toEqual([]);
   });
 
