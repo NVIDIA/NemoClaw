@@ -224,6 +224,30 @@ describe("onboarding entry composition boundary", () => {
     expect(actual.gateway).toEqual({ choose: 1 });
   });
 
+  it.each(["gateway?.start()", 'gateway?.["start"]()'])(
+    "checks the receiver-side optional gateway call %s",
+    (call) => {
+      const actual = collectOnboardEntryDecisions(`function choose() { ${call}; }`);
+
+      expect(actual.gateway).toEqual({ choose: 1 });
+    },
+  );
+
+  it("keeps static aliases within their lexical scope", () => {
+    const actual = collectOnboardEntryDecisions(`
+      function chooseStart(enabled: boolean) {
+        const start = startGateway;
+        if (enabled) start();
+      }
+      function reportOnly(enabled: boolean) {
+        const start = reportError;
+        if (enabled) start();
+      }
+    `);
+
+    expect(actual.gateway).toEqual({ chooseStart: 1 });
+  });
+
   it.each([
     ["if", "if (enabled) startGateway();"],
     ["switch", "switch (mode) { case 'start': startGateway(); }"],
@@ -329,6 +353,17 @@ describe("onboarding entry composition boundary", () => {
     );
 
     expect(actual.provider).toEqual({});
+  });
+
+  it("does not resolve a recovery method name through a local alias", () => {
+    const actual = collectOnboardEntryDecisions(`
+      function choose() {
+        const execute = reportError;
+        gatewayRecovery.execute();
+      }
+    `);
+
+    expect(actual.gateway).toEqual({ choose: 1 });
   });
 
   it("counts a direct promise recovery handler", () => {
