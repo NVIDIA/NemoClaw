@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { readValidatedArtifactZipEntry } from "../../../scripts/scorecard/read-artifact-zip.mts";
+import {
+  readValidatedArtifactZipEntry,
+  readValidatedArtifactZipEntryBytes,
+} from "../../../scripts/scorecard/read-artifact-zip.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
 
 const structuralMutations: Array<[string, (archive: Buffer, centralOffset: number) => void]> = [
@@ -19,7 +22,7 @@ const structuralMutations: Array<[string, (archive: Buffer, centralOffset: numbe
 ];
 
 describe("validated GitHub artifact ZIP reader", () => {
-  it("reads only the exact root-level entry from a multi-entry archive", () => {
+  it("reads only the exact safe relative entry from a multi-entry archive", () => {
     const archive = artifactZip([
       { name: "diagnostics/log.txt", contents: "ignored" },
       { name: "summary.json", contents: '{"safe":true}' },
@@ -32,7 +35,31 @@ describe("validated GitHub artifact ZIP reader", () => {
     expect(readValidatedArtifactZipEntry(archive, "résumé.json", { maxBytes: 1_024 })).toBe(
       '{"utf8":true}',
     );
+    expect(
+      readValidatedArtifactZipEntryBytes(archive, "diagnostics/log.txt", { maxBytes: 1_024 }),
+    ).toEqual(Buffer.from("ignored"));
     expect(readValidatedArtifactZipEntry(archive, "log.txt", { maxBytes: 1_024 })).toBeNull();
+  });
+
+  it.each([
+    ["empty", ""],
+    ["absolute", "/summary.json"],
+    ["parent", "../summary.json"],
+    ["nested parent", "diagnostics/../summary.json"],
+    ["backslash", "a\\b"],
+    ["empty segment", "diagnostics//log.txt"],
+    ["dot segment", "diagnostics/./log.txt"],
+    ["trailing slash", "diagnostics/"],
+    ["NUL byte", "diagnostics/\0log.txt"],
+  ])("rejects unsafe requested path with %s", (_case, requestedPath) => {
+    const archive = artifactZip([
+      { name: requestedPath, contents: "unsafe" },
+      { name: "summary.json", contents: '{"safe":true}' },
+    ]);
+
+    expect(
+      readValidatedArtifactZipEntryBytes(archive, requestedPath, { maxBytes: 1_024 }),
+    ).toBeNull();
   });
 
   it("rejects duplicate target entries and payloads over the caller's bound", () => {
