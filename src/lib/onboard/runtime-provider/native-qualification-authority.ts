@@ -1,47 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export interface NativeRuntimeQualificationArtifactIdentity {
-  readonly id: string;
-  readonly name: string;
-  readonly digest: string;
-  readonly sizeInBytes: number;
-}
-
 /**
- * Source identity authenticated by the protected native runtime qualification
- * collector. Keep this shape aligned with the qualification plan and authority
- * so activation can compare the authority with an independent requirement.
+ * Immutable GitHub identities resolved by the trusted native qualification
+ * collector. The evidence consumer rechecks these identities before issuing
+ * an authority receipt; activation must match the receipt to its independently
+ * required source identity.
  */
-export interface NativeRuntimeQualificationPlanSource {
-  readonly repository: "NVIDIA/NemoClaw";
-  readonly producerWorkflow: ".github/workflows/e2e.yaml";
+export const NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY = "NVIDIA/NemoClaw";
+/** The trusted collector is separate and rejects evidence emitted by its own workflow. */
+export const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW =
+  ".github/workflows/native-runtime-qualification.yaml";
+
+export interface NativeRuntimeQualificationProtectedRun {
+  readonly repository: string;
+  readonly workflow: string;
   readonly pullRequestNumber: number;
   readonly candidateRepository: string;
-  readonly candidateSha: string;
+  readonly headSha: string;
   readonly baseRef: "main";
   readonly baseSha: string;
-  readonly workflowSha: string;
-  readonly producerRunId: string;
-  readonly producerRunAttempt: 1;
-  readonly dispatchArtifact: NativeRuntimeQualificationArtifactIdentity;
+  readonly runId: number;
+  readonly attempt: number;
+  readonly jobId: number;
 }
 
-export interface NativeRuntimeQualificationProtectedJobIdentity {
-  readonly caseId: string;
-  readonly id: string;
-  readonly name: string;
+export interface NativeRuntimeQualificationExpectedSource extends NativeRuntimeQualificationProtectedRun {
+  readonly artifact: {
+    readonly id: number;
+    readonly name: string;
+    readonly digest: string;
+  };
 }
 
-export interface NativeRuntimeQualificationAuthoritySource extends NativeRuntimeQualificationPlanSource {
-  readonly protectedJobs: readonly NativeRuntimeQualificationProtectedJobIdentity[];
-}
-
-/** Issued only after the protected collector authenticates complete evidence. */
 export interface NativeRuntimeQualificationAuthority {
   readonly schemaVersion: 1;
-  readonly kind: "nemoclaw-native-runtime-qualification-authority-v1";
   readonly qualificationId: string;
   readonly providerId: string;
-  readonly source: NativeRuntimeQualificationAuthoritySource;
+  readonly source: NativeRuntimeQualificationExpectedSource;
 }

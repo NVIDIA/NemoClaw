@@ -6,17 +6,18 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
 import {
+  NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
+  NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY,
+  type NativeRuntimeQualificationAuthority,
+  type NativeRuntimeQualificationExpectedSource,
+} from "./native-qualification-authority";
+import {
   RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderContainerEngineOperation,
   type RuntimeProviderMutationOperation,
 } from "./contract";
-import type {
-  NativeRuntimeQualificationAuthority,
-  NativeRuntimeQualificationAuthoritySource,
-  NativeRuntimeQualificationProtectedJobIdentity,
-} from "./native-qualification-authority";
 import { createRuntimeProviderBundleRegistry } from "./registry";
 
 export const RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION = 1 as const;
@@ -27,7 +28,7 @@ export const RUNTIME_PROVIDER_ACTIVATION_AGENTS = [
 ] as const;
 export const RUNTIME_PROVIDER_ACTIVATION_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 export const RUNTIME_PROVIDER_ACTIVATION_ROOT_MODES = ["rootless"] as const;
-export const RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES = ["cpu", "nvidia-gpu"] as const;
+export const RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES = ["cpu", "nvidia-cdi"] as const;
 export const RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES = ["ollama", "nim", "vllm"] as const;
 export const RUNTIME_PROVIDER_ACTIVATION_JOURNEYS = [
   "onboard",
@@ -46,13 +47,9 @@ export const RUNTIME_PROVIDER_ACTIVATION_HOST_AUTHORITIES = [
 export const RUNTIME_PROVIDER_ACTIVATION_TRANSPORTS = ["operation-scoped", "socket-free"] as const;
 
 const QUALIFICATION_ID = /^[a-z][a-z0-9-]{0,62}-protected-host-local-inference$/u;
-const PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
-const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SOURCE_REVISION = /^[a-f0-9]{40}$/u;
 const SOURCE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
-const RUN_ID = /^[1-9][0-9]{0,19}$/u;
-const PROTECTED_REPOSITORY = "NVIDIA/NemoClaw";
-const PRODUCER_WORKFLOW = ".github/workflows/e2e.yaml";
+const ARTIFACT_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 
 const REQUIRED_MUTATIONS = [
   "registration",
@@ -110,7 +107,7 @@ export interface RuntimeProviderActivationDeclaration {
   };
   readonly qualification: {
     readonly qualificationId: string;
-    readonly source: NativeRuntimeQualificationAuthoritySource;
+    readonly source: NativeRuntimeQualificationExpectedSource;
   };
 }
 
@@ -131,15 +128,42 @@ export class RuntimeProviderActivationError extends Error {
   }
 }
 
+function exactSequence(
+  value: readonly unknown[],
+  expected: readonly string[],
+  label: string,
+): void {
+  if (
+    !Array.isArray(value) ||
+    value.length !== expected.length ||
+    value.some((entry, index) => entry !== expected[index])
+  ) {
+    throw new RuntimeProviderActivationError(
+      `${label} must be exactly '${expected.join(",")}' in canonical order`,
+    );
+  }
+}
+
+function exactSet(value: readonly unknown[], expected: readonly string[], label: string): void {
+  const actual = new Set(value);
+  const missing = expected.filter((entry) => !actual.has(entry));
+  const unknown = value.filter((entry) => typeof entry !== "string" || !expected.includes(entry));
+  if (
+    !Array.isArray(value) ||
+    actual.size !== value.length ||
+    missing.length > 0 ||
+    unknown.length > 0
+  ) {
+    throw new RuntimeProviderActivationError(
+      `${label} is incomplete (missing: ${missing.join(", ") || "none"})`,
+    );
+  }
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 function record(value: unknown, label: string): UnknownRecord {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    ![Object.prototype, null].includes(Object.getPrototypeOf(value))
-  ) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new RuntimeProviderActivationError(`${label} must be an object`);
   }
   return value as UnknownRecord;
@@ -153,30 +177,11 @@ function exactKeys(value: UnknownRecord, expected: readonly string[], label: str
   }
 }
 
-function exactSequence(value: unknown, expected: readonly string[], label: string): void {
-  if (
-    !Array.isArray(value) ||
-    value.length !== expected.length ||
-    value.some((entry, index) => entry !== expected[index])
-  ) {
-    throw new RuntimeProviderActivationError(
-      `${label} must be '${expected.join(",")}' in canonical order`,
-    );
+function positiveInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new RuntimeProviderActivationError(`${label} must be a positive integer`);
   }
-}
-
-function exactSet(value: unknown, expected: readonly string[], label: string): void {
-  if (!Array.isArray(value)) {
-    throw new RuntimeProviderActivationError(`${label} is incomplete`);
-  }
-  const actual = new Set(value);
-  const missing = expected.filter((entry) => !actual.has(entry));
-  const unknown = value.filter((entry) => typeof entry !== "string" || !expected.includes(entry));
-  if (actual.size !== value.length || missing.length > 0 || unknown.length > 0) {
-    throw new RuntimeProviderActivationError(
-      `${label} is incomplete (missing: ${missing.join(", ") || "none"})`,
-    );
-  }
+  return Number(value);
 }
 
 function singleLine(value: unknown, label: string): string {
@@ -194,166 +199,84 @@ function singleLine(value: unknown, label: string): string {
 function validatedQualificationSource(
   value: unknown,
   label: string,
-): NativeRuntimeQualificationAuthoritySource {
+): NativeRuntimeQualificationExpectedSource {
   const source = record(value, label);
   exactKeys(
     source,
     [
-      "candidateRepository",
-      "candidateSha",
       "repository",
-      "producerWorkflow",
+      "workflow",
       "pullRequestNumber",
+      "candidateRepository",
+      "headSha",
       "baseRef",
       "baseSha",
-      "workflowSha",
-      "producerRunId",
-      "producerRunAttempt",
-      "dispatchArtifact",
-      "protectedJobs",
+      "runId",
+      "attempt",
+      "jobId",
+      "artifact",
     ],
     label,
   );
+  const repository = singleLine(source.repository, `${label} repository`);
+  const workflow = singleLine(source.workflow, `${label} workflow`);
   const candidateRepository = singleLine(
     source.candidateRepository,
     `${label} candidate repository`,
   );
-  if (!REPOSITORY.test(candidateRepository)) {
-    throw new RuntimeProviderActivationError(`${label} candidate repository is invalid`);
-  }
   if (
-    source.repository !== PROTECTED_REPOSITORY ||
-    source.producerWorkflow !== PRODUCER_WORKFLOW ||
-    !Number.isSafeInteger(source.pullRequestNumber) ||
-    Number(source.pullRequestNumber) < 1 ||
-    source.baseRef !== "main"
+    repository !== NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY ||
+    workflow !== NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW ||
+    candidateRepository !== NATIVE_RUNTIME_QUALIFICATION_PROTECTED_REPOSITORY
   ) {
     throw new RuntimeProviderActivationError(
-      `${label} protected repository, producer workflow, pull request, or base ref is invalid`,
-    );
-  }
-  for (const [field, revision] of [
-    ["candidate commit", source.candidateSha],
-    ["target-branch base", source.baseSha],
-    ["trusted workflow", source.workflowSha],
-  ] as const) {
-    if (typeof revision !== "string" || !SOURCE_REVISION.test(revision)) {
-      throw new RuntimeProviderActivationError(`${label} ${field} SHA is invalid`);
-    }
-  }
-  const candidateSha = source.candidateSha as string;
-  const baseSha = source.baseSha as string;
-  const workflowSha = source.workflowSha as string;
-  if (candidateSha === baseSha || baseSha !== workflowSha) {
-    throw new RuntimeProviderActivationError(
-      `${label} must separate the candidate from the trusted target-branch base`,
+      `${label} must bind the protected qualification repository and producer workflow`,
     );
   }
   if (
-    typeof source.producerRunId !== "string" ||
-    !RUN_ID.test(source.producerRunId) ||
-    source.producerRunAttempt !== 1
+    source.baseRef !== "main" ||
+    typeof source.headSha !== "string" ||
+    !SOURCE_REVISION.test(source.headSha) ||
+    typeof source.baseSha !== "string" ||
+    !SOURCE_REVISION.test(source.baseSha) ||
+    source.headSha === source.baseSha
   ) {
-    throw new RuntimeProviderActivationError(`${label} producer run identity is invalid`);
+    throw new RuntimeProviderActivationError(
+      `${label} must bind the candidate commit and target-branch base SHA`,
+    );
   }
-  const dispatchArtifact = record(source.dispatchArtifact, `${label} dispatch artifact`);
-  exactKeys(
-    dispatchArtifact,
-    ["id", "name", "digest", "sizeInBytes"],
-    `${label} dispatch artifact`,
-  );
+  const artifact = record(source.artifact, `${label} artifact`);
+  exactKeys(artifact, ["id", "name", "digest"], `${label} artifact`);
+  const artifactName = singleLine(artifact.name, `${label} artifact name`);
   if (
-    typeof dispatchArtifact.id !== "string" ||
-    !RUN_ID.test(dispatchArtifact.id) ||
-    dispatchArtifact.name !== `e2e-dispatch-${source.producerRunId}-${source.producerRunAttempt}` ||
-    typeof dispatchArtifact.digest !== "string" ||
-    !SOURCE_DIGEST.test(dispatchArtifact.digest) ||
-    !Number.isSafeInteger(dispatchArtifact.sizeInBytes) ||
-    Number(dispatchArtifact.sizeInBytes) < 1 ||
-    Number(dispatchArtifact.sizeInBytes) > 1_048_576
+    !ARTIFACT_NAME.test(artifactName) ||
+    typeof artifact.digest !== "string" ||
+    !SOURCE_DIGEST.test(artifact.digest)
   ) {
-    throw new RuntimeProviderActivationError(`${label} dispatch artifact identity is invalid`);
+    throw new RuntimeProviderActivationError(`${label} artifact identity is invalid`);
   }
-  const protectedJobs = validatedProtectedJobs(source.protectedJobs, label);
   return {
-    repository: PROTECTED_REPOSITORY,
-    producerWorkflow: PRODUCER_WORKFLOW,
-    pullRequestNumber: Number(source.pullRequestNumber),
+    repository,
+    workflow,
+    pullRequestNumber: positiveInteger(source.pullRequestNumber, `${label} pull request number`),
     candidateRepository,
-    candidateSha,
+    headSha: source.headSha,
     baseRef: "main",
-    baseSha,
-    workflowSha,
-    producerRunId: source.producerRunId,
-    producerRunAttempt: 1,
-    dispatchArtifact: {
-      id: dispatchArtifact.id,
-      name: dispatchArtifact.name,
-      digest: dispatchArtifact.digest,
-      sizeInBytes: Number(dispatchArtifact.sizeInBytes),
+    baseSha: source.baseSha,
+    runId: positiveInteger(source.runId, `${label} run id`),
+    attempt: positiveInteger(source.attempt, `${label} run attempt`),
+    jobId: positiveInteger(source.jobId, `${label} job id`),
+    artifact: {
+      id: positiveInteger(artifact.id, `${label} artifact id`),
+      name: artifactName,
+      digest: artifact.digest,
     },
-    protectedJobs,
   };
 }
 
-function requiredQualificationCaseIds(providerId: string): readonly string[] {
-  return RUNTIME_PROVIDER_ACTIVATION_AGENTS.flatMap((agent) =>
-    RUNTIME_PROVIDER_ACTIVATION_PLATFORMS.flatMap((platform) => {
-      const architecture = platform.split("/")[1] as string;
-      return RUNTIME_PROVIDER_ACTIVATION_ACCELERATION_MODES.flatMap((acceleration) => {
-        const services =
-          acceleration === "cpu"
-            ? [RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES[0]]
-            : RUNTIME_PROVIDER_ACTIVATION_INFERENCE_SERVICES;
-        const accelerationId = acceleration === "nvidia-gpu" ? "gpu" : acceleration;
-        return services.map(
-          (service) => `${providerId}-${agent}-linux-${architecture}-${accelerationId}-${service}`,
-        );
-      });
-    }),
-  ).sort();
-}
-
-function validatedProtectedJobs(
-  value: unknown,
-  label: string,
-): readonly NativeRuntimeQualificationProtectedJobIdentity[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new RuntimeProviderActivationError(`${label} protected job identities are required`);
-  }
-  const jobs = value.map((entry, index) => {
-    const job = record(entry, `${label} protected job ${index + 1}`);
-    exactKeys(job, ["caseId", "id", "name"], `${label} protected job ${index + 1}`);
-    const caseId = singleLine(job.caseId, `${label} protected job case identity`);
-    const name = singleLine(job.name, `${label} protected job name`);
-    if (
-      typeof job.id !== "string" ||
-      !RUN_ID.test(job.id) ||
-      name !== `Native runtime qualification / ${caseId}`
-    ) {
-      throw new RuntimeProviderActivationError(`${label} protected job identity is invalid`);
-    }
-    return { caseId, id: job.id, name };
-  });
-  const caseIds = jobs.map(({ caseId }) => caseId);
-  const jobIds = jobs.map(({ id }) => id);
-  const names = jobs.map(({ name }) => name);
-  if (
-    new Set(caseIds).size !== jobs.length ||
-    new Set(jobIds).size !== jobs.length ||
-    new Set(names).size !== jobs.length ||
-    caseIds.some((caseId, index) => index > 0 && caseIds[index - 1]! >= caseId)
-  ) {
-    throw new RuntimeProviderActivationError(
-      `${label} protected jobs must have unique identities and canonical case order`,
-    );
-  }
-  return jobs;
-}
-
 function sameQualificationSource(
-  left: NativeRuntimeQualificationAuthoritySource,
-  right: NativeRuntimeQualificationAuthoritySource,
+  left: NativeRuntimeQualificationExpectedSource,
+  right: NativeRuntimeQualificationExpectedSource,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -380,18 +303,13 @@ function validatedQualificationAuthority(
     requirement.source,
     "required qualification source",
   );
-  exactSequence(
-    requiredSource.protectedJobs.map(({ caseId }) => caseId),
-    requiredQualificationCaseIds(declaration.providerId),
-    "required qualification protected jobs",
-  );
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new RuntimeProviderActivationError("authenticated qualification authority is required");
+    throw new RuntimeProviderActivationError("validated qualification authority is required");
   }
   const authority = record(value, "qualification authority");
   exactKeys(
     authority,
-    ["schemaVersion", "kind", "qualificationId", "providerId", "source"],
+    ["schemaVersion", "qualificationId", "providerId", "source"],
     "qualification authority",
   );
   const authoritySource = validatedQualificationSource(
@@ -400,7 +318,6 @@ function validatedQualificationAuthority(
   );
   if (
     authority.schemaVersion !== 1 ||
-    authority.kind !== "nemoclaw-native-runtime-qualification-authority-v1" ||
     authority.qualificationId !== qualificationId ||
     authority.providerId !== declaration.providerId
   ) {
@@ -415,38 +332,20 @@ function validatedQualificationAuthority(
   }
   return {
     schemaVersion: 1,
-    kind: "nemoclaw-native-runtime-qualification-authority-v1",
     qualificationId,
     providerId: declaration.providerId,
     source: authoritySource,
   };
 }
 
-function validateDeclaration(
-  value: unknown,
-): asserts value is RuntimeProviderActivationDeclaration {
-  const declaration = record(value, "activation declaration");
-  exactKeys(
-    declaration,
-    [
-      "contractVersion",
-      "providerId",
-      "topology",
-      "agents",
-      "platforms",
-      "qualificationRootModes",
-      "accelerationModes",
-      "hostLocalInferenceServices",
-      "journeys",
-      "installer",
-      "qualification",
-    ],
-    "activation declaration",
-  );
+function validateDeclaration(declaration: RuntimeProviderActivationDeclaration): void {
   if (
+    typeof declaration !== "object" ||
+    declaration === null ||
+    Array.isArray(declaration) ||
     declaration.contractVersion !== RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION ||
     typeof declaration.providerId !== "string" ||
-    !PROVIDER_ID.test(declaration.providerId)
+    !/^[a-z][a-z0-9-]{0,62}$/u.test(declaration.providerId)
   ) {
     throw new RuntimeProviderActivationError("declaration identity is malformed");
   }
@@ -468,21 +367,16 @@ function validateDeclaration(
     "host-local inference services",
   );
   exactSequence(declaration.journeys, RUNTIME_PROVIDER_ACTIVATION_JOURNEYS, "journeys");
-  const topology = record(declaration.topology, "execution topology");
-  exactKeys(topology, ["hostAuthority", "transport"], "execution topology");
   if (
-    !RUNTIME_PROVIDER_ACTIVATION_HOST_AUTHORITIES.includes(
-      topology.hostAuthority as RuntimeProviderActivationHostAuthority,
-    ) ||
-    !RUNTIME_PROVIDER_ACTIVATION_TRANSPORTS.includes(
-      topology.transport as RuntimeProviderActivationTransport,
-    )
+    !RUNTIME_PROVIDER_ACTIVATION_HOST_AUTHORITIES.includes(declaration.topology?.hostAuthority) ||
+    !RUNTIME_PROVIDER_ACTIVATION_TRANSPORTS.includes(declaration.topology?.transport)
   ) {
     throw new RuntimeProviderActivationError("execution topology is invalid");
   }
-  const installer = record(declaration.installer, "installer qualification");
-  exactKeys(installer, ["releaseInstaller", "dockerUnavailable"], "installer qualification");
-  if (installer.releaseInstaller !== true || installer.dockerUnavailable !== true) {
+  if (
+    declaration.installer?.releaseInstaller !== true ||
+    declaration.installer.dockerUnavailable !== true
+  ) {
     throw new RuntimeProviderActivationError(
       "release-installer qualification with Docker unavailable is required",
     );
@@ -492,13 +386,14 @@ function validateDeclaration(
 function requireSupported(
   bundle: RuntimeProviderBundle,
   surfaceName: keyof RuntimeProviderBundle,
-): void {
+): { readonly supported: true } {
   const surface = bundle[surfaceName] as { readonly supported?: boolean };
   if (surface.supported !== true) {
     throw new RuntimeProviderActivationError(
       `provider '${bundle.identity.id}' has incomplete ${String(surfaceName)} authority`,
     );
   }
+  return surface as { readonly supported: true };
 }
 
 function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
@@ -539,7 +434,7 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     workload.legacyDockerfileBuilds !== false
   ) {
     throw new RuntimeProviderActivationError(
-      `provider '${providerId}' must require digest-bound managed images`,
+      `provider '${providerId}' must require exact-digest managed images`,
     );
   }
   exactSequence(
@@ -612,16 +507,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
   );
 }
 
-function frozenSource(
-  source: NativeRuntimeQualificationAuthoritySource,
-): NativeRuntimeQualificationAuthoritySource {
-  return Object.freeze({
-    ...source,
-    dispatchArtifact: Object.freeze({ ...source.dispatchArtifact }),
-    protectedJobs: Object.freeze(source.protectedJobs.map((job) => Object.freeze({ ...job }))),
-  });
-}
-
 function validatedRegistration(
   registration: RuntimeProviderActivationRegistration,
 ): Readonly<RuntimeProviderActivationRegistration> {
@@ -660,12 +545,20 @@ function validatedRegistration(
       installer: Object.freeze({ ...registration.declaration.installer }),
       qualification: Object.freeze({
         qualificationId: registration.declaration.qualification.qualificationId,
-        source: frozenSource(registration.declaration.qualification.source),
+        source: Object.freeze({
+          ...registration.declaration.qualification.source,
+          artifact: Object.freeze({
+            ...registration.declaration.qualification.source.artifact,
+          }),
+        }),
       }),
     }),
     qualificationAuthority: Object.freeze({
       ...qualificationAuthority,
-      source: frozenSource(qualificationAuthority.source),
+      source: Object.freeze({
+        ...qualificationAuthority.source,
+        artifact: Object.freeze({ ...qualificationAuthority.source.artifact }),
+      }),
     }),
     bundle: validated,
   });

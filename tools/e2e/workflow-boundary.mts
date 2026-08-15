@@ -2443,8 +2443,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (liveTargets.needs !== "generate-matrix") {
-    errors.push("live job must depend on generate-matrix");
+  if (
+    !isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])
+  ) {
+    errors.push("live job must depend on base-image-publication and generate-matrix");
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
     errors.push("live job must run whenever the trusted planner emits typed targets");

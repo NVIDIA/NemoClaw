@@ -2,6 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type {
+  RuntimeProviderActivationCatalog,
+  RuntimeProviderActivationDeclaration,
+  RuntimeProviderActivationRegistration,
+} from "./activation";
+export {
+  composeActivatedRuntimeProviderBundles,
+  createRuntimeProviderActivationCatalog,
+  RuntimeProviderActivationError,
+} from "./activation";
+export type {
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationExpectedSource,
+  NativeRuntimeQualificationProtectedRun,
+} from "./native-qualification-authority";
+export type {
   RuntimeProviderBundle,
   RuntimeProviderBundleRegistry,
   RuntimeProviderChannelStopTransport,
