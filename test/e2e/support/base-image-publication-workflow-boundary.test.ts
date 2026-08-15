@@ -93,6 +93,12 @@ function runClassifier(environment: {
 }
 
 describe("base-image publication workflow boundary (#7372)", () => {
+  it("keeps Launchable off the base-image publication critical path", () => {
+    const value = workflow();
+
+    expect(validate(value)).toEqual([]);
+  });
+
   // source-shape-contract: security -- Immutable base contracts must outlive the qualification interval so later E2E cannot fall back to a mutable alias.
   it("retains immutable base contracts for later qualification (#9049)", () => {
     const action = YAML.parse(
@@ -209,7 +215,19 @@ describe("base-image publication workflow boundary (#7372)", () => {
         (gateSteps(value)[5].run = "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    ["fanout dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
+    [
+      "matrix publication dependency",
+      (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),
+    ],
+    ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
+    [
+      "Launchable publication dependency",
+      (value) =>
+        (value.jobs["staging-brev-launchable"].needs = [
+          "base-image-publication",
+          "generate-matrix",
+        ]),
+    ],
     [
       "matrix base output",
       (value) => {
