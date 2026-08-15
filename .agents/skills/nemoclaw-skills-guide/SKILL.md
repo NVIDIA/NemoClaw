@@ -62,7 +62,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-cross-issue-sweep` | Find open issues that a PR can also fix or conflict with. Report file and line evidence. |
 | `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
 | `nemoclaw-maintainer-evening` | End-of-day handoff: require the pre-tag dated changelog PR, check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, carry stragglers forward, retire the released label, and hand off the Announcement. |
-| `nemoclaw-maintainer-cut-release-tag` | At 4 PM, verify the dated changelog and housekeeping, prepare a maintainer-confirmed tag for local signing independent of E2E, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
+| `nemoclaw-maintainer-cut-release-tag` | Verify the dated changelog entry, cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
 | `nemoclaw-maintainer-e2e` | Describe default E2E triggered by pushes to `main`, dispatch exact-revision manual PR E2E, and verify applicable workflow evidence. |
 | `nemoclaw-maintainer-release-notes` | Draft the post-tag Announcement from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority. Link each PR to its issue and identify competing PRs. |
