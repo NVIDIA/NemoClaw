@@ -286,6 +286,10 @@ describe("Pi release cohort separation", () => {
       expect(entrypointStep).toContain(name);
     }
     expect(entrypointStep).toContain("source /tmp/nemoclaw-proxy-env.sh");
+    expect(entrypointStep).toContain(
+      "for proxy_variable in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy",
+    );
+    expect(entrypointStep).toContain("for no_proxy_variable in NO_PROXY no_proxy");
     expect(entrypointStep).toContain("merged_ca=/tmp/nemoclaw-ca-bundle.pem");
     expect(entrypointStep).toContain("merged_ca_status");
     expect(entrypointStep).toContain('!= "0:0:444"');

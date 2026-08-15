@@ -1155,16 +1155,6 @@ jobs:
             exit 1
           fi
           runtime_env="$(docker exec "$entrypoint_container" cat /tmp/nemoclaw-proxy-env.sh)"
-          for expected_export in \
-            'export HTTP_PROXY=http://10.200.0.1:3128' \
-            'export HTTPS_PROXY=http://10.200.0.1:3128' \
-            'export NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1'
-          do
-            if ! grep -qF "$expected_export" <<< "$runtime_env"; then
-              echo "ERROR: the Pi candidate entrypoint did not persist the trusted proxy environment ($expected_export)." >&2
-              exit 1
-            fi
-          done
           merged_ca=/tmp/nemoclaw-ca-bundle.pem
           merged_ca_status="$(docker exec "$entrypoint_container" stat -c '%u:%g:%a' "$merged_ca")"
           if [ "$merged_ca_status" != "0:0:444" ]; then
@@ -1199,8 +1189,23 @@ jobs:
             )) process.exit(1);
           ' "$merged_ca"
           docker exec --user 999:999 "$entrypoint_container" /bin/bash -ceu '
+            unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy
             unset SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS
             source /tmp/nemoclaw-proxy-env.sh
+            proxy_url=http://10.200.0.1:3128
+            for proxy_variable in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do
+              if [ "${!proxy_variable}" != "$proxy_url" ]; then
+                echo "ERROR: an independent Pi shell did not load $proxy_variable from the runtime environment." >&2
+                exit 1
+              fi
+            done
+            no_proxy_value=localhost,127.0.0.1,::1,10.200.0.1
+            for no_proxy_variable in NO_PROXY no_proxy; do
+              if [ "${!no_proxy_variable}" != "$no_proxy_value" ]; then
+                echo "ERROR: an independent Pi shell did not load $no_proxy_variable from the runtime environment." >&2
+                exit 1
+              fi
+            done
             merged_ca=/tmp/nemoclaw-ca-bundle.pem
             for ca_variable in \
               SSL_CERT_FILE \
