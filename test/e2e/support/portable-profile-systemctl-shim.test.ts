@@ -632,6 +632,38 @@ describe("portable profile systemctl fixture", () => {
   );
 
   it(
+    "rejects a reused gateway PID during shared cleanup without signaling the unrelated process (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      let originalRecord: FixtureProcessRecord | undefined;
+      let unrelated: ReturnType<typeof spawn> | undefined;
+      try {
+        expect(systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]).status).toBe(
+          0,
+        );
+        originalRecord = readFixtureProcessRecord(scope.gatewayPidFile);
+        unrelated = spawnUnrelatedProcess();
+        await vi.waitFor(() => expect(pidIsActive(unrelated!.pid!)).toBe(true));
+        fs.writeFileSync(scope.gatewayPidFile, replaceRecordedPid(originalRecord, unrelated.pid!), {
+          mode: 0o600,
+        });
+
+        await expect(cleanupPortableProfileSystemctlFixture(scope.runtimeDir)).rejects.toThrow(
+          `Portable profile fixture PID file ${scope.gatewayPidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
+        expect(fs.existsSync(scope.directory)).toBe(true);
+      } finally {
+        restoreFixtureProcessRecord(scope.gatewayPidFile, originalRecord);
+        await stopUnrelatedProcess(unrelated);
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
     "rejects gateway unit drift before restarting the managed process (#9208)",
     { timeout: 30_000 },
     async () => {
