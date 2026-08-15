@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as importedSandboxNameContract from "../../../../nemoclaw/src/shared/sandbox-name.cts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
@@ -11,6 +12,13 @@ import {
   outputContainsSandbox,
   resultText,
 } from "./command.ts";
+
+const sandboxNameContract = (
+  "default" in importedSandboxNameContract && importedSandboxNameContract.default
+    ? importedSandboxNameContract.default
+    : importedSandboxNameContract
+) as typeof import("../../../../nemoclaw/src/shared/sandbox-name.cts");
+const { diagnosticPreview, isValidName, NAME_ALLOWED_FORMAT } = sandboxNameContract;
 
 const SANDBOX_ALREADY_ABSENT =
   /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
@@ -193,9 +201,9 @@ export class SandboxClient {
   }
 
   /**
-   * Disruption helper: kill the entire openclaw process tree inside the
-   * sandbox (gateway + launcher + supervisor watchdog). Used after
-   * `wipeGuardChain` to force the recovery path to relaunch from scratch.
+   * Disruption helper: kill the observed OpenClaw process tree inside the
+   * sandbox. Used after `wipeGuardChain` to force the managed watchdog or
+   * recovery path to relaunch from scratch.
    *
    * The bracket pattern `[o]penclaw` is the standard pgrep/pkill trick to
    * avoid matching the matcher process itself.
@@ -207,12 +215,10 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    // Two-phase kill: SIGKILL the tree, sleep, then verify nothing came back.
-    // Mirrors the bash test's pkill -9 + verify pattern.
-    const script =
-      "pkill -9 -f '[o]penclaw' 2>/dev/null || true; " +
-      "sleep 2; " +
-      "pgrep -af '[o]penclaw' >/dev/null 2>&1 && exit 1 || exit 0";
+    // Require an initial gateway process, then kill it. Do not assert that the
+    // process stays absent: PID 1 is expected to respawn the gateway, and the
+    // live scenario verifies the replacement PID and restored guard chain.
+    const script = "pkill -9 -f '[o]penclaw'";
     const result = await this.exec(name, ["sh", "-c", script], {
       artifactName: `sandbox-kill-gateway-tree-${name}`,
       env: openshellProbeEnv(),
@@ -224,8 +230,10 @@ export class SandboxClient {
 }
 
 export function validateSandboxName(name: string): void {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
-    throw new Error(`sandbox name is invalid for fixture client: ${name}`);
+  if (!isValidName(name)) {
+    throw new Error(
+      `sandbox name is invalid for fixture client: ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
   }
 }
 

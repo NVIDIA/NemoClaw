@@ -325,7 +325,15 @@ async function recoverRegistryFromLiveGateway(
 
   let recoveredFromGateway = 0;
   const ephemeralSandboxes: RecoveredSandboxEntry[] = [];
-  const liveList = captureOpenshell(["sandbox", "list"], {
+  // Scope the live-sandbox list to the gateway this recovery targets. An
+  // unscoped `sandbox list` returns every sandbox on the host. On a host
+  // running two NemoClaw gateways, recovery therefore registered the sibling
+  // gateway's sandboxes under this gateway, and every later sandbox-scoped
+  // status and exec command resolved that binding and reported the sandbox as
+  // Provisioning or absent from the live gateway (#7105). `-g` targets the
+  // named gateway without selecting it, matching the readiness poll in
+  // `connect` and `captureNamedGatewaySandboxListReadOnly`.
+  const liveList = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });

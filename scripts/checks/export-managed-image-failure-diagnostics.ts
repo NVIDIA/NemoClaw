@@ -185,7 +185,7 @@ function prepareFiles(
       if (remaining <= 0) break;
       contents = truncateRedactedText(contents, remaining);
       const byteLength = Buffer.byteLength(contents, "utf8");
-      if (byteLength === 0) break;
+      if (byteLength === 0) continue;
       prepared.push({ bundle: bundleIndex + 1, contents, name });
       totalBytes += byteLength;
     }

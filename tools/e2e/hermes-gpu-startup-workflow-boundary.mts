@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
+import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
 
 /**
  * SOURCE_OF_TRUTH_REVIEW
@@ -37,7 +38,7 @@ const HOSTED_PROVIDER_ENV_NAMES = [
 ] as const;
 const SECRET_REFERENCE_PATTERN = /\bsecrets\.[A-Za-z0-9_]+\b/u;
 const EXPECTED_SELECTOR =
-  "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')) }}";
+  "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'hermes-gpu-startup') }}";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -59,7 +60,6 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-// biome-ignore format: Compact declarative shell-proof vocabulary.
 const TOKENS = { "@bash": '/bin/bash "$trusted_fixture" "$@"', "@bin": "/usr/bin", "@daemon": '"$daemon_json"', "@docker": "/etc/docker/daemon.json", "@env": "/usr/bin/sudo -n /usr/bin/env -i", "@fixture": '"$trusted_fixture"', "@gpu": "hermes-gpu-fallback-docker-runtime", "@install": "/usr/bin/sudo /usr/bin/install", "@root": '"$trusted_state_root"', "@run": "run_trusted_fixture", "@sha": '"$TRUSTED_FIXTURE_SHA256"', "@source": '"$trusted_source"', "@state": '"$state_dir"', "@sudo": "/usr/bin/sudo", "@workflow": '"$TRUSTED_WORKFLOW_SHA"' } as const;
 
 function proof(spec: string): string[] {
@@ -107,7 +107,7 @@ export function validateHermesGpuStartupWorkflow(
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
   if (job.needs !== "generate-matrix" || job.if !== EXPECTED_SELECTOR) {
-    errors.push(`${JOB_NAME} job must remain explicit-only behind generate-matrix`);
+    errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
   }
   if (job["timeout-minutes"] !== 90) {
     errors.push(`${JOB_NAME} requires a 90 minute timeout`);
@@ -119,9 +119,9 @@ export function validateHermesGpuStartupWorkflow(
     strategy["max-parallel"] !== 1 ||
     JSON.stringify(matrix.include) !==
       JSON.stringify([
-        { scenario: "native" },
-        { scenario: "fallback" },
-        { scenario: "compatibility-only" },
+        { scenario: "native", sandbox_name: "e2e-hgpu-native" },
+        { scenario: "fallback", sandbox_name: "e2e-hgpu-fallback" },
+        { scenario: "compatibility-only", sandbox_name: "e2e-hgpu-compat" },
       ])
   ) {
     errors.push(`${JOB_NAME} must serialize GPU scenarios`);
@@ -138,7 +138,7 @@ export function validateHermesGpuStartupWorkflow(
     NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
+    NEMOCLAW_SANDBOX_NAME: "${{ matrix.sandbox_name }}",
   } as const;
   for (const [name, expected] of Object.entries(requiredEnv)) {
     if (jobEnv[name] !== expected) {
@@ -241,13 +241,15 @@ if ! @run restore`;
   }
   const run = stringValue(runStep.run);
   const pi = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+  const restoreI = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
   const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
   const node = steps[ni];
   if (
     runStep.shell !== BASH ||
     !trustedEnv(runStep) ||
     pi < 0 ||
-    ni !== pi + 1 ||
+    restoreI <= pi ||
+    ni !== restoreI + 1 ||
     ni + 1 !== steps.indexOf(runStep) ||
     node?.uses !== "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" ||
     asRecord(node?.with)["node-version"] !== "22" ||

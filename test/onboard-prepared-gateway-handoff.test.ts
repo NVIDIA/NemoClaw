@@ -2,12 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { describe, it } from "vitest";
+
+import {
+  createOnboardProcessWorkspace,
+  minimalSpawnEnv,
+  runOnboardProcess,
+  trailingJsonPayload,
+} from "./helpers/onboard-child-process-harness";
 
 type HandoffScenario = "prepared" | "ordinary" | "mismatch";
 
@@ -21,11 +26,15 @@ const repoRoot = path.join(import.meta.dirname, "..");
 const sourceRequireHook = path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs");
 
 function runHandoffScenario(scenario: HandoffScenario): HandoffResult {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-gateway-handoff-${scenario}-`));
-  const scriptPath = path.join(home, "scenario.cjs");
+  const workspace = createOnboardProcessWorkspace(`nemoclaw-gateway-handoff-${scenario}-`);
+  const home = workspace.homeDir;
+  const scriptPath = workspace.path("scenario.cjs");
   const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const sessionPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+  );
+  const checkpointPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "state", "onboard-checkpoint-migrate.ts"),
   );
   const initialFlowPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "initial-flow-phases.ts"),
@@ -36,6 +45,7 @@ function runHandoffScenario(scenario: HandoffScenario): HandoffResult {
     `
 const initialFlow = require(${initialFlowPath});
 const onboardSession = require(${sessionPath});
+const { deriveCheckpointFromSession } = require(${checkpointPath});
 const scenario = ${JSON.stringify(scenario)};
 const stopAtInitialFlow = new Error("stop at initial onboarding flow");
 let flowCalls = 0;
@@ -48,14 +58,16 @@ initialFlow.runInitialOnboardFlowSlice = async () => {
 };
 
 if (scenario === "prepared") {
-  onboardSession.saveSession(onboardSession.createSession({
+  const session = onboardSession.createSession({
     mode: "non-interactive",
     agent: "langchain-deepagents-code",
     sandboxName: "prepared-dcode",
     provider: "compatible-endpoint",
     model: "nvidia/nemotron-3-super-120b-a12b",
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-  }));
+  });
+  session.checkpoint = deriveCheckpointFromSession(session, { profile: "default" });
+  onboardSession.saveSession(session);
 }
 
 process.env.OPENSHELL_GATEWAY = "ambient-other-gateway";
@@ -117,38 +129,16 @@ const { onboard } = require(${onboardPath});
 `,
   );
 
-  const env: NodeJS.ProcessEnv = {
-    HOME: home,
-    PATH: process.env.PATH || "/usr/bin:/bin",
-    NO_COLOR: "1",
-  };
-  Object.assign(
-    env,
-    Object.fromEntries(
-      ["ComSpec", "PATHEXT", "SystemRoot", "WINDIR"]
-        .map((key) => [key, process.env[key]] as const)
-        .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
-    ),
-  );
-
-  const result = spawnSync(process.execPath, ["--require", sourceRequireHook, scriptPath], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    env,
-    timeout: 15_000,
+  const result = runOnboardProcess(["--require", sourceRequireHook, scriptPath], {
+    env: minimalSpawnEnv(home),
+    timeoutMs: 15_000,
   });
 
   try {
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    const payload = result.stdout
-      .trim()
-      .split(/\r?\n/)
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payload, `expected JSON payload in stdout:\n${result.stdout}`);
-    return JSON.parse(payload) as HandoffResult;
+    return trailingJsonPayload<HandoffResult>(result.stdout);
   } finally {
-    fs.rmSync(home, { recursive: true, force: true });
+    workspace.remove();
   }
 }
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,8 @@ import {
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
@@ -25,28 +27,42 @@ function workflowScript(jobName: string, stepName: string): string {
   return step?.with?.script as string;
 }
 
-describe("E2E operations workflow boundary", () => {
-  it("accepts the checked-in workflow and rejects aggregation, permission, and secret-scope drift", () => {
+describe("E2E operations workflow", testTimeoutOptions(15_000), () => {
+  it("accepts the checked-in workflow", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
+  });
 
+  it("requires the scorecard to wait for every reporting dependency", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
     (workflow.jobs.scorecard.needs as string[]).pop();
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard needs must exactly match report-to-pr needs",
+    );
+  });
+
+  it("limits scorecard permissions to read access", () => {
+    const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.permissions = {
       actions: "read",
       contents: "read",
       issues: "write",
     };
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard permissions must be actions: read and contents: read",
+    );
+  });
+
+  it("does not expose credentials to the scorecard job", () => {
+    const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.env = {
       SLACK_WEBHOOK_URL_DAILY: "${{ secrets.SLACK_WEBHOOK_URL_DAILY }}",
     };
 
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "scorecard needs must exactly match report-to-pr needs",
-        "scorecard permissions must be actions: read and contents: read",
-        "scorecard must not expose credentials at job scope",
-      ]),
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must not expose credentials at job scope",
     );
   });
 
@@ -55,12 +71,68 @@ describe("E2E operations workflow boundary", () => {
     workflow.jobs["report-to-pr"].if =
       "${{ always() && github.event_name == 'workflow_dispatch' }}";
     workflow.jobs.scorecard.if =
-      "${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}";
+      "${{ always() && (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '') }}";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "report-to-pr must run only for manual workflow dispatches",
-        "scorecard must run after scheduled and manual E2E executions",
+        "scorecard must run after pushes and manual E2E runs dispatched against main",
+      ]),
+    );
+  });
+
+  it("requires release qualification to evaluate every full-run result (#7912)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["release-qualification"].if = "${{ always() }}";
+    workflow.jobs["release-qualification"].needs = ["generate-matrix"];
+    workflow.jobs["release-qualification"].steps!.find(
+      (step) => step.name === "Require every release E2E result",
+    )!.env!.RELEASE_REQUIRED_JOBS = "live";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "release-qualification needs must exactly match report-to-pr needs",
+        "release-qualification must run only for a full manual run against main",
+        "release-qualification must evaluate planner-selected jobs from needs",
+      ]),
+    );
+  });
+
+  it("requires release qualification to preserve admin waiver evidence", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const summary = workflow.jobs["release-qualification"].steps!.find(
+      (step) => step.name === "Record release qualification waiver",
+    )!;
+    delete summary.env?.TRIGGERING_ACTOR;
+    summary.run = "true";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "release-qualification must record and upload authorized waived job outcomes, identities, and reason",
+    );
+  });
+
+  it("requires the push summary to evaluate every selected E2E result (#7912)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const job = workflow.jobs["relevant-e2e"];
+    job.if = "${{ always() }}";
+    job.needs = ["generate-matrix"];
+    job.permissions = { contents: "write" };
+    const checkout = job.steps!.find((step) => step.name === "Check out the E2E result evaluator")!;
+    checkout.uses = "actions/checkout@v7";
+    checkout.with!["sparse-checkout-cone-mode"] = true;
+    const requireResults = job.steps!.find(
+      (step) => step.name === "Require every selected E2E result",
+    )!;
+    requireResults.run = "true";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "relevant-e2e needs must exactly match report-to-pr needs",
+        "relevant-e2e must be the stable aggregate check for main pushes",
+        "relevant-e2e permissions must be contents: read",
+        "relevant-e2e checkout must pin its action to a full SHA",
+        "relevant-e2e must check out only the trusted evaluator",
+        "relevant-e2e must evaluate planner-selected jobs from needs",
       ]),
     );
   });
@@ -172,257 +244,420 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("publishes only the bounded scheduled runtime summary through the canonical uploader", () => {
+  it("validates manual PR dispatch inputs and the checked-out commit", () => {
     const workflow = readE2eOperationsWorkflow();
-    const upload = workflow.jobs.scorecard.steps!.find(
-      (step) => step.name === "Upload E2E runtime summary",
-    )!;
-    upload.if = "always()";
-    upload.with!.path = "${{ runner.temp }}/e2e-runtime-audit";
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "scorecard must upload only the bounded scheduled runtime summary through the canonical E2E uploader",
-    );
-  });
-
-  it("rejects controller protocol and PR validation drift", () => {
-    const workflow = readE2eOperationsWorkflow();
-    delete workflow.on?.workflow_dispatch?.inputs?.base_sha;
-    delete workflow.on?.workflow_dispatch?.inputs?.checkout_repository;
-    delete workflow.on?.workflow_dispatch?.inputs?.controller_check_id;
-    delete workflow.on?.workflow_dispatch?.inputs?.workflow_sha;
-    delete workflow.on?.workflow_dispatch?.inputs?.plan_hash;
-    delete (workflow.permissions as Record<string, unknown>).checks;
-    workflow.env!.NEMOCLAW_E2E_PLAN_HASH = "${{ inputs.checkout_sha }}";
-    workflow.concurrency!["cancel-in-progress"] = false;
+    delete workflow.on?.workflow_dispatch?.inputs?.review_reason;
     const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate controller dispatch",
+      (step) => step.name === "Authenticate manual PR dispatch",
     )!;
-    delete authentication.env?.CONTROLLER_CHECK_ID;
-    authentication.if = "${{ inputs.plan_hash != '' }}";
     authentication.run = "echo unchecked";
     const validation = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Validate controller dispatch",
+      (step) => step.name === "Validate manual PR checkout",
     )!;
-    delete validation.env?.BASE_SHA;
-    delete validation.env?.CHECKOUT_REPOSITORY;
-    delete validation.env?.EXPECTED_WORKFLOW_SHA;
-    validation.if = "${{ inputs.plan_hash != '' }}";
     validation.run = "echo unchecked";
-    const checkout = workflow.jobs["generate-matrix"].steps!.find((step) =>
-      step.uses?.startsWith("actions/checkout@"),
-    )!;
-    delete checkout.with!.repository;
-    checkout.with!.ref = "${{ github.sha }}";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "workflow_dispatch base_sha must be an optional string with an empty default",
-        "workflow_dispatch checkout_repository must be an optional string with an empty default",
-        "workflow_dispatch controller_check_id must be an optional string with an empty default",
-        "workflow_dispatch workflow_sha must be an optional string with an empty default",
-        "workflow_dispatch plan_hash must be an optional string with an empty default",
-        "E2E workflow must bind NEMOCLAW_E2E_PLAN_HASH to controller metadata",
-        "PR E2E concurrency must cancel obsolete runs",
-        "E2E workflow must grant read-only check access for controller authentication",
-        "Controller authentication must be activated only by checkout_sha",
-        "Controller authentication must bind CONTROLLER_CHECK_ID",
-        'Controller authentication must retain "$ACTOR" == "github-actions[bot]"',
-        "Controller authentication must retain .app.id == 15368",
-        "Controller validation must be activated only by checkout_sha",
-        "Controller validation must bind BASE_SHA",
-        "Controller validation must bind CHECKOUT_REPOSITORY",
-        "Controller validation must bind EXPECTED_WORKFLOW_SHA",
-        'Controller validation must retain "$BASE_SHA" =~ ^[a-f0-9]{40}$',
-        'Controller validation must retain "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
-        'Controller validation must retain [[ "$(jq -r \'.base.sha\' <<< "$pull_json")" == "$BASE_SHA" ]]',
-        'Controller validation must retain "$PR_NUMBER" =~ ^[1-9][0-9]*$',
-        "generate-matrix checkout must use the selected PR commit",
-        "generate-matrix checkout must use the selected PR head repository",
+        "workflow_dispatch review_reason must be an optional string with an empty default",
+        'Manual PR authentication must retain "$WORKFLOW_EVENT" == "workflow_dispatch"',
+        'Manual PR authentication must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+        'Manual PR checkout validation must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
       ]),
     );
   });
 
-  it("rejects an authorized-looking direct fork dispatch before untrusted checkout", () => {
+  it("rejects changes that bypass E2E credential authorization (#9047)", () => {
     const workflow = readE2eOperationsWorkflow();
-    workflow.jobs["generate-matrix"].steps = workflow.jobs["generate-matrix"].steps!.filter(
-      (step) => step.name !== "Authenticate controller dispatch",
-    );
-
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "Controller authentication must be activated only by checkout_sha",
-        "Controller authentication must run before untrusted checkout and PR validation",
-        "Controller authentication must bind CONTROLLER_CHECK_ID",
-        "Controller authentication must retain nemoclaw-pr-e2e:v2:${PR_NUMBER}:${CHECKOUT_SHA}:${BASE_SHA}",
-        "Controller authentication must retain .external_id == $external_id",
-        "Controller authentication must retain .output.summary == $summary",
-      ]),
-    );
-  });
-
-  it("requires fresh controller state for longer than GitHub's check cache (#7140)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate controller dispatch",
+    delete workflow.jobs["generate-matrix"].outputs!.e2e_credentials_allowed;
+    const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authorize E2E credentials",
     )!;
-    authentication.run = String(authentication.run)
-      .replace('--header "Cache-Control: no-cache"', '--header "Cache-Control: max-age=60"')
-      .replace(" Child run: ${expected_run_url}.", "")
-      .replace("controller_auth_max_attempts=45", "controller_auth_max_attempts=15");
+    credentialAuthorization.run = "printf 'allowed=true\\n' >> \"$GITHUB_OUTPUT\"";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        'Controller authentication must retain --header "Cache-Control: no-cache"',
-        "Controller authentication must retain Child run: ${expected_run_url}.",
-        "Controller authentication polling window must exceed GitHub's 60-second check cache",
+        "Manual PR credential authorization must expose only the authorization result",
+        'Manual PR credential authorization must retain "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw"',
+        'Manual PR credential authorization must retain "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
       ]),
     );
   });
 
   it.each([
-    [
-      "attempt count",
-      "controller_auth_max_attempts=45",
-      "controller_auth_max_attempts=46",
-      "Controller authentication must use exactly 45 polling attempts",
-    ],
-    [
-      "poll interval",
-      "controller_auth_poll_seconds=2",
-      "controller_auth_poll_seconds=3",
-      "Controller authentication must use two-second polling intervals",
-    ],
-  ])("rejects controller %s drift (#7140)", (_name, current, replacement, expectedError) => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate controller dispatch",
-    )!;
-    authentication.run = String(authentication.run).replace(current, replacement);
-
-    expect(validateE2eOperationsWorkflow(workflow)).toContain(expectedError);
-  });
-
-  it("fails a valid-looking manual fork dispatch before controller API authentication", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate controller dispatch",
-    )!;
-    const result = spawnSync(
-      "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", authentication.run!],
-      {
+    {
+      caseName: "matching repository and requested SHAs",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: true,
+    },
+    {
+      caseName: "a checkout repository outside NVIDIA/NemoClaw",
+      checkoutRepository: "contributor/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: false,
+    },
+    {
+      caseName: "a workflow repository outside NVIDIA/NemoClaw",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "contributor/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: true,
+      expectedAllowed: false,
+    },
+    {
+      caseName: "checkout_sha differs from the checked-out commit",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: false,
+      workflowShaMatches: true,
+      expectedAllowed: false,
+    },
+    {
+      caseName: "a requested workflow SHA that differs from the running workflow",
+      checkoutRepository: "NVIDIA/NemoClaw",
+      workflowRepository: "NVIDIA/NemoClaw",
+      checkoutShaMatches: true,
+      workflowShaMatches: false,
+      expectedAllowed: false,
+    },
+  ])(
+    "sets E2E credential access to $expectedAllowed for $caseName (#9047)",
+    ({
+      checkoutRepository,
+      workflowRepository,
+      checkoutShaMatches,
+      workflowShaMatches,
+      expectedAllowed,
+    }) => {
+      const workflow = readE2eOperationsWorkflow();
+      const credentialAuthorization = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authorize E2E credentials",
+      )!;
+      const checkedOutSha = spawnSync("git", ["rev-parse", "HEAD"], {
         encoding: "utf8",
-        env: {
-          ...process.env,
-          ACTOR: "maintainer",
-          BASE_SHA: "b".repeat(40),
-          CHECKOUT_REPOSITORY: "contributor/NemoClaw",
-          CHECKOUT_SHA: "a".repeat(40),
-          CONTROLLER_CHECK_ID: "17",
-          CORRELATION_ID: "123e4567-e89b-42d3-a456-426614174000",
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_TOKEN: "unused",
-          JOBS: "cloud-inference",
-          PLAN_HASH: "c".repeat(64),
-          PR_NUMBER: "42",
-          RUN_ATTEMPT: "1",
-          RUN_ID: "23",
-          TARGETS: "",
-        },
-      },
-    );
+      }).stdout.trim();
+      const checkoutSha = checkoutShaMatches ? checkedOutSha : "0".repeat(40);
+      const workflowSha = "c".repeat(40);
+      const expectedWorkflowSha = workflowShaMatches ? workflowSha : "d".repeat(40);
+      const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-credentials-"));
+      const output = join(directory, "output");
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("PR E2E must be dispatched by the trusted controller");
-    expect(result.stderr).not.toContain("curl:");
+      try {
+        writeFileSync(output, "");
+        const result = spawnSync(
+          "bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            credentialAuthorization.run!,
+          ],
+          {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              CHECKOUT_REPOSITORY: checkoutRepository,
+              CHECKOUT_SHA: checkoutSha,
+              EVENT_NAME: "workflow_dispatch",
+              EXPECTED_WORKFLOW_SHA: expectedWorkflowSha,
+              GITHUB_OUTPUT: output,
+              REF: "refs/heads/main",
+              WORKFLOW_REPOSITORY: workflowRepository,
+              WORKFLOW_SHA: workflowSha,
+            },
+          },
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        expect(readFileSync(output, "utf8")).toBe(`allowed=${expectedAllowed ? "true" : "false"}\n`);
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("keeps catalogue-owned GPU targets out of the handwritten workflow jobs", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["llama-cpp-generic-gpu"] = {
+      name: "Duplicated catalogue target",
+      steps: [],
+    };
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "llama-cpp-generic-gpu must run through the catalogue execution profile",
+    );
   });
 
-  it("accepts a summary-bound child when GitHub canonicalizes the details URL (#7140)", () => {
+  it("passes the requested SHA and correlation ID to manual PR jobs", () => {
     const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate controller dispatch",
-    )!;
-    const headSha = "a".repeat(40);
-    const baseSha = "b".repeat(40);
-    const planHash = "c".repeat(64);
-    const check = JSON.stringify({
-      id: 17,
-      name: "E2E / PR Gate Coordination",
-      app: { id: 15368, slug: "github-actions" },
-      head_sha: headSha,
-      external_id: `nemoclaw-pr-e2e:v2:42:${headSha}:${baseSha}`,
-      status: "in_progress",
-      conclusion: null,
-      details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
-      output: {
-        summary: `Risk plan ${planHash} selected jobs: cloud-inference; targets: none. Child run: https://github.com/NVIDIA/NemoClaw/actions/runs/23.`,
-      },
-    });
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-e",
-        "-o",
-        "pipefail",
-        "-c",
-        `curl() { printf '%s' "$FAKE_CHECK"; }\n${authentication.run!}`,
-      ],
-      {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ACTOR: "github-actions[bot]",
-          BASE_SHA: baseSha,
-          CHECKOUT_SHA: headSha,
-          CONTROLLER_CHECK_ID: "17",
-          CORRELATION_ID: "123e4567-e89b-42d3-a456-426614174000",
-          FAKE_CHECK: check,
-          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-          GITHUB_TOKEN: "unused",
-          JOBS: "cloud-inference",
-          PLAN_HASH: planHash,
-          PR_NUMBER: "42",
-          RUN_ATTEMPT: "1",
-          RUN_ID: "23",
-          TARGETS: "",
-        },
-      },
-    );
-
-    expect(result.status, result.stderr || result.stdout).toBe(0);
-  });
-
-  it("binds controller dispatch to the exact checkout, plan, and correlation identity (#6955)", () => {
-    const workflow = readE2eOperationsWorkflow();
-    const validation = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Validate controller dispatch",
-    )!;
-    validation.run = validation
-      .run!.replace('[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]]', '[[ -n "$CHECKOUT_SHA" ]]')
-      .replace('[[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]]', '[[ -n "$PLAN_HASH" ]]')
-      .replace(
-        '[[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]',
-        '[[ -n "$CORRELATION_ID" ]]',
-      )
-      .replace(
-        `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
-        `[[ -n "$(jq -r '.head.sha' <<< "$pull_json")" ]]`,
-      );
+    workflow.env!.NEMOCLAW_E2E_EXPECTED_SHA = "${{ inputs.checkout_sha || github.sha }}";
+    workflow.env!.NEMOCLAW_E2E_CORRELATION_ID = "";
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        'Controller validation must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
-        'Controller validation must retain "$PLAN_HASH" =~ ^[a-f0-9]{64}$',
-        'Controller validation must retain "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
-        `Controller validation must retain [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+        "E2E workflow must bind NEMOCLAW_E2E_EXPECTED_SHA",
+        "E2E workflow must bind NEMOCLAW_E2E_CORRELATION_ID",
       ]),
     );
   });
 
-  it("keeps every planned job wired to bound evidence", () => {
+  it("limits manual PR runs to controller-approved selectors or Jetson dispatch", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace(
+      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR E2E accepts arbitrary selectors",
+    );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+    );
+  });
+
+  it("uses the same controller selectors as the PR Review Advisor", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    authentication.run = authentication.run!.replace("inference-routing::false:false | ", "");
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;",
+    );
+  });
+
+  it.each([
+    ["maintain", "", "", "false", 0, ""],
+    ["maintain", "inference-routing", "", "false", 0, ""],
+    ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
+    ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
+    ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
+    ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
+    ["maintain", "gpu-e2e", "", "false", 1, "accepts only empty selectors"],
+    ["write", "", "", "false", 1, "requires a repository maintainer or administrator"],
+  ])(
+    "requires a maintainer role and bounded selector before manual PR E2E for %s with jobs %s and targets %s",
+    (role, jobs, targets, allowJetsonDispatch, expectedStatus, expectedStderr) => {
+      const workflow = readE2eOperationsWorkflow();
+      const authentication = workflow.jobs["generate-matrix"].steps!.find(
+        (step) => step.name === "Authenticate manual PR dispatch",
+      )!;
+      const headSha = "a".repeat(40);
+      const baseSha = "b".repeat(40);
+      const workflowSha = "c".repeat(40);
+      const prefix = [
+        "curl() {",
+        '  case "${@: -1}" in',
+        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
+        `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
+        "    *) return 1 ;;",
+        "  esac",
+        "}",
+      ].join("\n");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ACTOR: "maintainer",
+            ALLOW_JETSON_DISPATCH: allowJetsonDispatch,
+            BASE_SHA: baseSha,
+            CHECKOUT_REPOSITORY: "contributor/NemoClaw",
+            CHECKOUT_SHA: headSha,
+            EXPECTED_WORKFLOW_SHA: workflowSha,
+            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+            GITHUB_TOKEN: "token",
+            INCLUDE_LAUNCHABLE: "false",
+            JOBS: jobs,
+            PR_NUMBER: "42",
+            REVIEW_REASON: "Reviewed PR head revision",
+            RUN_ATTEMPT: "1",
+            TARGETS: targets,
+            TRIGGERING_ACTOR: "maintainer",
+            WORKFLOW_EVENT: "workflow_dispatch",
+            WORKFLOW_REF: "refs/heads/main",
+            WORKFLOW_SHA: workflowSha,
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(expectedStatus);
+      expect(result.stderr).toContain(expectedStderr);
+    },
+  );
+
+  it("uses central maintainer authorization for protected managed-image qualification", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const guards = [
+      ["managed-image-multiarch-startup", "Validate protected exact-head dispatch"],
+      ["managed-image-protected-runtime", "Validate protected runtime exact-head dispatch"],
+    ].map(([jobName, stepName]) =>
+      workflow.jobs[jobName].steps!.find((step) => step.name === stepName)!,
+    );
+
+    for (const guard of guards) {
+      expect(guard.env).not.toHaveProperty("ACTOR");
+      expect(guard.run).not.toContain("github-actions[bot]");
+      expect(guard.run).toContain('"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"');
+      expect(guard.run).toContain('"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$');
+    }
+  });
+
+  it("accepts the controller target matrix for the commit under review", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const generateMatrix = workflow.jobs["generate-matrix"];
+    const controller = generateMatrix.steps!.find(
+      (step) => step.name === "Build trusted controller target matrix",
+    )!;
+    const planner = generateMatrix.steps!.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-manual-pr-matrix-"));
+    const output = join(directory, "output");
+    const summary = join(directory, "summary");
+
+    try {
+      writeFileSync(output, "");
+      writeFileSync(summary, "");
+      const controllerResult = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", controller.run!],
+        {
+          encoding: "utf8",
+          env: { ...process.env, GITHUB_OUTPUT: output, JOBS: "", TARGETS: "" },
+        },
+      );
+      expect(controllerResult.status, controllerResult.stderr).toBe(0);
+      const controllerOutput = readFileSync(output, "utf8").split("\n");
+      const controllerMatrix = controllerOutput
+        .find((line) => line.startsWith("matrix="))!
+        .slice("matrix=".length);
+      const controllerTestMatrix = controllerOutput
+        .find((line) => line.startsWith("test_matrix="))!
+        .slice("test_matrix=".length);
+
+      writeFileSync(output, "");
+      const plannerResult = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", planner.run!],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CHECKOUT_SHA: "a".repeat(40),
+            CONTROLLER_MATRIX: controllerMatrix,
+            CONTROLLER_TEST_MATRIX: controllerTestMatrix,
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+            INFERENCE_MODE: "mock",
+            JOBS: "",
+            TARGETS: "",
+          },
+        },
+      );
+      expect(plannerResult.status, plannerResult.stderr).toBe(0);
+      const matrixLine = readFileSync(output, "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("matrix="))!;
+      const actualMatrix = JSON.parse(matrixLine.slice("matrix=".length));
+      expect(
+        actualMatrix.map(({ id, runner }: { id: string; runner: string }) => ({ id, runner })),
+      ).toEqual(JSON.parse(controllerMatrix));
+      expect(actualMatrix).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "ubuntu-policy-custom-missing-presets-negative" }),
+          expect.objectContaining({ id: "ubuntu-repo-cloud-openclaw" }),
+        ]),
+      );
+      const testMatrixLine = readFileSync(output, "utf8")
+        .split("\n")
+        .find((line) => line.startsWith("test_matrix="))!;
+      expect(JSON.parse(testMatrixLine.slice("test_matrix=".length))).toEqual(
+        JSON.parse(controllerTestMatrix),
+      );
+      expect(
+        (generateMatrix as unknown as { outputs: Record<string, string> }).outputs.matrix,
+      ).toBe("${{ steps.matrix.outputs.matrix }}");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["inference-routing job", "inference-routing", ""],
+    ["managed-image-protected-runtime job", "managed-image-protected-runtime", ""],
+    ["jetson-nvmap-gpu target", "", "jetson-nvmap-gpu"],
+  ])("selects no shared targets for the %s selector", (_name, jobSelector, targetSelector) => {
+    const workflow = readE2eOperationsWorkflow();
+    const controller = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Build trusted controller target matrix",
+    )!;
+    const planner = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-job-selector-matrix-"));
+    const output = join(directory, "output");
+    const summary = join(directory, "summary");
+
+    try {
+      writeFileSync(output, "");
+      writeFileSync(summary, "");
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", controller.run!],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GITHUB_OUTPUT: output,
+            JOBS: jobSelector,
+            TARGETS: targetSelector,
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe("matrix=[]\ntest_matrix=[]\n");
+
+      writeFileSync(output, "");
+      const plannerResult = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", planner.run!],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            CHECKOUT_SHA: "a".repeat(40),
+            CONTROLLER_MATRIX: "[]",
+            CONTROLLER_TEST_MATRIX: "[]",
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
+            INFERENCE_MODE: "mock",
+            JOBS: jobSelector,
+            TARGETS: targetSelector,
+          },
+        },
+      );
+      expect(plannerResult.status, plannerResult.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toContain("matrix=[]\n");
+      expect(readFileSync(output, "utf8")).toContain("test_matrix=[]\n");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a result for every planned job", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["cloud-onboard"];
     job.env!.E2E_TARGET_ID = "different-job";
@@ -508,7 +743,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
-  it("requires prNumber and report to originate from the trusted resolveReportPr and renderE2eReport calls", () => {
+  it("derives the PR number and report text from the validated helper results", () => {
     const workflow = readE2eOperationsWorkflow();
     const report = workflow.jobs["report-to-pr"].steps!.find(
       (step) => step.name === "Post E2E target results to PR",
@@ -660,7 +895,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const coordinator = {
       buildScorecard: vi.fn().mockReturnValue({
-        scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+        scorecardData: { ran: 0, runMode: "Main push", total: 0 },
         slackData: { channel: "daily", payload: { attachments: [], text: "scorecard fallback" } },
         summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard\n\n### Onboard Performance Budget",
       }),
@@ -675,8 +910,8 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     const runtimeHistory = {
       buildRuntimeHistory: vi
         .fn()
-        .mockResolvedValue("## E2E Nightly Runtime Trend\n\n| Target | Prior median |"),
-      loadPriorNightlySummaries: vi.fn(),
+        .mockResolvedValue("## E2E Push Runtime Trend\n\n| Target | Prior median |"),
+      loadPriorPushSummaries: vi.fn(),
     };
     const firstTurnLatency = {
       readCurrentFirstTurnLatencySample: vi.fn().mockReturnValue(null),
@@ -708,7 +943,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const context = {
       actor: "scorecard-test",
-      eventName: "schedule",
+      eventName: "push",
       repo: { owner: "NVIDIA", repo: "NemoClaw" },
       runId: 123,
       serverUrl: "https://github.com",
@@ -734,7 +969,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       "/runner/e2e-runtime-summary.json",
       {
         currentFirstTurnLatency: null,
-        loadPriorNightlySummaries: runtimeHistory.loadPriorNightlySummaries,
+        loadPriorPushSummaries: runtimeHistory.loadPriorPushSummaries,
       },
     );
     expect(firstTurnLatency.readCurrentFirstTurnLatencySample).toHaveBeenCalledWith(
@@ -747,7 +982,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     expect(coordinator.buildScorecard).toHaveBeenCalledWith(
       expect.objectContaining({
         apiJobs: [],
-        eventName: "schedule",
+        eventName: "push",
         needs: { "generate-matrix": { result: "success" } },
         rawExplicitOnly: "",
         rawJobs: "",
@@ -759,7 +994,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringMatching(
-        /### Onboard Performance Budget[\s\S]*## E2E Test Phase Runtime[\s\S]*## E2E Nightly Runtime Trend/u,
+        /### Onboard Performance Budget[\s\S]*## E2E Test Phase Runtime[\s\S]*## E2E Push Runtime Trend/u,
       ),
     );
     expect(summary.write).toHaveBeenCalledOnce();
@@ -794,7 +1029,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         "/workspace/scripts/scorecard/coordinate-scorecard.mts",
         {
           buildScorecard: vi.fn().mockReturnValue({
-            scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+            scorecardData: { ran: 0, runMode: "Main push", total: 0 },
             slackData: { channel: "daily", payload: { attachments: [], text: "scorecard" } },
             summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard",
           }),
@@ -833,7 +1068,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     };
     const context = {
       actor: "scorecard-test",
-      eventName: "schedule",
+      eventName: "push",
       repo: { owner: "NVIDIA", repo: "NemoClaw" },
       runId: 123,
       serverUrl: "https://github.com",
@@ -922,7 +1157,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     }
   });
 
-  it("rejects raw trace upload ordering and unified advisor auto-dispatch", () => {
+  it("sanitizes raw traces before cleanup", () => {
     const workflow = readE2eOperationsWorkflow();
     const cloudSteps = workflow.jobs["cloud-onboard"].steps!;
     const sanitize = cloudSteps.find(
@@ -930,6 +1165,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     )!;
     sanitize.run = "cp -R raw-traces e2e-artifacts";
 
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
+    );
+  });
+
+  it("prevents the PR Review Advisor from writing to Actions or dispatching workflows", () => {
+    const workflow = readE2eOperationsWorkflow();
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
     const advisorPath = join(directory, "advisor.yaml");
     try {
@@ -944,7 +1186,6 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
-          "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
           "Unified advisor must not hold actions: write",
           "Unified advisor must not auto-dispatch workflows",
         ]),

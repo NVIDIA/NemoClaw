@@ -8,8 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
-const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.85'; exit 0; fi`;
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
+const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.101'; exit 0; fi`;
 
 const PRESET = `network_policies:
   example:
@@ -467,7 +467,7 @@ bridge.addMcpBridge("alpha", {
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -480,7 +480,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,
@@ -533,7 +533,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter),
+  content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 

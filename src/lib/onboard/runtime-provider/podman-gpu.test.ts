@@ -20,7 +20,7 @@ describe("Podman GPU attachment authority", () => {
       "MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/1/0",
       "nvidia.com/gpu=MIG-GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/1/0",
     ],
-  ])("normalizes %s to canonical NVIDIA CDI identity", (requested, expected) => {
+  ])("normalizes %s to one canonical NVIDIA CDI identity", (requested, expected) => {
     expect(normalizeNvidiaCdiDevice(requested)).toBe(expected);
   });
 
@@ -38,14 +38,23 @@ describe("Podman GPU attachment authority", () => {
     expect(Object.isFrozen(attachments[0])).toBe(true);
   });
 
-  it("fails closed for missing, duplicate, raw, and malformed devices", () => {
+  it("sorts and freezes a unique exact Podman inventory", () => {
+    const inventory = normalizePodmanCdiInventory(["nvidia.com/gpu=all", "nvidia.com/gpu=0"]);
+
+    expect(inventory).toEqual(["nvidia.com/gpu=0", "nvidia.com/gpu=all"]);
+    expect(Object.isFrozen(inventory)).toBe(true);
+  });
+
+  it("rejects missing, duplicate, raw, shorthand, and malformed authority", () => {
     expect(() => qualifyPodmanGpuAttachments([], ["all"])).toThrow("does not advertise");
     expect(() =>
       qualifyPodmanGpuAttachments(["nvidia.com/gpu=0"], ["0", "nvidia.com/gpu=0"]),
     ).toThrow("duplicate NVIDIA CDI device");
     expect(() => normalizeNvidiaCdiDevice("/dev/nvidia0")).toThrow("safe NVIDIA CDI name");
-    expect(() => normalizePodmanCdiInventory(["all", "nvidia.com/gpu=all"])).toThrow(
+    expect(() => normalizePodmanCdiInventory(["all"])).toThrow("canonical NVIDIA");
+    expect(() => normalizePodmanCdiInventory(["nvidia.com/gpu=all", "nvidia.com/gpu=all"])).toThrow(
       "duplicate NVIDIA device",
     );
+    expect(() => normalizeNvidiaCdiDevice(" nvidia.com/gpu=0 ")).toThrow("safe NVIDIA CDI");
   });
 });

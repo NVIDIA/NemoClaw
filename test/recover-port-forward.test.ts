@@ -7,6 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  LAUNCH_READINESS_FIXTURE_POLICY,
+  launchReadinessRegistryFixture,
+} from "./helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "./helpers/platform-override-node-options";
 import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
@@ -126,6 +130,7 @@ function setupFixture(opts: {
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
+          ...launchReadinessRegistryFixture(),
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
@@ -188,6 +193,10 @@ if (args[0] === "sandbox" && args[1] === "list") {
 }
 
 if (args[0] === "sandbox" && args[1] === "exec") {
+  if (args.join(" ").includes("inference.local/v1/models")) {
+    process.stdout.write("OK 200\\n");
+    process.exit(0);
+  }
   // The probe parser drops everything up to and including the start marker,
   // so the fake gateway response must follow it on a new line.
   process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n${opts.gatewayProbe}\\n");
@@ -261,7 +270,8 @@ if (args[0] === "forward") {
 }
 
 if (args[0] === "policy" && args[1] === "get") {
-  process.exit(1);
+  process.stdout.write(${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)});
+  process.exit(0);
 }
 
 if (args[0] === "inference" && args[1] === "get") {
@@ -344,7 +354,7 @@ describe("nemoclaw <name> recover", () => {
     testTimeoutOptions(20_000),
     () => {
       const fixture = setupFixture({
-        sandboxName: "delayed-owner-sandbox",
+        sandboxName: "delayed-owner-sb",
         gatewayProbe: "RUNNING",
         forwardListStatus: "dead",
         forwardStartDelayPolls: 3,

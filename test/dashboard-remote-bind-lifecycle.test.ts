@@ -141,15 +141,40 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
-  it("rejects config rewrites appended to the checked-in image scan (#6024)", () => {
+  // source-shape-contract: security -- The reviewed completed-image security inventory must stay bound to its exact Docker instruction.
+  it("rejects a mutated checked-in security inventory instruction (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-scan-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-mutated-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    const checkedInDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
+    const mutatedDockerfile = checkedInDockerfile.replace(
+      '"vim-common=2:9.2.0858-1"',
+      '"vim-common=2:9.2.0857-1"',
+    );
+    expect(mutatedDockerfile).not.toBe(checkedInDockerfile);
+    fs.writeFileSync(dockerfile, mutatedDockerfile);
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects config rewrites appended to checked-in metadata validation (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));
     const dockerfile = path.join(directory, "Dockerfile");
     const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
-    const scanTail = "    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json";
+    const metadataTail =
+      "    && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'";
     const mutatedDockerfile = stockDockerfile.replace(
-      scanTail,
-      `${scanTail} \\\n    && printf '{}' > /sandbox/.openclaw/openclaw.json`,
+      metadataTail,
+      `${metadataTail} \\
+    && printf '{}' > /sandbox/.openclaw/openclaw.json`,
     );
     fs.writeFileSync(dockerfile, mutatedDockerfile);
 

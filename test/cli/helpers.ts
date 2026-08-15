@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
+import { SANDBOX_EXEC_STARTED_MARKER } from "../../src/lib/actions/sandbox/sandbox-exec-output";
 import type { OwnedTestResources } from "../helpers/owned-test-resources";
 import { execTimeout, testTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
@@ -313,9 +314,49 @@ export function writeHealthyDockerStub(localBin: string): void {
   );
 }
 
+/**
+ * Answer the agent-request readiness probe inside an `openshell sandbox exec`
+ * stub. The probe posts a completion over the same transport as the route
+ * probe, and that transport trusts stdout only after the exec marker.
+ */
+export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): string[] {
+  const bodyLines =
+    new Map<number, string[]>([
+      [
+        0,
+        [
+          '      case "$*" in',
+          `        *chat/completions*) printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({ choices: [{ message: { role: "assistant", content: "OK" } }] }),
+          )} ;;`,
+          `        */v1/responses*) printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({
+              output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }],
+            }),
+          )} ;;`,
+          `        */v1/messages*) printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({ content: [{ type: "text", text: "OK" }] }),
+          )} ;;`,
+          "      esac",
+        ],
+      ],
+    ]).get(exitCode) ?? [];
+  return [
+    '  case "$*" in',
+    "    *chat/completions*|*/v1/responses*|*/v1/messages*)",
+    `      printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
+    `      printf '%s\\n' ${JSON.stringify(httpStatus)}`,
+    ...bodyLines,
+    `      exit ${String(exitCode)}`,
+    "      ;;",
+    "  esac",
+  ];
+}
+
 export function healthyInferenceRouteStubLines(): string[] {
   return [
     'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+    ...inferenceInvocationStubLines(),
     "  echo 'OK 200'",
     "  exit 0",
     "fi",
@@ -445,12 +486,16 @@ export function createCloudflaredServiceDir(prefix: string): {
   sandboxName: string;
   serviceDir: string;
 } {
+  const compactPrefix = prefix
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 4);
   const suffix = [
-    process.pid.toString(36),
-    Date.now().toString(36),
-    Math.random().toString(36).slice(2, 10),
+    process.pid.toString(36).slice(-3),
+    Date.now().toString(36).slice(-6),
+    Math.random().toString(36).slice(2, 5),
   ].join("-");
-  const sandboxName = `${prefix}${suffix}`;
+  const sandboxName = `${compactPrefix || "test"}-${suffix}`;
   const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
   fs.rmSync(serviceDir, { recursive: true, force: true });
   fs.mkdirSync(serviceDir, { recursive: true });

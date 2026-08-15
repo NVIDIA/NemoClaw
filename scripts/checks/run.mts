@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Runs local repository checks that are not first-class Biome rules. */
+/** Runs repository checks that Oxlint does not provide. */
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import path from "node:path";
@@ -54,6 +54,16 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/dependency-pins.mts"],
   },
   {
+    name: "pi-candidate-artifacts",
+    command: TSX,
+    args: ["scripts/checks/pi-candidate-artifacts.mts"],
+  },
+  {
+    name: "no-defaulted-dependent-flags",
+    command: TSX,
+    args: ["scripts/checks/no-defaulted-dependent-flags.mts"],
+  },
+  {
     name: "no-coverage-ignore",
     command: TSX,
     args: ["scripts/checks/no-coverage-ignore.mts"],
@@ -72,6 +82,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "source-architecture",
     command: TSX,
     args: ["scripts/checks/source-architecture.mts"],
+  },
+  {
+    name: "onboard-entry-composition",
+    command: TSX,
+    args: ["scripts/checks/onboard-entry-composition.mts"],
   },
   {
     name: "no-test-dist-imports",
@@ -97,6 +112,11 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "no-unit-blocks-in-live-e2e",
     command: TSX,
     args: ["scripts/checks/no-unit-blocks-in-live-e2e.mts"],
+  },
+  {
+    name: "test-registration-boundary",
+    command: TSX,
+    args: ["scripts/checks/test-registration-boundary.mts"],
   },
 ];
 

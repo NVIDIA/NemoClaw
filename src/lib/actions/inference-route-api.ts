@@ -125,17 +125,3 @@ export function resolveRuntimeInferenceApi(options: {
   if (provider === "compatible-anthropic-endpoint") return "anthropic-messages";
   return null;
 }
-
-export function hermesApiMode(inferenceApi: string): string | null {
-  switch (inferenceApi) {
-    case "":
-    case "openai-completions":
-      return null;
-    case "anthropic-messages":
-      return "anthropic_messages";
-    case "openai-responses":
-      return "codex_responses";
-    default:
-      return null;
-  }
-}

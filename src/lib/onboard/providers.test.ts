@@ -14,6 +14,8 @@ const {
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
   buildProviderArgs,
+  getNonInteractiveProvider,
+  getNonInteractiveModel,
   getRequestedModelHint,
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
@@ -41,6 +43,11 @@ const {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  getNonInteractiveProvider: (allowHostedInferenceStaging?: boolean) => string | null;
+  getNonInteractiveModel: (
+    providerKey: string,
+    options?: { allowProviderModelFallback?: boolean },
+  ) => string | null;
   getRequestedModelHint: (
     nonInteractive: boolean,
     allowHostedInferenceStaging?: boolean,
@@ -115,6 +122,13 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
+  it("keeps managed llama.cpp as a public non-interactive provider selector (#8433)", () => {
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("install-llama-cpp")).toBe(true);
+    withProviderEnv({ NEMOCLAW_PROVIDER: "install-llama-cpp" }, () => {
+      expect(getNonInteractiveProvider(false)).toBe("install-llama-cpp");
+    });
+  });
+
   it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.openrouter;
 
@@ -415,6 +429,26 @@ describe("onboard provider helpers", () => {
         expect(getRequestedModelHint(true)).toBe("qwen2.5:0.5b");
       },
     );
+  });
+
+  it("preserves NEMOCLAW_MODEL when the provider-model fallback is disabled", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+        NEMOCLAW_PROVIDER_MODEL: "fallback-model",
+      },
+      () => {
+        expect(getNonInteractiveModel("openai", { allowProviderModelFallback: false })).toBe(
+          "nvidia/nemotron-3-super-120b-a12b",
+        );
+      },
+    );
+  });
+
+  it("omits NEMOCLAW_PROVIDER_MODEL when the provider-model fallback is disabled", () => {
+    withProviderEnv({ NEMOCLAW_PROVIDER_MODEL: "fallback-model" }, () => {
+      expect(getNonInteractiveModel("openai", { allowProviderModelFallback: false })).toBeNull();
+    });
   });
 
   it("stages Deep Agents NEMOCLAW_PROVIDER_KEY as hosted custom inference", () => {

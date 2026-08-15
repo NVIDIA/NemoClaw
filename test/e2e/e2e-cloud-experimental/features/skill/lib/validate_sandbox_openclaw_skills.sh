@@ -31,7 +31,7 @@ TIMEOUT_CMD=""
 command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 60"
 command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 60"
 
-ssh_host="openshell-${SANDBOX_NAME}"
+ssh_host="openshell-${SANDBOX_NAME}.default"
 remote='set -e
 if [ ! -d /sandbox/.openclaw ]; then echo "MISSING_STATE_DIR"; exit 2; fi
 if [ ! -f /sandbox/.openclaw/openclaw.json ]; then echo "MISSING_CONFIG"; exit 3; fi

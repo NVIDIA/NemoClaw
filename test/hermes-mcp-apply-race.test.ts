@@ -54,6 +54,7 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
     transaction.STRICT_HASH_PATH = strict
     transaction.os.geteuid = lambda: 0
     transaction._assert_mutable_snapshot = lambda _: None
+    transaction._load_guard = lambda: guard
 
     payload = {
         "server": "fake",
@@ -79,7 +80,11 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
     transaction.apply_transaction = mock_apply
 
     # Mock reload_gateway: return True (gateway restart succeeded).
-    transaction.reload_gateway = lambda: True
+    reload_calls = {"n": 0}
+    def mock_reload():
+        reload_calls["n"] += 1
+        return True
+    transaction.reload_gateway = mock_reload
 
     # Mock _refresh_and_verify_hashes: on the first "apply" call, simulate
     # the gateway racing ahead by committing the apply-state hash before the
@@ -99,6 +104,22 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
         return original_refresh(g, privileged, transition)
     transaction._refresh_and_verify_hashes = race_on_apply
 
+    # The first recovery snapshot catches the tail of the same atomic hash
+    # replacement. A fresh second snapshot must verify the committed state.
+    recovery_calls = {"n": 0}
+    class StableIntegrity:
+        config_text = new_config
+        state = "current"
+    def race_first_recovery_snapshot(*args):
+        recovery_calls["n"] += 1
+        if recovery_calls["n"] == 1:
+            raise guard.UnsafePathError(
+                "refusing raced runtime config path: " + compat
+            )
+        return StableIntegrity()
+    guard.inspect_mcp_integrity_snapshot = race_first_recovery_snapshot
+    guard.assert_mcp_integrity_snapshot_current = lambda _integrity: None
+
     returned = None
     error = ""
     try:
@@ -107,6 +128,7 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
         error = str(exc)
 
     final_config = open(config, encoding="utf-8").read()
+    recovery_calls_before_final_proof = recovery_calls["n"]
     final_state = guard.inspect_mcp_integrity(hermes, strict)
     anchors_match = (
         open(strict, encoding="utf-8").read()
@@ -120,6 +142,8 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
         "final_state": final_state,
         "anchors_match": anchors_match,
         "apply_calls": apply_calls["n"],
+        "recovery_calls": recovery_calls_before_final_proof,
+        "reload_calls": reload_calls["n"],
     }))
 `,
         TRANSACTION,
@@ -136,6 +160,8 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
       final_state: string;
       anchors_match: boolean;
       apply_calls: number;
+      recovery_calls: number;
+      reload_calls: number;
     };
     expect(proof.error).toBe("");
     expect(proof.returned).toEqual({ ok: true, changed: true, reloaded: true });
@@ -143,6 +169,8 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-apply-race-") as root:
     expect(proof.final_state).toBe("current");
     expect(proof.anchors_match).toBe(true);
     expect(proof.apply_calls).toBe(1);
+    expect(proof.recovery_calls).toBe(2);
+    expect(proof.reload_calls).toBe(1);
   });
 
   it("falls back to rollback when only the strict integrity anchor was committed", () => {
@@ -184,6 +212,7 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-partial-apply-race-") as roo
     transaction.STRICT_HASH_PATH = strict
     transaction.os.geteuid = lambda: 0
     transaction._assert_mutable_snapshot = lambda _: None
+    transaction._load_guard = lambda: guard
 
     payload = {
         "server": "fake",
@@ -226,6 +255,21 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-partial-apply-race-") as roo
             raise RuntimeError("simulated rollback hash failure after partial commit")
     transaction._refresh_and_verify_hashes = partial_commit_then_fail_closed
 
+    # Retry one raced snapshot, then stop immediately when a stable pending
+    # snapshot proves the two anchors have not both committed.
+    recovery_calls = {"n": 0}
+    class PendingIntegrity:
+        config_text = new_config
+        state = "pending"
+    def race_then_pending(*_args):
+        recovery_calls["n"] += 1
+        if recovery_calls["n"] == 1:
+            raise guard.UnsafePathError(
+                "refusing raced Hermes MCP integrity snapshot"
+            )
+        return PendingIntegrity()
+    guard.inspect_mcp_integrity_snapshot = race_then_pending
+
     returned = None
     error = ""
     try:
@@ -241,6 +285,7 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-partial-apply-race-") as roo
         "apply_calls": apply_calls["n"],
         "rollback_calls": rollback_calls["n"],
         "reload_calls": reload_calls["n"],
+        "recovery_calls": recovery_calls["n"],
     }))
 `,
         TRANSACTION,
@@ -257,6 +302,7 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-partial-apply-race-") as roo
       apply_calls: number;
       rollback_calls: number;
       reload_calls: number;
+      recovery_calls: number;
     };
     expect(proof.returned).toBeNull();
     expect(proof.error).toContain("Hermes MCP runtime reload failed");
@@ -265,6 +311,66 @@ with tempfile.TemporaryDirectory(prefix="hermes-mcp-partial-apply-race-") as roo
     expect(proof.apply_calls).toBe(1);
     expect(proof.rollback_calls).toBe(1);
     expect(proof.reload_calls).toBe(1);
+    expect(proof.recovery_calls).toBe(2);
+  });
+
+  it("bounds repeated raced recovery snapshots before failing closed", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
+import importlib.util, json, sys
+
+spec = importlib.util.spec_from_file_location("bounded_apply_race_transaction", sys.argv[1])
+transaction = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = transaction
+spec.loader.exec_module(transaction)
+
+class UnsafePathError(Exception):
+    pass
+
+class RacingGuard:
+    UnsafePathError = UnsafePathError
+
+    def __init__(self):
+        self.inspect_calls = 0
+        self.assert_calls = 0
+
+    def inspect_mcp_integrity_snapshot(self, *_args):
+        self.inspect_calls += 1
+        raise UnsafePathError("refusing raced Hermes MCP integrity snapshot")
+
+    def assert_mcp_integrity_snapshot_current(self, _integrity):
+        self.assert_calls += 1
+
+guard = RacingGuard()
+error = ""
+try:
+    transaction._recover_committed_apply_snapshot(guard, True, "desired config")
+except Exception as exc:
+    error = str(exc)
+
+print(json.dumps({
+    "error": error,
+    "inspect_calls": guard.inspect_calls,
+    "assert_calls": guard.assert_calls,
+}))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf-8", timeout: 15_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    const proof = JSON.parse(result.stdout) as {
+      error: string;
+      inspect_calls: number;
+      assert_calls: number;
+    };
+    expect(proof.error).toContain("refusing raced Hermes MCP integrity snapshot");
+    expect(proof.inspect_calls).toBe(3);
+    expect(proof.assert_calls).toBe(0);
   });
 
   it("rolls back when both anchors advance but the gateway reload did not complete", () => {

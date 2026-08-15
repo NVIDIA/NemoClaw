@@ -3,9 +3,11 @@
 
 import {
   assertEndpointResolvesPublic,
+  isTrustedPrivateEndpointCapability,
   type TrustedPrivateEndpointCapability,
 } from "../inference/endpoint-ssrf-preflight";
 import { VLLM_MODELS } from "../inference/vllm-models";
+import { isLoopbackHostname } from "../private-networks";
 import { cliName } from "./branding";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "./setup-nim-flow";
 
@@ -30,7 +32,11 @@ export interface SetupNimVllmDeps {
   runCapture(args: string[], options: { ignoreError: boolean }): string;
   getLocalProviderBaseUrl(provider: string): string | null;
   getLocalProviderValidationBaseUrl(provider: string): string | null;
-  getManagedVllmProviderBinding(): { baseUrl: string; apiKey: string } | null;
+  getManagedVllmProviderBinding(): {
+    baseUrl: string;
+    validationBaseUrl?: string;
+    apiKey: string;
+  } | null;
   queryVllmModels(baseUrl: string, apiKey: string): string;
   isSafeModelId(model: string): boolean;
   requireValue<T>(value: T | null | undefined, message: string): T;
@@ -50,7 +56,7 @@ export interface SetupNimVllmDeps {
   applyVllmRuntimeContextWindow(models: VllmModels, model: string): void;
   isDgxSparkHost?: () => boolean;
   isNemoClawManagedVllmRunning?: () => boolean;
-  persistConfiguredDualStationVllmRuntimeReceipt(): Promise<
+  persistConfiguredManagedVllmRuntimeReceipt(): Promise<
     | {
         ok: true;
         persisted: boolean;
@@ -77,8 +83,14 @@ async function managedVllmValidationOptions(baseUrl: string, apiKey: string) {
   const preflight = await assertEndpointResolvesPublic(baseUrl, undefined, {
     trustedPrivateHosts: [hostname],
   });
-  if (!preflight.ok || !preflight.trustedPrivateCapability) {
-    throw new Error("Managed dual-Station vLLM endpoint authorization failed.");
+  if (!preflight.ok) {
+    throw new Error("Managed vLLM endpoint authorization failed.");
+  }
+  if (
+    !isLoopbackHostname(hostname) &&
+    !isTrustedPrivateEndpointCapability(preflight.trustedPrivateCapability)
+  ) {
+    throw new Error("Managed vLLM endpoint authorization failed.");
   }
   return {
     apiKey,
@@ -250,19 +262,31 @@ export function createSetupNimVllmHandler(
     const requiredModel = typeof state.model === "string" ? state.model : null;
 
     const validationBaseUrl =
-      managedBinding?.baseUrl ?? deps.getLocalProviderValidationBaseUrl(state.provider);
+      managedBinding?.validationBaseUrl ??
+      managedBinding?.baseUrl ??
+      deps.getLocalProviderValidationBaseUrl(state.provider);
     if (!validationBaseUrl) {
       console.error("  Local vLLM validation URL could not be determined.");
       deps.exitProcess(1);
     }
 
     const apiKey = managedBinding?.apiKey ?? null;
-    const managedDualEndpoint = managedBinding != null;
+    const managedEndpoint = managedBinding != null;
     console.log(
-      managedDualEndpoint
-        ? "  ✓ Using managed dual-Station vLLM endpoint"
+      managedEndpoint
+        ? "  ✓ Using managed vLLM endpoint"
         : `  ✓ Using existing vLLM on localhost:${deps.VLLM_PORT}`,
     );
+    let managedValidationOptions: Awaited<ReturnType<typeof managedVllmValidationOptions>> | null =
+      null;
+    if (apiKey) {
+      try {
+        managedValidationOptions = await managedVllmValidationOptions(validationBaseUrl, apiKey);
+      } catch {
+        console.error("  Managed vLLM endpoint authorization could not be verified.");
+        deps.exitProcess(1);
+      }
+    }
     const raw = apiKey
       ? deps.queryVllmModels(validationBaseUrl, apiKey)
       : deps.runCapture(["curl", "-sf", `${validationBaseUrl}/models`], {
@@ -273,8 +297,8 @@ export function createSetupNimVllmHandler(
       models = JSON.parse(raw);
     } catch {
       console.error(
-        managedDualEndpoint
-          ? "  Could not query the managed dual-Station vLLM models endpoint. Is the deployment running and reachable?"
+        managedEndpoint
+          ? "  Could not query the managed vLLM models endpoint. Is the deployment running and reachable?"
           : `  Could not query vLLM models endpoint. Is vLLM running on localhost:${deps.VLLM_PORT}?`,
       );
       deps.exitProcess(1);
@@ -295,15 +319,15 @@ export function createSetupNimVllmHandler(
       requiredModel &&
       detectedModel !== requiredModel &&
       (options.managedInstall === true ||
-        managedDualEndpoint ||
+        managedEndpoint ||
         !reportedModelMatchesRequest(models, detectedModel, requiredModel))
     ) {
       console.error(
         `  Detected vLLM model '${detectedModel}' does not match the shared gateway route '${requiredModel}'.`,
       );
       console.error(
-        managedDualEndpoint
-          ? `  To install '${requiredModel}', stop the managed dual-Station vLLM deployment, then rerun the original install/onboard command.`
+        managedEndpoint
+          ? `  To install '${requiredModel}', stop the managed vLLM deployment, then rerun the original install/onboard command.`
           : `  To install '${requiredModel}', stop the existing vLLM server on localhost:${deps.VLLM_PORT}, then rerun the original install/onboard command.`,
       );
       console.error(`  To keep '${detectedModel}' instead, start detailed setup:`);
@@ -330,16 +354,6 @@ export function createSetupNimVllmHandler(
     }
 
     const validationModel = deps.requireValue(state.model, "Expected a detected vLLM model");
-    let managedValidationOptions: Awaited<ReturnType<typeof managedVllmValidationOptions>> | null =
-      null;
-    if (apiKey) {
-      try {
-        managedValidationOptions = await managedVllmValidationOptions(validationBaseUrl, apiKey);
-      } catch {
-        console.error("  Managed vLLM endpoint authorization could not be verified.");
-        deps.exitProcess(1);
-      }
-    }
     const validation = apiKey
       ? await deps.validateOpenAiLikeSelection(
           "Local vLLM",
@@ -363,13 +377,11 @@ export function createSetupNimVllmHandler(
       return "retry-selection";
     }
 
-    if (managedDualEndpoint) {
-      const receipt = await deps.persistConfiguredDualStationVllmRuntimeReceipt();
+    if (managedEndpoint) {
+      const receipt = await deps.persistConfiguredManagedVllmRuntimeReceipt();
       if (!receipt.ok || !receipt.persisted) {
-        const reason = receipt.ok
-          ? "the managed dual-Station cleanup receipt was not written"
-          : receipt.reason;
-        console.error(`  Managed dual-Station cleanup ownership could not be persisted: ${reason}`);
+        const reason = receipt.ok ? "the managed cleanup receipt was not written" : receipt.reason;
+        console.error(`  Managed vLLM cleanup ownership could not be persisted: ${reason}`);
         deps.exitProcess(1);
       }
     }

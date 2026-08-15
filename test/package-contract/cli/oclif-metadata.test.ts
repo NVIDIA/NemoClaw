@@ -24,6 +24,9 @@ describe("oclif metadata lookup", () => {
     expect(getRegisteredOclifCommandSummary("internal:uninstall:plan")).toBe(
       "Internal: build the NemoClaw uninstall plan",
     );
+    expect(getRegisteredOclifCommandSummary("internal:voice-gateway:serve")).toBe(
+      "Internal: serve the experimental voice gateway",
+    );
   });
 
   it("keeps generated manifest command IDs aligned with oclif Config", async () => {

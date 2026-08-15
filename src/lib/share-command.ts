@@ -13,6 +13,7 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { openshellSandboxSshHost } from "./adapters/openshell/sandbox-ssh-host";
 import { GATEWAY_PORT } from "./core/ports";
 import type { ShareCommandDeps } from "./share-command-deps";
 import { buildShareCommandDeps } from "./share-command-deps";
@@ -267,7 +268,7 @@ export async function runShareMount(
         "ServerAliveInterval=15",
         "-o",
         "ServerAliveCountMax=3",
-        `openshell-${sandboxName}:${remotePath}`,
+        `${openshellSandboxSshHost(sandboxName)}:${remotePath}`,
         localMount,
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 },

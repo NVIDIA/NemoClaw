@@ -2,17 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Prompt-cancellation package contract for the policy preset pickers (#7418).
+ * Non-interactive package contract for policy preset selection (#7418).
  *
  * A boot unit runs `nemoclaw <sandbox> policy-add` with no preset name and a
- * closed stdin. That reaches the interactive picker, and the prompt hits EOF.
- * The `question` callback never fired, the picker promise never settled, and
- * the CLI exited 0 having applied nothing. Automation could not distinguish
- * an applied preset from a no-op.
+ * pipe-backed stdin. The CLI must reject the missing preset before it starts
+ * the interactive picker. Automation can then distinguish refusal from a
+ * successful mutation.
  *
- * These tests drive the compiled CLI (`dist/nemoclaw.js`) on real stdin at
- * EOF, so readline decides when the prompt closes. Only the registry and
- * preset lookups are stubbed, which replaces on-disk sandbox state.
+ * These tests drive the compiled CLI (`dist/nemoclaw.js`) with a pipe-backed
+ * stdin. Only the registry and preset lookups are stubbed, which replaces
+ * on-disk sandbox state.
  */
 
 import { spawnSync } from "node:child_process";
@@ -28,8 +27,8 @@ const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
 
 /**
- * Run a policy command with no preset name against a closed stdin. `input: ""`
- * gives the child an already-ended pipe, which is the EOF a boot unit
+ * Run a policy command with no preset name and no terminal input. `input: ""`
+ * gives the child an already-ended pipe, which is the stdin shape a boot unit
  * produces.
  */
 function runPolicyCommandAtStdinEof(command: "policy-add" | "policy-remove") {
@@ -76,7 +75,7 @@ describe("policy preset prompt cancellation", () => {
       menu: "Applied presets:",
       usage: "policy remove <preset>",
     },
-  ])("$command exits non-zero when the picker prompt hits EOF (#7418)", ({
+  ])("$command exits non-zero before opening a picker without a terminal (#7418)", ({
     command,
     menu,
     usage,
@@ -88,9 +87,7 @@ describe("policy preset prompt cancellation", () => {
     // pre-#7418 regression exited 0 and is caught by the final assertion.
     expect(result.error).toBeUndefined();
     expect(result.signal).toBeNull();
-    // The picker was reached, so this is prompt EOF rather than the
-    // NEMOCLAW_NON_INTERACTIVE=1 guard exiting earlier.
-    expect(result.stderr).toContain(menu);
+    expect(result.stderr).not.toContain(menu);
     expect(result.stderr).toContain("No input available on stdin");
     expect(result.stderr).toContain(usage);
     expect(result.status).toBe(1);

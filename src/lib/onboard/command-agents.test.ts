@@ -89,7 +89,7 @@ describe("onboard --agents", () => {
     try {
       await runOnboardCommand({
         flags: { agents: manifestPath },
-        env: {},
+        env: process.env,
         runOnboard,
         exit: exitWithCode,
       });

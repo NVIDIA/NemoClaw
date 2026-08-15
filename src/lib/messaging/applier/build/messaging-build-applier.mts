@@ -22,12 +22,14 @@ import { pathToFileURL } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { discordManifest } from "../../channels/discord/manifest.ts";
+import { googlechatManifest } from "../../channels/googlechat/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
 import { teamsManifest } from "../../channels/teams/manifest.ts";
 import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
+import { allowRenderedOpenClawPlugins } from "../openclaw-plugin-allow.ts";
 import {
   selectActiveMessagingChannelIds,
   selectEnabledMessagingAgentRender,
@@ -162,6 +164,7 @@ const TRUSTED_CHANNEL_MANIFESTS: readonly ChannelManifest[] = [
   slackManifest,
   whatsappManifest,
   teamsManifest,
+  googlechatManifest,
 ] as const;
 
 function isPinnedHermesUvPackageSpec(spec: string): boolean {
@@ -277,12 +280,9 @@ export function applyMessagingAgentRenderToObject(
 ): void {
   if (!plan) return;
   const rules = credentialPlaceholderRules(plan);
-  for (const render of enabledAgentRender(plan)) {
-    if (
-      render.kind !== "json-fragment" ||
-      render.target !== target ||
-      typeof render.path !== "string"
-    ) {
+  const renderEntries = enabledAgentRender(plan).filter((render) => render.target === target);
+  for (const render of renderEntries) {
+    if (render.kind !== "json-fragment" || typeof render.path !== "string") {
       continue;
     }
     const value = preserveCredentialPlaceholders(
@@ -292,6 +292,7 @@ export function applyMessagingAgentRenderToObject(
     );
     setJsonPath(config, render.path, value);
   }
+  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 export function applyMessagingAgentRenderToEnvLines(
@@ -964,6 +965,7 @@ function applyMessagingRenderEntriesToObject(
     );
     setJsonPath(config, render.path, value);
   }
+  if (plan.agent === "openclaw") allowRenderedOpenClawPlugins(config, renderEntries);
 }
 
 function readEnvRenderLines(render: MessagingRenderEntry): readonly string[] {

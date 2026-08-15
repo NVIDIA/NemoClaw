@@ -47,7 +47,9 @@ let errSpy: MockInstance;
 let promptSpy: MockInstance;
 let applyPresetMock: MockInstance;
 let gatewayStateMock: MockInstance;
+let npmCompatibilityStateMock: MockInstance;
 let refreshSpy: MockInstance;
+let stdinIsTty: PropertyDescriptor | undefined;
 
 async function captureExit(action: () => Promise<void>): Promise<number | undefined> {
   const outcome: unknown = await action().then(
@@ -60,6 +62,8 @@ async function captureExit(action: () => Promise<void>): Promise<number | undefi
 
 beforeEach(() => {
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -89,6 +93,9 @@ beforeEach(() => {
   );
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   gatewayStateMock = vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
+  npmCompatibilityStateMock = vi
+    .spyOn(policies, "getOpenClawNpmCompatibilityState")
+    .mockReturnValue("match");
   vi.spyOn(policies, "getPresetEndpoints").mockReturnValue(["pypi.example.com"]);
   vi.spyOn(policies, "getPresetValidationWarning").mockReturnValue(null);
 
@@ -100,6 +107,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
 });
 
 describe("addSandboxPolicy drift-aware named re-add", () => {
@@ -133,6 +143,43 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     );
     expect(applyPresetMock).not.toHaveBeenCalled();
     expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("repairs a matching npm preset whose OpenClaw compatibility overlay is absent (#8497)", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      policies: ["npm"],
+    });
+    vi.spyOn(policies, "listPresets").mockReturnValue([
+      { file: "npm.yaml", name: "npm", description: "npm registry access" },
+    ]);
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["npm"]);
+    vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
+      "network_policies:\n  npm_yarn:\n    name: npm_yarn\n",
+    );
+    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
+    const disclosureSpy = vi
+      .spyOn(policies, "logOpenClawNpmCompatibilityDisclosure")
+      .mockImplementation(() => undefined);
+    gatewayStateMock.mockReturnValue("match");
+    npmCompatibilityStateMock.mockReturnValue("repair");
+
+    await addSandboxPolicy("alpha", { preset: "npm", yes: true });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "  Preset 'npm' matches the live policy, but its OpenClaw compatibility overlay requires repair.",
+    );
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Effective egress scope that would replace the current preset policy",
+      ),
+    );
+    expect(disclosureSpy).toHaveBeenCalledTimes(1);
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "npm", {
+      suppressDisclosure: true,
+    });
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
   });
 
   it("re-applies when the preset is recorded but its entries are absent from the live policy", async () => {

@@ -154,7 +154,11 @@ function runFailedSessionRecovery(mode: FailedPromptMode, agent: FailedSessionAg
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(home, ".nemoclaw", "onboard-session.json"),
-    JSON.stringify({ status: "failed", resumable: true, failure: { step: "inference" } }),
+    JSON.stringify({
+      status: "failed",
+      resumable: true,
+      failure: { step: "inference" },
+    }),
   );
   fs.writeFileSync(promptInput, "");
   fs.writeFileSync(cliBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\n`, {
@@ -196,7 +200,11 @@ function runFailedSessionRecovery(mode: FailedPromptMode, agent: FailedSessionAg
       PROMPT_MODE: mode,
     },
   });
-  return { argvLog, output: `${result.stdout}${result.stderr}`, status: result.status };
+  return {
+    argvLog,
+    output: `${result.stdout}${result.stderr}`,
+    status: result.status,
+  };
 }
 
 describe("install.sh run_onboard — session classification (#5626)", () => {
@@ -408,7 +416,12 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
   it("does not resume or reset a completed session", () => {
     const argv = runOnboardWithSession(
       { NON_INTERACTIVE: "1" },
-      { version: 1, status: "complete", resumable: false, sandboxName: "my-assistant" },
+      {
+        version: 1,
+        status: "complete",
+        resumable: false,
+        sandboxName: "my-assistant",
+      },
     );
     expect(argv).toContain("onboard");
     expect(argv).not.toContain("--resume");
@@ -462,8 +475,16 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
 
 describe("install.sh run_onboard — failed-session recovery", () => {
   it.each([
-    { mode: "unreadable-tty", name: "no prompt TTY is readable", error: "no TTY" },
-    { mode: "read-failure", name: "reading prompt input fails", error: "Could not read" },
+    {
+      mode: "unreadable-tty",
+      name: "no prompt TTY is readable",
+      error: "no TTY",
+    },
+    {
+      mode: "read-failure",
+      name: "reading prompt input fails",
+      error: "Could not read",
+    },
   ] as const)("shows both recovery commands when $name", ({ mode, error }) => {
     const { argvLog, output, status } = runFailedSessionRecovery(mode);
     expect(status).not.toBe(0);
@@ -510,6 +531,14 @@ describe("install.sh run_onboard", () => {
     });
     expect(argv).toContain("--yes-i-accept-third-party-software");
     expect(argv).toContain("--yes");
+  });
+
+  it("forwards the portable profile to the actual onboard command", () => {
+    const argv = runOnboardWithMockCli({
+      NON_INTERACTIVE: "1",
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    });
+    expect(argv).toEqual(expect.arrayContaining(["onboard", "--experimental-profile", "portable"]));
   });
 });
 

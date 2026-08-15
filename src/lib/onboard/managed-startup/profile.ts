@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
+import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
@@ -92,6 +93,7 @@ export type ManagedStartupReasoningEffort = (typeof MANAGED_STARTUP_REASONING_EF
 export const MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES = ["disabled", "thread-opt-in"] as const;
 export type ManagedStartupDcodeAutoApprovalMode =
   (typeof MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES)[number];
+
 export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
   "nous-web",
   "nous-image",
@@ -104,7 +106,12 @@ export type ManagedStartupInputModality = "text" | "image";
 export type ManagedStartupWebSearchProvider = "brave" | "tavily";
 export type ManagedStartupDeviceAuthOptOutSource = "operator" | "managed-onboard";
 
-export const MANAGED_STARTUP_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+export const MANAGED_STARTUP_AGENTS = [
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+  "pi",
+] as const;
 
 export type ManagedStartupAgent = (typeof MANAGED_STARTUP_AGENTS)[number];
 export const MANAGED_STARTUP_MESSAGING_AGENTS = ["openclaw", "hermes"] as const;
@@ -189,10 +196,16 @@ export interface ManagedStartupDcodeDashboard {
   readonly mode: "disabled";
 }
 
+export interface ManagedStartupPiDashboard {
+  readonly agent: "pi";
+  readonly mode: "disabled";
+}
+
 export type ManagedStartupDashboard =
   | ManagedStartupOpenClawDashboard
   | ManagedStartupHermesDashboard
-  | ManagedStartupDcodeDashboard;
+  | ManagedStartupDcodeDashboard
+  | ManagedStartupPiDashboard;
 
 export interface ManagedStartupWebSearch {
   readonly enabled: boolean;
@@ -280,10 +293,15 @@ export interface ManagedStartupDcodeConfig {
   readonly observabilityEnabled: boolean;
 }
 
+export interface ManagedStartupPiConfig {
+  readonly agent: "pi";
+}
+
 export type ManagedStartupAgentConfig =
   | ManagedStartupOpenClawConfig
   | ManagedStartupHermesConfig
-  | ManagedStartupDcodeConfig;
+  | ManagedStartupDcodeConfig
+  | ManagedStartupPiConfig;
 
 export interface ManagedStartupProfile {
   readonly schemaVersion: typeof MANAGED_STARTUP_PROFILE_SCHEMA_VERSION;
@@ -400,6 +418,25 @@ const PROFILE_CAPABILITIES = {
     supportsExtraAgents: false,
     supportsDeviceAuth: false,
     observability: "dcode-marker",
+    supportsMinimalBootstrap: false,
+  },
+  pi: {
+    inferenceApis: ["openai-completions"],
+    dashboardModes: ["disabled"],
+    inputModalities: [],
+    webSearchProviders: [],
+    toolGateways: [],
+    tuningFields: [],
+    supportsMessaging: false,
+    supportsInferenceCompatibility: false,
+    supportsUpstreamEndpoint: false,
+    supportsHostProxyIntent: true,
+    supportsPrimaryModelRef: false,
+    supportsAgentTimeout: false,
+    supportsHeartbeat: false,
+    supportsExtraAgents: false,
+    supportsDeviceAuth: false,
+    observability: "none",
     supportsMinimalBootstrap: false,
   },
 } satisfies Record<ManagedStartupAgent, ManagedStartupAgentCapabilities>;
@@ -544,6 +581,23 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     ),
     ...HOST_PROXY_AFFORDANCES,
   ],
+  pi: [
+    affordance("NEMOCLAW_MODEL", "inference.model"),
+    affordance("NEMOCLAW_INFERENCE_PROVIDER_ID", "inference.routeProvider"),
+    affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
+    affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
+    affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
+    affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
+    affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
+    affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
+    affordance(
+      "NEMOCLAW_CORPORATE_CA_B64",
+      "corporateCa.bundleSha256",
+      "host-material",
+      "digest-handoff",
+    ),
+    ...HOST_PROXY_AFFORDANCES,
+  ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupAffordance[]>;
 
 export type ManagedStartupDeferredRuntimeOwner =
@@ -612,6 +666,16 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
       "operator scheduler tuning is applied by the application environment transaction",
     ),
     deferredRuntimeInput(
+      "NEMOCLAW_MCP_SHADOW_DIAGNOSTICS",
+      "application-environment",
+      "operator shadow-diagnostics tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
+      "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS",
+      "application-environment",
+      "operator MCP discovery timeout tuning is applied by the application environment transaction",
+    ),
+    deferredRuntimeInput(
       "OPENCLAW_HOME",
       "fixed-image-contract",
       "the managed image and agent definition own this fixed runtime layout path",
@@ -645,6 +709,13 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
       "engine-identity",
       "the lifecycle engine owns instance identity outside reusable startup intent",
     ),
+    deferredRuntimeInput(
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+      "credential-plumbing",
+      "credential provider construction owns key metadata outside the secret-free profile",
+    ),
+  ]),
+  pi: Object.freeze([
     deferredRuntimeInput(
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
       "credential-plumbing",
@@ -727,11 +798,14 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "OPENCLAW_2026_4_24_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_4_24_TARBALL", reason: "release-composition" },
     { input: "CODEX_ACP_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    { input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_VERSION", reason: "release-composition" },
     { input: "MCPORTER_0_7_3_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_0_7_3_TARBALL", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
   hermes: [
@@ -741,17 +815,30 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_WRAPPER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_VALIDATOR_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
   "langchain-deepagents-code": [
@@ -759,6 +846,16 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
+    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+  ],
+  pi: [
+    { input: "BASE_IMAGE", reason: "release-composition" },
+    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    { input: "PI_VERSION", reason: "integrity-pin" },
+    { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
+    { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupExcludedDockerInput[]>;
@@ -833,6 +930,8 @@ const OPENCLAW_CONFIG_KEYS = new Set([
 ]);
 const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
 const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
+const PI_CONFIG_KEYS = new Set(["agent"]);
+const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const WEB_SEARCH_KEYS = new Set(["enabled", "provider"]);
 const OTEL_KEYS = new Set(["enabled", "endpointUrl", "serviceName", "sampleRate"]);
 const DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
@@ -840,7 +939,22 @@ const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
 const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
 const REASONING_EFFORT_SET = new Set<string>(MANAGED_STARTUP_REASONING_EFFORTS);
-const HERMES_RESERVED_API_PORTS = new Set([8642, 18_642]);
+const HERMES_INTERNAL_API_PORT = 18_642;
+
+const HERMES_API_PORT_RANGE_START = 8642;
+const HERMES_API_PORT_RANGE_END = 8652;
+
+function isHermesApiPort(port: number): boolean {
+  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+}
+
+// A dashboard must not use the internal API port, and must not use any port in
+// the range that each Hermes sandbox allocates its public API port from.
+function isHermesReservedApiPort(port: number): boolean {
+  return port === HERMES_INTERNAL_API_PORT || isHermesApiPort(port);
+}
+
+const HERMES_RESERVED_API_PORT_LABEL = `${HERMES_API_PORT_RANGE_START}-${HERMES_API_PORT_RANGE_END} or ${HERMES_INTERNAL_API_PORT}`;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -1466,6 +1580,11 @@ function validateAgentConfig(
     return { agent, webSearch: validateWebSearch(config.webSearch, agent) };
   }
 
+  if (agent === "pi") {
+    rejectUnknownKeys(config, PI_CONFIG_KEYS, "agentConfig");
+    return { agent };
+  }
+
   rejectUnknownKeys(config, DCODE_CONFIG_KEYS, "agentConfig");
   return {
     agent,
@@ -1512,8 +1631,10 @@ function validateDashboard(
       invalid("OpenClaw dashboard.mode must reflect its URL, bind address, and WSL exposure");
     }
     const port = requirePort(dashboard.port, "dashboard.port", 1024);
-    if (port === 8642)
-      invalid("OpenClaw dashboard.port must not use reserved Hermes API port 8642");
+    if (isHermesApiPort(port))
+      invalid(
+        `OpenClaw dashboard.port must not use a reserved Hermes API port (${HERMES_API_PORT_RANGE_START}-${HERMES_API_PORT_RANGE_END})`,
+      );
     if (configuredDashboardPort(url) !== port) {
       invalid("OpenClaw dashboard.port must match dashboard.url");
     }
@@ -1559,8 +1680,10 @@ function validateDashboard(
     if (publicPort === internalPort) {
       invalid("Hermes dashboard publicPort and internalPort must differ");
     }
-    if (HERMES_RESERVED_API_PORTS.has(publicPort) || HERMES_RESERVED_API_PORTS.has(internalPort)) {
-      invalid("Hermes dashboard ports must not use reserved API ports 8642 or 18642");
+    if (isHermesReservedApiPort(publicPort) || isHermesReservedApiPort(internalPort)) {
+      invalid(
+        `Hermes dashboard ports must not use reserved API ports ${HERMES_RESERVED_API_PORT_LABEL}`,
+      );
     }
     if (configuredDashboardPort(url) !== publicPort) {
       invalid("Hermes dashboard.publicPort must match dashboard.url");
@@ -1575,6 +1698,12 @@ function validateDashboard(
     };
   }
 
+  if (agent === "pi") {
+    rejectUnknownKeys(dashboard, PI_DASHBOARD_KEYS, "dashboard");
+    if (dashboard.mode !== "disabled") invalid("pi dashboard.mode must be disabled");
+    return { agent, mode: "disabled" };
+  }
+
   rejectUnknownKeys(dashboard, DCODE_DASHBOARD_KEYS, "dashboard");
   if (dashboard.mode !== "disabled") {
     invalid("langchain-deepagents-code dashboard.mode must be disabled");
@@ -1586,6 +1715,10 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
   const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");
+  const upstreamProvider = requireBoundedString(
+    inference.upstreamProvider,
+    "inference.upstreamProvider",
+  );
   const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
@@ -1632,14 +1765,19 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (agent === "hermes" && upstreamEndpointUrl !== null) {
       invalid("inference.upstreamEndpointUrl must be null for hermes");
     }
+    if (
+      agent === "langchain-deepagents-code" &&
+      !isValidDcodeUpstreamProvider(upstreamProvider)
+    ) {
+      invalid(
+        "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
+      );
+    }
   }
 
   return {
     routeProvider,
-    upstreamProvider: requireBoundedString(
-      inference.upstreamProvider,
-      "inference.upstreamProvider",
-    ),
+    upstreamProvider,
     model,
     routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
     upstreamEndpointUrl,

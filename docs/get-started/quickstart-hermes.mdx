@@ -36,20 +36,31 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Hermes">
-    Select Hermes, then run the hosted installer.
+    Run the hosted installer.
 
     ```bash
-    export NEMOCLAW_AGENT=hermes
-    export NEMOCLAW_SANDBOX_NAME=my-hermes
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=my-hermes bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers Express, you can accept it to use managed local inference for that platform.
-    Otherwise, choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-hermes` as the sandbox name.
-    For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+    The explicit `NEMOCLAW_AGENT=hermes` setting keeps Hermes selected through interactive or Express setup.
+
+    <Note>
+      On supported platforms other than N1x, the installer can display `Run express install with these settings? [Y/n]:` before ordinary onboarding.
+      N1x instead displays `Run the Deferred N1x preview with these settings? [Y/n]:`.
+      Press Enter to use the recommended express install mode for that platform.
+      This mode applies preset settings and runs the remaining onboarding non-interactively.
+      Express install mode preserves the explicit Hermes selection in the install command.
+      On supported non-N1x express platforms, enter `n` if you want to select a sandbox name, an inference provider, and a model interactively.
+      On N1x, entering `n` stops installation because the Deferred managed-vLLM preview is the only admitted onboarding path.
+      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+    </Note>
+
+    The install command creates the `my-hermes` sandbox used in the commands that follow.
+    If you accept Express setup, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**; Express selects the provider and model non-interactively.
+    If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
+    For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
@@ -67,7 +78,17 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemohermes my-hermes dashboard-url --quiet
     ```
 
-    Alternatively, connect to the sandbox and start the Hermes CLI.
+    Alternatively, start Hermes from the terminal.
+
+    ```bash
+    nemohermes launch my-hermes
+    ```
+
+    `nemohermes launch` runs the complete preflight or, on Linux, validates an existing fixed 24-hour launch-readiness lease before it starts `hermes` in your terminal.
+    On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
+    On Linux, if the recorded configuration or live runtime has changed, NemoClaw durably invalidates prior evidence before it runs the complete preflight.
+    If old evidence might remain acceptable and cannot be invalidated, `launch` stops before preflight or recovery and tells you to repair the secure OS per-user runtime authority or NemoClaw state permissions.
+    To open a sandbox shell first and start Hermes yourself, run these commands instead.
 
     ```bash
     nemohermes my-hermes connect
@@ -111,6 +132,9 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Use the dashboard and API remotely">
     Hermes forwards its dashboard on port `18789` and its OpenAI-compatible API on port `8642`.
+    A sandbox receives those ports when no other sandbox or host listener already holds them.
+    Otherwise, NemoClaw allocates the next free dashboard port from `18789` through `18799` and the next free API port from `8642` through `8652`.
+    Run `openshell forward list` to read the host bind for each of that sandbox's forwards.
     For a remote dashboard origin or tunnel, set `CHAT_UI_URL` to the externally reachable dashboard origin before onboarding.
 
     ```bash
@@ -128,7 +152,9 @@ Use these details when your first-run path needs more control.
     ssh -L 8642:127.0.0.1:8642 <user>@<host>
     ```
 
-    Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding port `8642`.
+    These commands forward the default ports.
+    Replace them with the sandbox's own ports when `openshell forward list` reports different values.
+    Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding the API port.
     Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
     Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.
@@ -153,9 +179,16 @@ Use these details when your first-run path needs more control.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
-    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    DGX Spark, qualifying DGX Station, and Windows Subsystem for Linux (WSL) hosts can offer the recommended express install mode after the third-party software notice.
+    N1x can offer a Deferred preview after the notice, but full physical NemoClaw Express E2E validation is pending.
+    N1x remains outside the supported-platform set until that validation passes and the platform matrix status is promoted.
+    Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
+    On N1x, accept the preview prompt to apply those settings as explicit Deferred preview intent.
+    On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
+    On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
+    Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
     The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
+    The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
     Refer to [Platform Support](../reference/platform-support) for current validation status.
@@ -163,8 +196,20 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Onboarding and Integration Details">
     The wizard asks for an inference provider, model, required credential, and sandbox name before it prints the review summary.
-    After confirmation, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
-    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+    The review offers these actions:
+
+    - **Apply configuration** continues to provider registration.
+    - **Edit inference provider or model** returns to provider and model selection.
+    - **Edit sandbox name** prompts for the sandbox name again.
+    - **Exit onboarding** stops onboarding before provider registration.
+
+    When you edit inference, NemoClaw clears the credential staged for the discarded selection.
+    NemoClaw preserves the sandbox name.
+    When you edit the sandbox name, NemoClaw preserves the inference selection.
+    The sandbox prompt shows the prior name as its default.
+    After you apply the configuration, routine editing ends.
+    If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
+    NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
 
     The default Hermes sandbox name is `hermes`.
     Use a distinct name, such as `my-hermes`, when you run Hermes and OpenClaw sandboxes side by side.
@@ -186,7 +231,7 @@ Use these details when your first-run path needs more control.
     NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
     API-key mode is inference-only and does not enable managed tool gateways.
 
-    After you select a provider and model, review the summary and confirm the build.
+    After you select a provider and model, review the summary and apply the configuration.
     NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
@@ -224,6 +269,8 @@ Use these details when your first-run path needs more control.
     This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 
     Hermes exposes its browser dashboard on port `18789` and forwards its OpenAI-compatible API on port `8642` for local clients.
+    When another sandbox or a host listener already holds either port, NemoClaw allocates the next free port in that port's range.
+    The ready summary names the port this sandbox uses, and the examples below use the default ports.
     The dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
     Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
     To recover the dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned installation paths.
@@ -249,6 +296,12 @@ Use these details when your first-run path needs more control.
     ```
 
     The onboard flow starts both port forwards automatically.
+    For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and the image build.
+    If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
+    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
+    The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected host port.
+    NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
+    If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
     The Hermes dashboard URL does not include an OpenClaw `#token=` fragment.
     `nemohermes my-hermes dashboard-url --quiet` returns `http://127.0.0.1:18789/` when the default local forward is active.
     Check the API health endpoint from the host.

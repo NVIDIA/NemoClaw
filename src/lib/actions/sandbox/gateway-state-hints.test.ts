@@ -46,6 +46,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     getSandboxDockerRuntimeSpy = vi.spyOn(dockerHealth, "getSandboxDockerRuntime").mockReturnValue({
       health: "none",
       paused: false,
+      running: true,
       containerName: "openshell-instance-a-abc",
     });
     vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
@@ -99,7 +100,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
 
     const combined = lines.join("\n");
     expect(combined).not.toContain("sandbox has no spec");
-    expect(combined).toContain("openshell gateway start");
+    expect(combined).toContain("no longer configured or its metadata/runtime has been lost");
+    expect(combined).toContain("Start the gateway again with `nemoclaw onboard`.");
   });
 
   it.each([
@@ -144,6 +146,39 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     );
   });
 
+  it("reports a stopped container without crash guidance (#8695)", async () => {
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
+    });
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: false,
+      running: false,
+      containerName: "openshell-instance-a-abc",
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("Sandbox 'instance-a' is stopped.");
+    expect(output).toContain("Workspace state is preserved.");
+    expect(output).toContain("nemoclaw instance-a start");
+    expect(output).not.toContain("rebuild --yes");
+    expect(output).not.toContain("process crash");
+    expect(output).not.toContain("stuck in 'Error'");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("steers a non-paused Error sandbox to the workspace-preserving start path (#7222)", async () => {
     captureOpenshellSpy.mockReturnValue({
       status: 0,
@@ -177,6 +212,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: false,
+      running: true,
       containerName: null,
     });
     const lines: string[] = [];
@@ -197,10 +233,16 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("keeps rebuild guidance for terminal phases other than Error", async () => {
+  it("keeps rebuild guidance for a paused container in a terminal phase other than Error", async () => {
     captureOpenshellSpy.mockReturnValue({
       status: 0,
       output: "Sandbox:\n  Name: instance-a\n  Phase: Failed",
+    });
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: true,
+      running: true,
+      containerName: "openshell-instance-a-abc",
     });
     const lines: string[] = [];
     vi.spyOn(console, "error").mockImplementation((line = "") => {
@@ -217,7 +259,8 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const output = lines.join("\n");
     expect(output).toContain("nemoclaw instance-a rebuild --yes");
     expect(output).not.toContain("nemoclaw instance-a start");
-    expect(getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(output).not.toContain("docker unpause");
+    expect(getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("instance-a");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
@@ -229,6 +272,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     getSandboxDockerRuntimeSpy.mockReturnValue({
       health: "none",
       paused: true,
+      running: true,
       containerName: "openshell-instance-a-abc",
     });
     const lines: string[] = [];
@@ -338,6 +382,33 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const output = lines.join("\n");
     expect(output).toContain("gateway is still refusing connections after restart");
     expect(output).toContain("If the gateway never becomes healthy");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("names a command that exists when a sandbox-scoped command observes a stopped gateway", async () => {
+    captureOpenshellSpy.mockReturnValue({
+      status: 1,
+      output: "transport error\ntcp connect error\nConnection refused (os error 61)",
+    });
+    const lines: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(
+      gatewayState.ensureLiveSandboxOrExit("instance-a", { gatewayRecovery: "observe" }),
+    ).rejects.toThrow("process.exit(1)");
+
+    const output = lines.join("\n");
+    expect(output).toContain("This sandbox-scoped command will not restart the shared host gateway");
+    expect(output).toContain("Start the gateway again with `nemoclaw onboard`.");
+    expect(output).not.toContain("openshell gateway start");
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(1);
     errorSpy.mockRestore();
     exitSpy.mockRestore();

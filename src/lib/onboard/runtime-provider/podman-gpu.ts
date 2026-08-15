@@ -4,19 +4,29 @@
 const NVIDIA_CDI_PREFIX = "nvidia.com/gpu=";
 const CDI_DEVICE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/u;
 const LEGACY_MIG_DEVICE_NAME = /^MIG-GPU-[A-Za-z0-9-]+\/[0-9]+\/[0-9]+$/u;
+const MAX_CDI_DEVICES = 256;
 
 export interface PodmanGpuAttachment {
   readonly kind: "cdi";
   readonly device: string;
 }
 
-/**
- * Normalize one NVIDIA CDI device identity without consulting host state.
- * Availability is proved separately against the exact Podman endpoint's
- * qualified inventory.
- */
+function safeDeviceName(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value === "" ||
+    value !== value.trim() ||
+    Buffer.byteLength(value, "utf8") > 512 ||
+    /[\u0000-\u001f\u007f-\u009f]/u.test(value)
+  ) {
+    throw new Error("Podman GPU device must be one safe NVIDIA CDI identity.");
+  }
+  return value;
+}
+
+/** Normalize one requested NVIDIA device without consulting host state. */
 export function normalizeNvidiaCdiDevice(requestedDevice: string): string {
-  const requested = requestedDevice.trim();
+  const requested = safeDeviceName(requestedDevice);
   const device = requested.startsWith(NVIDIA_CDI_PREFIX)
     ? requested
     : `${NVIDIA_CDI_PREFIX}${requested}`;
@@ -29,15 +39,23 @@ export function normalizeNvidiaCdiDevice(requestedDevice: string): string {
   return device;
 }
 
+/** Validate the exact canonical NVIDIA subset reported by Podman's CDI registry. */
 export function normalizePodmanCdiInventory(devices: readonly string[]): readonly string[] {
-  if (!Array.isArray(devices) || devices.length > 256) {
+  if (!Array.isArray(devices) || devices.length > MAX_CDI_DEVICES) {
     throw new Error("Podman CDI inventory is invalid or exceeds its device limit.");
   }
-  const normalized = devices.map(normalizeNvidiaCdiDevice).sort();
+  const normalized = devices.map((device) => {
+    const exact = safeDeviceName(device);
+    const canonical = normalizeNvidiaCdiDevice(exact);
+    if (canonical !== exact) {
+      throw new Error("Podman CDI inventory must contain canonical NVIDIA device identities.");
+    }
+    return canonical;
+  });
   if (new Set(normalized).size !== normalized.length) {
     throw new Error("Podman CDI inventory contains a duplicate NVIDIA device.");
   }
-  return Object.freeze(normalized);
+  return Object.freeze(normalized.sort());
 }
 
 export function qualifyPodmanGpuAttachments(

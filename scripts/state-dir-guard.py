@@ -24,6 +24,7 @@ import json
 import os
 import posixpath
 import pwd
+import re
 import secrets
 import stat
 import struct
@@ -33,29 +34,6 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-HIGH_RISK_STATE_DIRS = frozenset(
-    {
-        "skills",
-        "agent",
-        "hooks",
-        "cron",
-        "agents",
-        "extensions",
-        "plugins",
-        "workspace",
-        "memory",
-        "devices",
-        "canvas",
-        "telegram",
-        "wechat",
-        "whatsapp",
-        "platforms",
-        "weixin",
-        "profiles",
-        "skins",
-    }
-)
-CONFIDENTIALITY_STATE_DIRS = frozenset({"credentials", "identity", "pairing"})
 MAX_SYMLINK_EXPANSIONS = 40
 MAX_TRAVERSAL_DEPTH = 256
 STABLE_COPY_ATTEMPTS = 3
@@ -66,9 +44,10 @@ MAX_ALLOCATED_BYTES_PER_PASS = 8 * 1024 * 1024 * 1024
 MAX_COPIED_BYTES_PER_PASS = 8 * 1024 * 1024 * 1024
 MAX_GUARD_SECONDS = 10 * 60
 PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
-    {"/sandbox/.openclaw", "/sandbox/.hermes"}
+    {"/sandbox/.openclaw", "/sandbox/.hermes", "/sandbox/.deepagents"}
 )
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
+MAX_TRANSITION_LOCK_BYTES = 16 * 1024
 # Keep this exact source/target contract aligned with
 # src/lib/state/openclaw-managed-extensions.ts.
 OPENCLAW_IMAGE_PACKAGE_PATHS = frozenset(
@@ -84,13 +63,52 @@ SAFE_EXTENSION_ID_CHARS = frozenset(
 ASCII_ALNUM_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 )
+SAFE_TOP_LEVEL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+PLAN_KEYS = frozenset(
+    {
+        "version",
+        "readOnlyRoots",
+        "confidentialRoots",
+        "readOnlyPrefixes",
+        "confidentialPrefixes",
+        "writableSubpaths",
+    }
+)
+OPTIONAL_PLAN_KEYS = frozenset({"$comment"})
+MAX_PLAN_BYTES = 1024 * 1024
+HERMES_PRIVATE_WRITABLE_SUBPATH = "profiles/dashboard-home"
 FS_IMMUTABLE_FL = 0x00000010
 FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
 FS_IOC_SETFLAGS = 0x40086602
 
-Action = Literal["preflight", "lock", "unlock"]
+Action = Literal["preflight", "lock", "unlock", "startup"]
 Policy = Literal["high-risk", "confidentiality"]
+
+
+class PlanValidationError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class AgentStateLockPlan:
+    version: Literal[1]
+    read_only_roots: tuple[str, ...]
+    confidential_roots: tuple[str, ...]
+    read_only_prefixes: tuple[str, ...]
+    confidential_prefixes: tuple[str, ...]
+    writable_subpaths: tuple[tuple[str, ...], ...]
+
+    def policy_for_root(self, name: str) -> Policy | None:
+        if name in self.confidential_roots or any(
+            name.startswith(prefix) for prefix in self.confidential_prefixes
+        ):
+            return "confidentiality"
+        if name in self.read_only_roots or any(
+            name.startswith(prefix) for prefix in self.read_only_prefixes
+        ):
+            return "high-risk"
+        return None
 
 
 @dataclass(frozen=True)
@@ -221,34 +239,177 @@ class WorkBudget:
             )
 
 
-def _is_runtime_carveout(relative_path: str) -> bool:
-    """Return whether this is OpenClaw's intentional writable sessions root."""
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise PlanValidationError(f"plan repeats key {key!r}")
+        result[key] = value
+    return result
 
-    parts = relative_path.split("/")
-    return (
-        len(parts) == 3
-        and parts[0] == "agents"
-        and parts[1] not in {"", ".", ".."}
-        and parts[2] == "sessions"
+
+def _read_string_list(record: dict[str, object], key: str) -> tuple[str, ...]:
+    value = record[key]
+    if not isinstance(value, list):
+        raise PlanValidationError(f"plan field {key!r} must be an array")
+    result: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise PlanValidationError(f"plan field {key!r}[{index}] must be a string")
+        if item in seen:
+            raise PlanValidationError(f"plan field {key!r} repeats {item!r}")
+        seen.add(item)
+        result.append(item)
+    return tuple(result)
+
+
+def _validate_top_level_name(value: str, field: str) -> None:
+    if (
+        value in {"", ".", ".."}
+        or SAFE_TOP_LEVEL_RE.fullmatch(value) is None
+        or "/" in value
+        or "\\" in value
+    ):
+        raise PlanValidationError(
+            f"plan field {field!r} must contain one safe top-level name"
+        )
+
+
+def _validate_writable_subpath(value: str, field: str) -> tuple[str, ...]:
+    if value.startswith("/") or "\\" in value or any(
+        ord(character) < 32 or ord(character) == 127 for character in value
+    ):
+        raise PlanValidationError(
+            f"plan field {field!r} must be a canonical relative path"
+        )
+    components = tuple(value.split("/"))
+    if len(components) < 2 or any(
+        component in {"", ".", ".."} for component in components
+    ):
+        raise PlanValidationError(
+            f"plan field {field!r} must be beneath a declared top-level root"
+        )
+    for component in components:
+        if "*" in component and component != "*":
+            raise PlanValidationError(
+                f"plan field {field!r} may use '*' only as a complete path component"
+            )
+    if components[-1] == "*":
+        raise PlanValidationError(
+            f"plan field {field!r} may not end with a wildcard component"
+        )
+    return components
+
+
+def _patterns_overlap(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
+    return all(
+        left == "*" or right == "*" or left == right
+        # A matching shorter pattern is a shared-prefix overlap.
+        for left, right in zip(first, second, strict=False)
     )
 
 
-def _is_under_runtime_carveout(relative_path: str) -> bool:
-    parts = relative_path.split("/")
-    return (
-        len(parts) >= 3
-        and parts[0] == "agents"
-        and parts[1] not in {"", ".", ".."}
-        and parts[2] == "sessions"
+def _validate_policy_boundaries(
+    read_only_roots: tuple[str, ...],
+    confidential_roots: tuple[str, ...],
+    read_only_prefixes: tuple[str, ...],
+    confidential_prefixes: tuple[str, ...],
+) -> None:
+    exact = [
+        *((name, "read-only") for name in read_only_roots),
+        *((name, "confidential") for name in confidential_roots),
+    ]
+    prefixes = [
+        *((prefix, "read-only") for prefix in read_only_prefixes),
+        *((prefix, "confidential") for prefix in confidential_prefixes),
+    ]
+    exact_names: set[str] = set()
+    for name, _policy in exact:
+        if name in exact_names:
+            raise PlanValidationError(f"plan assigns root {name!r} more than once")
+        exact_names.add(name)
+    prefix_names: set[str] = set()
+    for prefix, _policy in prefixes:
+        if prefix in prefix_names:
+            raise PlanValidationError(f"plan assigns prefix {prefix!r} more than once")
+        prefix_names.add(prefix)
+    for name, _policy in exact:
+        for prefix, _prefix_policy in prefixes:
+            if name.startswith(prefix):
+                raise PlanValidationError(
+                    f"plan root {name!r} also matches prefix {prefix!r}"
+                )
+    for index, (prefix, _policy) in enumerate(prefixes):
+        for other, _other_policy in prefixes[index + 1 :]:
+            if prefix.startswith(other) or other.startswith(prefix):
+                raise PlanValidationError(
+                    f"plan prefixes {prefix!r} and {other!r} overlap"
+                )
+
+
+def parse_agent_state_lock_plan(payload: str) -> AgentStateLockPlan:
+    try:
+        value = json.loads(payload, object_pairs_hook=_unique_json_object)
+    except (json.JSONDecodeError, PlanValidationError) as exc:
+        raise PlanValidationError(f"plan is not valid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise PlanValidationError("plan must be a JSON object")
+    keys = set(value)
+    missing = sorted(PLAN_KEYS - keys)
+    unknown = sorted(keys - PLAN_KEYS - OPTIONAL_PLAN_KEYS)
+    if missing:
+        raise PlanValidationError(f"plan is missing keys: {', '.join(missing)}")
+    if unknown:
+        raise PlanValidationError(f"plan has unknown keys: {', '.join(unknown)}")
+    if "$comment" in value and not isinstance(value["$comment"], str):
+        raise PlanValidationError("plan field '$comment' must be a string")
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise PlanValidationError("plan field 'version' must be exactly 1")
+
+    read_only_roots = _read_string_list(value, "readOnlyRoots")
+    confidential_roots = _read_string_list(value, "confidentialRoots")
+    read_only_prefixes = _read_string_list(value, "readOnlyPrefixes")
+    confidential_prefixes = _read_string_list(value, "confidentialPrefixes")
+    writable_values = _read_string_list(value, "writableSubpaths")
+    for key, entries in (
+        ("readOnlyRoots", read_only_roots),
+        ("confidentialRoots", confidential_roots),
+        ("readOnlyPrefixes", read_only_prefixes),
+        ("confidentialPrefixes", confidential_prefixes),
+    ):
+        for index, entry in enumerate(entries):
+            _validate_top_level_name(entry, f"{key}[{index}]")
+    _validate_policy_boundaries(
+        read_only_roots,
+        confidential_roots,
+        read_only_prefixes,
+        confidential_prefixes,
     )
 
-
-def _is_runtime_carveout_parent(relative_path: str) -> bool:
-    """Return whether this is an agent directory whose ``sessions`` child is
-    the carveout location."""
-
-    parts = relative_path.split("/")
-    return len(parts) == 2 and parts[0] == "agents" and parts[1] not in {"", ".", ".."}
+    writable_subpaths = tuple(
+        _validate_writable_subpath(entry, f"writableSubpaths[{index}]")
+        for index, entry in enumerate(writable_values)
+    )
+    for index, components in enumerate(writable_subpaths):
+        if components[0] not in read_only_roots:
+            raise PlanValidationError(
+                f"plan field 'writableSubpaths[{index}]' must be beneath a read-only root"
+            )
+        for other_index, other in enumerate(writable_subpaths[index + 1 :], index + 1):
+            if _patterns_overlap(components, other):
+                raise PlanValidationError(
+                    "plan writable subpaths "
+                    f"{writable_values[index]!r} and {writable_values[other_index]!r} overlap"
+                )
+    return AgentStateLockPlan(
+        version=1,
+        read_only_roots=read_only_roots,
+        confidential_roots=confidential_roots,
+        read_only_prefixes=read_only_prefixes,
+        confidential_prefixes=confidential_prefixes,
+        writable_subpaths=writable_subpaths,
+    )
 
 
 def _no_follow_flag() -> int:
@@ -388,16 +549,11 @@ def _entry_kind(st: os.stat_result) -> str:
     return "unknown entry"
 
 
-def _policy_for_root(name: str) -> Policy | None:
-    if name in CONFIDENTIALITY_STATE_DIRS:
-        return "confidentiality"
-    if name in HIGH_RISK_STATE_DIRS or name.startswith("workspace-"):
-        return "high-risk"
-    return None
-
-
 def _select_roots(
-    config_fd: int, config_path: str, config_dev: int
+    config_fd: int,
+    config_path: str,
+    config_dev: int,
+    plan: AgentStateLockPlan,
 ) -> tuple[list[RootSpec], list[Issue]]:
     issues: list[Issue] = []
     try:
@@ -406,7 +562,7 @@ def _select_roots(
         return [], [_os_issue("list-failed", config_path, "list config directory", exc)]
 
     selected_names = sorted(
-        name for name in present_names if _policy_for_root(name) is not None
+        name for name in present_names if plan.policy_for_root(name) is not None
     )
     roots: list[RootSpec] = []
     for name in selected_names:
@@ -441,7 +597,7 @@ def _select_roots(
                 )
             )
             continue
-        policy = _policy_for_root(name)
+        policy = plan.policy_for_root(name)
         if policy is None:  # The name came from the same predicate above.
             continue
         roots.append(RootSpec(name=name, policy=policy, dev=st.st_dev, ino=st.st_ino))
@@ -449,7 +605,10 @@ def _select_roots(
 
 
 def _remove_unsupported_root_entries_for_lock(
-    config_fd: int, config_path: str, config_dev: int
+    config_fd: int,
+    config_path: str,
+    config_dev: int,
+    plan: AgentStateLockPlan,
 ) -> int:
     """Remove attacker-created protected-root names that cannot be traversed.
 
@@ -461,7 +620,7 @@ def _remove_unsupported_root_entries_for_lock(
 
     removed = 0
     for name in _bounded_directory_names(config_fd, config_path):
-        if _policy_for_root(name) is None:
+        if plan.policy_for_root(name) is None:
             continue
         path = _display_path(config_path, name)
         st = os.stat(name, dir_fd=config_fd, follow_symlinks=False)
@@ -507,6 +666,7 @@ class TraversalContext:
     config_dev: int
     protected_roots: tuple[str, ...]
     budget: WorkBudget
+    writable_subpaths: tuple[tuple[str, ...], ...] = ()
 
     def display(self, relative_path: str) -> str:
         return _display_path(self.config_path, relative_path)
@@ -515,6 +675,42 @@ class TraversalContext:
         return any(
             relative_path == root or relative_path.startswith(f"{root}/")
             for root in self.protected_roots
+        )
+
+    @staticmethod
+    def _matches(pattern: tuple[str, ...], components: tuple[str, ...]) -> bool:
+        return len(pattern) == len(components) and all(
+            expected == "*" or expected == actual
+            for expected, actual in zip(pattern, components, strict=True)
+        )
+
+    def is_writable_root(self, relative_path: str) -> bool:
+        components = tuple(relative_path.split("/"))
+        return any(
+            self._matches(pattern, components) for pattern in self.writable_subpaths
+        )
+
+    def is_private_writable_root(self, relative_path: str) -> bool:
+        return (
+            posixpath.basename(self.config_path) == ".hermes"
+            and relative_path == HERMES_PRIVATE_WRITABLE_SUBPATH
+        )
+
+    def is_under_writable_root(self, relative_path: str) -> bool:
+        components = tuple(relative_path.split("/"))
+        return any(
+            len(components) >= len(pattern)
+            and self._matches(pattern, components[: len(pattern)])
+            for pattern in self.writable_subpaths
+        )
+
+    def writable_children(self, relative_path: str) -> tuple[str, ...]:
+        components = tuple(relative_path.split("/"))
+        return tuple(
+            pattern[-1]
+            for pattern in self.writable_subpaths
+            if len(pattern) == len(components) + 1
+            and self._matches(pattern[:-1], components)
         )
 
 
@@ -597,14 +793,14 @@ def _resolve_internal_symlink(
     relative = _normalize_link_target(
         context, posixpath.dirname(link_relative_path), target
     )
-    if _is_under_runtime_carveout(link_relative_path) or _is_under_runtime_carveout(
-        relative
-    ):
+    if context.is_under_writable_root(
+        link_relative_path
+    ) or context.is_under_writable_root(relative):
         raise GuardOperationError(
             Issue(
                 "symlink-crosses-runtime-carveout",
                 context.display(link_relative_path),
-                "symlinks may not enter or originate in the writable sessions carveout",
+                "symlinks may not enter or originate in a writable state subpath",
             )
         )
     seen: set[str] = set()
@@ -679,12 +875,12 @@ def _resolve_internal_symlink(
                                 "expanded symlink target leaves protected roots",
                             )
                         )
-                    if _is_under_runtime_carveout(relative):
+                    if context.is_under_writable_root(relative):
                         raise GuardOperationError(
                             Issue(
                                 "symlink-crosses-runtime-carveout",
                                 context.display(link_relative_path),
-                                "symlink chain enters the writable sessions carveout",
+                                "symlink chain enters a writable state subpath",
                             )
                         )
                     restart = True
@@ -799,11 +995,11 @@ def _scan_dir(
             )
             continue
         if stat.S_ISDIR(st.st_mode):
-            # Session contents are intentionally outside the shields integrity
-            # boundary and remain live while shields are up.  Validate that the
-            # carve-out itself is a real in-tree directory, but do not traverse
-            # a subtree the gateway may be appending to concurrently.
-            if _is_runtime_carveout(relative_path):
+            # Writable contents are intentionally outside the shields integrity
+            # boundary and remain live while shields are up. Validate that the
+            # subpath root is a real in-tree directory, but do not traverse a
+            # subtree the gateway may be mutating concurrently.
+            if context.is_writable_root(relative_path):
                 continue
             try:
                 child_fd = _open_child_dir(dir_fd, name, st)
@@ -847,8 +1043,9 @@ def _preflight(
     config_dev: int,
     deadline: float,
     action: Action,
+    plan: AgentStateLockPlan,
 ) -> tuple[list[RootSpec], list[Issue]]:
-    roots, issues = _select_roots(config_fd, config_path, config_dev)
+    roots, issues = _select_roots(config_fd, config_path, config_dev, plan)
     protected_roots = tuple(root.name for root in roots)
     context = TraversalContext(
         config_fd,
@@ -856,6 +1053,7 @@ def _preflight(
         config_dev,
         protected_roots,
         WorkBudget(deadline),
+        plan.writable_subpaths,
     )
     for root in roots:
         path = context.display(root.name)
@@ -879,19 +1077,33 @@ def _preflight(
 
 
 def _expected_ids(
-    policy: Policy, action: Action, identity: Identity
+    policy: Policy,
+    action: Action,
+    identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> tuple[int, int]:
     if action == "unlock":
         return identity.sandbox_uid, identity.sandbox_gid
     if policy == "confidentiality":
+        if is_confidentiality_root:
+            return identity.root_uid, identity.sandbox_gid
         return identity.root_uid, identity.root_gid
     return identity.root_uid, identity.sandbox_gid
 
 
-def _expected_dir_mode(policy: Policy, action: Action) -> int:
+def _expected_dir_mode(
+    policy: Policy, action: Action, is_confidentiality_root: bool = False
+) -> int:
     if action == "unlock":
         return 0o2770
-    return 0o700 if policy == "confidentiality" else 0o755
+    if policy == "confidentiality":
+        # The confidentiality root stays traversable (group execute, no read)
+        # so a sandbox probe for a missing name directly under the root, such
+        # as the legacy credentials/oauth.json, resolves as ENOENT instead of
+        # EACCES.  Nested directories and every file keep the sealed posture,
+        # so contents and the subtree shape stay unreadable.
+        return 0o710 if is_confidentiality_root else 0o700
+    return 0o755
 
 
 def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
@@ -902,7 +1114,12 @@ def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
         return (old_mode & 0o700) | 0o060 | (0o010 if old_mode & 0o111 else 0)
     if policy == "confidentiality":
         return old_mode & 0o700
-    return old_mode & ~0o022
+    # High-risk files move from the sandbox UID to root while retaining the
+    # sandbox group. Mirror the original owner's read/execute access onto that
+    # group before removing every group/world write bit; otherwise an
+    # owner-private 0600 runtime file becomes root:sandbox 0600 and the
+    # gateway loses the access it had before Shields went up (#8304).
+    return (old_mode & ~0o022) | ((old_mode & 0o500) >> 3)
 
 
 def _freeze_dir_for_lock(dir_fd: int) -> None:
@@ -915,10 +1132,51 @@ def _set_dir_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> None:
-    uid, gid = _expected_ids(policy, action, identity)
+    uid, gid = _expected_ids(policy, action, identity, is_confidentiality_root)
     os.fchown(dir_fd, uid, gid)
-    os.fchmod(dir_fd, _expected_dir_mode(policy, action))
+    os.fchmod(dir_fd, _expected_dir_mode(policy, action, is_confidentiality_root))
+
+
+def _set_writable_subpath_metadata(
+    context: TraversalContext,
+    dir_fd: int,
+    relative_path: str,
+    policy: Policy,
+    identity: Identity,
+) -> None:
+    if context.is_private_writable_root(relative_path):
+        os.fchown(dir_fd, identity.sandbox_uid, identity.sandbox_gid)
+        os.fchmod(dir_fd, 0o700)
+        return
+    _set_dir_metadata(dir_fd, policy, "unlock", identity)
+
+
+def _set_empty_credentials_startup_metadata(
+    dir_fd: int,
+    identity: Identity,
+) -> None:
+    """Allow the sandbox group to probe names in an empty sealed credentials dir."""
+
+    os.fchown(dir_fd, identity.root_uid, identity.sandbox_gid)
+    os.fchmod(dir_fd, 0o710)
+
+
+def _is_empty_credentials_root(
+    relative_dir: str,
+    policy: Policy,
+    action: Action,
+    is_root: bool,
+    names: list[str],
+) -> bool:
+    return (
+        action == "lock"
+        and policy == "confidentiality"
+        and is_root
+        and relative_dir == "credentials"
+        and not names
+    )
 
 
 def _copy_extent(
@@ -1234,30 +1492,27 @@ def _chown_symlink(
             raise GuardOperationError(issue)
 
 
-def _ensure_runtime_carveout(
+def _ensure_writable_subpath(
     context: TraversalContext,
     parent_fd: int,
     relative_dir: str,
+    name: str,
     policy: Policy,
     identity: Identity,
     result: GuardResult,
 ) -> None:
-    """Create the writable sessions carveout for an agent that has none.
+    """Create a declared writable subpath when its parent already exists.
 
-    The locked agent directory is root-owned and read-only for the sandbox
-    identity, so an agent booting for the first time after shields-up cannot
-    create its own sessions directory and fails with EACCES.  ``_mutate_dir``
-    calls this after its entry loop so an agent whose unsafe ``sessions``
-    entry was removed earlier in the same lock pass also converges on a
-    created carveout; a surviving non-directory entry keeps its locked
-    posture.  A name that appears between the existence check and the mkdir
-    makes the lock fail closed, matching the raced-entry policy.
+    The locked parent is root-owned and read-only for the sandbox identity, so
+    the runtime cannot create the declared final component after shields-up.
+    A surviving non-directory entry keeps its locked posture. A name that
+    appears between the existence check and mkdir makes the lock fail closed.
     """
 
-    relative_path = posixpath.join(relative_dir, "sessions")
+    relative_path = posixpath.join(relative_dir, name)
     path = context.display(relative_path)
     try:
-        os.stat("sessions", dir_fd=parent_fd, follow_symlinks=False)
+        os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         return
     except FileNotFoundError:
         pass
@@ -1266,33 +1521,35 @@ def _ensure_runtime_carveout(
             _os_issue(
                 "carveout-create-failed",
                 path,
-                "check for a sessions carveout",
+                "check for a writable state subpath",
                 exc,
             )
         ) from exc
     try:
-        os.mkdir("sessions", mode=0o700, dir_fd=parent_fd)
+        os.mkdir(name, mode=0o700, dir_fd=parent_fd)
         os.fsync(parent_fd)
-        created = os.stat("sessions", dir_fd=parent_fd, follow_symlinks=False)
+        created = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         context.budget.observe_entry(path, created)
-        child_fd = _open_child_dir(parent_fd, "sessions", created)
+        child_fd = _open_child_dir(parent_fd, name, created)
     except OSError as exc:
         raise GuardOperationError(
             _os_issue(
                 "carveout-create-failed",
                 path,
-                "create writable sessions carveout",
+                "create writable state subpath",
                 exc,
             )
         ) from exc
     try:
-        _set_dir_metadata(child_fd, policy, "unlock", identity)
+        _set_writable_subpath_metadata(
+            context, child_fd, relative_path, policy, identity
+        )
     except OSError as exc:
         raise GuardOperationError(
             _os_issue(
                 "metadata-update-failed",
                 path,
-                "prepare writable sessions carveout",
+                "prepare writable state subpath",
                 exc,
             )
         ) from exc
@@ -1328,7 +1585,9 @@ def _mutate_dir(
             # mutation through directory descriptors opened by the sandbox
             # before shields-up, and it happens before visiting descendants.
             _freeze_dir_for_lock(dir_fd)
-            _set_dir_metadata(dir_fd, policy, action, identity)
+            _set_dir_metadata(
+                dir_fd, policy, action, identity, is_root and policy == "confidentiality"
+            )
         elif is_root:
             # Keep the subtree inaccessible while descendants are restored.
             os.fchmod(dir_fd, 0o700)
@@ -1337,6 +1596,14 @@ def _mutate_dir(
         names = _bounded_directory_names(
             dir_fd, context.display(relative_dir), context.budget
         )
+        if _is_empty_credentials_root(
+            relative_dir, policy, action, is_root, names
+        ):
+            # The confidentiality-root contract already grants the sandbox
+            # group execute-only access (root:sandbox 0710).  Keep this
+            # explicit empty-root case for compatibility with the startup
+            # recovery path; nested entries remain root-only.
+            _set_empty_credentials_startup_metadata(dir_fd, identity)
     except OSError as exc:
         raise GuardOperationError(
             _os_issue(
@@ -1372,12 +1639,14 @@ def _mutate_dir(
                     )
                 ) from exc
             try:
-                if _is_runtime_carveout(relative_path):
-                    # Only the carve-out root has a shields contract.  Its
+                if context.is_writable_root(relative_path):
+                    # Only the writable root has a shields contract. Its
                     # contents remain runtime-owned and may change while this
                     # helper runs, so never chmod/chown/copy descendants.
                     _clear_mutation_flags(child_fd)
-                    _set_dir_metadata(child_fd, policy, "unlock", identity)
+                    _set_writable_subpath_metadata(
+                        context, child_fd, relative_path, policy, identity
+                    )
                     result.directories += 1
                 else:
                     _mutate_dir(
@@ -1472,10 +1741,17 @@ def _mutate_dir(
                 ) from exc
             result.removed_entries += 1
 
-    if action == "lock" and _is_runtime_carveout_parent(relative_dir):
-        _ensure_runtime_carveout(
-            context, dir_fd, relative_dir, policy, identity, result
-        )
+    if action == "lock":
+        for writable_child in context.writable_children(relative_dir):
+            _ensure_writable_subpath(
+                context,
+                dir_fd,
+                relative_dir,
+                writable_child,
+                policy,
+                identity,
+                result,
+            )
 
     if action == "unlock":
         try:
@@ -1510,8 +1786,11 @@ def _verify_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> Issue | None:
-    expected_uid, expected_gid = _expected_ids(policy, action, identity)
+    expected_uid, expected_gid = _expected_ids(
+        policy, action, identity, is_confidentiality_root
+    )
     if st.st_uid != expected_uid or st.st_gid != expected_gid:
         return Issue(
             "verification-owner-mismatch",
@@ -1522,7 +1801,7 @@ def _verify_metadata(
         return None
     mode = stat.S_IMODE(st.st_mode)
     if entry_type == "directory":
-        expected_mode = _expected_dir_mode(policy, action)
+        expected_mode = _expected_dir_mode(policy, action, is_confidentiality_root)
         if mode != expected_mode:
             return Issue(
                 "verification-mode-mismatch",
@@ -1550,11 +1829,47 @@ def _verify_metadata(
                 path,
                 f"confidential file exposes group/world permissions: {mode:04o}",
             )
-    elif mode & 0o022:
+    else:
+        if mode & 0o022:
+            return Issue(
+                "verification-mode-mismatch",
+                path,
+                f"high-risk file is group/world writable: {mode:04o}",
+            )
+        required_group_access = (mode & 0o500) >> 3
+        if (mode & required_group_access) != required_group_access:
+            return Issue(
+                "verification-mode-mismatch",
+                path,
+                "high-risk file does not preserve owner read/execute access "
+                f"for the sandbox group: {mode:04o}",
+            )
+    return None
+
+
+def _verify_writable_subpath_metadata(
+    context: TraversalContext,
+    path: str,
+    relative_path: str,
+    st: os.stat_result,
+    policy: Policy,
+    identity: Identity,
+) -> Issue | None:
+    if not context.is_private_writable_root(relative_path):
+        return _verify_metadata(path, st, "directory", policy, "unlock", identity)
+    if st.st_uid != identity.sandbox_uid or st.st_gid != identity.sandbox_gid:
+        return Issue(
+            "verification-owner-mismatch",
+            path,
+            f"owner is {st.st_uid}:{st.st_gid}, "
+            f"expected {identity.sandbox_uid}:{identity.sandbox_gid}",
+        )
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o700:
         return Issue(
             "verification-mode-mismatch",
             path,
-            f"high-risk file is group/world writable: {mode:04o}",
+            f"directory mode is {mode:04o}, expected 0700",
         )
     return None
 
@@ -1569,6 +1884,7 @@ def _verify_dir(
     replaced_inodes: dict[str, int],
     issues: list[Issue],
     depth: int,
+    is_root: bool = False,
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -1579,16 +1895,6 @@ def _verify_dir(
             )
         )
         return
-    dir_issue = _verify_metadata(
-        context.display(relative_dir),
-        os.fstat(dir_fd),
-        "directory",
-        policy,
-        action,
-        identity,
-    )
-    if dir_issue is not None:
-        issues.append(dir_issue)
     try:
         names = _bounded_directory_names(
             dir_fd, context.display(relative_dir), context.budget
@@ -1600,6 +1906,17 @@ def _verify_dir(
             )
         )
         return
+    dir_issue = _verify_metadata(
+        context.display(relative_dir),
+        os.fstat(dir_fd),
+        "directory",
+        policy,
+        action,
+        identity,
+        is_root and policy == "confidentiality",
+    )
+    if dir_issue is not None:
+        issues.append(dir_issue)
     for name in names:
         relative_path = posixpath.join(relative_dir, name)
         path = context.display(relative_path)
@@ -1630,17 +1947,17 @@ def _verify_dir(
                     )
                 continue
             try:
-                if _is_runtime_carveout(relative_path):
-                    carveout_issue = _verify_metadata(
+                if context.is_writable_root(relative_path):
+                    writable_issue = _verify_writable_subpath_metadata(
+                        context,
                         path,
+                        relative_path,
                         os.fstat(child_fd),
-                        "directory",
                         policy,
-                        "unlock",
                         identity,
                     )
-                    if carveout_issue is not None:
-                        issues.append(carveout_issue)
+                    if writable_issue is not None:
+                        issues.append(writable_issue)
                 else:
                     _verify_dir(
                         context,
@@ -1697,20 +2014,150 @@ def _verify_dir(
             )
 
 
+def _restore_empty_credentials_startup_access(
+    config_dir: str,
+    identity: Identity,
+    deadline: float,
+    plan: AgentStateLockPlan,
+) -> GuardResult:
+    """Restore only the empty credentials traversal needed during startup."""
+
+    result = GuardResult(action="startup")
+    config_fd = -1
+    credentials_fd = -1
+    path = _display_path(config_dir, "credentials")
+    if "credentials" not in plan.confidential_roots:
+        result.issues.append(
+            Issue(
+                "startup-plan-mismatch",
+                path,
+                "state lock plan must declare credentials as a confidential root",
+            )
+        )
+        return result
+    try:
+        config_fd = _open_absolute_dir_nofollow(config_dir)
+        config_st = os.fstat(config_fd)
+        config_mode = stat.S_IMODE(config_st.st_mode)
+        if config_st.st_uid != identity.root_uid or config_mode & 0o022:
+            result.issues.append(
+                Issue(
+                    "startup-posture-mismatch",
+                    config_dir,
+                    "sealed config directory must be root-owned and not group/world writable",
+                )
+            )
+            return result
+        try:
+            credentials_st = os.stat(
+                "credentials", dir_fd=config_fd, follow_symlinks=False
+            )
+        except FileNotFoundError:
+            return result
+        if (
+            not stat.S_ISDIR(credentials_st.st_mode)
+            or credentials_st.st_dev != config_st.st_dev
+        ):
+            result.issues.append(
+                Issue(
+                    "unsafe-startup-credentials-root",
+                    path,
+                    "credentials root must be a directory on the config filesystem",
+                )
+            )
+            return result
+        credentials_fd = _open_child_dir(config_fd, "credentials", credentials_st)
+        names = _bounded_directory_names(
+            credentials_fd, path, WorkBudget(deadline)
+        )
+        current = os.fstat(credentials_fd)
+        mode = stat.S_IMODE(current.st_mode)
+        root_only = (
+            current.st_uid == identity.root_uid
+            and current.st_gid == identity.root_gid
+            and mode == 0o700
+        )
+        startup_traversable = (
+            current.st_uid == identity.root_uid
+            and current.st_gid == identity.sandbox_gid
+            and mode == 0o710
+        )
+        if not root_only and not startup_traversable:
+            result.issues.append(
+                Issue(
+                    "startup-posture-mismatch",
+                    path,
+                    f"credentials root has unexpected owner or mode {mode:04o}",
+                )
+            )
+            return result
+        # All confidentiality roots are execute-only for the sandbox group,
+        # whether or not they currently contain credentials.  This preserves
+        # known-name ENOENT probes without exposing names or descendants.
+        _set_dir_metadata(
+            credentials_fd,
+            "confidentiality",
+            "lock",
+            identity,
+            is_confidentiality_root=True,
+        )
+        after = os.fstat(credentials_fd)
+        if (
+            after.st_uid != identity.root_uid
+            or after.st_gid != identity.sandbox_gid
+            or stat.S_IMODE(after.st_mode) != 0o710
+        ):
+            result.issues.append(
+                Issue(
+                    "startup-verification-failed",
+                    path,
+                    "empty credentials root did not reach root:sandbox 0710",
+                )
+            )
+            return result
+        os.fsync(credentials_fd)
+        result.roots = 1
+        result.directories = 1
+        return result
+    except (OSError, GuardOperationError) as exc:
+        result.issues.append(
+            exc.issue
+            if isinstance(exc, GuardOperationError)
+            else _os_issue(
+                "startup-restore-failed",
+                path,
+                "restore empty credentials startup access",
+                exc,
+            )
+        )
+        return result
+    finally:
+        if credentials_fd >= 0:
+            os.close(credentials_fd)
+        if config_fd >= 0:
+            os.close(config_fd)
+
+
 def _run_guard_unserialized(
     action: Action,
     config_dir: str,
     identity: Identity,
+    plan: AgentStateLockPlan,
 ) -> GuardResult:
     """Run one guard action.  ``identity`` is explicit for focused tests."""
 
     result = GuardResult(action=action)
     deadline = time.monotonic() + MAX_GUARD_SECONDS
     normalized_config = posixpath.normpath(config_dir)
+    if action == "startup":
+        return _restore_empty_credentials_startup_access(
+            normalized_config, identity, deadline, plan
+        )
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
         or os.environ.get("NEMOCLAW_TEST_HERMES_FAIL_CLOSED") == "1"
+        or os.environ.get("NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED") == "1"
     )
     config_fd = -1
     try:
@@ -1740,7 +2187,7 @@ def _run_guard_unserialized(
 
         if action == "lock":
             result.removed_entries += _remove_unsupported_root_entries_for_lock(
-                config_fd, normalized_config, config_st.st_dev
+                config_fd, normalized_config, config_st.st_dev, plan
             )
 
         roots, issues = _preflight(
@@ -1749,6 +2196,7 @@ def _run_guard_unserialized(
             config_st.st_dev,
             deadline,
             action,
+            plan,
         )
         result.roots = len(roots)
         result.issues.extend(issues)
@@ -1758,7 +2206,7 @@ def _run_guard_unserialized(
         # Detect root swaps/creations between preflight and mutation before
         # changing any metadata.  Each root inode is checked again when opened.
         current_roots, selection_issues = _select_roots(
-            config_fd, normalized_config, config_st.st_dev
+            config_fd, normalized_config, config_st.st_dev, plan
         )
         result.issues.extend(selection_issues)
         expected_root_set = {(root.name, root.dev, root.ino) for root in roots}
@@ -1779,6 +2227,7 @@ def _run_guard_unserialized(
             config_st.st_dev,
             tuple(root.name for root in roots),
             WorkBudget(deadline),
+            plan.writable_subpaths,
         )
         replaced_inodes: dict[str, int] = {}
         for root in roots:
@@ -1822,7 +2271,7 @@ def _run_guard_unserialized(
         # A second independent descriptor traversal verifies the recursive
         # result and catches entries changed by a concurrent pre-open FD.
         verify_roots, selection_issues = _select_roots(
-            config_fd, normalized_config, config_st.st_dev
+            config_fd, normalized_config, config_st.st_dev, plan
         )
         result.issues.extend(selection_issues)
         verify_root_set = {(root.name, root.dev, root.ino) for root in verify_roots}
@@ -1861,6 +2310,7 @@ def _run_guard_unserialized(
                     replaced_inodes,
                     result.issues,
                     1,
+                    is_root=True,
                 )
             finally:
                 os.close(root_fd)
@@ -1943,17 +2393,110 @@ def _acquire_transition_lock(path: str, identity: Identity) -> int:
         os.close(parent_fd)
 
 
+def _run_guard_with_transition_lock_fd(
+    action: Action,
+    config_dir: str,
+    identity: Identity,
+    plan: AgentStateLockPlan,
+    lock_path: str,
+    lock_fd: int,
+) -> GuardResult:
+    """Run under the caller's inherited OpenClaw mutation-mutex description.
+
+    The caller must hold the mutex exclusively. Re-locking an inherited
+    descriptor succeeds while a separately opened one blocks, which is what
+    proves inheritance. A shared lock would pass without giving exclusion, so
+    do not reuse this path for read-only actions.
+    """
+
+    try:
+        opened = os.fstat(lock_fd)
+        current = os.stat(lock_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or not _same_entry(opened, current)
+            or opened.st_uid != identity.root_uid
+            or opened.st_gid != identity.root_gid
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_size > MAX_TRANSITION_LOCK_BYTES
+        ):
+            raise GuardOperationError(
+                Issue(
+                    "unsafe-transition-lock",
+                    lock_path,
+                    "inherited mutation mutex must be the private root-owned lock file",
+                )
+            )
+        try:
+            # An inherited descriptor shares the parent's flock ownership; a
+            # separately opened one blocks and cannot bypass serialization.
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise GuardOperationError(
+                Issue(
+                    "transition-lock-not-inherited",
+                    lock_path,
+                    "mutation mutex descriptor does not share the caller's lock",
+                )
+            ) from exc
+        after = os.stat(lock_path, follow_symlinks=False)
+        if not _same_entry(opened, after):
+            raise GuardOperationError(
+                Issue(
+                    "transition-lock-raced",
+                    lock_path,
+                    "transition mutex changed during inherited-lock verification",
+                )
+            )
+        return _run_guard_unserialized(action, config_dir, identity, plan)
+    except GuardOperationError as exc:
+        result = GuardResult(action=action)
+        result.issues.append(exc.issue)
+        return result
+    except OSError as exc:
+        result = GuardResult(action=action)
+        result.issues.append(
+            _os_issue(
+                "transition-lock-failed", lock_path, "verify inherited mutation mutex", exc
+            )
+        )
+        return result
+
+
 def run_guard(
     action: Action,
     config_dir: str,
     identity: Identity,
+    plan: AgentStateLockPlan,
+    *,
+    transition_lock_fd: int | None = None,
 ) -> GuardResult:
     """Serialize production OpenClaw recursive transitions with its top guard."""
 
     normalized_config = posixpath.normpath(config_dir)
     lock_path = _transition_lock_path(normalized_config)
+    if transition_lock_fd is not None:
+        if lock_path is None:
+            result = GuardResult(action=action)
+            result.issues.append(
+                Issue(
+                    "unexpected-transition-lock-fd",
+                    normalized_config,
+                    "an inherited transition mutex is valid only for serialized OpenClaw state",
+                )
+            )
+            return result
+        return _run_guard_with_transition_lock_fd(
+            action,
+            normalized_config,
+            identity,
+            plan,
+            lock_path,
+            transition_lock_fd,
+        )
     if lock_path is None:
-        return _run_guard_unserialized(action, normalized_config, identity)
+        return _run_guard_unserialized(action, normalized_config, identity, plan)
 
     lock_fd = -1
     try:
@@ -1966,7 +2509,7 @@ def run_guard(
             hold_ms = int(os.environ.get("NEMOCLAW_TEST_TRANSACTION_LOCK_HOLD_MS", "0"))
             if hold_ms > 0:
                 time.sleep(hold_ms / 1000)
-        return _run_guard_unserialized(action, normalized_config, identity)
+        return _run_guard_unserialized(action, normalized_config, identity, plan)
     except GuardOperationError as exc:
         result = GuardResult(action=action)
         result.issues.append(exc.issue)
@@ -2002,34 +2545,86 @@ def _production_identity() -> Identity:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Safely preflight, lock, or unlock recursive agent state directories"
+        description="Safely manage recursive agent state directories"
     )
-    parser.add_argument("action", choices=("preflight", "lock", "unlock"))
+    parser.add_argument("action", choices=("preflight", "lock", "unlock", "startup"))
     parser.add_argument("--config-dir", required=True)
+    plan_source = parser.add_mutually_exclusive_group()
+    plan_source.add_argument("--plan-json")
+    plan_source.add_argument("--plan-file")
+    parser.add_argument("--transition-lock-fd", type=int, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
+
+
+def _bundled_plan_path() -> str:
+    helper_dir = os.path.dirname(os.path.realpath(__file__))
+    lib_dir = os.path.dirname(helper_dir)
+    if os.path.basename(helper_dir) != "nemoclaw" or os.path.basename(lib_dir) != "lib":
+        raise PlanValidationError(
+            "a plan source is required outside a bundled lib/nemoclaw helper layout"
+        )
+    prefix = os.path.dirname(lib_dir)
+    return os.path.join(prefix, "share", "nemoclaw", "state-lock-plan.json")
+
+
+def _load_plan(args: argparse.Namespace) -> AgentStateLockPlan:
+    if args.plan_json is not None:
+        payload = args.plan_json
+        if len(payload.encode("utf-8")) > MAX_PLAN_BYTES:
+            raise PlanValidationError(
+                f"plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
+            )
+    else:
+        plan_file = args.plan_file or _bundled_plan_path()
+        try:
+            with open(plan_file, "rb") as stream:
+                raw = stream.read(MAX_PLAN_BYTES + 1)
+        except OSError as exc:
+            raise PlanValidationError(f"cannot read plan file: {exc}") from exc
+        if len(raw) > MAX_PLAN_BYTES:
+            raise PlanValidationError(
+                f"plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
+            )
+        try:
+            payload = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise PlanValidationError("plan file must contain UTF-8 JSON") from exc
+    return parse_agent_state_lock_plan(payload)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    if os.geteuid() != 0:
+    try:
+        plan = _load_plan(args)
+    except PlanValidationError as exc:
         result = GuardResult(action=args.action)
-        result.issues.append(
-            Issue("root-required", args.config_dir, "state-dir guard must run as root")
-        )
+        result.issues.append(Issue("invalid-plan", args.config_dir, str(exc)))
     else:
-        try:
-            identity = _production_identity()
-        except KeyError as exc:
+        if os.geteuid() != 0:
             result = GuardResult(action=args.action)
             result.issues.append(
-                Issue(
-                    "identity-unavailable",
-                    args.config_dir,
-                    f"required sandbox account is unavailable: {exc}",
-                )
+                Issue("root-required", args.config_dir, "state-dir guard must run as root")
             )
         else:
-            result = run_guard(args.action, args.config_dir, identity)
+            try:
+                identity = _production_identity()
+            except KeyError as exc:
+                result = GuardResult(action=args.action)
+                result.issues.append(
+                    Issue(
+                        "identity-unavailable",
+                        args.config_dir,
+                        f"required sandbox account is unavailable: {exc}",
+                    )
+                )
+            else:
+                result = run_guard(
+                    args.action,
+                    args.config_dir,
+                    identity,
+                    plan,
+                    transition_lock_fd=args.transition_lock_fd,
+                )
 
     for issue in result.issues:
         print(json.dumps(issue.as_json(), sort_keys=True, separators=(",", ":")))

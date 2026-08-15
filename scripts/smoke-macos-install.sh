@@ -24,7 +24,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=./lib/runtime.sh
 . "$SCRIPT_DIR/lib/runtime.sh"
 
-SANDBOX_NAME="smoke-$(date +%Y%m%d%H%M%S)"
+SANDBOX_NAME="smoke-$(date +%m%d%H%M%S)"
 LOG_DIR="${TMPDIR:-/tmp}/nemoclaw-smoke"
 RUNTIME=""
 ALLOW_EXISTING_STATE=false
@@ -59,7 +59,7 @@ Options:
   --allow-existing-state      Allow running even if NemoClaw/OpenShell state already exists
   --keep-logs                 Preserve log files after success
   --remove-openshell          Allow uninstall.sh to remove openshell
-  --delete-models             Allow uninstall.sh to delete Ollama models
+  --delete-models             Allow uninstall.sh to delete all Ollama models and non-credential Hugging Face cache data (authentication files remain)
   -h, --help                  Show this help
 
 Environment:
@@ -115,8 +115,10 @@ done
 [ -x "$REPO_DIR/uninstall.sh" ] || fail "uninstall.sh not found at repo root."
 
 validate_sandbox_name() {
-  if ! [[ "$SANDBOX_NAME" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
-    fail "Invalid sandbox name '$SANDBOX_NAME'. Use lowercase letters, numbers, and hyphens."
+  if [ "${#SANDBOX_NAME}" -gt 19 ] \
+    || [[ "$SANDBOX_NAME" == *--* ]] \
+    || ! [[ "$SANDBOX_NAME" =~ ^[a-z]([a-z0-9-]*[a-z0-9])?$ ]]; then
+    fail "Invalid sandbox name '$SANDBOX_NAME'. Use 1-19 lowercase letters, numbers, and single internal hyphens; start with a letter and end with a letter or number."
   fi
 }
 
@@ -253,10 +255,18 @@ verify_cleanup() {
   fi
 
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    # Mirrors the uninstall selection in src/lib/actions/uninstall/run-plan.ts.
+    # `openclaw` is deliberately absent from both: uninstall does not remove the
+    # separate OpenClaw project's containers, so reporting them here would fail
+    # the smoke run on any host that also runs OpenClaw (#8496).
+    # `tolower($0) ~` rather than `BEGIN { IGNORECASE=1 }`: IGNORECASE is a gawk
+    # extension. macOS ships BWK awk and Ubuntu defaults to mawk, and both accept
+    # the assignment and then match case-sensitively, so the mirror silently
+    # disagreed with the case-insensitive filter it mirrors.
     local related_containers
     related_containers="$(
       docker ps -a --format '{{.Image}} {{.Names}}' 2>/dev/null \
-        | awk 'BEGIN { IGNORECASE=1 } /openshell-cluster|openshell|openclaw|nemoclaw/ { print }'
+        | awk 'tolower($0) ~ /openshell-cluster|openshell|nemoclaw/ { print }'
     )"
     if [ -n "$related_containers" ]; then
       warn "Related Docker containers remain after uninstall:"

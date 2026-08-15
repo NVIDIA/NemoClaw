@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
+import { decisionUnset } from "../state/onboard-checkpoint-decision";
 
 export function normalizeAgentNameForResumeState(agentName: string | null | undefined): string {
   const trimmed = typeof agentName === "string" ? agentName.trim() : "";
@@ -33,8 +34,20 @@ export function clearAgentScopedResumeState(session: Session, selectedAgentName:
   session.webSearchConfig = null;
   session.messagingPlan = null;
   if (session.sandboxPromptProgress) {
+    session.sandboxPromptProgress.sandboxName = false;
     session.sandboxPromptProgress.webSearch = false;
     session.sandboxPromptProgress.messaging = false;
+  }
+  if (session.checkpoint) {
+    session.checkpoint = {
+      ...session.checkpoint,
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+      updatedAt: new Date().toISOString(),
+    };
   }
   session.policyPresets = null;
 

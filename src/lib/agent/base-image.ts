@@ -14,6 +14,14 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
+import { requireCuaFrameworkEnabled } from "../cua/feature";
+import {
+  getCuaSandboxImageRef,
+  loadCuaRuntimeManifest,
+  stageCuaRuntimePayload,
+  verifyCuaRuntimePayload,
+} from "../cua/runtime-manifest";
+import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
@@ -41,6 +49,22 @@ import {
 } from "../sandbox-base-image";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
+
+function corporateCaBuildArgs(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> | undefined {
+  const corporateCa = resolveCorporateCa(env);
+  return corporateCa
+    ? { NEMOCLAW_CORPORATE_CA_B64: encodeCorporateCaArg(corporateCa.pem) }
+    : undefined;
+}
+
+function agentBaseImageBuildArgs(agent: AgentDefinition): Record<string, string> | undefined {
+  if (agent.name === "nemocua") {
+    return { NEMOCUA_RUNTIME_IMAGE: getCuaSandboxImageRef() };
+  }
+  return agent.name === "langchain-deepagents-code" ? corporateCaBuildArgs() : undefined;
+}
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
 // Matches the official Hermes base repository for both Dockerfile manifest-list
@@ -263,6 +287,7 @@ function createAgentBaseImageResolutionOptions(
   return {
     imageName,
     dockerfilePath,
+    buildArgs: agentBaseImageBuildArgs(agent),
     localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
     envVar: getAgentSandboxBaseImageEnvVar(agent.name),
     label: `${agent.displayName} sandbox base image`,
@@ -471,10 +496,17 @@ export function ensureAgentBaseImage(
   agent: AgentDefinition,
   options: EnsureAgentBaseImageOptions = {},
 ): EnsureAgentBaseImageResult {
+  if (agent.name === "nemocua") requireCuaFrameworkEnabled();
   const baseDockerfile = agent.dockerfileBasePath;
 
   if (!baseDockerfile) {
     return { imageTag: null, built: false };
+  }
+
+  if (agent.name === "nemocua") {
+    const runtimeManifest = loadCuaRuntimeManifest();
+    verifyCuaRuntimePayload(runtimeManifest);
+    return { imageTag: getCuaSandboxImageRef(), built: false };
   }
 
   const resolutionOptions = createAgentBaseImageResolutionOptions(agent, baseDockerfile, options);
@@ -501,6 +533,8 @@ export function ensureAgentBaseImage(
     const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     console.log(`  Rebuilding ${agent.displayName} base image...`);
     const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
+      buildArgs: resolutionOptions.buildArgs,
+
       ignoreError: true,
       labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
@@ -610,6 +644,8 @@ export function ensureAgentBaseImage(
     console.log(`  Building ${agent.displayName} base image (first time only)...`);
     const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
+      buildArgs: resolutionOptions.buildArgs,
+
       ignoreError: true,
       labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
@@ -643,6 +679,7 @@ export function createAgentSandbox(
   agent: AgentDefinition,
   options: CreateAgentSandboxOptions = {},
 ): CreateAgentSandboxResult {
+  if (agent.name === "nemocua") requireCuaFrameworkEnabled();
   const agentDockerfile = agent.dockerfilePath;
 
   if (!agentDockerfile) {
@@ -655,19 +692,43 @@ export function createAgentSandbox(
     baseImageOptions,
   );
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
-  const shouldIncludeBuildContextPath = createCustomBuildContextFilter(rootDir);
-  fs.cpSync(rootDir, buildCtx, {
-    recursive: true,
-    filter: (src) => path.basename(src) !== ".claude" && shouldIncludeBuildContextPath(src),
-  });
+  const stagedCuaAgentDir = path.join(buildCtx, "agents", "nemocua");
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(agentDockerfile, stagedDockerfile);
-  if (baseImageRef) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    fs.writeFileSync(
-      stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
-    );
+  try {
+    if (agent.name === "nemocua") {
+      // The external CUA manifest defines the complete Docker input set. Do
+      // not disclose the NemoClaw checkout to the Docker daemon or its cache.
+      stageCuaRuntimePayload(stagedCuaAgentDir);
+      const dockerfile = fs.readFileSync(path.join(stagedCuaAgentDir, "Dockerfile"), "utf8");
+      fs.writeFileSync(
+        stagedDockerfile,
+        baseImageRef
+          ? dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`)
+          : dockerfile,
+        { flag: "wx", mode: 0o600 },
+      );
+    } else {
+      const shouldIncludeBuildContextPath = createCustomBuildContextFilter(rootDir);
+      fs.cpSync(rootDir, buildCtx, {
+        recursive: true,
+        filter: (src) => path.basename(src) !== ".claude" && shouldIncludeBuildContextPath(src),
+      });
+      fs.copyFileSync(agentDockerfile, stagedDockerfile);
+      if (baseImageRef) {
+        const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
+        fs.writeFileSync(
+          stagedDockerfile,
+          dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
+        );
+      }
+    }
+  } catch (error) {
+    try {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    } catch {
+      // Preserve the manifest or staging authority failure.
+    }
+    throw error;
   }
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
 

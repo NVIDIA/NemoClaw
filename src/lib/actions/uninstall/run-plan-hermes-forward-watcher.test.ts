@@ -6,6 +6,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
+
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 
 import { type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
 
@@ -82,11 +93,40 @@ function defaultRun(command: string, args: readonly string[]): RunResult {
   return defaults.get(command) ?? shellProbe;
 }
 
+function writeScopedGatewayState(home: string, port: number): void {
+  const stateDir = path.join(
+    home,
+    ".local",
+    "state",
+    "nemoclaw",
+    resolveGatewayStateDirName(port),
+  );
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  fs.writeFileSync(
+    path.join(stateDir, "openshell-gateway.toml"),
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${String(port)}`,
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
+  );
+  writeManagedGatewayRuntimeProof(stateDir, port);
+}
+
 function createHarness(
   tmpHome: string,
   processes: readonly ProcessFixture[],
   forwardStatuses: ReadonlyMap<string, number | null> = new Map(),
+  gatewayPort = 8080,
 ) {
+  writeScopedGatewayState(tmpHome, gatewayPort);
   const calls: Array<{ args: string[]; command: string }> = [];
   const killed: number[] = [];
   const logs: string[] = [];
@@ -128,11 +168,16 @@ function createHarness(
     calls.push({ args: [...args], command });
     return routes.get(commandKey(command, args))?.() ?? defaultRun(command, args);
   });
-  const deps: UninstallRunDeps = {
+  const deps: UninstallRunDeps = withProvenManagedGatewayProcess({
     commandExists: (command) => !["docker", "pgrep"].includes(command),
-    env: { HOME: tmpHome, LOGNAME: "testuser" },
+    env: {
+      HOME: tmpHome,
+      LOGNAME: "testuser",
+      ...(gatewayPort === 8080 ? {} : { NEMOCLAW_GATEWAY_PORT: String(gatewayPort) }),
+    },
     error: (line) => warnings.push(line),
     existsSync: (target) => fs.existsSync(target),
+    isPortFree: () => true,
     isTty: false,
     kill: (pid) => {
       killed.push(pid);
@@ -150,10 +195,20 @@ function createHarness(
     },
     log: (line) => logs.push(line),
     readProcessArgv: (pid) => processByPid.get(pid)?.argv ?? null,
+    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort: selectedPort }) => ({
+      gatewayName,
+      gatewayPort: selectedPort,
+      mode: "nemoclaw-managed",
+      source: selectedPort === 8080 ? "packaged-service" : "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
     rmSync: vi.fn(),
     run,
     runDocker: () => ok(),
-  };
+  });
   return { calls, deps, killed, logs, warnings };
 }
 
@@ -432,10 +487,15 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
       const gatewayRoot = path.join(tmpHome, ".nemoclaw", "gateways");
       const selected = seedWatcher(path.join(gatewayRoot, "9123"), "63642\n", "selected-box");
       const sibling = seedWatcher(path.join(gatewayRoot, "9124"), "64642\n", "sibling-box");
-      const harness = createHarness(tmpHome, [
-        { argv: managedArgv(selected), pid: 63642, watcher: selected },
-        { argv: managedArgv(sibling), pid: 64642, watcher: sibling },
-      ]);
+      const harness = createHarness(
+        tmpHome,
+        [
+          { argv: managedArgv(selected), pid: 63642, watcher: selected },
+          { argv: managedArgv(sibling), pid: 64642, watcher: sibling },
+        ],
+        new Map(),
+        9123,
+      );
       const outcome = uninstall(tmpHome, harness, runPortUninstall, {
         NEMOCLAW_GATEWAY_PORT: "9123",
       });

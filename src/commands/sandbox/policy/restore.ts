@@ -7,7 +7,7 @@ import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import {
   commonPolicyOptions,
   policyBaselineArgs,
-  policyBaselineRestoreFlags,
+  policyMutationFlags,
 } from "../../../lib/sandbox/policy-command-support";
 
 export default class PolicyRestoreCommand extends NemoClawCommand {
@@ -16,13 +16,14 @@ export default class PolicyRestoreCommand extends NemoClawCommand {
   static summary = "Restore a previously excluded baseline entry";
   static description =
     "Restore an excluded baseline network policy entry against the current release baseline and drop its recorded exclusion.";
-  static usage = ["<name> <key> [--dry-run]"];
+  static usage = ["<name> <key> [--force] [--yes|-y] [--dry-run]"];
   static examples = [
     "<%= config.bin %> sandbox policy restore alpha nous_research",
+    "<%= config.bin %> sandbox policy restore alpha nous_research --yes",
     "<%= config.bin %> sandbox policy restore alpha nous_research --dry-run",
   ];
   static args = policyBaselineArgs;
-  static flags = policyBaselineRestoreFlags;
+  static flags = policyMutationFlags;
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(PolicyRestoreCommand);

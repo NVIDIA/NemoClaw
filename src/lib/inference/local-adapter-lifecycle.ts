@@ -8,7 +8,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { waitUntilAsync } from "../core/wait";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -27,7 +27,20 @@ export type RunFn = (
 
 export type LocalAdapterProcessMatcher = string | RegExp | ((commandLine: string) => boolean);
 
-export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = nemoclawStateRoot(os.homedir(), GATEWAY_PORT);
+export function resolveLocalAdapterStateRoot(
+  homeDir: string = os.homedir(),
+  gatewayPort: number = GATEWAY_PORT,
+): string {
+  return nemoclawStateRoot(homeDir, gatewayPort);
+}
+
+export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = resolveLocalAdapterStateRoot();
+
+export function resolveSharedLocalAdapterStateRoot(homeDir: string = os.homedir()): string {
+  return nemoclawStateRoot(homeDir, DEFAULT_GATEWAY_PORT);
+}
+
+export const SHARED_LOCAL_ADAPTER_STATE_DIR = resolveSharedLocalAdapterStateRoot();
 export const LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES = 64 * 1024;
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {
@@ -170,11 +183,15 @@ export function spawnDetachedNodeAdapter(options: {
   env: Record<string, string>;
   buildEnv: (extraEnv?: Record<string, string>) => NodeJS.ProcessEnv;
 }): ChildProcess {
-  const child = spawn(process.execPath, [options.scriptPath], {
-    detached: true,
-    stdio: "ignore",
-    env: options.buildEnv(options.env),
-  });
+  const child = spawn(
+    process.execPath,
+    ["--experimental-strip-types", "--no-warnings", options.scriptPath],
+    {
+      detached: true,
+      stdio: "ignore",
+      env: options.buildEnv(options.env),
+    },
+  );
   child.unref();
   return child;
 }

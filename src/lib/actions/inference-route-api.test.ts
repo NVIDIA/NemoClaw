@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { hermesApiMode } from "../hermes-managed-route";
 import type { ConfigObject } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import {
-  hermesApiMode,
   normalizeInferenceApi,
   readOpenClawPrimaryRouteApi,
   resolveRuntimeInferenceApi,

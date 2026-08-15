@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { noAuthProxy } from "../../inference/ollama/proxy";
+import { withCredentialOverrides } from "../../credentials/scoped-overrides";
+import { noAuthProxy, withOllamaProxyLifecycleTransaction } from "../../inference/ollama/proxy";
+import { hydrateCredentialEnv } from "../credential-env";
 import { setupRemoteProviderInference } from "./remote";
 import type { RemoteProviderDeps } from "./types";
 
-vi.mock("../../inference/ollama/proxy", () => ({ noAuthProxy: vi.fn() }));
+vi.mock("../../inference/ollama/proxy", () => ({
+  noAuthProxy: vi.fn(),
+  withOllamaProxyLifecycleTransaction: vi.fn(),
+}));
 
 const PROVIDER = "compatible-anthropic-endpoint";
 const MODEL = "custom-model";
@@ -41,6 +46,7 @@ function createHarness() {
     configKeys: ["ANTHROPIC_BASE_URL"],
   }));
   const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
+  const hydrateCredential = vi.fn((_name: string) => "test-secret");
   const exitProcess = vi.fn((code: number): never => {
     throw new Error(`EXIT_CALLED:${code}`);
   });
@@ -76,8 +82,19 @@ function createHarness() {
         modelMode: "input",
         defaultModel: MODEL,
       },
+      "llama-cpp": {
+        label: "Local llama.cpp",
+        providerName: "llama-cpp-local",
+        providerType: "openai",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        helpUrl: null,
+        modelMode: "input",
+        defaultModel: "",
+        skipVerify: true,
+      },
     },
-    hydrateCredentialEnv: vi.fn(() => "test-secret"),
+    hydrateCredentialEnv: hydrateCredential,
     promptValidationRecovery: vi.fn(async () => "selection" as const),
     classifyApplyFailure: vi.fn(() => "unknown"),
     LOCAL_INFERENCE_TIMEOUT_SECS: 60,
@@ -106,9 +123,59 @@ function createHarness() {
   };
 }
 
+beforeEach(() => {
+  vi.mocked(withOllamaProxyLifecycleTransaction).mockImplementation(async (operation) =>
+    operation(),
+  );
+});
+
 afterEach(() => {
   vi.mocked(noAuthProxy).mockReset();
+  vi.mocked(withOllamaProxyLifecycleTransaction).mockReset();
   delete process.env[NO_AUTH_ENV];
+  vi.unstubAllEnvs();
+});
+
+describe("OpenAI-compatible scoped credential registration", () => {
+  it("passes the scoped key only in the authorized provider-registration environment", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", undefined);
+    const harness = createHarness();
+    harness.deps.hydrateCredentialEnv.mockImplementation((name: string) => {
+      const value = hydrateCredentialEnv(name);
+      if (!value) {
+        throw new Error(`Missing scoped credential '${name}'.`);
+      }
+      return value;
+    });
+
+    await withCredentialOverrides({ COMPATIBLE_API_KEY: "runtime-only-secret" }, async () => {
+      await expect(
+        setupRemoteProviderInference(
+          {
+            sandboxName: SANDBOX,
+            model: MODEL,
+            provider: "compatible-endpoint",
+            endpointUrl: "https://inference.example/v1",
+            credentialEnv: "COMPATIBLE_API_KEY",
+            preferredInferenceApi: "openai-completions",
+            pinnedAddresses: ["93.184.216.34"],
+          },
+          harness.deps,
+        ),
+      ).resolves.toEqual({ done: false });
+
+      expect(harness.upsertProvider).toHaveBeenCalledWith(
+        "compatible-endpoint",
+        "openai",
+        "COMPATIBLE_API_KEY",
+        "https://inference.example/v1",
+        { COMPATIBLE_API_KEY: "runtime-only-secret" },
+      );
+      expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+    });
+
+    expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+  });
 });
 
 describe("custom Anthropic provider replacement on the OpenAI surface", () => {
@@ -247,6 +314,7 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     });
 
     expect(noAuthProxy).toHaveBeenCalledWith("http://localhost:8000/v1");
+    expect(withOllamaProxyLifecycleTransaction).toHaveBeenCalledOnce();
     expect(harness.upsertProvider).toHaveBeenCalledWith(
       "compatible-endpoint",
       "openai",
@@ -290,6 +358,30 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
   });
 
+  it("restores committed proxy state when registration throws unexpectedly (#7424)", async () => {
+    const harness = createHarness();
+    const persist = vi.fn();
+    const restore = vi.fn();
+    process.env[NO_AUTH_ENV] = "committed-token";
+    vi.mocked(noAuthProxy).mockReturnValue({
+      baseUrl: "http://host.openshell.internal:11435/v1",
+      credentialValue: "proxy-token",
+      persist,
+      restore,
+    });
+    harness.deps.hydrateCredentialEnv.mockReturnValue("proxy-token");
+    harness.upsertProvider.mockImplementation(() => {
+      throw new Error("unexpected registration failure");
+    });
+
+    await expect(setupRemoteProviderInference(args, harness.deps)).rejects.toThrow(
+      "unexpected registration failure",
+    );
+    expect(persist).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
+  });
+
   it("restores committed proxy state when registration returns to selection (#7424)", async () => {
     const harness = createHarness();
     const persist = vi.fn();
@@ -313,5 +405,46 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     expect(persist).not.toHaveBeenCalled();
     expect(restore).toHaveBeenCalledOnce();
     expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
+  });
+});
+
+describe("llama.cpp existing-server provider registration", () => {
+  it("registers the fixed llama.cpp gateway endpoint with NEMOCLAW_LLAMACPP_LOCAL_TOKEN (#8161)", async () => {
+    const harness = createHarness();
+    harness.deps.hydrateCredentialEnv.mockReturnValue("llama-secret");
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: SANDBOX,
+          model: "team/model-alias",
+          provider: "llama-cpp-local",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+          preferredInferenceApi: "openai-completions",
+        },
+        harness.deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(harness.upsertProvider).toHaveBeenCalledWith(
+      "llama-cpp-local",
+      "openai",
+      "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      "http://host.openshell.internal:8081/v1",
+      { NEMOCLAW_LLAMACPP_LOCAL_TOKEN: "llama-secret" },
+    );
+    expect(harness.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "llama-cpp-local",
+        "--model",
+        "team/model-alias",
+      ],
+      { ignoreError: true },
+    );
   });
 });

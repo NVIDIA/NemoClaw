@@ -4,8 +4,8 @@
 //
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
-const { redact } = require("../runner");
-const { normalizeCredentialValue } = require("../credentials/store");
+const { redact, ROOT } = require("../runner");
+const { normalizeCredentialValue, getCredential } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
@@ -16,6 +16,11 @@ const {
 const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const {
+  LLAMA_CPP_CREDENTIAL_ENV,
+  LLAMA_CPP_HOST_OPENAI_BASE_URL,
+  LLAMA_CPP_PROVIDER_NAME,
+} = require("../inference/llama-cpp/contract");
 const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
@@ -59,6 +64,8 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "gemini",
   "hermesProvider",
   "ollama",
+  "llama-cpp",
+  "install-llama-cpp",
   "custom",
   "nim-local",
   "vllm",
@@ -69,7 +76,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, install-llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -172,10 +179,25 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "",
     skipVerify: true,
   },
+  "llama-cpp": {
+    label: "Local llama.cpp",
+    providerName: LLAMA_CPP_PROVIDER_NAME,
+    providerType: "openai",
+    credentialEnv: LLAMA_CPP_CREDENTIAL_ENV,
+    endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL,
+    helpUrl: null,
+    modelMode: "input",
+    defaultModel: "",
+    skipVerify: true,
+  },
 };
 
 // Providers that run on the host and need the local-inference policy preset.
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
+// Host-endpoint providers that need the declarative local-inference network policy.
+// Keep this separate from LOCAL_INFERENCE_PROVIDERS: llama.cpp is operator-owned,
+// credential-bearing, endpoint-bearing, and must never enter managed lifecycle paths.
+const LOCAL_INFERENCE_POLICY_PROVIDERS = [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"];
 
 // Re-exported alias matching the existing onboard.ts call sites. The canonical
 // definitions live in inference-config.ts so that getProviderSelectionConfig
@@ -204,6 +226,8 @@ function getProviderLabel(provider) {
       return "Local vLLM";
     case "ollama-local":
       return "Local Ollama";
+    case "llama-cpp-local":
+      return "Local llama.cpp";
     default:
       return provider;
   }
@@ -223,6 +247,8 @@ function getEffectiveProviderName(providerKey) {
       return "ollama-local";
     case "vllm":
       return "vllm-local";
+    case "llama-cpp":
+      return "llama-cpp-local";
     case "routed":
       return "nvidia-router";
     default:
@@ -314,9 +340,10 @@ const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialC
 /**
  * Resolve the requested model from the preferred env var or its compatibility fallback.
  */
-function getRequestedModelEnv(env = process.env) {
+function getRequestedModelEnv(env = process.env, options = {}) {
   const model = (env[MODEL_ENV] || "").trim();
   if (model) return { value: model, source: MODEL_ENV };
+  if (options.allowProviderModelFallback === false) return { value: "", source: null };
   const providerModel = (env[PROVIDER_MODEL_ENV] || "").trim();
   if (providerModel) return { value: providerModel, source: PROVIDER_MODEL_ENV };
   return { value: "", source: null };
@@ -329,8 +356,8 @@ function getRequestedModelFromEnv(env = process.env) {
   return getRequestedModelEnv(env).value || null;
 }
 
-function getNonInteractiveModel(providerKey) {
-  const { value: model, source } = getRequestedModelEnv();
+function getNonInteractiveModel(providerKey, options = {}) {
+  const { value: model, source } = getRequestedModelEnv(process.env, options);
   if (!model) return null;
   if (!isSafeModelId(model)) {
     console.error(`  Invalid ${source || MODEL_ENV} for provider '${providerKey}': ${model}`);
@@ -482,6 +509,31 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
+  // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
+  // the uniform create loop, ordered around `provider create`:
+  //
+  //   ensureMessagingBridgeProfiles      <- BEFORE loop: import the profile
+  //      provider profile import            (must exist before `provider create`)
+  //          |
+  //     +----v-------------------------------------------------+
+  //     |  for (tokenDef of tokenDefs)   <- THE LOOP           |
+  //     |     upsertProvider(name, providerType || "generic")  |  bridge created
+  //     |       . slack       -> --type generic                |  with a sentinel
+  //     |       . googlechat  -> --type google-chat-bridge     |  token
+  //     +----+-------------------------------------------------+
+  //          |
+  //   configureMessagingBridgeRefreshes  <- AFTER loop: refresh mints the real
+  //      provider refresh configure         token, overwriting the sentinel
+  //
+  // A channel is a bridge by the PRESENCE of a co-located
+  // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
+  // bracket steps self-gate when no bridge token def is present.
+  const messagingBridgeProvider = require("./messaging-bridge-provider");
+  messagingBridgeProvider.ensureMessagingBridgeProfiles(tokenDefs, {
+    root: ROOT,
+    runOpenshell: _runOpenshell,
+    redact,
+  });
   const upserted = [];
   const failures = [];
   for (const { name, envKey, token, providerType } of tokenDefs) {
@@ -508,6 +560,30 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   if (failures.length > 0) {
     throw new Error(failures.join("; "));
   }
+  // Gateway-side token minting is configured AFTER the providers exist (best-effort,
+  // self-gates without a bridge token def). Secret material stays gateway-side —
+  // never written into the sandbox.
+  const refreshResult = messagingBridgeProvider.configureMessagingBridgeRefreshes(tokenDefs, {
+    runOpenshell: _runOpenshell,
+    redact,
+    getCredential,
+    env: process.env,
+    normalizeCredentialValue,
+  });
+  // Fail-closed: an active bridge channel whose gateway token minting was not
+  // configured can receive webhooks but cannot authenticate outbound replies.
+  // Surface it instead of reporting a fully-configured channel (bestEffort/rollback
+  // paths report residual work by throwing; the normal path exits like a failed
+  // provider upsert above).
+  if (refreshResult && !refreshResult.ok) {
+    if (options.bestEffort) {
+      throw new Error("Failed to configure gateway token minting for a messaging bridge.");
+    }
+    console.error(
+      "\n  ✗ Gateway token minting for a messaging bridge was not configured; aborting.",
+    );
+    process.exit(1);
+  }
   return upserted;
 }
 
@@ -518,6 +594,7 @@ module.exports = {
   GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
+  LOCAL_INFERENCE_POLICY_PROVIDERS,
   OLLAMA_PROXY_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,

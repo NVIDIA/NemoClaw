@@ -14,6 +14,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  dockerRunCommandBetween,
+  runDockerShell,
+  runLoggedDockerShell,
+} from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -31,38 +36,6 @@ const DEEPAGENTS_DOCKERFILE_BASE = path.join(
 function completedDockerStage(dockerfile: string): string {
   const start = dockerfile.lastIndexOf("\nFROM ");
   return start >= 0 ? dockerfile.slice(start) : dockerfile;
-}
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Expected Dockerfile block between ${startMarker} and ${endMarker}`);
-  }
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  if (runIndex === -1 || runIndex > end) {
-    throw new Error(`Expected RUN instruction after ${startMarker}`);
-  }
-  const runLines: string[] = [];
-  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
-    runLines.push(line);
-    if (!line.trimEnd().endsWith("\\")) {
-      break;
-    }
-  }
-  const lastLine = runLines[runLines.length - 1]?.trimEnd() ?? "";
-  if (lastLine.endsWith("\\")) {
-    throw new Error(`Expected complete RUN instruction before ${endMarker}`);
-  }
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
 }
 
 function dockerHealthCommandBetween(
@@ -97,58 +70,6 @@ function dockerHealthCommandBetween(
     throw new Error(`Expected shell-form HEALTHCHECK CMD after ${startMarker}`);
   }
   return command.trim();
-}
-
-function runDockerShell(command: string, sandboxRoot: string) {
-  const logPath = path.join(sandboxRoot, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const rewritten = command.replaceAll("/sandbox", sandboxRoot);
-  const script = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `call_log=${JSON.stringify(logPath)}`,
-    'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
-    rewritten,
-  ].join("\n");
-  const scriptPath = path.join(sandboxRoot, "run-docker-block.sh");
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-  const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
-}
-
-function runLoggedDockerShell(
-  command: string,
-  tmp: string,
-  functionDefs: string[] = [],
-  env: Record<string, string | undefined> = {},
-) {
-  const logPath = path.join(tmp, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const script = [
-    "#!/usr/bin/env bash",
-    "set -euo pipefail",
-    `call_log=${JSON.stringify(logPath)}`,
-    ...functionDefs,
-    command,
-  ].join("\n");
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const childEnv = { ...process.env };
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined) {
-      delete childEnv[key];
-    } else {
-      childEnv[key] = value;
-    }
-  }
-  const result = spawnSync("bash", [scriptPath], {
-    encoding: "utf-8",
-    env: childEnv,
-    timeout: 5000,
-  });
-  const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
-  return { result, calls };
 }
 
 function runOpenclawRepairLayoutCase(legacy: boolean) {
@@ -247,6 +168,8 @@ function runOpenclawUserSetupBlock() {
     'useradd() { printf "useradd %s\\n" "$*" >> "$call_log"; }',
     'usermod() { printf "usermod %s\\n" "$*" >> "$call_log"; }',
     'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+    'id() { case "$1" in -u|-g) printf "998\\n" ;; *) return 1 ;; esac; }',
+    `getent() { printf "%s\\n" ${JSON.stringify(`sandbox:x:998:998::${sandboxRoot}:/bin/bash`)}; }`,
   ]);
   return { ...result, tmp, sandboxRoot };
 }
@@ -385,7 +308,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     const command = dockerHealthCommandBetween(
       dockerfile,
       "# Health check: poll the gateway's /health endpoint",
-      "# Entrypoint runs as root",
+      "ENTRYPOINT",
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-probe-"));
 
@@ -395,10 +318,12 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         tmp,
         ['curl() { printf "%s\\n" "$*" >> "$call_log"; }'],
         {
-          NEMOCLAW_DASHBOARD_PORT: undefined,
-          OPENCLAW_GATEWAY_PORT: undefined,
-          CHAT_UI_URL: undefined,
-          ...env,
+          env: {
+            NEMOCLAW_DASHBOARD_PORT: undefined,
+            OPENCLAW_GATEWAY_PORT: undefined,
+            CHAT_UI_URL: undefined,
+            ...env,
+          },
         },
       );
 
@@ -455,7 +380,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       const rawCommand = dockerHealthCommandBetween(
         dockerfile,
         "# Health check: poll the gateway's /health endpoint",
-        "# Entrypoint runs as root",
+        "ENTRYPOINT",
       );
       const command = rawCommand
         .replaceAll("/tmp/gateway.log", logPath)
@@ -617,7 +542,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         const command = dockerHealthCommandBetween(
           dockerfile,
           "# Health check: poll the gateway's /health endpoint",
-          "# Entrypoint runs as root",
+          "ENTRYPOINT",
         )
           .replaceAll("/tmp/gateway.log", logPath)
           .replaceAll("/tmp/nemoclaw-gateway-local", markerPath)
@@ -822,6 +747,14 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     const fallback = runOpenclawStaleGroupFallback();
     try {
       expect(base.result.status, base.result.stderr).toBe(0);
+      expect(base.calls).toContain("groupadd -r -g 999 gateway");
+      expect(base.calls).toContain(
+        `useradd -r -u 999 -g gateway -d ${base.sandboxRoot} -s /usr/sbin/nologin gateway`,
+      );
+      expect(base.calls).toContain("groupadd -r -g 998 sandbox");
+      expect(base.calls).toContain(
+        `useradd -r -u 998 -g sandbox -d ${base.sandboxRoot} -s /bin/bash sandbox`,
+      );
       expect(base.calls).toContain("usermod -aG sandbox gateway");
       expect(base.calls).toContain("usermod -aG sandbox root");
       expect(fallback.result.status, fallback.result.stderr).toBe(0);
@@ -1112,9 +1045,39 @@ describe("Hermes sandbox provisioning", () => {
       localLib,
       "patch-hermes-langfuse-credentials.mts",
     );
-    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.85.json");
+    const managedPolicyReaderPath = path.join(localLib, "managed_policy.py");
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.101.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
+    const runtimeStateMutationControlPath = path.join(
+      localLib,
+      "runtime-state-mutation-control.py",
+    );
+    const runtimeStateMutationStartupGatePath = path.join(
+      localLib,
+      "runtime-state-mutation-startup-gate.py",
+    );
+    const runtimeStateMutationPublisherPath = path.join(
+      localLib,
+      "runtime_state_mutation_hermes_publisher.py",
+    );
+    const stateLockPlanPath = path.join(
+      tmp,
+      "usr",
+      "local",
+      "share",
+      "nemoclaw",
+      "state-lock-plan.json",
+    );
+    const runtimeStateMutationCapabilityPath = path.join(
+      tmp,
+      "usr",
+      "local",
+      "share",
+      "nemoclaw",
+      "runtime-state-mutation-publisher-v1.json",
+    );
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
+    const hermesCronRestoreControlPath = path.join(localLib, "hermes-cron-restore-control.py");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
@@ -1124,8 +1087,10 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "patch-hermes-session-list-preview.py"),
+      path.join(localLib, "patch-hermes-sqlite-temp-store.py"),
       path.join(localLib, "patch-hermes-discord-recovery-permissions.py"),
       path.join(localLib, "patch-hermes-profile-policy-defaults.py"),
+      managedPolicyReaderPath,
       langfuseCredentialPatcherPath,
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
@@ -1135,7 +1100,13 @@ describe("Hermes sandbox provisioning", () => {
       mcpManifest,
       gatewaySupervisorPath,
       stateDirGuardPath,
+      runtimeStateMutationControlPath,
+      runtimeStateMutationStartupGatePath,
+      runtimeStateMutationPublisherPath,
+      stateLockPlanPath,
+      runtimeStateMutationCapabilityPath,
       managedGatewayControlPath,
+      hermesCronRestoreControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
     ];
     const command = dockerRunCommandBetween(
@@ -1145,11 +1116,18 @@ describe("Hermes sandbox provisioning", () => {
     )
       .replaceAll("/usr/local/bin", localBin)
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
+      .replaceAll("/opt/hermes/.venv/bin/python3", "python3")
+      .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlanPath)
+      .replaceAll(
+        "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json",
+        runtimeStateMutationCapabilityPath,
+      )
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(path.dirname(stateLockPlanPath), { recursive: true });
       fs.mkdirSync(etcDir, { recursive: true });
       fs.writeFileSync(bashrcPath, "# fixture\n", { mode: 0o600 });
       for (const file of files) fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
@@ -1159,15 +1137,26 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${mcpManifest}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${runtimeStateMutationControlPath} ${runtimeStateMutationStartupGatePath} ${runtimeStateMutationPublisherPath} ${stateLockPlanPath} ${runtimeStateMutationCapabilityPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
+      expect((fs.statSync(hermesCronRestoreControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(langfuseCredentialPatcherPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(managedPolicyReaderPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(runtimeStateMutationControlPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(runtimeStateMutationStartupGatePath).mode & 0o777).toString(8)).toBe(
+        "555",
+      );
+      expect((fs.statSync(runtimeStateMutationPublisherPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(stateLockPlanPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(runtimeStateMutationCapabilityPath).mode & 0o777).toString(8)).toBe(
+        "444",
+      );
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1229,6 +1218,10 @@ describe("Hermes sandbox provisioning", () => {
       'useradd() { printf "useradd %s\\n" "$*" >> "$call_log"; }',
       'usermod() { printf "usermod %s\\n" "$*" >> "$call_log"; }',
       'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+      'id() { case "$1" in -u) printf "998\\n" ;; -g) printf "999\\n" ;; *) return 1 ;; esac; }',
+      `getent() { printf "%s\\n" ${JSON.stringify(
+        `sandbox:x:998:999::${sandboxRoot}:/bin/bash`,
+      )}; }`,
     ]);
     return { ...result, tmp, sandboxRoot };
   }
@@ -1364,14 +1357,39 @@ describe("Hermes sandbox provisioning", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {
       expect(result.status).toBe(0);
-      expect(calls).toContain("groupadd -r sandbox");
-      expect(calls).toContain("groupadd -r gateway");
+      expect(calls).toContain("groupadd -r -g 999 sandbox");
+      expect(calls).toContain("groupadd -r -g 998 gateway");
+      expect(calls).toContain(
+        `useradd -r -u 999 -g gateway -G sandbox -d ${sandboxRoot} -s /usr/sbin/nologin gateway`,
+      );
+      expect(calls).toContain(
+        `useradd -r -u 998 -g sandbox -d ${sandboxRoot} -s /bin/bash sandbox`,
+      );
       expect(calls).toContain("usermod -a -G sandbox root");
       expect(calls).toContain(`chown -R sandbox:sandbox ${sandboxRoot}`);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+  it("creates the Hermes lazy dependency target with sandbox ownership (#8613)", () => {
+    const layout = runHermesLayoutBlock(
+      HERMES_DOCKERFILE_BASE,
+      "# Create .hermes with mutable integration dirs",
+      "# Pre-create shell init files",
+    );
+    try {
+      expect(layout.result.status, layout.result.stderr).toBe(0);
+      const lazyPackages = path.join(layout.sandboxRoot, ".hermes", "lazy-packages");
+      const metadata = fs.statSync(lazyPackages);
+      expect(metadata.mode & 0o777).toBe(0o750);
+      expect(layout.calls).toContain(
+        `chown -R sandbox:sandbox ${path.join(layout.sandboxRoot, ".hermes")}`,
+      );
+    } finally {
+      fs.rmSync(layout.tmp, { recursive: true, force: true });
+    }
+  });
+
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(

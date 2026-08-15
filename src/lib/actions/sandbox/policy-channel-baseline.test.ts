@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as store from "../../credentials/store";
 import * as policies from "../../policy";
+import { digestBaselineEntry } from "../../policy/baseline-exclusion";
 import type { PolicyObject } from "../../policy/preset-parsing";
 import * as registry from "../../state/registry";
 
@@ -59,8 +60,19 @@ async function captureExit(action: () => Promise<void>): Promise<number | undefi
   throw new Error("Expected process.exit to be called");
 }
 
+let stdinIsTty: PropertyDescriptor | undefined;
+
+function arrangeTerminal(present: boolean): void {
+  Object.defineProperty(process.stdin, "isTTY", {
+    configurable: true,
+    value: present ? true : undefined,
+  });
+}
+
 beforeEach(() => {
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  arrangeTerminal(true);
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -88,6 +100,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  stdinIsTty
+    ? Object.defineProperty(process.stdin, "isTTY", stdinIsTty)
+    : Reflect.deleteProperty(process.stdin, "isTTY");
 });
 
 describe("excludeSandboxBaseline (#7178)", () => {
@@ -124,6 +139,16 @@ describe("excludeSandboxBaseline (#7178)", () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     const code = await captureExit(() => excludeSandboxBaseline("alpha", { key: "nous_research" }));
     expect(code).toBe(1);
+    expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit acknowledgement when standard input has no terminal (#8877)", async () => {
+    arrangeTerminal(false);
+
+    const code = await captureExit(() => excludeSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
+    expect(promptMock).not.toHaveBeenCalled();
     expect(excludeBaselineEntryMock).not.toHaveBeenCalled();
   });
 
@@ -191,10 +216,119 @@ describe("restoreSandboxBaseline (#7178)", () => {
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 
-  it("restores a recorded exclusion", async () => {
+  it("restores a recorded exclusion after interactive acknowledgement", async () => {
     getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
-    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research");
+    expect(promptMock).toHaveBeenCalledOnce();
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
+      expectedTargetDigest: digestBaselineEntry(NOUS_ENTRY),
+    });
+  });
+
+  it("requires explicit acknowledgement in non-interactive mode (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
+    expect(code).toBe(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Non-interactive restore requires explicit acknowledgement"),
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Usage: nemoclaw <sandbox> policy restore <key>"),
+    );
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit restore acknowledgement when standard input has no terminal (#8877)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    arrangeTerminal(false);
+
+    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not restore when standard input closes before acknowledgement (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    promptMock.mockRejectedValue(
+      Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
+    );
+
+    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("No input available on stdin"),
+    );
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("restores without prompting when acknowledged via --yes (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+    await restoreSandboxBaseline("alpha", { key: "nous_research", yes: true });
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
+      expectedTargetDigest: digestBaselineEntry(NOUS_ENTRY),
+    });
+  });
+
+  it("restores without prompting when acknowledged via --force (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    await restoreSandboxBaseline("alpha", { key: "nous_research", force: true });
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
+      expectedTargetDigest: digestBaselineEntry(NOUS_ENTRY),
+    });
+  });
+
+  it("binds stale exclusion cleanup to an absent preview", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "legacy_entry", digest: "digest-1" }]);
+    vi.mocked(policies.getSandboxBaselineEntry).mockReturnValue(null);
+
+    await restoreSandboxBaseline("alpha", { key: "legacy_entry", force: true });
+
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "legacy_entry", {
+      expectedTargetDigest: null,
+    });
+  });
+
+  it("discloses the restored egress before interactive acknowledgement (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    promptMock.mockImplementation(async () => {
+      expect(console.log).toHaveBeenCalledWith(expect.stringContaining("re-allows:"));
+      return "n";
+    });
+
+    await restoreSandboxBaseline("alpha", { key: "nous_research" });
+
+    expect(promptMock).toHaveBeenCalledOnce();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts when the interactive confirmation is declined (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    promptMock.mockResolvedValue("n");
+    await restoreSandboxBaseline("alpha", { key: "nous_research" });
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("reports the cancellation when the interactive confirmation is declined", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    promptMock.mockResolvedValue("n");
+    await restoreSandboxBaseline("alpha", { key: "nous_research" });
+    expect(console.log).toHaveBeenCalledWith("  Cancelled.");
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate on --dry-run", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    await restoreSandboxBaseline("alpha", { key: "nous_research", dryRun: true });
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 
   it("does not mutate when a recorded agent baseline cannot be resolved (#7194)", async () => {

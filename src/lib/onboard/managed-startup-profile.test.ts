@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { HERMES_API_PORT_RANGE_END, HERMES_API_PORT_RANGE_START } from "../core/ports";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -247,6 +248,7 @@ const STOCK_DOCKER_ARGS = {
   "langchain-deepagents-code": dockerArgs(
     path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile"),
   ),
+  pi: dockerArgs(path.join(process.cwd(), "agents/pi/Dockerfile")),
 } satisfies Record<ManagedStartupAgent, Set<string>>;
 
 const RUNTIME_INPUT_SOURCE_FILES = [
@@ -288,7 +290,9 @@ const STOCK_RUNTIME_INPUT_AGENTS = {
   NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: ["hermes"],
   NEMOCLAW_HERMES_DASHBOARD_PORT: ["hermes"],
   NEMOCLAW_HERMES_DASHBOARD_TUI: ["hermes"],
+  NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: ["openclaw"],
   NEMOCLAW_MINIMAL_BOOTSTRAP: ["openclaw"],
+  NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: ["openclaw"],
   NEMOCLAW_OBSERVABILITY: ["langchain-deepagents-code"],
   NEMOCLAW_PROXY_HOST: MANAGED_STARTUP_AGENTS,
   NEMOCLAW_PROXY_PORT: MANAGED_STARTUP_AGENTS,
@@ -535,14 +539,12 @@ describe("managed startup profile", () => {
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("keeps deferred %s runtime inputs separate from typed profile intent", (agent) => {
+    const deferredInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent];
     const profileInputs = new Set(
       MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
     );
-    expect(
-      MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].filter(({ input }) =>
-        profileInputs.has(input),
-      ),
-    ).toEqual([]);
+    expect(deferredInputs.filter(({ input }) => profileInputs.has(input))).toEqual([]);
+    expect(new Set(deferredInputs.map(({ input }) => input)).size).toBe(deferredInputs.length);
   });
 
   it.each(MANAGED_STARTUP_AGENTS)("keeps the %s affordance inventory unambiguous", (agent) => {
@@ -960,8 +962,10 @@ describe("managed startup profile", () => {
 
   it.each([
     ["publicPort", 8642],
+    ["publicPort", 8652],
     ["publicPort", 18_642],
     ["internalPort", 8642],
+    ["internalPort", 8652],
     ["internalPort", 18_642],
   ] as const)("rejects Hermes dashboard %s collisions with reserved API port %i", (field, port) => {
     expect(() =>
@@ -969,7 +973,31 @@ describe("managed startup profile", () => {
         ...HERMES_PROFILE,
         dashboard: { ...HERMES_PROFILE.dashboard, [field]: port },
       }),
-    ).toThrow(/reserved API ports 8642 or 18642/);
+    ).toThrow(/reserved API ports 8642-8652 or 18642/);
+  });
+
+  it("reserves exactly the Hermes API port range the port module declares", () => {
+    for (let port = HERMES_API_PORT_RANGE_START; port <= HERMES_API_PORT_RANGE_END; port += 1) {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...HERMES_PROFILE,
+          dashboard: { ...HERMES_PROFILE.dashboard, publicPort: port },
+        }),
+      ).toThrow(/reserved API ports/);
+    }
+
+    for (const port of [HERMES_API_PORT_RANGE_START - 1, HERMES_API_PORT_RANGE_END + 1]) {
+      expect(() =>
+        validateManagedStartupProfile({
+          ...HERMES_PROFILE,
+          dashboard: {
+            ...HERMES_PROFILE.dashboard,
+            url: `http://127.0.0.1:${port}`,
+            publicPort: port,
+          },
+        }),
+      ).not.toThrow();
+    }
   });
 
   it.each([

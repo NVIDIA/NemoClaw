@@ -40,7 +40,6 @@ exec node -e 'const { cleanupGatewayAfterLastSandbox } = require(process.argv[1]
 `;
 const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-gpu-startup";
 const FAKE_API_KEY = "e2e-hermes-gpu-startup-key";
 const FAKE_MODEL = "test-model";
 const EXTRA_PLACEHOLDER_TOKEN_A = "e2e-hermes-gpu-extra-telegram-token";
@@ -50,6 +49,13 @@ const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuSta
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
   process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1",
 );
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ??
+  (GPU_STARTUP_SCENARIO === "fallback"
+    ? "e2e-hgpu-fallback"
+    : GPU_STARTUP_SCENARIO === "compatibility-only"
+      ? "e2e-hgpu-compat"
+      : "e2e-hgpu-native");
 const GPU_ROUTE_CONTROL =
   GPU_ROUTE === "compatibility-only"
     ? "1"

@@ -4,14 +4,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
-import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import { resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
+  getInitialGatewayReuseStateForOwner,
   type InitialOnboardFlowContext,
   runInitialOnboardFlowSlice,
 } from "./initial-flow-phases";
-import { advanceTo, type OnboardStateResult } from "./result";
+import type { OnboardPrerequisiteRepairEventRecorder } from "./prerequisite-repair";
+import { advanceTo } from "./result";
 import type { OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
@@ -43,6 +44,7 @@ function context(overrides: Partial<Context> = {}): Context {
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+
     compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
@@ -70,7 +72,22 @@ function config(gpu: Gpu): SandboxGpuConfig {
 function runtime(session: Session = createSession()): OnboardMachineRunnerRuntime {
   return {
     session: async () => session,
-    applyResult: async () => session,
+    applyResult: async (result) => {
+      if (result.type === "transition") {
+        session.machine = {
+          ...session.machine,
+          state: result.next,
+          revision: session.machine.revision + 1,
+        };
+      }
+      return session;
+    },
+  };
+}
+
+function repairRecorder(events: string[] = []): OnboardPrerequisiteRepairEventRecorder {
+  return async (type, options) => {
+    events.push(`${type}:${options.state ?? "unknown"}`);
   };
 }
 
@@ -84,9 +101,35 @@ function completeStep(): Session["steps"][string] {
 }
 
 describe("initial onboard flow phases", () => {
+  it("does not run managed gateway selection for an external owner (#7411)", () => {
+    const owner = resolveGatewayOwner({
+      gatewayName: "nemoclaw",
+      gatewayPort: 31818,
+      declaration: {
+        version: 1,
+        mode: "externally-supervised",
+        endpoint: "http://127.0.0.1:31818",
+        stateDir: "/var/lib/openshell/gateway",
+        supervisor: {
+          kind: "systemd-system",
+          serviceName: "openshell-gateway.service",
+          execPath: "/usr/local/bin/openshell-gateway",
+        },
+        requiredCapabilities: [],
+      },
+      hasPackagedService: false,
+    });
+    const getManagedReuseState = vi.fn(() => "healthy" as const);
+
+    expect(getInitialGatewayReuseStateForOwner(owner, getManagedReuseState)).toBe("missing");
+    expect(getManagedReuseState).not.toHaveBeenCalled();
+  });
+
   it("carries preflight GPU output into the gateway phase", async () => {
     const notes: string[] = [];
     const gpu: Gpu = { type: "nvidia", platform: "linux" };
+    let preflightFailure: Error | null = null;
+    const commitSelectedAgentTransition = vi.fn(async () => createSession());
     const phases = createInitialOnboardFlowPhases({
       explicitSandboxGpuFlag: null,
       sandboxGpuDevice: null,
@@ -95,15 +138,16 @@ describe("initial onboard flow phases", () => {
       env: {},
       platform: "darwin",
       recordedGpuPassthroughBeforePreflight: false,
+      commitSelectedAgentTransition,
       ensureResumePreflightDashboardPortAvailable: vi.fn(),
       preflightDeps: {
         getSandbox: () => null,
         getResumeSandboxGpuOverrides: () => ({ flag: null, device: null }),
+        detectGpuForReadiness: () => gpu,
         detectGpu: () => gpu,
-        runPreflight: async () => gpu,
+        runPreflight: async () => (preflightFailure ? Promise.reject(preflightFailure) : gpu),
         assessHost: () => ({}),
-        assertCdiNvidiaGpuSpecPresent: vi.fn(),
-        rejectUnsupportedContainerRuntime: vi.fn(),
+        assertOnboardHostReadiness: vi.fn(),
         assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
         resolveSandboxGpuConfig: config,
         validateSandboxGpuPreflight: vi.fn(),
@@ -117,6 +161,7 @@ describe("initial onboard flow phases", () => {
         },
       },
       getInitialGatewayReuseState: () => "healthy",
+      assertGatewayReadiness: vi.fn(async () => undefined),
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
@@ -193,18 +238,30 @@ describe("initial onboard flow phases", () => {
     expect(notes).toContain(
       "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.",
     );
+    expect(commitSelectedAgentTransition).toHaveBeenCalledOnce();
+
+    commitSelectedAgentTransition.mockClear();
+    preflightFailure = new Error("readiness blocked");
+    await expect(phases[0].run(context())).rejects.toThrow("readiness blocked");
+    expect(commitSelectedAgentTransition).not.toHaveBeenCalled();
   });
 
-  it("records each phase result when a resume snapshot is already at gateway", async () => {
-    const recorded: string[] = [];
+  it("repairs preflight before strict gateway entry", async () => {
+    const events: string[] = [];
     const phases: readonly OnboardSequencePhase<Context>[] = [
       {
         state: "preflight",
-        run: (ctx) => ({ context: ctx, result: advanceTo("gateway") }),
+        run: (ctx) => ({
+          context: ctx,
+          result: advanceTo("gateway", { metadata: { state: "preflight" } }),
+        }),
       },
       {
         state: "gateway",
-        run: (ctx) => ({ context: ctx, result: advanceTo("provider_selection") }),
+        run: (ctx) => ({
+          context: ctx,
+          result: advanceTo("provider_selection", { metadata: { state: "gateway" } }),
+        }),
       },
     ];
 
@@ -222,16 +279,13 @@ describe("initial onboard flow phases", () => {
       ),
       phases,
       resume: true,
-      recordStateResult: async (result) => {
-        if (result.type === "transition") recorded.push(result.next);
-      },
-      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
+      recordRepairEvent: repairRecorder(events),
     });
 
-    expect(recorded).toEqual(["gateway", "provider_selection"]);
+    expect(events).toEqual(["state.repair.started:preflight", "state.repair.completed:preflight"]);
   });
 
-  it("returns the runtime session after ahead-state compatibility recording", async () => {
+  it("returns the runtime session after strict gateway entry", async () => {
     const phaseSession = createSession({
       machine: {
         version: 1,
@@ -253,14 +307,14 @@ describe("initial onboard flow phases", () => {
         state: "preflight",
         run: (ctx) => ({
           context: { ...ctx, session: phaseSession },
-          result: advanceTo("gateway"),
+          result: advanceTo("gateway", { metadata: { state: "preflight" } }),
         }),
       },
       {
         state: "gateway",
         run: (ctx) => ({
           context: { ...ctx, session: phaseSession },
-          result: advanceTo("provider_selection"),
+          result: advanceTo("provider_selection", { metadata: { state: "gateway" } }),
         }),
       },
     ];
@@ -269,25 +323,20 @@ describe("initial onboard flow phases", () => {
       context: context({ resume: true, session: phaseSession }),
       runtime: {
         session: async () => runtimeSession,
-        applyResult: async () => {
-          throw new Error("resume compatibility path should not use strict applyResult");
+        applyResult: async (stateResult) => {
+          if (stateResult.type === "transition") {
+            runtimeSession.machine = {
+              ...runtimeSession.machine,
+              state: stateResult.next,
+              revision: runtimeSession.machine.revision + 1,
+            };
+          }
+          return runtimeSession;
         },
       },
       phases,
       resume: true,
-      recordStateResult: async (stateResult) => {
-        if (stateResult.type === "transition") {
-          runtimeSession = createSession({
-            machine: {
-              version: 1,
-              state: stateResult.next,
-              stateEnteredAt: "2026-06-09T00:01:00.000Z",
-              revision: 1,
-            },
-          });
-        }
-      },
-      recordInvalidatedStateResult: recordInvalidatedTargets([]),
+      recordRepairEvent: repairRecorder(),
     });
 
     expect(result.context.session).toBe(phaseSession);
@@ -322,6 +371,10 @@ describe("initial onboard flow phases", () => {
       env: {},
       platform: "darwin",
       recordedGpuPassthroughBeforePreflight: true,
+      commitSelectedAgentTransition: async () => {
+        calls.push("commit-agent-transition");
+        return session;
+      },
       ensureResumePreflightDashboardPortAvailable,
       preflightDeps: {
         getSandbox: vi.fn(() => {
@@ -331,6 +384,10 @@ describe("initial onboard flow phases", () => {
         getResumeSandboxGpuOverrides: vi.fn(() => {
           calls.push("resume-gpu-overrides");
           return { flag: "enable" as const, device: null };
+        }),
+        detectGpuForReadiness: vi.fn(() => {
+          calls.push("detect-gpu-readiness");
+          return gpu;
         }),
         detectGpu: vi.fn(() => {
           calls.push("detect-gpu");
@@ -343,11 +400,8 @@ describe("initial onboard flow phases", () => {
           calls.push("assess-host");
           return { docker: true };
         }),
-        assertCdiNvidiaGpuSpecPresent: vi.fn(() => {
-          calls.push("assert-cdi");
-        }),
-        rejectUnsupportedContainerRuntime: vi.fn(() => {
-          calls.push("reject-unsupported-runtime");
+        assertOnboardHostReadiness: vi.fn(() => {
+          calls.push("assert-host-readiness");
         }),
         assertDockerBridgeAndContainerDnsHealthy: vi.fn(() => {
           calls.push("assert-bridge-dns");
@@ -376,6 +430,9 @@ describe("initial onboard flow phases", () => {
         calls.push("initial-gateway-reuse-state");
         return "healthy";
       },
+      assertGatewayReadiness: vi.fn(async () => {
+        calls.push("assert-gateway-readiness");
+      }),
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
@@ -448,7 +505,7 @@ describe("initial onboard flow phases", () => {
       },
       note: vi.fn(),
     });
-    const recorded: string[] = [];
+    const repairEvents: string[] = [];
 
     const result = await runInitialOnboardFlowSlice({
       context: context({
@@ -460,10 +517,7 @@ describe("initial onboard flow phases", () => {
       runtime: runtime(session),
       phases,
       resume: true,
-      recordStateResult: async (stateResult) => {
-        if (stateResult.type === "transition") recorded.push(stateResult.next);
-      },
-      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
+      recordRepairEvent: repairRecorder(repairEvents),
     });
 
     expect(result.session.machine.state).toBe("provider_selection");
@@ -473,15 +527,22 @@ describe("initial onboard flow phases", () => {
       "resume-gpu-overrides",
       "skip-preflight",
       "record-preflight-skipped",
-      "detect-gpu",
-      "resolve-gpu-config",
-      "validate-gpu-preflight",
       "assess-host",
-      "reject-unsupported-runtime",
-      "assert-cdi",
+      "detect-gpu-readiness",
+      "resolve-gpu-config",
+      "assert-gateway-readiness",
+      "assert-host-readiness",
+      "detect-gpu",
+      "assess-host",
+      "resolve-gpu-config",
+      "assert-gateway-readiness",
+      "assert-host-readiness",
+      "validate-gpu-preflight",
       "assert-bridge-dns",
       "resolve-gpu-config",
       "ensure-resume-preflight-port",
+      "commit-agent-transition",
+      "assert-gateway-readiness",
       "initial-gateway-reuse-state",
       "refresh-gateway-reuse",
       "gateway-lifecycle-support",
@@ -490,13 +551,13 @@ describe("initial onboard flow phases", () => {
       "record-gateway-skipped",
       "record-gateway-complete",
     ]);
-    expect(recorded).toEqual(["gateway", "provider_selection"]);
-    // Ahead-state resume invalidates the preflight/gateway transitions but the
-    // recomputed context (sandboxGpuConfig, gpu, gpuPassthrough) must still
-    // survive so runOnboard's assertion at src/lib/onboard.ts:4397
-    // ("Preflight did not produce a sandbox GPU configuration") stays
-    // satisfied on resume, and downstream sandbox setup can consume the
-    // freshly detected GPU rather than a stale saved value (#6227).
+    expect(repairEvents).toEqual([
+      "state.repair.started:preflight",
+      "state.repair.completed:preflight",
+      "state.repair.started:gateway",
+      "state.repair.completed:gateway",
+    ]);
+    // Repair context must carry the current GPU observation into sandbox setup.
     expect(result.context.sandboxGpuConfig).toEqual(config(gpu));
     expect(result.context.gpu).toEqual(gpu);
     expect(result.context.gpuPassthrough).toBe(true);
@@ -510,16 +571,22 @@ describe("initial onboard flow phases", () => {
     "policies",
     "finalizing",
     "post_verify",
-  ] as const)("lets resume sessions at %s pass through initial compatibility", async (state) => {
-    const recorded: string[] = [];
+  ] as const)("repairs initial prerequisites for resumed %s entry", async (state) => {
+    const repairEvents: string[] = [];
     const phases: readonly OnboardSequencePhase<Context>[] = [
       {
         state: "preflight",
-        run: (ctx) => ({ context: ctx, result: advanceTo("gateway") }),
+        run: (ctx) => ({
+          context: ctx,
+          result: advanceTo("gateway", { metadata: { state: "preflight" } }),
+        }),
       },
       {
         state: "gateway",
-        run: (ctx) => ({ context: ctx, result: advanceTo("provider_selection") }),
+        run: (ctx) => ({
+          context: ctx,
+          result: advanceTo("provider_selection", { metadata: { state: "gateway" } }),
+        }),
       },
     ];
 
@@ -537,22 +604,27 @@ describe("initial onboard flow phases", () => {
       ),
       phases,
       resume: true,
-      recordStateResult: async (stateResult) => {
-        recorded.push((stateResult as ReturnType<typeof advanceTo>).next);
-      },
-      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
+      recordRepairEvent: repairRecorder(repairEvents),
     });
 
-    expect(recorded).toEqual(["gateway", "provider_selection"]);
+    expect(repairEvents).toEqual([
+      "state.repair.started:preflight",
+      "state.repair.completed:preflight",
+      "state.repair.started:gateway",
+      "state.repair.completed:gateway",
+    ]);
   });
 
   it.each([
     "complete",
     "failed",
-  ] as const)("rejects terminal %s sessions before initial compatibility side effects", async (state) => {
+  ] as const)("rejects terminal %s sessions before initial repair effects", async (state) => {
     const phase: OnboardSequencePhase<Context> = {
       state: "preflight",
-      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("gateway") })),
+      run: vi.fn((ctx) => ({
+        context: ctx,
+        result: advanceTo("gateway", { metadata: { state: "preflight" } }),
+      })),
     };
 
     await expect(
@@ -570,10 +642,9 @@ describe("initial onboard flow phases", () => {
         ),
         phases: [phase],
         resume: true,
-        recordStateResult: async () => undefined,
-        recordInvalidatedStateResult: recordInvalidatedTargets([]),
+        recordRepairEvent: repairRecorder(),
       }),
-    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
   });
 
@@ -625,11 +696,8 @@ describe("initial onboard flow phases", () => {
       },
       phases,
       resume,
-      recordStateResult: async () => {
-        throw new Error("compatibility recorder should not run");
-      },
-      recordInvalidatedStateResult: async () => {
-        throw new Error("invalidation recorder should not run on the strict runner path");
+      recordRepairEvent: async () => {
+        throw new Error("repair recorder should not run on the exact-entry path");
       },
     });
 
@@ -680,11 +748,8 @@ describe("initial onboard flow phases", () => {
       },
       phases,
       resume,
-      recordStateResult: async () => {
-        throw new Error("compatibility recorder should not run");
-      },
-      recordInvalidatedStateResult: async () => {
-        throw new Error("invalidation recorder should not run on the strict runner path");
+      recordRepairEvent: async () => {
+        throw new Error("repair recorder should not run on the exact-entry path");
       },
     });
 

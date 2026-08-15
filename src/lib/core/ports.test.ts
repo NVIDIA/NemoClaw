@@ -7,6 +7,7 @@ import {
   parseGatewayPort,
   parsePort,
   validateHttpsPinRuntimeAdapterPort,
+  validateLlamaCppPortReservation,
   validateOpenRouterRuntimeAdapterPort,
 } from "./ports";
 
@@ -157,6 +158,26 @@ describe("parseGatewayPort", () => {
         httpsPinRuntimeAdapterPort: 19004,
       }),
     ).toThrow("NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT");
+  });
+});
+
+describe("validateLlamaCppPortReservation", () => {
+  it.each([
+    "gatewayPort",
+    "dashboardPort",
+    "vllmPort",
+    "ollamaPort",
+    "ollamaProxyPort",
+    "bedrockRuntimeAdapterPort",
+    "openrouterRuntimeAdapterPort",
+    "httpsPinRuntimeAdapterPort",
+  ] as const)("rejects configured %s collision with fixed port 8081 (#8161)", (field) => {
+    expect(() =>
+      validateLlamaCppPortReservation({
+        ...GATEWAY_VALIDATION_OPTIONS,
+        [field]: 8081,
+      }),
+    ).toThrow(/fixed llama\.cpp inference port \(8081\)/);
   });
 });
 

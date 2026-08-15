@@ -9,9 +9,44 @@ import { describe, expect, it } from "vitest";
 
 import {
   auditOpenShellPolicyMutationReads,
+  classifyPolicyReadCalls,
   countPolicyReadCalls,
   discoverPolicyReadSites,
 } from "../scripts/checks/openshell-policy-mutation-read.mts";
+
+function createShieldsAuditFixture(source: string): string {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-read-audit-"));
+  const sourcePath = path.join(repoRoot, "src", "lib", "shields", "index.ts");
+  fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+  fs.writeFileSync(sourcePath, source);
+  return repoRoot;
+}
+
+function shieldsAuditSource(
+  downRead = "runCapture(buildPolicyGetCommand(sandboxName));",
+  extraRead = "",
+  aliasDeclaration = "",
+  ignoreErrors = true,
+): string {
+  const downFunction = ignoreErrors
+    ? [
+        "function shieldsDownWithoutHostLock(sandboxName: string) {",
+        "  try {",
+        `    ${downRead}`,
+        "  } catch {",
+        "    return;",
+        "  }",
+        "}",
+      ]
+    : ["function shieldsDownWithoutHostLock(sandboxName: string) {", `  ${downRead}`, "}"];
+  return [
+    'const { buildPolicyGetCommand, buildPolicyGetFullCommand } = require("../policy");',
+    'const { runCapture } = require("../runner");',
+    aliasDeclaration,
+    ...downFunction,
+    extraRead,
+  ].join("\n");
+}
 
 describe("OpenShell policy mutation read discovery (#6921)", () => {
   it("counts canonical builder bindings and direct argv reads", () => {
@@ -34,6 +69,151 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     ].join("\n");
 
     expect(countPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toBe(7);
+  });
+
+  it("classifies each read by function, policy view, and failure handling", () => {
+    const source = [
+      'import { buildPolicyGetCommand as buildBase, buildPolicyGetFullCommand as buildFull } from "./policy/commands";',
+      "let readPolicy = buildBase;",
+      "function preserve(sandboxName: string) {",
+      "  return runCapture(readPolicy(sandboxName));",
+      "}",
+      "const ignore = (sandboxName: string) =>",
+      "  runCapture(buildFull(sandboxName), { ignoreError: true });",
+      "function unknown(sandboxName: string) {",
+      "  return execute(buildBase(sandboxName));",
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "preserve", view: "base", failureHandling: "error-preserving" },
+      { site: "ignore", view: "full", failureHandling: "ignore-error" },
+      { site: "unknown", view: "base", failureHandling: "unclassified" },
+    ]);
+  });
+
+  it("discovers a full builder destructured from a canonical namespace import", () => {
+    const source = [
+      'import * as policy from "./policy/commands";',
+      "function inspectPolicy(sandboxName: string) {",
+      "  const { buildPolicyGetFullCommand: readPolicy } = policy;",
+      "  return runCapture(readPolicy(sandboxName));",
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "inspectPolicy", view: "full", failureHandling: "error-preserving" },
+    ]);
+  });
+
+  it("discovers a literal computed builder destructured from a policy namespace", () => {
+    const source = [
+      'import * as policy from "./policy/commands";',
+      "function inspectPolicy(sandboxName: string) {",
+      '  const { ["buildPolicyGetFullCommand"]: readPolicy } = policy;',
+      "  return runCapture(readPolicy(sandboxName));",
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "inspectPolicy", view: "full", failureHandling: "error-preserving" },
+    ]);
+  });
+
+  it("follows an object-rest policy namespace alias", () => {
+    const source = [
+      'import * as policy from "./policy/commands";',
+      "function inspectPolicy(sandboxName: string) {",
+      "  return runCapture(policyAlias.buildPolicyGetFullCommand(sandboxName));",
+      "}",
+      "const { ...firstPolicyAlias } = policy;",
+      "const policyAlias = firstPolicyAlias;",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "inspectPolicy", view: "full", failureHandling: "error-preserving" },
+    ]);
+  });
+
+  it("follows chained namespace aliases before destructuring a builder", () => {
+    const source = [
+      'import * as policy from "./policy/commands";',
+      "function inspectPolicy(sandboxName: string) {",
+      "  const { buildPolicyGetCommand: readPolicy } = policyAlias;",
+      "  return runCapture(readPolicy(sandboxName));",
+      "}",
+      "const firstPolicyAlias = policy;",
+      "const policyAlias = firstPolicyAlias;",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "inspectPolicy", view: "base", failureHandling: "error-preserving" },
+    ]);
+  });
+
+  it("classifies empty and fallback catches as ignored runner failures", () => {
+    const source = [
+      'import { buildPolicyGetCommand } from "./policy/commands";',
+      "function inspectPolicy(sandboxName: string) {",
+      "  try {",
+      "    return runCapture(buildPolicyGetCommand(sandboxName));",
+      "  } catch {}",
+      "}",
+      "function inspectFallbackPolicy(sandboxName: string) {",
+      '  let rawPolicy = "";',
+      "  try {",
+      "    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));",
+      "  } catch {",
+      '    rawPolicy = "";',
+      "  }",
+      "  return rawPolicy;",
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "inspectPolicy", view: "base", failureHandling: "ignore-error" },
+      {
+        site: "inspectFallbackPolicy",
+        view: "base",
+        failureHandling: "ignore-error",
+      },
+    ]);
+  });
+
+  it("leaves conditional catch exits unclassified", () => {
+    const source = [
+      'import { buildPolicyGetCommand } from "./policy/commands";',
+      "function inspectPolicy(sandboxName: string) {",
+      "  try {",
+      "    return runCapture(buildPolicyGetCommand(sandboxName));",
+      "  } catch (error) {",
+      "    switch (String(error)) {",
+      '      case "retry":',
+      "        throw error;",
+      "    }",
+      "  }",
+      "}",
+      "function inspectPolicyWithEarlyExit(sandboxName: string) {",
+      "  try {",
+      "    return runCapture(buildPolicyGetCommand(sandboxName));",
+      "  } catch (error) {",
+      "    switch (String(error)) {",
+      '      case "ignore":',
+      '        return "";',
+      "    }",
+      "    throw error;",
+      "  }",
+      "}",
+    ].join("\n");
+
+    expect(classifyPolicyReadCalls(source, "/repo/src/lib/fixture.ts", "/repo")).toEqual([
+      { site: "inspectPolicy", view: "base", failureHandling: "unclassified" },
+      {
+        site: "inspectPolicyWithEarlyExit",
+        view: "base",
+        failureHandling: "unclassified",
+      },
+    ]);
   });
 
   it("ignores similarly named calls without canonical policy bindings", () => {
@@ -155,13 +335,117 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
 
     try {
       expect(discoverPolicyReadSites(repoRoot)).toEqual([
-        { relativePath: "nemoclaw/src/new-policy-diagnostic.ts", readCalls: 1 },
-        { relativePath: "src/lib/new-policy-mutation.ts", readCalls: 1 },
+        {
+          relativePath: "nemoclaw/src/new-policy-diagnostic.ts",
+          readCalls: 1,
+          reads: [{ site: "<module>", view: "full", failureHandling: "error-preserving" }],
+        },
+        {
+          relativePath: "src/lib/new-policy-mutation.ts",
+          readCalls: 1,
+          reads: [{ site: "<module>", view: "base", failureHandling: "error-preserving" }],
+        },
       ]);
       expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
         expect.arrayContaining([
           expect.stringContaining("new-policy-diagnostic.ts: found 1 unaccounted policy read"),
           expect.stringContaining("new-policy-mutation.ts: found 1 unaccounted policy read"),
+        ]),
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an aliased full read substituted at an approved Shields site", () => {
+    const source = shieldsAuditSource(
+      "runCapture(readPolicy(sandboxName));",
+      "",
+      "const readPolicy = buildPolicyGetFullCommand;",
+    );
+    const repoRoot = createShieldsAuditFixture(source);
+
+    try {
+      expect(
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+      ).toBe(1);
+      expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("shieldsDownWithoutHostLock (full, ignore-error)"),
+        ]),
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a destructured full builder substituted at an approved Shields site", () => {
+    const source = shieldsAuditSource(
+      "runCapture(readPolicy(sandboxName));",
+      "",
+      [
+        'const policyNamespace = require("../policy");',
+        "const policyAlias = policyNamespace;",
+        "const { buildPolicyGetFullCommand: readPolicy } = policyAlias;",
+      ].join("\n"),
+    );
+    const repoRoot = createShieldsAuditFixture(source);
+
+    try {
+      expect(
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+      ).toBe(1);
+      expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("shieldsDownWithoutHostLock (full, ignore-error)"),
+        ]),
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects error-preserving behavior substituted at an approved Shields site", () => {
+    const source = shieldsAuditSource(
+      "runCapture(buildPolicyGetCommand(sandboxName));",
+      "",
+      "",
+      false,
+    );
+    const repoRoot = createShieldsAuditFixture(source);
+
+    try {
+      expect(
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+      ).toBe(1);
+      expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("shieldsDownWithoutHostLock (base, error-preserving)"),
+        ]),
+      );
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects moving a Shields read to an unapproved site without changing the count", () => {
+    const source = shieldsAuditSource(
+      "return;",
+      [
+        "function inspectAnotherPolicy(sandboxName: string) {",
+        "  runCapture(buildPolicyGetCommand(sandboxName));",
+        "}",
+      ].join("\n"),
+    );
+    const repoRoot = createShieldsAuditFixture(source);
+
+    try {
+      expect(
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+      ).toBe(1);
+      expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("inspectAnotherPolicy (base, error-preserving)"),
         ]),
       );
     } finally {

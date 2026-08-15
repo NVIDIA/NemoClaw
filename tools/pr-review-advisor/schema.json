@@ -13,6 +13,7 @@
     "changedFiles",
     "summary",
     "findings",
+    "terminologyReview",
     "acceptanceCoverage",
     "securityCategories",
     "sourceOfTruthReview",
@@ -64,6 +65,25 @@
     "findings": {
       "type": "array",
       "items": { "$ref": "#/$defs/finding" }
+    },
+    "terminologyReview": {
+      "description": "Canonical semantic terminology receipt. It is advisory and does not change the merge recommendation by itself.",
+      "type": "object",
+      "required": ["status", "decisions", "noChangesReason"],
+      "properties": {
+        "status": { "enum": ["clear", "candidates", "limited"] },
+        "decisions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/terminologyDecision" }
+        },
+        "noChangesReason": {
+          "type": ["string", "null"],
+          "maxLength": 2000,
+          "pattern": "^[^\\r\\n]*$"
+        }
+      },
+      "additionalProperties": false
     },
     "acceptanceCoverage": {
       "type": "array",
@@ -244,6 +264,59 @@
     }
   },
   "$defs": {
+    "terminologyDecision": {
+      "type": "object",
+      "required": [
+        "id",
+        "term",
+        "change",
+        "disposition",
+        "meaning",
+        "contrast",
+        "existingTerm",
+        "semanticImpact",
+        "recommendation",
+        "traceId",
+        "source"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^T-[0-9]+$" },
+        "term": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\r\\n]*$"
+        },
+        "change": { "enum": ["introduced", "expanded", "redefined"] },
+        "disposition": {
+          "enum": ["established", "justified", "define", "replace", "conflict"]
+        },
+        "meaning": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "contrast": { "type": ["string", "null"], "maxLength": 2000 },
+        "existingTerm": { "type": ["string", "null"], "maxLength": 2000 },
+        "semanticImpact": {
+          "enum": ["none", "behavior", "security", "support", "evidence", "test", "release"]
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\r\\n]*$"
+        },
+        "traceId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "source": {
+          "type": "object",
+          "required": ["file", "line", "headSha"],
+          "properties": {
+            "file": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "line": { "type": "integer", "minimum": 1 },
+            "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "e2eDomain": {
       "type": "object",
       "required": ["domain", "reason", "confidence", "matchedFiles"],

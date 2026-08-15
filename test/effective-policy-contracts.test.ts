@@ -232,10 +232,11 @@ describe("effective built-in policy contracts", () => {
   });
 
   it("keeps mutable web APIs on their reviewed hosts, methods, and paths", () => {
-    const effective = composePresets(["tavily", "outlook", "openclaw-pricing"]);
+    const effective = composePresets(["tavily", "outlook", "openclaw-pricing", "teams"]);
     const tavily = requireNetworkPolicy(effective, "tavily");
     const outlook = requireNetworkPolicy(effective, "outlook_graph");
     const pricing = requireNetworkPolicy(effective, "openclaw-pricing");
+    const teams = requireNetworkPolicy(effective, "teams");
 
     expect(tavily.endpoints).toEqual([
       {
@@ -276,6 +277,12 @@ describe("effective built-in policy contracts", () => {
       "outlook.office365.com",
     ]);
     expect(methods(graph)).toEqual(["GET", "PATCH", "POST"]);
+    for (const host of ["graph.microsoft.com", "login.microsoftonline.com"]) {
+      expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(true);
+      expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(
+        requireEndpoint(teams, host).request_body_credential_rewrite,
+      );
+    }
     for (const host of [
       "login.microsoftonline.com",
       "outlook.office365.com",
@@ -341,6 +348,26 @@ describe("effective built-in policy contracts", () => {
     );
   });
 
+  it("allows only the approved local Hindsight endpoint (#8613)", () => {
+    const effective = composePresets(["local-memory"], "hermes");
+    const localMemory = requireNetworkPolicy(effective, "local_memory");
+    const endpoint = requireEndpoint(localMemory, "host.openshell.internal");
+    const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
+
+    expect(endpoint).toMatchObject({
+      port: 8888,
+      protocol: "rest",
+      enforcement: "enforce",
+      allowed_ips: privateRanges,
+    });
+    expect(rules(endpoint)).toEqual([
+      { method: "GET", path: "/**" },
+      { method: "POST", path: "/**" },
+    ]);
+    expect(binaries(localMemory)).toEqual(["/opt/hermes/.venv/bin/python"]);
+    expect((localMemory.endpoints ?? []).some((entry) => entry.host === "10.0.0.1")).toBe(false);
+  });
+
   it("keeps host-local inference and managed tools on their broker boundaries", () => {
     const matrix = loadManagedToolGatewayMatrix();
     const managedPresetNames = Object.keys(matrix);
@@ -359,6 +386,10 @@ describe("effective built-in policy contracts", () => {
       });
       expect(methods(endpoint ?? {})).toEqual(["GET", "POST"]);
     }
+    const llamaCpp = (localInference.endpoints ?? []).find(
+      (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 8081,
+    );
+    expect(llamaCpp?.rules).toEqual([{ allow: { method: "POST", path: "/v1/chat/completions" } }]);
     expect(binaries(localInference)).toEqual(
       expect.arrayContaining([
         "/usr/local/bin/openclaw",
@@ -500,6 +531,17 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
+    for (const host of ["github.com", "raw.githubusercontent.com"]) {
+      const endpoint = requireEndpoint(brew, host);
+      expect(endpoint).toMatchObject({ port: 443, access: "full" });
+      expect(endpoint).not.toHaveProperty("protocol");
+      expect(endpoint).not.toHaveProperty("tls");
+    }
+    for (const endpoint of (brew.endpoints ?? []).filter(
+      (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
+    )) {
+      expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
+    }
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",

@@ -3,10 +3,13 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
-import type { SandboxMessagingPlan } from "../../messaging";
+import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
+import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
+import { sameGatewayOwner } from "../../onboard/gateway-ownership";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import * as shields from "../../shields";
+import { decisionSelected, isDecisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -98,7 +101,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     log,
     bail,
   } = input;
-
   console.log("");
   console.log("  Creating new sandbox with current image...");
 
@@ -107,8 +109,46 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
 
+  const rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
+  if (
+    rebuildGatewayAuthority.gatewayName !== recreateOptions.targetGatewayName ||
+    rebuildGatewayAuthority.gatewayPort !== recreateOptions.targetGatewayPort
+  ) {
+    return bail("Authoritative rebuild journal authority does not match the target gateway.");
+  }
+  const journaledCheckpoint = onboardSession.loadSession()?.checkpoint ?? null;
+  if (!journaledCheckpoint) {
+    return bail("Authoritative rebuild journal does not identify the target sandbox.");
+  }
+  const journaledSandboxIdentity = journaledCheckpoint.sandboxIdentity;
+  if (!isDecisionSelected(journaledSandboxIdentity)) {
+    return bail("Authoritative rebuild journal does not identify the target sandbox.");
+  }
+  const journaledRecreate = journaledCheckpoint.sandboxRecreate;
+  if (
+    journaledSandboxIdentity.value.name !== sandboxName ||
+    !journaledRecreate ||
+    journaledRecreate.id !== recreateJournal.id ||
+    journaledRecreate.sandboxName !== sandboxName ||
+    journaledRecreate.gatewayName !== recreateOptions.targetGatewayName ||
+    journaledRecreate.gatewayPort !== recreateOptions.targetGatewayPort ||
+    journaledRecreate.targetGeneration !== recreateJournal.targetGeneration ||
+    journaledRecreate.targetIntentFingerprint !== recreateJournal.targetIntentFingerprint
+  ) {
+    return bail("Authoritative rebuild journal does not match the target replacement.");
+  }
+  const journaledGatewayAuthority = journaledCheckpoint.gatewayAuthority;
+  if (
+    !isDecisionSelected(journaledGatewayAuthority) ||
+    !sameGatewayOwner(
+      gatewayOwnerFromCheckpoint(journaledGatewayAuthority.value),
+      gatewayOwnerFromCheckpoint(rebuildGatewayAuthority),
+    )
+  ) {
+    return bail("Authoritative rebuild journal authority changed before sandbox recreation.");
+  }
+
   onboardSession.updateSession((s: Session) => {
-    const journaledCheckpoint = s.checkpoint;
     Object.assign(
       s,
       onboardSession.createSession({
@@ -162,14 +202,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
     // The journal outlives this reset, but the retired session owns its effect
     // receipts and bindings. Rebind only the values the journal invariant needs.
-    s.checkpoint = journaledCheckpoint
-      ? {
-          ...deriveCheckpointFromSession(s),
-          sandboxIdentity: journaledCheckpoint.sandboxIdentity,
-          gatewayAuthority: journaledCheckpoint.gatewayAuthority,
-          sandboxRecreate: journaledCheckpoint.sandboxRecreate,
-        }
-      : null;
+    s.checkpoint = {
+      ...deriveCheckpointFromSession(s),
+      sandboxIdentity: journaledSandboxIdentity,
+      gatewayAuthority: decisionSelected(rebuildGatewayAuthority),
+      sandboxRecreate: journaledRecreate,
+    };
     return s;
   });
   const sessionAfter = onboardSession.loadSession();
@@ -206,6 +244,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // where a second backup is impossible after deletion. Keep the bypass scoped to
   // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  if (rebuildMessagingPlan) MessagingSetupApplier.writePlanToEnv(rebuildMessagingPlan);
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
   }
@@ -225,6 +264,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      rebuildGatewayAuthority,
+      ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
+        ? { rebuildPreservedEnv: backupManifest.preservedEnv }
+        : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
     log("onboard() returned successfully");

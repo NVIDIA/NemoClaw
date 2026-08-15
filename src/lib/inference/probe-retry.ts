@@ -37,6 +37,7 @@ function shouldRetryHttpProbe(result) {
   return (
     result &&
     !result.ok &&
+    result.reasoningRetryAttempted !== true &&
     result.curlStatus === 0 &&
     RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
   );
@@ -60,6 +61,7 @@ function isTimeoutOrConnFailureStatus(curlStatus) {
 }
 
 function isRetriableProbeResult(result) {
+  if (result.reasoningRetryAttempted === true) return false;
   return (
     isTimeoutOrConnFailureStatus(result.curlStatus) ||
     RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
@@ -80,13 +82,17 @@ function executeProbeWithHttpRetry(probe) {
         curl_status: result.curlStatus,
       });
       for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-        if (!shouldRetryHttpProbe(result)) break;
+        const customReason = probe.retryReason?.(result);
+        const httpRetry = shouldRetryHttpProbe(result);
+        if (!httpRetry && !customReason) break;
+        const reason = customReason || `returned HTTP ${result.httpStatus}`;
         console.log(
-          `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+          `  ${probe.name} validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
         );
         trace.addTraceEvent("probe_retry_sleep", {
           delay_ms: delayMs,
           http_status: result.httpStatus,
+          retry_reason: customReason ? "semantic_readiness" : "http_status",
         });
         sleepSync(delayMs);
         attempt += 1;

@@ -90,6 +90,8 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
   beforeEach(() => {
     registryState.removeSandbox.mockReset();
     registryState.sandbox = null;
+    onboardSessionState.sessionId = "session-owner";
+    onboardSessionState.recreate = null;
   });
 
   for (const marker of ["destroyPreparedAt", "destroyPendingAt"] as const) {
@@ -136,6 +138,30 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       });
     }
   }
+
+  it("keeps the source registry row when OpenShell reports no sandbox (#7736)", () => {
+    const rows = new Map<string, SandboxEntry>([
+      ["beta", { name: "beta", agent: "openclaw", toolDisclosure: "progressive" }],
+    ]);
+    registryState.removeSandbox.mockImplementation((name: string) => {
+      rows.delete(name);
+    });
+    registryState.sandbox = rows.get("beta") ?? null;
+    onboardSessionState.recreate = { sandboxName: "beta", phase: "deleting" };
+    const helpers = createSandboxLifecycleHelpers({
+      runCaptureOpenshell: () => null,
+      fetchGatewayAuthTokenFromSandbox: () => null,
+      agentProductName: () => "OpenClaw",
+      prompt: async () => "no",
+      isAffirmativeAnswer: () => false,
+    });
+
+    const inspected = helpers.inspectSandboxForCreate("beta");
+    removeSandboxUnlessSessionReservation(inspected.existingEntry, "beta");
+
+    expect(inspected.liveExists).toBe(false);
+    expect(rows.get("beta")).toMatchObject({ name: "beta", toolDisclosure: "progressive" });
+  });
 
   it("inspects a stale registry entry without pruning it", () => {
     const runCaptureOpenshell = vi.fn(() => null);

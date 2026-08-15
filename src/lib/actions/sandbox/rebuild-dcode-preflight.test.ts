@@ -1,23 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   configureDcodeSession,
   expectNoDcodeMutation,
   makeDcodeSandboxEntry,
-} from "../../../../test/helpers/rebuild-dcode-flow-support";
+} from "../../../../test/helpers/rebuild-dcode-flow-helpers";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
+  installRebuildFlowTestHooks,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-harness";
+} from "../../../../test/helpers/rebuild-flow-dcode-harness";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("rebuildSandbox DCode flow: preflight", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
   it.each([
     ["defaults legacy state to disabled", undefined, undefined, "disabled", null],

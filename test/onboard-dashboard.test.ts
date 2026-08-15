@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { AgentDefinition } from "../src/lib/agent/defs";
 import { loadAgent } from "../src/lib/agent/defs";
 import { printDashboardUi } from "../src/lib/agent/onboard";
 import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
@@ -27,6 +29,37 @@ function createTokenDownloadRunOpenshell() {
     }
     return { status: 0 };
   });
+}
+
+function captureReadySummary(
+  agent: AgentDefinition | null,
+  { sandboxName, cliName }: { sandboxName: string; cliName: string },
+): string {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const helpers = createOnboardDashboardHelpers({
+    runOpenshell: createTokenDownloadRunOpenshell(),
+    runCaptureOpenshell: vi.fn(() => ""),
+    runCapture: vi.fn(() => ""),
+    openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+    cliName: () => cliName,
+    agentProductName: () => "NemoClaw",
+    getProviderLabel: (provider: string) => provider,
+    nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+    shouldShowNimLine: vi.fn(() => false),
+    note: vi.fn(),
+    isWsl: () => false,
+    redact: (value: unknown) => String(value),
+    sleep: vi.fn(),
+    printAgentDashboardUi: vi.fn(),
+    listSandboxes: () => ({ sandboxes: [] }),
+  });
+
+  try {
+    helpers.printDashboard(sandboxName, "gpt-oss:20b", "ollama", null, agent);
+    return logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+  } finally {
+    logSpy.mockRestore();
+  }
 }
 
 function createListenerFailureRecoveryHarness(targetPort: number) {
@@ -85,6 +118,64 @@ describe("onboard dashboard helpers", () => {
     );
   });
 
+  it("deletes the built sandbox and exits 1 when the committed port becomes occupied (#8798)", async () => {
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const address = listener.address();
+    expect(address && typeof address !== "string").toBe(true);
+    const targetPort = (address as AddressInfo).port;
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const openshellArgv = vi.fn(() => {
+      throw new Error("forward start must not run after host-bound port detection");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as typeof process.exit);
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv,
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    try {
+      expect(() =>
+        helpers.ensureDashboardForward("my-sandbox", `http://127.0.0.1:${String(targetPort)}`, {
+          rollbackSandboxOnFailure: true,
+        }),
+      ).toThrow("process.exit(1)");
+      expect(openshellArgv).not.toHaveBeenCalled();
+      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "my-sandbox"], {
+        ignoreError: true,
+      });
+      const errorOutput = errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
+      expect(errorOutput).toContain(
+        `Dashboard port ${String(targetPort)} became host-bound during sandbox build`,
+      );
+      expect(errorOutput).toContain(
+        "The orphaned sandbox has been removed. Resolve the error above before retrying.",
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      await new Promise<void>((resolve, reject) => {
+        listener.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("uses sandbox-scoped forward stops for same-sandbox dashboard cleanup", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" +
@@ -122,6 +213,27 @@ describe("onboard dashboard helpers", () => {
           Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
+  });
+
+  it("uses the default dashboard URL when an empty environment override is passed", () => {
+    const forwardList =
+      "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => forwardList),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(helpers.ensureDashboardForward("my-sandbox", "")).toBe(18789);
   });
 
   it("retries dashboard forward cleanup when the first owner lookup fails", () => {
@@ -191,7 +303,7 @@ describe("onboard dashboard helpers", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", () => {
+  it("starts declared non-dashboard agent port forwards without cleaning up the dashboard forward", async () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" +
       "my-sandbox 127.0.0.1 18789 12345 running\n" +
@@ -218,7 +330,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         forwardPort: 18789,
         forward_ports: [18789, 8642],
       }),
@@ -232,7 +344,7 @@ describe("onboard dashboard helpers", () => {
     ).toHaveLength(1);
   });
 
-  it("skips dashboard forwarding for terminal agents without declared ports", () => {
+  it("skips dashboard forwarding for terminal agents without declared ports", async () => {
     const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
       status: 0,
     }));
@@ -251,7 +363,7 @@ describe("onboard dashboard helpers", () => {
     });
 
     expect(
-      helpers.ensureAgentDashboardForward("my-sandbox", {
+      await helpers.ensureAgentDashboardForward("my-sandbox", {
         runtime: { kind: "terminal" },
         forwardPort: 0,
         forward_ports: [],
@@ -468,5 +580,61 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toContain("#token=");
     expect(output).not.toContain("dashboard-url --quiet");
     expect(output).toContain("then run: openclaw tui");
+  });
+
+  it("offers launch first and keeps connect in the OpenClaw ready summary (#6006)", () => {
+    const output = captureReadySummary(null, { sandboxName: "my-gpt-claw", cliName: "nemoclaw" });
+
+    expect(output).toContain(
+      [
+        "    Terminal:",
+        "      nemoclaw launch my-gpt-claw",
+        "",
+        "      Or open a sandbox shell first:",
+        "        nemoclaw my-gpt-claw connect",
+        "        then run: openclaw tui",
+      ].join("\n"),
+    );
+    expect(output.indexOf("nemoclaw launch my-gpt-claw")).toBeLessThan(
+      output.indexOf("nemoclaw my-gpt-claw connect"),
+    );
+  });
+
+  it("prints the Hermes interactive command instead of the OpenClaw TUI (#6006)", () => {
+    const output = captureReadySummary(loadAgent("hermes"), {
+      sandboxName: "my-hermes",
+      cliName: "nemohermes",
+    });
+
+    expect(output).toContain(
+      [
+        "  Terminal:",
+        "    nemohermes launch my-hermes",
+        "",
+        "    Or open a sandbox shell first:",
+        "      nemohermes my-hermes connect",
+        "      then run: hermes",
+      ].join("\n"),
+    );
+    expect(output).not.toContain("openclaw tui");
+  });
+
+  it("prints the Deep Agents Code interactive command in the ready summary (#6006)", () => {
+    const output = captureReadySummary(loadAgent("langchain-deepagents-code"), {
+      sandboxName: "my-dcode",
+      cliName: "nemoclaw",
+    });
+
+    expect(output).toContain(
+      [
+        "  Terminal:",
+        "    nemoclaw launch my-dcode",
+        "",
+        "    Or open a sandbox shell first:",
+        "      nemoclaw my-dcode connect",
+        "      then run: dcode",
+      ].join("\n"),
+    );
+    expect(output).not.toContain("openclaw tui");
   });
 });

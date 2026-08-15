@@ -13,12 +13,14 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
@@ -37,7 +39,7 @@ import {
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import { redact } from "../../security/redact";
+import { redact, redactFull } from "../../security/redact";
 import {
   isSandboxReady,
   isTerminalSandboxPhase,
@@ -52,13 +54,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
-import {
-  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} from "./connect-autopair-budget";
+import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
@@ -77,22 +73,50 @@ import {
 } from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
-import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
+import {
+  ensureLiveSandboxOrExit,
+  printGatewayLifecycleHint,
+  recoverPortableDemoSandboxLifecycleForConnect,
+  startStoppedSandboxContainerForProbeRecovery,
+} from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
+import {
+  inspectLaunchReadiness,
+  publicationFromDecision,
+  publishLaunchReadiness,
+  withLaunchReadinessMutationGate,
+} from "./launch-readiness";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
   type ManagedGatewayControlCompletion,
   resolveSandboxDashboardPort,
+  waitForManagedGatewaySupervisor,
 } from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
+export { runConnectAutoPairApprovalPass, waitForManagedGatewaySupervisor };
+
 export type SandboxConnectOptions = {
   probeOnly?: boolean;
+  requireLaunchReadinessPublication?: boolean;
 };
+
+export type SandboxStartupRecoveryResult = ReturnType<typeof checkAndRecoverSandboxProcesses> & {
+  recoveryFailureDetail?: string | null;
+  recoveryFailureLayer?: GatewayRestartFailureLayer | null;
+};
+
+export function sanitizeSandboxStartupRecoveryDetail(raw: string): string {
+  return redactFull(raw)
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 240);
+}
 
 type SpawnLikeResult = {
   status: number | null;
@@ -107,6 +131,7 @@ type SandboxListProbe = {
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
+  httpStatus?: number;
   detail: string;
 };
 
@@ -283,7 +308,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     );
   }
   if (processCheck.wasRunning) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
     // path (#4504): the gateway is up, so deterministically clear any pending
     // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
@@ -298,7 +323,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     return;
   }
   if (processCheck.recovered) {
-    await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+    await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
     // Same defense-in-depth approval after a recovery (#4504); best-effort.
     runConnectAutoPairApprovalPass(sandboxName);
     const managedControlCompletion =
@@ -312,7 +337,7 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
     }
     return;
   }
-  await ensureSandboxInferenceRoute(sandboxName, agent, { quiet: true });
+  await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
   console.error(
     `  Probe failed: ${agentName} gateway is not running in '${sandboxName}' and automatic recovery failed.`,
   );
@@ -358,11 +383,8 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error(
-    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
-  );
-  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
-  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
+  console.error(`    2. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
 }
 
@@ -411,6 +433,7 @@ function probeSandboxInferenceRoute(
     lastProbe = {
       healthy: parsed.healthy,
       broken: parsed.broken,
+      httpStatus: parsed.httpStatus,
       detail: parsed.detail,
     };
     if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
@@ -461,13 +484,17 @@ export function repairSandboxInferenceRouteWithDeps(
 ): SandboxInferenceRouteRepairResult {
   const log = deps.log ?? console.log;
   const error = deps.error ?? console.error;
-  if (deps.isRepairDisabled?.()) {
-    return { healthy: true, repairAttempted: false, detail: "route repair disabled" };
-  }
   deps.assertRouteCompatible?.(sandboxName, sb);
   const initialProbe = deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
+  }
+  if (deps.isRepairDisabled?.()) {
+    return {
+      healthy: false,
+      repairAttempted: false,
+      detail: `route repair disabled; ${initialProbe.detail}`,
+    };
   }
   if (!initialProbe.broken) {
     return { healthy: false, repairAttempted: false, detail: initialProbe.detail };
@@ -808,14 +835,37 @@ function ensureSandboxInferenceRouteUnlocked(
       }
       return { sandbox: sb, routeHealthy: false };
     }
-    if (!repairResult.healthy && repairResult.repairAttempted) {
-      const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
+    let routeReady = repairResult.healthy;
+    if (!routeReady && repairResult.repairAttempted) {
+      routeReady = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
         quiet,
       });
-      return { sandbox: sb, routeHealthy: resetResult };
+      if (!routeReady) return { sandbox: sb, routeHealthy: false };
     }
-    return { sandbox: sb, routeHealthy: repairResult.healthy };
+    if (provider === "ollama-local") {
+      if (!verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+        return { sandbox: sb, routeHealthy: false };
+      }
+      const finalProbe = probeSandboxInferenceRoute(sandboxName, agent);
+      const strictRouteHealthy =
+        finalProbe.healthy &&
+        finalProbe.httpStatus !== undefined &&
+        finalProbe.httpStatus >= 200 &&
+        finalProbe.httpStatus < 300;
+      if (!strictRouteHealthy) {
+        if (!quiet) {
+          printUnrecoverableInferenceRoute(
+            sandboxName,
+            `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`,
+            `inference.local/v1/models must return HTTP 2xx; ${finalProbe.detail}`,
+            { repairAttempted: repairResult.repairAttempted },
+          );
+        }
+        return { sandbox: sb, routeHealthy: false };
+      }
+    }
+    return { sandbox: sb, routeHealthy: routeReady };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
     if (error instanceof OpenShellGatewayEndpointOverrideError) {
@@ -878,24 +928,6 @@ async function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
-// Connect/probe/finalization budget for the shared auto-pair approval pass
-// (#4504). The bounded single-request budget, timeout rationale, and invariant
-// live in the dependency-free ./connect-autopair-budget leaf so tests assert the
-// real values without importing this heavy module. The doctor recovery surface
-// (#4616) keeps the wider default budget in ./auto-pair-approval.
-const CONNECT_AUTO_PAIR_BUDGET = {
-  maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
-  listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
-  approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
-  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-} as const;
-
-// Thin wrapper so the connect/probe/finalization surfaces share one budget
-// without each caller restating it. Best-effort; never throws (#4263/#4504).
-export function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
-}
-
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   if (
     !sb ||
@@ -911,6 +943,19 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   } catch {
     /* non-fatal — managed-tool calls will surface broker guidance if needed */
   }
+}
+
+export function restoreSandboxStartupState(sandboxName: string): SandboxStartupRecoveryResult {
+  let recoveryFailureDetail: string | null = null;
+  let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
+    quiet: true,
+    onRecoveryFailureLayer: (layer, detail) => {
+      recoveryFailureLayer = layer;
+      recoveryFailureDetail = detail ?? null;
+    },
+  });
+  return { ...processCheck, recoveryFailureDetail, recoveryFailureLayer };
 }
 
 function restoreInteractiveTerminal(): void {
@@ -955,7 +1000,13 @@ type WaitForSandboxReadyOptions = {
   successLogs?: readonly string[];
 };
 
-function waitForSandboxReadyOrExit(
+// Readiness budget for the repair paths that wait for a restarted sandbox
+// before they touch in-sandbox processes or host forwards. A cold agent boot on
+// a constrained host can exceed the interactive budget, and `start` and
+// `connect --probe-only` prove the same readiness for the same sandbox.
+export const SANDBOX_REPAIR_READY_TIMEOUT_SEC = 300;
+
+export function waitForSandboxReadyOrExit(
   sandboxName: string,
   {
     defaultTimeoutSec = 120,
@@ -1072,9 +1123,14 @@ function waitForSandboxReadyOrExit(
   for (const line of successLogs) console.log(line);
 }
 
-export async function connectSandbox(
+/**
+ * Shared prefix of every connect-style entry point: registry/route validation,
+ * the express-vLLM model preflight, the owning-gateway pin, and the Docker
+ * outage fast-fail. Runs before any probe or interactive work.
+ */
+async function runConnectEntryPreflight(
   sandboxName: string,
-  { probeOnly = false }: SandboxConnectOptions = {},
+  { probeOnly }: { probeOnly: boolean },
 ): Promise<void> {
   try {
     assertNoOpenShellGatewayEndpointOverride();
@@ -1084,17 +1140,21 @@ export async function connectSandbox(
         `Sandbox '${sandboxName}' is still being created by onboarding. Wait for onboarding to finish or remove the incomplete sandbox before connecting.`,
       );
     }
-    if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
+    if (registered) {
       const gatewayName = resolveSandboxGatewayName(registered);
-      assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+      if (registry.getSandboxEntryInference(registered).kind === "configured") {
+        assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+      }
+      recoverPortableDemoSandboxLifecycleForConnect(sandboxName, registered, gatewayName);
     }
   } catch (error) {
     console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
-  // probe-only / recover never install or serve a model, so skip the
-  // express-vLLM model preflight for them (it only steers the install path
-  // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
+  // probe-only / recover can restart receipt-owned local inference, but they
+  // never select, install, or pull a model. Skip the express-vLLM model
+  // preflight because it only steers installation and can reject recovery on
+  // a stale NEMOCLAW_VLLM_MODEL.
   if (!probeOnly) preflightVllmModelEnvOrExit();
   const live = await ensureLiveSandboxOrExit(sandboxName, {
     allowNonReadyPhase: true,
@@ -1118,19 +1178,10 @@ export async function connectSandbox(
   ) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
   }
+}
 
-  if (probeOnly) {
-    waitForSandboxReadyOrExit(sandboxName, {
-      defaultTimeoutSec: 300,
-      retryCommand: "connect --probe-only",
-    });
-    // Re-pin and re-observe the owning gateway after a potentially long wait
-    // before any in-sandbox process or host-forward mutation. The readiness
-    // polls are already owner-scoped; this also catches registry changes.
-    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
-  }
-
+/** Print version and active-session hints on both interactive launch paths. */
+export function printInteractiveSessionHints(sandboxName: string): void {
   // Version staleness check — warn but don't block
   try {
     const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
@@ -1158,6 +1209,43 @@ export async function connectSandbox(
   } catch {
     /* non-fatal — don't block connect on session detection failure */
   }
+}
+
+/** Preserve session setup after the complete preflight or lease acceptance. */
+export function completeInteractiveSessionSetup(
+  sandboxName: string,
+  sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : getSandboxTargetGatewayName(sandboxName);
+  runApprovalPass(sandboxName, gatewayName);
+}
+
+/** Preserve session setup after launch readiness accepts a trusted agent identity. */
+export function completeReadinessQualifiedInteractiveSessionSetup(
+  sandboxName: string,
+  agent: AgentDefinition,
+  sb: SandboxEntry | null,
+  runApprovalPass = runConnectAutoPairApprovalPass,
+  resolveFallbackGateway = getSandboxTargetGatewayName,
+): void {
+  maybeEnsureHermesToolGatewayBroker(sb);
+  if (sb && agent.name === "openclaw") return;
+  const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveFallbackGateway(sandboxName);
+  runApprovalPass(sandboxName, gatewayName);
+}
+
+/**
+ * Run the complete interactive preflight before SSH or agent launch, including
+ * process recovery, readiness polling, inference-route repair, and session
+ * setup. Any `process.exit(...)` ends the process as it does on `connect`.
+ */
+export async function prepareInteractiveSession(
+  sandboxName: string,
+): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
+  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
+  printInteractiveSessionHints(sandboxName);
 
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName);
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
@@ -1183,17 +1271,81 @@ export async function connectSandbox(
   // After the sandbox is Ready, verify and recover the route before SSH.
   const agent = agentRuntime.getSessionAgent(sandboxName);
   sb = await ensureSandboxInferenceRouteOrExit(sandboxName, agent);
-  maybeEnsureHermesToolGatewayBroker(sb);
+  completeInteractiveSessionSetup(sandboxName, sb);
 
-  // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
-  // Defense in depth: even with the in-sandbox watcher running in
-  // slow-mode keepalive, a brief approval pass before opening SSH
-  // catches any pending allowlisted CLI/webchat scope upgrades that
-  // piled up between startup and now (e.g., watcher crashed, watcher
-  // deadline exhausted, multi-sandbox gateway contention). The same pass
-  // is reachable without SSH via `doctor --fix` for dashboard-only users
-  // (#4616). Uses the tight connect budget (#4504).
-  runConnectAutoPairApprovalPass(sandboxName);
+  return { agent, sb };
+}
+
+export async function connectSandbox(
+  sandboxName: string,
+  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions = {},
+): Promise<void> {
+  if (probeOnly) {
+    let readiness = await inspectLaunchReadiness(sandboxName);
+    let publication: Awaited<ReturnType<typeof publishLaunchReadiness>>;
+    while (true) {
+      if (readiness.kind === "accepted") {
+        console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
+        return;
+      }
+      if (readiness.fenceFailed && readiness.authorityUnsupported !== true) {
+        console.error(
+          readiness.recoveryBlocked
+            ? "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry."
+            : "  Probe failed: no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+        );
+        process.exit(1);
+      }
+      const publicationRequest = publicationFromDecision(sandboxName, readiness);
+      const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
+        await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+        // Restart a stopped container before the readiness wait. Without this step,
+        // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
+        startStoppedSandboxContainerForProbeRecovery(sandboxName);
+        waitForSandboxReadyOrExit(sandboxName, {
+          defaultTimeoutSec: SANDBOX_REPAIR_READY_TIMEOUT_SEC,
+          retryCommand: "connect --probe-only",
+        });
+        // Re-pin and re-observe the owning gateway after a potentially long wait
+        // before any in-sandbox process or host-forward mutation. The readiness
+        // polls are already scoped to the owning gateway; this also catches
+        // registry changes.
+        await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
+        await runSandboxConnectProbe(sandboxName);
+        return publishLaunchReadiness(publicationRequest);
+      });
+      if (gated.kind === "changed") {
+        readiness = await inspectLaunchReadiness(sandboxName);
+        continue;
+      }
+      if (gated.kind === "unsafe") {
+        console.error(
+          "  Probe failed: complete probe and recovery did not run because the current launch-readiness epoch could not be safely revalidated. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+        );
+        process.exit(1);
+      }
+      publication = gated.value;
+      break;
+    }
+    if (publication.kind === "validation-failed") {
+      console.error(
+        `  Probe failed: final launch-readiness validation failed due to ${publication.category}.`,
+      );
+      process.exit(1);
+    }
+    if (publication.kind === "evidence-failed") {
+      if (!requireLaunchReadinessPublication) return;
+      console.error(
+        readiness.kind === "fallback" && readiness.authorityUnsupported === true
+          ? "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform."
+          : "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
+      );
+      process.exit(1);
+    }
+    return;
+  }
+
+  const { agent, sb } = await prepareInteractiveSession(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
@@ -1205,9 +1357,9 @@ export async function connectSandbox(
     !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))
   ) {
     console.log("");
-    const agentName = sb?.agent || "openclaw";
-    const terminalCommand = agentRuntime.getTerminalCommand(agent, "interactive");
-    const agentCmd = terminalCommand ?? (agentName === "openclaw" ? "openclaw tui" : agentName);
+    // Same resolver `launch` uses, so the hint cannot drift from the command
+    // that `nemoclaw launch <name>` actually runs (#6006).
+    const agentCmd = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
       `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,

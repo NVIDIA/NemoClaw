@@ -59,7 +59,7 @@ describe("connectSandbox flow", () => {
     );
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw");
     expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
@@ -69,6 +69,18 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("uses the owning OpenShell gateway for auto-pair when an ambient gateway has the same sandbox name (#8942)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    const harness = createConnectHarness({
+      registryEntry: { gatewayName: "nemoclaw-8091", gatewayPort: 8091 },
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(process.env.OPENSHELL_GATEWAY).toBe("ambient-sibling");
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", "nemoclaw-8091");
   });
 
   it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
@@ -296,6 +308,47 @@ describe("connectSandbox flow", () => {
     );
   });
 
+  it.each([
+    401, 403, 404,
+  ])("rejects HTTP %i from inference.local for an Ollama recovery path (#8502)", async (httpStatus) => {
+    const response = `OK ${String(httpStatus)}`;
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+      inferenceProbeResponses: [response, response],
+      registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference.local/v1/models must return HTTP 2xx",
+    );
+    expect(harness.probeLocalProviderHealthSpy).toHaveBeenCalledWith("ollama-local", {
+      skipOllamaAuthProxySubprobe: true,
+    });
+    expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalledTimes(1);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("rechecks HTTP 2xx after repairing an Ollama inference route (#8502)", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
+      inferenceProbeResponses: ["BROKEN 503", "OK 401", "OK 401"],
+      registryEntry: { provider: "ollama-local", model: "qwen3-vl:4b" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runSetupDnsProxySpy).toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference.local/v1/models must return HTTP 2xx",
+    );
+  });
+
   it("fails closed with actionable diagnostics when the initial route probe is inconclusive (#6192)", async () => {
     const longProbeDetail = `route probe unavailable NVIDIA_API_KEY=super-secret ${"x".repeat(400)}`;
     const harness = createConnectHarness({
@@ -469,7 +522,7 @@ describe("connectSandbox flow", () => {
       "alpha",
       expect.objectContaining({ quiet: true }),
     );
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
@@ -478,6 +531,253 @@ describe("connectSandbox flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Probe complete: recovered OpenClaw gateway in 'alpha'.",
     );
+  });
+
+  it("probe-only accepts healthy launch evidence without duplicate recovery or publication (#8942)", async () => {
+    const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "openclaw" },
+        sb,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Probe complete: launch readiness is healthy for 'alpha'.",
+    );
+  });
+
+  it("probe-only skips every mutation when a newer accepted lease replaces its epoch (#8942)", async () => {
+    const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
+    const harness = createConnectHarness();
+    harness.inspectLaunchReadinessSpy
+      .mockResolvedValueOnce({
+        kind: "fallback",
+        category: "config",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      })
+      .mockResolvedValueOnce({
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "openclaw" },
+        sb,
+      });
+    harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "changed" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledTimes(2);
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Probe complete: launch readiness is healthy for 'alpha'.",
+    );
+  });
+
+  it("probe-only refuses runtime recovery when prior evidence cannot be fenced (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: true,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "complete probe and recovery did not run because prior launch-readiness evidence could not be fenced",
+    );
+  });
+
+  it("probe-only reports failure to create new authority after secure absence is proven (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "prior launch-readiness evidence could not be fenced",
+    );
+  });
+
+  it("probe-only completes macOS recovery before reporting unavailable evidence (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        authorityUnsupported: true,
+      },
+      readinessPublicationResult: { kind: "evidence-failed" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform.",
+    );
+  });
+
+  it("lets a public lifecycle command continue after recovery when evidence publication is unavailable (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessDecision: {
+        kind: "fallback",
+        category: "unsafe",
+        fence: null,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: true,
+        recoveryBlocked: false,
+        authorityUnsupported: true,
+      },
+      readinessPublicationResult: { kind: "evidence-failed" },
+    });
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        probeOnly: true,
+        requireLaunchReadinessPublication: false,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps authoritative runtime validation failures blocking for public lifecycle commands (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: { kind: "validation-failed", category: "health" },
+    });
+
+    await expect(
+      harness.connectSandbox("alpha", {
+        probeOnly: true,
+        requireLaunchReadinessPublication: false,
+      }),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "final launch-readiness validation failed due to health",
+    );
+  });
+
+  it("probe-only stops before mutation when the fenced epoch cannot be revalidated (#8942)", async () => {
+    const harness = createConnectHarness();
+    harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "unsafe" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "current launch-readiness epoch could not be safely revalidated",
+    );
+  });
+
+  it("probe-only distinguishes completed recovery from final evidence failure (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: { kind: "evidence-failed" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published",
+    );
+  });
+
+  it("probe-only reports final semantic validation failure as a runtime failure (#8942)", async () => {
+    const harness = createConnectHarness({
+      readinessPublicationResult: { kind: "validation-failed", category: "health" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "final launch-readiness validation failed due to health",
+    );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
+      "complete probe and recovery succeeded",
+    );
+  });
+
+  it("probe-only mode exits before reporting success when inference.local returns no trusted result (#8502)", async () => {
+    const harness = createConnectHarness({
+      registryEntry: {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+      inferenceGetOutput: "Provider: nvidia-prod\nModel: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceProbeResponses: ["route probe unavailable"],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain("Probe complete");
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "inference route is not known healthy",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("probe-only mode reports an ordinary running gateway for an already-running completion (#7919)", async () => {

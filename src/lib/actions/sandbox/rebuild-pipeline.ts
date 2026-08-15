@@ -18,13 +18,25 @@ import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
-import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
+import {
+  type HermesCronRestoreIdentity,
+  HermesCronRestoreIncompleteError,
+  printHermesCronRestoreRecoveryCommand,
+  recoverHermesCronRestore,
+  runHermesCronRestoreTransaction,
+  runRebuildPostRestorePhase,
+} from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   blockRebuildOnPendingBaselineTransition,
+  revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
-import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
+import {
+  finalizePreparedRebuildImageMessagingPlan,
+  runHermesCronRestoreBackupPreflight,
+  runRebuildPreflightPhase,
+} from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
   verifyPreparedBuildContext,
@@ -51,6 +63,10 @@ function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: str
   } catch {
     console.warn(warning);
   }
+}
+
+function rebuildFailureDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -108,7 +124,7 @@ async function rebuildSandboxUnlocked(
     liveState,
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
-    preparedImage,
+    preparedImage: initiallyPreparedImage,
     routePreflightReceipt,
     releaseOnboardLock,
     log,
@@ -125,6 +141,7 @@ async function rebuildSandboxUnlocked(
     fromDockerfile,
   } = targetConfig;
   const { staleRecovery } = liveState;
+  let preparedImage = initiallyPreparedImage;
   const preservedCustomPolicies = (sandboxEntry.customPolicies ?? []).map((entry) => ({
     ...entry,
   }));
@@ -190,6 +207,42 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
 
+      // Validate the completed backup artifact produced above, not the mutable live
+      // tree. This gate therefore follows backup creation and precedes every
+      // destructive rebuild phase.
+      const hermesCronRestorePreflight = runHermesCronRestoreBackupPreflight({
+        rebuildAgent,
+        backupPath: backup.backupManifest?.backupPath ?? null,
+        backedUpDirs: backup.backupManifest?.backedUpDirs ?? [],
+        log,
+        bail,
+      });
+      if (!hermesCronRestorePreflight) return;
+      const hermesCronRestorePlan = hermesCronRestorePreflight.plan;
+
+      const preservedEnv = backup.backupManifest?.preservedEnv ?? [];
+      if (preparedImage && messagingPlan?.agent === "hermes" && preservedEnv.length > 0) {
+        const finalizedImage = finalizePreparedRebuildImageMessagingPlan(
+          preparedImage,
+          messagingPlan,
+          preservedEnv,
+        );
+        if (!finalizedImage.ok) {
+          printRebuildPreflightFailure(
+            `the retained replacement image could not include preserved Hermes messaging state: ${finalizedImage.detail}`,
+            "The existing sandbox is untouched. Retry the rebuild after checking the replacement image inputs.",
+            "Replacement sandbox image finalization failed",
+            bail,
+          );
+          return;
+        }
+        preparedImage = finalizedImage.prepared;
+        recreateOptions.preparedImageRebuild = {
+          buildContext: preparedImage,
+          gatewayName: recreateOptions.targetGatewayName,
+        };
+      }
+
       // The post-delete create must consume the exact context that passed the
       // image preflight. Revalidate at the last safe point so mutation of the
       // retained copy cannot cross the destructive boundary.
@@ -218,21 +271,72 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const managedWorkloadMutationGuard = revalidateManagedWorkloadRebuildBeforeDelete(
+        sandboxName,
+        recreateOptions.managedWorkloadRebuild,
+      );
+      if (managedWorkloadMutationGuard) {
+        bail(managedWorkloadMutationGuard.message);
+        return;
+      }
+
+      const expectedGatewayAuthority = recreateOptions.rebuildGatewayAuthority;
+      if (!expectedGatewayAuthority) {
+        bail("Authoritative rebuild gateway readiness did not produce an authority handoff.");
+        return;
+      }
       const recreateJournal = openRebuildRecreateJournal({
         target: {
           sandboxName,
           gatewayName: recreateOptions.targetGatewayName,
           gatewayPort: recreateOptions.targetGatewayPort,
         },
+        expectedGatewayAuthority,
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
         log,
+        onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
+      recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
 
       // An earlier run of this rebuild already registered and proved the
       // replacement. Retire its journal and stop before the destroy phase so a
       // restart converges to that sandbox instead of deleting it.
       if (recreateJournal.acceptedTarget) {
+        // The accepted replacement belongs to an earlier run. Its persisted
+        // gate is independent of the current backup's cron plan, so probe every
+        // Hermes target before retiring the replacement journal.
+        if (rebuildAgent === "hermes") {
+          try {
+            const outcome = recoverHermesCronRestore(sandboxName);
+            if (outcome === "unsupported") {
+              console.error("");
+              console.error(
+                "  The accepted Hermes replacement does not provide cron restore recovery.",
+              );
+              console.error(`  Backup is preserved at: ${backup.backupManifest?.backupPath}`);
+              return bail(
+                "Hermes cron restore recovery is unavailable; the replacement journal was retained.",
+              );
+            }
+            if (outcome === "operator-drain-preserved") {
+              console.log(
+                "  Hermes cron restore gate cleared; the independent operator drain remains active.",
+              );
+            }
+            log(`Hermes cron restore recovery for accepted replacement: ${outcome}`);
+          } catch (error) {
+            console.error("");
+            console.error(
+              `  Hermes cron restore could not validate and release the accepted replacement: ${rebuildFailureDetail(error)}`,
+            );
+            console.error(`  Backup is preserved at: ${backup.backupManifest?.backupPath}`);
+            printHermesCronRestoreRecoveryCommand(sandboxName);
+            return bail(
+              "Hermes cron restore recovery failed; the replacement journal was retained.",
+            );
+          }
+        }
         recreateJournal.completeAcceptedTarget();
         log(`Recovered journaled replacement ${recreateJournal.id} for '${sandboxName}'`);
         console.log(
@@ -286,7 +390,11 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
-        validateAtDeleteEdge: () => revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
+        validateAtDeleteEdge: () =>
+          revalidateManagedWorkloadRebuildBeforeDelete(
+            sandboxName,
+            recreateOptions.managedWorkloadRebuild,
+          ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         onDeleted: () => {
           sandboxStillExists = false;
         },
@@ -349,19 +457,62 @@ async function rebuildSandboxUnlocked(
         },
         durableConfig.webSearchConfig,
       );
-
-      const restored = runRebuildRestorePhase({
-        sandboxName,
-        targetAgentType: rebuildAgent || "openclaw",
-        targetImageIsCustom: Boolean(fromDockerfile),
-        backupManifest: backup.backupManifest,
-        policyPresets: targetPolicyPresets,
-        customPolicies:
-          backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
-          preservedCustomPolicies,
-        reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
-        log,
+      const capturedCustomPolicies =
+        backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
+        preservedCustomPolicies;
+      const customPoliciesWithRegistryPinAuthority = capturedCustomPolicies.map((entry) => {
+        const { trustedPrivatePins: _capturedPinAuthority, ...captured } = entry;
+        const registryAuthority = preservedCustomPolicies.find(
+          (candidate) =>
+            candidate.name === entry.name &&
+            candidate.content === entry.content &&
+            candidate.trustedPrivatePins?.contentDigest === entry.trustedPrivatePins?.contentDigest,
+        )?.trustedPrivatePins;
+        return {
+          ...captured,
+          ...(registryAuthority ? { trustedPrivatePins: registryAuthority } : {}),
+        };
       });
+
+      const restore = () =>
+        runRebuildRestorePhase({
+          sandboxName,
+          targetAgentType: rebuildAgent || "openclaw",
+          targetImageIsCustom: Boolean(fromDockerfile),
+          backupManifest: backup.backupManifest,
+          policyPresets: targetPolicyPresets,
+          customPolicies: customPoliciesWithRegistryPinAuthority,
+          reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
+          log,
+        });
+      let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
+      const restored = hermesCronRestorePlan?.requiresDispatchGate
+        ? (() => {
+            try {
+              const transaction = runHermesCronRestoreTransaction(
+                sandboxName,
+                restore,
+                (state, identity) => {
+                  log(
+                    `Hermes cron restore gate ${state}: pid=${String(identity.pid)}, startTime=${String(identity.start_time)}`,
+                  );
+                },
+              );
+              hermesCronRestoreIdentity = transaction.identity;
+              return transaction.result;
+            } catch (error) {
+              console.error("");
+              console.error(
+                error instanceof HermesCronRestoreIncompleteError
+                  ? "  Hermes cron dispatch remains drained because state restore was incomplete."
+                  : `  Hermes cron restore could not validate and reactivate dispatch: ${rebuildFailureDetail(error)}`,
+              );
+              console.error(`  Backup is preserved at: ${backup.backupManifest?.backupPath}`);
+              printHermesCronRestoreRecoveryCommand(sandboxName);
+              return bail("Hermes cron restore validation failed; dispatch was not re-enabled.");
+            }
+          })()
+        : restore();
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
@@ -370,6 +521,7 @@ async function rebuildSandboxUnlocked(
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
+        hermesCronRestoreIdentity,
         backupWasForceSkipped: backup.backupWasForceSkipped,
         failedPresets: restored.failedPresets,
         finalBuiltinPresets: restored.finalBuiltinPresets,
@@ -399,8 +551,9 @@ async function rebuildSandboxUnlocked(
       "  Warning: temporary rebuild base-image handoff could not be removed.",
     );
     if (preparedImage) {
+      const retainedPreparedImage = preparedImage;
       runBestEffortRebuildCleanup(
-        () => disposePreparedBuildContext(preparedImage),
+        () => disposePreparedBuildContext(retainedPreparedImage),
         "  Warning: temporary rebuild image inputs could not be fully removed.",
       );
     }

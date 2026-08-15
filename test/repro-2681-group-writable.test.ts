@@ -17,6 +17,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { AgentStateLockPlan } from "../src/lib/agent/definition-types";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const MUTABLE_CONFIG_NORMALIZER = path.join(
@@ -28,8 +29,25 @@ const MUTABLE_CONFIG_NORMALIZER = path.join(
 );
 const OPENCLAW_CONFIG_GUARD = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py";
+const STATE_LOCK_PLAN = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const HERMES_LOCK_TOKEN = "a".repeat(64);
+const OPENCLAW_STATE_LOCK_PLAN = {
+  version: 1 as const,
+  readOnlyRoots: ["skills"],
+  confidentialRoots: ["credentials"],
+  readOnlyPrefixes: ["workspace-"],
+  confidentialPrefixes: [],
+  writableSubpaths: ["agents/*/sessions"],
+};
+const HERMES_STATE_LOCK_PLAN = {
+  version: 1 as const,
+  readOnlyRoots: ["skills"],
+  confidentialRoots: ["pairing"],
+  readOnlyPrefixes: [],
+  confidentialPrefixes: [],
+  writableSubpaths: [],
+};
 const HERMES_SEALED_GUARD_HELP = [
   "begin-shields-transition",
   "run-state-dir-transition",
@@ -38,7 +56,18 @@ const HERMES_SEALED_GUARD_HELP = [
   "prepare-shields-abort",
   "abort-shields-transition",
   "--rollback-shields-mode",
+  "--state-lock-plan-json",
 ].join(" ");
+
+function stateDirGuardAction(command: string[]): string | null {
+  const installedIndex = command.indexOf(STATE_DIR_GUARD);
+  const pythonIndex = command.indexOf("python3");
+  return installedIndex >= 0
+    ? (command[installedIndex + 1] ?? null)
+    : pythonIndex >= 0 && command[pythonIndex + 2] === "-"
+      ? (command[pythonIndex + 3] ?? null)
+      : null;
+}
 
 function extractShellFunctionFromSource(src: string, name: string): string {
   const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -52,6 +81,12 @@ function replaceRequired(source: string, target: string, replacement: string): s
   const parts = source.split(target);
   expect(parts, `Expected exactly one replacement target: ${target}`).toHaveLength(2);
   return `${parts[0]}${replacement}${parts[1]}`;
+}
+
+function restoreCachedModule(modulePath: string, previous: NodeJS.Module | undefined): boolean {
+  return previous === undefined
+    ? Reflect.deleteProperty(require.cache, modulePath)
+    : Reflect.set(require.cache, modulePath, previous);
 }
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
@@ -125,7 +160,12 @@ function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
 function withMockedDockerExecFileSync<T>(
   calls: string[][],
   run: () => T,
-  options: { hermesLockedTransaction?: boolean; symlinkedPaths?: ReadonlySet<string> } = {},
+  options: {
+    hermesLockedTransaction?: boolean;
+    installedStateLockPlan?: AgentStateLockPlan;
+    registryAgent?: "hermes" | "openclaw";
+    symlinkedPaths?: ReadonlySet<string>;
+  } = {},
 ): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerExecModule = require("../src/lib/adapters/docker/exec.js") as {
@@ -134,9 +174,22 @@ function withMockedDockerExecFileSync<T>(
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
   const originalDockerSpawnSync = dockerExecModule.dockerSpawnSync;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const registryModule =
+    require("../src/lib/state/registry.js") as typeof import("../src/lib/state/registry");
+  const getSandboxSpy = vi.spyOn(registryModule, "getSandbox").mockReturnValue({
+    agent: options.registryAgent ?? "openclaw",
+    name: "sandbox-pod",
+  } as never);
   const shieldsModulePath = require.resolve("../src/lib/shields/index.js");
   const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec.js");
+  const transitionLockPath = require.resolve("../src/lib/shields/transition-lock.js");
   const priorPrivilegedExec = require.cache[privilegedExecPath];
+  const priorTransitionLock = require.cache[transitionLockPath];
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const transitionLock = require(
+    transitionLockPath,
+  ) as typeof import("../src/lib/shields/transition-lock");
   delete require.cache[shieldsModulePath];
   require.cache[privilegedExecPath] = {
     id: privilegedExecPath,
@@ -144,6 +197,21 @@ function withMockedDockerExecFileSync<T>(
     loaded: true,
     exports: {
       privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+      withPrivilegedSandboxExecutionLease: <T>(
+        _sandboxName: string,
+        _operation: string,
+        fn: () => T,
+      ): T => fn(),
+    },
+  } as any;
+  require.cache[transitionLockPath] = {
+    id: transitionLockPath,
+    filename: transitionLockPath,
+    loaded: true,
+    exports: {
+      ...transitionLock,
+      withShieldsTransitionLock: <T>(_sandboxName: string, _command: string, fn: () => T): T =>
+        fn(),
     },
   } as any;
 
@@ -224,7 +292,7 @@ function withMockedDockerExecFileSync<T>(
     calls.push(command);
 
     const openClawGuardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
-    const stateDirGuardIndex = command.indexOf(STATE_DIR_GUARD);
+    const stateDirAction = stateDirGuardAction(command);
     switch (true) {
       case command[0] === "test" &&
         command[1] === "-r" &&
@@ -233,6 +301,15 @@ function withMockedDockerExecFileSync<T>(
           status: 0,
           signal: null,
           stdout: "",
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      case command[0] === "cat" && command[1] === STATE_LOCK_PLAN:
+        return {
+          status: 0,
+          signal: null,
+          stdout: JSON.stringify(options.installedStateLockPlan ?? OPENCLAW_STATE_LOCK_PLAN),
           stderr: "",
           pid: 0,
           output: [],
@@ -272,8 +349,8 @@ function withMockedDockerExecFileSync<T>(
           output: [],
         } as never;
       }
-      case stateDirGuardIndex >= 0: {
-        const action = command[stateDirGuardIndex + 1];
+      case stateDirAction !== null: {
+        const action = stateDirAction;
         return {
           status: 0,
           signal: null,
@@ -305,9 +382,10 @@ function withMockedDockerExecFileSync<T>(
   } finally {
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
     dockerExecModule.dockerSpawnSync = originalDockerSpawnSync;
+    getSandboxSpy.mockRestore();
     delete require.cache[shieldsModulePath];
-    if (priorPrivilegedExec) require.cache[privilegedExecPath] = priorPrivilegedExec;
-    else delete require.cache[privilegedExecPath];
+    restoreCachedModule(privilegedExecPath, priorPrivilegedExec);
+    restoreCachedModule(transitionLockPath, priorTransitionLock);
   }
 }
 
@@ -447,6 +525,8 @@ describe("mutable agent config permissions", () => {
             configPath: string;
             configDir: string;
             sensitiveFiles?: string[];
+            stateLockPlan?: AgentStateLockPlan;
+            stateLockPlanInImage: boolean;
           },
         ) => void;
       };
@@ -456,6 +536,8 @@ describe("mutable agent config permissions", () => {
         configPath: "/sandbox/.openclaw/openclaw.json",
         configDir: "/sandbox/.openclaw",
         sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+        stateLockPlan: OPENCLAW_STATE_LOCK_PLAN,
+        stateLockPlanInImage: true,
       });
     });
 
@@ -464,13 +546,12 @@ describe("mutable agent config permissions", () => {
       .map((command) => command[command.indexOf(OPENCLAW_CONFIG_GUARD) + 1])
       .filter((action): action is string => typeof action === "string");
     const stateDirActions = commands
-      .filter((command) => command.includes(STATE_DIR_GUARD))
-      .map((command) => command[command.indexOf(STATE_DIR_GUARD) + 1])
-      .filter((action): action is string => typeof action === "string");
+      .map(stateDirGuardAction)
+      .filter((action): action is string => action !== null);
     expect(openClawActions).toEqual(["preflight", "unlock"]);
     expect(stateDirActions).toEqual(["unlock"]);
     expect(commands).toContainEqual(["test", "-r", OPENCLAW_CONFIG_GUARD]);
-    expect(commands).toContainEqual(["test", "-r", STATE_DIR_GUARD]);
+    expect(commands.some((command) => stateDirGuardAction(command) === "unlock")).toBe(true);
     expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.openclaw/openclaw.json"]);
     expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.openclaw/.config-hash"]);
     expect(
@@ -499,6 +580,8 @@ describe("mutable agent config permissions", () => {
                 configPath: string;
                 configDir: string;
                 sensitiveFiles?: string[];
+                stateLockPlan?: AgentStateLockPlan;
+                stateLockPlanInImage: boolean;
               },
             ) => void;
           };
@@ -508,6 +591,8 @@ describe("mutable agent config permissions", () => {
             configPath: "/sandbox/.openclaw/openclaw.json",
             configDir: "/sandbox/.openclaw",
             sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+            stateLockPlan: OPENCLAW_STATE_LOCK_PLAN,
+            stateLockPlanInImage: true,
           });
         },
         {
@@ -531,7 +616,7 @@ describe("mutable agent config permissions", () => {
       ]),
     );
     expect(commands).toContainEqual(["test", "-r", OPENCLAW_CONFIG_GUARD]);
-    expect(commands.some((command) => command.includes(STATE_DIR_GUARD))).toBe(false);
+    expect(commands.some((command) => stateDirGuardAction(command) !== null)).toBe(false);
     expect(
       commands.some(
         (command) =>
@@ -545,27 +630,35 @@ describe("mutable agent config permissions", () => {
 
   it("shields-down restores Hermes sticky group-writable config root without group-writable config files", () => {
     const commands: string[][] = [];
-    withMockedDockerExecFileSync(commands, () => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
-        unlockAgentConfig: (
-          sandboxName: string,
-          target: {
-            agentName?: string;
-            configPath: string;
-            configDir: string;
-            sensitiveFiles?: string[];
-          },
-        ) => void;
-      };
+    withMockedDockerExecFileSync(
+      commands,
+      () => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
+          unlockAgentConfig: (
+            sandboxName: string,
+            target: {
+              agentName?: string;
+              configPath: string;
+              configDir: string;
+              sensitiveFiles?: string[];
+              stateLockPlan?: AgentStateLockPlan;
+              stateLockPlanInImage: boolean;
+            },
+          ) => void;
+        };
 
-      unlockAgentConfig("sandbox-pod", {
-        agentName: "hermes",
-        configPath: "/sandbox/.hermes/config.yaml",
-        configDir: "/sandbox/.hermes",
-        sensitiveFiles: ["/sandbox/.hermes/.env"],
-      });
-    });
+        unlockAgentConfig("sandbox-pod", {
+          agentName: "hermes",
+          configPath: "/sandbox/.hermes/config.yaml",
+          configDir: "/sandbox/.hermes",
+          sensitiveFiles: ["/sandbox/.hermes/.env"],
+          stateLockPlan: HERMES_STATE_LOCK_PLAN,
+          stateLockPlanInImage: true,
+        });
+      },
+      { installedStateLockPlan: HERMES_STATE_LOCK_PLAN, registryAgent: "hermes" },
+    );
 
     const hermesActions = commands
       .filter((command) => command.includes(HERMES_RUNTIME_CONFIG_GUARD))
@@ -607,6 +700,8 @@ describe("mutable agent config permissions", () => {
               configPath: string;
               configDir: string;
               sensitiveFiles?: string[];
+              stateLockPlan?: AgentStateLockPlan;
+              stateLockPlanInImage: boolean;
             },
           ) => void;
         };
@@ -616,9 +711,15 @@ describe("mutable agent config permissions", () => {
           configPath: "/sandbox/.hermes/config.yaml",
           configDir: "/sandbox/.hermes",
           sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
+          stateLockPlan: HERMES_STATE_LOCK_PLAN,
+          stateLockPlanInImage: true,
         });
       },
-      { hermesLockedTransaction: true },
+      {
+        hermesLockedTransaction: true,
+        installedStateLockPlan: HERMES_STATE_LOCK_PLAN,
+        registryAgent: "hermes",
+      },
     );
 
     const finishIndex = commands.findIndex((command) =>
@@ -643,7 +744,19 @@ const originalLoad = Module._load;
 const calls = [];
 const OPENCLAW_CONFIG_GUARD = ${JSON.stringify(OPENCLAW_CONFIG_GUARD)};
 const STATE_DIR_GUARD = ${JSON.stringify(STATE_DIR_GUARD)};
+const STATE_LOCK_PLAN = ${JSON.stringify(STATE_LOCK_PLAN)};
+const INSTALLED_STATE_LOCK_PLAN = ${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)};
+${stateDirGuardAction.toString()}
 Module._load = function patchedLoad(request, parent, isMain) {
+  if (request === "./transition-lock") {
+    const transitionLock = originalLoad.call(this, request, parent, isMain);
+    return {
+      ...transitionLock,
+      withShieldsTransitionLock(_sandboxName, _command, fn) {
+        return fn();
+      },
+    };
+  }
   if (request === "../adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
@@ -678,6 +791,16 @@ Module._load = function patchedLoad(request, parent, isMain) {
         ) {
           return { status: 0, signal: null, stdout: "", stderr: "", pid: 0, output: [] };
         }
+        if (command[0] === "cat" && command[1] === STATE_LOCK_PLAN) {
+          return {
+            status: 0,
+            signal: null,
+            stdout: JSON.stringify(INSTALLED_STATE_LOCK_PLAN),
+            stderr: "",
+            pid: 0,
+            output: [],
+          };
+        }
         const openClawGuardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
         if (openClawGuardIndex >= 0) {
           const action = command[openClawGuardIndex + 1];
@@ -697,9 +820,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
             output: [],
           };
         }
-        const stateDirGuardIndex = command.indexOf(STATE_DIR_GUARD);
-        if (stateDirGuardIndex >= 0) {
-          const action = command[stateDirGuardIndex + 1];
+        const stateDirAction = stateDirGuardAction(command);
+        if (stateDirAction) {
+          const action = stateDirAction;
           return {
             status: 0,
             signal: null,
@@ -723,6 +846,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
       privilegedSandboxExecArgv(_sandboxName, cmd) {
         return [...cmd];
       },
+      withPrivilegedSandboxExecutionLease(_sandboxName, _operation, fn) {
+        return fn();
+      },
     };
   }
   return originalLoad.call(this, request, parent, isMain);
@@ -733,6 +859,8 @@ lockAgentConfig("sandbox-pod", {
   configPath: "/sandbox/.openclaw/openclaw.json",
   configDir: "/sandbox/.openclaw",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  stateLockPlan: ${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)},
+  stateLockPlanInImage: true,
 });
 process.stdout.write(JSON.stringify(calls));
 `,
@@ -749,12 +877,8 @@ process.stdout.write(JSON.stringify(calls));
       const guardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
       return guardIndex >= 0 && command[guardIndex + 1] === "lock";
     });
-    const stateDirCapabilityIndex = commands.findIndex(
-      (command) => command.join("\0") === ["test", "-r", STATE_DIR_GUARD].join("\0"),
-    );
     const stateDirLockIndex = commands.findIndex((command) => {
-      const guardIndex = command.indexOf(STATE_DIR_GUARD);
-      return guardIndex >= 0 && command[guardIndex + 1] === "lock";
+      return stateDirGuardAction(command) === "lock";
     });
     const verificationIndex = commands.findIndex(
       (command, index) =>
@@ -765,9 +889,8 @@ process.stdout.write(JSON.stringify(calls));
     );
     expect(openClawCapabilityIndex).toBeGreaterThan(-1);
     expect(openClawLockIndex).toBeGreaterThan(openClawCapabilityIndex);
-    expect(stateDirCapabilityIndex).toBeGreaterThan(openClawLockIndex);
     expect(stateDirLockIndex).toBeGreaterThan(-1);
-    expect(stateDirLockIndex).toBeGreaterThan(stateDirCapabilityIndex);
+    expect(stateDirLockIndex).toBeGreaterThan(openClawLockIndex);
     expect(verificationIndex).toBeGreaterThan(stateDirLockIndex);
     expect(commands).not.toContainEqual(["chmod", "g-s", "/sandbox/.openclaw"]);
     expect(commands).not.toContainEqual(["chmod", "755", "/sandbox/.openclaw"]);

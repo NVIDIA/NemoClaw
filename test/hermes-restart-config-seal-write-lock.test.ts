@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   createRestartFixture,
-  hashInputs,
   mode,
   RUNTIME_CONFIG_GUARD,
   runGuard,
@@ -44,41 +43,32 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     }
   });
 
-  it("keeps a maximum-size config write journal below its bounded state cap", {
-    timeout: 120_000,
-  }, () => {
+  it("accepts exactly 16 MiB at the size guard before validating filesystem state", () => {
     const fixture = createRestartFixture();
-    const boundarySize = 16 * 1024 * 1024;
-    const payloadSize = boundarySize - "payload: \n".length;
-    const originalConfig = `payload: ${"a".repeat(payloadSize)}\n`;
-    const updatedConfig = `payload: ${"b".repeat(payloadSize)}\n`;
-    fs.writeFileSync(fixture.configPath, originalConfig);
-    const hash = hashInputs(fixture.configPath, fixture.envPath);
-    fs.writeFileSync(fixture.hashPath, hash);
-    fs.writeFileSync(fixture.compatHashPath, hash);
-    const expectedDigest = createHash("sha256").update(originalConfig).digest("hex");
+    const configAtLimit = "a".repeat(16 * 1024 * 1024);
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+
+    const updated = runWriteConfig(fixture, "0".repeat(64), configAtLimit);
+
+    expect(updated.status).not.toBe(0);
+    expect(updated.stderr).not.toContain("refusing oversized Hermes config input");
+    expect(updated.stderr).toContain("No such file or directory");
+  });
+
+  it("rejects Hermes configuration input larger than 16 MiB without creating restart state", () => {
+    const fixture = createRestartFixture();
+    const expectedDigest = createHash("sha256").update(fixture.trustedConfig).digest("hex");
+    const oversizedConfig = "a".repeat(16 * 1024 * 1024 + 1);
 
     try {
-      const startedAt = Date.now();
-      const updated = runWriteConfig(fixture, expectedDigest, updatedConfig);
-      const elapsedMs = Date.now() - startedAt;
-      const errorCode = (updated.error as NodeJS.ErrnoException | undefined)?.code ?? "<none>";
-      expect(
-        updated.status,
-        [
-          `write-config failed after ${elapsedMs} ms`,
-          `error.code=${errorCode}`,
-          `signal=${updated.signal ?? "<none>"}`,
-          `stderr=${updated.stderr || "<empty>"}`,
-        ].join("\n"),
-      ).toBe(0);
-      const updatedBytes = fs.readFileSync(fixture.configPath);
-      expect(updatedBytes).toHaveLength(boundarySize);
-      expect(createHash("sha256").update(updatedBytes).digest("hex")).toBe(
-        createHash("sha256").update(updatedConfig).digest("hex"),
-      );
+      const updated = runWriteConfig(fixture, expectedDigest, oversizedConfig);
+
+      expect(updated.status).not.toBe(0);
+      expect(updated.stderr).toContain("refusing oversized Hermes config input");
+      expect(fs.readFileSync(fixture.configPath, "utf-8")).toBe(fixture.trustedConfig);
       expect(strictHashIsValid(fixture)).toBe(true);
       expect(fs.existsSync(fixture.statePath)).toBe(false);
+      expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }

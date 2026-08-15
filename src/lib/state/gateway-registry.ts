@@ -11,6 +11,8 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { resolveGatewayName, resolveGatewayPortFromName } from "../onboard/gateway-binding";
 import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
+export { GATEWAYS_SUBDIR } from "./state-root";
+
 const MAX_REGISTRY_BYTES = 16 * 1024 * 1024;
 const MAX_GATEWAY_ROOTS = 256;
 const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;
@@ -18,6 +20,7 @@ const MAX_GATEWAY_DIRECTORY_ENTRIES = 1024;
 export interface GatewayRegistryEntry extends Record<string, unknown> {
   name: string;
   dashboardPort?: number | null;
+  hermesApiPort?: number | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
 }
@@ -93,17 +96,15 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
     ) {
       throw stateError(`${filePath} has an invalid sandbox row for ${JSON.stringify(name)}`);
     }
-    if (
-      value.dashboardPort !== undefined &&
-      value.dashboardPort !== null &&
-      (typeof value.dashboardPort !== "number" ||
-        !Number.isInteger(value.dashboardPort) ||
-        value.dashboardPort < 0 ||
-        value.dashboardPort > 65535)
-    ) {
-      throw stateError(
-        `${filePath} has an invalid dashboardPort for sandbox ${JSON.stringify(name)}`,
-      );
+    for (const field of ["dashboardPort", "hermesApiPort"] as const) {
+      const port = value[field];
+      if (
+        port !== undefined &&
+        port !== null &&
+        (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535)
+      ) {
+        throw stateError(`${filePath} has an invalid ${field} for sandbox ${JSON.stringify(name)}`);
+      }
     }
     sandboxes[name] =
       value.dashboardPort === 0

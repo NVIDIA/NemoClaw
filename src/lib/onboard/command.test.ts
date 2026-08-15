@@ -5,11 +5,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getCredential } from "../credentials/store";
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { servingProfileProvenance } from "../inference/serving/profile-provenance";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
+import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
+import { GatewayAuthorityError } from "./gateway-teardown-authority";
+import {
+  LOCAL_MODEL_PROFILE_ENABLED_ENV,
+  LOCAL_MODEL_PROFILE_RUNTIME_ENV,
+} from "./local-model-profile/plan";
+import { OnboardResumeIntentError, OnboardResumeIntentRaceError } from "./session-bootstrap";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -27,15 +41,176 @@ function resolve(
   });
 }
 
+const COMPATIBLE_NANO_PROFILE = {
+  id: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  displayName: "NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark",
+  backend: "install-llama-cpp",
+  model: "unsloth/Nemotron-3-Nano-30B-A3B-GGUF",
+  topology: "single-host",
+  selectionMode: "explicit-only" as const,
+  supportState: "experimental" as const,
+  estimatedImageDownloadBytes: 1,
+  estimatedModelDownloadBytes: 1,
+  compatible: true,
+  incompatibilityReason: null,
+};
+
+// Recreation is selected three ways and only the first sets the flag that
+// `resolveOnboardOptions` records: the explicit flag, NEMOCLAW_RECREATE_SANDBOX
+// read inside `runOnboard`, and drift detected mid-run. All three reach the same
+// recreate journal, so all three must report an authority refusal (#8103).
+const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
+  ["the explicit --recreate-sandbox flag", { "recreate-sandbox": true }, {}],
+  ["NEMOCLAW_RECREATE_SANDBOX without the flag", {}, { NEMOCLAW_RECREATE_SANDBOX: "1" }],
+  ["drift detected with neither the flag nor the environment request", {}, {}],
+];
+
 describe("onboard command options", () => {
+  it("resolves a generic serving profile ID without changing defaults (#8384)", () => {
+    expect(
+      resolve(
+        { profile: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
+        { listServingProfiles: () => [COMPATIBLE_NANO_PROFILE] },
+      ).servingProfile,
+    ).toBe("llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b");
+    expect(
+      resolve(
+        { profile: COMPATIBLE_NANO_PROFILE.displayName },
+        { listServingProfiles: () => [COMPATIBLE_NANO_PROFILE] },
+      ).servingProfile,
+    ).toBe(COMPATIBLE_NANO_PROFILE.id);
+    expect(resolve({}).servingProfile).toBeNull();
+  });
+
+  it("rejects unknown or conflicting serving profile intent before onboarding (#8384)", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve({ profile: "missing-profile" }, { error: (message = "") => errors.push(message) }),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Run 'nemoclaw profiles list'");
+
+    errors.length = 0;
+    expect(() =>
+      resolve(
+        { profile: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
+        {
+          env: { NEMOCLAW_PROVIDER: "ollama" },
+          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("cannot be combined with inference overrides");
+    expect(errors.join("\n")).toContain("NEMOCLAW_PROVIDER");
+
+    errors.length = 0;
+    expect(() =>
+      resolve(
+        { profile: COMPATIBLE_NANO_PROFILE.id },
+        {
+          listServingProfiles: () => [
+            {
+              ...COMPATIBLE_NANO_PROFILE,
+              compatible: false,
+              incompatibilityReason: "A host requirement is not met.",
+            },
+          ],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("incompatible: A host requirement is not met");
+  });
+
+  it("reuses exact recorded profile identity on resume and rejects catalog drift (#8246)", () => {
+    const catalog = loadServingCatalog();
+    const recorded = servingProfileProvenance(catalog, catalog.presets[0]!.metadata.id);
+    const resumed = resolve(
+      { resume: true },
+      {
+        loadServingCatalog: () => catalog,
+        loadSession: () => ({ servingProfileProvenance: recorded }) as never,
+      },
+    );
+    expect(resumed.servingProfile).toBe(recorded.preset.id);
+    expect(resumed.servingProfileProvenance).toEqual(recorded);
+
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { resume: true },
+        {
+          loadServingCatalog: () => ({
+            ...catalog,
+            catalogDigest: `sha256:${"f".repeat(64)}`,
+          }),
+          loadSession: () => ({ servingProfileProvenance: recorded }) as never,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("changed since onboarding started");
+  });
+
+  it("records installer local-model profile intent before onboarding and reuses it on resume", () => {
+    const catalog = loadServingCatalog();
+    const fresh = resolve(
+      {},
+      {
+        env: {
+          [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+          [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+        },
+        loadServingCatalog: () => catalog,
+      },
+    );
+
+    expect(fresh.servingProfile).toBeNull();
+    expect(fresh.servingProfileProvenance?.preset.id).toBe("local-model-profile.vllm.spark.v1");
+
+    const resumed = resolve(
+      { resume: true },
+      {
+        env: {},
+        loadServingCatalog: () => catalog,
+        loadSession: () => ({
+          servingProfileProvenance: fresh.servingProfileProvenance,
+        }),
+      },
+    );
+    expect(resumed.servingProfileProvenance).toEqual(fresh.servingProfileProvenance);
+  });
+
+  it("keeps legacy resume compatible but refuses to add new profile intent (#8384)", () => {
+    expect(
+      resolve({ resume: true }, { loadSession: () => ({}) as never }).servingProfile,
+    ).toBeNull();
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { resume: true, profile: COMPATIBLE_NANO_PROFILE.id },
+        {
+          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+          loadSession: () => ({}) as never,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("legacy onboarding session");
+  });
+
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
+    const managedCatalogPath = path.join(tmpDir, "managed-catalog.json");
     fs.writeFileSync(dockerfilePath, "FROM scratch\n");
+    fs.writeFileSync(managedCatalogPath, "{}\n");
 
     expect(
       resolve(
         {
+          "temp-managed-runtime": true,
+          "temp-managed-runtime-catalog": managedCatalogPath,
           "non-interactive": true,
           resume: true,
           "recreate-sandbox": true,
@@ -55,6 +230,8 @@ describe("onboard command options", () => {
         { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
       ),
     ).toEqual({
+      tempManagedRuntime: true,
+      tempManagedRuntimeCatalog: managedCatalogPath,
       nonInteractive: true,
       resume: true,
       fresh: false,
@@ -69,15 +246,23 @@ describe("onboard command options", () => {
       toolDisclosure: "direct",
       observabilityEnabled: true,
       controlUiPort: 18790,
+      deferProcessExit: true,
       gpu: true,
       noGpu: false,
       autoYes: true,
       noOllamaAutostart: true,
+      experimentalProfile: null,
+      portableInferenceActivation: null,
+      resumeIntentSnapshot: null,
+      servingProfile: null,
+      servingProfileProvenance: null,
     });
   });
 
   it("uses explicit false/null defaults when flags are absent", () => {
     expect(resolve({})).toEqual({
+      tempManagedRuntime: false,
+      tempManagedRuntimeCatalog: null,
       nonInteractive: false,
       resume: false,
       fresh: false,
@@ -92,11 +277,115 @@ describe("onboard command options", () => {
       toolDisclosure: null,
       observabilityEnabled: null,
       controlUiPort: null,
+      deferProcessExit: true,
       gpu: false,
       noGpu: false,
       autoYes: false,
       noOllamaAutostart: false,
+      experimentalProfile: null,
+      portableInferenceActivation: null,
+      resumeIntentSnapshot: null,
+      servingProfile: null,
+      servingProfileProvenance: null,
     });
+  });
+
+  it("maps repeated host mounts when the selected runtime provider supports them", () => {
+    const first = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const second = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
+    try {
+      expect(resolve({ "host-mount": values }, { platform: "linux" }).hostMounts).toEqual([
+        {
+          source: first,
+          target: "/sandbox/project",
+          readOnly: true,
+          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+        },
+        {
+          source: second,
+          target: "/sandbox/reference",
+          readOnly: true,
+          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+        },
+      ]);
+    } finally {
+      fs.rmSync(first, { recursive: true, force: true });
+      fs.rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the Podman capability reason for portable host mounts", () => {
+    const errors: string[] = [];
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+
+    try {
+      expect(() =>
+        resolve(
+          {
+            "experimental-profile": "portable",
+            "host-mount": [`${source}:/sandbox/project`],
+          },
+          { platform: "linux", error: (message = "") => errors.push(message) },
+        ),
+      ).toThrow("exit:1");
+      expect(errors.join("\n")).toContain("Runtime provider 'podman'");
+      expect(errors.join("\n")).toContain("not qualified for the Podman runtime provider");
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["darwin", "arm64", "docker", "has not qualified read-only host mounts"],
+    ["win32", "x64", "kubernetes", "Kubernetes hostPath semantics"],
+  ] as const)(
+    "reports why the runtime provider selected for %s rejects host mounts",
+    (platform, arch, provider, reason) => {
+      const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+      const error = vi.fn();
+      try {
+        expect(() =>
+          resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform, arch, error }),
+        ).toThrow("exit:1");
+        expect(error.mock.calls.flat().join("\n")).toContain(`Runtime provider '${provider}'`);
+        expect(error.mock.calls.flat().join("\n")).toContain(reason);
+      } finally {
+        fs.rmSync(source, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("resolves the portable profile to deterministic unattended defaults", () => {
+    expect(resolve({ "experimental-profile": "portable" })).toMatchObject({
+      experimentalProfile: "portable",
+      nonInteractive: true,
+      fresh: true,
+      autoYes: true,
+      noOllamaAutostart: true,
+      noGpu: false,
+      sandboxGpu: null,
+    });
+  });
+
+  it("allows an exact portable checkpoint profile on resume (#9035)", () => {
+    expect(
+      resolve(
+        { "experimental-profile": "portable", resume: true },
+        {
+          resumeIntent: {
+            effectiveResume: true,
+            snapshot: {
+              fingerprint: "a".repeat(64),
+              sessionId: "session-1",
+              checkpointUpdatedAt: "2026-08-13T00:00:00.000Z",
+              machineRevision: 1,
+              profile: "portable",
+            },
+          },
+        },
+      ),
+    ).toMatchObject({ resume: true, fresh: false, experimentalProfile: "portable" });
   });
 
   it("maps --no-observability to an explicit disabled request", () => {
@@ -246,6 +535,459 @@ describe("onboard command options", () => {
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
   });
 
+  it("re-resolves once after onboard reports a pre-read race (#9035)", async () => {
+    const snapshots = ["first", "second"].map((fingerprint) => ({
+      effectiveResume: true,
+      snapshot: {
+        fingerprint,
+        sessionId: "session-1",
+        checkpointUpdatedAt: "2026-08-13T20:00:00.000Z",
+        machineRevision: 2,
+        profile: "portable" as const,
+      },
+    }));
+    const resolveResumeIntent = vi
+      .fn()
+      .mockReturnValueOnce(snapshots[0])
+      .mockReturnValueOnce(snapshots[1]);
+    const runOnboard = vi
+      .fn()
+      .mockRejectedValueOnce(new OnboardResumeIntentRaceError())
+      .mockResolvedValueOnce(undefined);
+
+    await runOnboardCommand({
+      flags: { resume: true },
+      env: {},
+      resolveResumeIntent,
+      loadPortableInferenceDescriptor: async () => null,
+      runOnboard,
+    });
+
+    expect(resolveResumeIntent).toHaveBeenCalledTimes(2);
+    expect(runOnboard).toHaveBeenCalledTimes(2);
+    expect(runOnboard.mock.calls[1]?.[0].resumeIntentSnapshot?.fingerprint).toBe("second");
+  });
+
+  it("keeps early legacy recovery guidance agent-neutral for an alias (#9035)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: { resume: true },
+        env: { NEMOCLAW_AGENT: "nemohermes" },
+        resolveResumeIntent: () => {
+          throw new OnboardResumeIntentError(
+            "This onboarding checkpoint predates recorded runtime authority and cannot be resumed safely. Start a new onboarding attempt with the `--fresh` option.",
+          );
+        },
+        runOnboard: vi.fn(async () => {}),
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errors.join("\n")).toContain(
+      "Start a new onboarding attempt with the `--fresh` option.",
+    );
+    expect(errors.join("\n")).not.toContain("nemoclaw onboard");
+  });
+
+  it("fails after a second pre-read race instead of looping (#9035)", async () => {
+    const resolveResumeIntent = vi.fn(() => ({
+      effectiveResume: true,
+      snapshot: {
+        fingerprint: "changed",
+        sessionId: "session-1",
+        checkpointUpdatedAt: "2026-08-13T20:00:00.000Z",
+        machineRevision: 2,
+        profile: "default" as const,
+      },
+    }));
+    const runOnboard = vi.fn(async () => {
+      throw new OnboardResumeIntentRaceError();
+    });
+    const errors: string[] = [];
+
+    await expect(
+      runOnboardCommand({
+        flags: { resume: true },
+        env: {},
+        resolveResumeIntent,
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+    expect(resolveResumeIntent).toHaveBeenCalledTimes(2);
+    expect(runOnboard).toHaveBeenCalledTimes(2);
+    expect(errors.join("\n")).toContain("checkpoint changed while resume acquired its lock");
+  });
+
+  it("does not handle an unbranded deferred-exit lookalike (#9035)", async () => {
+    const lookalike = Object.assign(new Error("unknown failure"), {
+      code: 1,
+      name: "OnboardDeferredExitError",
+    });
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("unexpected exit");
+    });
+
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw lookalike;
+        },
+        exit,
+      }),
+    ).rejects.toBe(lookalike);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("restores scoped command environment before exiting after a second resume race (#9035)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resume-race-environment-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: []\n");
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
+      NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+    };
+    let environmentAtExit: NodeJS.ProcessEnv | null = null;
+
+    try {
+      await expect(
+        runOnboardCommand({
+          flags: {
+            resume: true,
+            agents: manifestPath,
+            "no-ollama-autostart": true,
+            "tool-disclosure": "direct",
+          },
+          env,
+          resolveResumeIntent: () => ({ effectiveResume: true, snapshot: null }),
+          runOnboard: async () => {
+            throw new OnboardResumeIntentRaceError();
+          },
+          error: () => {},
+          exit: (code): never => {
+            environmentAtExit = { ...env };
+            throw new Error(`exit:${code}`);
+          },
+        }),
+      ).rejects.toThrow("exit:1");
+      expect(environmentAtExit).toEqual({
+        NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
+        NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
+        NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores every scoped command value before exiting on a handled error (#9035)", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: []\n");
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
+      NEMOCLAW_SERVING_PRESET: "previous-serving",
+      NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+    };
+    let environmentAtExit: NodeJS.ProcessEnv | null = null;
+
+    try {
+      await expect(
+        runOnboardCommand({
+          flags: {
+            agents: manifestPath,
+            "no-ollama-autostart": true,
+            profile: COMPATIBLE_NANO_PROFILE.id,
+            "tool-disclosure": "direct",
+          },
+          env,
+          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+          runOnboard: async () => {
+            throw invalidGatewayManagementDeclarationError("unsupported contract");
+          },
+          error: () => {},
+          exit: (code): never => {
+            environmentAtExit = { ...env };
+            throw new Error(`exit:${code}`);
+          },
+        }),
+      ).rejects.toThrow("exit:1");
+      expect(environmentAtExit).toEqual({
+        NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
+        NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
+        NEMOCLAW_SERVING_PRESET: "previous-serving",
+        NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("scopes the selected catalog preset to one onboarding run (#8384)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    let observed: string | undefined;
+    await runOnboardCommand({
+      flags: { profile: COMPATIBLE_NANO_PROFILE.id },
+      env,
+      listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      runOnboard: async (options) => {
+        observed = env.NEMOCLAW_SERVING_PRESET;
+        expect(options.servingProfile).toBe(COMPATIBLE_NANO_PROFILE.id);
+      },
+    });
+
+    expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("records an installer profile without activating the disabled generic preset", async () => {
+    const env: NodeJS.ProcessEnv = {
+      [LOCAL_MODEL_PROFILE_ENABLED_ENV]: "1",
+      [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: "vllm",
+    };
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async (options) => {
+        expect(options.servingProfile).toBeNull();
+        expect(options.servingProfileProvenance?.preset.id).toBe(
+          "local-model-profile.vllm.spark.v1",
+        );
+        expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+      },
+    });
+
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("preserves an explicit preset list during portable onboarding (#8991)", async () => {
+    const explicitPresets = "weather,public-reference,github";
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+    };
+    const observed: Record<string, string | undefined> = {};
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => null,
+      runOnboard: async () => {
+        for (const key of [
+          "NEMOCLAW_EXPERIMENTAL_PROFILE",
+          "NEMOCLAW_PROVIDER",
+          "NEMOCLAW_MODEL",
+          "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+          "NEMOCLAW_POLICY_MODE",
+          "NEMOCLAW_POLICY_PRESETS",
+          "NEMOCLAW_POLICY_TIER",
+          "NEMOCLAW_TOOL_DISCLOSURE",
+        ]) {
+          observed[key] = env[key];
+        }
+      },
+    });
+
+    expect(observed).toEqual({
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+    });
+    expect(env).toMatchObject({
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+      NEMOCLAW_POLICY_MODE: "previous-mode",
+      NEMOCLAW_POLICY_PRESETS: explicitPresets,
+      NEMOCLAW_POLICY_TIER: "previous-tier",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+    });
+  });
+
+  it("defers the portable policy default to the scoped onboarding environment (#8991)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    let observedPresets: string | undefined;
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => null,
+      runOnboard: async () => {
+        observedPresets = env.NEMOCLAW_POLICY_PRESETS;
+      },
+    });
+
+    expect(observedPresets).toBeUndefined();
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBeUndefined();
+  });
+
+  it("does not change an explicit preset list outside portable onboarding (#8991)", async () => {
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_POLICY_PRESETS: "weather,public-reference,github",
+    };
+    let observedPresets: string | undefined;
+
+    await runOnboardCommand({
+      flags: {},
+      env,
+      runOnboard: async () => {
+        observedPresets = env.NEMOCLAW_POLICY_PRESETS;
+      },
+    });
+
+    expect(observedPresets).toBe("weather,public-reference,github");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
+  });
+
+  it("configures portable onboarding from an admitted descriptor without exporting its credential", async () => {
+    vi.stubEnv("COMPATIBLE_API_KEY", undefined);
+    const env: NodeJS.ProcessEnv = {};
+    const runOnboard = vi.fn(async (options) => {
+      expect(options.portableInferenceActivation).toEqual({
+        schemaVersion: 1,
+        baseUrl: "https://inference.example.test/v1",
+        model: "vendor/model-1",
+        expiresAt: "2026-08-10T18:05:00Z",
+      });
+      expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+      expect(env.NEMOCLAW_MODEL).toBeUndefined();
+      expect(env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+      expect(env.NEMOCLAW_PREFERRED_API).toBeUndefined();
+      expect(env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(getCredential("COMPATIBLE_API_KEY")).toBe("runtime-only-secret");
+    });
+
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env,
+      loadPortableInferenceDescriptor: async () => ({
+        schemaVersion: 1,
+        apiKey: "runtime-only-secret",
+        baseUrl: "https://inference.example.test/v1",
+        model: "vendor/model-1",
+        expiresAt: "2026-08-10T18:05:00Z",
+      }),
+      runOnboard,
+    });
+
+    expect(runOnboard).toHaveBeenCalledOnce();
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(getCredential("COMPATIBLE_API_KEY")).toBeNull();
+  });
+
+  it("fails before onboarding when a present portable descriptor is invalid", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const errors: string[] = [];
+    const runOnboard = vi.fn(async () => {});
+
+    await expect(
+      runOnboardCommand({
+        flags: { "experimental-profile": "portable" },
+        env,
+        loadPortableInferenceDescriptor: async () => {
+          throw new PortableInferenceDescriptorError("Runtime inference descriptor has expired.");
+        },
+        runOnboard,
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(runOnboard).not.toHaveBeenCalled();
+    expect(env).toEqual({});
+    expect(errors).toEqual(["  Runtime inference descriptor has expired."]);
+  });
+
+  it("scopes an agents manifest to one onboarding run", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agents-manifest-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: []\n");
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXTRA_AGENTS_JSON: "previous-manifest" };
+    let observed: string | undefined;
+
+    try {
+      await runOnboardCommand({
+        flags: { agents: manifestPath },
+        env,
+        runOnboard: async () => {
+          observed = env.NEMOCLAW_EXTRA_AGENTS_JSON;
+        },
+      });
+      expect(observed).toBe('{"agents":[]}');
+      expect(env.NEMOCLAW_EXTRA_AGENTS_JSON).toBe("previous-manifest");
+
+      const initiallyUnsetEnv: NodeJS.ProcessEnv = {};
+      await runOnboardCommand({
+        flags: { agents: manifestPath },
+        env: initiallyUnsetEnv,
+        runOnboard: async () => {},
+      });
+      expect(initiallyUnsetEnv.NEMOCLAW_EXTRA_AGENTS_JSON).toBeUndefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "portable profile",
+      flags: { "experimental-profile": "portable" } as OnboardFlags,
+      listServingProfiles: undefined,
+      keys: [
+        "NEMOCLAW_EXPERIMENTAL_PROFILE",
+        "NEMOCLAW_PROVIDER",
+        "NEMOCLAW_MODEL",
+        "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+        "NEMOCLAW_POLICY_PRESETS",
+      ],
+    },
+    {
+      name: "serving profile",
+      flags: { profile: COMPATIBLE_NANO_PROFILE.id } as OnboardFlags,
+      listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      keys: ["NEMOCLAW_SERVING_PRESET"],
+    },
+  ])("restores the $name environment when an agents manifest is invalid", async (testCase) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-agents-manifest-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: [\n");
+    const env: NodeJS.ProcessEnv = {};
+
+    try {
+      await expect(
+        runOnboardCommand({
+          flags: { ...testCase.flags, agents: manifestPath },
+          env,
+          listServingProfiles: testCase.listServingProfiles,
+          runOnboard: vi.fn(),
+        }),
+      ).rejects.toThrow("--agents YAML parse error");
+      for (const key of testCase.keys) expect(env[key]).toBeUndefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("treats a prompt EOF during onboarding as cancellation and exits non-zero (#5976)", async () => {
     const errors: string[] = [];
     await expect(
@@ -283,6 +1025,78 @@ describe("onboard command options", () => {
     // No stack frames leaked into the user-facing output.
     expect(output).not.toContain(".js:");
     expect(output).not.toContain("    at ");
+  });
+
+  it("redacts credentials in a gateway declaration diagnostic (#9035)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw invalidGatewayManagementDeclarationError(
+            "invalid metadata NVIDIA_API_KEY=nvapi-secret-value",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errors.join("\n")).toContain("Invalid gateway management declaration");
+    expect(errors.join("\n")).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(errors.join("\n")).not.toContain("nvapi-secret-value");
+  });
+
+  it.each(RECREATE_SELECTIONS)(
+    "reports a gateway authority refusal when recreation is selected by %s (#8103)",
+    async (_selection, flags, env) => {
+      const errors: string[] = [];
+      await expect(
+        runOnboardCommand({
+          flags,
+          env,
+          runOnboard: async () => {
+            throw new GatewayAuthorityError(
+              "Gateway lifecycle authority changed since onboarding (packaged-service -> standalone).",
+            );
+          },
+          error: (message = "") => errors.push(message),
+          exit: exitWithCode,
+        }),
+      ).rejects.toThrow("exit:1");
+
+      const output = errors.join("\n");
+      expect(output).toContain(
+        "Refusing sandbox recreate because the gateway lifecycle authority could not be revalidated.",
+      );
+      expect(output).toContain("packaged-service -> standalone");
+      expect(output).toContain("Re-run onboarding to bind the current gateway authority");
+      expect(output).not.toContain(".js:");
+      expect(output).not.toContain("    at ");
+    },
+  );
+
+  it("redacts credentials while preserving gateway authority context (#9035)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: { "recreate-sandbox": true },
+        env: {},
+        runOnboard: async () => {
+          throw new GatewayAuthorityError(
+            "Gateway lifecycle authority changed; OPENAI_API_KEY=secret-authority-value.",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const output = errors.join("\n");
+    expect(output).toContain("gateway lifecycle authority could not be revalidated");
+    expect(output).toContain("OPENAI_API_KEY=<REDACTED>");
+    expect(output).not.toContain("secret-authority-value");
   });
 
   it("escapes terminal controls in gateway declaration errors before printing (#7627)", async () => {
@@ -355,26 +1169,15 @@ describe("onboard command options", () => {
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {
-    const previous = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-    delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-    const restoreEnvironment =
-      previous === undefined
-        ? () => delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART
-        : () => {
-            process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = previous;
-          };
+    const env: NodeJS.ProcessEnv = {};
     let observed: string | undefined;
-    try {
-      await runOnboardCommand({
-        flags: { "no-ollama-autostart": true },
-        env: {},
-        runOnboard: async () => {
-          observed = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-        },
-      });
-      expect(observed).toBe("1");
-    } finally {
-      restoreEnvironment();
-    }
+    await runOnboardCommand({
+      flags: { "no-ollama-autostart": true },
+      env,
+      runOnboard: async () => {
+        observed = env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
+      },
+    });
+    expect(observed).toBe("1");
   });
 });

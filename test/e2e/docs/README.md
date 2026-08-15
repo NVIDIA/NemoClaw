@@ -24,11 +24,12 @@ Direct E2E implementations now live in Vitest. The former
 | Live target IDs and metadata | `test/e2e/registry/registry.ts`, `test/e2e/registry/definitions/baseline.ts` |
 | GitHub Actions matrix emission | `test/e2e/registry/run.ts --emit-live-matrix` |
 | Live target execution | `test/e2e/live/registry-targets.test.ts` |
+| Homogeneous target catalogue and execution | [Catalogue Targets](../README.md#catalogue-targets) |
+| Main-push and manual selection | `tools/e2e/workflow-plan.mts` |
 | Phase fixtures and clients | `test/e2e/fixtures/` |
 | Expected-state probes | `test/e2e/registry/expected-states.ts` |
 | Product-facing setup/onboarding state | `test/e2e/manifests/*.yaml` |
 | Migration status and retirement decisions | GitHub issues and pull requests |
-| Native runtime activation qualification | `registry/activation-qualification.ts`, `docs/NATIVE_RUNTIME_QUALIFICATION.md` |
 
 ## Target Model
 
@@ -68,53 +69,6 @@ harness or runner. Vitest remains the only test harness.
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
 
-## Cross-Runtime Foundation
-
-The registry contains an inert foundation for describing the same behavior on
-more than one execution provider:
-
-- `scenario.ts` owns provider-neutral desired state and explicit support
-  obligations, an ordered semantic user journey, and normalized assertions.
-- `execution-profile.ts` describes provider, host platform and architecture,
-  root mode, acceleration, capabilities, and bounded runner capacity. Provider
-  IDs are open; adding one does not require editing a central union.
-- `runtime-matrix.ts` binds every scenario obligation to a registered callable
-  fixture adapter, rejects incompatible capabilities, keeps full-profile
-  preparation batches atomic, schedules those batches within a host-wide shard
-  ceiling, and derives isolated resource identities.
-- `fixtures/runtime-provider.ts` is the provider-command boundary for
-  readiness, exact workload identity, obligation execution, lifecycle evidence,
-  and cleanup. Its fixture-only executor exercises compiled cases without
-  crossing the legacy Docker phase-fixture path.
-- `parity-evidence.ts` compares normalized lifecycle traces, desired-state
-  fingerprints, terminal outcomes, and user-visible projections. It retains
-  exact head/base, engine, architecture, workload, managed-image, capability,
-  and opaque provider receipt evidence without comparing provider internals.
-
-Compile one registry-wide `RuntimeMatrixDefinition`, then attach only a
-`scenarioId`/`profileId` reference with `TargetBuilder.runtimeCase(...)` in fast
-compiler tests today. The existing target compiler resolves the reference but
-does not dispatch its adapter IDs. Support tests execute the same compiled case
-through Docker-shaped and fake-MXC providers; no canonical target, workflow
-selector, live scenario, or production runtime registration consumes this
-metadata yet. Existing legacy Docker command fixtures, their ordering, and
-their output contracts are unchanged.
-Execution evidence must be published with
-`ArtifactSink.writeExecutionEvidence(...)` so normal artifact redaction still
-applies.
-
-When extending the foundation, keep product intent in the scenario, runtime
-mechanics in obligation bindings, and support facts in capabilities. A binding
-must cover every obligation explicitly; a missing adapter or capability is a
-compile error rather than a skip.
-
-The dormant native-runtime activation contract builds on this foundation. It
-requires the complete all-agent, multiarch, CPU/GPU, host-local inference,
-installer, lifecycle, recovery, cleanup, and exact-evidence matrix before a
-provider can be activated. See
-[`NATIVE_RUNTIME_QUALIFICATION.md`](./NATIVE_RUNTIME_QUALIFICATION.md). The
-contract is not production runtime registration or a support claim.
-
 ## How To Run
 
 ```bash
@@ -140,20 +94,28 @@ npm run test:live-e2e -- --silent=false --reporter=default
 npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 ```
 
-The aggregate live command rebuilds the CLI before Vitest starts and runs live
-test files serially.
-Live E2E projects do not retry an entire failed test.
-These tests mutate host, Docker, gateway, and sandbox state, so re-entering one
-on the same runner can replace the original failure with stale-lock,
-storage-exhaustion, or ownership noise. A target may retry a transient operation
-only inside its own cleanup boundary.
-Retry a full target by starting a fresh workflow run and runner.
+The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
+test files serially. It does not retry a failed test.
+
+After an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and source-attempt evidence.
+It does not request a broad failed-job or workflow rerun.
+An E2E test can retry an external operation only through its checked-in bounded policy.
+The observer records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored`.
+The `flaky` field is `true` only for `passed-after-retry`.
+Hosted Runner Recovery separately owns one rerun of an eligible `CI / Platform Evidence` push with authenticated GitHub-hosted runner-loss evidence.
+
+After the observer evaluates attempt N, it uploads an artifact named for that
+attempt. The artifact contains one `attempts` entry for each source attempt through
+N. `totalRunnerMinutes` is the sum across those entries. If evaluation or file
+creation fails, the upload step warns that the file is missing and publishes no
+evidence artifact. The observer ignores manual PR runs and a run
+superseded by a newer `main` push.
 
 During fixture teardown, every passing or failing live test writes
 `test-progress.json` beside its other target artifacts. The runtime audit
 groups those files by target, optional shard, and test name, then reports
 median, p95, maximum, p95-minus-median variability, and the slowest observed
-phase with its duration and outcome. Scheduled and ordinary manual workflows
+phase with its duration and outcome. Push and ordinary manual workflows
 publish the current run's table in the GitHub Actions scorecard summary. The
 summary reads the target identity from `E2E_TARGET_ID`, falling back to the
 Actions `GITHUB_JOB`, and reads `NEMOCLAW_E2E_SHARD` when set. It retains
@@ -279,33 +241,45 @@ test/e2e/
 
 ## CI Entry Points
 
-- `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor and the PR E2E controller. It maps
-  changed runtime surfaces to invariant families and
-  canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
-  ledger. The advisor uses it as recommendation context, while the controller
-  applies it independently without model output.
+- `tools/advisors/risk-plan.mts` is the small deterministic recommendation policy
+  used by PR Review Advisor. It maps changed runtime surfaces to invariant
+  families and canonical `e2e.yaml` jobs; it does not dispatch E2E.
 
-- `.github/workflows/pr-e2e-gate.yaml` reserves the internal
-  `E2E / PR Gate Coordination` check for every PR SHA, including forks,
-  before `CI / Pull Request` completes. Its default-branch
-  `pull_request_target` path also publishes the native GitHub Actions job named
-  `E2E / PR Gate`. The read-only observer runs from `github.workflow_sha`,
-  validates the live PR head and base, waits for the matching trusted
-  coordination identity, and mirrors the terminal verdict into the required
-  job. Its summary is static, while the job log includes the validated trusted
-  controller-run link. Authorization states remain pending while the maintainer
-  decision is recorded. During rollout, the observer also accepts the former
-  `E2E / PR Gate` custom-check name for the same PR/base SHA identity. The
-  controller builds the risk plan from GitHub's complete file list. Internal
-  revisions normally dispatch every selected job and verify each expected
-  `risk-signal.json`; this remains automatic when their `e2e-control-plane`
-  matches are drawn only from the trusted controller workflow and scripts.
-  Other or mixed internal
-  control-plane revisions require a maintainer-authorized run for the PR SHA; only
-  its verified evidence can pass coordination. Risky forks require protected
-  approval before the trusted workflow runs their exact repository and SHA with
-  E2E credentials. See [NemoClaw E2E CI](../README.md) for the full lifecycle.
+- `.github/workflows/e2e.yaml` compares the before and candidate commits on each
+  push to `main`, then selects the catalogue targets and retained workflow jobs
+  that own the changed files. Each trusted push also selects the CPU-only
+  `jetson-nvmap-gpu` proof. If no other retained E2E owns a changed file,
+  `Relevant E2E` requires only the Jetson proof.
+  Push runs skip `llama-cpp-dgx-spark-plan` and
+  `llama-cpp-dgx-spark-qualification` because a push event cannot set their
+  required workflow dispatch flag.
+  Runner, credential, evidence, and cleanup requirements remain job-specific.
+  A maintainer can also dispatch the trusted `main` workflow against the latest
+  commit from an open internal or fork PR. The manual path validates the actor,
+  PR number, PR source repository, candidate commit SHA, base commit SHA,
+  workflow SHA, review reason, and
+  allowed jobs, targets, and Launchable combination before candidate checkout.
+  For a PR revision run, leave `jobs` and
+  `targets` empty. The run selects every default-selected free-standing workflow
+  E2E except `Exact staging Brev Launchable`, every catalogue target in the
+  `standard` profile, all shared credential-free tests, and these
+  controller-selected registry targets:
+  `ubuntu-policy-custom-missing-presets-negative`,
+  `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and
+  `ubuntu-repo-docker-post-reboot-recovery`. Keep
+  `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for
+  this default selection. If the DGX Spark flag is `true`, GitHub can pause the
+  qualification job for the `approve-dgx-spark-image-qualification` environment.
+  An authorized environment reviewer must approve it before qualification starts.
+  Accepted nonempty `jobs` values are `inference-routing` and
+  `managed-image-protected-runtime`. The `jetson-nvmap-gpu` target is also
+  accepted when `allow_jetson_dispatch` is `true`.
+  Refer to [NemoClaw E2E CI](../README.md).
+
+- [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
+  HTTP contract, trusted GitHub controller, repository configuration, and
+  evidence for `jetson-nvmap-gpu`. The service behind that contract is
+  operator-owned infrastructure.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -324,22 +298,29 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches authenticate the controller-owned coordination check before
-  checking out the PR revision, then validate the PR SHA and controller
-  metadata before preparation. Direct manual dispatches cannot reuse the PR
-  input shape to run fork code. Selected runs attach
-  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations and suppress PR
-  reporting and scorecards. The workflow boundary requires every selected job
-  shard to upload its evidence artifact.
-- `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
-  four independent shards on each of macOS and WSL, with `fail-fast` disabled.
-  Each macOS shard installs the pinned OpenShell formula and has a 30-minute
-  budget. Each WSL shard has a 90-minute budget, and WSL runs its additional
-  root-required contracts on shard 1 only.
-  `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E
-  targets directly for their platform coverage.
-  Repository-hosted targets, including `ollama-auth-proxy`, are selected
-  through `.github/workflows/e2e.yaml`.
+  Manual PR runs attach `test/e2e/risk-signal-reporter.ts` to live Vitest
+  invocations and suppress PR reporting and scorecards. Each risk signal binds
+  its result counts to the expected and tested candidate SHA, correlation ID,
+  job ID, and shard ID. The workflow boundary requires every selected job shard
+  to upload its evidence artifact.
+- `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence`.
+  It runs the Ubuntu 26.04 compatibility contracts and four full-suite Vitest shards on each of macOS and WSL.
+  Each macOS shard installs the pinned OpenShell formula.
+  Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.
+  WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
+  On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
+  Otherwise, those live tests skip and the platform contracts remain as evidence.
+  This conditional result is platform evidence, not `Release qualification`.
+  The live steps give candidate test code the job-scoped `GITHUB_TOKEN` and repository `NVIDIA_INFERENCE_API_KEY`.
+  The macOS step sets both in its process environment.
+  The WSL step uses the trusted PowerShell helper to forward both into the WSL test process.
+  The workflow sets these credentials only for the live steps, but candidate code can copy either value while a step runs.
+  GitHub invalidates `GITHUB_TOKEN` after the job.
+  `NVIDIA_INFERENCE_API_KEY` remains valid until it expires or is revoked; the workflow does not revoke it.
+- `.github/workflows/portable-profile-e2e.yaml` provides experimental portable-profile evidence on matching `main` changes or manual dispatches.
+- `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
+- `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
+  `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
 - The `staging-brev-launchable` job validates the exact baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.

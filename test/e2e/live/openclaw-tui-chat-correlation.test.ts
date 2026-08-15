@@ -57,7 +57,7 @@ import {
 // `from(env) → from(state, instance)` model.
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
-const SANDBOX_NAME = "e2e-openclaw-tui-corr";
+const SANDBOX_NAME = "e2e-oc-tui-corr";
 // OpenClaw 2026.7.1 is the post-fix regression-guard version for #2603 + #3145.
 // Historical buggy builds were older; this live guard asserts the fixed
 // protocol/history contract stays stable on the pinned OpenClaw version.
@@ -549,7 +549,6 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 
 // ─── The live regression guard ─────────────────────────────────────
 
-// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
   {
@@ -592,7 +591,7 @@ test(
     });
     expect(checkoutRef.exitCode, resultText(checkoutRef)).toBe(0);
     const refEvidence = verifyNemoClawRefFidelity({
-      expectedRef: process.env.NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA,
+      expectedRef: process.env.NEMOCLAW_E2E_EXPECTED_SHA,
       actualRef: checkoutRef.stdout.trim(),
       cliPath: host.commandPath,
       expectedCliPath: CLI_ENTRYPOINT,

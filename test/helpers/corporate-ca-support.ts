@@ -280,12 +280,22 @@ export function runDockerfileCorporateCaDecode(
     .join("\n")
     .replace(/^RUN /, "")
     .replaceAll("/usr/local/share/nemoclaw", outDir)
+    .replaceAll("/usr/local/share/ca-certificates", path.join(outDir, "ca-certificates"))
+    // The shipped block refreshes the image OS trust store. Keep this
+    // unprivileged extraction focused on the decode/split contract and prevent
+    // it from mutating the test host's trust store.
+    .replaceAll("command -v update-ca-certificates >/dev/null 2>&1", "true")
+    .replaceAll("&& update-ca-certificates \\", "&& true \\")
     // Redirect the fixed /tmp decode scratch path into the per-test dir so
     // concurrent test runs never collide.
     .replaceAll("/tmp/nemoclaw-corporate-ca.decoded", path.join(outDir, "decoded"))
-    // Root ownership requires root; the test only exercises the base64/cert
-    // guards, so chown to the current user keeps the shipped fail-fast `&&`
-    // chain intact while running unprivileged.
+    // Root ownership requires root. The contract test preserves the exact
+    // production command; this extracted-script test substitutes the current
+    // user and group so the certificate guards run unprivileged.
+    .replaceAll(
+      "install -d -o root -g root -m 0755",
+      'install -d -o "$(id -u)" -g "$(id -g)" -m 0755',
+    )
     .replaceAll("chown root:root", 'chown "$(id -u):$(id -g)"');
   const wrapper = path.join(outDir, "decode.sh");
   fs.writeFileSync(

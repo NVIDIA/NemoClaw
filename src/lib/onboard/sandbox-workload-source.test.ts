@@ -11,6 +11,8 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  CANDIDATE_MANAGED_IMAGE_AGENTS,
+  type ManagedImageAgent,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "./managed-image/contract";
@@ -27,9 +29,10 @@ const DIGESTS = {
   openclaw: `sha256:${"4d".repeat(32)}`,
   hermes: `sha256:${"5e".repeat(32)}`,
   "langchain-deepagents-code": `sha256:${"6f".repeat(32)}`,
-} as const satisfies Record<ShippedManagedImageAgent, `sha256:${string}`>;
+  pi: `sha256:${"7a".repeat(32)}`,
+} as const satisfies Record<ManagedImageAgent, `sha256:${string}`>;
 
-function contractFor(agent: ShippedManagedImageAgent): ManagedImageContractV1 {
+function contractFor(agent: ManagedImageAgent): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   const digest = DIGESTS[agent];
   return {
@@ -241,5 +244,61 @@ describe("sandbox workload source resolution", () => {
         catalog: mutableCatalog,
       }),
     ).toThrow("failed closed validation");
+  });
+
+  it.each(
+    CANDIDATE_MANAGED_IMAGE_AGENTS,
+  )("refuses candidate %s while candidate selection is disabled (#7927)", (agent) => {
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: agent,
+        legacyDockerfilePath: `agents/${agent}/Dockerfile`,
+        runtime: managedRuntime("docker"),
+        catalog: { ...CATALOG, [agent]: contractFor(agent) },
+      }),
+    ).toThrow(
+      `Managed image workload is required for '${agent}', but the selected agent is a release candidate and candidate selection is disabled.`,
+    );
+  });
+
+  it.each(
+    CANDIDATE_MANAGED_IMAGE_AGENTS,
+  )("selects the exact candidate digest for %s behind the gate (#7927)", (agent) => {
+    const source = resolveSandboxWorkloadSource({
+      agentName: agent,
+      legacyDockerfilePath: `agents/${agent}/Dockerfile`,
+      runtime: managedRuntime("docker"),
+      catalog: { ...CATALOG, [agent]: contractFor(agent) },
+      candidateAgentsEnabled: true,
+    });
+
+    expect(source).toEqual({
+      kind: "managed-image",
+      reference: contractFor(agent).reference,
+      contract: contractFor(agent),
+    });
+  });
+
+  it("never builds a host Dockerfile for a gated candidate on a buildless runtime (#7927)", () => {
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: "pi",
+        legacyDockerfilePath: "agents/pi/Dockerfile",
+        runtime: managedRuntime("podman"),
+        catalog: CATALOG,
+      }),
+    ).toThrow("release candidate and candidate selection is disabled");
+  });
+
+  it("keeps an unknown agent distinct from a gated candidate (#7927)", () => {
+    expect(() =>
+      resolveSandboxWorkloadSource({
+        agentName: "not-an-agent",
+        legacyDockerfilePath: "agents/not-an-agent/Dockerfile",
+        runtime: managedRuntime("podman"),
+        catalog: CATALOG,
+        candidateAgentsEnabled: true,
+      }),
+    ).toThrow("the selected agent is not a shipped managed agent");
   });
 });

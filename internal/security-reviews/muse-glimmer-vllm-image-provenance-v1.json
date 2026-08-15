@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "kind": "nemoclaw-reviewed-vllm-image-provenance",
+  "consumer": {
+    "recipe": "managed-inference/recipes/vllm.muse-glimmer-30b-nvfp4-w4a4.spark-single.v1.yaml",
+    "profile": "muse-glimmer-30b"
+  },
+  "publisher": {
+    "registry": "registry-1.docker.io",
+    "namespace": "vllm",
+    "repository": "vllm/vllm-openai"
+  },
+  "image": {
+    "reference": "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+    "manifestDigest": "sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+    "manifestMediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "manifestUrl": "https://registry-1.docker.io/v2/vllm/vllm-openai/manifests/sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+    "configDigest": "sha256:c3f199e54a26d2d7a9a41115cd07ce9d90a6488c5a4e75b17129e1006ce533fd",
+    "configMediaType": "application/vnd.docker.container.image.v1+json",
+    "configSizeBytes": 34762,
+    "configUrl": "https://registry-1.docker.io/v2/vllm/vllm-openai/blobs/sha256:c3f199e54a26d2d7a9a41115cd07ce9d90a6488c5a4e75b17129e1006ce533fd",
+    "layerCount": 32,
+    "compressedLayerSizeBytes": 9699710136,
+    "createdAt": "2026-08-14T05:33:50.528328374Z",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    }
+  },
+  "build": {
+    "sourceRepository": "https://github.com/vllm-project/vllm",
+    "sourceRevision": "ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "sourceRevisionUrl": "https://github.com/vllm-project/vllm/commit/ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "imageTag": "vllm/vllm-openai:nightly-ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "pipelineId": "019d130e-464e-4ff7-b84b-492992c0c06b",
+    "pipelineUrl": "https://buildkite.com/vllm/release-v2/builds/5174"
+  },
+  "upstreamSupport": {
+    "museMergeCommit": "6adad08767583f52eb4d2122111af0bf638ed5e6",
+    "museMergeCommitUrl": "https://github.com/vllm-project/vllm/commit/6adad08767583f52eb4d2122111af0bf638ed5e6",
+    "comparisonUrl": "https://github.com/vllm-project/vllm/compare/6adad08767583f52eb4d2122111af0bf638ed5e6...ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "relationship": "direct-descendant",
+    "aheadBy": 1
+  },
+  "reportedLabels": {
+    "ai.vllm.build.commit": "ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "ai.vllm.build.pipeline": "019d130e-464e-4ff7-b84b-492992c0c06b",
+    "ai.vllm.build.url": "https://buildkite.com/vllm/release-v2/builds/5174",
+    "ai.vllm.image.tag": "vllm/vllm-openai:nightly-ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "org.opencontainers.image.revision": "ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9",
+    "org.opencontainers.image.source": "https://github.com/vllm-project/vllm"
+  },
+  "verification": {
+    "observedAt": "2026-08-14T16:33:50Z",
+    "methods": [
+      "docker-buildx-imagetools-inspect-raw",
+      "docker-image-inspect",
+      "github-compare-api"
+    ],
+    "signedProvenanceAttestation": "not-available"
+  }
+}

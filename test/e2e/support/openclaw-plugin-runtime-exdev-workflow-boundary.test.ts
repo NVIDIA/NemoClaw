@@ -59,6 +59,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     );
     const [revoke] = steps.splice(revokeIndex, 1);
     revoke!.if = "success()";
+    revoke!.uses = "./.github/actions/docker-auth-cleanup";
     revoke!.run = "echo credentials retained";
     steps.splice(steps.indexOf(prepare) + 1, 0, revoke!);
 
@@ -85,9 +86,9 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
         "openclaw-plugin-runtime-exdev action 'actions/checkout@v6' must pin a full SHA",
         "openclaw-plugin-runtime-exdev checkout must disable persisted credentials",
         "openclaw-plugin-runtime-exdev must use the reviewed prepare-e2e action",
-        "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
+        "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
         "openclaw-plugin-runtime-exdev must always revoke Docker auth before the release-pinned fixture",
-        "openclaw-plugin-runtime-exdev step 'Remove Docker auth before release-pinned fixture' must run: bash .github/scripts/docker-auth-cleanup.sh",
+        "openclaw-plugin-runtime-exdev must use the pinned Docker auth cleanup action before artifact restore",
         "openclaw-plugin-runtime-exdev runtime proof must not receive workflow credentials",
         "openclaw-plugin-runtime-exdev must always use the reviewed artifact uploader",
         "openclaw-plugin-runtime-exdev step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'",

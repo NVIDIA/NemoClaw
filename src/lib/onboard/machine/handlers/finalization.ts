@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { CLI_NAME } from "../../../cli/branding";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -22,8 +24,10 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   stagedLegacyKeys: readonly string[];
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
+  webSearchProvider: WebSearchVerifyProvider | null;
   deps: {
-    ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
+    persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -63,12 +67,16 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     isDeploymentHealthy(result: VerificationResult): boolean;
     reportDeploymentReadiness(healthy: boolean): void;
     /**
-     * Best-effort probe that confirms the agent runtime actually accepted the
-     * web-search config and (for Brave) that the L7 proxy rewrites the
-     * `X-Subscription-Token` header at egress. Called after the post-policy
-     * sandbox-process recovery so the final policy/gateway state is live.
+     * Confirms the live sandbox does not expose a raw web-search credential.
+     * Other web-search diagnostics remain best-effort. Returns false for a
+     * confirmed exposure or an unverifiable isolation result so finalization
+     * cannot report the sandbox as ready.
      */
-    verifyWebSearchInsideSandbox(sandboxName: string, agent: Agent): void;
+    verifyWebSearchInsideSandbox(
+      sandboxName: string,
+      agent: Agent,
+      provider: WebSearchVerifyProvider,
+    ): boolean;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -115,7 +123,11 @@ function logTerminalReadyBlock(
         ? terminalAgent.name
         : "Terminal agent";
   log(`  ✓ ${displayName} terminal runtime is ready`);
-  log(`  Connect: nemoclaw ${sandboxName} connect`);
+  // Lead with the one-step path (#6006); `connect` still opens a sandbox shell.
+  // Only terminal agents reach this block, so the variant binary (for example
+  // `nemo-deepagents`) is the common case — use the resolved name, not a literal.
+  log(`  Launch: ${CLI_NAME} launch ${sandboxName}`);
+  log(`  Connect: ${CLI_NAME} ${sandboxName} connect`);
   if (typeof terminalAgent.runtime?.interactive_command === "string") {
     log(`  Interactive: ${terminalAgent.runtime.interactive_command}`);
   }
@@ -129,7 +141,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   agent,
   stagedLegacyKeys,
   migratedLegacyKeys,
-  webSearchEnabled,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -172,20 +183,16 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.autoPairScopeApproval(sandboxName);
   }
 
-  // Probe Brave Search egress through the L7 proxy now that the final
-  // policy and provider state are live — earlier probes would race the
-  // not-yet-applied `brave` preset (#3626). Best-effort; never blocks.
-  if (webSearchEnabled && manageDashboard) {
-    deps.verifyWebSearchInsideSandbox(sandboxName, agent);
-  }
-
   if (manageDashboard) {
     // Scope warm-up can outlive a forward that was healthy after policy recovery.
     // Recheck the gateway and forward before verification, restarting only when needed.
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
     // invalidate the forward created earlier in onboarding.
-    deps.ensureAgentDashboardForward(sandboxName, agent);
+    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
+    if (dashboardPort > 0) {
+      deps.persistDashboardPort(sandboxName, dashboardPort);
+    }
   }
 
   return {
@@ -202,6 +209,8 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   agent,
   hermesAuthMethod,
   hermesToolGateways,
+  webSearchEnabled,
+  webSearchProvider,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -213,10 +222,19 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (manageDashboard) {
+    // Probe web-search credential isolation and egress now that the final
+    // policy, provider, process, and forwarding state are live. Egress
+    // diagnostics remain best-effort, but a confirmed raw credential must
+    // prevent a successful handoff (#7425).
+    const webSearchCredentialBoundarySafe =
+      !webSearchEnabled ||
+      (webSearchProvider !== null &&
+        deps.verifyWebSearchInsideSandbox(sandboxName, agent, webSearchProvider));
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
-    deploymentHealthy = deps.isDeploymentHealthy(verificationResult);
+    deploymentHealthy =
+      webSearchCredentialBoundarySafe && deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
     deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);

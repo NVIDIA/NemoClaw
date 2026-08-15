@@ -30,7 +30,7 @@ import { registerCreatedSandbox } from "../sandbox-registration";
 import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
-import type { HostLocalInferenceRuntime } from "./host-local-inference";
+import type { HostLocalInferenceOperation } from "./host-local-inference";
 import {
   createRuntimeProviderBundleRegistry,
   normalizeRuntimeProviderManagedProfileRestoreAuthority,
@@ -39,6 +39,10 @@ import {
   normalizeRuntimeProviderSnapshotRestoreReceipt,
   normalizeRuntimeProviderSnapshotRestoreSource,
   RuntimeProviderRegistrationError,
+  RuntimeProviderSelectionError,
+  requireRuntimeProviderHostLocalInferenceOperation,
+  requireRuntimeProviderReadOnlyHostMounts,
+  requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
 } from "./registry";
 
@@ -95,23 +99,6 @@ function mxcBundle(): InMemoryRuntimeProviderBundle {
   });
 }
 
-function mxcInferenceRuntime(): HostLocalInferenceRuntime {
-  const unavailable = () => {
-    throw new Error("not exercised by the registry contract test");
-  };
-  return {
-    providerId: "mxc",
-    authorityId: "memory:mxc-host-local-inference",
-    services: ["ollama", "nim", "vllm"],
-    translateContainerArgs: (args) => args,
-    qualifyOllama: unavailable,
-    startManaged: unavailable,
-    inspectManaged: unavailable,
-    stopManaged: unavailable,
-    preserveForRebuild: unavailable,
-  };
-}
-
 function replaceSurface(
   bundle: RuntimeProviderBundle,
   surface: keyof RuntimeProviderBundle,
@@ -140,6 +127,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         "hostLocalInference",
         "lifecycle",
         "mutationAuthority",
+        "stateMutation",
         "bootstrap",
         "snapshot",
         "recovery",
@@ -148,7 +136,11 @@ describe("RuntimeProviderBundle registry contract", () => {
       ] as const) {
         expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
       }
-      expect(bundle.bootstrap).toMatchObject({ supported: false });
+      expect(bundle.bootstrap).toMatchObject({ supported: providerId === "docker" });
+      expect(bundle.stateMutation).toMatchObject({
+        supported: providerId === "docker",
+        ...(providerId === "docker" ? { contractVersion: 2 } : {}),
+      });
       expect(bundle.snapshot).toMatchObject(
         providerId === "docker"
           ? {
@@ -163,9 +155,49 @@ describe("RuntimeProviderBundle registry contract", () => {
       );
       expect(bundle.recovery).toMatchObject({ supported: false });
     }
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.capabilities.hostLocalInference).toBe(true);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.hostLocalInference).toMatchObject({
+      supported: true,
+      services: ["llama-cpp"],
+    });
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.capabilities.hostLocalInference).toBe(
+      false,
+    );
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes?.hostLocalInference).toMatchObject({
+      supported: false,
+    });
+    expect(
+      requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!),
+    ).toMatchObject({ providerId: "docker", supported: true, contractVersion: 2 });
+    expect(() =>
+      requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!),
+    ).toThrow(/no state-mutation implementation/u);
   });
 
-  it("validates the dormant Docker bootstrap candidate through the same bundle registry", () => {
+  it("declares and enforces read-only host-mount support per runtime provider", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const kubernetes = CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!;
+
+    expect(docker.capabilities.readOnlyHostMounts).toEqual({
+      supported: true,
+      hostPlatforms: ["linux"],
+    });
+    expect(kubernetes.capabilities.readOnlyHostMounts).toMatchObject({
+      supported: false,
+      reason: expect.stringMatching(/Kubernetes hostPath semantics/u),
+    });
+    expect(requireRuntimeProviderReadOnlyHostMounts(docker, "linux")).toBe(
+      docker.capabilities.readOnlyHostMounts,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(docker, "darwin")).toThrow(
+      /provider 'docker'.*not qualified.*'darwin'/u,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(kubernetes, "linux")).toThrow(
+      /provider 'kubernetes'.*Kubernetes hostPath semantics/u,
+    );
+  });
+
+  it("registers the production Docker bootstrap surface through the same bundle registry", () => {
     const docker = createDockerRuntimeProviderBundle();
     const providers = createRuntimeProviderBundleRegistry([
       [
@@ -183,7 +215,7 @@ describe("RuntimeProviderBundle registry contract", () => {
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.bootstrap).toMatchObject({
       providerId: "docker",
-      supported: false,
+      supported: true,
     });
   });
 
@@ -228,7 +260,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         printReadinessFailureIfEnabled: vi.fn(),
         verifyGpuOrExit: vi.fn(async (verify) => verify("alpha")),
       },
-      recoverUnfinished: vi.fn(async () => []),
+      recoverUnfinished: vi.fn(async () => ({ receipts: [], failures: [] })),
       prepareNetwork: vi.fn(async () => undefined),
       runCreate: vi.fn(),
     }));
@@ -240,12 +272,16 @@ describe("RuntimeProviderBundle registry contract", () => {
       isNativeReadinessRoutingFailure: vi.fn(() => false),
       prepareCompatibilityLaunch: vi.fn(() => ({ createArgv: [], registryImageRef: null })),
     }));
+    const createAuthorityStore = vi.fn(() => ({
+      recordPreparedAuthority: vi.fn(),
+    }));
     const providers = createRuntimeProviderBundleRegistry([
       [
         "mxc",
         replaceSurface(bundle, "bootstrap", {
           providerId: "mxc",
           supported: true,
+          createAuthorityStore,
           createLifecycle,
           createOnboardRouting,
         }),
@@ -263,42 +299,8 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(registered.identity.id).toBe("mxc");
     expect(routing.nativeFallbackHasCleanBaseline).toBe(false);
     expect(createOnboardRouting).toHaveBeenCalledOnce();
+    expect(createAuthorityStore).not.toHaveBeenCalled();
     expect(createLifecycle).not.toHaveBeenCalled();
-  });
-
-  it("registers MXC-style host-local inference without a Podman-specific switch", () => {
-    const runtime = mxcInferenceRuntime();
-    const bundle = createInMemoryRuntimeProviderBundle({
-      providerId: "mxc",
-      workloadProfile: PORTABLE_PROFILE,
-      hostLocalInferenceRuntime: runtime,
-    });
-    const registered = createRuntimeProviderBundleRegistry([["mxc", bundle]]).mxc!;
-
-    expectSupportedSurface(registered.hostLocalInference);
-    expect(registered.hostLocalInference.runtime.providerId).toBe("mxc");
-    expect(registered.hostLocalInference.runtime.authorityId).toBe(
-      "memory:mxc-host-local-inference",
-    );
-    expect(registered.hostLocalInference.runtime.services).toEqual(["ollama", "nim", "vllm"]);
-    expect(registered.containerEngine).toMatchObject({
-      identities: expect.arrayContaining([
-        expect.objectContaining({ operation: "host-local-inference", engineId: "memory" }),
-      ]),
-    });
-  });
-
-  it("rejects a host-local inference runtime without an endpoint authority", () => {
-    const runtime = mxcInferenceRuntime();
-    const bundle = createInMemoryRuntimeProviderBundle({
-      providerId: "mxc",
-      workloadProfile: PORTABLE_PROFILE,
-      hostLocalInferenceRuntime: { ...runtime, authorityId: "" },
-    });
-
-    expect(() => createRuntimeProviderBundleRegistry([["mxc", bundle]])).toThrow(
-      "authorityId must be a non-empty string",
-    );
   });
 
   it("rejects an omitted managed platform without changing legacy receipt acceptance", () => {
@@ -355,6 +357,7 @@ describe("RuntimeProviderBundle registry contract", () => {
       "hostLocalInference",
       "lifecycle",
       "mutationAuthority",
+      "stateMutation",
       "bootstrap",
       "snapshot",
       "recovery",
@@ -434,6 +437,14 @@ describe("RuntimeProviderBundle registry contract", () => {
       }),
     ],
     [
+      "stateMutation",
+      (bundle: RuntimeProviderBundle) => ({
+        ...bundle.stateMutation,
+        supported: true,
+        contractVersion: 2,
+      }),
+    ],
+    [
       "bootstrap",
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.bootstrap,
@@ -483,6 +494,55 @@ describe("RuntimeProviderBundle registry contract", () => {
         ["mxc", replaceSurface(bundle, surface, mutate(bundle))],
       ]),
     ).toThrow(RuntimeProviderRegistrationError);
+  });
+
+  it.each([
+    "publish",
+    "rollback",
+    "release",
+  ] as const)("rejects state-mutation v2 without %s", (operation) => {
+    const bundle = mxcBundle();
+    const supported = {
+      providerId: "mxc",
+      supported: true,
+      contractVersion: 2,
+      acquire: vi.fn(),
+      assertFenced: vi.fn(),
+      publish: vi.fn(),
+      rollback: vi.fn(),
+      activate: vi.fn(),
+      release: vi.fn(),
+      recover: vi.fn(),
+    };
+    const incomplete = { ...supported } as Record<string, unknown>;
+    Reflect.deleteProperty(incomplete, operation);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        ["mxc", replaceSurface(bundle, "stateMutation", incomplete)],
+      ]),
+    ).toThrow(new RegExp(`stateMutation\\.${operation} must be a function`, "u"));
+  });
+
+  it.each([
+    [undefined, /missing readOnlyHostMounts surface/u],
+    [{ supported: false, reason: "" }, /reason must be a non-empty string/u],
+    [{ supported: true, hostPlatforms: [] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["linux", "linux"] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["plan9"] }, /hostPlatforms must list unique/u],
+  ])("rejects an invalid read-only host-mount capability %#", (readOnlyHostMounts, message) => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "capabilities", {
+            ...bundle.capabilities,
+            readOnlyHostMounts,
+          }),
+        ],
+      ]),
+    ).toThrow(message);
   });
 
   it("rejects a lifecycle surface without provider-owned post-start verification", () => {
@@ -553,6 +613,17 @@ describe("RuntimeProviderBundle registry contract", () => {
       createRuntimeProviderBundleRegistry([
         [
           "mxc",
+          replaceSurface(bundle, "capabilities", {
+            ...bundle.capabilities,
+            hostLocalInference: true,
+          }),
+        ],
+      ]),
+    ).toThrow(/capabilities disagree/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
           replaceSurface(bundle, "containerEngine", {
             ...bundle.containerEngine,
             identities: [
@@ -563,6 +634,61 @@ describe("RuntimeProviderBundle registry contract", () => {
         ],
       ]),
     ).toThrow(/duplicate operation identities/u);
+  });
+
+  it("rejects an unsupported host-local-inference capability with an actionable provider error", () => {
+    const bundle = mxcBundle();
+
+    expect(() =>
+      requireRuntimeProviderHostLocalInferenceOperation(bundle, "llama-cpp", { env: {} }),
+    ).toThrow(
+      new RuntimeProviderSelectionError(
+        "Runtime provider 'mxc' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.",
+      ),
+    );
+  });
+
+  it("keeps host-local-inference runtime selection scoped to each operation", () => {
+    const operation = (providerId: string, authorityId: string): HostLocalInferenceOperation => ({
+      providerId,
+      bindingSha256: authorityId.padEnd(64, "0").slice(0, 64),
+      assertAuthority: vi.fn(),
+      spawn: vi.fn(() => ({}) as never),
+      createLlamaCppLifecycle: vi.fn(() => {
+        throw new Error("lifecycle construction is outside this contract test");
+      }),
+      engine: {
+        operation: "host-local-inference",
+        engineId: "memory",
+        displayName: "In-memory",
+        authorityId,
+        capture: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+        captureHost: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+      },
+    });
+    const firstFactory = vi.fn(() => operation("first", "first-authority"));
+    const secondFactory = vi.fn(() => operation("second", "second-authority"));
+    const first = createInMemoryRuntimeProviderBundle({
+      providerId: "first",
+      workloadProfile: PORTABLE_PROFILE,
+      hostLocalInference: { services: ["llama-cpp"], createOperation: firstFactory },
+    });
+    const second = createInMemoryRuntimeProviderBundle({
+      providerId: "second",
+      workloadProfile: PORTABLE_PROFILE,
+      hostLocalInference: { services: ["llama-cpp"], createOperation: secondFactory },
+    });
+
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(first, "llama-cpp", { env: {} }).engine
+        .authorityId,
+    ).toBe("first-authority");
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(second, "llama-cpp", { env: {} }).engine
+        .authorityId,
+    ).toBe("second-authority");
+    expect(firstFactory).toHaveBeenCalledOnce();
+    expect(secondFactory).toHaveBeenCalledOnce();
   });
 
   it("versions supported snapshot facets and enforces managed-profile capability dependencies", () => {
@@ -834,7 +960,8 @@ describe("socket-free MXC action contract", () => {
       recordEvent,
     });
     const providers = createRuntimeProviderBundleRegistry([["mxc", bundle]]);
-    const sandboxName = `${agent}-sandbox`;
+    const sandboxName =
+      agent === "langchain-deepagents-code" ? "dcode-sandbox" : `${agent}-sandbox`;
     const imageTag = `mxc-memory:${agent}`;
     const registerSandbox = vi.fn();
     const entry = registerCreatedSandbox({
@@ -911,6 +1038,7 @@ describe("socket-free MXC action contract", () => {
         sandbox: entry,
         sandboxConfirmedAbsent: false,
         sandboxName,
+        stopInferenceResources: vi.fn(),
         runtimeProviders: providers,
         deps: {
           readTimerMarker: () => null,

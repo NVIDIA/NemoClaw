@@ -6,13 +6,39 @@
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
+import { requireCuaFrameworkEnabled } from "../cua/feature";
+import {
+  type CuaBuildIdentity,
+  type CuaLiveInferenceObservation,
+  type CuaRuntimeReadiness,
+  isCuaQualificationEnabled,
+  observeCuaLiveAppliedPolicy,
+  observeCuaLiveInference,
+  requireCurrentCuaRuntimeReadiness,
+  resolveSandboxGatewayName,
+  withGatewayRouteMutationLock,
+} from "../cua/onboard-runtime";
 import { getProviderSelectionConfig } from "../inference/config";
-import { runSandboxConfigSync } from "../onboard/config-sync";
+import { normalizeInferenceSelection } from "../inference/selection";
+import { runSandboxConfigSync, sandboxConfigSyncArgs } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
+import { resolveSandboxHermesApiPort } from "../onboard/hermes-api-port";
+
+export {
+  createHermesApiPortScopedSandboxEntryPoints,
+  createHermesApiPortReservationScope,
+  type HermesApiPortReservationScope,
+  reserveCreateSandboxHermesApiPort,
+  withHermesApiPortReservationScope,
+} from "../onboard/hermes-api-port";
+
 import { redact, run } from "../runner";
+import * as registry from "../state/registry";
+import type { SandboxEntry } from "../state/registry/types";
 import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
@@ -21,6 +47,7 @@ import {
   isTerminalAgent,
   loadAgent,
   requireAgentPolicyAdditionsPath,
+  requireCandidateQualificationEnabled,
   resolveAgentName,
 } from "./defs";
 import { waitForAgentGatewayReady } from "./gateway-readiness";
@@ -36,12 +63,38 @@ export interface OnboardContext {
     args: string[],
     opts?: { ignoreError?: boolean; timeout?: number },
   ) => string | null;
+  captureOpenshell?: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => CaptureOpenshellResult;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+  getSandboxInferenceSelection?: (sandboxName: string) => SandboxEntry | null;
+  updateSandbox?: (
+    sandboxName: string,
+    updates: { cuaRuntimeReadiness: CuaRuntimeReadiness },
+  ) => boolean;
+  recordCuaRuntimeReadiness?: (
+    sandboxName: string,
+    readiness: CuaRuntimeReadiness,
+    expectedEntry: SandboxEntry,
+  ) => boolean;
+  cuaRegistry?: {
+    getSandbox: (sandboxName: string) => SandboxEntry | null;
+    recordCuaRuntimeReadiness: NonNullable<OnboardContext["recordCuaRuntimeReadiness"]>;
+  };
+  cuaRuntimeEnvironment?: NodeJS.ProcessEnv;
+  cuaBuildIdentity?: CuaBuildIdentity;
+  cuaRootDir?: string;
+  cuaObserveLiveInference?: (entry: SandboxEntry) => CuaLiveInferenceObservation;
+  cuaObserveLiveAppliedPolicy?: (
+    entry: SandboxEntry,
+  ) => import("../cua/contract").CuaAppliedPolicyIdentity;
+  cuaWithGatewayRouteMutationLock?: typeof withGatewayRouteMutationLock;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
 }
@@ -129,6 +182,10 @@ export function resolveAgent({
 } = {}): AgentDefinition | null {
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
+  if (name === "nemocua" && !isCuaQualificationEnabled()) {
+    throw new Error("NemoCUA candidate onboarding requires exact qualification authority");
+  }
+  requireCandidateQualificationEnabled(name);
   return loadAgent(name);
 }
 
@@ -137,6 +194,7 @@ export function resolveAgent({
  */
 export function getAgentPolicyPath(agent: AgentDefinition): string | null {
   if (agent.name === "openclaw") return null;
+  if (agent.name === "nemocua") requireCuaFrameworkEnabled();
   return requireAgentPolicyAdditionsPath(agent);
 }
 
@@ -239,6 +297,105 @@ async function failAgentSetup(
   process.exit(1);
 }
 
+async function recordCuaRuntimeReadiness(
+  sandboxName: string,
+  agent: AgentDefinition,
+  provider: string,
+  model: string,
+  context: Pick<
+    OnboardContext,
+    | "getSandboxInferenceSelection"
+    | "recordStepFailed"
+    | "updateSandbox"
+    | "recordCuaRuntimeReadiness"
+    | "cuaRegistry"
+    | "cuaRuntimeEnvironment"
+    | "cuaBuildIdentity"
+    | "cuaRootDir"
+    | "openshellBinary"
+    | "cuaObserveLiveInference"
+    | "cuaObserveLiveAppliedPolicy"
+    | "cuaWithGatewayRouteMutationLock"
+  >,
+): Promise<void> {
+  if (agent.name !== "nemocua") return;
+  try {
+    const storedSandbox = (
+      context.getSandboxInferenceSelection ?? context.cuaRegistry?.getSandbox
+    )?.(sandboxName);
+    const recordedSandbox = storedSandbox ?? {
+      provider,
+      model,
+    };
+    const recordedInference = normalizeInferenceSelection(recordedSandbox);
+    const env = context.cuaRuntimeEnvironment ?? process.env;
+    const entry: SandboxEntry = {
+      name: sandboxName,
+      agent: agent.name,
+      ...recordedInference,
+      ...(storedSandbox?.gatewayName !== undefined
+        ? { gatewayName: storedSandbox.gatewayName }
+        : {}),
+      ...(storedSandbox?.gatewayPort !== undefined
+        ? { gatewayPort: storedSandbox.gatewayPort }
+        : {}),
+    };
+    if (!isCuaQualificationEnabled(env)) {
+      throw new Error("NemoCUA candidate onboarding requires exact qualification authority");
+    }
+    await (context.cuaWithGatewayRouteMutationLock ?? withGatewayRouteMutationLock)(
+      resolveSandboxGatewayName(entry),
+      () => {
+        const live = context.cuaObserveLiveInference
+          ? context.cuaObserveLiveInference(entry)
+          : observeCuaLiveInference(entry, {
+              openshellBinary: context.openshellBinary,
+              env,
+            });
+        const liveAppliedPolicy = context.cuaObserveLiveAppliedPolicy
+          ? context.cuaObserveLiveAppliedPolicy(entry)
+          : observeCuaLiveAppliedPolicy(entry, {
+              openshellBinary: context.openshellBinary,
+              env,
+            });
+        const cuaRuntimeReadiness = requireCurrentCuaRuntimeReadiness({
+          agentName: agent.name,
+          recordedInference,
+          liveInference: {
+            ...recordedInference,
+            provider: live.provider,
+            model: live.model,
+          },
+          liveProviderAuthorityDigest: live.providerAuthorityDigest,
+          liveAppliedPolicy,
+          ...(live.openshellDigest ? { expectedOpenshellDigest: live.openshellDigest } : {}),
+          acceptance: "candidate-qualification",
+          env,
+          openshellBinary: context.openshellBinary,
+          ...(context.cuaBuildIdentity ? { buildIdentity: context.cuaBuildIdentity } : {}),
+          ...(context.cuaRootDir ? { rootDir: context.cuaRootDir } : {}),
+        });
+        const canonicalRecord =
+          context.recordCuaRuntimeReadiness ?? context.cuaRegistry?.recordCuaRuntimeReadiness;
+        const recorded =
+          canonicalRecord && storedSandbox && "name" in storedSandbox
+            ? canonicalRecord(sandboxName, cuaRuntimeReadiness, storedSandbox as SandboxEntry)
+            : context.updateSandbox?.(sandboxName, { cuaRuntimeReadiness });
+        if (!recorded) {
+          throw new Error(`NemoCUA runtime readiness could not be recorded for '${sandboxName}'`);
+        }
+      },
+    );
+  } catch (error) {
+    await failAgentSetup(
+      sandboxName,
+      agent,
+      error instanceof Error ? error.message : String(error),
+      context.recordStepFailed,
+    );
+  }
+}
+
 /**
  * Interpret an agent health-probe response as healthy or unhealthy.
  */
@@ -272,12 +429,28 @@ export async function handleAgentSetup(
   const {
     step,
     runCaptureOpenshell,
+    captureOpenshell,
     openshellBinary: openshellBin,
     startRecordedStep,
     recordStepComplete,
     recordStepFailed,
     skippedStepMessage,
+    getSandboxInferenceSelection,
+    updateSandbox,
+    recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
+    cuaRegistry,
+    cuaRuntimeEnvironment,
+    cuaBuildIdentity,
+    cuaRootDir,
+    cuaObserveLiveInference,
+    cuaObserveLiveAppliedPolicy,
+    cuaWithGatewayRouteMutationLock,
   } = ctx;
+
+  const runSmokeCapture =
+    agent.name === "langchain-deepagents-code" && captureOpenshell
+      ? captureOpenshell
+      : runCaptureOpenshell;
 
   const syncNemoClawConfig = (): void => {
     runSandboxConfigSync(sandboxName, {
@@ -286,7 +459,7 @@ export async function handleAgentSetup(
         return cfg ? { ...cfg, agent: agent.name } : null;
       },
       runConnectScript: (name, scriptContent) => {
-        run([openshellBin, "sandbox", "connect", name], {
+        run([openshellBin, ...sandboxConfigSyncArgs(name)], {
           stdio: ["pipe", "ignore", "inherit"],
           input: scriptContent,
         });
@@ -303,11 +476,25 @@ export async function handleAgentSetup(
       );
       if (binaryAvailability.available) {
         syncNemoClawConfig();
-        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
         if (smokeResult.ok) {
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
             beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
             onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+          });
+          await recordCuaRuntimeReadiness(sandboxName, agent, provider, model, {
+            getSandboxInferenceSelection,
+            recordStepFailed,
+            updateSandbox,
+            recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
+            cuaRegistry,
+            cuaRuntimeEnvironment,
+            cuaBuildIdentity,
+            cuaRootDir,
+            openshellBinary: openshellBin,
+            cuaObserveLiveInference,
+            cuaObserveLiveAppliedPolicy,
+            cuaWithGatewayRouteMutationLock,
           });
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
@@ -359,7 +546,7 @@ export async function handleAgentSetup(
   syncNemoClawConfig();
 
   if (isTerminalAgent(agent)) {
-    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
     if (!smokeResult.ok) {
       await failAgentSetup(
         sandboxName,
@@ -371,6 +558,20 @@ export async function handleAgentSetup(
     }
     await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
       onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+    });
+    await recordCuaRuntimeReadiness(sandboxName, agent, provider, model, {
+      getSandboxInferenceSelection,
+      recordStepFailed,
+      updateSandbox,
+      recordCuaRuntimeReadiness: persistCuaRuntimeReadiness,
+      cuaRegistry,
+      cuaRuntimeEnvironment,
+      cuaBuildIdentity,
+      cuaRootDir,
+      openshellBinary: openshellBin,
+      cuaObserveLiveInference,
+      cuaObserveLiveAppliedPolicy,
+      cuaWithGatewayRouteMutationLock,
     });
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
@@ -481,7 +682,7 @@ export function printDashboardUi(
     }
     printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
-    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
+    printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls, sandboxName);
     return;
   }
 
@@ -497,7 +698,12 @@ export function printDashboardUi(
       effectiveDashboardPort,
       redactUrl: dashboardUrlForDisplay,
     });
-    printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
+    printAdditionalForwardPorts(
+      agent,
+      effectiveDashboardPort,
+      deps.buildControlUiUrls,
+      sandboxName,
+    );
     return;
   }
 
@@ -522,7 +728,7 @@ export function printDashboardUi(
     effectiveDashboardPort,
     redactUrl: dashboardUrlForDisplay,
   });
-  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls);
+  printAdditionalForwardPorts(agent, effectiveDashboardPort, deps.buildControlUiUrls, sandboxName);
 }
 
 /**
@@ -549,14 +755,25 @@ function printAdditionalForwardPorts(
   agent: AgentDefinition,
   primaryPort: number,
   buildControlUiUrls: (token: string | null, port: number) => string[],
+  sandboxName?: string,
 ): void {
   const declared = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
   if (declared.length === 0) return;
-  const apiPort = agent.healthProbe?.port;
-  for (const port of declared) {
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
-    if (port === primaryPort || port === agent.forwardPort) continue;
-    const isApi = port === apiPort;
+  const declaredApiPort = agent.healthProbe?.port;
+  // The manifest names Hermes' default API port. This sandbox owns its own, so
+  // announce the port the operator actually has to forward. Only Hermes
+  // allocates a per-sandbox API port; every other agent keeps its declared one.
+  const sandboxApiPort =
+    agent.name === "hermes"
+      ? resolveSandboxHermesApiPort(
+          (sandboxName ? registry.getSandbox(sandboxName) : undefined) ?? {},
+        )
+      : 0;
+  for (const declaredPort of declared) {
+    if (!Number.isInteger(declaredPort) || declaredPort < 1024 || declaredPort > 65535) continue;
+    if (declaredPort === primaryPort || declaredPort === agent.forwardPort) continue;
+    const isApi = declaredPort === declaredApiPort;
+    const port = isApi && agent.name === "hermes" ? sandboxApiPort : declaredPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";
     console.log("");
     console.log(`  ${agent.displayName} ${sectionLabel}`);

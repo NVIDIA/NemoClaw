@@ -24,7 +24,7 @@ const coordinator = require("../../../scripts/scorecard/coordinate-scorecard.mts
 
 function coordinatorInput(overrides: Partial<ScorecardInput> = {}): ScorecardInput {
   return {
-    eventName: "schedule",
+    eventName: "push",
     actor: "",
     serverUrl: "https://github.com",
     repo: { owner: "NVIDIA", repo: "NemoClaw" },
@@ -50,9 +50,9 @@ describe("scorecard coordinator selectors and run mode", () => {
     expect(coordinator.parseSelectors("   ")).toEqual([]);
   });
 
-  it("maps event and selectors to the scheduled, full, and selective run modes", () => {
-    expect(coordinator.deriveRunMode("schedule", "", "")).toEqual({
-      runMode: "Scheduled E2E",
+  it("maps event and selectors to the main-push, full, and selective run modes", () => {
+    expect(coordinator.deriveRunMode("push", "", "")).toEqual({
+      runMode: "Main push",
       isDispatch: false,
       isSelectiveDispatch: false,
     });
@@ -73,7 +73,7 @@ describe("scorecard coordinator selectors and run mode", () => {
 });
 
 describe("scorecard coordinator assembly", () => {
-  it("routes a clean scheduled run to the daily channel with a perfect summary", () => {
+  it("routes a clean main-push run to the daily channel with a perfect summary", () => {
     const { scorecardData, slackData, summaryMarkdown } = coordinator.buildScorecard(
       coordinatorInput({
         needs: { "cloud-onboard": { result: "success" }, "report-to-pr": { result: "success" } },
@@ -84,7 +84,7 @@ describe("scorecard coordinator assembly", () => {
       }),
     );
 
-    expect(scorecardData.runMode).toBe("Scheduled E2E");
+    expect(scorecardData.runMode).toBe("Main push");
     expect(scorecardData).toMatchObject({
       ran: 1,
       total: 1,
@@ -95,7 +95,7 @@ describe("scorecard coordinator assembly", () => {
     expect(slackData.channel).toBe("daily");
     expect(slackData.payload.attachments[0].color).toBe("good");
     expect(summaryMarkdown).toContain("## 🌅 NemoClaw E2E Scorecard — Jul 16");
-    expect(summaryMarkdown).toContain("**Run mode:** Scheduled E2E");
+    expect(summaryMarkdown).toContain("**Run mode:** Main push");
     expect(summaryMarkdown).toContain("🎉 **All jobs passed!**");
     expect(summaryMarkdown).toContain("Trace: cloud-onboard total 2.0s");
     expect(summaryMarkdown).toContain(

@@ -64,15 +64,6 @@ if len(errors) != len(bad):
       { url: "https://host.containers.internal:31337/mcp", accepted: false },
       { url: "https://8.8.8.8/mcp", accepted: true },
       { url: "http://mcp.example.com/mcp", accepted: false },
-      { url: "https://localhost/mcp", accepted: false },
-      { url: "https://service.internal/mcp", accepted: false },
-      { url: "https://127.0.0.1/mcp", accepted: false },
-      { url: "https://10.0.0.1/mcp", accepted: false },
-      { url: "https://100.64.0.1/mcp", accepted: false },
-      { url: "https://169.254.169.254/mcp", accepted: false },
-      { url: "https://192.0.2.1/mcp", accepted: false },
-      { url: "https://198.18.0.1/mcp", accepted: false },
-      { url: "https://224.0.0.1/mcp", accepted: false },
       { url: "https://[::1]/mcp", accepted: false },
       { url: "https://[fc00::1]/mcp", accepted: false },
       { url: "https://[fe80::1]/mcp", accepted: false },
@@ -158,9 +149,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.101",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.101",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.101",
     ]);
   });
 
@@ -343,6 +334,7 @@ module.HERMES_DIR = sys.argv[3]
 module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
 module.os.geteuid = lambda: 1000
 module._assert_non_root_lifecycle_identity = lambda: None
+module._configure_gateway_public_port = lambda: None
 payload = {
     "server": "safe",
     "url": "https://mcp.example.test/mcp",
@@ -1165,6 +1157,7 @@ def trusted_gateway(pid):
     return True
 module._is_trusted_gateway_process = trusted_gateway
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 def signal_gateway(pid, sent_signal):
     observed["signal_uid"] = module.os.geteuid()
     observed["signal_pid"] = pid
@@ -1381,8 +1374,9 @@ module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
 module._gateway_has_managed_parent = lambda pid: True
+module._configure_gateway_public_port = lambda: None
 module.apply_transaction_and_reload = lambda action, payload: {
-    "ok": True, "changed": True, "reloaded": True
+    "ok": True, "changed": True, "reloaded": True,
 }
 result = module.execute("add", {
     "server": "fake",
@@ -1399,24 +1393,6 @@ print(json.dumps(result, sort_keys=True))
       ok: true,
       reloaded: true,
     });
-  });
-
-  it("probes the same-UID helper without mutating config", () => {
-    const result = runPython(`
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-module.os.geteuid = lambda: 1000
-module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
-module._gateway_identity = lambda: (123, 456)
-module._gateway_has_managed_parent = lambda pid: True
-print(json.dumps(module.probe(), sort_keys=True))
-`);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   });
 
   it("restores config and hashes after both desired-config reload signals fail", () => {

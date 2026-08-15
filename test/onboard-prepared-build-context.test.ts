@@ -17,7 +17,7 @@ type PreparedContextResult = {
   commands: string[];
   errorMessage: string | null;
   patchCalls: number;
-  planBuildContexts: string[];
+  planFromRefs: string[];
   registerCalls: Array<{ imageTag?: string | null }>;
   resolvedBuildIds: string[];
   stageCalls: number;
@@ -34,9 +34,11 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(preparedBuildCtx, { recursive: true });
-  fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    path.join(fakeBin, "openshell"),
+    '#!/usr/bin/env bash\nif [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-prepared-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\nexit 0\n',
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
     ["FROM scratch", `ARG NEMOCLAW_BUILD_ID=${buildId}`, 'CMD ["/bin/true"]', ""].join("\n"),
@@ -89,7 +91,7 @@ const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
 const commands = [];
 const registerCalls = [];
-const planBuildContexts = [];
+const planFromRefs = [];
 const resolvedBuildIds = [];
 let cleanupCalls = 0;
 let patchCalls = 0;
@@ -120,7 +122,7 @@ dockerfilePatchFlow.prepareSandboxDockerfilePatch = async () => {
 
 const materializeSandboxCreatePlan = sandboxCreatePlanMaterialization.materializeSandboxCreatePlan;
 sandboxCreatePlanMaterialization.materializeSandboxCreatePlan = (input) => {
-  planBuildContexts.push(input.buildCtx);
+  planFromRefs.push(input.fromRef);
   return materializeSandboxCreatePlan(input);
 };
 const resolveSandboxImageTagFromCreateOutput = imageTag.resolveSandboxImageTagFromCreateOutput;
@@ -132,8 +134,11 @@ imageTag.resolveSandboxImageTagFromCreateOutput = (output, receivedBuildId, warn
 const normalize = (command) =>
   (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 runner.run = (command) => {
-  commands.push(normalize(command));
-  return { status: 0 };
+  const normalized = normalize(command);
+  commands.push(normalized);
+  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
+    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = []) => {
   commands.push(normalize([file, ...args]));
@@ -228,7 +233,7 @@ const { createSandbox } = require(${onboardPath});
     commands,
     errorMessage,
     patchCalls,
-    planBuildContexts,
+    planFromRefs,
     registerCalls,
     resolvedBuildIds,
     stageCalls,
@@ -248,6 +253,7 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });
@@ -271,7 +277,7 @@ describe("onboard prepared DCode build context", () => {
     assert.equal(result.errorMessage, null);
     assert.equal(result.stageCalls, 0);
     assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planBuildContexts, [result.buildCtx]);
+    assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
     assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
     assert.equal(result.cleanupCalls, 1);
     assert.ok(
@@ -299,7 +305,7 @@ describe("onboard prepared DCode build context", () => {
     );
     assert.equal(result.stageCalls, 0);
     assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planBuildContexts, []);
+    assert.deepEqual(result.planFromRefs, []);
     assert.deepEqual(result.resolvedBuildIds, []);
     assert.equal(result.cleanupCalls, 0);
     assert.equal(

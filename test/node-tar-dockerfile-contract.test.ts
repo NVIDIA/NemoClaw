@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bundled-npm-tar.mts";
+import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const dockerfiles = [
@@ -29,6 +30,31 @@ const dockerfiles = [
     installsWithNpm: false,
   },
 ] as const;
+const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
+const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
+const pinnedBaseDockerfiles = [
+  "Dockerfile.base",
+  "agents/hermes/Dockerfile.base",
+  "agents/langchain-deepagents-code/Dockerfile.base",
+] as const;
+const reviewedNodeBases = new Set<string>(NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH);
+
+function nodeBaseReferences(source: string): string[] {
+  return [
+    ...new Set(
+      [...source.matchAll(/^FROM\s+(node:[^\s]+@sha256:[0-9a-f]{64})(?:\s|$)/gmu)].map(
+        (match) => match[1]!,
+      ),
+    ),
+  ].sort();
+}
+
+function assertReviewedNodeBases(file: string, source: string): void {
+  const bases = nodeBaseReferences(source);
+  assert(bases.length > 0, `${file} must pin at least one upstream Node base image`);
+  const unreviewed = bases.filter((base) => !reviewedNodeBases.has(base));
+  assert.deepEqual(unreviewed, [], `${file} contains an unreviewed upstream Node base image`);
+}
 
 function completedStage(source: string): string {
   const finalStageStart = [...source.matchAll(/^FROM\b/gmu)].at(-1)?.index;
@@ -45,13 +71,31 @@ function namedStage(source: string, name: string): string {
 
 describe("node-tar image remediation contract", () => {
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
-    const pinnedBaseSources = ["Dockerfile.base", "agents/hermes/Dockerfile.base"]
-      .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
-      .join("\n");
-
-    for (const base of NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH) {
-      expect(pinnedBaseSources, base).toContain(`FROM ${base}`);
+    const observedBases = new Set<string>();
+    for (const file of pinnedBaseDockerfiles) {
+      const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      assertReviewedNodeBases(file, source);
+      for (const base of nodeBaseReferences(source)) observedBases.add(base);
     }
+    expect([...observedBases].sort()).toEqual(
+      [...NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH].sort(),
+    );
+  });
+
+  // source-shape-contract: security -- Each managed Dockerfile must remain bound to a reviewed Node base digest.
+  it("rejects an isolated unreviewed Deep Agents Code Node base pin", () => {
+    const file = "agents/langchain-deepagents-code/Dockerfile.base";
+    const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const reviewedBase = NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH.find((base) =>
+      base.startsWith("node:22-"),
+    );
+    assert(reviewedBase !== undefined, "the reviewed Node 22 base must be registered");
+    const unreviewedBase = `node:22-trixie-slim@sha256:${"0".repeat(64)}`;
+    const changedSource = source.replaceAll(reviewedBase, unreviewedBase);
+
+    expect(() => assertReviewedNodeBases(file, changedSource)).toThrow(
+      `${file} contains an unreviewed upstream Node base image`,
+    );
   });
 
   it.each([
@@ -61,9 +105,11 @@ describe("node-tar image remediation contract", () => {
   ])("installs curl before patching the bundled npm tar in $file", (file) => {
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
     const curlInstall = source.indexOf("curl=");
-    const patchRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+    const patchRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
+    ).commandStart;
 
     expect(curlInstall, file).toBeGreaterThanOrEqual(0);
     expect(patchRun, file).toBeGreaterThan(curlInstall);
@@ -71,7 +117,7 @@ describe("node-tar image remediation contract", () => {
 
   it.each(
     dockerfiles,
-  )("patches npm before use and scans the completed $file filesystem", (entry) => {
+  )("places bundled npm tar remediation in the final $file stage before any npm consumers", (entry) => {
     const { file, installsPatchDownloader, installsWithNpm } = entry;
     const dockerfile = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const source = completedStage(dockerfile);
@@ -80,27 +126,19 @@ describe("node-tar image remediation contract", () => {
     );
     const patchPayloadLayer =
       patchPayloadStage === undefined ? -1 : source.indexOf(`COPY --from=${patchPayloadStage} / /`);
-    const scanPayloadLayer = source.indexOf("COPY --from=hermes-scan-payload / /");
     const patchInputStage =
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
-    const scanInputStage =
-      scanPayloadLayer >= 0 ? namedStage(dockerfile, "hermes-scan-payload") : source;
     const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
-    const patchRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
-    const scanCopy = scanInputStage.indexOf(
-      "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
-    );
-    const scanRun = source.indexOf(
-      "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
-    );
+    const patchRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
+    ).commandStart;
     const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
-    const scanInputReady = scanPayloadLayer >= 0 ? scanPayloadLayer : scanCopy;
 
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(
@@ -127,11 +165,6 @@ describe("node-tar image remediation contract", () => {
         aptInstallCleanup < patchRun,
       file,
     ).toBe(installsPatchDownloader);
-    expect(scanCopy, file).toBeGreaterThanOrEqual(0);
-    expect(scanInputReady, file).toBeGreaterThan(patchRun);
-    expect(scanRun, file).toBeGreaterThan(scanInputReady);
-    expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");
-
     const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
     const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
       (match) => match.index,
@@ -151,15 +184,19 @@ describe("reviewed npm image remediation contract", () => {
     { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
   ])("upgrades npm before use in $file", ({ file, installsWithNpm }) => {
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
-    const patchRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+    const patchRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
+    ).commandStart;
     const upgradeCopy = source.indexOf(
       "COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts",
     );
-    const upgradeRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
-    );
+    const upgradeRun = requireSingleReviewedDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      npmRootArguments,
+    ).commandStart;
 
     expect(upgradeCopy, file).toBeGreaterThanOrEqual(0);
     expect(patchRun, file).toBeGreaterThan(upgradeCopy);

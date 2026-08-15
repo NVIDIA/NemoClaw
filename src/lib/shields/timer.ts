@@ -6,20 +6,33 @@
 // restores the captured policy snapshot.
 //
 // Usage (internal — called by shields.ts via fork()):
-//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token> <allow-legacy-hermes>
+//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token> <allow-legacy-hermes> <lease-owner-pid> <lease-owner-start> <agent-name>
 
 import fs from "node:fs";
 import path from "node:path";
+import { CLI_NAME } from "../cli/branding";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { buildPolicySetCommand } from "../policy";
-import { run } from "../runner";
-import { resolveAgentConfig } from "../sandbox/config";
-import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
+import {
+  beginCommittedMcpLifecycleContainmentSync,
+  durableMcpLifecycleContainmentFailure,
+  getMcpLifecycleLockPath,
+  withMcpLifecycleDeadlineFence,
+} from "../state/mcp-lifecycle-lock";
+import {
+  readShieldsTimerMarkerFile,
+  type ShieldsTimerMarker,
+} from "../state/mcp-lifecycle-lock/shields-timer-authority";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
 import { relockAndReconfirm } from "./relock-reconfirm";
-import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
+import {
+  hasExactTimerAuthorizationProof,
+  isProcessAlive,
+  readProcessStartIdentity,
+  removeTimerAuthorizationProof,
+  writeTimerAuthorizationProofForMarker,
+} from "./timer-control";
 import { withShieldsTransitionLock } from "./transition-lock";
 
 interface ShieldsStatePatch {
@@ -42,16 +55,30 @@ interface TimerArgs {
   markerPath: string;
   configPath?: string;
   configDir?: string;
+  agentName?: string;
   processToken?: string;
   allowLegacyHermesProtocol: boolean;
   leaseOwnerPid?: number;
   leaseOwnerStartIdentity?: string;
 }
 
+interface TimerRuntimeOptions {
+  retryDelayMs?: number;
+  maxRestoreAttempts?: number;
+  deadlineSetupTimeoutMs?: number;
+}
+
+interface RecoveryAttemptBudget {
+  attemptsUsed: number;
+}
+
 type LockAgentConfig = typeof shields.lockAgentConfig;
+type RestoreAttemptOutcome = "complete" | "retry" | "revoked";
 
 const STATE_DIR = resolveNemoclawStateDir();
 const AUTO_RESTORE_RETRY_MS = 5_000;
+const AUTO_RESTORE_MAX_ATTEMPTS = 7;
+const AUTO_RESTORE_AUTHORITY_POLL_MS = 250;
 
 function parseTimerArgs(argv: string[]): TimerArgs | null {
   const [
@@ -64,6 +91,7 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     allowLegacyHermes,
     leaseOwnerPidRaw,
     leaseOwnerStartIdentityRaw,
+    agentNameRaw,
   ] = argv;
   const restoreAtMs = restoreAtIso ? new Date(restoreAtIso).getTime() : Number.NaN;
   const leaseOwnerPid = leaseOwnerPidRaw ? Number(leaseOwnerPidRaw) : undefined;
@@ -91,6 +119,7 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     markerPath: path.join(STATE_DIR, `shields-timer-${sandboxName}.json`),
     configPath,
     configDir,
+    ...(agentNameRaw ? { agentName: agentNameRaw } : {}),
     processToken,
     allowLegacyHermesProtocol: allowLegacyHermes === "1",
     ...(leaseOwnerPid && leaseOwnerStartIdentity ? { leaseOwnerPid, leaseOwnerStartIdentity } : {}),
@@ -103,6 +132,13 @@ function appendAudit(entry: ShieldsAuditEntry): void {
   } catch {
     // Best effort — don't crash the timer
   }
+}
+
+function isDurableContainmentFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: string }).code === "NEMOCLAW_DURABLE_CONTAINMENT"
+  );
 }
 
 function readStateFile(stateFile: string): UnknownRecord {
@@ -150,19 +186,25 @@ function updateState(stateFile: string, patch: ShieldsStatePatch): void {
   }
 }
 
-function readTimerMarker(markerPath: string): UnknownRecord | null {
-  try {
-    if (!fs.existsSync(markerPath)) {
-      return null;
-    }
-    const parsed = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
-    return isObjectRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+function readTimerMarker(markerPath: string): ShieldsTimerMarker | null {
+  return readShieldsTimerMarkerFile(markerPath);
 }
 
-function markerRecordMatchesCurrentTimer(marker: UnknownRecord | null, args: TimerArgs): boolean {
+let cachedCurrentProcessStartIdentity: string | undefined;
+
+function currentProcessStartIdentity(): string | null {
+  if (cachedCurrentProcessStartIdentity !== undefined) {
+    return cachedCurrentProcessStartIdentity;
+  }
+  const identity = readProcessStartIdentity(process.pid);
+  if (identity !== null) cachedCurrentProcessStartIdentity = identity;
+  return identity;
+}
+
+function markerRecordMatchesCurrentTimer(
+  marker: ShieldsTimerMarker | null,
+  args: TimerArgs,
+): boolean {
   if (!marker) return false;
   return (
     marker.pid === process.pid &&
@@ -170,9 +212,14 @@ function markerRecordMatchesCurrentTimer(marker: UnknownRecord | null, args: Tim
     marker.snapshotPath === args.snapshotPath &&
     marker.restoreAt === args.restoreAtIso &&
     marker.processToken === args.processToken &&
+    (marker.timerProcessStartIdentity === undefined ||
+      marker.timerProcessStartIdentity === currentProcessStartIdentity()) &&
     (marker.allowLegacyHermesProtocol === true) === args.allowLegacyHermesProtocol &&
     marker.leaseOwnerPid === args.leaseOwnerPid &&
-    marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity
+    marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity &&
+    marker.agentName === args.agentName &&
+    (marker.configPath === undefined || marker.configPath === args.configPath) &&
+    (marker.configDir === undefined || marker.configDir === args.configDir)
   );
 }
 
@@ -187,6 +234,13 @@ function cleanupOwnedTimerMarker(args: TimerArgs): boolean {
 
   if (markerRecordMatchesCurrentTimer(readTimerMarker(quarantinePath), args)) {
     fs.unlinkSync(quarantinePath);
+    removeTimerAuthorizationProof(args.sandboxName, args.processToken);
+    const directoryFd = fs.openSync(path.dirname(args.markerPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
     return true;
   }
 
@@ -227,18 +281,75 @@ function rebuildLeaseOwnerIsCurrent(args: TimerArgs): boolean {
   );
 }
 
-async function runRestoreTimer(args: TimerArgs): Promise<void> {
-  const now = new Date().toISOString();
+async function runRestoreTimerWithBudget(
+  args: TimerArgs,
+  runtimeOptions: TimerRuntimeOptions,
+  recoveryBudget: RecoveryAttemptBudget,
+): Promise<void> {
+  const retryDelayMs =
+    Number.isFinite(runtimeOptions.retryDelayMs) && (runtimeOptions.retryDelayMs ?? 0) >= 0
+      ? Math.floor(runtimeOptions.retryDelayMs!)
+      : AUTO_RESTORE_RETRY_MS;
+  const maxRestoreAttempts =
+    Number.isInteger(runtimeOptions.maxRestoreAttempts) &&
+    (runtimeOptions.maxRestoreAttempts ?? 0) > 0
+      ? runtimeOptions.maxRestoreAttempts!
+      : AUTO_RESTORE_MAX_ATTEMPTS;
+  const deadlineSetupTimeoutMs =
+    Number.isFinite(runtimeOptions.deadlineSetupTimeoutMs) &&
+    (runtimeOptions.deadlineSetupTimeoutMs ?? 0) > 0
+      ? Math.floor(runtimeOptions.deadlineSetupTimeoutMs!)
+      : 5_000;
   let exitCode = 0;
   let retryScheduled = false;
+  let terminalContainment = false;
+  let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
     setTimeout(() => {
-      void runRestoreTimer(args);
-    }, AUTO_RESTORE_RETRY_MS);
+      void runRestoreTimerWithBudget(args, runtimeOptions, recoveryBudget);
+    }, retryDelayMs);
     return true;
   };
+  const assertTakeoverAuthority = (): void => {
+    if (!markerMatchesCurrentTimer(args)) {
+      throw new Error("Auto-restore authority changed before Shields transition takeover");
+    }
+  };
+  const terminalRecoveryFailure = (attempt: number): Error => {
+    const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
+    const reason = `Auto-restore recovery failed after ${String(attempt)} ${attempt === 1 ? "attempt" : "attempts"} while the exact timer generation still owned recovery authority`;
+    try {
+      beginCommittedMcpLifecycleContainmentSync(
+        args.sandboxName,
+        args.processToken!,
+        reason,
+        STATE_DIR,
+        assertTakeoverAuthority,
+      );
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) return error as Error;
+      if (!markerMatchesCurrentTimer(args)) {
+        return error instanceof Error ? error : new Error(String(error));
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return durableMcpLifecycleContainmentFailure(
+        new Error(
+          `${reason}; durable containment could not be committed: ${message}. Correct the state-directory write failure, then run \`${CLI_NAME} ${args.sandboxName} shields status\` to resume recovery or receive exact-generation recovery guidance`,
+        ),
+        lockPath,
+        { retainOwnedLifecycleGates: true },
+      );
+    }
+    return durableMcpLifecycleContainmentFailure(
+      new Error(
+        `${reason}. Durable containment now blocks sandbox mutations. Stop all NemoClaw processes for this sandbox, then follow the exact-generation recovery guidance from the next NemoClaw command.`,
+      ),
+      lockPath,
+    );
+  };
+  const attemptsAtEntry = recoveryBudget.attemptsUsed;
 
   try {
     // Timer markers are the source of authority. If the marker was removed or
@@ -261,13 +372,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
     if (!args.processToken || !/^[0-9a-f]{32}$/.test(args.processToken)) {
       throw new Error("Auto-restore timer has no valid transition takeover token");
     }
-    shields.prepareAutoRestoreTransitionTakeover(
-      args.sandboxName,
-      args.processToken,
-      args.snapshotPath,
-    );
-
-    await withSandboxMutationLock(args.sandboxName, () =>
+    const restoreUnderDeadlineFence = (): RestoreAttemptOutcome =>
       withShieldsTransitionLock(
         args.sandboxName,
         "shields auto-restore",
@@ -275,95 +380,78 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
           // A manual hardening command may have completed while this timer waited
           // for the host mutation lock. The marker is the timer's authority, so
           // re-check it only after serialization is established.
-          if (!markerMatchesCurrentTimer(args)) return;
+          if (!markerMatchesCurrentTimer(args)) return "revoked";
 
           if (!fs.existsSync(args.snapshotPath)) {
             appendAudit({
               action: "shields_up_failed",
               sandbox: args.sandboxName,
-              timestamp: now,
+              timestamp: new Date().toISOString(),
               restored_by: "auto_timer",
               error: "Policy snapshot file missing",
             });
             exitCode = 1;
-            scheduleRetry();
-            return;
+            return "retry";
           }
 
           // Restore policy (slow — openshell policy set --wait blocks)
-          const result = run(buildPolicySetCommand(args.snapshotPath, args.sandboxName), {
-            ignoreError: true,
+          const result = shields.applyShieldsPolicySnapshot(args.sandboxName, args.snapshotPath, {
+            transitionProcessToken: args.processToken,
+            deadlineAuthoritative: true,
           });
           const status = typeof result.status === "number" ? result.status : 1;
+          managedMcpWarning = result.managedMcpOmissions?.length
+            ? `Auto-restore omitted ${String(
+                result.managedMcpOmissions.length,
+              )} unproven managed MCP policy entries`
+            : undefined;
 
           if (status !== 0) {
             appendAudit({
               action: "shields_up_failed",
               sandbox: args.sandboxName,
-              timestamp: now,
+              timestamp: new Date().toISOString(),
               restored_by: "auto_timer",
               error: `Policy restore exited with status ${String(status)}`,
             });
             exitCode = 1;
-            scheduleRetry();
-            return;
+            return "retry";
           }
 
           // Destroy and force-restore can revoke this marker while a slow
           // policy restore is already in flight. Stop before the next sandbox
           // mutation if this timer generation no longer owns recovery.
-          if (!markerMatchesCurrentTimer(args)) return;
+          if (!markerMatchesCurrentTimer(args)) return "revoked";
 
           // Re-lock config file using the shared lockAgentConfig from shields.ts.
           // lockAgentConfig runs each operation independently and verifies the
           // on-disk state — it throws if verification fails.
           //
-          // NC-2227-03: Resolve the full agent config target (including sensitive
-          // files like .config-hash, .env) so the timer re-locks the same scope
-          // that interactive `shields up` uses. Fall back to the bare configPath/
-          // configDir from argv if resolution fails (e.g., registry unavailable).
+          // NC-2227-03: Reuse resolved registry metadata only when configPath,
+          // configDir, and the optional agentName match the timer arguments.
+          // Otherwise the persisted paths remain the recovery authority. This
+          // keeps older markers without agentName pinned by path while preserving
+          // the full sensitive-file set whenever the registry still describes the
+          // same target.
           let lockVerified = true;
           let lockedChattr: boolean | null = null;
           let lockedHashes: { [path: string]: string } | null = null;
           if (args.configPath) {
-            let lockTarget: {
-              agentName?: string;
-              configPath: string;
-              configDir: string;
-              sensitiveFiles?: string[];
-            } | null = null;
-            try {
-              // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
-              // carries the OpenClaw sensitiveFiles (.config-hash) that
-              // shields-up locks and that the content seal hashes. Dropping
-              // them here would persist a partial fileHashes map and the next
-              // `shields status` would flag the missing entries as drift.
-              lockTarget = resolveAgentConfig(args.sandboxName);
-            } catch {
-              // Resolver itself threw (registry unavailable). Fall back to
-              // argv-supplied paths, but still infer sensitiveFiles from
-              // configDir so the locked set matches what shields-up uses.
-              if (args.configDir) {
-                lockTarget = {
-                  configPath: args.configPath,
-                  configDir: args.configDir,
-                  sensitiveFiles: [`${args.configDir}/.config-hash`],
-                };
-              } else {
-                lockVerified = false;
-                appendAudit({
-                  action: "shields_auto_restore_lock_warning",
-                  sandbox: args.sandboxName,
-                  timestamp: now,
-                  restored_by: "auto_timer",
-                  warning: "Missing config directory for auto-restore re-lock verification",
-                  lock_verified: false,
-                });
-              }
+            const lockTarget = shields.resolvePersistedAutoRestoreTarget(args.sandboxName, args);
+            if (!lockTarget) {
+              lockVerified = false;
+              appendAudit({
+                action: "shields_auto_restore_lock_warning",
+                sandbox: args.sandboxName,
+                timestamp: new Date().toISOString(),
+                restored_by: "auto_timer",
+                warning: "Missing config directory for auto-restore re-lock verification",
+                lock_verified: false,
+              });
             }
             if (lockTarget) {
               try {
-                if (!markerMatchesCurrentTimer(args)) return;
+                if (!markerMatchesCurrentTimer(args)) return "revoked";
                 const lockAgentConfig = resolveLockAgentConfig();
                 // #4663: a single instantaneous lock+verify cannot prove an
                 // in-sandbox reconciler didn't re-permission .config-hash after the
@@ -387,7 +475,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
                   appendAudit({
                     action: "shields_auto_restore_lock_warning",
                     sandbox: args.sandboxName,
-                    timestamp: now,
+                    timestamp: new Date().toISOString(),
                     restored_by: "auto_timer",
                     warning:
                       relock.error ?? "Config re-lock did not re-confirm after settle window",
@@ -399,7 +487,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
                 appendAudit({
                   action: "shields_auto_restore_lock_warning",
                   sandbox: args.sandboxName,
-                  timestamp: now,
+                  timestamp: new Date().toISOString(),
                   restored_by: "auto_timer",
                   warning: error instanceof Error ? error.message : String(error),
                   lock_verified: false,
@@ -410,7 +498,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
 
           // Re-lock verification includes a settle window. Do not rewrite state
           // or remove a replacement marker if authority changed while it ran.
-          if (!markerMatchesCurrentTimer(args)) return;
+          if (!markerMatchesCurrentTimer(args)) return "revoked";
 
           // Only mark shields as UP if the lock was verified (or no config path).
           if (lockVerified) {
@@ -424,17 +512,28 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
             if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
             if (lockedHashes !== null) patch.fileHashes = lockedHashes;
             updateState(args.stateFile, patch);
+            if (
+              !shields.completeAutoRestoreTransition(
+                args.sandboxName,
+                args.processToken!,
+                args.snapshotPath,
+              )
+            ) {
+              return "revoked";
+            }
 
             appendAudit({
               action: "shields_auto_restore",
               sandbox: args.sandboxName,
-              timestamp: now,
+              timestamp: new Date().toISOString(),
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
+              ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
             cleanupOwnedTimerMarker(args);
-            return;
+            exitCode = 0;
+            return "complete";
           }
 
           // Explicitly ensure state reflects shields are still DOWN.
@@ -444,29 +543,128 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
           appendAudit({
             action: "shields_up_failed",
             sandbox: args.sandboxName,
-            timestamp: now,
+            timestamp: new Date().toISOString(),
             restored_by: "auto_timer",
             error: "Config re-lock verification failed — shields remain DOWN",
           });
           exitCode = 1;
-          scheduleRetry();
+          return "retry";
         },
-        { takeoverToken: args.processToken },
-      ),
+        {
+          takeoverToken: args.processToken,
+          recoverStaleOwner: false,
+          waitTimeoutMs: 0,
+        },
+      );
+    const restoreWhileDeadlineOwned = async (): Promise<void> => {
+      for (;;) {
+        const attempt = (recoveryBudget.attemptsUsed += 1);
+        let outcome: RestoreAttemptOutcome;
+        try {
+          shields.prepareAutoRestoreTransitionTakeover(
+            args.sandboxName,
+            args.processToken!,
+            args.snapshotPath,
+            assertTakeoverAuthority,
+          );
+          outcome = restoreUnderDeadlineFence();
+        } catch (error) {
+          const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
+          if (isDurableContainmentFailure(error) || fs.existsSync(`${lockPath}.containment`)) {
+            terminalContainment = true;
+            throw durableMcpLifecycleContainmentFailure(error, lockPath);
+          }
+          appendAudit({
+            action: "shields_up_failed",
+            sandbox: args.sandboxName,
+            timestamp: new Date().toISOString(),
+            restored_by: "auto_timer",
+            policy_snapshot: args.snapshotPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          exitCode = 1;
+          outcome = "retry";
+        }
+        if (outcome !== "retry") return;
+        if (!markerMatchesCurrentTimer(args)) return;
+        if (attempt >= maxRestoreAttempts) {
+          terminalContainment = true;
+          throw terminalRecoveryFailure(attempt);
+        }
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        if (!markerMatchesCurrentTimer(args)) return;
+      }
+    };
+    await withMcpLifecycleDeadlineFence(
+      args.sandboxName,
+      args.processToken,
+      restoreWhileDeadlineOwned,
+      {
+        stateDir: STATE_DIR,
+        pollIntervalMs: 50,
+        timeoutMs: deadlineSetupTimeoutMs,
+        throwOnCommittedContainment: true,
+        onSetupFailure: async () => {
+          const attempt = (recoveryBudget.attemptsUsed += 1);
+          if (attempt >= maxRestoreAttempts) throw terminalRecoveryFailure(attempt);
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          assertTakeoverAuthority();
+        },
+        onContainment: ({ kind, ownerPid, reason }) => {
+          if (kind === "verified-live-wait") {
+            appendAudit({
+              action: "shields_auto_restore_lock_warning",
+              sandbox: args.sandboxName,
+              timestamp: new Date().toISOString(),
+              restored_by: "auto_timer",
+              policy_snapshot: args.snapshotPath,
+              warning: reason,
+            });
+            return;
+          }
+          appendAudit({
+            action: "shields_up_failed",
+            sandbox: args.sandboxName,
+            timestamp: new Date().toISOString(),
+            restored_by: "auto_timer",
+            policy_snapshot: args.snapshotPath,
+            error: `${reason}${ownerPid ? ` Contained owner PID: ${String(ownerPid)}.` : ""}`,
+          });
+        },
+      },
     );
   } catch (error: unknown) {
+    let reportedError = error;
+    if (isDurableContainmentFailure(reportedError)) {
+      terminalContainment = true;
+    } else if (markerMatchesCurrentTimer(args)) {
+      if (recoveryBudget.attemptsUsed === attemptsAtEntry) {
+        recoveryBudget.attemptsUsed += 1;
+      }
+      if (recoveryBudget.attemptsUsed >= maxRestoreAttempts) {
+        reportedError = terminalRecoveryFailure(recoveryBudget.attemptsUsed);
+        terminalContainment = isDurableContainmentFailure(reportedError);
+      }
+    }
     appendAudit({
       action: "shields_up_failed",
       sandbox: args.sandboxName,
-      timestamp: now,
+      timestamp: new Date().toISOString(),
       restored_by: "auto_timer",
-      error: error instanceof Error ? error.message : String(error),
+      error: reportedError instanceof Error ? reportedError.message : String(reportedError),
     });
     exitCode = 1;
-    scheduleRetry();
+    if (!terminalContainment && recoveryBudget.attemptsUsed < maxRestoreAttempts) scheduleRetry();
   } finally {
     if (!retryScheduled) process.exit(exitCode);
   }
+}
+
+async function runRestoreTimer(
+  args: TimerArgs,
+  runtimeOptions: TimerRuntimeOptions = {},
+): Promise<void> {
+  return await runRestoreTimerWithBudget(args, runtimeOptions, { attemptsUsed: 0 });
 }
 
 function main(): void {
@@ -476,31 +674,80 @@ function main(): void {
   }
 
   let scheduled = false;
-  const authorize = (): void => {
-    if (scheduled || !markerMatchesCurrentTimer(args)) return;
-    scheduled = true;
-    setTimeout(
+  const authorize = (): boolean => {
+    if (scheduled) return true;
+    const marker = readTimerMarker(args.markerPath);
+    if (!markerRecordMatchesCurrentTimer(marker, args)) return false;
+    const restoreTimeout = setTimeout(
       () => {
+        clearInterval(authorityPoll);
+        const currentMarker = readTimerMarker(args.markerPath);
+        if (
+          !markerRecordMatchesCurrentTimer(currentMarker, args) ||
+          !hasExactTimerAuthorizationProof(currentMarker!)
+        ) {
+          process.exit(0);
+          return;
+        }
         void runRestoreTimer(args);
       },
       Math.max(0, args.restoreAtMs - Date.now()),
     );
+    const authorityPoll = setInterval(() => {
+      const currentMarker = readTimerMarker(args.markerPath);
+      if (
+        markerRecordMatchesCurrentTimer(currentMarker, args) &&
+        hasExactTimerAuthorizationProof(currentMarker!)
+      ) {
+        return;
+      }
+      clearTimeout(restoreTimeout);
+      clearInterval(authorityPoll);
+      process.exit(0);
+    }, AUTO_RESTORE_AUTHORITY_POLL_MS);
+    scheduled = true;
+    try {
+      writeTimerAuthorizationProofForMarker(marker!);
+      if (!hasExactTimerAuthorizationProof(marker!)) {
+        throw new Error("Timer authorization proof did not verify after publication");
+      }
+    } catch {
+      clearTimeout(restoreTimeout);
+      clearInterval(authorityPoll);
+      scheduled = false;
+      return false;
+    }
+    return true;
   };
 
   // The parent publishes the PID/token marker before authorizing this child.
   // Without this barrier a short timeout can fire in the fork-to-marker gap,
   // causing the child to exit before the parent records a now-dead timer PID.
   process.on("message", (message: unknown) => {
+    const request = message as {
+      type?: unknown;
+      processToken?: unknown;
+      acknowledge?: unknown;
+    };
     if (
       typeof message === "object" &&
       message !== null &&
-      (message as { type?: unknown }).type === "authorize" &&
-      (message as { processToken?: unknown }).processToken === args.processToken
+      request.type === "authorize" &&
+      request.processToken === args.processToken
     ) {
-      authorize();
+      const authorized = authorize();
+      if (!authorized) {
+        process.exit(1);
+        return;
+      }
+      if (request.acknowledge === true && process.connected && process.send !== undefined) {
+        process.send({ type: "authorized", processToken: args.processToken }, () => undefined);
+      }
     }
   });
-  process.once("disconnect", authorize);
+  process.once("disconnect", () => {
+    if (!authorize()) process.exit(1);
+  });
 }
 
 if (require.main === module) {

@@ -55,12 +55,10 @@ The version is already known, so use a patch bump unless the maintainer selects 
 Show the commit, changelog, carry-forward plan, label-retirement plan, and release notes draft.
 
 After the release plan captures the candidate SHA, load `nemoclaw-maintainer-e2e`.
-Run full mode if that SHA has no applicable exact Brev Launchable evidence.
-Review the pre-tag E2E evidence ledger from `.github/workflows/e2e.yaml` at that commit.
-When full mode runs, require a successful `Exact staging Brev Launchable` job, matching Launchable E2E identity, and verified workspace absence.
-Each missing test result requires its own itemized maintainer exception.
-Missing or invalid Launchable E2E evidence requires a separate itemized exception with run and job URLs, the result or missing receipt, and rationale.
-Do not ask for the release confirmation phrase until each required result has successful evidence or its own exception.
+Use an existing qualifying full manual run at the candidate SHA, or run full mode when none exists.
+Require its `Release qualification` check to pass.
+Record the workflow and check URLs.
+Do not ask for the release confirmation phrase until `scripts/release-cut-tag.sh` accepts the canonical check at the current candidate SHA.
 
 Tag the confirmed release commit with `vX.Y.Z`.
 Let the workflow move `latest`, carry open work forward, and delete the released label.
@@ -71,7 +69,7 @@ Prepare the Announcement draft for the maintainer to post.
 After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
-- **Pre-tag E2E evidence**: 12/13 tests and exact Brev Launchable E2E passing for the candidate SHA; 1 itemized maintainer exception
+- **Pre-tag E2E evidence**: `Release qualification` passing for the candidate SHA
 - **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Moved to v0.0.9**: 1 item (#1238 — still needs CI fix)

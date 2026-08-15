@@ -135,7 +135,11 @@ if (args[0] === "api" && args[1] === "--paginate" && args[2]?.startsWith("repos/
     return spawnSync(process.execPath, args, {
       cwd: process.cwd(),
       encoding: "utf-8",
-      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+      env: {
+        ...process.env,
+        NODE_OPTIONS: "",
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -155,7 +159,7 @@ describe("maintainer triage runtime behavior", () => {
         .join("\n"),
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     const output = JSON.parse(result.stdout);
     expect(output.queue.map((item: { number: number }) => item.number)).toEqual([101, 102, 103]);
     expect(output.queue).toEqual(
@@ -174,7 +178,7 @@ describe("maintainer triage runtime behavior", () => {
       approvedOnly: true,
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     const output = JSON.parse(result.stdout);
     expect(output.scanned).toBe(3);
     expect(output.queue.map((item: { number: number }) => item.number)).toEqual([101]);
@@ -184,7 +188,7 @@ describe("maintainer triage runtime behavior", () => {
   it("reports malformed Project data and continues without priority boosts", () => {
     const result = runTriage({ projectOutput: "not-json" });
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toContain(
       "Could not parse Project 199 item data; continuing without priority boosts.",
     );

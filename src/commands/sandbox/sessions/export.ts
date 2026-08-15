@@ -48,7 +48,7 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
   static examples = [
     "<%= config.bin %> sandbox sessions export alpha",
     "<%= config.bin %> sandbox sessions export alpha main --agent main",
-    "<%= config.bin %> sandbox sessions export alpha agent:work:telegram:t-1 --include-trajectory",
+    "<%= config.bin %> sandbox sessions export alpha agent:main:telegram:t-1 --include-trajectory",
     "<%= config.bin %> sandbox sessions export alpha --format tar --out ./bundles/alpha.tgz --json",
   ];
   static flags = {

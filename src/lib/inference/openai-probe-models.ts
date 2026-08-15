@@ -1,7 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveMaxTokensField } from "./max-tokens-field";
+import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
+
+export const STRICT_TOOL_PROBE_INITIAL_TOKENS = 256;
+// Reasoning-heavy models can spend the whole output budget on their reasoning
+// trace before emitting the structured tool call. nemotron-3-nano:30b fails at
+// 1024 and passes at 4096 on the same host (#8714), so the retry escalates
+// through this ladder instead of stopping at one larger budget.
+export const STRICT_TOOL_PROBE_RETRY_TOKEN_LADDER: readonly number[] = [1024, 4096];
+
+export function strictToolProbeReasoningRetryMessage(
+  exhaustedTokens: number,
+  retryTokens: number,
+): string {
+  return (
+    `  Chat Completions tool-call validation exhausted ${exhaustedTokens} tokens in reasoning; ` +
+    `retrying with a ${retryTokens}-token output budget...`
+  );
+}
 
 export function isDeepSeekV4ProModel(model: unknown): boolean {
   return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
@@ -16,7 +33,7 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    [maxTokensField]: 8,
+    [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
   };
 
   if (isDeepSeekV4ProModel(model)) {
@@ -33,10 +50,113 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
   if (isKimiK26Model(model)) {
     return {
       ...payload,
-      [maxTokensField]: 8,
+      [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
       chat_template_kwargs: { thinking: false },
     };
   }
 
   return payload;
+}
+
+export function getChatCompletionsToolProbePayload(
+  model: string,
+  maxTokens = STRICT_TOOL_PROBE_INITIAL_TOKENS,
+): Record<string, unknown> {
+  const maxTokensField = resolveMaxTokensField(model);
+  return {
+    model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
+      },
+      {
+        role: "user",
+        content:
+          "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
+      },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "sessions_send",
+          description: "Send a message to the active chat session.",
+          parameters: {
+            type: "object",
+            properties: { message: { type: "string" } },
+            required: ["message"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search memory for relevant prior context.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "web_fetch",
+          description: "Fetch a URL and summarize the result.",
+          parameters: {
+            type: "object",
+            properties: { url: { type: "string" } },
+            required: ["url"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ],
+    tool_choice: "required",
+    // GPT-5/o-series models reject custom sampling temperatures. Keep the
+    // deterministic setting for models that still use the legacy field.
+    ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
+    [maxTokensField]: maxTokens,
+    stream: false,
+  };
+}
+
+export function isReasoningOnlyLengthResponse(body: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const choice = (parsed as { choices?: unknown[] }).choices?.[0];
+  if (!choice || typeof choice !== "object") return false;
+  const typedChoice = choice as {
+    finish_reason?: unknown;
+    message?: {
+      content?: unknown;
+      reasoning?: unknown;
+      reasoning_content?: unknown;
+      tool_calls?: unknown;
+    };
+  };
+  const message = typedChoice.message;
+  if (typedChoice.finish_reason !== "length" || !message) return false;
+  const reasoning = [message.reasoning_content, message.reasoning].find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+  const contentIsEmpty =
+    message.content == null ||
+    (typeof message.content === "string" && message.content.trim().length === 0) ||
+    (Array.isArray(message.content) && message.content.length === 0);
+  const toolCallsAreEmpty =
+    message.tool_calls == null ||
+    (Array.isArray(message.tool_calls) && message.tool_calls.length === 0);
+  return Boolean(reasoning) && contentIsEmpty && toolCallsAreEmpty;
 }

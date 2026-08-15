@@ -5,6 +5,7 @@ import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -39,9 +40,7 @@ function gatewayContainerCheck(
     label: "Docker container",
     status: running && healthy ? "ok" : "fail",
     detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
-    hint: running
-      ? undefined
-      : `restart the gateway with \`openshell gateway start --name ${options.gatewayName ?? "nemoclaw"}\``,
+    hint: running ? undefined : gatewayStartGuidance(options.gatewayName ?? "nemoclaw"),
   };
 }
 

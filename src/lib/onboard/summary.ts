@@ -6,6 +6,7 @@ import {
   HERMES_PROVIDER_NAME,
   type HermesAuthMethod,
 } from "../hermes-provider-auth";
+import type { ServingProfileProvenance } from "../inference/serving/types";
 import {
   type WebSearchConfig,
   webSearchLabelFor,
@@ -31,6 +32,7 @@ export type OnboardConfigSummary = {
   enabledChannels?: string[] | null;
   hermesToolGateways?: string[] | null;
   sandboxName: string;
+  servingProfileProvenance?: ServingProfileProvenance | null;
   notes?: string[] | null;
 };
 
@@ -83,6 +85,7 @@ export function formatOnboardConfigSummary({
   enabledChannels = null,
   hermesToolGateways = null,
   sandboxName,
+  servingProfileProvenance = null,
   notes = [],
 }: OnboardConfigSummary): string {
   const bar = `  ${"─".repeat(50)}`;
@@ -110,6 +113,15 @@ export function formatOnboardConfigSummary({
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((note) => typeof note === "string" && note.length > 0)
     .map((note) => `  Note:          ${note}`);
+  const profileLines = servingProfileProvenance
+    ? [
+        `  Profile:       ${servingProfileProvenance.preset.displayName} (${servingProfileProvenance.preset.id})`,
+        `  Recipe:        ${servingProfileProvenance.recipe.id}`,
+        `  Support:       ${servingProfileProvenance.preset.supportState}`,
+        `  Runtime image: ${servingProfileProvenance.runtimeImage ?? "(not declared)"}`,
+        `  Downloads:     image ${formatBytes(servingProfileProvenance.estimatedImageDownloadBytes)}, model ${formatBytes(servingProfileProvenance.estimatedModelDownloadBytes)}`,
+      ]
+    : [];
   return [
     "",
     bar,
@@ -117,6 +129,7 @@ export function formatOnboardConfigSummary({
     bar,
     `  Provider:      ${provider ?? "(unset)"}`,
     `  Model:         ${model ?? "(unset)"}`,
+    ...profileLines,
     apiKeyLine,
     `  Web search:    ${webSearch}`,
     `  Managed tools: ${hermesToolGatewayLabels(hermesToolGateways)}`,
@@ -125,4 +138,8 @@ export function formatOnboardConfigSummary({
     ...noteLines,
     bar,
   ].join("\n");
+}
+
+function formatBytes(value: number | null): string {
+  return value === null ? "unknown" : `${(value / 1024 ** 3).toFixed(1)} GiB`;
 }

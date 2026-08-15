@@ -12,13 +12,15 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
+const DOCKER_HUB_CLEANUP_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3";
 
 const JOB_CONTRACTS = [
   {
     jobName: "openclaw-plugin-runtime-exdev-release",
     timeoutMinutes: 55,
     artifactId: "openclaw-plugin-runtime-exdev-release",
-    sandboxName: "e2e-openclaw-plugin-exdev-release",
+    sandboxName: "e2e-oc-exdev-rel",
     selector: "release-baseline",
     runName: "Run OpenClaw custom-plugin release baseline live test",
     uploadName: "Upload OpenClaw plugin release baseline artifacts",
@@ -29,12 +31,12 @@ const JOB_CONTRACTS = [
     jobName: "openclaw-plugin-runtime-exdev",
     timeoutMinutes: 105,
     artifactId: "openclaw-plugin-runtime-exdev",
-    sandboxName: "e2e-openclaw-plugin-exdev",
+    sandboxName: "e2e-oc-exdev",
     selector: "current-lifecycle",
     runName: "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
     uploadName: "Upload OpenClaw plugin runtime-deps EXDEV artifacts",
     builderImage:
-      "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
+      "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
   },
 ] as const;
 
@@ -190,7 +192,14 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
     if (revoke.if !== "always()") {
       errors.push(`${jobName} must always revoke Docker auth before the release-pinned fixture`);
     }
-    requireRunContains(errors, jobName, revoke, "bash .github/scripts/docker-auth-cleanup.sh");
+    if (
+      revoke.uses !== DOCKER_HUB_CLEANUP_ACTION ||
+      Object.keys(revoke).sort().join(",") !== "if,name,uses"
+    ) {
+      errors.push(
+        `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
+      );
+    }
 
     const run = findStep(job, runName);
     for (const fragment of [

@@ -393,6 +393,7 @@ export async function installSandboxSkill(
       }
       console.log(`  ${G}✓${R} Installed ${fresh.uploaded} file(s) into the agent skill directory`);
       console.log(`  ${G}✓${R} Skill '${frontmatter.name}' installed`);
+      console.log(`  ${D}Content digest (SHA-256): ${fresh.contentDigest}${R}`);
       console.log(`  ${D}Start a new Deep Agents session to load the skill.${R}`);
       return;
     }
@@ -422,7 +423,7 @@ export async function installSandboxSkill(
     }
     console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);
 
-    // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
+    // 7. Post-install (OpenClaw mirror + refresh, or agent-specific activation guidance).
     //    OpenClaw caches skill content per session, so always refresh the
     //    session index after an install/update to avoid stale SKILL.md data.
     const post = skillInstall.postInstall(ctx, paths, skillDir);

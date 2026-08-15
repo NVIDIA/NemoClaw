@@ -93,71 +93,17 @@ If a PR changes more than 30 files, review them in this order:
 4. New dependencies (package.json, requirements.txt, go.mod changes).
 5. Everything else.
 
-## Step 5: Analyze Against the Security Checklist
+## Step 5: Analyze Against the Security Rubric
+
+Read the canonical [Security Rubric](../_shared/security-rubric.md). Independently evaluate the
+completed change against every category, including its trust-boundary questions and expected
+evidence. Do not rely on planning or implementation conclusions as review evidence.
 
 For each of the nine categories, assign a verdict:
 
 - Use **PASS** when you find no issue. Give a short reason.
 - Use **WARNING** for a concern. Describe the risk and fix.
 - Use **FAIL** for a vulnerability. Describe its impact, severity, and fix.
-
-### Category 1: Secrets and Credentials
-
-- No hardcoded secrets, API keys, passwords, tokens, or connection strings in code, configs, or test fixtures.
-- No secrets committed to version control (check for `.env` files, PEM/key files, credential JSON).
-- Pass tokens and credentials through environment variables or secret stores. Do not put them in string literals.
-
-### Category 2: Input Validation and Data Sanitization
-
-- Validate each user-controlled input. Allow only the required type, length, and format.
-- Encode and escape inputs to prevent XSS, SQL injection, command injection, path traversal, and SSRF.
-- Use safe parsers for untrusted data (no `pickle.loads`, `yaml.unsafe_load`, `eval`, `new Function`, or similar).
-
-### Category 3: Authentication and Authorization
-
-- Require authentication before a new or changed endpoint processes a request.
-- Allow users to access or modify only resources they own or may use.
-- Prevent horizontal and vertical privilege escalation.
-- Verify token expiry, signature, and scope.
-
-### Category 4: Dependencies and Third-Party Libraries
-
-- Check new dependencies for known CVEs (OSV, Snyk, GitHub Advisory DB).
-- Pin production dependencies. Do not use floating ranges.
-- Confirm that each dependency has a compatible open-source license.
-- Use trusted registries.
-
-### Category 5: Error Handling and Logging
-
-- Do not leak stack traces, internal paths, or sensitive data in errors.
-- Do not log secrets, tokens, passwords, or PII.
-- Catch exceptions where callers can handle them. Do not expose state through crashes.
-
-### Category 6: Cryptography and Data Protection
-
-- Use current standard algorithms (AES-256-GCM, RSA-2048+, SHA-256+).
-- No MD5 or SHA-1 for security purposes. No custom cryptography.
-- Encrypt sensitive data at rest and in transit where needed.
-
-### Category 7: Configuration and Security Headers
-
-- Disable debug mode, restrict permissions, and expose only needed ports.
-- Set CSP and CORS for HTTP endpoints. Do not allow wildcard origins for authenticated requests.
-- Run container images as non-root users with minimal base images and pinned digests.
-
-### Category 8: Security Testing
-
-- Test malicious input, boundary values, and unauthorized access attempts.
-- Do not reduce existing security test coverage.
-- Verify that the system denies forbidden actions.
-
-### Category 9: System Security
-
-- Check whether the change weakens an existing security control.
-- Do not rely on client-only validation or incomplete checks.
-- Use least privilege for code, services, and users.
-- Prevent TOCTOU race conditions in security-critical paths.
-- Prevent concurrency from bypassing security checks.
 
 ## Step 6: Produce the Report
 

@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  MessagingHookHandler,
-  MessagingHookOutputMap,
-  MessagingHookRegistration,
-} from "../types";
 import { createBuiltInChannelManifestRegistry } from "../../channels";
 import type {
   ChannelHookOutputSpec,
   ChannelManifest,
   ChannelSecretInputSpec,
 } from "../../manifest";
+import type {
+  MessagingHookHandler,
+  MessagingHookOutputMap,
+  MessagingHookRegistration,
+} from "../types";
 
 export const COMMON_TOKEN_PASTE_HOOK_HANDLER_ID = "common.tokenPaste";
 
@@ -19,15 +19,22 @@ export interface TokenPasteField {
   readonly envKey: string;
   readonly label: string;
   readonly help?: string;
+  readonly maskCap?: number;
+  readonly maxTokenAttempts?: number;
   readonly format?: RegExp;
   readonly formatHint?: string;
+  /** Reject-check run after `format` for a rule a regex cannot express (a channel injects one via resolveField); return non-null to reject the value. */
+  readonly validate?: (token: string) => string | null;
 }
 
 export interface TokenPasteHookOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly getCredential?: (key: string) => string | null;
   readonly saveCredential?: (key: string, value: string) => void;
-  readonly prompt?: (question: string, options?: { readonly secret?: boolean }) => Promise<string>;
+  readonly prompt?: (
+    question: string,
+    options?: { readonly secret?: boolean; readonly maskCap?: number },
+  ) => Promise<string>;
   readonly log?: (message: string) => void;
   readonly resolveField?: (
     channelId: string,
@@ -106,15 +113,12 @@ async function resolveTokenValue(
 
   let token = normalizeCredentialValue(env[field.envKey]) || readCredential(field.envKey);
   let source: "existing" | "prompted" = "existing";
-  if (token && field.format && !field.format.test(token)) {
-    log(`  ✗ Invalid format. ${field.formatHint || "Check the token and try again."}`);
+  const existingValidationError = token ? tokenValidationError(field, token) : null;
+  if (token && existingValidationError) {
+    log(`  ✗ Invalid format. ${existingValidationError}`);
     if (!isInteractive) {
       log(formatSkippedInvalidTokenMessage(channelId, output));
-      throw new Error(
-        `Invalid token format for ${field.envKey}. ${
-          field.formatHint || "Check the token and try again."
-        }`,
-      );
+      throw new Error(`Invalid token format for ${field.envKey}. ${existingValidationError}`);
     }
     log(`  ✗ Invalid existing ${channelId} ${tokenNoun(output)} ignored.`);
     token = "";
@@ -126,26 +130,43 @@ async function resolveTokenValue(
     }
     if (field.help) {
       log("");
-      log(`  ${field.help}`);
+      for (const line of field.help.split("\n")) {
+        log(line ? `  ${line}` : "");
+      }
     }
-    token = normalizeCredentialValue(await prompt(`  ${field.label}: `, { secret: true }));
     source = "prompted";
+    // Default 1 attempt (skip on first invalid — unchanged for other channels);
+    // maxTokenAttempts opts into re-prompts. An empty entry is a deliberate skip
+    // (not a format error), so break out.
+    const maxAttempts = field.maxTokenAttempts ?? 1;
+    for (let attempt = 1; ; attempt += 1) {
+      token = normalizeCredentialValue(
+        await prompt(`  ${field.label}: `, { secret: true, maskCap: field.maskCap }),
+      );
+      if (!token) break;
+      const validationError = tokenValidationError(field, token);
+      if (!validationError) break;
+      if (attempt >= maxAttempts) {
+        log(`  ✗ Invalid format. ${validationError}`);
+        log(formatSkippedInvalidTokenMessage(channelId, output));
+        throw new Error(`Invalid token format for ${field.envKey}. ${validationError}`);
+      }
+      log(`  ✗ Invalid format (attempt ${attempt + 1} of ${maxAttempts}). ${validationError}`);
+    }
   }
   if (!token) {
     log(formatSkippedNoTokenMessage(channelId, output));
     throw new Error(`No token entered for ${field.envKey}.`);
   }
-  if (field.format && !field.format.test(token)) {
-    log(`  ✗ Invalid format. ${field.formatHint || "Check the token and try again."}`);
-    log(formatSkippedInvalidTokenMessage(channelId, output));
-    throw new Error(
-      `Invalid token format for ${field.envKey}. ${
-        field.formatHint || "Check the token and try again."
-      }`,
-    );
-  }
 
   return { token, source };
+}
+
+function tokenValidationError(field: TokenPasteField, token: string): string | null {
+  if (field.format && !field.format.test(token)) {
+    return field.formatHint || "Check the value and try again.";
+  }
+  return field.validate?.(token) ?? null;
 }
 
 function persistTokenValue(
@@ -183,7 +204,7 @@ function resolveTokenPasteField(
   return manifest ? resolveManifestTokenPasteField(manifest, output) : null;
 }
 
-function resolveManifestTokenPasteField(
+export function resolveManifestTokenPasteField(
   manifest: ChannelManifest,
   output: ChannelHookOutputSpec,
 ): TokenPasteField | null {
@@ -195,6 +216,8 @@ function resolveManifestTokenPasteField(
     envKey: input.envKey,
     label: input.prompt?.label ?? input.envKey,
     help: input.prompt?.help,
+    maskCap: input.maskCap,
+    maxTokenAttempts: input.maxTokenAttempts,
     format: input.formatPattern ? new RegExp(input.formatPattern) : undefined,
     formatHint: input.formatHint,
   };
@@ -225,8 +248,11 @@ function logEnrollmentNotes(
   options: TokenPasteHookOptions,
 ): void {
   const log = options.log ?? ((message: string) => console.log(message));
-  for (const line of manifest?.enrollmentNotes ?? []) {
-    log(`  ${line}`);
+  const notes = manifest?.enrollmentNotes ?? [];
+  if (notes.length === 0) return;
+  log("");
+  for (const line of notes) {
+    log(line ? `  ${line}` : "");
   }
 }
 

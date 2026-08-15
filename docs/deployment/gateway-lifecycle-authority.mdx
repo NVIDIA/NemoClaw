@@ -29,7 +29,15 @@ Choose the mode that matches the component responsible for process lifecycle ope
 | `externally-supervised` | A declared platform supervisor | Validates and attaches to the running gateway without managing its process. |
 
 When nothing is declared, NemoClaw keeps its existing managed behavior.
-It uses the packaged gateway user service when that service is installed and otherwise manages a standalone gateway.
+On Linux, the installer selects a packaged gateway user service only after the systemd user manager reports the effective unit and executable identity.
+The installer verifies that identity and the gateway version before NemoClaw uses the service.
+It does not parse a static package unit as the effective service identity.
+
+If the systemd user manager reports a recognized unavailable condition, the installer can keep the existing standalone gateway lifecycle.
+This fallback requires no `.wants`, `.requires`, or `.upholds` activation link for either gateway service in the standard systemd user unit paths.
+The installer stops when `SYSTEMD_UNIT_PATH` overrides those paths because it cannot verify the activation state.
+An activation path stops installation until you restore the user manager or resolve the competing service through its owner.
+Other service query errors, malformed metadata, untrusted paths, executable failures, and version mismatches stop installation.
 
 ## Declare the mode
 
@@ -151,6 +159,14 @@ Resume resolves the current authority again and compares the complete record wit
 If any value changes, including the per-port gateway binding, resume fails before gateway effects and directs you to start a fresh onboarding run.
 A completed gateway step does not bypass listener, supervisor, identity, health, registration, or checkpoint validation.
 
+### Migrate Managed Authority During Rebuild and Full Uninstall
+
+A transactional sandbox rebuild can adopt one managed lifecycle change when the recorded package-managed service is no longer selected and NemoClaw selects its standalone gateway.
+NemoClaw records the standalone authority in the replacement journal before it changes managed MCP state, providers, or deletes the sandbox.
+Full uninstall can also complete gateway teardown when an earlier uninstall step already removed the package-managed service and the same NemoClaw-managed gateway resolves as standalone.
+These exceptions do not apply to credential mutation, ordinary gateway teardown outside full uninstall, an authority declaration change, the reverse transition to a package-managed service, or other authority drift.
+Those operations continue to fail closed before gateway effects.
+
 ## Inspect the selected authority
 
 Run `$$nemoclaw status` to see the management mode and redacted owner identity selected by the last onboarding run.
@@ -177,6 +193,8 @@ Stop, final-sandbox cleanup, and uninstall reload the declaration before gateway
 When a valid checkpoint exists, they compare the current authority with that checkpoint.
 The comparison uses the exact gateway name and port.
 If the authority changed, teardown stops before it scans listeners or changes gateway runtime resources.
+During full uninstall, a recorded package-managed default gateway can resolve as standalone after the service has already been removed.
+That narrow transition is allowed so uninstall can finish removing the remaining selected gateway registration and runtime resources.
 
 `$$nemoclaw stop` does not scan or signal the externally supervised gateway.
 Final-sandbox cleanup can stop local dashboard forwards and remove the modern local gateway registration.

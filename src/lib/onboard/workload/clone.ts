@@ -6,7 +6,6 @@ import { isDeepStrictEqual } from "node:util";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { createBuiltInChannelManifestRegistry } from "../../messaging/channels/built-ins";
-import type { MessagingAgentId } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isValidName, isValidProviderName } from "../../name-validation";
 import {
@@ -162,9 +161,9 @@ function registryFields(
   source: SandboxEntry,
 ): ManagedWorkloadCloneRegistryFields {
   const webSearch =
-    profile.agentConfig.agent === "langchain-deepagents-code"
-      ? null
-      : profile.agentConfig.webSearch;
+    profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+      ? profile.agentConfig.webSearch
+      : null;
   const hermesDashboard = profile.dashboard.agent === "hermes" ? profile.dashboard : null;
   const dcodeConfig =
     profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;
@@ -251,10 +250,10 @@ function reboundMessaging(
   destinationSandboxName: string,
 ): SandboxMessagingState | undefined {
   if (profile.messaging.plan === null) return undefined;
-  if (profile.agent === "langchain-deepagents-code") {
-    fail("DCode clone unexpectedly produced a messaging plan");
+  if (profile.agent === "langchain-deepagents-code" || profile.agent === "pi") {
+    fail(`${profile.agent} clone unexpectedly produced a messaging plan`);
   }
-  const agent = profile.agent as MessagingAgentId;
+  const agent = profile.agent;
   const manifestRegistry = createBuiltInChannelManifestRegistry();
   const plan = parseSandboxMessagingPlan(profile.messaging.plan, {
     sandboxName: destinationSandboxName,

@@ -13,9 +13,13 @@ import {
   serializeManagedBootstrapImageCompletion,
 } from "./managed-bootstrap/envelope";
 import {
-  consumeManagedBootstrapEnvelope,
-  serializeManagedStartupCompletionMarker,
+  readManagedBootstrapEnvelope,
   verifyManagedBootstrapImageCompletion,
+  waitForManagedBootstrapImageCompletion,
+} from "./managed-bootstrap/image-runtime";
+import {
+  MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
+  serializeManagedStartupCompletionMarker,
 } from "./managed-startup/image-runtime";
 import {
   encodeManagedStartupProfile,
@@ -84,7 +88,7 @@ function completionFixture(directory: string) {
   writeProtectedFile(
     startupCompletionFile,
     serializeManagedStartupCompletionMarker({
-      schemaVersion: 1,
+      schemaVersion: MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
       agent: profile.agent,
       profileFingerprint,
       runtimeEnvironmentSha256: createHash("sha256").update(runtimeEnvironment).digest("hex"),
@@ -122,7 +126,7 @@ afterEach(() => {
 });
 
 describe("managed bootstrap image runtime", () => {
-  it("consumes one exact root-owned bootstrap envelope", () => {
+  it("validates one exact root-owned bootstrap envelope without ending retry authority", () => {
     const directory = temporaryDirectory();
     const requestFile = path.join(directory, "request.json");
     const fixture = requestFixture();
@@ -136,10 +140,10 @@ describe("managed bootstrap image runtime", () => {
     );
     mockRootFileOwnership();
 
-    expect(consumeManagedBootstrapEnvelope(fixture.expected, requestFile)).toEqual(
+    expect(readManagedBootstrapEnvelope(fixture.expected, requestFile)).toEqual(
       fixture.rootApplyRequest,
     );
-    expect(fs.existsSync(requestFile)).toBe(false);
+    expect(fs.existsSync(requestFile)).toBe(true);
   });
 
   it.each([
@@ -160,7 +164,7 @@ describe("managed bootstrap image runtime", () => {
     mockRootFileOwnership();
 
     expect(() =>
-      consumeManagedBootstrapEnvelope(
+      readManagedBootstrapEnvelope(
         { ...fixture.expected, bootstrapIdentity: identity },
         requestFile,
       ),
@@ -183,6 +187,31 @@ describe("managed bootstrap image runtime", () => {
       ...fixture.expected,
       transactionPending: true,
     });
+  });
+
+  it("lets the unprivileged hold wait for only its exact bootstrap identity", () => {
+    const fixture = completionFixture(temporaryDirectory());
+    mockRootFileOwnership();
+    vi.spyOn(process, "geteuid").mockReturnValue(1000);
+
+    expect(
+      waitForManagedBootstrapImageCompletion(
+        fixture.expected,
+        1,
+        fixture.completionFile,
+        fixture.startupCompletionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toMatchObject(fixture.expected);
+    expect(() =>
+      waitForManagedBootstrapImageCompletion(
+        { ...fixture.expected, bootstrapIdentity: "c".repeat(64) },
+        1,
+        fixture.completionFile,
+        fixture.startupCompletionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow("managed bootstrap completion identity does not match the replacement");
   });
 
   it.each([

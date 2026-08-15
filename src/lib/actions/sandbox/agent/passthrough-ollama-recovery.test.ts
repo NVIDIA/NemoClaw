@@ -122,9 +122,10 @@ function makePassthroughDeps(
     ensureLive: (async () => ({ state: "present", output: "Phase: Ready" })) as NonNullable<
       AgentPassthroughDeps["ensureLive"]
     >,
-    exec: (async () => {
+    execNonJson: ((): never => {
       events.push("dispatch");
-    }) as NonNullable<AgentPassthroughDeps["exec"]>,
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>,
     getRecentShieldsAutoRestore: () => ({ kind: "none" }),
     process: {
       exit: ((code: number) => {
@@ -177,11 +178,13 @@ describe("agent passthrough Ollama recovery ordering", () => {
       events.push("recovery");
     });
 
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--agent", "main", "-m", "ping"] },
-      { ...deps, runOllamaRestartRecovery: runRecovery },
-    );
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { ...deps, runOllamaRestartRecovery: runRecovery },
+      ),
+    ).rejects.toThrow("__exit:0");
 
     expect(runRecovery).toHaveBeenCalledWith(expect.objectContaining(route), deps.process);
     expect(events).toEqual(["recovery", "dispatch"]);
@@ -199,11 +202,13 @@ describe("agent passthrough Ollama recovery ordering", () => {
     );
     const runRecovery = vi.fn();
 
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--agent", "main", "-m", "ping"] },
-      { ...deps, runOllamaRestartRecovery: runRecovery },
-    );
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { ...deps, runOllamaRestartRecovery: runRecovery },
+      ),
+    ).rejects.toThrow("__exit:0");
 
     expect(runRecovery).not.toHaveBeenCalled();
     expect(events).toEqual(["dispatch"]);

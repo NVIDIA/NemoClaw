@@ -41,12 +41,23 @@ const BACKUP_DIR = path.resolve(BACKUP_ROOT, SANDBOX_NAME);
 if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
   throw new Error(`snapshot backup directory escaped rebuild-backups root: ${BACKUP_DIR}`);
 }
-const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
-const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
+const OPENCLAW_WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
+const MARKER_FILE = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker.txt`;
+const SECOND_MARKER = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker-2.txt`;
+const PREFIX_MARKER = "/sandbox/.openclaw/workspace-research/snapshot-marker.txt";
+const USER_FILE = `${OPENCLAW_WORKSPACE_PATH}/USER.md`;
+const SOUL_FILE = `${OPENCLAW_WORKSPACE_PATH}/SOUL.md`;
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
+const SOURCE_PAIRING_NEGATIVE_CONTROL_MODEL = "snapshot-commands-source-pairing-negative-control";
+const SOURCE_PAIRING_NEGATIVE_CONTROL = "/tmp/nemoclaw-snapshot-source-pairing-negative-control";
+const SOURCE_PAIRING_NEGATIVE_CONTROL_REQUEST = JSON.stringify({
+  model: SOURCE_PAIRING_NEGATIVE_CONTROL_MODEL,
+  messages: [{ role: "user", content: "source sandbox pairing negative control" }],
+  max_tokens: 1,
+});
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
 const PROTECTED_CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
 const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixture.json`;
@@ -136,6 +147,12 @@ async function expectAuthenticatedGatewayPairing(
 set -eu
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+if [ -e ${JSON.stringify(SOURCE_PAIRING_NEGATIVE_CONTROL)} ]; then
+  curl -fsS https://inference.local/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    --data ${JSON.stringify(SOURCE_PAIRING_NEGATIVE_CONTROL_REQUEST)} >/dev/null
+  exit 97
+fi
 openclaw agent --agent main --json -m "ping" \
   --session-id ${JSON.stringify(sessionId)}
 `),
@@ -304,6 +321,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "confirm Docker and start hermetic inference",
       "onboard the snapshot sandbox",
       "create and list the first snapshot",
+      "destroy, freshly onboard, and restore canonical OpenClaw workspace files",
       "restore the first snapshot into a clone",
       "verify the restored clone state and gateway pairing",
       "create a second snapshot from changed workspace",
@@ -325,11 +343,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "onboard authenticates to a hermetic compatible inference endpoint",
       "snapshot create reports Snapshot v<N> created",
       "snapshot list shows versioned snapshots and parseable timestamps",
+      "snapshot restore recovers canonical OpenClaw USER.md and SOUL.md after destroy and fresh same-name onboarding",
       "baseline exclusions remain active in registry and live policy across rebuild",
       "snapshot restore --to carries baseline exclusions into clone registry and live policy",
       "snapshot restore --to returns only after restored gateway pairing is authenticated",
-      "post-restore verification stores its unique session only in the clone and sends one authenticated inference request",
+      "post-restore clone verification sends one clone-fixture request, stores its unique session only in the clone, and sends no source-sandbox negative-control request",
       "latest snapshot restore recovers latest workspace state",
+      "snapshot restore recovers state from workspace-* prefix directories",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
       "snapshot help advertises create/list/restore",
@@ -478,13 +498,21 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
   const secondContent = `SNAPSHOT_E2E_SECOND_${Date.now()}`;
+  const userContent = `SNAPSHOT_E2E_USER_${Date.now()}`;
+  const soulContent = `SNAPSHOT_E2E_SOUL_${Date.now()}`;
 
   const writeMarker = await sandbox.exec(
     SANDBOX_NAME,
     [
       "sh",
       "-lc",
-      `mkdir -p /sandbox/.openclaw/workspace && printf '%s' '${markerContent}' > ${MARKER_FILE}`,
+      `set -eu
+test "$OPENCLAW_WORKSPACE_DIR" = ${JSON.stringify(OPENCLAW_WORKSPACE_PATH)}
+mkdir -p "$OPENCLAW_WORKSPACE_DIR" /sandbox/.openclaw/workspace-research
+printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}
+printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(PREFIX_MARKER)}
+printf '%s' ${JSON.stringify(userContent)} > "$OPENCLAW_WORKSPACE_DIR/USER.md"
+printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
     ],
     {
       artifactName: "phase-2-write-marker",
@@ -499,6 +527,20 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     MARKER_FILE,
     markerContent,
     "phase-2-read-marker",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    USER_FILE,
+    userContent,
+    "phase-2-read-user-file",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    SOUL_FILE,
+    soulContent,
+    "phase-2-read-soul-file",
   );
 
   progress.phase("create and list the first snapshot");
@@ -520,6 +562,102 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(list)).toContain("snapshot(s)");
   const timestamp = firstSnapshotTimestamp(resultText(list));
   await artifacts.writeJson("phase-4-first-snapshot.json", { timestamp });
+
+  progress.phase("destroy, freshly onboard, and restore canonical OpenClaw workspace files");
+  const destroySource = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "phase-4-destroy-source",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  expect(destroySource.exitCode, resultText(destroySource)).toBe(0);
+
+  const freshOnboard = await host.command(
+    "nemoclaw",
+    ["onboard", "--fresh", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "phase-4-fresh-onboard-source",
+      env: commandEnv(inferenceConfig),
+      redactionValues: [INFERENCE_API_KEY],
+      timeoutMs: 20 * 60_000,
+    },
+  );
+  expect(freshOnboard.exitCode, resultText(freshOnboard)).toBe(0);
+
+  const reapplyBaselineExclusion = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "policy", "exclude", BASELINE_EXCLUSION_KEY, "--force"],
+    {
+      artifactName: "phase-4-reapply-baseline-exclusion",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
+  await expectBaselineExclusionAgreement(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    "phase-4-after-reapplying-baseline-exclusion",
+  );
+
+  const replacementHasNoSnapshotMarkers = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      `set -eu
+! grep -F ${JSON.stringify(userContent)} ${JSON.stringify(USER_FILE)}
+! grep -F ${JSON.stringify(soulContent)} ${JSON.stringify(SOUL_FILE)}
+test ! -e ${JSON.stringify(MARKER_FILE)}`,
+    ],
+    {
+      artifactName: "phase-4-verify-fresh-workspace",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(
+    replacementHasNoSnapshotMarkers.exitCode,
+    resultText(replacementHasNoSnapshotMarkers),
+  ).toBe(0);
+
+  const replacementRestore = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "snapshot", "restore", timestamp],
+    {
+      artifactName: "phase-4-restore-source-after-fresh-onboard",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    },
+  );
+  expect(classifySnapshotRestoreResult(replacementRestore)).toBe("restored");
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    MARKER_FILE,
+    markerContent,
+    "phase-4-read-restored-source-marker",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    USER_FILE,
+    userContent,
+    "phase-4-read-restored-user-file",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    SOUL_FILE,
+    soulContent,
+    "phase-4-read-restored-soul-file",
+  );
+  await expectBaselineExclusionAgreement(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    "phase-4-restored-source-baseline-exclusion",
+  );
 
   progress.phase("restore the first snapshot into a clone");
   const cloneRestore = await host.command(
@@ -547,45 +685,83 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     CLONE_SANDBOX_NAME,
     "phase-4-clone-baseline-exclusion",
   );
-  const clonePairingRequestOffset = inference.requests().length;
-  const pairingSessionId = await expectAuthenticatedGatewayPairing(
-    sandbox,
-    CLONE_SANDBOX_NAME,
-    inferenceConfig,
-    "phase-4-verify-clone-gateway-pairing",
-  );
-  const clonePairingRequests = inference
-    .requests()
-    .slice(clonePairingRequestOffset)
-    .filter(
+  try {
+    const installSourcePairingNegativeControl = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-lc", `set -eu; umask 077; : > ${JSON.stringify(SOURCE_PAIRING_NEGATIVE_CONTROL)}`],
+      {
+        artifactName: "phase-4-install-source-pairing-negative-control",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      installSourcePairingNegativeControl.exitCode,
+      "source-pairing-negative-control-setup-failed",
+    ).toBe(0);
+    const clonePairingRequestOffset = inference.requests().length;
+    const pairingSessionId = await expectAuthenticatedGatewayPairing(
+      sandbox,
+      CLONE_SANDBOX_NAME,
+      inferenceConfig,
+      "phase-4-verify-clone-gateway-pairing",
+    );
+    const pairingRequestDelta = inference.requests().slice(clonePairingRequestOffset);
+    const clonePairingRequests = pairingRequestDelta.filter(
       (request) => request.path === "/v1/chat/completions" && request.model === INFERENCE_MODEL,
     );
-  await expectSandboxSessionPresence(
-    sandbox,
-    CLONE_SANDBOX_NAME,
-    pairingSessionId,
-    true,
-    "phase-4-verify-clone-session-owner",
-  );
-  await expectSandboxSessionPresence(
-    sandbox,
-    SANDBOX_NAME,
-    pairingSessionId,
-    false,
-    "phase-4-verify-primary-session-non-owner",
-  );
-  await artifacts.writeJson("phase-4-pairing-inference-request-deltas.json", {
-    cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok").length,
-    cloneSessionOwned: true,
-    primarySessionOwned: false,
-  });
-  expect(clonePairingRequests.length, "clone-pairing-inference-request-count").toBe(1);
-  expect(
-    clonePairingRequests[0]?.auth === "ok" &&
-      clonePairingRequests[0]?.model === INFERENCE_MODEL &&
-      clonePairingRequests[0]?.path === "/v1/chat/completions",
-    "clone-pairing-inference-request-classification",
-  ).toBe(true);
+    const sourcePairingNegativeControlRequests = pairingRequestDelta.filter(
+      (request) =>
+        request.path === "/v1/chat/completions" &&
+        request.model === SOURCE_PAIRING_NEGATIVE_CONTROL_MODEL,
+    );
+    await expectSandboxSessionPresence(
+      sandbox,
+      CLONE_SANDBOX_NAME,
+      pairingSessionId,
+      true,
+      "phase-4-verify-clone-session-owner",
+    );
+    await expectSandboxSessionPresence(
+      sandbox,
+      SANDBOX_NAME,
+      pairingSessionId,
+      false,
+      "phase-4-verify-source-session-non-owner",
+    );
+    await artifacts.writeJson("phase-4-pairing-inference-request-deltas.json", {
+      cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok")
+        .length,
+      cloneSessionOwned: true,
+      sourceNegativeControlCount: sourcePairingNegativeControlRequests.length,
+      sourceSessionOwned: false,
+    });
+    expect(clonePairingRequests.length, "clone-pairing-inference-request-count").toBe(1);
+    expect(
+      clonePairingRequests[0]?.auth === "ok" &&
+        clonePairingRequests[0]?.model === INFERENCE_MODEL &&
+        clonePairingRequests[0]?.path === "/v1/chat/completions",
+      "clone-pairing-inference-request-classification",
+    ).toBe(true);
+    expect(
+      sourcePairingNegativeControlRequests.length,
+      "source-pairing-negative-control-request-count",
+    ).toBe(0);
+  } finally {
+    const removeSourcePairingNegativeControl = await sandbox.exec(
+      SANDBOX_NAME,
+      ["rm", "-f", SOURCE_PAIRING_NEGATIVE_CONTROL],
+      {
+        artifactName: "phase-4-remove-source-pairing-negative-control",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      removeSourcePairingNegativeControl.exitCode,
+      "source-pairing-negative-control-cleanup-failed",
+    ).toBe(0);
+  }
   const destroyClone = await host.command("nemoclaw", [CLONE_SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "phase-4-destroy-clone",
     env: commandEnv(),
@@ -622,7 +798,11 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   const perturb = await sandbox.exec(
     SANDBOX_NAME,
-    ["sh", "-lc", `rm -f ${SECOND_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`],
+    [
+      "sh",
+      "-lc",
+      `rm -f ${SECOND_MARKER} ${PREFIX_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`,
+    ],
     {
       artifactName: "phase-5-perturb-workspace",
       env: commandEnv(),
@@ -644,6 +824,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     SECOND_MARKER,
     secondContent,
     "phase-6-read-second-marker-after-latest-restore",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    PREFIX_MARKER,
+    markerContent,
+    "phase-6-read-prefix-marker-after-latest-restore",
   );
   const firstGoneAfterLatest = await sandbox.exec(
     SANDBOX_NAME,
@@ -861,7 +1048,9 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     PROTECTED_CREDENTIALS_DIR,
     "phase-11-protected-credentials-dir-before-backup",
   );
-  expect(protectedDirBeforeBackup).toEqual({ mode: "700", owner: "root:root" });
+  // Confidentiality roots remain search-only for the sandbox group; every
+  // descendant stays root-only and unreadable to the sandbox.
+  expect(protectedDirBeforeBackup).toEqual({ mode: "710", owner: "root:sandbox" });
   const protectedFileBeforeBackup = await rootSandboxPathMetadata(
     host,
     rebuiltContainerId,
@@ -942,7 +1131,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       PROTECTED_CREDENTIALS_DIR,
       "phase-11-protected-credentials-dir-after-backup",
     ),
-  ).toEqual({ mode: "700", owner: "root:root" });
+  ).toEqual({ mode: "710", owner: "root:sandbox" });
   expect(
     await rootSandboxPathMetadata(
       host,

@@ -10,12 +10,17 @@ import type { GpuDetection, NvidiaPlatform } from "../inference/nim";
 import type { HostAssessment } from "../onboard/preflight";
 import { collectHostObservations, createHostReadinessReport, projectHostReadiness } from "./host";
 
-const { detectGpu, detectNvidiaPlatform } = vi.hoisted(() => ({
-  detectGpu: vi.fn<() => GpuDetection | null>(() => null),
+const { detectGpu, detectNvidiaDriverVersion, detectNvidiaPlatform } = vi.hoisted(() => ({
+  detectGpu: vi.fn<(_deps?: unknown) => GpuDetection | null>(() => null),
+  detectNvidiaDriverVersion: vi.fn<() => string | undefined>(() => undefined),
   detectNvidiaPlatform: vi.fn<() => NvidiaPlatform>(() => "linux"),
 }));
 
-vi.mock("../inference/nim", () => ({ detectGpu, detectNvidiaPlatform }));
+vi.mock("../inference/nim", () => ({
+  detectGpu,
+  detectNvidiaDriverVersion,
+  detectNvidiaPlatform,
+}));
 
 const NOW = new Date("2026-06-01T12:00:00Z");
 const SOURCE_REVISION = "21e60ae287e8c2a184f71406ac8b418f046330d1";
@@ -46,6 +51,7 @@ function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
     dockerDefaultCgroupnsMode: "private",
     dockerStorageDriver: "overlay2",
     dockerUsesContainerdSnapshotter: false,
+    dockerNvidiaRuntimeAvailable: true,
     dockerCpus: 8,
     dockerMemTotalBytes: 16 * 1024 ** 3,
     isContainerRuntimeUnderProvisioned: false,
@@ -97,6 +103,8 @@ describe("host readiness projection (#7408)", () => {
   beforeEach(() => {
     detectGpu.mockReset();
     detectGpu.mockReturnValue(null);
+    detectNvidiaDriverVersion.mockReset();
+    detectNvidiaDriverVersion.mockReturnValue(undefined);
     detectNvidiaPlatform.mockReset();
     detectNvidiaPlatform.mockReturnValue("linux");
   });
@@ -170,16 +178,73 @@ describe("host readiness projection (#7408)", () => {
     expect(findingIds(result)).toContain(findingId);
   });
 
+  it("blocks a reachable but unsupported DOCKER_HOST before using daemon evidence (#7411)", () => {
+    const result = report({ dockerHostInvalid: true, dockerReachable: true });
+
+    expect(result.status).toBe("incompatible");
+    expect(state(result, "host.docker.endpoint_supported")).toBe("absent");
+    expect(state(result, "host.docker.daemon_reachable")).toBe("unknown");
+    expect(findingIds(result)).toContain("host.docker.host_invalid");
+    expect(result.observations.find(({ id }) => id === "host.docker.runtime")?.state).toBe(
+      "unknown",
+    );
+  });
+
+  it("blocks an unsupported DOCKER_HOST in WSL (#7411)", () => {
+    const result = report({
+      dockerHostInvalid: true,
+      dockerReachable: true,
+      isWsl: true,
+      runtime: "docker-desktop",
+    });
+
+    expect(state(result, "host.docker.endpoint_supported")).toBe("absent");
+    expect(findingIds(result)).toContain("host.docker.host_invalid");
+  });
+
+  it("classifies an unsupported runtime as a blocking public finding (#7411)", () => {
+    const result = report({ isUnsupportedRuntime: true, runtime: "podman" });
+
+    expect(result.status).toBe("incompatible");
+    expect(result.exitCode).toBe(2);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.docker.runtime_unsupported",
+        severity: "blocking",
+      }),
+    );
+  });
+
+  it("classifies an unsupported platform as incompatible instead of supported (#7411)", () => {
+    const result = report({ platform: "darwin", runtime: "docker-desktop" });
+
+    expect(result.status).toBe("incompatible");
+    expect(result.exitCode).toBe(2);
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ id: "host.platform.unsupported", severity: "blocking" }),
+    );
+  });
+
   it.each([
-    [{ cdiNvidiaGpuSpecMissing: true }, { detectHostGpuPlatform: () => "jetson" as const }],
     [
-      { isWsl: true, runtime: "docker-desktop", cdiNvidiaGpuSpecStale: true },
+      { cdiNvidiaGpuSpecMissing: true, nvidiaContainerToolkitInstalled: false },
+      { detectHostGpuPlatform: () => "jetson" as const },
+    ],
+    [
+      {
+        isWsl: true,
+        runtime: "docker-desktop",
+        cdiNvidiaGpuSpecStale: true,
+        nvidiaContainerToolkitInstalled: false,
+      },
       { wslDockerDesktopGpuProofPassed: true },
     ],
   ] as const)("preserves CDI enforcement exclusions for %s", (overrides, collectionOptions) => {
     const result = report(overrides, collectionOptions);
 
     expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
+    expect(state(result, "host.gpu.container_toolkit_available")).toBe("present");
+    expect(findingIds(result)).not.toContain("host.gpu.container_toolkit_missing");
     expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
     expect(findingIds(result)).not.toContain("host.gpu.cdi_stale");
     expect(result.status).toBe("supported");
@@ -203,16 +268,74 @@ describe("host readiness projection (#7408)", () => {
     expect(result.status).toBe("supported");
   });
 
-  it("uses the canonical WSL Docker Desktop GPU proof in the default report creator", () => {
-    detectGpu.mockReturnValue({
-      type: "nvidia",
-      count: 1,
-      totalMemoryMB: 32_768,
-      perGpuMB: 32_768,
-      nimCapable: true,
-      wslDockerDesktopGpuProofPassed: true,
-    });
+  it("recognizes a Jetson GPU through the canonical detector without nvidia-smi", () => {
+    const result = createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
+      {
+        assess: () =>
+          host({
+            hasNvidiaGpu: false,
+            nvidiaContainerToolkitInstalled: false,
+            cdiNvidiaGpuSpecMissing: true,
+          }),
+        architecture: "arm64",
+        collectPlatformIdentity: emptyPlatformIdentity,
+        detectGpu: () => ({ count: 1, platform: "jetson", type: "nvidia" }),
+      },
+    );
 
+    expect(state(result, "host.gpu.nvidia_available")).toBe("present");
+    expect(state(result, "host.gpu.container_toolkit_available")).toBe("present");
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("present");
+    expect(findingIds(result)).not.toContain("host.gpu.container_toolkit_missing");
+    expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
+  });
+
+  it("blocks Jetson GPU admission when Docker lacks the NVIDIA runtime", () => {
+    const result = report(
+      { dockerNvidiaRuntimeAvailable: false },
+      { detectHostGpuPlatform: () => "jetson" },
+    );
+
+    expect(state(result, "host.gpu.container_toolkit_available")).toBe("absent");
+    expect(result.observations).toContainEqual({
+      id: "host.gpu.nvidia_runtime",
+      state: "absent",
+      value: false,
+    });
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({
+        id: "host.gpu.nvidia_runtime_missing",
+        severity: "blocking",
+      }),
+    );
+  });
+
+  it("projects bounded GPU count and driver observations for managed serving", () => {
+    const result = createHostReadinessReport(
+      { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
+      {
+        assess: () => host(),
+        architecture: "arm64",
+        collectPlatformIdentity: () => ({
+          nvidiaPlatform: "spark",
+          productName: "NVIDIA DGX Spark",
+        }),
+        detectGpu: () => ({ count: 1 }),
+        detectHostGpuPlatform: () => "spark",
+        detectNvidiaDriverVersion: () => "580.65.06",
+      },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        { id: "host.gpu.count", state: "present", value: 1 },
+        { id: "host.gpu.driver_version", state: "present", value: "580.65.06" },
+      ]),
+    );
+  });
+
+  it("keeps the default WSL Docker Desktop GPU observation container-free", () => {
     const result = createHostReadinessReport(
       { nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION, now: () => NOW },
       {
@@ -222,12 +345,18 @@ describe("host readiness projection (#7408)", () => {
       },
     );
 
-    expect(detectGpu).toHaveBeenCalledOnce();
-    expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("present");
+    expect(detectGpu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proveArm64WslDockerDesktopGpu: null,
+        runCaptureImpl: expect.any(Function),
+      }),
+    );
+    expect(state(result, "host.platform.wsl_gpu_passthrough")).toBe("unknown");
   });
 
   it("skips the WSL Docker Desktop GPU proof when Docker is unreachable", () => {
     const detectGpuProbe = vi.fn(() => ({
+      count: 1,
       wslDockerDesktopGpuProofPassed: true,
     }));
 

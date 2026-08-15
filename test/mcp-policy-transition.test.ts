@@ -34,13 +34,13 @@ const oldContent = generated.buildMcpBridgePolicyYaml(
   entry.server,
   entry.url,
   entry.adapter,
-  ["1.1.1.1"],
+  { addresses: ["1.1.1.1"] },
 );
 const desiredContent = generated.buildMcpBridgePolicyYaml(
   entry.server,
   entry.url,
   entry.adapter,
-  ["8.8.8.8"],
+  { addresses: ["8.8.8.8"] },
 );
 let liveContent = oldContent;
 let applyCalls = 0;
@@ -71,7 +71,7 @@ policies.applyPresetContent = () => {
 
 let firstError = "";
 try {
-  generated.applyGeneratedPolicy("alpha", entry, ["8.8.8.8"]);
+  generated.applyGeneratedPolicy("alpha", entry, { addresses: ["8.8.8.8"] });
 } catch (error) {
   firstError = error instanceof Error ? error.message : String(error);
 }
@@ -83,7 +83,7 @@ const afterPresence = registry.getCustomPolicies("alpha")[0];
 let retryError = "";
 if (mode !== "rejected") {
   try {
-    generated.applyGeneratedPolicy("alpha", entry, ["8.8.8.8"]);
+    generated.applyGeneratedPolicy("alpha", entry, { addresses: ["8.8.8.8"] });
   } catch (error) {
     retryError = error instanceof Error ? error.message : String(error);
   }
@@ -148,7 +148,7 @@ try {
   if (${JSON.stringify(operation)} === "assert") {
     generated.assertGeneratedPolicyMutationSafe("alpha", entry);
   } else {
-    generated.applyGeneratedPolicy("alpha", entry, ["8.8.8.8"]);
+    generated.applyGeneratedPolicy("alpha", entry, { addresses: ["8.8.8.8"] });
   }
 } catch (error) {
   message = error instanceof Error ? error.message : String(error);
@@ -189,7 +189,7 @@ const content = generated.buildMcpBridgePolicyYaml(
   entry.server,
   entry.url,
   entry.adapter,
-  ["8.8.8.8"],
+  { addresses: ["8.8.8.8"] },
 );
 registry.registerSandbox({ name: "alpha", agent: "openclaw" });
 registry.addCustomPolicy("alpha", {

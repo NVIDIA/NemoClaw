@@ -13,6 +13,7 @@ import {
   type ProviderInferenceStateOptions,
   type ProviderSelectionResult,
 } from "./provider-inference";
+import { guardProviderInferenceRouteSelection } from "./provider-inference-route-containment";
 
 type Options = ProviderInferenceStateOptions<null, null, { cpus?: number }>;
 
@@ -87,13 +88,18 @@ function createDeps() {
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
     getSandboxRecoveryAuthority: (): "missing" => "missing",
     withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
+    withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
+    getModelRouterPort: () => 4000,
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
+    resolveHostLocalInferenceStartupSelection: () => null,
     startRecordedStep: vi.fn(async () => undefined),
     recordStepComplete: calls.recordStepComplete,
+    recordStepRejected: vi.fn(async () => createSession()),
     toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
     skippedStepMessage: vi.fn(),
+    ensureManagedLlamaCppResumeReady: vi.fn(async () => false),
     ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, credentialEnv) => ({
       forceInferenceSetup: false,
       credentialEnv: credentialEnv ?? null,
@@ -116,12 +122,14 @@ function createDeps() {
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
     reserveSandboxInferenceRoute: calls.reserveRoute,
     registryUpdateSandbox: calls.updateSandbox,
+    checkpointSandboxIdentity: vi.fn(async () => undefined),
+    prepareLocalProviderForInference: vi.fn(async () => null),
     promptValidatedSandboxName: vi.fn(async () => "target-sandbox"),
     assessHost: () => ({ cpus: 8 }),
     formatSandboxBuildEstimateNote: () => "estimate",
     formatOnboardConfigSummary: ({ provider, model, sandboxName }) =>
       `summary:${provider}/${model}/${sandboxName}`,
-    promptYesNoOrDefault: vi.fn(async () => true),
+    prompt: vi.fn(async () => "1"),
     cliName: () => "nemoclaw",
     log: calls.log,
     error: calls.error,
@@ -142,6 +150,7 @@ function resumeOptions(
     fresh: false,
     session,
     gpu: null,
+    gpuPassthrough: false,
     sandboxName: "target-sandbox",
     agent: null,
     initial: {
@@ -193,6 +202,32 @@ function reportDifferentRoute(
 }
 
 describe("provider route containment", () => {
+  it("defers exact endpoint comparison until llama.cpp route discovery is complete (#8161)", () => {
+    const { calls } = createDeps();
+    const containmentDeps = {
+      checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+      preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+      error: calls.error,
+      exitProcess: calls.exit,
+    };
+
+    expect(
+      guardProviderInferenceRouteSelection(containmentDeps, "nemoclaw-9090", "target-sandbox", {
+        provider: "llama-cpp-local",
+        model: "team/model-alias",
+        endpointUrl: null,
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: null,
+      }),
+    ).toEqual({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledOnce();
+    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+  });
+
   it("allows fresh selection to continue so setup can issue the mutation warning (#6315)", async () => {
     const { calls, deps } = createDeps();
     reportDifferentRoute(calls, "nvidia-prod", "nvidia/test");
@@ -378,6 +413,71 @@ describe("provider route containment", () => {
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("waits for a cross-gateway teardown port lock before publishing routed resume repair (#9098)", async () => {
+    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    let insideGatewayLock = false;
+    let insidePortLock = false;
+    let reportPortLockRequested!: () => void;
+    const portLockRequested = new Promise<void>((resolve) => {
+      reportPortLockRequested = resolve;
+    });
+    let releaseTeardownPortLock!: () => void;
+    const teardownPortLockReleased = new Promise<void>((resolve) => {
+      releaseTeardownPortLock = resolve;
+    });
+    deps.withGatewayRouteMutationLock = async (gatewayName, operation) => {
+      expect(gatewayName).toBe("nemoclaw-9090");
+      insideGatewayLock = true;
+      try {
+        return await operation();
+      } finally {
+        insideGatewayLock = false;
+      }
+    };
+    deps.withModelRouterPortLifecycleLock = async (port, operation) => {
+      expect(insideGatewayLock).toBe(true);
+      expect(port).toBe(4000);
+      reportPortLockRequested();
+      await teardownPortLockReleased;
+      insidePortLock = true;
+      try {
+        return await operation();
+      } finally {
+        insidePortLock = false;
+      }
+    };
+    calls.reconcileRouter.mockImplementation(async () => {
+      expect(insideGatewayLock).toBe(true);
+      expect(insidePortLock).toBe(true);
+    });
+    calls.reupsertRoutedProvider.mockImplementation(() => {
+      expect(insideGatewayLock).toBe(true);
+      expect(insidePortLock).toBe(true);
+      return { ok: true, endpointUrl: "http://host.openshell.internal:4000/v1" };
+    });
+    calls.reserveRoute.mockImplementation(() => {
+      expect(insideGatewayLock).toBe(true);
+      expect(insidePortLock).toBe(true);
+      return true;
+    });
+
+    const repair = handleProviderInferenceState(resumeOptions(deps, session));
+    await portLockRequested;
+
+    expect(calls.reconcileRouter).not.toHaveBeenCalled();
+    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+
+    releaseTeardownPortLock();
+    await expect(repair).resolves.toMatchObject({ provider: "nvidia-router" });
+
+    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(calls.reserveRoute).toHaveBeenCalledOnce();
   });
 
   it("allows compatible-endpoint refresh to reach the final setup boundary (#6315)", async () => {

@@ -25,6 +25,7 @@ filesystem_policy:
     - /app
     - /etc
     - /var/log
+    - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
   read_write:
     - /tmp
     - /dev/null

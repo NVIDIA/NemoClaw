@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { LLAMA_CPP_PORT } from "../inference/llama-cpp/contract";
+
 /**
  * Central port configuration — override any port via environment variables.
  * TypeScript counterpart of bin/lib/ports.js.
@@ -60,8 +62,25 @@ export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
 export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
-/** Hermes OpenAI-compatible API port (manifest `forward_ports[1]` / start.sh `PUBLIC_PORT`); reserved — never a valid dashboard port, for any agent. (#4984) */
+/** llama.cpp existing-server attachment port; fixed by the declarative serving contract. */
+export { LLAMA_CPP_PORT };
+/** Default Hermes OpenAI-compatible API port (manifest `forward_ports[1]`; the default for start.sh `PUBLIC_PORT`). */
 export const HERMES_OPENAI_API_PORT = 8642;
+/** Start of the auto-allocation range for Hermes API ports (inclusive). */
+export const HERMES_API_PORT_RANGE_START = HERMES_OPENAI_API_PORT;
+/** End of the auto-allocation range for Hermes API ports (inclusive). */
+export const HERMES_API_PORT_RANGE_END = 8652;
+
+/**
+ * The API port is a per-sandbox host resource: each Hermes sandbox exposes its
+ * OpenAI-compatible API on its own port allocated from
+ * `HERMES_API_PORT_RANGE_START` through `HERMES_API_PORT_RANGE_END`, so two
+ * sandboxes can serve inference on one host. Every port in that range is
+ * therefore unavailable as a dashboard port, for any agent.
+ */
+export function isHermesApiPort(port: number): boolean {
+  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+}
 /** Bedrock Runtime adapter port (default 11436, override via NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT). */
 export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
   "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
@@ -90,6 +109,7 @@ export function validateGatewayPort(
   }
 
   const reservedDefaults = [
+    { label: "llama.cpp inference", port: LLAMA_CPP_PORT },
     { label: "vLLM / NIM inference", port: 8000 },
     { label: "Ollama inference", port: 11434 },
     { label: "Ollama auth proxy", port: 11435 },
@@ -152,6 +172,7 @@ export function validateOpenRouterRuntimeAdapterPort(
   }
 
   const reservedDefaults = [
+    { label: "llama.cpp inference", port: LLAMA_CPP_PORT },
     { label: "vLLM / NIM inference", port: 8000 },
     { label: "Ollama inference", port: 11434 },
     { label: "Ollama auth proxy", port: 11435 },
@@ -200,6 +221,7 @@ export function validateHttpsPinRuntimeAdapterPort(
   }
 
   const reservedDefaults = [
+    { label: "llama.cpp inference", port: LLAMA_CPP_PORT },
     { label: "vLLM / NIM inference", port: 8000 },
     { label: "Ollama inference", port: 11434 },
     { label: "Ollama auth proxy", port: 11435 },
@@ -240,6 +262,50 @@ export function validateHttpsPinRuntimeAdapterPort(
 export const DEFAULT_GATEWAY_PORT = 8080;
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
 export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, {
+  dashboardPort: DASHBOARD_PORT,
+  dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
+  dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
+  vllmPort: VLLM_PORT,
+  ollamaPort: OLLAMA_PORT,
+  ollamaProxyPort: OLLAMA_PROXY_PORT,
+  bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+  openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
+  httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+});
+
+/** Reject every configurable service collision with fixed llama.cpp attachment port 8081. */
+export function validateLlamaCppPortReservation(
+  options: RuntimeAdapterPortValidationOptions,
+): void {
+  const configuredPorts = [
+    { envVar: "NEMOCLAW_GATEWAY_PORT", port: options.gatewayPort },
+    { envVar: "NEMOCLAW_DASHBOARD_PORT", port: options.dashboardPort },
+    { envVar: "NEMOCLAW_VLLM_PORT", port: options.vllmPort },
+    { envVar: "NEMOCLAW_OLLAMA_PORT", port: options.ollamaPort },
+    { envVar: "NEMOCLAW_OLLAMA_PROXY_PORT", port: options.ollamaProxyPort },
+    {
+      envVar: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+      port: options.bedrockRuntimeAdapterPort,
+    },
+    {
+      envVar: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+      port: options.openrouterRuntimeAdapterPort,
+    },
+    {
+      envVar: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+      port: options.httpsPinRuntimeAdapterPort,
+    },
+  ];
+  const conflict = configuredPorts.find(({ port }) => port === LLAMA_CPP_PORT);
+  if (conflict) {
+    throw new Error(
+      `Invalid port: ${conflict.envVar}="${LLAMA_CPP_PORT}" — conflicts with the fixed llama.cpp inference port (${LLAMA_CPP_PORT})`,
+    );
+  }
+}
+
+validateLlamaCppPortReservation({
+  gatewayPort: GATEWAY_PORT,
   dashboardPort: DASHBOARD_PORT,
   dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
   dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,

@@ -4,6 +4,7 @@
 import { cloneAndDeepFreeze } from "../core/immutable";
 import { isValidName } from "../name-validation";
 import { createBuiltInChannelManifestRegistry } from "./channels/built-ins";
+import { resolveSandboxNameTemplate } from "./compiler/engines/template";
 import { hydrateDerivedSandboxMessagingPlanFields } from "./hydration";
 import type { MessagingAgentId, SandboxMessagingPlan } from "./manifest";
 import { compactSandboxMessagingPlanForPersistence } from "./persistence";
@@ -154,10 +155,10 @@ export function rebindSandboxMessagingPlanForClone(
     const credential = manifestRegistry
       .get(binding.channelId)
       ?.credentials.find((candidate) => candidate.id === binding.credentialId);
-    const expectedProviderName = credential?.providerName.replaceAll(
-      "{sandboxName}",
-      destinationSandboxName,
-    );
+    const expectedProviderName =
+      credential === undefined
+        ? undefined
+        : resolveSandboxNameTemplate(credential.providerName, destinationSandboxName);
     if (!expectedProviderName || binding.providerName !== expectedProviderName) {
       fail(`destination provider identity for ${binding.channelId} could not be proven`);
     }

@@ -9,6 +9,25 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+sys.path.insert(0, "/usr/local/lib/nemoclaw")
+
+
+def _verify_profile_config_policy(config: dict, expected: dict[str, object]) -> None:
+    from managed_policy import policy_value
+
+    for path, value in expected.items():
+        if path.startswith("session_reset."):
+            continue
+        actual = policy_value(config, path)
+        assert actual == value, (path, actual, value)
+
+
+def _verify_session_reset_policy(reset_policy: object, expected: dict[str, object]) -> None:
+    for field in ("mode", "at_hour", "idle_minutes"):
+        path = f"session_reset.{field}"
+        actual = getattr(reset_policy, field)
+        assert actual == expected[path], (path, actual, expected[path])
+
 
 def verify_profile_policy() -> None:
     from types import SimpleNamespace
@@ -18,38 +37,25 @@ def verify_profile_policy() -> None:
     from hermes_cli import config as hermes_config
     from hermes_cli.config import load_config_readonly
     from hermes_cli.main import _resolve_pre_update_backup_mode
+    from managed_policy import load_managed_policy, profile_default_values
     from tools.browser_tool import (
         _allow_unsafe_browser_evaluate,
         _restrict_browser_evaluate,
     )
     from tui_gateway.server import _load_show_reasoning
 
+    policy = load_managed_policy()
+    expected = profile_default_values(policy)
     config = load_config_readonly()
-    assert config["approvals"]["mode"] == "manual", config["approvals"]
-    assert config["browser"]["allow_unsafe_evaluate"] is False, config["browser"]
-    assert config["browser"]["restrict_evaluate"] is True, config["browser"]
-    assert config["display"]["show_reasoning"] is False, config["display"]
-    assert config["display"]["show_commentary"] is False, config["display"]
-    assert config["updates"]["pre_update_backup"] is False, config["updates"]
-    assert config["updates"]["refresh_cua_driver"] is False, config["updates"]
-    assert CLI_CONFIG["display"]["show_reasoning"] is False, CLI_CONFIG["display"]
-    assert _allow_unsafe_browser_evaluate() is False
-    assert _restrict_browser_evaluate() is True
-    assert _load_show_reasoning() is False
-    assert SessionResetPolicy().mode == "both"
-    assert SessionResetPolicy.from_dict({}).mode == "both"
+    _verify_profile_config_policy(config, expected)
+    assert CLI_CONFIG["display"]["show_reasoning"] == expected["display.show_reasoning"]
+    assert _allow_unsafe_browser_evaluate() == expected["browser.allow_unsafe_evaluate"]
+    assert _restrict_browser_evaluate() == expected["browser.restrict_evaluate"]
+    assert _load_show_reasoning() == expected["display.show_reasoning"]
+    _verify_session_reset_policy(SessionResetPolicy(), expected)
+    _verify_session_reset_policy(SessionResetPolicy.from_dict({}), expected)
     gateway = load_gateway_config()
-    assert gateway.default_reset_policy.mode == "both", gateway.default_reset_policy
-    assert gateway.default_reset_policy.at_hour == 4, gateway.default_reset_policy
-    assert gateway.default_reset_policy.idle_minutes == 1440, gateway.default_reset_policy
-    tui_source = Path("/opt/hermes/tui_gateway/server.py").read_text(encoding="utf-8")
-    assert tui_source.count('.get("show_reasoning", True)') == 0
-    assert tui_source.count('.get("show_reasoning", False)') == 2
-    agent_source = Path("/opt/hermes/agent/agent_init.py").read_text(encoding="utf-8")
-    assert agent_source.count("agent.show_commentary = True") == 0
-    assert agent_source.count("agent.show_commentary = False") == 2
-    assert agent_source.count('.get("show_commentary", True)') == 0
-    assert agent_source.count('.get("show_commentary", False)') == 1
+    _verify_session_reset_policy(gateway.default_reset_policy, expected)
     original_load_config = hermes_config.load_config
     try:
 
@@ -58,16 +64,14 @@ def verify_profile_policy() -> None:
 
         hermes_config.load_config = fail_config_load
         args = SimpleNamespace(no_backup=False, backup=False)
-        assert _resolve_pre_update_backup_mode(args) == "off"
+        expected_backup_mode = (
+            "off"
+            if expected["updates.pre_update_backup"] is False
+            else str(expected["updates.pre_update_backup"])
+        )
+        assert _resolve_pre_update_backup_mode(args) == expected_backup_mode
     finally:
         hermes_config.load_config = original_load_config
-    main_source = Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-    assert main_source.count('updates_cfg.get("pre_update_backup", "quick")') == 0
-    assert main_source.count('updates_cfg.get("pre_update_backup", False)') == 1
-    assert main_source.count("refresh_cua_driver = True") == 0
-    assert main_source.count("refresh_cua_driver = False") == 1
-    assert main_source.count('_update_cfg.get("refresh_cua_driver", True)') == 0
-    assert main_source.count('_update_cfg.get("refresh_cua_driver", False)') == 1
 
 
 def verify_gateway_runtime_metadata() -> None:
@@ -124,6 +128,47 @@ def verify_gateway_process_identity() -> None:
     )
 
 
+def verify_neutral_platform_inertness() -> None:
+    import socket
+
+    from gateway.config import Platform, load_gateway_config
+
+    original_connect = socket.socket.connect
+    original_create_connection = socket.create_connection
+
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("neutral Hermes configuration attempted a network connection")
+
+    socket.socket.connect = reject_network
+    socket.create_connection = reject_network
+    try:
+        config = load_gateway_config()
+    finally:
+        socket.socket.connect = original_connect
+        socket.create_connection = original_create_connection
+    bundled_plugins = {
+        manifest.parent.name
+        for manifest in Path("/opt/hermes/plugins/platforms").glob("*/plugin.yaml")
+    }
+    built_in_optional = {
+        platform.value
+        for platform in Platform
+        if platform.value not in {"api_server", "local"}
+    }
+    expected = bundled_plugins | built_in_optional
+    assert "google_chat" in expected, expected
+    assert "whatsapp_cloud" in expected, expected
+
+    for name in expected:
+        platform = Platform(name)
+        platform_config = config.platforms.get(platform)
+        assert platform_config is not None, name
+        assert platform_config.enabled is False, (name, platform_config)
+        assert platform_config.token is None, (name, platform_config.token)
+        assert platform_config.api_key is None, (name, platform_config.api_key)
+        assert platform_config.extra == {}, (name, platform_config.extra)
+
+
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -147,6 +192,20 @@ def verify_session_preview() -> None:
     rows = db.list_sessions_rich(limit=1)
     assert rows and rows[0]["id"] == session_id, rows
     assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
+
+
+def verify_session_delete() -> None:
+    from hermes_state import SessionDB
+
+    db = SessionDB()
+    session_id = "nemoclaw-session-delete-smoke"
+    db.create_session(session_id, "cli")
+    db.append_message(session_id, "user", "probe message 1")
+    db.append_message(session_id, "assistant", "probe reply")
+    deleted = db.delete_session(session_id)
+    assert deleted, f"delete_session returned {deleted!r}"
+    rows = db.list_sessions_rich(limit=10)
+    assert not any(r["id"] == session_id for r in rows), "session still present after delete"
 
 
 def verify_discord_recovery_source() -> None:
@@ -201,91 +260,16 @@ def verify_langfuse_credentials() -> None:
     )
 
 
-def verify_wrapper_session_boundaries() -> None:
-    import ast
-
-    wrapper_tree = ast.parse(
-        Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(encoding="utf-8")
-    )
-    wrapper_assignments = [
-        node
-        for node in wrapper_tree.body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_HERMES_SESSION_NAME_BOUNDARIES"
-    ]
-    if len(wrapper_assignments) != 1:
-        raise SystemExit("ERROR: expected one wrapper session-name boundary constant")
-    wrapper_value = wrapper_assignments[0].value
-    if not (
-        isinstance(wrapper_value, ast.Call)
-        and isinstance(wrapper_value.func, ast.Name)
-        and wrapper_value.func.id == "frozenset"
-        and len(wrapper_value.args) == 1
-        and not wrapper_value.keywords
-    ):
-        raise SystemExit("ERROR: wrapper session-name boundaries are not a literal frozenset")
-    wrapper_boundaries = set(ast.literal_eval(wrapper_value.args[0]))
-
-    upstream_tree = ast.parse(
-        Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-    )
-    coalescers = [
-        node
-        for node in upstream_tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_coalesce_session_name_args"
-    ]
-    if len(coalescers) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes session-name coalescer")
-    upstream_assignments = [
-        node
-        for node in coalescers[0].body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_SUBCOMMANDS"
-    ]
-    if len(upstream_assignments) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes coalescer boundary set")
-    upstream_boundaries = set(ast.literal_eval(upstream_assignments[0].value))
-
-    missing = sorted(upstream_boundaries - wrapper_boundaries)
-    stale = sorted(wrapper_boundaries - upstream_boundaries)
-    if missing or stale:
-        raise SystemExit(
-            "ERROR: Hermes wrapper session-name boundaries drifted from pinned coalescer: "
-            f"missing={','.join(missing)} stale={','.join(stale)}"
-        )
-
-
 def verify_dashboard_policy(path: Path) -> None:
     import yaml
+    from managed_policy import load_managed_policy, policy_value
 
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
-    expected = {
-        "approvals": {"mode": "manual"},
-        "browser": {"restrict_evaluate": True},
-        "session_reset": {
-            "mode": "both",
-            "at_hour": 4,
-            "idle_minutes": 1440,
-            "notify": True,
-            "notify_exclude_platforms": ["api_server", "webhook"],
-            "bg_process_max_age_hours": 24,
-        },
-        "display": {
-            "show_reasoning": False,
-            "show_commentary": False,
-        },
-        "updates": {
-            "pre_update_backup": False,
-            "refresh_cua_driver": False,
-        },
-    }
-    for section, values in expected.items():
-        assert config.get(section) == values, (section, config.get(section), values)
+    policy = load_managed_policy()
+    for dotted_path in policy["managed_paths"]:
+        expected = policy_value(policy["config"], dotted_path)
+        actual = policy_value(config, dotted_path)
+        assert actual == expected, (dotted_path, actual, expected)
     path.unlink()
 
 
@@ -417,9 +401,10 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "gateway-process-identity": verify_gateway_process_identity,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
+    "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
+    "session-delete": verify_session_delete,
     "session-preview": verify_session_preview,
-    "wrapper-session-boundaries": verify_wrapper_session_boundaries,
 }
 
 

@@ -43,7 +43,13 @@ You can also re-supply the same endpoint URL when the registry records that onbo
 NemoClaw requires an exact canonical match and does not extend that trust to a different URL or an endpoint recorded by `inference set`.
 If the route metadata is incomplete, NemoClaw stops and tells you to re-run onboarding.
 
-For Hermes, the command also mirrors the selected model into the dashboard profile.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+For Hermes, the command recomputes the target model's context window before it updates the main configuration and dashboard profile.
+NemoClaw writes `model.context_length` when it resolves a value.
+When it cannot resolve a value, NemoClaw omits the field so Hermes can discover the model metadata from the endpoint.
 If it reports that the Dashboard config did not converge, the route and main Hermes config remain committed; follow [Hermes dashboard config did not converge](../../reference/troubleshooting#hermes-dashboard-config-did-not-converge) before using Dashboard Chat.
 
 </AgentOnly>

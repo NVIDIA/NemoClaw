@@ -452,6 +452,7 @@ describe("full-E2E cold-path calibration", () => {
         "scripts/patch-openclaw-tool-catalog.mts",
         "scripts/patch-openclaw-chat-send.mts",
         "scripts/patch-openclaw-mcp-npx.mts",
+        "scripts/patch-openclaw-mcp-reliability.mts",
         "scripts/patch-openclaw-issue-4434-diagnostics.mts",
         "scripts/patch-openclaw-device-self-approval.mts",
       ]),

@@ -26,7 +26,10 @@ import {
   awaitPodmanBootstrapImageTransaction,
   startPodmanBootstrapImageTransaction,
 } from "./podman-image-transaction";
-import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
+import {
+  PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+  type PodmanGatewayWatcherLease,
+} from "./podman-watcher-lease";
 
 const RUNTIME_ID = "1".repeat(64);
 const ORIGINAL_RUNTIME_ID = "0".repeat(64);
@@ -55,7 +58,8 @@ function result(
 function watcherLease(): PodmanGatewayWatcherLease {
   return {
     record: {
-      schemaVersion: 1,
+      schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+      holder: { pid: 9_100, processStartIdentity: "holder-start-100" },
       leaseId: LEASE_ID,
       phase: "stopped",
       gatewayName: "gateway",
@@ -130,6 +134,7 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   const prepared = preparedReplacement();
   const durableJournal = options.journal === undefined ? prepared.journal : options.journal;
   const commands: string[][] = [];
+  const commandInputs: Array<Buffer | undefined> = [];
   const timeouts: number[] = [];
   let running = options.startsRunning ?? false;
   let completionAttempts = 0;
@@ -162,8 +167,10 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
     running = true;
     return result({ stdout: RUNTIME_ID });
   };
-  const stageEnvelope = (source: string): ContainerEngineCommandResult => {
-    stagedEnvelope = fs.readFileSync(source, "utf8");
+  const stageEnvelope = (archive: Buffer | undefined): ContainerEngineCommandResult => {
+    expect(archive).toBeInstanceOf(Buffer);
+    const payloadSize = Number.parseInt(archive!.subarray(124, 136).toString("ascii"), 8);
+    stagedEnvelope = archive!.subarray(512, 512 + payloadSize).toString("utf8");
     return result();
   };
   const publishCompletion = (destination: string): ContainerEngineCommandResult => {
@@ -186,26 +193,25 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
       ? result({ status: 1, stderr: "completion not found" })
       : publishCompletion(destination);
   };
-  const copy = (args: readonly string[]): ContainerEngineCommandResult => {
+  const copy = (args: readonly string[], input?: Buffer): ContainerEngineCommandResult => {
     const source = args[2] as string;
     const destination = args[3] as string;
-    return source.startsWith(`${RUNTIME_ID}:`)
-      ? copyCompletion(destination)
-      : stageEnvelope(source);
+    return source.startsWith(`${RUNTIME_ID}:`) ? copyCompletion(destination) : stageEnvelope(input);
   };
   const handlers: Readonly<
-    Record<string, (args: readonly string[]) => ContainerEngineCommandResult>
+    Record<string, (args: readonly string[], input?: Buffer) => ContainerEngineCommandResult>
   > = {
     "container cp": copy,
     "container inspect": inspect,
     "container start": start,
   };
   const capture = vi.fn(
-    (args: readonly string[], timeoutMs = 15_000): ContainerEngineCommandResult => {
+    (args: readonly string[], timeoutMs = 15_000, input?: Buffer): ContainerEngineCommandResult => {
       commands.push([...args]);
+      commandInputs.push(input);
       timeouts.push(timeoutMs);
       return (
-        handlers[`${args[0] ?? ""} ${args[1] ?? ""}`]?.(args) ??
+        handlers[`${args[0] ?? ""} ${args[1] ?? ""}`]?.(args, input) ??
         result({ status: 127, stderr: "unexpected command" })
       );
     },
@@ -222,6 +228,7 @@ function harness(agent: ManagedStartupAgent, options: HarnessOptions = {}) {
   const watcher = watcherLease();
   return {
     commands,
+    commandInputs,
     completionAttempts: () => completionAttempts,
     engine,
     journalStore,
@@ -247,7 +254,7 @@ function startInput(agent: ManagedStartupAgent, fake: ReturnType<typeof harness>
 
 describe("Podman image-owned bootstrap transaction", () => {
   it.each(
-    MANAGED_STARTUP_AGENTS,
+    MANAGED_STARTUP_AGENTS.filter((agent) => agent !== "pi"),
   )("stages, starts, and authenticates one protected %s completion without exec", (agent) => {
     const fake = harness(agent);
     const transaction = startPodmanBootstrapImageTransaction(startInput(agent, fake), {
@@ -299,6 +306,10 @@ describe("Podman image-owned bootstrap transaction", () => {
       watcherLeaseId: LEASE_ID,
     });
     expect(fake.commands).toContainEqual(["container", "start", RUNTIME_ID]);
+    expect(fake.commands).toContainEqual(["container", "cp", "-", `${RUNTIME_ID}:/`]);
+    expect(
+      fake.commandInputs.some((input) => input?.subarray(257, 263).toString("ascii") === "ustar\0"),
+    ).toBe(true);
     expect(fake.commands).toContainEqual([
       "container",
       "cp",
@@ -531,5 +542,15 @@ describe("Podman image-owned bootstrap transaction", () => {
       ),
     ).toThrow("not published before timeout");
     expect(fake.completionAttempts()).toBe(3);
+  });
+
+  it("refuses to bootstrap a release candidate on Podman (#7927)", () => {
+    const fake = harness("pi");
+
+    expect(() =>
+      startPodmanBootstrapImageTransaction(startInput("pi", fake), {
+        now: () => new Date("2026-08-01T12:00:00.000Z"),
+      }),
+    ).toThrow("agent 'pi' is not supported on Podman; onboard it through the Docker compute runtime");
   });
 });
