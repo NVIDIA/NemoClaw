@@ -28,6 +28,7 @@ describe("Hermes API and dashboard port creation scopes", () => {
     const createSandboxWithBaseImageResolution = vi.fn(
       async (
         _baseImageResolutionContext: { fresh: boolean },
+        portableRuntimeAuthority: { socketPath: string },
         _computePlan: { sequence: number },
         _managedWorkloadRebuild: null,
         temporaryManagedRuntime: boolean,
@@ -38,6 +39,7 @@ describe("Hermes API and dashboard port creation scopes", () => {
       ) => ({
         dashboardPortReservationScope,
         hermesApiPortReservationScope,
+        portableRuntimeAuthority,
         sandboxName,
         temporaryManagedRuntime,
       }),
@@ -46,6 +48,7 @@ describe("Hermes API and dashboard port creation scopes", () => {
     const entryPoints = createHermesApiPortScopedSandboxEntryPoints({
       createBaseImageResolutionContext: () => ({ fresh: false }),
       createSandboxWithBaseImageResolution,
+      resolvePortableRuntimeAuthority: () => ({ socketPath: "/run/user/1001/podman.sock" }),
       resolveComputePlan: () => ({ sequence: ++sequence }),
     });
 
@@ -53,6 +56,9 @@ describe("Hermes API and dashboard port creation scopes", () => {
     const temporary = await entryPoints.createSandboxWithTemporaryManagedRuntime("temporary");
 
     expect(standard).toMatchObject({ sandboxName: "standard", temporaryManagedRuntime: false });
+    expect(standard.portableRuntimeAuthority).toEqual({
+      socketPath: "/run/user/1001/podman.sock",
+    });
     expect(temporary).toMatchObject({ sandboxName: "temporary", temporaryManagedRuntime: true });
     expect(standard.dashboardPortReservationScope).not.toBe(
       temporary.dashboardPortReservationScope,

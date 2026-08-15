@@ -874,6 +874,22 @@ After all portable TCP probe attempts fail, onboarding prints commands for the u
 
 Onboarding prints the same commands when the portable probe cannot reach the user-scoped Podman service.
 The printed rerun command keeps the portable experimental profile selected.
+Portable commands reconstruct the current user's rootless Podman socket authority from NemoClaw state before they use the Docker-compatible API.
+They do not select an endpoint from ambient Docker or Podman runtime variables or named connections.
+When `podman.service` reports inactive and the recorded socket exists, NemoClaw first makes one 10-second API request through the guarded recorded authority.
+A valid server version classifies the endpoint as warm and avoids starting another socket service.
+A missing socket or a response without a valid server version enters bounded cold activation.
+Any socket authority change during this precheck fails at the socket authority stage.
+When the user-scoped socket-backed service needs activation, NemoClaw activates it and waits through a bounded startup period for a real Podman API response.
+During cold activation, the first API probe can cause systemd to replace the socket inode.
+NemoClaw requalifies one such replacement and repeats the probe only when the socket path, device, mode, owner, and complete directory authority remain unchanged.
+Any other authority change or a second inode replacement fails the readiness check.
+After cold activation succeeds, later API health checks use the fixed 10-second steady-state deadline.
+Onboarding and portable sandbox lifecycle commands use this same readiness contract.
+Failures identify socket authority, service activation, startup API health, or steady-state API health without reporting credentials.
+NemoClaw does not fall back to Docker or report an absent or unreachable endpoint as healthy.
+A successful cold path uses the `cold` timing label and reports activation, API, and total time in milliseconds.
+A successful warm path uses the `warm` timing label and reports steady-state API and total time in milliseconds.
 To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
 The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
@@ -4968,6 +4984,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
+| `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` | `60000` | Maximum cold-start time for portable rootless Podman socket activation and the first real API response. Set an integer from `15000` through `300000` milliseconds. This setting does not change the fixed 10,000 ms steady-state API deadline. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
 | `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |

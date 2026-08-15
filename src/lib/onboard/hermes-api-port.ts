@@ -51,11 +51,13 @@ interface HermesApiPortScopedSandboxEntryPointDeps<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
+  PortableRuntimeAuthority,
   ComputePlan,
 > {
   createBaseImageResolutionContext(): BaseImageResolutionContext;
   createSandboxWithBaseImageResolution(
     baseImageResolutionContext: BaseImageResolutionContext,
+    portableRuntimeAuthority: PortableRuntimeAuthority,
     computePlan: ComputePlan,
     managedWorkloadRebuild: null,
     temporaryManagedRuntime: boolean,
@@ -64,6 +66,7 @@ interface HermesApiPortScopedSandboxEntryPointDeps<
     hermesApiPortReservationScope: HermesApiPortReservationScope,
     ...args: Args
   ): Promise<Result>;
+  resolvePortableRuntimeAuthority(): PortableRuntimeAuthority;
   resolveComputePlan(): ComputePlan;
 }
 
@@ -72,12 +75,14 @@ export function createHermesApiPortScopedSandboxEntryPoints<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
+  PortableRuntimeAuthority,
   ComputePlan,
 >(
   deps: HermesApiPortScopedSandboxEntryPointDeps<
     Args,
     Result,
     BaseImageResolutionContext,
+    PortableRuntimeAuthority,
     ComputePlan
   >,
 ): {
@@ -88,6 +93,7 @@ export function createHermesApiPortScopedSandboxEntryPoints<
     createBaseImageResolutionContext: deps.createBaseImageResolutionContext,
     createSandboxWithBaseImageResolution: (
       baseImageResolutionContext,
+      portableRuntimeAuthority,
       computePlan,
       managedWorkloadRebuild,
       temporaryManagedRuntime,
@@ -98,6 +104,7 @@ export function createHermesApiPortScopedSandboxEntryPoints<
       withHermesApiPortReservationScope((hermesApiPortReservationScope) =>
         deps.createSandboxWithBaseImageResolution(
           baseImageResolutionContext,
+          portableRuntimeAuthority,
           computePlan,
           managedWorkloadRebuild,
           temporaryManagedRuntime,
@@ -108,6 +115,7 @@ export function createHermesApiPortScopedSandboxEntryPoints<
         ),
       ),
     resolveComputePlan: deps.resolveComputePlan,
+    resolvePortableRuntimeAuthority: deps.resolvePortableRuntimeAuthority,
   });
 }
 
