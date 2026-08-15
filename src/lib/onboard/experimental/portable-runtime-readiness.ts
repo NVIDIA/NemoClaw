@@ -245,6 +245,24 @@ function recaptureColdActivationSocket(
   }
 }
 
+function probePodmanServerVersion(
+  socketAuthority: PodmanSocketAuthority,
+  timeoutMs: number,
+  authorityDeps: PodmanSocketAuthorityDeps,
+  assertAuthority: NonNullable<PortablePodmanReadinessDeps["assertSocketAuthority"]>,
+  podmanCapture?: ContainerEngineCommandCapture,
+): string | null {
+  const provider = createPodmanContainerEngine({
+    operation: "host-doctor",
+    socketAuthority,
+    authorityDeps,
+    assertAuthority,
+    ...(podmanCapture ? { capture: podmanCapture } : {}),
+  });
+  const result = provider.capture(["version", "--format", "json"], timeoutMs);
+  return result.status === 0 ? parseServerVersion(result.stdout) : null;
+}
+
 /**
  * Verify one receipt-owned rootless Podman API. Cold activation and warm health
  * use separate budgets; no process-global engine selector participates.
@@ -287,12 +305,79 @@ export function inspectPortablePodmanReadiness(
         stdio: ["ignore", "pipe", "pipe"],
         timeout: timeoutMs,
       }));
+  const capture = deps.captureSocketAuthority ?? capturePodmanSocketAuthority;
+  const assert = deps.assertSocketAuthority ?? assertPodmanSocketAuthority;
+  const authorityDeps = { ...deps.socketAuthorityDeps, uid: normalized.uid };
+  let socketSeen = false;
+  let socketHardened = false;
+  let socketAuthority: PodmanSocketAuthority | null = null;
+  let coldActivationSocketRecaptured = false;
   const active = systemctl(
     ["--user", "is-active", "--quiet", "podman.service"],
     commandEnv,
     PORTABLE_PODMAN_STEADY_STATE_TIMEOUT_MS,
   );
-  const mode = active.status === 0 && !active.error ? "warm" : "cold";
+  const serviceActive = active.status === 0 && !active.error;
+  if (!serviceActive) {
+    try {
+      (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(
+        normalized.socketPath,
+        normalized.uid,
+      );
+      socketHardened = true;
+      socketAuthority = capture(normalized.socketPath, authorityDeps);
+      if (socketAuthority.socketPath !== normalized.socketPath) {
+        throw new Error("The captured Podman socket does not match the recorded endpoint.");
+      }
+      socketSeen = true;
+    } catch (error) {
+      if (!isMissingSocket(error)) {
+        return failure(
+          "socket authority",
+          "The recorded portable Podman socket is absent, unsafe, or no longer has its recorded authority.",
+          "cold",
+          0,
+          0,
+          elapsed(now, startedAt),
+          normalized.socketPath,
+        );
+      }
+      socketAuthority = null;
+    }
+    if (socketAuthority) {
+      const apiStartedAt = now();
+      let serverVersion: string | null;
+      try {
+        serverVersion = probePodmanServerVersion(
+          socketAuthority,
+          PORTABLE_PODMAN_STEADY_STATE_TIMEOUT_MS,
+          authorityDeps,
+          assert,
+          deps.podmanCapture,
+        );
+      } catch {
+        return failure(
+          "socket authority",
+          "The recorded portable Podman socket changed while its API was being verified.",
+          "cold",
+          0,
+          elapsed(now, apiStartedAt),
+          elapsed(now, startedAt),
+          normalized.socketPath,
+        );
+      }
+      if (serverVersion) {
+        return {
+          ok: true,
+          authority: socketAuthority,
+          dockerHost: `unix://${normalized.socketPath}`,
+          serverVersion,
+          timing: timing("warm", 0, elapsed(now, apiStartedAt), elapsed(now, startedAt)),
+        };
+      }
+    }
+  }
+  const mode = serviceActive ? "warm" : "cold";
   const deadlineMs = mode === "warm" ? PORTABLE_PODMAN_STEADY_STATE_TIMEOUT_MS : startupTimeoutMs;
   const activationStartedAt = now();
   if (mode === "cold") {
@@ -316,13 +401,6 @@ export function inspectPortablePodmanReadiness(
   const activationMs = elapsed(now, activationStartedAt);
   const apiStartedAt = now();
   const budgetStartedAt = mode === "warm" ? apiStartedAt : startedAt;
-  const capture = deps.captureSocketAuthority ?? capturePodmanSocketAuthority;
-  const assert = deps.assertSocketAuthority ?? assertPodmanSocketAuthority;
-  const authorityDeps = { ...deps.socketAuthorityDeps, uid: normalized.uid };
-  let socketSeen = false;
-  let socketHardened = false;
-  let socketAuthority: PodmanSocketAuthority | null = null;
-  let coldActivationSocketRecaptured = false;
 
   while (elapsed(now, budgetStartedAt) < deadlineMs) {
     if (!socketAuthority) {
@@ -358,17 +436,15 @@ export function inspectPortablePodmanReadiness(
       }
     }
 
-    const provider = createPodmanContainerEngine({
-      operation: "host-doctor",
-      socketAuthority,
-      authorityDeps,
-      assertAuthority: assert,
-      ...(deps.podmanCapture ? { capture: deps.podmanCapture } : {}),
-    });
     const remainingMs = Math.max(1, deadlineMs - elapsed(now, budgetStartedAt));
     try {
-      const result = provider.capture(["version", "--format", "json"], remainingMs);
-      const serverVersion = result.status === 0 ? parseServerVersion(result.stdout) : null;
+      const serverVersion = probePodmanServerVersion(
+        socketAuthority,
+        remainingMs,
+        authorityDeps,
+        assert,
+        deps.podmanCapture,
+      );
       if (serverVersion) {
         return {
           ok: true,

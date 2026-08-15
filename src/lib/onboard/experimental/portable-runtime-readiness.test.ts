@@ -101,7 +101,7 @@ describe("portable Podman activation readiness", () => {
     expect(result).toMatchObject({
       ok: true,
       serverVersion: "5.6.1",
-      timing: { mode: "cold", activationMs: 0, apiMs: 100, totalMs: 100 },
+      timing: { mode: "cold", activationMs: 0, apiMs: 0, totalMs: 0 },
     });
     expect(h.systemctl.mock.calls.map(([args]) => args)).toEqual([
       ["--user", "is-active", "--quiet", "podman.service"],
@@ -110,7 +110,7 @@ describe("portable Podman activation readiness", () => {
     expect(h.podmanCapture).toHaveBeenCalledWith(
       "podman",
       ["--url", `unix://${AUTHORITY.socketPath}`, "version", "--format", "json"],
-      59_900,
+      60_000,
     );
     expect(hardenSocket).toHaveBeenCalledTimes(2);
   });
@@ -130,13 +130,16 @@ describe("portable Podman activation readiness", () => {
     expect(result).toMatchObject({
       ok: true,
       serverVersion: "5.6.1",
-      timing: { mode: "cold", apiMs: 100, totalMs: 100 },
+      timing: { mode: "cold", apiMs: 0, totalMs: 0 },
     });
     expect(hardenSocket).toHaveBeenCalledTimes(1);
     expect(captureSocket).toHaveBeenCalledTimes(2);
   });
 
   it("requalifies one socket inode rotation during cold API activation (#9070)", () => {
+    const hardenSocket = vi.fn().mockImplementationOnce(() => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    });
     const captureSocket = vi
       .fn()
       .mockReturnValueOnce(SOCKET_AUTHORITY)
@@ -150,7 +153,7 @@ describe("portable Podman activation readiness", () => {
       .mockImplementationOnce(() => {
         throw new Error("the initial socket is no longer current");
       });
-    const h = harness({ active: false, captureSocket, assertSocket });
+    const h = harness({ active: false, captureSocket, hardenSocket, assertSocket });
 
     const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);
 
@@ -160,6 +163,9 @@ describe("portable Podman activation readiness", () => {
   });
 
   it("rejects a cold socket replacement that changes its device identity (#9070)", () => {
+    const hardenSocket = vi.fn().mockImplementationOnce(() => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    });
     const captureSocket = vi
       .fn()
       .mockReturnValueOnce(SOCKET_AUTHORITY)
@@ -173,7 +179,7 @@ describe("portable Podman activation readiness", () => {
       .mockImplementationOnce(() => {
         throw new Error("the initial socket is no longer current");
       });
-    const h = harness({ active: false, captureSocket, assertSocket });
+    const h = harness({ active: false, captureSocket, hardenSocket, assertSocket });
 
     expect(inspectPortablePodmanReadiness(AUTHORITY, h.deps)).toMatchObject({
       ok: false,
@@ -194,8 +200,24 @@ describe("portable Podman activation readiness", () => {
     expect(h.podmanCapture).toHaveBeenCalledWith("podman", expect.any(Array), 10_000);
   });
 
+  it("uses an already healthy pinned API without starting another user socket (#9070)", () => {
+    const h = harness({ active: false });
+
+    const result = inspectPortablePodmanReadiness(AUTHORITY, h.deps);
+
+    expect(result).toMatchObject({ ok: true, timing: { mode: "warm" } });
+    expect(h.systemctl).toHaveBeenCalledTimes(1);
+    expect(h.podmanCapture).toHaveBeenCalledWith("podman", expect.any(Array), 10_000);
+  });
+
   it("classifies socket activation failure without command output (#9070)", () => {
-    const h = harness({ active: false, startStatus: 1 });
+    const h = harness({
+      active: false,
+      hardenSocket: () => {
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+      startStatus: 1,
+    });
 
     expect(inspectPortablePodmanReadiness(AUTHORITY, h.deps)).toMatchObject({
       ok: false,
@@ -249,6 +271,7 @@ describe("portable Podman activation readiness", () => {
       },
     });
     const replaced = harness({
+      active: false,
       assertSocket: () => {
         throw new Error("replaced");
       },
@@ -264,11 +287,18 @@ describe("portable Podman activation readiness", () => {
       stage: "socket authority",
       socketPath: AUTHORITY.socketPath,
     });
+    expect(replaced.systemctl).toHaveBeenCalledOnce();
   });
 
   it("reports only a validated recorded socket path (#9070)", () => {
     const validFailure = inspectPortablePodmanReadiness(AUTHORITY, {
-      ...harness({ active: false, startStatus: 1 }).deps,
+      ...harness({
+        active: false,
+        hardenSocket: () => {
+          throw Object.assign(new Error("missing"), { code: "ENOENT" });
+        },
+        startStatus: 1,
+      }).deps,
     });
     const invalidFailure = inspectPortablePodmanReadiness(AUTHORITY, {
       ...harness().deps,
