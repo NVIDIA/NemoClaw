@@ -316,8 +316,8 @@ COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 # /etc/profile.d, interactive shells via /etc/bash.bashrc. OpenShell creates
 # these exec/connect processes outside the entrypoint tree, and this image
 # layer cannot make them inherit a child's lowered limits. Refuse the shell if
-# the helper is absent or either enforcement step fails so every Pi execution
-# path retains the reviewed limits. The managed entrypoint separately enforces
+# the helper is absent or either enforcement step fails so these Pi Bash shell
+# paths retain the reviewed limits. The managed entrypoint separately enforces
 # the same fail-closed contract. Ref: sandbox-rlimits.sh (#2173).
 # hadolint ignore=SC2028
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
