@@ -26,6 +26,7 @@ import {
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
+  | "delayed-duplicate"
   | "delayed-input"
   | "invalid-order"
   | "nonzero"
@@ -61,6 +62,7 @@ function runEvidenceFixture(input: {
   after: SessionRecords;
   afterFinalNewline?: boolean;
   before?: SessionRecords;
+  expectedInput?: string;
   expectedTurns: number;
   mode?: "qualify" | "qualify-input";
 }) {
@@ -85,6 +87,7 @@ function runEvidenceFixture(input: {
         sessionRoot,
         baselinePath,
         String(input.expectedTurns),
+        input.expectedInput ?? "",
       ],
       { encoding: "utf8" },
     );
@@ -160,7 +163,7 @@ const append = (role, content) => fs.appendFileSync(
 
 (async () => {
   if (mode === "delayed-input") {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await ask();
   }
 
   const first = await ask();
@@ -171,6 +174,13 @@ const append = (role, content) => fs.appendFileSync(
     append("user", first);
     process.stdout.write(terminalCopy === "ansi" ? "\u001b[2Kignored repaint\r" : "ignored plain copy\n");
     append("assistant", "first response");
+  }
+
+  if (mode === "delayed-duplicate") {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    append("user", first);
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+    return;
   }
 
   const second = await ask();
@@ -263,12 +273,14 @@ it("keeps a partial structured turn pending (#9160)", () => {
 
 it("qualifies PTY input from the structured user record before the assistant reply (#9160)", () => {
   const accepted = runEvidenceFixture({
-    after: { "session-a": [message("user")] },
+    after: { "session-a": [message("user", "first input")] },
+    expectedInput: "first input",
     expectedTurns: 1,
     mode: "qualify-input",
   });
   const pending = runEvidenceFixture({
     after: { "session-a": [message("user"), message("assistant")] },
+    expectedInput: "second input",
     expectedTurns: 2,
     mode: "qualify-input",
   });
@@ -277,6 +289,25 @@ it("qualifies PTY input from the structured user record before the assistant rep
   expect(accepted.qualification.status).toBe(0);
   expect(pending.baseline.status).toBe(0);
   expect(pending.qualification.status).toBe(1);
+});
+
+it("rejects a prior turn duplicate as evidence for the next PTY input (#9160)", () => {
+  const { baseline, qualification } = runEvidenceFixture({
+    after: {
+      "session-a": [
+        message("user", "first input"),
+        message("assistant"),
+        message("user", "first input"),
+      ],
+    },
+    expectedInput: "second input",
+    expectedTurns: 2,
+    mode: "qualify-input",
+  });
+
+  expect(baseline.status).toBe(0);
+  expect(qualification.status).toBe(2);
+  expect(qualification.stderr).toContain('"reason":"input_content_mismatch"');
 });
 
 it("does not qualify structured turns recorded before the baseline (#9160)", () => {
@@ -363,6 +394,22 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "rejects a delayed duplicate before recording the distinct second PTY input (#9160)",
+  () => {
+    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
+      "delayed-duplicate",
+      "plain",
+    );
+
+    expect(ttyObserved).toBe(true);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('"reason":"input_content_mismatch"');
   },
 );
 

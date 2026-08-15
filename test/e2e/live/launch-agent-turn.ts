@@ -16,7 +16,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText] = process.argv.slice(1);
+const [mode, sessionRoot, baselinePath, expectedTurnsText, expectedInput] = process.argv.slice(1);
 
 function finish(exitCode, reason, detail = {}) {
   if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
@@ -108,6 +108,13 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+function containsExactInput(message, input) {
+  if (typeof message.content === "string") return message.content === input;
+  return Array.isArray(message.content) && message.content.some((part) =>
+    part && typeof part === "object" && typeof part.text === "string" && part.text === input
+  );
+}
+
 function appendedMessages(fileName, baseline) {
   const { offset, complete, raw } = readCompleteSession(fileName);
   const prior = baseline[fileName];
@@ -132,7 +139,11 @@ function appendedMessages(fileName, baseline) {
     if (!record || record.type !== "message" || !record.message) continue;
     const role = record.message.role;
     if (role !== "user" && role !== "assistant") continue;
-    messages.push({ role, hasStructuredContent: hasStructuredContent(record.message) });
+    messages.push({
+      role,
+      hasStructuredContent: hasStructuredContent(record.message),
+      containsExpectedInput: containsExactInput(record.message, expectedInput),
+    });
   }
   return messages;
 }
@@ -141,6 +152,9 @@ function qualifyTurns(requireAssistant) {
   const expectedTurns = Number(expectedTurnsText);
   if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
     finish(2, "expected_turn_count_invalid");
+  }
+  if (!requireAssistant && (!expectedInput || expectedInput.includes("\n") || expectedInput.includes("\r"))) {
+    finish(2, "expected_input_invalid");
   }
 
   const baseline = readBaseline();
@@ -171,6 +185,9 @@ function qualifyTurns(requireAssistant) {
   }
   const requiredMessages = expectedRoles.length - (requireAssistant ? 0 : 1);
   if (messages.length < requiredMessages) finish(1);
+  if (!requireAssistant && !messages[requiredMessages - 1].containsExpectedInput) {
+    finish(2, "input_content_mismatch", { sessionId });
+  }
   finish(0);
 }
 
@@ -250,8 +267,12 @@ fail_launch_session() {
 session_evidence() {
   local mode="$1"
   local expected_turns=""
+  local expected_input=""
   if [[ "$#" -gt 1 ]]; then
     expected_turns="$2"
+  fi
+  if [[ "$#" -gt 2 ]]; then
+    expected_input="$3"
   fi
   "$NEMOCLAW_OPENSHELL_COMMAND" sandbox exec \
     --name "$NEMOCLAW_LAUNCH_SANDBOX" -- \
@@ -259,7 +280,8 @@ session_evidence() {
     "$mode" \
     "$NEMOCLAW_LAUNCH_SESSION_ROOT" \
     "$baseline_path" \
-    "$expected_turns"
+    "$expected_turns" \
+    "$expected_input"
 }
 
 wait_for_turn_count() {
@@ -294,7 +316,7 @@ submit_turn() {
       break
     fi
     for _ in {1..2}; do
-      if session_evidence qualify-input "$expected_turns" >/dev/null 2>"$evidence_error"; then
+      if session_evidence qualify-input "$expected_turns" "$content" >/dev/null 2>"$evidence_error"; then
         return 0
       else
         evidence_status=$?
