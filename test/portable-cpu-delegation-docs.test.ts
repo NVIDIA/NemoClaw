@@ -664,7 +664,7 @@ describe("portable CPU delegation documentation", () => {
   it("partial cleanup refuses a published file whose identity changed (#9188)", () => {
     const fixture = makeCommandFixture();
     const creation = runDocumentedCommand(fixture, { FAIL_LINK_CALL: "2" });
-    fs.rmSync(fixture.delegationDropIn);
+    fs.renameSync(fixture.delegationDropIn, `${fixture.delegationDropIn}.original`);
     fs.writeFileSync(fixture.delegationDropIn, "replacement\n");
 
     const cleanup = runPartialCreationRollback(fixture, creation.stdout);
