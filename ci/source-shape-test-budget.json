@@ -223,7 +223,7 @@
     },
     {
       "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
-      "test": "runs as a credential-free exact-head PR workflow",
+      "test": "runs as a credential-free PR workflow bound to the commit under review",
       "category": "security"
     },
     {
