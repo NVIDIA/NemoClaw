@@ -148,7 +148,9 @@ describe("native Podman CPU proof workflow", () => {
     const delegationProof = readRepoText(
       "test/e2e/live/portable-cpu-delegation-proof.test.ts",
     );
-    expect(delegationProof).toContain('from "vitest"');
+    expect(delegationProof).toContain('from "../fixtures/e2e-test.ts"');
+    expect(delegationProof).not.toContain('from "vitest"');
+    expect(delegationProof).toContain("e2ePhases");
     expect(delegationProof).toContain("process.env.E2E_CPU_DELEGATION_STATE");
     expect(delegationProof).not.toContain("process.argv");
     expect(delegationProof).not.toContain("main();");

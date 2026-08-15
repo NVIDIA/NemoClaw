@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { it } from "vitest";
+import { test } from "../fixtures/e2e-test.ts";
 
 import {
   inspectPortableCpuDelegation,
@@ -66,33 +66,46 @@ function proveFailureBeforeEffects(preflight: CpuDelegationPreflight): void {
   assert.deepEqual(effects, []);
 }
 
-const proof = process.env.E2E_TARGET_ID === "portable-cpu-delegation" ? it : it.skip;
+const proof = process.env.E2E_TARGET_ID === "portable-cpu-delegation" ? test : test.skip;
 
-proof("records portable CPU delegation evidence for the configured hierarchy (#9188)", () => {
-  assert.equal(process.platform, "linux", "CPU delegation proof requires Linux");
-  const uid = expectedUid();
-  assert.notEqual(uid, 0, "CPU delegation proof requires a non-root user");
-  assert.equal(process.getuid?.(), uid, "CPU delegation proof must run as the configured user");
-  const state = expectedState(process.env.E2E_CPU_DELEGATION_STATE);
-  const preflight = inspectPortableCpuDelegation();
-  if (state === "missing") {
-    proveFailureBeforeEffects(preflight);
-  } else {
-    assert.equal(preflight.ok, true, preflight.detail);
-    assert.equal(preflight.failure, undefined);
-  }
-  fs.writeFileSync(
-    path.join(artifactDirectory(), `${state}.json`),
-    `${JSON.stringify({
-      schemaVersion: 1,
-      sourceRevision: sourceRevision(),
-      state,
-      uid,
-      ok: preflight.ok,
-      failure: preflight.failure ?? null,
-      detail: preflight.detail,
-      effectsBeforeAdmission: 0,
-    })}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-});
+proof(
+  "records portable CPU delegation evidence for the configured hierarchy (#9188)",
+  {
+    meta: {
+      e2ePhases: [
+        "inspect the configured CPU delegation hierarchy",
+        "record CPU delegation admission evidence",
+      ],
+    },
+  },
+  ({ progress }) => {
+    assert.equal(process.platform, "linux", "CPU delegation proof requires Linux");
+    const uid = expectedUid();
+    assert.notEqual(uid, 0, "CPU delegation proof requires a non-root user");
+    assert.equal(process.getuid?.(), uid, "CPU delegation proof must run as the configured user");
+    const state = expectedState(process.env.E2E_CPU_DELEGATION_STATE);
+    progress.phase("inspect the configured CPU delegation hierarchy");
+    const preflight = inspectPortableCpuDelegation();
+    if (state === "missing") {
+      proveFailureBeforeEffects(preflight);
+    } else {
+      assert.equal(preflight.ok, true, preflight.detail);
+      assert.equal(preflight.failure, undefined);
+    }
+    progress.phase("record CPU delegation admission evidence");
+    fs.writeFileSync(
+      path.join(artifactDirectory(), `${state}.json`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        sourceRevision: sourceRevision(),
+        state,
+        uid,
+        ok: preflight.ok,
+        failure: preflight.failure ?? null,
+        detail: preflight.detail,
+        effectsBeforeAdmission: 0,
+      })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+  },
+);
