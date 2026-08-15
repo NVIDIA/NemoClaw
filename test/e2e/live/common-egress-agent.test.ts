@@ -27,10 +27,10 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
-  agentReplyContainsToken,
+  classifyHermesAgentAssertion,
+  classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
-  isHermesTransientAgentFailure,
   parseChatContent,
   parseOpenClawAgentText,
   runHermesAgentAssertionRetry,
@@ -119,22 +119,6 @@ function httpBodyFromResponse(raw: string): string {
     .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
     .join("\n")
     .trim();
-}
-
-function isOpenClawPolicyBlock(output: string): boolean {
-  return /SsrFBlockedError|Blocked hostname/i.test(output);
-}
-
-function isOpenClawScopeUpgradePending(output: string): boolean {
-  return /scope upgrade pending approval|pairing required: device is asking for more scopes/i.test(
-    output,
-  );
-}
-
-function isOpenClawTransientAgentError(output: string): boolean {
-  return /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|gateway unavailable|network connection error|DNS error|fetch failed|LLM request timed out|FailoverError|inference service unavailable|rawError=503/i.test(
-    output,
-  );
 }
 
 function isMissingSandboxOutput(output: string): boolean {
@@ -491,31 +475,16 @@ async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
-      if (agent.exitCode === 0 && agentReplyContainsToken(reply, args.expected)) {
-        return { passed: true };
-      }
       lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
         0,
         240,
       )}' stderr='${agent.stderr.slice(0, 240)}'`;
-      if (isOpenClawPolicyBlock(combined)) {
-        return { passed: false, failureClass: "policy-denial" };
-      }
-      if (/\b401\b|unauthorized|authentication failed|invalid api key/iu.test(combined)) {
-        return { passed: false, failureClass: "authentication" };
-      }
-      if (/\b403\b|forbidden/iu.test(combined)) {
-        return { passed: false, failureClass: "authorization" };
-      }
-      const recoveryRequired = isOpenClawScopeUpgradePending(combined);
-      return {
-        passed: false,
-        failureClass:
-          recoveryRequired || isOpenClawTransientAgentError(combined)
-            ? "transient-external"
-            : "deterministic",
-        recoveryRequired,
-      };
+      return classifyOpenClawAgentAssertion({
+        exitCode: agent.exitCode,
+        expected: args.expected,
+        reply,
+        response: combined,
+      });
     },
     reconcile: async (attempt, attemptNumber) => {
       if (!attempt.recoveryRequired) return true;
@@ -604,25 +573,17 @@ async function runHermesAgentAssertion(
       } catch {
         reply = "";
       }
-      if (
-        agent.exitCode === 0 &&
-        httpStatus === "200" &&
-        agentReplyContainsToken(reply, args.expected)
-      ) {
-        return { passed: true };
-      }
       lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
         0,
         240,
       )}' body='${body.slice(0, 240)}'`;
-      if (httpStatus === "401") return { passed: false, failureClass: "authentication" };
-      if (httpStatus === "403") return { passed: false, failureClass: "authorization" };
-      return {
-        passed: false,
-        failureClass: isHermesTransientAgentFailure(httpStatus, response)
-          ? "transient-external"
-          : "deterministic",
-      };
+      return classifyHermesAgentAssertion({
+        exitCode: agent.exitCode,
+        expected: args.expected,
+        httpStatus,
+        reply,
+        response,
+      });
     },
   });
   if (execution.outcome === "passed") return;

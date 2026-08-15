@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   agentReplyContainsToken,
+  classifyHermesAgentAssertion,
+  classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   isHermesTransientAgentFailure,
   parseChatContent,
@@ -55,6 +57,77 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(isHermesTransientAgentFailure("401", "unauthorized")).toBe(false);
     expect(isHermesTransientAgentFailure("200", "wrong deterministic answer")).toBe(false);
     expect(isHermesTransientAgentFailure("200", "reply mentions fetch failed")).toBe(false);
+  });
+
+  it("classifies OpenClaw agent results for bounded retry", () => {
+    const result = {
+      exitCode: 1,
+      expected: "REFERENCE_AGENT_OK",
+      reply: "wrong answer",
+      response: "wrong answer",
+    };
+
+    expect(
+      classifyOpenClawAgentAssertion({ ...result, exitCode: 0, reply: "REFERENCE_AGENT_OK" }),
+    ).toEqual({ passed: true });
+    expect(classifyOpenClawAgentAssertion({ ...result, response: "Blocked hostname" })).toEqual({
+      passed: false,
+      failureClass: "policy-denial",
+    });
+    expect(classifyOpenClawAgentAssertion({ ...result, response: "HTTP 401" })).toEqual({
+      passed: false,
+      failureClass: "authentication",
+    });
+    expect(classifyOpenClawAgentAssertion({ ...result, response: "HTTP 403" })).toEqual({
+      passed: false,
+      failureClass: "authorization",
+    });
+    expect(
+      classifyOpenClawAgentAssertion({ ...result, response: "scope upgrade pending approval" }),
+    ).toEqual({
+      passed: false,
+      failureClass: "transient-external",
+      recoveryRequired: true,
+    });
+    expect(classifyOpenClawAgentAssertion(result)).toEqual({
+      passed: false,
+      failureClass: "deterministic",
+      recoveryRequired: false,
+    });
+  });
+
+  it("classifies Hermes agent results for bounded retry", () => {
+    const result = {
+      exitCode: 1,
+      expected: "HERMES_REFERENCE_AGENT_OK",
+      httpStatus: "200",
+      reply: "wrong answer",
+      response: "wrong answer",
+    };
+
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        exitCode: 0,
+        reply: "HERMES_REFERENCE_AGENT_OK",
+      }),
+    ).toEqual({ passed: true });
+    expect(classifyHermesAgentAssertion({ ...result, httpStatus: "401" })).toEqual({
+      passed: false,
+      failureClass: "authentication",
+    });
+    expect(classifyHermesAgentAssertion({ ...result, httpStatus: "403" })).toEqual({
+      passed: false,
+      failureClass: "authorization",
+    });
+    expect(classifyHermesAgentAssertion({ ...result, httpStatus: "503" })).toEqual({
+      passed: false,
+      failureClass: "transient-external",
+    });
+    expect(classifyHermesAgentAssertion(result)).toEqual({
+      passed: false,
+      failureClass: "deterministic",
+    });
   });
 
   it("records recovered OpenClaw success after reconciliation", async () => {

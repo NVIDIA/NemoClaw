@@ -46,6 +46,17 @@ export interface AgentAssertionAttempt {
   recoveryRequired?: boolean;
 }
 
+interface OpenClawAgentAssertionResult {
+  exitCode: number | null;
+  expected: string;
+  reply: string;
+  response: string;
+}
+
+interface HermesAgentAssertionResult extends OpenClawAgentAssertionResult {
+  httpStatus: string;
+}
+
 interface AgentAssertionRetryOptions {
   attempts: number;
   delayMs: (attempt: number) => number;
@@ -159,9 +170,75 @@ function compactAgentReply(value: string): string {
   return value.replace(/\s+/gu, "");
 }
 
+function isOpenClawPolicyBlock(output: string): boolean {
+  return /SsrFBlockedError|Blocked hostname/i.test(output);
+}
+
+function isOpenClawScopeUpgradePending(output: string): boolean {
+  return /scope upgrade pending approval|pairing required: device is asking for more scopes/i.test(
+    output,
+  );
+}
+
+function isOpenClawTransientAgentError(output: string): boolean {
+  return /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|gateway unavailable|network connection error|DNS error|fetch failed|LLM request timed out|FailoverError|inference service unavailable|rawError=503/i.test(
+    output,
+  );
+}
+
 export function agentReplyContainsToken(reply: string, expected: string): boolean {
   const compactExpected = compactAgentReply(expected);
   return compactExpected.length > 0 && compactAgentReply(reply).includes(compactExpected);
+}
+
+export function classifyOpenClawAgentAssertion(
+  result: OpenClawAgentAssertionResult,
+): AgentAssertionAttempt {
+  if (result.exitCode === 0 && agentReplyContainsToken(result.reply, result.expected)) {
+    return { passed: true };
+  }
+  if (isOpenClawPolicyBlock(result.response)) {
+    return { passed: false, failureClass: "policy-denial" };
+  }
+  if (/\b401\b|unauthorized|authentication failed|invalid api key/iu.test(result.response)) {
+    return { passed: false, failureClass: "authentication" };
+  }
+  if (/\b403\b|forbidden/iu.test(result.response)) {
+    return { passed: false, failureClass: "authorization" };
+  }
+  const recoveryRequired = isOpenClawScopeUpgradePending(result.response);
+  return {
+    passed: false,
+    failureClass:
+      recoveryRequired || isOpenClawTransientAgentError(result.response)
+        ? "transient-external"
+        : "deterministic",
+    recoveryRequired,
+  };
+}
+
+export function classifyHermesAgentAssertion(
+  result: HermesAgentAssertionResult,
+): AgentAssertionAttempt {
+  if (
+    result.exitCode === 0 &&
+    result.httpStatus === "200" &&
+    agentReplyContainsToken(result.reply, result.expected)
+  ) {
+    return { passed: true };
+  }
+  if (result.httpStatus === "401") {
+    return { passed: false, failureClass: "authentication" };
+  }
+  if (result.httpStatus === "403") {
+    return { passed: false, failureClass: "authorization" };
+  }
+  return {
+    passed: false,
+    failureClass: isHermesTransientAgentFailure(result.httpStatus, result.response)
+      ? "transient-external"
+      : "deterministic",
+  };
 }
 
 /** Recognize transport/provider failures without retrying a successful product response. */
