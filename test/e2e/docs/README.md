@@ -97,24 +97,18 @@ npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
 test files serially. It does not retry a failed test.
 
-After an eligible `E2E main` push workflow fails, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
-A successful CLI artifact producer is not rerun.
-The workflow retains its CLI artifact for 3 days.
-During that period, consumers reuse the immutable, content-addressed artifact from the earlier producer attempt in the same workflow run.
-If the artifact is unavailable when a consumer downloads it, restoration fails because the failed-job rerun does not rerun the successful producer.
-Restore validation binds the producer provenance to the workflow run, workflow SHA, and candidate checkout.
-It downloads by immutable artifact ID and verifies the manifest and the payload digest.
-It rejects a producer attempt that is newer than the consumer attempt.
-The controller can request two reruns, for three total attempts.
-It does not verify that GitHub schedules a different runner, so do not treat a rerun as evidence of a fresh host.
-If a later attempt succeeds, the source workflow concludes with `success`.
-The evidence sets `action` to `passed-after-retry` and `flaky` to `true`.
+After an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and source-attempt evidence.
+It does not request a broad failed-job or workflow rerun.
+An E2E test can retry an external operation only through its checked-in bounded policy.
+The observer records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored`.
+The `flaky` field is `true` only for `passed-after-retry`.
+Hosted Runner Recovery separately owns one rerun of an eligible `CI / Platform Evidence` push with authenticated GitHub-hosted runner-loss evidence.
 
-After the controller evaluates attempt N, it uploads an artifact named for that
+After the observer evaluates attempt N, it uploads an artifact named for that
 attempt. The artifact contains one `attempts` entry for each source attempt through
 N. `totalRunnerMinutes` is the sum across those entries. If evaluation or file
 creation fails, the upload step warns that the file is missing and publishes no
-evidence artifact. The controller does not retry manual PR runs or a run
+evidence artifact. The observer ignores manual PR runs and a run
 superseded by a newer `main` push.
 
 During fixture teardown, every passing or failing live test writes

@@ -28,6 +28,7 @@ import {
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentity,
   observeDestroyContainerIdentity,
+  removeExactDestroyContainerIdentity,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
 import type { DestroyRunOpenshell } from "./destroy-gateway";
@@ -511,6 +512,26 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
         shieldsRelockRequiresGateway: gatewayUnreachable && hardened.hardeningFailed,
       };
+    }
+
+    if (!forcedLocalCleanup && expectedContainerIdentity) {
+      try {
+        removeExactDestroyContainerIdentity(sandboxName, expectedContainerIdentity, console.log);
+      } catch (error) {
+        const detail = redactDestroyError(error);
+        return {
+          ok: false as const,
+          deleteOutput:
+            `OpenShell reported sandbox '${sandboxName}' absent, but exact runtime ` +
+            `cleanup failed: ${detail}. The local sandbox record was preserved for retry.`,
+          exitCode: 1,
+          gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          shieldsRelockRequiresGateway: false,
+          deleteConfirmed: true,
+        };
+      }
     }
 
     // The sandbox is confirmed gone, or --force is discarding only a local

@@ -287,6 +287,15 @@ describe("dormant Podman runtime provider", () => {
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
   });
 
+  it("declares read-only host mounts unsupported until Podman qualification lands", () => {
+    const runtime = providerHarness("openclaw");
+
+    expect(runtime.providers.podman?.capabilities.readOnlyHostMounts).toEqual({
+      supported: false,
+      reason: "Read-only host mounts are not qualified for the Podman runtime provider.",
+    });
+  });
+
   it("fails host-local inference before probing either Podman operation scope", () => {
     const hostDoctor = hostDoctorEngine();
     const sandboxLifecycle = lifecycleEngine("unsupported");

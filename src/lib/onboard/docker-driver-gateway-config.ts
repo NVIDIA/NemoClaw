@@ -1,9 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomBytes } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  randomBytes,
+  sign,
+  verify,
+} from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { parse as parseToml } from "smol-toml";
+import { type OpenRegularFile, openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
   type DockerDriverGatewayJwtBundle,
   ensureDockerDriverGatewayJwtBundle,
@@ -18,6 +27,206 @@ export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
+type DockerDriverGatewayDriver = "docker" | "podman";
+
+interface FileIdentity {
+  dev: number;
+  ino: number;
+  mode: number;
+  uid: number;
+}
+
+interface RegularFileProof {
+  bytes: Buffer;
+  file: OpenRegularFile;
+  identity: FileIdentity;
+  path: string;
+}
+
+interface ExistingConfigProof extends RegularFileProof {
+  stateDir: string;
+  stateDirIdentity: FileIdentity;
+}
+
+interface LegacyJwtBundleProof {
+  bundle: DockerDriverGatewayJwtBundle;
+  directoryIdentity: FileIdentity;
+  files: RegularFileProof[];
+  jwtDir: string;
+}
+
+interface LegacyGatewayIdentity {
+  configProof: ExistingConfigProof;
+  gatewayId: string;
+  jwtProof: LegacyJwtBundleProof;
+  kind: "legacy";
+  sandboxNamespace: "default";
+}
+
+type DockerDriverGatewayIdentity =
+  | LegacyGatewayIdentity
+  | {
+      configProof: ExistingConfigProof | null;
+      kind: "scoped";
+      gatewayId: string;
+      sandboxNamespace: string;
+    };
+
+function fileIdentity(stats: fs.Stats): FileIdentity {
+  return { dev: stats.dev, ino: stats.ino, mode: stats.mode & 0o777, uid: stats.uid };
+}
+
+function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.uid === right.uid
+  );
+}
+
+function assertStateDirectoryIdentity(stateDir: string, expected: FileIdentity): void {
+  const current = fs.lstatSync(stateDir);
+  if (
+    !current.isDirectory() ||
+    current.isSymbolicLink() ||
+    !sameFileIdentity(fileIdentity(current), expected)
+  ) {
+    throw new Error(
+      `Gateway state directory changed during legacy identity validation: ${stateDir}`,
+    );
+  }
+}
+
+function assertRegularFileProof(proof: RegularFileProof): void {
+  const current = fs.lstatSync(proof.path);
+  if (!sameFileIdentity(fileIdentity(current), proof.identity)) {
+    throw new Error(`File changed during gateway identity validation: ${proof.path}`);
+  }
+  if (!proof.file.readBytes(64 * 1024).equals(proof.bytes)) {
+    throw new Error(`File contents changed during gateway identity validation: ${proof.path}`);
+  }
+}
+
+function closeRegularFileProof(proof: RegularFileProof): void {
+  proof.file.close();
+}
+
+function assertExistingConfigProof(proof: ExistingConfigProof): void {
+  assertStateDirectoryIdentity(proof.stateDir, proof.stateDirIdentity);
+  assertRegularFileProof(proof);
+}
+
+function closeLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
+  for (const file of proof.files) closeRegularFileProof(file);
+}
+
+function assertLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
+  const currentDirectory = fs.lstatSync(proof.jwtDir);
+  if (!sameFileIdentity(fileIdentity(currentDirectory), proof.directoryIdentity)) {
+    throw new Error(`Legacy gateway JWT directory changed during validation: ${proof.jwtDir}`);
+  }
+  for (const file of proof.files) assertRegularFileProof(file);
+}
+
+function openOwnedLegacyJwtBundle(stateDir: string, ownerUid: number): LegacyJwtBundleProof {
+  const jwtDir = path.join(stateDir, "jwt");
+  let directoryState: fs.Stats;
+  try {
+    directoryState = fs.lstatSync(jwtDir);
+  } catch (error) {
+    throw new Error(`Legacy gateway JWT bundle is incomplete or unsafe: ${jwtDir}`, {
+      cause: error,
+    });
+  }
+  if (
+    !directoryState.isDirectory() ||
+    directoryState.isSymbolicLink() ||
+    directoryState.uid !== ownerUid ||
+    (directoryState.mode & 0o077) !== 0
+  ) {
+    throw new Error(`Legacy gateway JWT directory is not private and owner-controlled: ${jwtDir}`);
+  }
+  const directoryIdentity = fileIdentity(directoryState);
+  const files: RegularFileProof[] = [];
+  const contents = new Map<string, Buffer>();
+  try {
+    for (const candidate of Object.values(gatewayJwtBundlePaths(stateDir))) {
+      let file: OpenRegularFile;
+      try {
+        file = openRegularFileNoFollow(candidate);
+      } catch (error) {
+        throw new Error(`Legacy gateway JWT bundle is incomplete or unsafe: ${candidate}`, {
+          cause: error,
+        });
+      }
+      try {
+        const state = fs.lstatSync(candidate);
+        if (state.uid !== ownerUid || (state.mode & 0o077) !== 0) {
+          throw new Error(
+            `Legacy gateway JWT file is not private and owner-controlled: ${candidate}`,
+          );
+        }
+        const bytes = file.readBytes(64 * 1024);
+        if (bytes.length === 0) {
+          throw new Error(`Legacy gateway JWT file is empty: ${candidate}`);
+        }
+        files.push({ bytes, file, identity: fileIdentity(state), path: candidate });
+        contents.set(candidate, bytes);
+      } catch (error) {
+        file.close();
+        throw error;
+      }
+    }
+    const bundle = gatewayJwtBundlePaths(stateDir);
+    try {
+      const privateKey = createPrivateKey(contents.get(bundle.signingKeyPath) ?? Buffer.alloc(0));
+      const publicKey = createPublicKey(contents.get(bundle.publicKeyPath) ?? Buffer.alloc(0));
+      const kid = contents.get(bundle.kidPath)?.toString("utf-8").trim();
+      const payload = Buffer.from("nemoclaw-legacy-gateway-jwt-bundle-check", "utf-8");
+      if (
+        !kid ||
+        privateKey.asymmetricKeyType !== "ed25519" ||
+        publicKey.asymmetricKeyType !== "ed25519" ||
+        !verify(null, payload, publicKey, sign(null, payload, privateKey))
+      ) {
+        throw new Error("the keypair or key id is invalid");
+      }
+    } catch (error) {
+      throw new Error(`Legacy gateway JWT bundle is invalid: ${jwtDir}`, { cause: error });
+    }
+    const proof = {
+      bundle,
+      directoryIdentity,
+      files,
+      jwtDir,
+    };
+    assertLegacyJwtBundleProof(proof);
+    return proof;
+  } catch (error) {
+    for (const file of files) closeRegularFileProof(file);
+    throw error;
+  }
+}
+
+function gatewayStateHasDurableIdentityEvidence(stateDir: string): boolean {
+  for (const name of ["jwt", "openshell.db", "openshell-gateway.pid", "runtime.json"]) {
+    try {
+      fs.lstatSync(path.join(stateDir, name));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return true;
+    }
+  }
+  return false;
+}
+
+function ambiguousGatewayConfig(configPath: string, detail: string): Error {
+  return new Error(
+    `Refusing to rewrite ${configPath}: NemoClaw cannot prove its generated gateway identity (${detail})`,
+  );
+}
+
 function tomlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -27,7 +236,12 @@ function writeRestrictedFile(filePath: string, value: string, mode = 0o600): voi
   fs.chmodSync(filePath, mode);
 }
 
-function writeRestrictedFileAtomic(filePath: string, value: string, mode = 0o600): void {
+function writeRestrictedFileAtomic(
+  filePath: string,
+  value: string,
+  mode = 0o600,
+  beforeCommit?: () => void,
+): void {
   const dir = path.dirname(filePath);
   const basename = path.basename(filePath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -39,6 +253,7 @@ function writeRestrictedFileAtomic(filePath: string, value: string, mode = 0o600
   let committed = false;
   try {
     writeRestrictedFile(tmpPath, value, mode);
+    beforeCommit?.();
     fs.renameSync(tmpPath, filePath);
     fs.chmodSync(filePath, mode);
     committed = true;
@@ -63,46 +278,259 @@ export function gatewayIdForStateDir(stateDir: string): string {
   return `nemoclaw-${leaf || "gateway"}-${suffix}`;
 }
 
+function legacyGatewayIdForStateDir(stateDir: string): string {
+  const leaf = path.basename(path.resolve(stateDir)).replace(/[^A-Za-z0-9_.-]/g, "-");
+  return leaf ? `nemoclaw-${leaf}` : "nemoclaw";
+}
+
+function gatewayJwtBundlePaths(stateDir: string): DockerDriverGatewayJwtBundle {
+  const jwtDir = path.join(stateDir, "jwt");
+  return {
+    signingKeyPath: path.join(jwtDir, "signing.pem"),
+    publicKeyPath: path.join(jwtDir, "public.pem"),
+    kidPath: path.join(jwtDir, "kid"),
+  };
+}
+
+function asTomlTable(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function assignStringEnv(env: Record<string, string>, key: string, value: unknown): void {
+  if (typeof value === "string") env[key] = value;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function existingGatewayIdentityFromConfig(
+  stateDir: string,
+  driver: DockerDriverGatewayDriver,
+): DockerDriverGatewayIdentity | null {
+  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  let configFile: OpenRegularFile | null = null;
+  let configProof: ExistingConfigProof | null = null;
+  let state: fs.Stats;
+  try {
+    state = fs.lstatSync(stateDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+
+  if (!state.isDirectory() || state.isSymbolicLink()) {
+    throw ambiguousGatewayConfig(configPath, "the state path is not a real directory");
+  }
+
+  let config: fs.Stats;
+  try {
+    config = fs.lstatSync(configPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (gatewayStateHasDurableIdentityEvidence(stateDir)) {
+      throw ambiguousGatewayConfig(configPath, "durable gateway state exists without a config");
+    }
+    return null;
+  }
+
+  if (typeof process.getuid !== "function") {
+    throw ambiguousGatewayConfig(configPath, "ownership verification is unavailable");
+  }
+  if (state.uid !== process.getuid() || (state.mode & 0o777) !== 0o700) {
+    throw ambiguousGatewayConfig(
+      configPath,
+      "the state directory is not owner-controlled with mode 0700",
+    );
+  }
+
+  try {
+    if (
+      !config.isFile() ||
+      config.isSymbolicLink() ||
+      config.nlink !== 1 ||
+      config.uid !== state.uid ||
+      (config.mode & 0o077) !== 0
+    ) {
+      throw ambiguousGatewayConfig(configPath, "the config is not a private owned regular file");
+    }
+    try {
+      configFile = openRegularFileNoFollow(configPath);
+    } catch (error) {
+      throw ambiguousGatewayConfig(
+        configPath,
+        `the config could not be opened safely: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const openedConfig = fs.lstatSync(configPath);
+    if (
+      openedConfig.uid !== state.uid ||
+      openedConfig.dev !== config.dev ||
+      openedConfig.ino !== config.ino ||
+      openedConfig.mode !== config.mode
+    ) {
+      throw ambiguousGatewayConfig(configPath, "the config changed while it was opened");
+    }
+    let originalToml: string;
+    try {
+      originalToml = configFile.readBytes(64 * 1024).toString("utf-8");
+    } catch (error) {
+      throw ambiguousGatewayConfig(
+        configPath,
+        `the config could not be read safely: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    configProof = {
+      bytes: Buffer.from(originalToml, "utf-8"),
+      file: configFile,
+      identity: fileIdentity(openedConfig),
+      path: configPath,
+      stateDir,
+      stateDirIdentity: fileIdentity(state),
+    };
+    configFile = null;
+    let parsed: Record<string, unknown> | null;
+    try {
+      parsed = asTomlTable(parseToml(originalToml));
+    } catch (error) {
+      throw ambiguousGatewayConfig(
+        configPath,
+        `the config is not valid TOML: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const openshell = asTomlTable(parsed?.openshell);
+    const gateway = asTomlTable(openshell?.gateway);
+    const gatewayJwt = asTomlTable(gateway?.gateway_jwt);
+    const drivers = asTomlTable(openshell?.drivers);
+    const driverConfig = asTomlTable(drivers?.[driver]);
+    if (!parsed || !openshell || !gateway || !gatewayJwt || !drivers || !driverConfig) {
+      throw ambiguousGatewayConfig(configPath, "the config does not match NemoClaw's schema");
+    }
+    const requiredDriverFields =
+      driver === "docker"
+        ? [
+            "grpc_endpoint",
+            "network_name",
+            "supervisor_image",
+            "guest_tls_ca",
+            "guest_tls_cert",
+            "guest_tls_key",
+          ]
+        : [
+            "grpc_endpoint",
+            "host_gateway_ip",
+            "socket_path",
+            "network_name",
+            "supervisor_image",
+            "guest_tls_ca",
+            "guest_tls_cert",
+            "guest_tls_key",
+          ];
+    if (!requiredDriverFields.every((field) => isNonEmptyString(driverConfig[field]))) {
+      throw ambiguousGatewayConfig(configPath, "the driver config is incomplete");
+    }
+
+    const configuredGatewayId = gatewayJwt.gateway_id;
+    const namespace = driverConfig.sandbox_namespace;
+    const legacyGatewayId = legacyGatewayIdForStateDir(stateDir);
+    const scopedGatewayId = gatewayIdForStateDir(stateDir);
+    const hasLegacyNamespace =
+      driver === "docker"
+        ? namespace === undefined || namespace === "default"
+        : namespace === undefined;
+    const hasScopedNamespace =
+      driver === "docker" ? namespace === scopedGatewayId : namespace === undefined;
+    const isLegacy = configuredGatewayId === legacyGatewayId && hasLegacyNamespace;
+    const isScoped = configuredGatewayId === scopedGatewayId && hasScopedNamespace;
+    if (!isLegacy && !isScoped) {
+      throw ambiguousGatewayConfig(
+        configPath,
+        "the JWT issuer and sandbox namespace are neither the legacy nor scoped identity",
+      );
+    }
+
+    const parsedEnv: Record<string, string> = {
+      OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+    };
+    if (driver === "podman") parsedEnv.OPENSHELL_DRIVERS = "podman";
+    if (driverConfig.enable_bind_mounts === true) {
+      parsedEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";
+    }
+    assignStringEnv(parsedEnv, "OPENSHELL_GRPC_ENDPOINT", driverConfig.grpc_endpoint);
+    assignStringEnv(parsedEnv, "OPENSHELL_PODMAN_SOCKET", driverConfig.socket_path);
+    assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_NETWORK_NAME", driverConfig.network_name);
+    assignStringEnv(parsedEnv, "OPENSHELL_DOCKER_SUPERVISOR_IMAGE", driverConfig.supervisor_image);
+    const configuredSandboxBin =
+      typeof driverConfig.supervisor_bin === "string" ? driverConfig.supervisor_bin : undefined;
+    const canonicalToml = buildDockerDriverGatewayConfigTomlForIdentity(
+      parsedEnv,
+      configuredSandboxBin,
+      gatewayJwtBundlePaths(stateDir),
+      String(configuredGatewayId),
+      typeof namespace === "string" ? namespace : null,
+    );
+    if (originalToml !== canonicalToml) {
+      throw ambiguousGatewayConfig(
+        configPath,
+        "the config does not match NemoClaw's generated form",
+      );
+    }
+
+    if (isLegacy) {
+      const identity: LegacyGatewayIdentity = {
+        configProof,
+        gatewayId: legacyGatewayId,
+        jwtProof: openOwnedLegacyJwtBundle(stateDir, state.uid),
+        kind: "legacy",
+        sandboxNamespace: "default",
+      };
+      configProof = null;
+      return identity;
+    }
+
+    if (isScoped) {
+      const identity: DockerDriverGatewayIdentity = {
+        configProof,
+        gatewayId: scopedGatewayId,
+        kind: "scoped",
+        sandboxNamespace: scopedGatewayId,
+      };
+      configProof = null;
+      return identity;
+    }
+
+    throw new Error("unreachable gateway identity classification");
+  } finally {
+    configFile?.close();
+    if (configProof) closeRegularFileProof(configProof);
+  }
+}
+
+function resolveDockerDriverGatewayIdentity(
+  stateDir: string,
+  gatewayEnv: Record<string, string>,
+): DockerDriverGatewayIdentity {
+  const driver: DockerDriverGatewayDriver =
+    gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
+  const existing = existingGatewayIdentityFromConfig(stateDir, driver);
+  if (existing) return existing;
+  const gatewayId = gatewayIdForStateDir(stateDir);
+  return { configProof: null, kind: "scoped", gatewayId, sandboxNamespace: gatewayId };
+}
+
 /** Prove that a NemoClaw-owned Docker gateway config uses its state-scoped namespace. */
 export function hasStateScopedSandboxNamespace(stateDir: string): boolean {
-  if (typeof process.getuid !== "function" || typeof fs.constants.O_NOFOLLOW !== "number") {
-    return false;
-  }
-  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
-  let descriptor: number | undefined;
+  let identity: DockerDriverGatewayIdentity | null = null;
   try {
-    const state = fs.lstatSync(stateDir);
-    descriptor = fs.openSync(configPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const config = fs.fstatSync(descriptor);
-    if (
-      !state.isDirectory() ||
-      state.isSymbolicLink() ||
-      !config.isFile() ||
-      config.nlink !== 1 ||
-      state.uid !== process.getuid() ||
-      config.uid !== state.uid ||
-      config.size > 64 * 1024
-    ) {
-      return false;
-    }
-    const expected = `sandbox_namespace = ${tomlString(gatewayIdForStateDir(stateDir))}`;
-    let inDriverTable = false;
-    const matches = fs
-      .readFileSync(descriptor, "utf-8")
-      .split(/\r?\n/)
-      .filter((line) => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-          inDriverTable = trimmed === "[openshell.drivers.docker]";
-          return false;
-        }
-        return inDriverTable && trimmed.startsWith("sandbox_namespace =");
-      });
-    return matches.length === 1 && matches[0]?.trim() === expected;
+    identity = existingGatewayIdentityFromConfig(stateDir, "docker");
+    return identity?.kind === "scoped";
   } catch {
     return false;
   } finally {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
+    if (identity?.kind === "legacy") closeLegacyJwtBundleProof(identity.jwtProof);
+    if (identity?.configProof) closeRegularFileProof(identity.configProof);
   }
 }
 
@@ -114,17 +542,18 @@ function gatewayLocalTlsDir(gatewayEnv: Record<string, string>): string {
   return localTlsDir;
 }
 
-export function buildDockerDriverGatewayConfigToml(
+function buildDockerDriverGatewayConfigTomlForIdentity(
   gatewayEnv: Record<string, string>,
   sandboxBin?: string | null,
   jwtBundle?: DockerDriverGatewayJwtBundle | null,
   gatewayId = "nemoclaw",
+  sandboxNamespace: string | null = gatewayId,
 ): string {
   const driver = gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const dockerEntries: [string, string | boolean | undefined][] = [
     ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
-    ["sandbox_namespace", driver === "docker" ? gatewayId : undefined],
+    ["sandbox_namespace", driver === "docker" ? (sandboxNamespace ?? undefined) : undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
     ["socket_path", driver === "podman" ? gatewayEnv.OPENSHELL_PODMAN_SOCKET : undefined],
@@ -191,24 +620,81 @@ export function buildDockerDriverGatewayConfigToml(
   return sections.join("\n");
 }
 
+export function buildDockerDriverGatewayConfigToml(
+  gatewayEnv: Record<string, string>,
+  sandboxBin?: string | null,
+  jwtBundle?: DockerDriverGatewayJwtBundle | null,
+  gatewayId = "nemoclaw",
+): string {
+  return buildDockerDriverGatewayConfigTomlForIdentity(
+    gatewayEnv,
+    sandboxBin,
+    jwtBundle,
+    gatewayId,
+    gatewayId,
+  );
+}
+
+function writeDockerDriverGatewayConfigWithIdentity(
+  stateDir: string,
+  gatewayEnv: Record<string, string>,
+  sandboxBin: string | null | undefined,
+  identity: DockerDriverGatewayIdentity,
+): string {
+  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
+  if (identity.kind === "legacy") {
+    try {
+      assertExistingConfigProof(identity.configProof);
+      assertLegacyJwtBundleProof(identity.jwtProof);
+      writeRestrictedFileAtomic(
+        configPath,
+        buildDockerDriverGatewayConfigTomlForIdentity(
+          gatewayEnv,
+          sandboxBin,
+          identity.jwtProof.bundle,
+          identity.gatewayId,
+          identity.sandboxNamespace,
+        ),
+        0o600,
+        () => {
+          assertExistingConfigProof(identity.configProof);
+          assertLegacyJwtBundleProof(identity.jwtProof);
+        },
+      );
+      // Existing containers and sandbox JWTs embed this namespace and
+      // issuer. Other generated settings still follow the current runtime.
+      return configPath;
+    } finally {
+      closeRegularFileProof(identity.configProof);
+      closeLegacyJwtBundleProof(identity.jwtProof);
+    }
+  }
+  try {
+    if (identity.configProof) assertExistingConfigProof(identity.configProof);
+    const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+    writeRestrictedFileAtomic(
+      configPath,
+      buildDockerDriverGatewayConfigToml(gatewayEnv, sandboxBin, jwtBundle, identity.gatewayId),
+      0o600,
+      identity.configProof ? () => assertExistingConfigProof(identity.configProof!) : undefined,
+    );
+    return configPath;
+  } finally {
+    if (identity.configProof) closeRegularFileProof(identity.configProof);
+  }
+}
+
 export function writeDockerDriverGatewayConfig(
   stateDir: string,
   gatewayEnv: Record<string, string>,
   sandboxBin?: string | null,
 ): string {
-  const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
-  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
-  writeRestrictedFileAtomic(
-    configPath,
-    buildDockerDriverGatewayConfigToml(
-      gatewayEnv,
-      sandboxBin,
-      jwtBundle,
-      gatewayIdForStateDir(stateDir),
-    ),
-    0o600,
+  return writeDockerDriverGatewayConfigWithIdentity(
+    stateDir,
+    gatewayEnv,
+    sandboxBin,
+    resolveDockerDriverGatewayIdentity(stateDir, gatewayEnv),
   );
-  return configPath;
 }
 
 export function prepareDockerDriverGatewayConfigEnv(
@@ -216,15 +702,17 @@ export function prepareDockerDriverGatewayConfigEnv(
   stateDir: string,
   sandboxBin?: string | null,
 ): Record<string, string> {
-  gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfig(
+  const identity = resolveDockerDriverGatewayIdentity(stateDir, gatewayEnv);
+  gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,
     gatewayEnv,
     sandboxBin,
+    identity,
   );
   if (gatewayEnv.OPENSHELL_DRIVERS === "podman") {
     delete gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   } else {
-    gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] = gatewayIdForStateDir(stateDir);
+    gatewayEnv[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] = identity.sandboxNamespace;
   }
   return gatewayEnv;
 }

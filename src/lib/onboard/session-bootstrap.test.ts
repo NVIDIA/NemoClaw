@@ -83,6 +83,7 @@ function createDeps(
     exitProcess: vi.fn((code: number) => {
       throw new ExitError(code);
     }) as (code: number) => never,
+    requireHostMountRuntimeSupport: vi.fn(),
     resolveResumeCheckpoint: vi.fn((): CheckpointLoadResult => ({ status: "none" })),
     ...overrides,
   };
@@ -122,6 +123,36 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
+  });
+
+  it("rejects unsupported fresh-session host mounts before changing session state", async () => {
+    const existing = createSession({ sessionId: "old-session" });
+    const requireHostMountRuntimeSupport = vi.fn(() => {
+      throw new Error("unsupported runtime provider");
+    });
+    const { deps } = createDeps(existing, { requireHostMountRuntimeSupport });
+    const mounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: false,
+          fresh: true,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          requestedHostMounts: mounts,
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("unsupported runtime provider");
+
+    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts, undefined);
+    expect(deps.clearSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
   });
 
   it("publishes portable runtime intent in the first atomic session envelope", async () => {
@@ -278,6 +309,38 @@ describe("prepareOnboardSession", () => {
       { source: "/srv/project", target: "/sandbox/project", readOnly: true },
     ]);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
+  });
+
+  it("rejects unsupported persisted host mounts before changing a resumed session", async () => {
+    const mounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+    const initial = createSession({
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts: mounts },
+    });
+    const requireHostMountRuntimeSupport = vi.fn(() => {
+      throw new Error("unsupported runtime provider");
+    });
+    const { deps } = createDeps(initial, { requireHostMountRuntimeSupport });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: true,
+          nonInteractive: true,
+          checkpointProfile: "portable",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("unsupported runtime provider");
+
+    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts, "portable");
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(deps.applySessionRecovery).not.toHaveBeenCalled();
   });
 
   it("preserves recorded serving profile provenance during resume (#8246)", async () => {

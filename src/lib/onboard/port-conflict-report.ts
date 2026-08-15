@@ -25,11 +25,10 @@ export function formatPortConflictReport(input: PortConflictReportInput): string
     lines.push(
       `     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`,
       "",
-      "     To fix, stop the conflicting process:",
+      "     To fix, verify that the same process still owns the port:",
       "",
-      portCheck.pid
-        ? `       sudo kill ${portCheck.pid}`
-        : `       sudo lsof -i :${port} -sTCP:LISTEN -P -n`,
+      `       sudo lsof -i :${port} -sTCP:LISTEN -P -n`,
+      "     Stop it through its service manager, or signal only the PID from that fresh check.",
       ...serviceHints,
     );
   } else {
