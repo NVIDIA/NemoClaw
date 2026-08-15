@@ -16,17 +16,34 @@ const UID_ENV: NodeJS.ProcessEnv = {
   NETAVARK_FW: "iptables",
 };
 
-function receiptFile(stateDir: string, name: string, containerId: string): string {
+function receiptFile(
+  stateDir: string,
+  name: string,
+  containerId: string,
+): string {
   return `${portableReceiptDirectory(stateDir)}/${name}`;
 }
 
-function commandRecorder(script: (command: string, args: string[]) => CommandResult) {
+function commandRecorder(
+  script: (command: string, args: string[]) => CommandResult,
+) {
   const calls: Array<{ command: string; args: string[] }> = [];
   const run = (command: string, args: string[]): CommandResult => {
     calls.push({ command, args });
     return script(command, args);
   };
   return { calls, run };
+}
+
+function scriptedCommand(
+  responses: Readonly<Record<string, CommandResult>>,
+): (command: string, args: string[]) => CommandResult {
+  return (command, args) =>
+    responses[`${command}:${command === "systemctl" ? args[1] : args[0]}`] ?? {
+      status: 1,
+      stdout: "",
+      stderr: "unexpected",
+    };
 }
 
 describe("readPortableReceipt", () => {
@@ -41,7 +58,9 @@ describe("readPortableReceipt", () => {
     expect(readPortableReceipt("a.json", () => "{not json")).toBeNull();
     expect(readPortableReceipt("a.json", () => "{}")).toBeNull();
     expect(
-      readPortableReceipt("a.json", () => JSON.stringify({ containerId: "../not-a-container-id" })),
+      readPortableReceipt("a.json", () =>
+        JSON.stringify({ containerId: "../not-a-container-id" }),
+      ),
     ).toBeNull();
     expect(
       readPortableReceipt("a.json", () => {
@@ -53,7 +72,11 @@ describe("readPortableReceipt", () => {
 
 describe("teardownPortableRuntime", () => {
   it("is a no-op when there is no portable runtime to tear down", () => {
-    const { calls, run } = commandRecorder(() => ({ status: 1, stdout: "", stderr: "nope" }));
+    const { calls, run } = commandRecorder(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "nope",
+    }));
     const result = teardownPortableRuntime({
       env: { HOME: "/home/tester" },
       stateDir: "/home/tester/.nemoclaw",
@@ -74,9 +97,13 @@ describe("teardownPortableRuntime", () => {
     expect(result.unsetSelectors).toEqual([]);
     // No destructive calls when there is nothing to remove (the label scan and
     // the user-manager selector probe are read-only).
-    expect(calls.filter((c) => c.command === "podman" && c.args[0] === "rm")).toEqual([]);
     expect(
-      calls.filter((c) => c.command === "systemctl" && c.args[1] === "unset-environment"),
+      calls.filter((c) => c.command === "podman" && c.args[0] === "rm"),
+    ).toEqual([]);
+    expect(
+      calls.filter(
+        (c) => c.command === "systemctl" && c.args[1] === "unset-environment",
+      ),
     ).toEqual([]);
   });
 
@@ -85,30 +112,27 @@ describe("teardownPortableRuntime", () => {
     const sandboxId = "aaaabbbbccccdddd";
     const registryId = "1111222233334444";
     const file = receiptFile(stateDir, "deadbeef.json", sandboxId);
-    const { calls, run } = commandRecorder((command, args) => {
-      if (command === "podman" && args[0] === "ps") {
-        return { status: 0, stdout: `${registryId}\n`, stderr: "" };
-      }
-      if (command === "podman" && args[0] === "rm") {
-        return { status: 0, stdout: "", stderr: "" };
-      }
-      if (command === "systemctl" && args[1] === "show-environment") {
-        return {
+    const { calls, run } = commandRecorder(
+      scriptedCommand({
+        "podman:ps": { status: 0, stdout: `${registryId}\n`, stderr: "" },
+        "podman:rm": { status: 0, stdout: "", stderr: "" },
+        "systemctl:show-environment": {
           status: 0,
           stdout:
             "CONTAINERS_CONF=/home/tester/.config/nemoclaw/portable/containers.conf\nNETAVARK_FW=iptables\n",
           stderr: "",
-        };
-      }
-      return { status: 1, stdout: "", stderr: "unexpected" };
-    });
+        },
+      }),
+    );
     const removed: string[] = [];
     const result = teardownPortableRuntime({
       env: UID_ENV,
       stateDir,
       run,
-      readDirSync: (dir) => (dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : []),
-      readFileSync: (f) => (f === file ? JSON.stringify({ containerId: sandboxId }) : ""),
+      readDirSync: (dir) =>
+        dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : [],
+      readFileSync: (f) =>
+        f === file ? JSON.stringify({ containerId: sandboxId }) : "",
       rmSync: (f) => {
         removed.push(f);
       },
@@ -119,7 +143,9 @@ describe("teardownPortableRuntime", () => {
     expect(result.removedContainerIds).toEqual([sandboxId, registryId]);
     expect(result.removedReceiptFiles).toEqual([file]);
     expect(removed).toEqual([file]);
-    const rmCalls = calls.filter((c) => c.command === "podman" && c.args[0] === "rm");
+    const rmCalls = calls.filter(
+      (c) => c.command === "podman" && c.args[0] === "rm",
+    );
     expect(rmCalls.map((c) => c.args[2])).toEqual([sandboxId, registryId]);
   });
 
@@ -127,28 +153,29 @@ describe("teardownPortableRuntime", () => {
     const stateDir = "/home/tester/.nemoclaw";
     const sandboxId = "aaaabbbbccccdddd";
     const file = receiptFile(stateDir, "deadbeef.json", sandboxId);
-    const { calls, run } = commandRecorder((command, args) => {
-      if (command === "podman" && args[0] === "ps") {
-        return { status: 0, stdout: `${sandboxId}\n`, stderr: "" };
-      }
-      if (command === "podman" && args[0] === "rm") {
-        return { status: 0, stdout: "", stderr: "" };
-      }
-      return { status: 1, stdout: "", stderr: "unexpected" };
-    });
+    const { calls, run } = commandRecorder(
+      scriptedCommand({
+        "podman:ps": { status: 0, stdout: `${sandboxId}\n`, stderr: "" },
+        "podman:rm": { status: 0, stdout: "", stderr: "" },
+      }),
+    );
     const result = teardownPortableRuntime({
       env: { HOME: "/home/tester" },
       stateDir,
       run,
-      readDirSync: (dir) => (dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : []),
-      readFileSync: (f) => (f === file ? JSON.stringify({ containerId: sandboxId }) : ""),
+      readDirSync: (dir) =>
+        dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : [],
+      readFileSync: (f) =>
+        f === file ? JSON.stringify({ containerId: sandboxId }) : "",
       rmSync: () => {},
       log: () => {},
       warn: () => {},
     });
     expect(result.ok).toBe(true);
     expect(result.removedContainerIds).toEqual([sandboxId]);
-    const rmCalls = calls.filter((c) => c.command === "podman" && c.args[0] === "rm");
+    const rmCalls = calls.filter(
+      (c) => c.command === "podman" && c.args[0] === "rm",
+    );
     expect(rmCalls).toHaveLength(1);
   });
 
@@ -156,21 +183,24 @@ describe("teardownPortableRuntime", () => {
     const stateDir = "/home/tester/.nemoclaw";
     const sandboxId = "aaaabbbbccccdddd";
     const file = receiptFile(stateDir, "deadbeef.json", sandboxId);
-    const { calls, run } = commandRecorder((command, args) => {
-      if (command === "podman" && args[0] === "ps") {
-        return { status: 0, stdout: "", stderr: "" };
-      }
-      if (command === "podman" && args[0] === "rm") {
-        return { status: 1, stdout: "", stderr: "Error: No such container" };
-      }
-      return { status: 1, stdout: "", stderr: "unexpected" };
-    });
+    const { calls, run } = commandRecorder(
+      scriptedCommand({
+        "podman:ps": { status: 0, stdout: "", stderr: "" },
+        "podman:rm": {
+          status: 1,
+          stdout: "",
+          stderr: "Error: No such container",
+        },
+      }),
+    );
     const result = teardownPortableRuntime({
       env: { HOME: "/home/tester" },
       stateDir,
       run,
-      readDirSync: (dir) => (dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : []),
-      readFileSync: (f) => (f === file ? JSON.stringify({ containerId: sandboxId }) : ""),
+      readDirSync: (dir) =>
+        dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : [],
+      readFileSync: (f) =>
+        f === file ? JSON.stringify({ containerId: sandboxId }) : "",
       rmSync: () => {},
       log: () => {},
       warn: () => {},
@@ -178,19 +208,26 @@ describe("teardownPortableRuntime", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toContain("could not all be removed");
     // The registry scan still ran.
-    expect(calls.some((c) => c.command === "podman" && c.args[0] === "ps")).toBe(true);
+    expect(
+      calls.some((c) => c.command === "podman" && c.args[0] === "ps"),
+    ).toBe(true);
   });
 
   it("skips malformed receipts without deleting or removing them", () => {
     const stateDir = "/home/tester/.nemoclaw";
     const file = receiptFile(stateDir, "deadbeef.json", "ignored");
-    const { calls, run } = commandRecorder(() => ({ status: 0, stdout: "", stderr: "" }));
+    const { calls, run } = commandRecorder(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
     const removed: string[] = [];
     const result = teardownPortableRuntime({
       env: { HOME: "/home/tester" },
       stateDir,
       run,
-      readDirSync: (dir) => (dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : []),
+      readDirSync: (dir) =>
+        dir === portableReceiptDirectory(stateDir) ? ["deadbeef.json"] : [],
       readFileSync: () => "{not json",
       rmSync: (f) => {
         removed.push(f);
@@ -208,39 +245,46 @@ describe("teardownPortableRuntime", () => {
 
 describe("clearPortableUserManagerSelectors", () => {
   it("unsets only the NemoClaw-owned selectors", () => {
-    const { calls, run } = commandRecorder((command, args) => {
-      if (command === "systemctl" && args[1] === "show-environment") {
-        return {
+    const { calls, run } = commandRecorder(
+      scriptedCommand({
+        "systemctl:show-environment": {
           status: 0,
           stdout:
             "CONTAINERS_CONF=/home/tester/.config/nemoclaw/portable/containers.conf\n" +
             "NETAVARK_FW=iptables\n" +
             "MY_APP=/unrelated/path\n",
           stderr: "",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+        },
+        "systemctl:unset-environment": { status: 0, stdout: "", stderr: "" },
+      }),
+    );
     const unset = clearPortableUserManagerSelectors(UID_ENV, run);
     expect(unset).toEqual(["CONTAINERS_CONF", "NETAVARK_FW"]);
     const unsetCalls = calls.filter(
       (c) => c.command === "systemctl" && c.args[1] === "unset-environment",
     );
-    expect(unsetCalls.map((c) => c.args[2])).toEqual(["CONTAINERS_CONF", "NETAVARK_FW"]);
+    expect(unsetCalls.map((c) => c.args[2])).toEqual([
+      "CONTAINERS_CONF",
+      "NETAVARK_FW",
+    ]);
   });
 
   it("leaves unrelated selector values alone", () => {
-    const { calls, run } = commandRecorder((command, args) => {
-      if (command === "systemctl" && args[1] === "show-environment") {
-        return {
+    const { calls, run } = commandRecorder(
+      scriptedCommand({
+        "systemctl:show-environment": {
           status: 0,
-          stdout: "CONTAINERS_CONF=/etc/containers/containers.conf\n" + "NETAVARK_FW=firewalld\n",
+          stdout:
+            "CONTAINERS_CONF=/etc/containers/containers.conf\n" +
+            "NETAVARK_FW=firewalld\n",
           stderr: "",
-        };
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
-    const unset = clearPortableUserManagerSelectors({ HOME: "/home/tester" }, run);
+        },
+      }),
+    );
+    const unset = clearPortableUserManagerSelectors(
+      { HOME: "/home/tester" },
+      run,
+    );
     expect(unset).toEqual([]);
     const unsetCalls = calls.filter(
       (c) => c.command === "systemctl" && c.args[1] === "unset-environment",
