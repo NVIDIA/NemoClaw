@@ -475,7 +475,7 @@ The `actions/setup-node` step selects Node.js 22 and disables automatic package 
 An exact-argument and asset-allowlisted `gh` shim presents only the retained files to the unchanged trusted `scripts/install-openshell.sh` path.
 A separate `curl` shim blocks network fallback.
 The installer still checks the release checksums and archive structure before installation.
-Each product shard installs OpenShell and revokes Docker credentials before candidate dependency preparation begins.
+Each product shard revokes Docker credentials, then installs OpenShell before candidate dependency preparation begins.
 Dependency preparation can read candidate project configuration and is the first candidate-controlled execution boundary.
 The candidate CLI artifact restore runs after dependency preparation.
 This ordering protects the bytes consumed by the trusted installer before candidate-controlled execution starts.
