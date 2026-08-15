@@ -22,6 +22,12 @@ describe("cloud inference pre-contract provider skip classifier", () => {
     expect(classifyCloudChatFailure("503", "", "expected PONG", undefined)).toBe(
       "transient-external",
     );
+    expect(classifyCloudChatFailure("408", "", "expected PONG", undefined)).toBe(
+      "transient-external",
+    );
+    expect(classifyCloudChatFailure("429", "", "expected PONG", undefined)).toBe(
+      "transient-external",
+    );
     expect(classifyCloudChatFailure("", "", "", new Error("request ETIMEDOUT"))).toBe(
       "transient-external",
     );
@@ -35,6 +41,20 @@ describe("cloud inference pre-contract provider skip classifier", () => {
     expect(classifyCloudChatFailure("200", "", "expected PONG", undefined)).toBe("deterministic");
     expect(
       classifyCloudChatFailure("200", "", "body said rate limit and HTTP 503", undefined),
+    ).toBe("deterministic");
+  });
+
+  it("keeps authentication statuses terminal when transport text is present (#9166)", () => {
+    expect(
+      classifyCloudChatFailure("401", "request timed out", "expected PONG", undefined),
+    ).toBe("deterministic");
+    expect(
+      classifyCloudChatFailure(
+        "403",
+        "failed to connect after ECONNRESET",
+        "expected PONG",
+        undefined,
+      ),
     ).toBe("deterministic");
   });
 

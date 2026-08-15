@@ -51,10 +51,15 @@ export function classifyCloudChatFailure(
   error: unknown,
   timedOut = false,
 ): RetryFailureClass {
-  if (timedOut) return "transient-external";
+  const hasNoResponseStatus = httpStatus === "" || httpStatus === "000";
   const thrownDetail = error instanceof Error ? error.message : "";
-  if (httpStatus === "429" || /^5\d{2}$/u.test(httpStatus)) return "transient-external";
-  if (TRANSIENT_CHAT_FAILURE.test(`${transportOutput}\n${thrownDetail}`)) {
+  if (httpStatus === "408" || httpStatus === "429" || /^5\d{2}$/u.test(httpStatus)) {
+    return "transient-external";
+  }
+  if (
+    hasNoResponseStatus &&
+    (timedOut || TRANSIENT_CHAT_FAILURE.test(`${transportOutput}\n${thrownDetail}`))
+  ) {
     return "transient-external";
   }
   return failure === "response was not parseable JSON" ? "malformed-input" : "deterministic";
