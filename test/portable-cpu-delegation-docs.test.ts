@@ -185,6 +185,29 @@ if [ "\${1-}" = systemctl ]; then
   printf '%s\n' "$*" >> "$SYSTEMCTL_CALL_MARKER"
   exit 0
 fi
+if [ "\${1-}" = stat ]; then
+  if [ "\${2-}" != -Lc ] || [ "\${4-}" != -- ] || [ "$#" -ne 5 ]; then
+    printf 'unexpected stat invocation: %s\n' "$*" >&2
+    exit 1
+  fi
+  exec node -e '
+    const fs = require("node:fs");
+    const metadata = fs.statSync(process.argv[2]);
+    process.stdout.write(
+      process.argv[1]
+        .replace("%d", String(metadata.dev))
+        .replace("%i", String(metadata.ino)),
+    );
+  ' "$3" "$5"
+fi
+if [ "\${1-}" = rm ] || [ "\${1-}" = rmdir ]; then
+  command="$1"
+  shift
+  if [ "\${1-}" = -- ]; then
+    shift
+  fi
+  exec "$command" "$@"
+fi
 exec "$@"
 `,
     { mode: 0o755 },
