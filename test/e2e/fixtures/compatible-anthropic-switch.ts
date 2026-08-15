@@ -12,6 +12,12 @@ export const COMPATIBLE_ANTHROPIC_PROVIDER = "compatible-anthropic-endpoint";
 export const COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const DEFAULT_COMPATIBLE_ANTHROPIC_CREDENTIAL = "test-compatible-anthropic-key";
 const OPENSHELL_HOST_ALIAS = "host.openshell.internal";
+const HOST_VERIFICATION_LOCK_PATH = path.join(
+  os.tmpdir(),
+  "nemoclaw-compatible-endpoint-hosts.lock",
+);
+const HOST_VERIFICATION_LOCK_TIMEOUT_MS = 5 * 60_000;
+const HOST_VERIFICATION_LOCK_POLL_MS = 100;
 
 export interface CompatibleAnthropicSwitchBinding {
   endpointUrl: string;
@@ -49,6 +55,49 @@ export function hostVerificationHostsFile(source: string): string {
   return `127.0.0.1 ${OPENSHELL_HOST_ALIAS}\n${existing}`;
 }
 
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : undefined;
+}
+
+async function withHostVerificationHostsLock<T>(run: () => Promise<T>): Promise<T> {
+  const deadline = Date.now() + HOST_VERIFICATION_LOCK_TIMEOUT_MS;
+  let descriptor: number;
+  while (true) {
+    try {
+      descriptor = fs.openSync(HOST_VERIFICATION_LOCK_PATH, "wx", 0o600);
+      break;
+    } catch (error) {
+      if (errorCode(error) !== "EEXIST") throw error;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `timed out waiting for exclusive host resolver fixture ownership: ${HOST_VERIFICATION_LOCK_PATH}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, HOST_VERIFICATION_LOCK_POLL_MS));
+    }
+  }
+
+  try {
+    return await run();
+  } finally {
+    fs.closeSync(descriptor);
+    fs.unlinkSync(HOST_VERIFICATION_LOCK_PATH);
+  }
+}
+
+const REPLACE_HOSTS_IF_UNCHANGED = [
+  "set -euo pipefail",
+  'expected="$1"',
+  'replacement="$2"',
+  'if ! cmp -s -- "$expected" /etc/hosts; then',
+  '  echo "/etc/hosts changed while the NemoClaw host verifier alias was active" >&2',
+  "  exit 3",
+  "fi",
+  'cp -- "$replacement" /etc/hosts',
+].join("\n");
+
 export async function withHostVerificationLoopbackAlias<T>(
   host: HostCliClient,
   cleanup: { trackDisposable(name: string, run: () => Promise<void> | void): void },
@@ -57,19 +106,46 @@ export async function withHostVerificationLoopbackAlias<T>(
   const fixtureDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "nemoclaw-compatible-endpoint-hosts-"),
   );
-  const originalHosts = fs.readFileSync("/etc/hosts", "utf8");
   const originalPath = path.join(fixtureDirectory, "hosts.original");
   const mappedPath = path.join(fixtureDirectory, "hosts.mapped");
-  fs.writeFileSync(originalPath, originalHosts, { mode: 0o600 });
-  fs.writeFileSync(mappedPath, hostVerificationHostsFile(originalHosts), { mode: 0o600 });
 
   let restored = false;
-  const restore = async (): Promise<void> => {
+  let originalHosts: string | null = null;
+  let mappedHosts: string | null = null;
+  let mappingMayNeedRecovery = false;
+  const restoreWhileLocked = async (): Promise<void> => {
     if (restored) return;
-    const result = await host.command("sudo", ["cp", "--", originalPath, "/etc/hosts"], {
-      artifactName: "restore-host-verifier-alias",
-      timeoutMs: 30_000,
-    });
+    if (!mappingMayNeedRecovery || originalHosts === null || mappedHosts === null) {
+      restored = true;
+      fs.rmSync(fixtureDirectory, { force: true, recursive: true });
+      return;
+    }
+    const currentHosts = fs.readFileSync("/etc/hosts", "utf8");
+    if (currentHosts === originalHosts) {
+      restored = true;
+      fs.rmSync(fixtureDirectory, { force: true, recursive: true });
+      return;
+    }
+    if (currentHosts !== mappedHosts) {
+      throw new Error(
+        "/etc/hosts changed while the host verifier alias was active; refusing to overwrite concurrent resolver state",
+      );
+    }
+    const result = await host.command(
+      "sudo",
+      [
+        "bash",
+        "-ceu",
+        REPLACE_HOSTS_IF_UNCHANGED,
+        "restore-host-verifier-alias",
+        mappedPath,
+        originalPath,
+      ],
+      {
+        artifactName: "restore-host-verifier-alias",
+        timeoutMs: 30_000,
+      },
+    );
     if (result.exitCode !== 0) {
       throw new Error(`could not restore /etc/hosts: ${resultText(result)}`);
     }
@@ -79,20 +155,50 @@ export async function withHostVerificationLoopbackAlias<T>(
     restored = true;
     fs.rmSync(fixtureDirectory, { force: true, recursive: true });
   };
+  const restore = async (): Promise<void> => {
+    if (restored) return;
+    await withHostVerificationHostsLock(restoreWhileLocked);
+  };
   cleanup.trackDisposable("restore the host verifier alias mapping", restore);
 
-  try {
-    const mapped = await host.command("sudo", ["cp", "--", mappedPath, "/etc/hosts"], {
-      artifactName: "map-host-verifier-alias",
-      timeoutMs: 30_000,
-    });
-    if (mapped.exitCode !== 0) {
-      throw new Error(`could not map the host verifier alias: ${resultText(mapped)}`);
+  return await withHostVerificationHostsLock(async () => {
+    originalHosts = fs.readFileSync("/etc/hosts", "utf8");
+    mappedHosts = hostVerificationHostsFile(originalHosts);
+    fs.writeFileSync(originalPath, originalHosts, { mode: 0o600 });
+    fs.writeFileSync(mappedPath, mappedHosts, { mode: 0o600 });
+
+    try {
+      let mapped: Awaited<ReturnType<HostCliClient["command"]>>;
+      try {
+        mapped = await host.command(
+          "sudo",
+          [
+            "bash",
+            "-ceu",
+            REPLACE_HOSTS_IF_UNCHANGED,
+            "map-host-verifier-alias",
+            originalPath,
+            mappedPath,
+          ],
+          {
+            artifactName: "map-host-verifier-alias",
+            timeoutMs: 30_000,
+          },
+        );
+      } finally {
+        mappingMayNeedRecovery = fs.readFileSync("/etc/hosts", "utf8") !== originalHosts;
+      }
+      if (mapped.exitCode !== 0) {
+        throw new Error(`could not map the host verifier alias: ${resultText(mapped)}`);
+      }
+      if (fs.readFileSync("/etc/hosts", "utf8") !== mappedHosts) {
+        throw new Error("/etc/hosts differs after host verifier alias installation");
+      }
+      return await run();
+    } finally {
+      await restoreWhileLocked();
     }
-    return await run();
-  } finally {
-    await restore();
-  }
+  });
 }
 
 export async function requireCompatibleAnthropicProviderAbsent(

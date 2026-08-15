@@ -19,6 +19,17 @@ import {
 describe("compatible Anthropic inference switch setup", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  function mockHostsFixture(reads: string[]) {
+    vi.spyOn(fs, "mkdtempSync").mockReturnValue("/tmp/nemoclaw-compatible-endpoint-hosts-test");
+    vi.spyOn(fs, "openSync").mockReturnValue(42);
+    const close = vi.spyOn(fs, "closeSync").mockImplementation(() => {});
+    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {});
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => reads.shift() ?? "");
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
+    const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {});
+    return { close, remove, unlink };
+  }
+
   it("passes the direct binding credential only to the inference-set command", () => {
     const binding = compatibleAnthropicSwitchBinding("http://host.openshell.internal:18766", {
       COMPATIBLE_ANTHROPIC_API_KEY: "fixture-key",
@@ -58,10 +69,14 @@ describe("compatible Anthropic inference switch setup", () => {
 
   it("restores the host resolver file when verification fails", async () => {
     const originalHosts = "127.0.0.1 localhost\n";
-    vi.spyOn(fs, "mkdtempSync").mockReturnValue("/tmp/nemoclaw-compatible-endpoint-hosts-test");
-    vi.spyOn(fs, "readFileSync").mockReturnValue(originalHosts);
-    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {});
-    const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {});
+    const mappedHosts = hostVerificationHostsFile(originalHosts);
+    const { close, remove, unlink } = mockHostsFixture([
+      originalHosts,
+      mappedHosts,
+      mappedHosts,
+      mappedHosts,
+      originalHosts,
+    ]);
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
     const trackDisposable = vi.fn();
 
@@ -75,24 +90,21 @@ describe("compatible Anthropic inference switch setup", () => {
       ),
     ).rejects.toThrow("verification failed");
 
-    expect(command.mock.calls.map(([program, args]) => [program, args])).toEqual([
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(
+      command.mock.calls.map(([program, args]) => [program, args?.[0], args?.at(-2), args?.at(-1)]),
+    ).toEqual([
       [
         "sudo",
-        [
-          "cp",
-          "--",
-          "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.mapped",
-          "/etc/hosts",
-        ],
+        "bash",
+        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.original",
+        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.mapped",
       ],
       [
         "sudo",
-        [
-          "cp",
-          "--",
-          "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.original",
-          "/etc/hosts",
-        ],
+        "bash",
+        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.mapped",
+        "/tmp/nemoclaw-compatible-endpoint-hosts-test/hosts.original",
       ],
     ]);
     expect(trackDisposable.mock.invocationCallOrder[0]).toBeLessThan(
@@ -102,6 +114,93 @@ describe("compatible Anthropic inference switch setup", () => {
       force: true,
       recursive: true,
     });
+    expect(close).toHaveBeenCalledWith(42);
+    expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not discard a concurrent host resolver update", async () => {
+    const originalHosts = "127.0.0.1 localhost\n";
+    const mappedHosts = hostVerificationHostsFile(originalHosts);
+    const concurrentHosts = `${mappedHosts}192.0.2.10 concurrent.example.test\n`;
+    const { close, remove, unlink } = mockHostsFixture([
+      originalHosts,
+      mappedHosts,
+      mappedHosts,
+      concurrentHosts,
+    ]);
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await expect(
+      withHostVerificationLoopbackAlias(
+        { command } as unknown as HostCliClient,
+        { trackDisposable: vi.fn() },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("refusing to overwrite concurrent resolver state");
+
+    expect(command).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith(42);
+    expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a failed owned resolver restoration", async () => {
+    const originalHosts = "127.0.0.1 localhost\n";
+    const mappedHosts = hostVerificationHostsFile(originalHosts);
+    const { close, remove, unlink } = mockHostsFixture([
+      originalHosts,
+      mappedHosts,
+      mappedHosts,
+      mappedHosts,
+    ]);
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" })
+      .mockResolvedValueOnce({ exitCode: 1, stderr: "permission denied", stdout: "" });
+
+    await expect(
+      withHostVerificationLoopbackAlias(
+        { command } as unknown as HostCliClient,
+        { trackDisposable: vi.fn() },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("could not restore /etc/hosts: permission denied");
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(remove).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith(42);
+    expect(unlink).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores an observed mapping after the mapping runner fails", async () => {
+    const originalHosts = "127.0.0.1 localhost\n";
+    const mappedHosts = hostVerificationHostsFile(originalHosts);
+    const { close, remove, unlink } = mockHostsFixture([
+      originalHosts,
+      mappedHosts,
+      mappedHosts,
+      originalHosts,
+    ]);
+    const command = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("mapping runner disconnected"))
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
+
+    await expect(
+      withHostVerificationLoopbackAlias(
+        { command } as unknown as HostCliClient,
+        { trackDisposable: vi.fn() },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("mapping runner disconnected");
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledWith("/tmp/nemoclaw-compatible-endpoint-hosts-test", {
+      force: true,
+      recursive: true,
+    });
+    expect(close).toHaveBeenCalledWith(42);
+    expect(unlink).toHaveBeenCalledTimes(1);
   });
 
   it("requires the direct provider to be absent before inference set owns its creation", async () => {

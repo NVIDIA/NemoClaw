@@ -969,7 +969,8 @@ flowchart LR
 
 Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
 A main push can queue repository-owned GPU runners or create external resources when a selected target requires them.
-The retry workflow reruns failed jobs at most twice.
+The main-run observer records attempt evidence but does not request broad failed-job reruns.
+Each E2E test owns any bounded operation-level retry policy.
 
 `Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
 The job reads these credentials from repository Actions secrets:
@@ -987,13 +988,14 @@ These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, remove the recorded Brev
 workspace. Rotate or revoke each credential to remove later access.
 
-When an eligible `E2E main` push workflow concludes with `failure`, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
-The controller permits two reruns but does not verify that GitHub schedules a different runner.
-After evaluation succeeds, it uploads an artifact named for the current attempt.
+When an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and the available source-attempt evidence.
+It does not request a broad failed-job or workflow rerun.
+An owning E2E test can retry an external operation only through its checked-in bounded policy.
+After evaluation succeeds, the observer uploads an artifact named for the current attempt.
 The artifact contains one `attempts` summary for each source attempt through the current attempt.
 The `totalRunnerMinutes` field contains the cumulative runner time for those summaries.
 A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`.
-The controller does not retry manual PR runs or a run superseded by a newer `main` push.
+The observer ignores manual PR runs and a run superseded by a newer `main` push.
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
