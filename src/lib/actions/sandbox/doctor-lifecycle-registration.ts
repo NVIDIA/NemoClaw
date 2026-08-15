@@ -27,9 +27,14 @@ function formatFieldList(
 export function buildPortableRuntimeCheck(sandboxName: string): DoctorCheck | null {
   const portable = inspectPortableRuntimeReceiptReadiness(sandboxName);
   if (!portable) return null;
-  const recordedSocket = !portable.ok && portable.socketPath
-    ? ` Recorded socket: ${portable.socketPath}.`
-    : "";
+  const recordedSocket =
+    !portable.ok && portable.socketPath ? ` Recorded socket: ${portable.socketPath}.` : "";
+  const recoveryHint =
+    !portable.ok && !portable.socketPath
+      ? portable.recovery === "current-user-authority"
+        ? "run NemoClaw as the user who created the portable state, or rerun portable onboarding as the current user"
+        : "rerun portable onboarding with `nemoclaw onboard --experimental-profile portable`, then retry"
+      : "repair the recorded current-user Podman endpoint, then retry";
   return portable.ok
     ? {
         group: "Host",
@@ -42,7 +47,7 @@ export function buildPortableRuntimeCheck(sandboxName: string): DoctorCheck | nu
         label: "Portable Podman API",
         status: "fail",
         detail: `${portable.stage}: ${portable.detail}${recordedSocket}`,
-        hint: "repair the recorded current-user Podman endpoint, then retry",
+        hint: recoveryHint,
       };
 }
 

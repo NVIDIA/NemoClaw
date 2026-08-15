@@ -56,6 +56,23 @@ function writePortableReceipt(stateDir: string): void {
   );
 }
 
+function writeLegacyPortableReceipt(stateDir: string): void {
+  const receiptPath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
+  fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
+  fs.writeFileSync(
+    receiptPath,
+    `${JSON.stringify({
+      schemaVersion: 3,
+      sandboxName: "alpha",
+      sandboxId: "sandbox-id-alpha",
+      containerId: "a".repeat(64),
+      dashboardPort: 18789,
+      registryGeneration: "a".repeat(64),
+    })}\n`,
+    { mode: 0o600 },
+  );
+}
+
 function makeRunners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {
     dockerInfo: () => true,
@@ -215,9 +232,7 @@ describe("isDockerRuntimeDown", () => {
       const out: string[] = [];
       printDockerRuntimeDownGuidance("alpha", { writer: (line) => out.push(line) });
       expect(out.join("\n")).toContain("steady-state API health");
-      expect(out.join("\n")).toContain(
-        `Recorded socket: ${PORTABLE_SOCKET_AUTHORITY.socketPath}`,
-      );
+      expect(out.join("\n")).toContain(`Recorded socket: ${PORTABLE_SOCKET_AUTHORITY.socketPath}`);
       expect(out.join("\n")).toContain("no Docker or named-connection fallback was used");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -241,8 +256,38 @@ describe("isDockerRuntimeDown", () => {
       expect(dockerInfo).not.toHaveBeenCalled();
       const out: string[] = [];
       printDockerRuntimeDownGuidance("alpha", { writer: (line) => out.push(line) });
-      expect(out.join("\n")).toContain("socket authority");
-      expect(out.join("\n")).not.toContain("super-secret");
+      const guidance = out.join("\n");
+      expect(guidance).toContain("socket authority");
+      expect(guidance).toContain("nemoclaw onboard --experimental-profile portable");
+      expect(guidance).not.toContain("current user's Podman socket service");
+      expect(guidance).not.toContain("Confirm the recorded endpoint");
+      expect(guidance).not.toContain("super-secret");
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("routes a legacy portable receipt to onboarding without endpoint repair (#9070)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-readiness-"));
+    writeLegacyPortableReceipt(stateDir);
+    const dockerInfo = vi.fn(() => true);
+    try {
+      expect(
+        isDockerRuntimeDown("alpha", {
+          runners: { dockerInfo },
+          getSandbox: dockerSandbox,
+          portableLifecycle: { stateDir },
+        }),
+      ).toBe(true);
+      expect(dockerInfo).not.toHaveBeenCalled();
+
+      const out: string[] = [];
+      printDockerRuntimeDownGuidance("alpha", { writer: (line) => out.push(line) });
+      const guidance = out.join("\n");
+      expect(guidance).toContain("predates recorded portable Podman authority");
+      expect(guidance).toContain("nemoclaw onboard --experimental-profile portable");
+      expect(guidance).not.toContain("current user's Podman socket service");
+      expect(guidance).not.toContain("Confirm the recorded endpoint");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
