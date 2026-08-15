@@ -268,7 +268,8 @@ describe("Pi release cohort separation", () => {
     );
     expect(entrypointStep).toContain('if [ "$EVENT_NAME" = "pull_request" ]; then');
     expect(entrypointStep).toContain('reference="$IMAGE_REFERENCE"');
-    expect(entrypointStep).toContain('reference="${REPOSITORY}@${DIGEST}"');
+    const publishedReference = 'reference="$' + "{REPOSITORY}@$" + '{DIGEST}"';
+    expect(entrypointStep).toContain(publishedReference);
     expect(entrypointStep).not.toContain("--entrypoint /usr/local/bin/nemoclaw-start");
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]');
     expect(dockerfile).toContain("CMD []");
