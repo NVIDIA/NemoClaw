@@ -35,7 +35,18 @@ describe("staging Launchable maintainer guidance", () => {
       "a required GitHub, Brev, browser-control, or inference-credential dependency is unavailable",
     );
     expect(launchable).toContain("candidate code can read and use it");
-    expect(launchable).toContain("The validation does not revoke the inference credential");
+    expect(launchable).toContain(
+      "Require a short-lived inference API key scoped only to the required validation",
+    );
+    expect(launchable).toContain(
+      "require a maintainer-approved waiver tied to the exact candidate commit SHA and selected image-publication run ID",
+    );
+    expect(launchable).toContain(
+      "rotate or revoke the inference API key in the issuing NVIDIA service after the run",
+    );
+    expect(launchable).toContain(
+      "record its approver, exact candidate commit SHA, selected image-publication run ID, and the accepted period of later API-key access",
+    );
     expect(launchable).toContain(
       "obtain explicit maintainer approval immediately before starting the credential-bearing process",
     );
@@ -52,7 +63,10 @@ describe("staging Launchable maintainer guidance", () => {
     );
     expect(launchable).toContain("Do not use it as automated E2E evidence");
     expect(launchable).toContain(
-      "Inference credential exposure approval: approved / denied / not requested",
+      "Inference API key exposure approval: approved / denied / not requested",
+    );
+    expect(launchable).toContain(
+      "Inference API key disposition: rotated / revoked / waived / not used",
     );
     expect(launchable).toContain(
       "Do not stop or delete a Brev instance without explicit user approval",

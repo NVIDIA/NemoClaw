@@ -118,10 +118,12 @@ Derive the invocation and required environment from the current trusted `tools/e
 Use a unique `e2e-` sandbox name.
 
 Before running inference checks, confirm that a usable `NVIDIA_INFERENCE_API_KEY` is already available through the supported secret mechanism.
+Require a short-lived inference API key scoped only to the required validation and arrange to rotate or revoke it after the run.
 Run the validation from a short-lived local process that receives the key through its environment.
 The local validation process and its SSH child can read the key; the remote shell exports it to the baked full E2E process, so candidate code can read and use it.
 Before exposing the key, record the authorized candidate repository and commit SHA, require the repository to be `NVIDIA/NemoClaw`, and reject a candidate from a fork pull request.
 Explain that the selected candidate code can read and use the key, then obtain explicit maintainer approval immediately before starting the credential-bearing process.
+If the issuing service cannot rotate or revoke the inference API key after the run, require a maintainer-approved waiver tied to the exact candidate commit SHA and selected image-publication run ID before starting validation.
 Do not persist the key in shell startup files, temporary files, SSH configuration, or the Brev environment after the test process exits.
 If it is unavailable:
 
@@ -134,8 +136,8 @@ When the credential is available, pass it through the process environment withou
 Require the baked full E2E success sentinel and retain only redacted logs.
 The test must remove its `e2e-` sandbox and verify the expected cleanup result even after a test failure.
 After the local and remote test processes exit, unset any shell variable created for the run and verify that no temporary credential file remains.
-The validation does not revoke the inference credential.
-It remains valid until it expires or an administrator rotates or revokes it in the issuing NVIDIA service; rotation or revocation ends later access.
+Unless the approved waiver applies, rotate or revoke the inference API key in the issuing NVIDIA service after the run and record non-sensitive confirmation.
+When the waiver applies, record its approver, exact candidate commit SHA, selected image-publication run ID, and the accepted period of later API-key access without recording the key.
 
 ## Finish the Instance Handoff
 
@@ -169,7 +171,8 @@ Return this structure:
 - Preinstalled user journey: passed / failed / partially blocked / not run
 - Hosted inference: passed / failed / partially blocked / not run
 - Sandbox inference: passed / failed / partially blocked / not run
-- Inference credential exposure approval: approved / denied / not requested
+- Inference API key exposure approval: approved / denied / not requested
+- Inference API key disposition: rotated / revoked / waived / not used
 - Sandbox cleanup: passed / failed / not run
 - Brev instance disposition: running / stopped / deleted / unknown
 
