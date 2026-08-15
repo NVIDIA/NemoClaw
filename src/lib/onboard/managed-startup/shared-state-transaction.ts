@@ -11,6 +11,7 @@ import {
 } from "../../messaging/post-agent-install-selection";
 import {
   fingerprintManagedStartupProfile,
+  MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
 } from "./profile";
@@ -340,6 +341,8 @@ function agentRoot(agent: ManagedStartupAgent, sandboxRoot: string): string {
       return path.join(sandboxRoot, ".hermes");
     case "langchain-deepagents-code":
       return path.join(sandboxRoot, ".deepagents");
+    case "pi":
+      return path.join(sandboxRoot, ".pi");
   }
 }
 
@@ -384,6 +387,10 @@ function managedOutputTargets(
       files.add(path.join(root, "config.toml"));
       directories.add(path.join(root, ".state"));
       directories.add(path.join(root, "skills"));
+      break;
+    case "pi":
+      directories.add(path.join(root, "agent"));
+      files.add(path.join(root, "agent", "models.json"));
       break;
   }
 
@@ -577,7 +584,7 @@ function parseCommitReceipt(text: string): CommitReceipt {
   requireExactKeys(record, ["agent", "bootstrapIdentity", "profileFingerprint", "schemaVersion"]);
   if (
     record.schemaVersion !== TRANSACTION_SCHEMA_VERSION ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
     typeof record.bootstrapIdentity !== "string" ||
@@ -629,7 +636,7 @@ function parseManifest(text: string): TransactionManifest {
   const bootstrapIdentity = hasBootstrapIdentity ? record.bootstrapIdentity : null;
   if (
     record.schemaVersion !== TRANSACTION_SCHEMA_VERSION ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
     !(

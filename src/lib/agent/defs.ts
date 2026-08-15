@@ -16,6 +16,11 @@ import {
   formatAgentAliasSuffix,
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";
+import {
+  isCandidateAgent,
+  isCandidateAgentSelectable,
+  requireCandidateAgentSelectable,
+} from "./candidate";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 import type {
   AgentChoice,
@@ -94,6 +99,7 @@ export const AGENTS_DIR = path.join(ROOT, "agents");
 const _cache = new Map<string, AgentDefinition>();
 
 export { agentAliasSummary } from "./aliases";
+export { requireCandidateQualificationEnabled } from "./candidate";
 
 export function resolveAgentNameAlias(
   value: string | null | undefined,
@@ -122,7 +128,7 @@ export function listAgents(env: NodeJS.ProcessEnv = process.env): string[] {
         .readdirSync(AGENTS_DIR, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
         .filter((entry) => entry.name !== "nemocua")
-        .filter((entry) => entry.name !== "pi")
+        .filter((entry) => !isCandidateAgent(entry.name) || isCandidateAgentSelectable(entry.name, env))
         .filter((entry) => fs.existsSync(path.join(AGENTS_DIR, entry.name, "manifest.yaml")))
         .map((entry) => entry.name)
     : [];
@@ -157,7 +163,7 @@ export function requireAgentPolicyAdditionsPath(
  */
 export function loadAgent(name: string, env: NodeJS.ProcessEnv = process.env): AgentDefinition {
   if (name === "nemocua") requireCuaFrameworkEnabled(env);
-  if (name === "pi") throw new Error("Pi is not selectable in this release");
+  requireCandidateAgentSelectable(name, env);
   const externalCua = name === "nemocua";
   const manifestPath = externalCua
     ? getCuaExternalAgentManifestPath(env)
@@ -489,6 +495,10 @@ export function resolveAgentName({
     const available = listAgents();
     const resolved = resolveAgentNameAlias(session.agent, available);
     if (!resolved) {
+      // A recorded release candidate must fail closed. Falling back to OpenClaw
+      // would silently change the agent a resumed session was created with and
+      // strand its agent-scoped state.
+      requireCandidateAgentSelectable(session.agent);
       console.error(
         `  Warning: session references unknown agent '${session.agent}', falling back to openclaw.`,
       );

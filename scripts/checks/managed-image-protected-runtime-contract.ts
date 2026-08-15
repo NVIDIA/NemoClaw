@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  ManagedStartupAgent,
-  ManagedStartupProfile,
-} from "../../src/lib/onboard/managed-startup/profile.ts";
+import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
+import type { ManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 
 export {
   PROTECTED_MANAGED_IMAGE_AGENTS,
@@ -24,7 +22,7 @@ export type ManagedImageProtectedRouteKind = ManagedImageLocalInferenceKind | "r
 // free without relying on truncation.
 export const MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX = "nmc-mi-";
 
-const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ManagedStartupAgent, string>> = Object.freeze(
+const PROTECTED_SANDBOX_AGENT_TOKENS: Readonly<Record<ShippedManagedImageAgent, string>> = Object.freeze(
   {
     openclaw: "oc",
     hermes: "he",
@@ -119,7 +117,7 @@ export function withManagedImageLocalInferenceProfile(
 }
 
 export function managedImageProtectedSandboxName(
-  agent: ManagedStartupAgent,
+  agent: ShippedManagedImageAgent,
   routeKind: ManagedImageProtectedRouteKind,
 ): string {
   return `${MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX}${PROTECTED_SANDBOX_AGENT_TOKENS[agent]}-${PROTECTED_SANDBOX_ROUTE_TOKENS[routeKind]}`;

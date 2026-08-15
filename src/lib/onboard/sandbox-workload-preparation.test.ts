@@ -20,8 +20,8 @@ import {
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
   type ManagedImageContractCatalog,
   type ManagedImageContractV1,
+  type ManagedImageAgent,
   SHIPPED_MANAGED_IMAGE_AGENTS,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
@@ -36,7 +36,7 @@ const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const REVISION = "2f03907c37822ea6f1ac9d1bf5c82a4a4568585f";
 const COHORT = "ghrun-7744-2";
 
-function contract(agent: ShippedManagedImageAgent, index: number): ManagedImageContractV1 {
+function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   const digest = `sha256:${String(index + 1).repeat(64)}` as const;
   return {
@@ -427,5 +427,82 @@ describe("sandbox workload preparation", () => {
       kind: "managed-image",
       reference: contract("hermes", 1).reference,
     });
+  });
+
+  it("never fetches the all-agent cohort catalog for a gated candidate (#7927)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("pi"), acceptedCandidateContract: contract("pi", 3) },
+        { resolveCatalog },
+      ),
+    ).rejects.toThrow("requires an exact managed image catalog file");
+    expect(resolveCatalog).not.toHaveBeenCalled();
+  });
+
+  it("prepares the exact candidate digest from a supplied catalog file (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const piContract = contract("pi", 3);
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: piContract }), { mode: 0o600 });
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("pi"), acceptedCandidateContract: piContract, catalogPath },
+      { resolveCatalog: async () => CATALOG },
+    );
+
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      reference: piContract.reference,
+    });
+  });
+
+  it("refuses a candidate catalog that differs from the accepted receipt (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const acceptedContract = contract("pi", 3);
+    const differentDigest = `sha256:${"5".repeat(64)}` as const;
+    const differentContract = {
+      ...acceptedContract,
+      digest: differentDigest,
+      reference: `${acceptedContract.image}@${differentDigest}` as const,
+    };
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: differentContract }), { mode: 0o600 });
+
+    try {
+      await expect(
+        prepareSandboxWorkloadSource({
+          ...input("pi"),
+          acceptedCandidateContract: acceptedContract,
+          catalogPath,
+        }),
+      ).rejects.toThrow("does not match the accepted qualification receipt");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses a candidate catalog entry that claims a shipped agent (#7927)", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-candidate-catalog-"));
+    const catalogPath = path.join(fixtureRoot, "catalog.json");
+    fs.writeFileSync(catalogPath, JSON.stringify({ pi: contract("hermes", 1) }), { mode: 0o600 });
+
+    await expect(
+      prepareSandboxWorkloadSource({
+        ...input("pi"),
+        acceptedCandidateContract: contract("pi", 3),
+        catalogPath,
+      }),
+    ).rejects.toThrow(SandboxWorkloadPreparationError);
+  });
+
+  it("refuses a candidate while the gate is off (#7927)", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("pi"), runtime: runtime("docker") },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("the selected agent is a release candidate and candidate selection is disabled");
   });
 });
