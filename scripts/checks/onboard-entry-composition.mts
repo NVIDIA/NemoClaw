@@ -381,7 +381,7 @@ function nearestAliasScope(node: ts.Node, functionScoped = false): ts.Node {
     }
     candidate = candidate.parent;
   }
-  return candidate ?? node.getSourceFile();
+  return node.getSourceFile();
 }
 
 function collectStaticAliases(sourceFile: ts.SourceFile): StaticAliases {
