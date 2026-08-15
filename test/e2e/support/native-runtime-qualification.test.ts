@@ -4,16 +4,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../src/lib/onboard/runtime-provider/current";
 import {
+  nativeQualificationEvidence as qualificationEvidence,
+  nativeQualificationExpectedSource as expectedProtectedSource,
+  NATIVE_QUALIFICATION_HEAD_SHA,
+} from "../../helpers/native-runtime-qualification-evidence";
+import {
   compileNativeRuntimeQualification,
   consumeNativeRuntimeCandidateEvidence,
+  consumeNativeRuntimeQualificationEvidence,
   nativeRuntimeQualificationDefinition,
   NATIVE_RUNTIME_QUALIFICATION_AGENTS,
   NATIVE_RUNTIME_QUALIFICATION_OBLIGATIONS,
   PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
   type NativeRuntimeCandidateEvidence,
+  type NativeRuntimeQualificationExpectedSource,
 } from "../registry/native-runtime-qualification";
 
-const SOURCE_REVISION = "a".repeat(40);
+const SOURCE_REVISION = NATIVE_QUALIFICATION_HEAD_SHA;
 
 function candidateEvidence(): NativeRuntimeCandidateEvidence {
   return {
@@ -158,5 +165,64 @@ describe("native runtime qualification contract", () => {
       consumeNativeRuntimeCandidateEvidence(candidateEvidence(), "b".repeat(40)),
     ).toThrow("does not match source");
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  });
+
+  it("consumes complete evidence only against externally resolved protected identities", () => {
+    const authority = consumeNativeRuntimeQualificationEvidence(
+      PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
+      qualificationEvidence(),
+      expectedProtectedSource(),
+    );
+
+    expect(authority).toEqual({
+      schemaVersion: 1,
+      qualificationId: "podman-protected-host-local-inference",
+      providerId: "podman",
+      source: expectedProtectedSource(),
+    });
+    expect(Object.isFrozen(authority.source.artifact)).toBe(true);
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
+  });
+
+  it.each([
+    [
+      "head",
+      { headSha: "e".repeat(40), baseSha: "f".repeat(40) },
+      "externally expected protected source",
+    ],
+    [
+      "base",
+      { headSha: "f".repeat(40), baseSha: "e".repeat(40) },
+      "externally expected protected source",
+    ],
+  ])(
+    "rejects an internally consistent but wrong %s/base evidence pair",
+    (_label, source, error) => {
+      expect(() =>
+        consumeNativeRuntimeQualificationEvidence(
+          PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
+          qualificationEvidence(source),
+          expectedProtectedSource(),
+        ),
+      ).toThrow(error);
+    },
+  );
+
+  it("rejects missing immutable GitHub artifact identity", () => {
+    const source = {
+      ...expectedProtectedSource(),
+      artifact: {
+        ...expectedProtectedSource().artifact,
+        digest: "",
+      },
+    } as NativeRuntimeQualificationExpectedSource;
+
+    expect(() =>
+      consumeNativeRuntimeQualificationEvidence(
+        PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
+        qualificationEvidence(),
+        source,
+      ),
+    ).toThrow("GitHub artifact identity is invalid");
   });
 });
