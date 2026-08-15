@@ -136,7 +136,7 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     });
 
     expect(plan.map(({ action }) => action)).toEqual(
-      agent === "langchain-deepagents-code"
+      agent === "langchain-deepagents-code" || agent === "pi"
         ? ["generate-agent-config"]
         : ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"],
     );
