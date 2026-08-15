@@ -81,6 +81,7 @@ import type {
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
+  resolveExportedPortableRuntimeAuthority,
   resolveAgentCreateInput,
   resolvePortableLifecycleMode,
   runSandboxGpuCreateFlow,
@@ -218,6 +219,36 @@ describe("resolveAgentCreateInput", () => {
     });
     expect(resolvePortableLifecycleMode(null, env)).toBe(true);
     expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
+  });
+});
+
+describe("resolveExportedPortableRuntimeAuthority", () => {
+  it("passes checkpoint-owned authority to exported portable creation (#9070)", () => {
+    expect(
+      resolveExportedPortableRuntimeAuthority(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        () => ({
+          checkpoint: {
+            profile: { kind: "selected", value: "portable" },
+            runtimeAuthority: { kind: "selected", value: PORTABLE_RUNTIME_AUTHORITY },
+          },
+        }),
+      ),
+    ).toEqual(PORTABLE_RUNTIME_AUTHORITY);
+  });
+
+  it("rejects exported portable creation before effects when authority is absent (#9070)", () => {
+    expect(() =>
+      resolveExportedPortableRuntimeAuthority(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        () => ({
+          checkpoint: {
+            profile: { kind: "selected", value: "portable" },
+            runtimeAuthority: { kind: "unset" },
+          },
+        }),
+      ),
+    ).toThrow("requires checkpoint-owned Podman runtime authority before creation begins");
   });
 });
 

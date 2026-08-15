@@ -17,6 +17,7 @@ import {
   recoverPortableDemoSandboxLifecycle as recoverPortableDemoSandboxLifecycleUnchecked,
   removePortableDemoSandboxLifecycleReceipt,
   resolvePortableDemoPrivilegedExecTarget,
+  stopPortableDemoSandboxLifecycle,
 } from "./portable-demo-lifecycle";
 
 const CONTAINER_ID = "a".repeat(64);
@@ -118,6 +119,9 @@ function createPodman(
         };
       case "start":
         running = true;
+        return { status: 0 };
+      case "stop":
+        running = false;
         return { status: 0 };
       case "update":
         return { status: options.updateStatus ?? 0 };
@@ -315,6 +319,50 @@ describe("portable demo sandbox lifecycle", () => {
 
     expect(fs.existsSync(filePath)).toBe(false);
     expect(runtime.podman).not.toHaveBeenCalled();
+  });
+
+  it("stops the receipt-owned container through qualified Podman authority (#9070)", () => {
+    const stateDir = temporaryStateDir();
+    const runtime = createPodman();
+    installReceipt(stateDir, runtime.podman);
+    runtime.podman.mockClear();
+    const beforeStop = vi.fn();
+
+    expect(
+      stopPortableDemoSandboxLifecycle(
+        "alpha",
+        {
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: CONTAINER_ID,
+          openshellDriver: "docker",
+        },
+        beforeStop,
+        {
+          platform: "linux",
+          podman: runtime.podman,
+          podmanSocketAuthorityDeps: socketAuthorityDeps(),
+          stateDir,
+          hardenSocketDirectory: vi.fn(),
+          runtimeReadiness: {
+            uid: 1001,
+            home: RUNTIME_AUTHORITY.homeDir,
+            systemctl: () => ({ status: 0 }),
+            podmanCapture: () => ({
+              status: 0,
+              stdout: JSON.stringify({ Server: { Version: "5.6.1" } }),
+              stderr: "",
+            }),
+          },
+          log: vi.fn(),
+        },
+      ),
+    ).toEqual({ kind: "stopped" });
+    expect(beforeStop).toHaveBeenCalledExactlyOnceWith();
+    expect(runtime.podman).toHaveBeenCalledWith(
+      expect.arrayContaining(["stop", CONTAINER_ID]),
+      expect.any(Object),
+    );
   });
 
   it("removes a stale receipt for another startup contract (#8584)", () => {

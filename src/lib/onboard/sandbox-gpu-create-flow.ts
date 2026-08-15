@@ -5,6 +5,7 @@ import type { AgentDefinition } from "../agent/defs";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
+import { parsePortableRuntimeAuthority } from "../state/onboard/portable-runtime-authority";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
@@ -43,6 +44,32 @@ export function resolvePortableLifecycleMode(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return isPortableExperimentalProfile(env) && (agent?.name ?? "openclaw") === "openclaw";
+}
+
+/** Resolve the checkpoint-owned authority required by exported portable creation helpers. */
+export function resolveExportedPortableRuntimeAuthority(
+  env: NodeJS.ProcessEnv,
+  loadSession: () =>
+    | {
+        checkpoint?: {
+          profile: { kind: "selected"; value: "default" | "portable" };
+          runtimeAuthority:
+            | { kind: "unset" }
+            | { kind: "selected"; value: CheckpointPortableRuntimeAuthority };
+        } | null;
+      }
+    | null,
+): CheckpointPortableRuntimeAuthority | null {
+  if (!isPortableExperimentalProfile(env)) return null;
+  const checkpoint = loadSession()?.checkpoint;
+  const authority =
+    checkpoint?.profile.value === "portable" && checkpoint.runtimeAuthority.kind === "selected"
+      ? parsePortableRuntimeAuthority(checkpoint.runtimeAuthority.value)
+      : null;
+  if (authority) return authority;
+  throw new Error(
+    "Portable sandbox creation requires checkpoint-owned Podman runtime authority before creation begins.",
+  );
 }
 
 export function resolveAgentCreateInput(

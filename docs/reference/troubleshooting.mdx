@@ -3360,12 +3360,14 @@ systemctl --user status podman.socket podman.service --no-pager
 journalctl --user -u podman.socket -u podman.service --since -10m --no-pager
 ```
 
-If the units need activation, restart the active service when present and enable the socket:
+If the units need activation, restart the active service when present and start the socket for the current user session:
 
 ```bash
 systemctl --user try-restart podman.service
-systemctl --user enable --now podman.socket
+systemctl --user start podman.socket
 ```
+
+These commands do not enable the socket for later user sessions.
 
 Use the exact socket path from the NemoClaw failure to require a real server response:
 
@@ -3407,15 +3409,15 @@ Portable onboarding reports output like this:
 ```
 
 If `podman.service` is active, restart it.
-Then enable and start the user-scoped Podman socket:
+Then start the user-scoped Podman socket for the current user session:
 
 ```bash
 systemctl --user try-restart podman.service
-systemctl --user enable --now podman.socket
+systemctl --user start podman.socket
 ```
 
 The first command does not start an inactive service.
-The second command enables and starts the current user's Podman API socket.
+The second command starts the current user's Podman API socket without enabling it for later user sessions.
 These commands affect only the current user's Podman units.
 They do not read or write credentials.
 

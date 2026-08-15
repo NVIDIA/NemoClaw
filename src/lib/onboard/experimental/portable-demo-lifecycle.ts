@@ -126,6 +126,11 @@ export type PortableDemoLifecycleRecoveryResult =
   | { kind: "already-running" }
   | { kind: "recovered" };
 
+export type PortableDemoLifecycleStopResult =
+  | { kind: "not-installed" }
+  | { kind: "already-stopped" }
+  | { kind: "stopped" };
+
 export interface PortableDemoLifecycleContext {
   agent?: string | null;
   gatewayName: string;
@@ -546,6 +551,14 @@ export function inspectPortableDemoRuntimeReadiness(
   deps: PortableDemoLifecycleDeps = {},
 ): PortablePodmanReadinessResult | null {
   return inspectPortableRuntimeReceiptReadiness(sandboxName, deps);
+}
+
+/** Whether the sandbox has a receipt that requires authority-bound lifecycle operations. */
+export function hasPortableDemoSandboxLifecycleReceipt(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return loadReceipt(sandboxName, defaultStateDir(env)) !== null;
 }
 
 /** Resolve the receipt-owned portable container for a host-side privileged exec. */
@@ -1031,6 +1044,52 @@ export function recoverPortableDemoSandboxLifecycle(
   }
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);
   return { kind: "recovered" };
+}
+
+/** Stop the exact receipt-owned portable container through its recorded Podman authority. */
+export function stopPortableDemoSandboxLifecycle(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  beforeStop: () => void,
+  deps: PortableDemoLifecycleDeps = {},
+): PortableDemoLifecycleStopResult {
+  if ((context.agent ?? "openclaw") !== "openclaw") return { kind: "not-installed" };
+  if (context.openshellDriver !== "docker") return { kind: "not-installed" };
+  const commandEnv = deps.env ?? process.env;
+  const stateDir = deps.stateDir ?? defaultStateDir(commandEnv);
+  const receipt = loadReceipt(sandboxName, stateDir);
+  if (!receipt) return { kind: "not-installed" };
+  if ((deps.platform ?? process.platform) !== "linux") {
+    throw new Error("Portable demo lifecycle receipt is only valid on Linux");
+  }
+  requireCurrentRegistryGeneration(receipt, context.lifecycleGeneration);
+  const authority = qualifiedPodmanAuthority(receipt, commandEnv, deps);
+  const initialInspection = authority.podman(["inspect", receipt.containerId]);
+  if (isMissingPodmanContainer(initialInspection)) {
+    throw new Error(
+      `Portable sandbox '${sandboxName}' no longer has its recorded Podman container`,
+    );
+  }
+  const inspection = inspectPodmanContainer(
+    receipt.containerId,
+    sandboxName,
+    authority.podman,
+    initialInspection,
+  );
+  requireReceiptOwnedInspection(receipt, inspection);
+  if (!inspection.running) return { kind: "already-stopped" };
+
+  beforeStop();
+  requireCommand(
+    authority.podman(["stop", receipt.containerId]),
+    `Stopping portable sandbox '${sandboxName}'`,
+  );
+  const stopped = inspectPodmanContainer(receipt.containerId, sandboxName, authority.podman);
+  requireReceiptOwnedInspection(receipt, stopped);
+  if (stopped.running) {
+    throw new Error(`Portable sandbox '${sandboxName}' did not enter the stopped state`);
+  }
+  return { kind: "stopped" };
 }
 
 export const portableDemoLifecycleInternals = { receiptPath };

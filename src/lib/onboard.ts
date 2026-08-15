@@ -2106,7 +2106,11 @@ const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
     createBaseImageResolutionContext: () =>
       baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
     createSandboxWithBaseImageResolution,
-    resolvePortableRuntimeAuthority: () => null,
+    resolvePortableRuntimeAuthority: () =>
+      sandboxGpuCreateFlow.resolveExportedPortableRuntimeAuthority(
+        process.env,
+        onboardSession.loadSession,
+      ),
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
 

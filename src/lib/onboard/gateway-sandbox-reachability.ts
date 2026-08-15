@@ -514,7 +514,7 @@ export function formatSandboxBridgeUnreachableMessage(
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
       "    Enable and start the user-scoped Podman socket:",
-      "      systemctl --user enable --now podman.socket",
+      "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ]
       .filter((line): line is string => Boolean(line))
@@ -540,7 +540,7 @@ export function formatSandboxBridgeUnreachableMessage(
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
       "    Enable and start the user-scoped Podman socket:",
-      "      systemctl --user enable --now podman.socket",
+      "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ].join("\n");
   }
