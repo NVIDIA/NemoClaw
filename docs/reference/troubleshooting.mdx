@@ -3536,7 +3536,7 @@ sudo systemctl stop "user@${uid}.service" &&
   sudo systemctl start "user@${uid}.service"
 ```
 
-The inactive reload removes the NemoClaw drop-in from the instantiated unit and recalculates ancestor controller masks before the manager starts.
+The inactive reload removes both NemoClaw drop-ins from the instantiated units and recalculates ancestor controller masks before the manager starts.
 Do not replace this sequence with `systemctl restart`.
 The sequence stops at the first failed command.
 If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.

@@ -159,9 +159,10 @@ export function inspectPortableCpuDelegation(
       detail:
         `The current user's systemd manager has no cgroup controllers file ` +
         `(${userManager} is missing), so systemd has not exposed controllers to it. ` +
-        "Have an administrator create the NemoClaw delegation drop-in described in " +
-        "the troubleshooting guide, stop and start the user manager as documented, " +
-        "and rerun the portable preflight.",
+        "Have an administrator apply both CPU controller settings described in the " +
+        "troubleshooting guide: `Delegate=cpu memory pids` for `user@.service` and " +
+        "`CPUWeight=100` for `app.slice`. Then stop and start the user manager as " +
+        "documented and rerun the portable preflight.",
     };
   }
   const userManagerContent = userManagerRead.content;
@@ -173,10 +174,11 @@ export function inspectPortableCpuDelegation(
       detail:
         `systemd did not delegate the cpu controller to the current user's manager: ` +
         `${userManager} is "${userManagerContent.trim()}" (no "cpu"). The stock ` +
-        "user@.service delegates only `pids memory`. Have an administrator add " +
-        "`Delegate=cpu memory pids` through the NemoClaw drop-in described in the " +
-        "troubleshooting guide, stop and start the user manager as documented, and " +
-        "rerun the portable preflight.",
+        "user@.service delegates only `pids memory`. Have an administrator apply both " +
+        "CPU controller settings described in the troubleshooting guide: " +
+        "`Delegate=cpu memory pids` for `user@.service` and `CPUWeight=100` for " +
+        "`app.slice`. Then stop and start the user manager as documented and rerun " +
+        "the portable preflight.",
     };
   }
 

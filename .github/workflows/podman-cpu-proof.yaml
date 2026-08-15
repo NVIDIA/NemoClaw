@@ -40,7 +40,7 @@ concurrency:
 
 jobs:
   portable-cpu-delegation:
-    name: Portable CPU delegation admission on clean Ubuntu
+    name: Portable CPU delegation admission on Ubuntu 22.04
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     env:
@@ -68,7 +68,7 @@ jobs:
       - name: Build shared sandbox-name contract
         run: npm run build:policy-boundary
 
-      - name: Prepare the clean user manager boundary
+      - name: Prepare app.slice CPU setting without service delegation
         shell: bash
         run: |
           set -euo pipefail
@@ -330,7 +330,6 @@ jobs:
             sudo mktemp "$app_slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"
           )"
           # The user manager enables delegated controllers for user units that request them.
-          # CPUWeight=100 matches the kernel default while making this request explicit.
           printf '[Slice]\nCPUWeight=100\n' | sudo tee "$app_slice_drop_in_temp" >/dev/null
           sudo chown root:root "$app_slice_drop_in_temp"
           sudo chmod 0644 "$app_slice_drop_in_temp"

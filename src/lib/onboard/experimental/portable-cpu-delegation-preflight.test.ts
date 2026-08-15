@@ -100,7 +100,8 @@ describe("inspectPortableCpuDelegation", () => {
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("NemoClaw delegation drop-in");
+    expect(preflight.detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
+    expect(preflight.detail).toContain("`CPUWeight=100` for `app.slice`");
   });
 
   it("reports access recovery when the user manager controllers file is unreadable", () => {
@@ -130,7 +131,8 @@ describe("inspectPortableCpuDelegation", () => {
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("user@.service");
+    expect(preflight.detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
+    expect(preflight.detail).toContain("`CPUWeight=100` for `app.slice`");
   });
 
   it("reports when the cpu controller is not available to app.slice for this boot", () => {

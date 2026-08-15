@@ -110,14 +110,15 @@ describe("native Podman CPU proof workflow", () => {
     expect(installOpenShell).toContain("$HOME/.local/bin");
     expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("${{ secrets.");
     const delegation = delegationJob();
-    const prepare = namedDelegationStep("Prepare the clean user manager boundary").run ?? "";
+    const prepare =
+      namedDelegationStep("Prepare app.slice CPU setting without service delegation").run ?? "";
     const reject = namedDelegationStep("Prove missing delegation fails before effects").run ?? "";
     const admit =
       namedDelegationStep("Apply administrator delegation and prove admission").run ?? "";
     const diagnostics = namedDelegationStep("Capture CPU delegation failure diagnostics");
     const cleanup = namedDelegationStep("Restore the user manager boundary");
 
-    expect(delegation.name).toBe("Portable CPU delegation admission on clean Ubuntu");
+    expect(delegation.name).toBe("Portable CPU delegation admission on Ubuntu 22.04");
     expect(delegation["runs-on"]).toBe("ubuntu-22.04");
     expect(delegation["timeout-minutes"]).toBe(15);
     expect(delegation.env?.E2E_CPU_DELEGATION_USER).toBe("nemoclaw-e2e");
