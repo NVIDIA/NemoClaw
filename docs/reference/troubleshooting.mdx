@@ -3408,19 +3408,29 @@ if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
   exit 1
 fi
 
-sudo install -d -o root -g root -m 0755 -- "$(dirname "$drop_in")"
-printf '%s\n' '[Service]' 'Delegate=cpu memory pids' | sudo tee "$drop_in" >/dev/null
-sudo chown root:root "$drop_in"
-sudo chmod 0644 "$drop_in"
+sudo install -d -o root -g root -m 0755 -- "$(dirname "$drop_in")" &&
+  printf '%s\n' '[Service]' 'Delegate=cpu memory pids' | sudo tee "$drop_in" >/dev/null &&
+  sudo chown root:root "$drop_in" &&
+  sudo chmod 0644 "$drop_in"
 ```
 
-Verify the persistent file:
+If a creation command fails, do not reload systemd.
+Ask the administrator to inspect the named path and remove it only if this procedure created the partial file.
+
+Verify that the persistent path is a root-owned regular file with mode `0644` and the required content:
 
 ```bash
+if sudo test -L "$drop_in" \
+  || ! sudo test -f "$drop_in" \
+  || [ "$(sudo stat -Lc '%U:%G %a' -- "$drop_in")" != "root:root 644" ]; then
+  printf 'Unexpected CPU delegation drop-in type, owner, or mode: %s\n' "$drop_in" >&2
+  exit 1
+fi
+
 sudo cat -- "$drop_in"
 ```
 
-Expected output:
+Continue only when the command exits with status `0` and prints this output:
 
 ```ini
 [Service]
@@ -3434,9 +3444,9 @@ Run the following commands from an administrator session that does not depend on
 
 ```bash
 uid="<affected-user-id>"
-sudo systemctl stop "user@${uid}.service"
-sudo systemctl daemon-reload
-sudo systemctl start "user@${uid}.service"
+sudo systemctl stop "user@${uid}.service" &&
+  sudo systemctl daemon-reload &&
+  sudo systemctl start "user@${uid}.service"
 ```
 
 After the affected user signs in again, start `app.slice` in that user's session:
@@ -3449,6 +3459,8 @@ The stop must complete before `daemon-reload` runs.
 Reloading while the instantiated unit is inactive lets systemd recalculate ancestor controller masks for the new delegation.
 The final start creates the user manager with those updated masks.
 Do not replace this sequence with `systemctl restart`, which can fail with `219/CGROUP` before systemd recalculates the masks.
+The sequence stops at the first failed command.
+If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.
 
 Verify the root hierarchy, current user manager, and `app.slice`:
 
@@ -3497,18 +3509,25 @@ Remove the file while the manager is inactive, then reload systemd and start the
 ```bash
 uid="<affected-user-id>"
 drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
-sudo systemctl stop "user@${uid}.service"
-sudo rm -- "$drop_in"
-sudo systemctl daemon-reload
-sudo systemctl start "user@${uid}.service"
+sudo systemctl stop "user@${uid}.service" &&
+  sudo rm -- "$drop_in" &&
+  sudo systemctl daemon-reload &&
+  sudo systemctl start "user@${uid}.service"
 ```
 
 The inactive reload removes the NemoClaw drop-in from the instantiated unit and recalculates ancestor controller masks before the manager starts.
 Do not replace this sequence with `systemctl restart`.
+The sequence stops at the first failed command.
+If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.
 
 After the affected user signs in again, verify that systemd no longer loads this drop-in:
 
 ```bash
+if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
+  printf 'CPU delegation drop-in remains after removal: %s\n' "$drop_in" >&2
+  exit 1
+fi
+
 systemctl cat user@.service
 ```
 
