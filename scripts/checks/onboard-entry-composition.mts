@@ -22,6 +22,7 @@ export type OnboardEntryCompositionViolation = {
 export type OnboardEntryCompositionCeiling = {
   readonly declarations: OnboardEntryCompositionBudget;
   readonly categoryTotals: Readonly<Record<OnboardDecisionCategory, number>>;
+  readonly globalTotal: number;
 };
 export type OnboardEntryCompositionBudgetExpansion =
   | {
@@ -34,6 +35,11 @@ export type OnboardEntryCompositionBudgetExpansion =
   | {
       readonly kind: "category";
       readonly category: OnboardDecisionCategory;
+      readonly budgetCount: number;
+      readonly baselineCount: number;
+    }
+  | {
+      readonly kind: "global";
       readonly budgetCount: number;
       readonly baselineCount: number;
     };
@@ -665,7 +671,15 @@ export function combineOnboardEntryCompositionCeiling(
       Math.max(totalDecisions(baseBudget[category]), totalDecisions(baseActual[category])),
     ]),
   ) as Record<OnboardDecisionCategory, number>;
-  return { declarations, categoryTotals };
+  const budgetTotal = CATEGORIES.reduce(
+    (total, category) => total + totalDecisions(baseBudget[category]),
+    0,
+  );
+  const actualTotal = CATEGORIES.reduce(
+    (total, category) => total + totalDecisions(baseActual[category]),
+    0,
+  );
+  return { declarations, categoryTotals, globalTotal: Math.max(budgetTotal, actualTotal) };
 }
 
 export function evaluateOnboardEntryCompositionBudgetExpansion(
@@ -684,6 +698,17 @@ export function evaluateOnboardEntryCompositionBudgetExpansion(
     if (budgetCount > baselineCount) {
       expansions.push({ kind: "category", category, budgetCount, baselineCount });
     }
+  }
+  const budgetTotal = CATEGORIES.reduce(
+    (total, category) => total + totalDecisions(budget[category]),
+    0,
+  );
+  if (budgetTotal > ceiling.globalTotal) {
+    expansions.push({
+      kind: "global",
+      budgetCount: budgetTotal,
+      baselineCount: ceiling.globalTotal,
+    });
   }
   return expansions.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
@@ -757,7 +782,9 @@ function formatBudgetExpansions(
     ...expansions.map((expansion) =>
       expansion.kind === "declaration"
         ? `- ${expansion.declaration}: ${expansion.category} budget increased from ${expansion.baselineCount} to ${expansion.budgetCount}.`
-        : `- ${expansion.category}: total budget increased from ${expansion.baselineCount} to ${expansion.budgetCount}.`,
+        : expansion.kind === "category"
+          ? `- ${expansion.category}: total budget increased from ${expansion.baselineCount} to ${expansion.budgetCount}.`
+          : `- all categories: total budget increased from ${expansion.baselineCount} to ${expansion.budgetCount}.`,
     ),
   ].join("\n");
 }

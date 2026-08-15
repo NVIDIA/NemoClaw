@@ -563,6 +563,11 @@ describe("onboarding entry composition boundary", () => {
         budgetCount: 3,
         baselineCount: 2,
       },
+      {
+        kind: "global",
+        budgetCount: 3,
+        baselineCount: 2,
+      },
     ]);
   });
 
@@ -581,6 +586,35 @@ describe("onboarding entry composition boundary", () => {
       {
         kind: "category",
         category: "messaging",
+        budgetCount: 2,
+        baselineCount: 1,
+      },
+      {
+        kind: "global",
+        budgetCount: 2,
+        baselineCount: 1,
+      },
+    ]);
+  });
+
+  it("rejects duplicated allowance when detector recalibration moves a category", () => {
+    const baseline = combineOnboardEntryCompositionCeiling(
+      { ...EMPTY_BUDGET, provider: { oldOwner: 1 } },
+      { ...EMPTY_BUDGET, messaging: { newOwner: 1 } },
+    );
+
+    expect(
+      evaluateOnboardEntryCompositionBudgetExpansion(
+        {
+          ...EMPTY_BUDGET,
+          messaging: { newOwner: 1 },
+          provider: { oldOwner: 1 },
+        },
+        baseline,
+      ),
+    ).toEqual([
+      {
+        kind: "global",
         budgetCount: 2,
         baselineCount: 1,
       },
