@@ -8,6 +8,7 @@ import {
   PROVIDER_NAME_ALLOWED_FORMAT as CANONICAL_PROVIDER_NAME_ALLOWED_FORMAT,
   PROVIDER_NAME_MAX_LENGTH as CANONICAL_PROVIDER_NAME_MAX_LENGTH,
   PROVIDER_NAME_VALID_PATTERN as CANONICAL_PROVIDER_NAME_VALID_PATTERN,
+  diagnosticPreview as canonicalDiagnosticPreview,
   isValidName as isCanonicalValidName,
   isValidProviderName as isCanonicalValidProviderName,
 } from "../../nemoclaw/dist/shared/sandbox-name.cjs";
@@ -23,6 +24,7 @@ export const NAME_VALID_PATTERN = CANONICAL_NAME_VALID_PATTERN;
 export const PROVIDER_NAME_MAX_LENGTH = CANONICAL_PROVIDER_NAME_MAX_LENGTH;
 export const PROVIDER_NAME_ALLOWED_FORMAT = CANONICAL_PROVIDER_NAME_ALLOWED_FORMAT;
 export const PROVIDER_NAME_VALID_PATTERN = CANONICAL_PROVIDER_NAME_VALID_PATTERN;
+export const diagnosticPreview = canonicalDiagnosticPreview;
 export const isValidName = isCanonicalValidName;
 export const isValidProviderName = isCanonicalValidProviderName;
 
@@ -34,7 +36,7 @@ function validationSubject(label: string): string {
   return "Names";
 }
 
-// Derive a copy-paste-ready RFC 1123 label from arbitrary user input. Returns
+// Derive a copy-paste-ready OpenShell-compatible label from arbitrary user input. Returns
 // null when no recoverable slug exists (empty, all-symbol input) or when the
 // input is already a valid name (no canonicalisation is performed against
 // inputs the validator would accept). The transform mirrors what a user would

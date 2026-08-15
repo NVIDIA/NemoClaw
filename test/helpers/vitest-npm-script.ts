@@ -24,6 +24,7 @@ export function runVitestNpmScript(
     '#!/bin/sh\nprintf \'vitest %s\\n\' "$*" > "$COMMAND_LOG"\n',
     { mode: 0o755 },
   );
+  fs.writeFileSync(path.join(fakeBin, "tsx"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   fs.writeFileSync(
     scriptShell,
     `#!/bin/sh\nPATH="$FAKE_BIN:${path.dirname(process.execPath)}:/usr/bin:/bin"\nexport PATH\nexec /bin/sh "$@"\n`,

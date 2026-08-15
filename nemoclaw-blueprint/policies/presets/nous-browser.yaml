@@ -121,8 +121,7 @@ network_policies:
       - { path: /sandbox/.hermes/node/bin/node* }
       - { path: /sandbox/.hermes/node/bin/npx* }
       - { path: /sandbox/.hermes/node/bin/agent-browser* }
-      - { path: /usr/bin/python3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
       - { path: /usr/bin/curl }
       - { path: /usr/local/bin/curl }

@@ -3,6 +3,78 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/portable-profile-rootless-linux.test.ts",
+      "fast": [
+        "src/lib/onboard/command.test.ts",
+        "src/lib/onboard/docker-driver-gateway-env.test.ts",
+        "src/lib/onboard/experimental/portable-host-preparation.test.ts",
+        "src/lib/onboard/sandbox-prebuild.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+      "fast": [
+        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-contract.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-plan.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-runner.test.ts",
+        "test/llama-cpp-image.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/llama-cpp-generic-gpu.test.ts",
+      "fast": [
+        "src/lib/inference/llama-cpp/managed-selection.test.ts",
+        "src/lib/inference/llama-cpp/managed-installer.test.ts",
+        "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
+      "fast": [
+        "test/e2e/support/base-image-publication.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
+        "test/managed-image-publication-workflow.test.ts",
+        "test/pr-risk-plan.test.ts",
+        "test/protected-managed-image-contract.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "fast": [
+        "src/lib/inference/nim.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+        "test/managed-image-protected-runtime-contract.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-activation-e2e.test.ts",
+      "fast": [
+        "src/lib/onboard/command.test.ts",
+        "src/lib/onboard/sandbox-workload-preparation.test.ts",
+        "test/managed-image-publication-workflow.test.ts",
+        "test/onboard-managed-image-buildless-e2e.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
+      "fast": [
+        "src/lib/adapters/container-engine.test.ts",
+        "src/lib/adapters/podman/index.test.ts",
+        "src/lib/adapters/podman/socket-authority.test.ts",
+        "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
+        "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
+        "src/lib/onboard/runtime-provider/podman.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+        "test/runtime-provider-source-shape.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
@@ -30,9 +102,21 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
+        "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/launch-readiness-lease-acceptance.test.ts",
+      "fast": [
+        "src/lib/actions/sandbox/launch-readiness-gateway-health.test.ts",
+        "src/lib/actions/sandbox/launch-readiness.test.ts",
+        "src/lib/state/launch-readiness-lease.test.ts",
+        "test/e2e/support/launch-agent-turn.test.ts",
+        "test/launch-readiness-forward-observation.test.ts"
       ]
     },
     {
@@ -110,8 +194,14 @@
       "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
     },
     {
+      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "fast": [
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/sandbox-operations.test.ts",
-      "liveOnlyReason": "The final-destroy gateway release contract needs two real Docker/OpenShell sandboxes plus host 127.0.0.1 port binding; a fast mock cannot prove the shared-gateway ownership boundary."
+      "liveOnlyReason": "The resource-limit and final-destroy contracts require real Docker and OpenShell sandboxes, the repository CLI, and host port binding; fast mocks cannot verify these runtime boundaries."
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
@@ -120,7 +210,7 @@
         "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
-        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -134,20 +224,16 @@
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
-        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
-      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
       "fast": [
-        "test/cli/dispatch-basics.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts",
-        "test/sandbox-rlimit-hooks.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/onboard-interactive-pty.test.ts"
       ]
     },
     {
@@ -431,7 +517,8 @@
       "live": "test/e2e/live/shields-config.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/shields-failed-startup.test.ts"
       ]
     },
     {
@@ -439,6 +526,20 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/spark-express-vllm.test.ts",
+      "fast": [
+        "src/lib/inference/serving/catalog.test.ts",
+        "src/lib/inference/serving/host-local-vllm-selection.test.ts",
+        "src/lib/inference/vllm-models.test.ts",
+        "src/lib/onboard/local-model-profile/onboarder.test.ts",
+        "src/lib/onboard/local-model-profile/plan.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/install-express-prompt.test.ts",
+        "test/install-local-model-profile.test.ts"
       ]
     },
     {
@@ -476,6 +577,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
@@ -552,6 +654,13 @@
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/windows-mxc-openclaw-process-container.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/windows-mxc-openclaw-process-container.test.ts"
       ]
     }
   ]

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { resolveMessagingPlanAuthority } from "../../../messaging/plan-authority";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession } from "../../../state/onboard-session";
 import { handleSandboxState } from "./sandbox";
@@ -45,7 +46,6 @@ describe("sandbox create intent machine boundary", () => {
     expect(resolveSandboxCreateIntent).toHaveBeenCalledTimes(1);
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.repairSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
@@ -96,7 +96,7 @@ describe("sandbox create intent machine boundary", () => {
           disabledChannelNames: [],
           extraPlaceholderKeys: [],
         },
-        recreate: expect.any(Boolean),
+        recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
@@ -115,6 +115,21 @@ describe("sandbox create intent machine boundary", () => {
 
     expect(resolvedIntents[1]).toEqual(resolvedIntents[0]);
     expect(resolvedIntents[2]).toEqual(resolvedIntents[0]);
+  });
+
+  it("carries an explicit recreate request through a fresh sandbox decision (#8847)", async () => {
+    const session = createSession({ sandboxName: "same-sandbox" });
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      fresh: true,
+      recreateSandbox: () => true,
+      sandboxName: "same-sandbox",
+    });
+
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ recreate: true });
   });
 
   it("checkpoints a known sandbox name before an interrupted web-search prompt (#6743)", async () => {
@@ -177,10 +192,11 @@ describe("sandbox create intent machine boundary", () => {
   });
 
   it("invalidates sandbox-bound messaging when an explicit resume name changes (#6743)", async () => {
+    const oldPlan = makeMinimalPlan("old-name");
     const durableSession = createSession({
       sandboxName: "old-name",
       webSearchConfig: null,
-      messagingPlan: makeMinimalPlan("old-name"),
+      messagingPlan: oldPlan,
       resourceProfile: null,
       sandboxPromptProgress: {
         sandboxName: true,
@@ -193,7 +209,26 @@ describe("sandbox create intent machine boundary", () => {
       mutator(durableSession);
       return durableSession;
     });
-    const { deps, calls } = createDeps({ updateSession });
+    let stagedPlan: ReturnType<typeof makeMinimalPlan> | null = oldPlan;
+    const clearPlanEnv = vi.fn(() => {
+      stagedPlan = null;
+    });
+    const getStoredMessagingChannelConfig = vi.fn((sandboxName: string | null) => {
+      expect(sandboxName).toBe("new-name");
+      resolveMessagingPlanAuthority({
+        sandboxName: sandboxName ?? "",
+        registry: { authoritative: false, plan: null },
+        stagedPlan,
+        sessionPlan: durableSession.messagingPlan,
+      });
+      return null;
+    });
+    const { deps, calls } = createDeps({
+      updateSession,
+      clearPlanEnv,
+      readMessagingPlanFromEnv: () => stagedPlan,
+      getStoredMessagingChannelConfig,
+    });
     calls.setupMessaging.mockRejectedValueOnce(new Error("messaging selection interrupted"));
 
     await expect(
@@ -204,7 +239,11 @@ describe("sandbox create intent machine boundary", () => {
       }),
     ).rejects.toThrow("messaging selection interrupted");
 
-    expect(calls.clearPlanEnv).toHaveBeenCalledTimes(1);
+    expect(clearPlanEnv).toHaveBeenCalledTimes(1);
+    expect(getStoredMessagingChannelConfig).toHaveBeenCalledWith(
+      "new-name",
+      expect.objectContaining({ sandboxName: "new-name", messagingPlan: null }),
+    );
     expect(calls.setupMessaging).toHaveBeenCalledWith(null, null, "new-name");
     expect(durableSession.sandboxName).toBe("new-name");
     expect(durableSession.messagingPlan).toBeNull();
@@ -256,6 +295,8 @@ describe("sandbox create intent machine boundary", () => {
     const readMessagingPlanFromEnv = vi
       .fn<() => typeof messagingPlan | null>()
       .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
       .mockReturnValueOnce(messagingPlan)
       .mockReturnValue(null);
     const { deps, calls } = createDeps({
@@ -297,9 +338,12 @@ describe("sandbox create intent machine boundary", () => {
       enabledChannels: [],
       webSearchConfig: braveConfig,
       agent: null,
+      requiredBindings: [
+        { name: "tm-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ],
     });
-    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
-      setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeGreaterThan(
+      setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,
     );
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
       calls.selectResourceProfile.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
@@ -309,6 +353,13 @@ describe("sandbox create intent machine boundary", () => {
       enabledChannels: ["telegram"],
       webSearchConfig: null,
       agent: null,
+      requiredBindings: [
+        {
+          name: "tm-telegram-bridge",
+          type: "generic",
+          credentialEnv: "TELEGRAM_BOT_TOKEN",
+        },
+      ],
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[1]).toBeGreaterThan(
       setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,

@@ -9,8 +9,8 @@
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 
-NVIDIA NemoClaw is an open source reference stack for running always-on AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
-It provides guided onboarding, a hardened blueprint, routed inference, network policy, and lifecycle management through a single CLI.
+NVIDIA NemoClaw is an open source reference stack for running supported AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
+It provides guided onboarding, managed inference, network policy, managed integrations, snapshots, and lifecycle operations through the NemoClaw CLI and its agent-specific aliases.
 
 **Supported agents:**
 
@@ -30,10 +30,13 @@ Use the starter prompt when you want Cursor, Claude Code, Codex, Copilot, or ano
 
 The prompt tells your agent to use NemoClaw docs and skills, ask one question at a time, run commands only with your approval, and keep secrets out of chat.
 
-### Install Using the Interactive Installer in Your Terminal
+### Install Using the Installer in Your Terminal
 
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
-For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the `nemohermes` alias after install.
+On a supported DGX or Windows Subsystem for Linux (WSL) host, press Enter at the `Run express install with these settings? [Y/n]:` prompt to use the recommended preset settings for that platform.
+Express install mode installs OpenClaw by default.
+If you accept, refer to [NemoClaw Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html).
+Enter `n` if you want to choose Hermes or LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
 When connecting to a Hermes sandbox from a light terminal, NemoClaw may install a managed `nemoclaw-light` Hermes skin for readable assistant text; it removes that managed skin state again when the terminal no longer needs it and preserves any user-selected Hermes skin.
 
 | Agent | Guide |
@@ -49,9 +52,9 @@ Refer to the following pages on the official documentation website for more info
 | Page | Description |
 |------|-------------|
 | [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
-| [Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | High-level overview of Plugin, blueprint, sandbox lifecycle, and protection layers. |
+| [Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | High-level overview of the host CLI, agent integration layer, blueprint, sandbox lifecycle, and protection layers. |
 | [Ecosystem](https://docs.nvidia.com/nemoclaw/latest/about/ecosystem.html) | How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone. |
-| [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
+| [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of agent integration structure, blueprint lifecycle, sandbox environment, and host-side state. |
 | [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) | Hardware, software, and supported platforms, with any platform-specific pre-setup. |
 | [Choose an Inference Provider](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |

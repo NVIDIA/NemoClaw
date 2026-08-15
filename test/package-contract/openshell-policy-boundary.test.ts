@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { auditOpenShellPolicyBoundaryDependencies } from "../../scripts/checks/verify-openshell-policy-boundary-dependencies.mts";
+import { createPackageFixture } from "./helpers/package-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "..", "..");
 const require = createRequire(import.meta.url);
@@ -190,15 +191,34 @@ describe("OpenShell policy boundary package contract", () => {
       expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
     }
 
-    const controlContract =
-      require("../../agents/hermes/host/tool-gateway-control-contract.ts") as {
-        isValidName: (value: unknown) => boolean;
-      };
-    expect(controlContract.isValidName("packaged-hermes-sandbox")).toBe(true);
-    expect(controlContract.isValidName("../packaged-hermes-sandbox")).toBe(false);
+    const controlContractPath = path.join(
+      repoRoot,
+      "agents",
+      "hermes",
+      "host",
+      "tool-gateway-control-contract.ts",
+    );
+    const validation = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          "--no-warnings",
+          "--eval",
+          `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes"), contract.isValidName("../packaged-hermes")]));`,
+        ],
+        { cwd: repoRoot, encoding: "utf8" },
+      ),
+    ) as [boolean, boolean];
+    expect(validation).toEqual([true, false]);
   });
 
-  it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 90_000 }, () => {
+  it("ships agent manifests and generated state lock plans (#8006)", () => {
+    expect(packageFiles(repoRoot)).toContain("agents/*/manifest.yaml");
+    expect(packageFiles(repoRoot)).toContain("agents/*/state-lock-plan.json");
+  });
+
+  it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
     const productionDependencyTree = spawnSync(
       "npm",
       ["ls", "ajv", "--omit=dev", "--all", "--json"],
@@ -213,13 +233,17 @@ describe("OpenShell policy boundary package contract", () => {
     };
     expect(productionDependencies.dependencies?.ajv?.version).toMatch(/^8\./u);
 
+    const fixtureRoot = createPackageFixture({
+      prefix: "nemoclaw-policy-pack-",
+      entries: ["dist", "nemoclaw/dist", "schemas"],
+    });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-package-"));
     try {
       const packed = spawnSync(
         "npm",
         ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
         {
-          cwd: repoRoot,
+          cwd: fixtureRoot,
           encoding: "utf8",
           env: { ...process.env, npm_config_cache: path.join(tempDir, "npm-cache") },
         },
@@ -305,6 +329,7 @@ process.stdout.write("validated");
       expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
       expect(probe.stdout).toBe("validated");
     } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });

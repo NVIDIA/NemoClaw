@@ -82,17 +82,48 @@ NemoClaw's default Docker-driver topology does not place the sandbox in an embed
 Only the default gateway port `8080` uses a NemoClaw-managed service.
 
 On Linux, NemoClaw prefers the upstream package-managed `openshell-gateway.service`.
+Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart`.
+When systemd returns the service identity, NemoClaw requires trusted package paths for both the unit and its effective binary.
+It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
+This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
+NemoClaw rejects a known version below the minimum or a known stable version above the maximum.
+An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`.
+An undetermined version or an unsupported version stops package-unit adoption.
+When the systemd identity query reports a recognized unavailable user manager, NemoClaw checks the standard user unit paths before standalone fallback.
+It checks `.wants`, `.requires`, and `.upholds` activation links for both gateway service names.
+An activation path blocks fallback because its service can later claim port `8080`.
+An active `SYSTEMD_UNIT_PATH` override also blocks fallback because NemoClaw cannot verify its activation state.
+Other identity-query failures stop package-unit adoption.
+NemoClaw stops when systemd identifies an untrusted unit or effective binary.
+For a version rejection, NemoClaw reports the version once and blocks another gateway lifecycle.
+Identity and path-trust failures also block another gateway lifecycle.
+After `systemctl --user daemon-reload` and systemd identity validation, startup checks the effective binary's version again before any service-state mutation.
+If a known version is now unsupported, startup does not stop, enable, or restart the package service.
+Onboarding stops instead of starting a standalone gateway.
 For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit.
 Onboarding validates and reuses a healthy selected service.
 It enables or restarts the service when startup or verified runtime drift requires it, then checks gateway health.
 The marked service generates the local OpenShell mTLS bundle and reads `$XDG_CONFIG_HOME/openshell/gateway.env`, or `~/.config/openshell/gateway.env` when `XDG_CONFIG_HOME` is not absolute.
 NemoClaw preserves unrelated environment entries, accepts `DOCKER_HOST` only for an absolute local `unix://` socket, and refuses foreign or symlinked managed files.
-The standalone Linux process is used only when the systemd user manager is unavailable; after a service is selected, startup or health failure stops onboarding.
+For ordinary startup or health failures, NemoClaw prints the `journalctl` log command and attempts the standalone fallback.
+Unknown inspection, trust, and version failures stop onboarding.
 
 On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritative.
-The installer stages the formula and onboarding starts its `openshell` service.
-When Homebrew is present, a missing formula, a formula from another tap, a service-start failure, or a health failure stops onboarding.
-Only a host without Homebrew uses the standalone macOS gateway fallback.
+The installer stages the checksum-pinned formula and runs installation inside a formula-scoped Homebrew trust boundary.
+Onboarding uses the same boundary for formula inspection and each service start or stop operation.
+Each operation verifies the staged formula, removes any inherited formula trust, grants temporary trust only to `nvidia/openshell/openshell`, and removes that trust when the operation finishes.
+An inability to grant or remove trust is a hard failure.
+If the service fails inspection, startup, shutdown, or its health check, NemoClaw prints the formula log command and stops so Homebrew remains lifecycle authority.
+A host without Homebrew, or with no staged formula and no installed OpenShell keg, uses the standalone macOS gateway.
+A legacy installation, missing pin, changed formula, failed Homebrew operation, or invalid official-tap identity stops with repair guidance instead of changing lifecycle authority.
+Rerunning the standard NemoClaw installer downloads and stages the pinned formula before onboarding is retried:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+On both platforms, standalone startup requires exclusive ownership of the gateway port.
+A positively untrusted upstream package service is declined as described above.
+Trust failures in a marked NemoClaw service or Homebrew formula, and unsafe environment configuration, remain hard failures.
 
 NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
 An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.
@@ -221,7 +252,7 @@ The blueprint schema and runner enforce these name constraints before the runner
 
 | Field | Constraint |
 |---|---|
-| `components.sandbox.name` | Use 1–63 lowercase letters, numbers, or internal hyphens, starting with a letter and ending with a letter or number. |
+| `components.sandbox.name` | Use 1–19 lowercase letters, numbers, or single internal hyphens, starting with a letter and ending with a letter or number. Consecutive hyphens (`--`) are not allowed. |
 | `components.inference.profiles.<profile>.provider_name` | Use 1–128 letters, numbers, dots, underscores, or hyphens, starting with a letter. |
 
 <AgentOnly variant="openclaw">
@@ -325,6 +356,16 @@ The router selects from the configured pool, then calls the upstream NVIDIA endp
 Some model and provider combinations need agent-specific compatibility setup.
 NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so fixes for each supported agent can be tested and reviewed independently.
 
+### Managed Inference Catalog
+
+Managed inference profiles use definitions under `managed-inference/presets/` and `managed-inference/recipes/`.
+The catalog compiler validates those definitions and includes them in the packaged runtime catalog.
+
+For a managed-cluster recipe, the `nodeCount` field declares cluster cardinality.
+Registered managed-cluster TypeScript adapters validate qualified topology and materialize each ranked node.
+Contributors can define a compatible managed-cluster profile that uses an existing execution contract with preset and recipe YAML.
+A managed-cluster profile that needs a different execution contract requires a registered adapter.
+
 Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider configuration details.
 
 ## Provider Credential Storage
@@ -341,7 +382,7 @@ NemoClaw keeps non-secret operator-facing state on the host rather than inside t
 | Path | Purpose |
 |---|---|
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata for the default gateway port, including the default sandbox selection. |
-| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, snapshots, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
+| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, snapshots, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The Ollama auth proxy token, backend URL, PID, and status files stay in the top-level `~/.nemoclaw/` location for every gateway port, because one proxy on the host serves them all. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
 <AgentOnly variant="openclaw">
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 </AgentOnly>

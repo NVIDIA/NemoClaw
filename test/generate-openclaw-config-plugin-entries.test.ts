@@ -11,25 +11,49 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
+import {
+  buildConfig,
+  MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+  MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  main,
+} from "../scripts/generate-openclaw-config.mts";
+import { baseOpenClawGenerationEnv } from "./helpers/openclaw-env-fixture";
 
-const BASE_ENV: Record<string, string> = {
-  NEMOCLAW_MODEL: "test-model",
-  NEMOCLAW_PROVIDER_KEY: "test-provider",
-  NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
-  CHAT_UI_URL: "http://127.0.0.1:18789",
-  NEMOCLAW_INFERENCE_BASE_URL: "http://localhost:8080",
-  NEMOCLAW_INFERENCE_API: "openai",
-  NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from("{}").toString("base64"),
-  NEMOCLAW_PROXY_HOST: "10.200.0.1",
-  NEMOCLAW_PROXY_PORT: "3128",
-  NEMOCLAW_CONTEXT_WINDOW: "131072",
-  NEMOCLAW_MAX_TOKENS: "4096",
-  NEMOCLAW_REASONING: "false",
-  NEMOCLAW_AGENT_TIMEOUT: "600",
-};
+const BASE_ENV = baseOpenClawGenerationEnv();
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
+  { channelId: "telegram", pluginId: "telegram" },
+  { channelId: "discord", pluginId: "discord" },
+  { channelId: "openclaw-weixin", pluginId: "openclaw-weixin" },
+  { channelId: "slack", pluginId: "slack" },
+  { channelId: "whatsapp", pluginId: "whatsapp" },
+  { channelId: "msteams", pluginId: "msteams" },
+  { channelId: "googlechat", pluginId: "googlechat" },
+] as const;
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
+  { channelId: "imessage", pluginId: "imessage" },
+] as const;
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
+  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+] as const;
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
+  it("adds the installed NemoClaw plugin to the default OpenClaw allowlist (#8975)", () => {
+    const config = buildConfig({ ...BASE_ENV });
+    expect(config.plugins.allow).toEqual(["nemoclaw"]);
+  });
+
+  it("allows the enabled diagnostics plugin (#8975)", () => {
+    const config = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+    });
+
+    expect(config.plugins.entries["diagnostics-otel"]).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain("diagnostics-otel");
+  });
+
   it("omits the stale acpx entry and disables bundled bonjour by default", () => {
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.entries.acpx).toBeUndefined();
@@ -49,33 +73,23 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
     });
 
-    for (const pluginId of [
-      "telegram",
-      "discord",
-      "openclaw-weixin",
-      "slack",
-      "whatsapp",
-      "msteams",
-      "diagnostics-otel",
-      "brave",
-      "tavily",
-    ]) {
+    expect(MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES).toEqual(
+      EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+    );
+    expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toEqual(
+      EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+    );
+    for (const { channelId, pluginId } of EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
-    }
-    for (const channelId of [
-      "telegram",
-      "discord",
-      "openclaw-weixin",
-      "slack",
-      "whatsapp",
-      "msteams",
-    ]) {
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
+    }
+    for (const pluginId of ["diagnostics-otel", "brave", "tavily"]) {
+      expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     }
     expect(config.tools.web.search).toEqual({ enabled: false });
   });
 
-  it("retains managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
+  it("retains existing plugin allowlist and managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
     const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-union-"));
     const originalEnvironment = { ...process.env };
     const configPath = path.join(tempDirectory, ".openclaw", "openclaw.json");
@@ -88,7 +102,12 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.writeFileSync(
         configPath,
-        JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+        JSON.stringify({
+          plugins: {
+            allow: ["openclaw-weixin"],
+            installs: { "openclaw-weixin": installEntry },
+          },
+        }),
       );
       for (const name of Object.keys(process.env)) delete process.env[name];
       Object.assign(process.env, BASE_ENV, {
@@ -100,6 +119,7 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
 
       const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+      expect(config.plugins?.allow).toEqual(["nemoclaw", "openclaw-weixin"]);
       expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
       expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });
     } finally {

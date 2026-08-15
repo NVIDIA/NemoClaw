@@ -110,6 +110,24 @@ describe("managed-image failure diagnostic export", () => {
     expect(fs.readdirSync(outputRoot)).toEqual([]);
   });
 
+  it("skips an empty diagnostic file without dropping later evidence", () => {
+    const { outputRoot, sourceRoot } = fixture();
+    const diagnosticBundle = bundle(sourceRoot);
+    fs.writeFileSync(path.join(diagnosticBundle, "openshell-gateway-relevant.log"), "");
+    fs.writeFileSync(path.join(diagnosticBundle, "rootfs-console.log"), "console evidence\n");
+    fs.writeFileSync(path.join(diagnosticBundle, "summary.txt"), "summary evidence\n");
+
+    expect(exportManagedImageFailureDiagnostics({ outputRoot, sourceRoot })).toMatchObject({
+      bundles: 1,
+      files: 2,
+    });
+    expect(
+      fs.existsSync(path.join(outputRoot, "bundle-01", "openshell-gateway-relevant.log")),
+    ).toBe(false);
+    expect(outputText(outputRoot)).toContain("console evidence");
+    expect(outputText(outputRoot)).toContain("summary evidence");
+  });
+
   it("fails closed on non-file diagnostic entries", () => {
     const { outputRoot, sourceRoot } = fixture();
     const diagnosticBundle = bundle(sourceRoot);

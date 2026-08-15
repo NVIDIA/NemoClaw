@@ -14,6 +14,7 @@ import {
   type FirstParentHistory,
   githubRequest,
   type PublicationRun,
+  isBaseImagePublicationEvent,
   parseBaseImagePushPaths,
   resolveFirstParentHistory,
   selectPublicationRun,
@@ -21,6 +22,7 @@ import {
   validatePublisherJobs,
   validateWorkflow,
   waitForBaseImagePublication,
+  writePublicationRunOutputs,
 } from "../../../tools/e2e/base-image-publication.mts";
 
 const EXPECTED_SHA = "a".repeat(40);
@@ -161,6 +163,17 @@ function successfulJobs(overrides: { runAttempt?: number } = {}): Record<string,
 }
 
 describe("base-image publication evidence", () => {
+  it.each(["push", "workflow_dispatch"])("accepts %s publication preflight events", (eventName) => {
+    expect(isBaseImagePublicationEvent(eventName)).toBe(true);
+  });
+
+  it.each(["schedule", "pull_request", undefined])(
+    "rejects unsupported %s publication preflight events",
+    (eventName) => {
+      expect(isBaseImagePublicationEvent(eventName)).toBe(false);
+    },
+  );
+
   it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
     const source = fs.readFileSync(
       path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
@@ -169,6 +182,7 @@ describe("base-image publication evidence", () => {
 
     expect(parseBaseImagePushPaths(source)).toEqual(
       expect.arrayContaining([
+        ".github/actions/ci-reviewed-npm-audit/**",
         ".github/workflows/base-image.yaml",
         "Dockerfile",
         "Dockerfile.base",
@@ -233,68 +247,19 @@ describe("base-image publication evidence", () => {
     expect(() => parseBaseImagePushPaths(source)).toThrow(expected);
   });
 
-  it("expands only reviewed glob families against first-parent Git history (#7744)", () => {
-    const calls: string[][] = [];
-    const expanded = expandBaseImagePushPaths(
-      EXPECTED_SHA,
-      ["Dockerfile", "agents/**", "src/lib/messaging/**"],
-      (args) => {
-        calls.push(args);
-        const pathspec = required(args.at(-1), "glob expansion call is missing a pathspec");
-        return required(
-          new Map([
-            [
-              ":(glob)agents/**",
-              "agents/hermes/Dockerfile\nagents/openclaw/manifest.yaml\nagents/hermes/Dockerfile",
-            ],
-            [
-              ":(glob)src/lib/messaging/**",
-              "src/lib/messaging/channels/slack.ts\nsrc/lib/messaging/types.ts",
-            ],
-          ]).get(pathspec),
-          `unexpected glob expansion: ${args.join(" ")}`,
-        );
-      },
-    );
-
-    expect(expanded).toEqual([
+  it("passes only reviewed glob families as bounded Git pathspecs (#7744)", () => {
+    const expanded = expandBaseImagePushPaths(EXPECTED_SHA, [
       "Dockerfile",
-      "agents/hermes/Dockerfile",
-      "agents/openclaw/manifest.yaml",
-      "src/lib/messaging/channels/slack.ts",
-      "src/lib/messaging/types.ts",
+      "agents/**",
+      "src/lib/messaging/**",
+      "test/e2e/live/managed-image-activation-e2e*.ts",
     ]);
-    expect(calls).toEqual([
-      [
-        "log",
-        "--first-parent",
-        "--diff-merges=first-parent",
-        "--format=",
-        "--name-only",
-        EXPECTED_SHA,
-        "--",
-        ":(glob)agents/**",
-      ],
-      [
-        "log",
-        "--first-parent",
-        "--diff-merges=first-parent",
-        "--format=",
-        "--name-only",
-        EXPECTED_SHA,
-        "--",
-        ":(glob)src/lib/messaging/**",
-      ],
+    expect(expanded).toEqual([
+      ":(glob)agents/**",
+      ":(glob)src/lib/messaging/**",
+      ":(glob)test/e2e/live/managed-image-activation-e2e*.ts",
+      "Dockerfile",
     ]);
-  });
-
-  it("fails closed when a reviewed glob is empty or Git returns an out-of-family path (#7744)", () => {
-    expect(() => expandBaseImagePushPaths(EXPECTED_SHA, ["agents/**"], () => "")).toThrow(
-      /did not match Git history/u,
-    );
-    expect(() =>
-      expandBaseImagePushPaths(EXPECTED_SHA, ["agents/**"], () => "scripts/escaped.sh"),
-    ).toThrow(/outside reviewed/u);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {
@@ -431,6 +396,53 @@ describe("base-image publication evidence", () => {
     ).rejects.toThrow(/duplicate id/u);
   });
 
+  it("restarts collection after a concurrent workflow-run count change", async () => {
+    const entries = Array.from({ length: 102 }, (_, index) => ({ id: index + 1 }));
+    const pages = [
+      { total_count: 101, workflow_runs: entries.slice(0, 100) },
+      { total_count: 102, workflow_runs: entries.slice(100) },
+      { total_count: 102, workflow_runs: entries.slice(0, 100) },
+      { total_count: 102, workflow_runs: entries.slice(100) },
+    ];
+    const requests: string[] = [];
+
+    await expect(
+      collectPaginated(
+        async (requestPath) => {
+          requests.push(requestPath);
+          return pages.shift();
+        },
+        "/runs?per_page=100",
+        "workflow_runs",
+      ),
+    ).resolves.toMatchObject({ total_count: 102, workflow_runs: entries });
+    expect(requests).toEqual([
+      "/runs?per_page=100&page=1",
+      "/runs?per_page=100&page=2",
+      "/runs?per_page=100&page=1",
+      "/runs?per_page=100&page=2",
+    ]);
+  });
+
+  it("fails closed after three unstable pagination attempts", async () => {
+    const entries = Array.from({ length: 101 }, (_, index) => ({ id: index + 1 }));
+    let requests = 0;
+
+    await expect(
+      collectPaginated(
+        async (requestPath) => {
+          requests += 1;
+          return requestPath.endsWith("page=1")
+            ? { total_count: 101, workflow_runs: entries.slice(0, 100) }
+            : { total_count: 102, workflow_runs: entries.slice(100) };
+        },
+        "/runs?per_page=100",
+        "workflow_runs",
+      ),
+    ).rejects.toThrow(/total_count changed during 3 pagination attempts/u);
+    expect(requests).toBe(6);
+  });
+
   it("accepts a batch-push tip that descends from the newest changed input (#7372)", () => {
     const selection = selectPublicationRun(
       runsPayload([workflowRun({ head_sha: EXPECTED_SHA })]),
@@ -509,14 +521,14 @@ describe("base-image publication evidence", () => {
     ).toMatchObject({ state: "pending", run: { status: "in_progress" } });
   });
 
-  it.each([
-    "failure",
-    "cancelled",
-  ] as const)("fails closed when publication concludes %s (#7372)", (conclusion) => {
-    expect(() =>
-      selectPublicationRun(runsPayload([workflowRun({ conclusion })]), history(), WORKFLOW_ID),
-    ).toThrow(`base-image workflow for ${RELEVANT_SHA} concluded ${conclusion}; ${RUN_URL}`);
-  });
+  it.each(["failure", "cancelled"] as const)(
+    "fails closed when publication concludes %s (#7372)",
+    (conclusion) => {
+      expect(() =>
+        selectPublicationRun(runsPayload([workflowRun({ conclusion })]), history(), WORKFLOW_ID),
+      ).toThrow(`base-image workflow for ${RELEVANT_SHA} concluded ${conclusion}; ${RUN_URL}`);
+    },
+  );
 
   it("fails closed on ambiguous or malformed runs (#7372)", () => {
     expect(() =>
@@ -571,6 +583,22 @@ describe("base-image publication evidence", () => {
     expect(() =>
       validateBoundRun(workflowRun({ status: "in_progress", conclusion: null }), selectedRun()),
     ).toThrow(/changed while evidence was verified/u);
+  });
+
+  it("exports the selected immutable publication identity for downstream qualification (#9049)", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publication-output-"));
+    const output = path.join(directory, "github-output");
+    try {
+      writePublicationRunOutputs(output, selectedRun());
+      expect(fs.readFileSync(output, "utf8")).toBe(
+        `run_id=${RUN_ID}\nrun_attempt=1\nhead_sha=${RELEVANT_SHA}\n`,
+      );
+      expect(() => writePublicationRunOutputs("bad\npath", selectedRun())).toThrow(
+        /single-line path/u,
+      );
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

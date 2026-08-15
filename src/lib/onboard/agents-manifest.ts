@@ -179,8 +179,11 @@ export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
  * validator's job), so structured errors raised here would mask the
  * authoritative build-time errors; we keep host-side checks light.
  */
-export function applyAgentsManifestEnv(filePath: string): AgentsManifestPayload {
+export function applyAgentsManifestEnv(
+  filePath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentsManifestPayload {
   const payload = loadAgentsManifest(filePath);
-  process.env.NEMOCLAW_EXTRA_AGENTS_JSON = JSON.stringify(payload);
+  env.NEMOCLAW_EXTRA_AGENTS_JSON = JSON.stringify(payload);
   return payload;
 }

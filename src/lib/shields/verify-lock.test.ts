@@ -162,7 +162,7 @@ describe("verifyShieldsLockState", () => {
     });
   });
 
-  it("requires the same protected parent for OpenClaw but does not impose it on custom agents", async () => {
+  it("requires a protected parent for managed top-level configs but not custom agents", async () => {
     const { verifyShieldsLockState } = await loadVerifier();
     const openClawTarget = { ...target, agentName: "openclaw" };
     const replaceableParent = makeExec({
@@ -202,6 +202,30 @@ describe("verifyShieldsLockState", () => {
         verifyParentProtection: true,
       }),
     ).toEqual({ ok: true, issues: [] });
+
+    const deepAgentsTarget = {
+      agentName: "langchain-deepagents-code",
+      configPath: "/sandbox/.deepagents/config.toml",
+      configDir: "/sandbox/.deepagents",
+      sensitiveFiles: ["/sandbox/.deepagents/.config-hash"],
+    };
+    const replaceableDeepAgentsParent = makeExec({
+      "/sandbox/.deepagents/config.toml": "444 root:root",
+      "/sandbox/.deepagents/.config-hash": "444 root:root",
+      "/sandbox/.deepagents": "755 root:root",
+      "/sandbox": "755 sandbox:sandbox",
+    });
+    expect(
+      verifyShieldsLockState("dcode", deepAgentsTarget, {
+        exec: replaceableDeepAgentsParent,
+        verifyParentProtection: true,
+      }).issues,
+    ).toEqual(
+      expect.arrayContaining([
+        "parent dir mode=755 (expected 1775)",
+        "parent dir owner=sandbox:sandbox (expected root:sandbox)",
+      ]),
+    );
   });
 
   it.each([

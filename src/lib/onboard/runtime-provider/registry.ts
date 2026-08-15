@@ -6,6 +6,7 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION,
   RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION,
+  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderChannelStopTransport,
@@ -18,6 +19,11 @@ import {
   type RuntimeProviderSnapshotRestoreReceipt,
   type RuntimeProviderSnapshotRestoreSource,
 } from "./contract";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceOperationInput,
+  HostLocalInferenceService,
+} from "./host-local-inference";
 
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const RESERVED_PROVIDER_IDS = new Set(["constructor", "prototype"]);
@@ -30,6 +36,7 @@ const BUNDLE_SURFACES = [
   "hostLocalInference",
   "lifecycle",
   "mutationAuthority",
+  "stateMutation",
   "bootstrap",
   "snapshot",
   "recovery",
@@ -54,6 +61,21 @@ const CHANNEL_STOP_TRANSPORTS: ReadonlySet<unknown> = new Set<RuntimeProviderCha
 ]);
 const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-managed"]);
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
+const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
+const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
+const HOST_PLATFORMS = new Set<NodeJS.Platform>([
+  "aix",
+  "android",
+  "cygwin",
+  "darwin",
+  "freebsd",
+  "haiku",
+  "linux",
+  "netbsd",
+  "openbsd",
+  "sunos",
+  "win32",
+]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "registration",
   "start",
@@ -67,12 +89,18 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
 ]);
 const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperation>([
   "host-doctor",
-  "host-local-inference",
   "gateway-inspection",
+  "host-local-inference",
   "sandbox-lifecycle",
+  "state-mutation",
   "workload-cleanup",
 ]);
-const HOST_LOCAL_INFERENCE_SERVICES = new Set(["ollama", "nim", "vllm"]);
+const HOST_LOCAL_INFERENCE_SERVICES = new Set<HostLocalInferenceService>([
+  "ollama",
+  "nim",
+  "vllm",
+  "llama-cpp",
+]);
 
 export class RuntimeProviderRegistrationError extends Error {
   constructor(message: string) {
@@ -228,6 +256,44 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
       `workload profile for '${providerId}' has invalid host architectures`,
     );
   }
+  if (profile.nativeArtifactSupport !== undefined && profile.nativeArtifactSupport !== null) {
+    if (!isPlainRecord(profile.nativeArtifactSupport)) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid native-artifact support`,
+      );
+    }
+    const nativeSupport = profile.nativeArtifactSupport;
+    if (
+      typeof nativeSupport.exactDigestReferences !== "boolean" ||
+      !Array.isArray(nativeSupport.platforms) ||
+      nativeSupport.platforms.length === 0 ||
+      nativeSupport.platforms.some(
+        (platform) => !NATIVE_ARTIFACT_PLATFORMS.has(String(platform)),
+      ) ||
+      new Set(nativeSupport.platforms).size !== nativeSupport.platforms.length ||
+      !Array.isArray(nativeSupport.agents) ||
+      nativeSupport.agents.length === 0 ||
+      nativeSupport.agents.some((agent) => !NATIVE_ARTIFACT_AGENTS.has(String(agent))) ||
+      new Set(nativeSupport.agents).size !== nativeSupport.agents.length
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid native-artifact identity`,
+      );
+    }
+    for (const field of ["contractVersions", "startupProfileContractVersions"] as const) {
+      const versions = nativeSupport[field];
+      if (
+        !Array.isArray(versions) ||
+        versions.length === 0 ||
+        versions.some((version) => !Number.isSafeInteger(version) || Number(version) <= 0) ||
+        new Set(versions).size !== versions.length
+      ) {
+        throw new RuntimeProviderRegistrationError(
+          `workload profile for '${providerId}' has invalid native-artifact ${field}`,
+        );
+      }
+    }
+  }
   if (profile.support === null) return;
   if (!isPlainRecord(profile.support)) {
     throw new RuntimeProviderRegistrationError(
@@ -283,6 +349,26 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
   ] as const) {
     requireBoolean(surface, field, "capabilities");
   }
+  const hostMounts = requireOwnRecord(surface, "readOnlyHostMounts");
+  if (typeof hostMounts.supported !== "boolean") {
+    throw new RuntimeProviderRegistrationError(
+      "capabilities.readOnlyHostMounts.supported must be a boolean",
+    );
+  }
+  if (hostMounts.supported === false) {
+    requireNonEmptyString(hostMounts, "reason", "capabilities.readOnlyHostMounts");
+    return;
+  }
+  if (
+    !Array.isArray(hostMounts.hostPlatforms) ||
+    hostMounts.hostPlatforms.length === 0 ||
+    hostMounts.hostPlatforms.some((platform) => !HOST_PLATFORMS.has(platform as NodeJS.Platform)) ||
+    new Set(hostMounts.hostPlatforms).size !== hostMounts.hostPlatforms.length
+  ) {
+    throw new RuntimeProviderRegistrationError(
+      "capabilities.readOnlyHostMounts.hostPlatforms must list unique Node.js host platforms",
+    );
+  }
 }
 
 function validatePreflightDoctorSurface(surface: Record<string, unknown>): void {
@@ -311,33 +397,19 @@ function validateHostLocalInferenceSurface(
   surface: Record<string, unknown>,
 ): void {
   if (surface.supported !== true) return;
-  const runtime = requireOwnRecord(surface, "runtime");
-  if (runtime.providerId !== providerId) {
-    throw new RuntimeProviderRegistrationError(
-      `hostLocalInference runtime identity '${String(runtime.providerId)}' does not match '${providerId}'`,
-    );
-  }
-  requireNonEmptyString(runtime, "authorityId", "hostLocalInference runtime");
   if (
-    !Array.isArray(runtime.services) ||
-    runtime.services.length === 0 ||
-    runtime.services.some((service) => !HOST_LOCAL_INFERENCE_SERVICES.has(String(service))) ||
-    new Set(runtime.services).size !== runtime.services.length
+    !Array.isArray(surface.services) ||
+    surface.services.length === 0 ||
+    surface.services.some(
+      (service) => !HOST_LOCAL_INFERENCE_SERVICES.has(String(service) as HostLocalInferenceService),
+    ) ||
+    new Set(surface.services).size !== surface.services.length
   ) {
     throw new RuntimeProviderRegistrationError(
       `hostLocalInference for '${providerId}' must list unique valid services`,
     );
   }
-  for (const operation of [
-    "translateContainerArgs",
-    "qualifyOllama",
-    "startManaged",
-    "inspectManaged",
-    "stopManaged",
-    "preserveForRebuild",
-  ] as const) {
-    requireFunction(runtime, operation, "hostLocalInference runtime");
-  }
+  requireFunction(surface, "createOperation", "hostLocalInference");
 }
 
 function validateLifecycleSurface(providerId: string, surface: Record<string, unknown>): void {
@@ -372,8 +444,29 @@ function validateMutationAuthoritySurface(
   }
 }
 
+function validateStateMutationSurface(providerId: string, surface: Record<string, unknown>): void {
+  if (surface.supported !== true) return;
+  if (surface.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION) {
+    throw new RuntimeProviderRegistrationError(
+      `stateMutation for '${providerId}' has an unsupported contract version`,
+    );
+  }
+  for (const operation of [
+    "acquire",
+    "assertFenced",
+    "publish",
+    "rollback",
+    "activate",
+    "release",
+    "recover",
+  ] as const) {
+    requireFunction(surface, operation, "stateMutation");
+  }
+}
+
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
+    requireFunction(surface, "createAuthorityStore", "bootstrap");
     requireFunction(surface, "createLifecycle", "bootstrap");
     requireFunction(surface, "createOnboardRouting", "bootstrap");
   }
@@ -467,6 +560,7 @@ function validateSupportedSurfaceSchemas(
   validateHostLocalInferenceSurface(providerId, surfaces.hostLocalInference);
   validateLifecycleSurface(providerId, surfaces.lifecycle);
   validateMutationAuthoritySurface(providerId, surfaces.mutationAuthority);
+  validateStateMutationSurface(providerId, surfaces.stateMutation);
   validateBootstrapSurface(surfaces.bootstrap);
   validateSnapshotSurface(providerId, surfaces.snapshot);
   validateRecoverySurface(surfaces.recovery);
@@ -479,8 +573,7 @@ function validateSupportedSurfaceSchemas(
     );
   }
   if (
-    (surfaces.hostLocalInference.supported === true &&
-      surfaces.capabilities.hostLocalInference !== true) ||
+    surfaces.capabilities.hostLocalInference !== (surfaces.hostLocalInference.supported === true) ||
     surfaces.capabilities.directLifecycle !== (surfaces.lifecycle.supported === true) ||
     surfaces.capabilities.workloadImageCleanup !== (surfaces.cleanup.supported === true) ||
     surfaces.capabilities.legacyGatewayContainerInspection !==
@@ -571,6 +664,27 @@ export function requireRuntimeProviderBundleForSandbox(
   return requireRuntimeProviderBundle(sandbox.openshellDriver, providers);
 }
 
+export function requireRuntimeProviderReadOnlyHostMounts(
+  bundle: RuntimeProviderBundle,
+  platform: NodeJS.Platform,
+): Extract<
+  RuntimeProviderBundle["capabilities"]["readOnlyHostMounts"],
+  { readonly supported: true }
+> {
+  const capability = bundle.capabilities.readOnlyHostMounts;
+  if (capability.supported !== true) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' does not support read-only host mounts: ${capability.reason}`,
+    );
+  }
+  if (!capability.hostPlatforms.includes(platform)) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' has not qualified read-only host mounts on host platform '${platform}'.`,
+    );
+  }
+  return capability;
+}
+
 export function requireRuntimeProviderMutationAuthority(
   bundle: RuntimeProviderBundle,
   operation: RuntimeProviderMutationOperation,
@@ -581,6 +695,18 @@ export function requireRuntimeProviderMutationAuthority(
       `Runtime provider '${bundle.identity.id}' does not authorize '${operation}' mutation.`,
     );
   }
+}
+
+export function requireRuntimeProviderStateMutationSurface(
+  bundle: RuntimeProviderBundle,
+): Extract<RuntimeProviderBundle["stateMutation"], { readonly supported: true }> {
+  const surface = bundle.stateMutation;
+  if (surface.supported !== true) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' has no state-mutation implementation: ${surface.reason}`,
+    );
+  }
+  return surface;
 }
 
 export type RuntimeProviderDestructiveCleanupAuthority = {
@@ -653,6 +779,44 @@ export function runtimeProviderContainerEngineIdentity(
     (candidate) => candidate.operation === operation,
   );
   return identity ? { engineId: identity.engineId, displayName: identity.displayName } : null;
+}
+
+export function requireRuntimeProviderHostLocalInferenceOperation(
+  bundle: RuntimeProviderBundle,
+  service: HostLocalInferenceService,
+  input: HostLocalInferenceOperationInput,
+  candidate?: HostLocalInferenceOperation,
+): HostLocalInferenceOperation {
+  const surface = bundle.hostLocalInference;
+  if (
+    bundle.capabilities.hostLocalInference !== true ||
+    surface.supported !== true ||
+    !surface.services.includes(service)
+  ) {
+    const detail =
+      surface.supported === true ? `service '${service}' is not enabled` : surface.reason;
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' does not provide the host-local-inference capability required for ${service}: ${detail}`,
+    );
+  }
+  const expectedEngine = runtimeProviderContainerEngineIdentity(bundle, "host-local-inference");
+  if (expectedEngine === null) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' does not provide an operation-scoped host-local-inference engine for ${service}.`,
+    );
+  }
+  const operation = candidate ?? surface.createOperation(input);
+  if (
+    operation.providerId !== bundle.identity.id ||
+    operation.engine.operation !== "host-local-inference" ||
+    operation.engine.engineId !== expectedEngine.engineId ||
+    operation.engine.displayName !== expectedEngine.displayName
+  ) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' returned mismatched host-local-inference authority for ${service}.`,
+    );
+  }
+  return operation;
 }
 
 function boundedString(value: unknown, maxBytes: number): value is string {

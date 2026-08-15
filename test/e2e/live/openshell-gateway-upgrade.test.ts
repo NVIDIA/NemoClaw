@@ -8,6 +8,8 @@
  * sandbox, seed durable workspace + live process state, run the current
  * installer upgrade path, then assert the gateway reports the current
  * OpenShell version and the survivor claw remains restored/reachable.
+ * After the outer rebuild destroys the source sandbox, the inner onboarding flow
+ * must continue the upgrade-owned recreation journal without opening a second transaction.
  *
  * The macOS regressions from the shell script remain hermetic installer-script
  * probes in this file: fake Darwin arm64 PATH, fake existing OpenShell tools,
@@ -37,13 +39,17 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
+import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
   currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
+  GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
+  legacyGatewayUpgradeHostFirewallOptions,
   oldGatewayUpgradeInstallerArgs,
+  throwGatewayUpgradeSetupFailures,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
@@ -69,7 +75,7 @@ const OLD_INSTALLER_SHA256 =
   process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
   "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
-const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.85";
+const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.101";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
@@ -87,15 +93,7 @@ const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgr
   sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
 });
 const SURVIVOR_SANDBOX =
-  process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ??
-  [
-    "e2e-gateway-upgrade-survivor",
-    process.env.GITHUB_RUN_ID,
-    process.env.GITHUB_RUN_ATTEMPT,
-    process.pid,
-  ]
-    .filter(Boolean)
-    .join("-");
+  process.env.NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME ?? `e2e-gw-${process.pid}`;
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
 const INSTALLED_AGENT_DB_MARKER = `openclaw-2026-6-agent-db-${Date.now()}`;
@@ -106,14 +104,14 @@ const OPENCLAW_MAIN_AGENT_DB = "/sandbox/.openclaw/agents/main/agent/openclaw-ag
 const LEGACY_UPDATE_CHECK_PATH = "/sandbox/.openclaw/update-check.json";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const TEST_TIMEOUT_MS = 65 * 60_000;
-const INSTALL_TIMEOUT_MS = 35 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
 validateSandboxName(SURVIVOR_SANDBOX);
 expect(
-  SURVIVOR_SANDBOX.startsWith("e2e-gateway-upgrade-survivor"),
-  `openshell-gateway-upgrade live test only accepts survivor sandbox names with prefix e2e-gateway-upgrade-survivor; got ${SURVIVOR_SANDBOX}`,
+  SURVIVOR_SANDBOX.startsWith("e2e-gw-"),
+  `openshell-gateway-upgrade live test only accepts survivor sandbox names with prefix e2e-gw-; got ${SURVIVOR_SANDBOX}`,
 ).toBe(true);
+expect(SURVIVOR_SANDBOX.length).toBeLessThanOrEqual(19);
 const stateUpgradeFixtureExpectations: ReadonlyArray<readonly [string, string]> =
   OPENCLAW_STATE_UPGRADE_PROOF
     ? [
@@ -687,7 +685,7 @@ ${installerInvocation}`,
       env,
       hiddenOpenShellDir: options.hiddenOpenShellDir,
       redactionValues,
-      timeoutMs: INSTALL_TIMEOUT_MS,
+      timeoutMs: GATEWAY_UPGRADE_INSTALL_TIMEOUT_MS,
     },
   );
   const tail = await bash(host, `tail -160 ${shellQuote(logFile)} 2>/dev/null || true`, {
@@ -1192,6 +1190,18 @@ runLinuxOpenShellGatewayUpgrade(
       requireAuthModels: OPENCLAW_STATE_UPGRADE_PROOF,
       responseText: "ok",
     });
+    let firewallSetup: ReturnType<typeof registerOpenShellHostMockFirewall>;
+    try {
+      firewallSetup = registerOpenShellHostMockFirewall({
+        cleanup,
+        host,
+        port: Number(new URL(fake.baseUrl).port),
+        ...legacyGatewayUpgradeHostFirewallOptions(OLD_NEMOCLAW_REF),
+      });
+    } catch (error) {
+      await fake.close();
+      throw error;
+    }
     cleanup.add("close compatible endpoint mock", async () => {
       await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
       await fake.close();
@@ -1201,7 +1211,11 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     progress.phase("install pinned legacy NemoClaw and its sandbox");
-    await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
+    const setupResults = await Promise.allSettled([
+      installOldNemoclawAndClaw(host, artifacts, fake.baseUrl),
+      firewallSetup.then((result) => artifacts.writeJson("host-mock-firewall.json", result)),
+    ]);
+    throwGatewayUpgradeSetupFailures(setupResults);
     const legacyStateContract = await captureOpenClawStateUpgradeProof(host, fake, artifacts);
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;

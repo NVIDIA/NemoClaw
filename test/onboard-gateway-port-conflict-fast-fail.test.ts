@@ -1,114 +1,221 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
+import type { AddressInfo } from "node:net";
+import net from "node:net";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getGatewayClusterContainerName } from "../src/lib/adapters/openshell/gateway-drift";
+import { resolveGatewayName } from "../src/lib/onboard/gateway-binding";
+import { createProductionGatewayReadinessDependencies } from "../src/lib/readiness/gateway-production";
+import {
+  createOnboardProcessWorkspace,
+  type OnboardProcessWorkspace,
+  runOnboardProcess,
+  workspaceEnv,
+} from "./helpers/onboard-child-process-harness";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
-const GATEWAY_PORT = "18080";
 
-describe("onboard gateway port conflict fast-fail (#6752)", () => {
-  let home: string;
-  let binDir: string;
-  let openshellCallLog: string;
+describe("onboard gateway port conflict readiness (#6752)", () => {
+  let workspace: OnboardProcessWorkspace;
+  let gatewayPort: number;
+  let gatewayServer: net.Server;
 
-  beforeEach(() => {
-    home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-6752-"));
-    binDir = path.join(home, "bin");
-    openshellCallLog = path.join(home, "openshell-calls.log");
-    fs.mkdirSync(binDir, { recursive: true });
+  beforeEach(async () => {
+    workspace = createOnboardProcessWorkspace("nemoclaw-6752-");
+    gatewayServer = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      gatewayServer.once("error", reject);
+      gatewayServer.listen(0, "127.0.0.1", resolve);
+    });
+    gatewayPort = (gatewayServer.address() as AddressInfo).port;
 
     for (const component of ["openshell", "openshell-gateway", "openshell-sandbox"]) {
-      fs.writeFileSync(
-        path.join(binDir, component),
+      workspace.writeExecutable(
+        component,
         [
           "#!/usr/bin/env bash",
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
-          `printf '%s\\n' "$*" >> ${JSON.stringify(openshellCallLog)}`,
           'case "$*" in',
-          '  --version|-V) printf "%s 0.0.85\\n" "${0##*/}"; exit 0;;',
-          '  status|"gateway info"|"gateway info -g nemoclaw"*) sleep 20; exit 0;;',
+          '  --version|-V) printf "%s 0.0.101\\n" "${0##*/}"; exit 0;;',
+          '  status) printf "No active gateway\\n"; exit 1;;',
+          '  "gateway info"|"gateway info -g nemoclaw"*) printf "No gateway metadata found\\n"; exit 1;;',
           "esac",
           "exit 1",
         ].join("\n"),
-        { mode: 0o755 },
       );
     }
 
-    fs.writeFileSync(
-      path.join(binDir, "docker"),
+    workspace.writeExecutable("brew", "#!/usr/bin/env bash\nexit 1\n");
+
+    workspace.writeExecutable(
+      "docker",
       [
         "#!/usr/bin/env bash",
         'if [ "$1" = info ]; then echo "Server Version: 24.0.0"; exit 0; fi',
         'if [ "$1" = ps ]; then exit 0; fi',
         "exit 0",
       ].join("\n"),
-      { mode: 0o755 },
     );
 
-    fs.writeFileSync(
-      path.join(binDir, "lsof"),
+    workspace.writeExecutable(
+      "lsof",
       [
         "#!/usr/bin/env bash",
         'port=""',
         'for arg in "$@"; do',
         '  case "$arg" in :*) port="${arg#:}";; esac',
         "done",
-        `if [ "$port" = ${JSON.stringify(GATEWAY_PORT)} ]; then`,
-        `  echo "python3 1234 test 1u IPv4 TCP 127.0.0.1:${GATEWAY_PORT} (LISTEN)"`,
+        `if [ "$port" = ${JSON.stringify(String(gatewayPort))} ]; then`,
+        '  if [ "$1" = -ti ]; then printf "%s\\n" "$PPID"; exit 0; fi',
+        `  echo "python3 $PPID test 1u IPv4 TCP 127.0.0.1:${String(gatewayPort)} (LISTEN)"`,
         "  exit 0",
         "fi",
         "exit 1",
       ].join("\n"),
-      { mode: 0o755 },
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(home, { recursive: true, force: true });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await new Promise<void>((resolve) => gatewayServer.close(() => resolve()));
+    workspace.remove();
   });
 
   it(
-    "reports a foreign listener before OpenShell gateway inspection can hang",
-    testTimeoutOptions(10_000),
+    "rejects a foreign listener without waiting on lifecycle inspection",
+    testTimeoutOptions(15_000),
     () => {
-      const result = spawnSync(
-        process.execPath,
+      const result = runOnboardProcess(
         [CLI, "onboard", "--name", "foreign-port", "--no-gpu", "--non-interactive"],
         {
-          encoding: "utf-8",
-          timeout: 5_000,
-          env: {
-            ...process.env,
-            HOME: home,
-            PATH: `${binDir}:${process.env.PATH || ""}`,
+          timeoutMs: 10_000,
+          env: workspaceEnv(workspace, {
             NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-            NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT,
-            NEMOCLAW_OPENSHELL_BIN: path.join(binDir, "openshell"),
+            NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
+            NEMOCLAW_OPENSHELL_BIN: path.join(workspace.binDir, "openshell"),
             NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-            NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(binDir, "openshell-gateway"),
-            NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(binDir, "openshell-sandbox"),
+            NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(workspace.binDir, "openshell-gateway"),
+            NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(workspace.binDir, "openshell-sandbox"),
+            NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
             NEMOCLAW_TEST_NO_SLEEP: "1",
-          },
+          }),
         },
       );
 
-      const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-      const calls = fs.existsSync(openshellCallLog)
-        ? fs.readFileSync(openshellCallLog, "utf8")
-        : "";
+      const combined = result.output;
       expect(result.error).toBeUndefined();
       expect(result.signal).toBeNull();
       expect(result.status).toBeGreaterThan(0);
-      expect(combined).toContain(`Port ${GATEWAY_PORT} is not available.`);
-      expect(combined).toContain("Blocked by: python3 (PID 1234)");
-      expect(combined).toContain("NEMOCLAW_GATEWAY_PORT=<port> nemoclaw onboard");
-      expect(calls).not.toMatch(/^(status|gateway info(?: -g nemoclaw)?)$/m);
+      expect(combined).toMatch(
+        new RegExp(`(?:Port|Gateway port) ${String(gatewayPort)} (?:is not available|is occupied)`),
+      );
+      expect(combined).toMatch(
+        /The gateway port is held by an incompatible or ambiguous owner|OpenShell gateway needs this port/,
+      );
+      expect(combined).not.toMatch(/occupied by unknown/);
+      expect(combined).toMatch(/\(PID \d+\)/);
+      expect(combined).toContain(
+        `sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`,
+      );
+      expect(combined).toContain("signal only the matching PID from that fresh result");
+      expect(combined).not.toMatch(/sudo kill \d+/);
+    },
+  );
+
+  it(
+    "accepts Server endpoint evidence on repeated production readiness probes",
+    testTimeoutOptions(30_000),
+    async () => {
+      const gatewayName = resolveGatewayName(gatewayPort);
+      const gatewayEndpoint = `https://127.0.0.1:${String(gatewayPort)}/`;
+      const gatewayStatus = [
+        "Server Status",
+        "",
+        `Gateway: ${gatewayName}`,
+        `Server: ${gatewayEndpoint}`,
+        "Status: Connected",
+        "",
+      ].join("\n");
+      const gatewayInfo = [
+        "Gateway Info",
+        "",
+        `Gateway: ${gatewayName}`,
+        `Server: ${gatewayEndpoint}`,
+        "",
+      ].join("\n");
+
+      for (const component of ["openshell", "openshell-gateway", "openshell-sandbox"]) {
+        workspace.writeExecutable(
+          component,
+          [
+            "#!/usr/bin/env bash",
+            "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
+            'case "$*" in',
+            '  --version|-V) printf "%s 0.0.101\\n" "${0##*/}"; exit 0;;',
+            `  status|"status -g ${gatewayName}") printf ${JSON.stringify(gatewayStatus)}; exit 0;;`,
+            `  "gateway info"|"gateway info -g ${gatewayName}") printf ${JSON.stringify(gatewayInfo)}; exit 0;;`,
+            "esac",
+            "exit 1",
+          ].join("\n"),
+        );
+      }
+
+      const containerName = getGatewayClusterContainerName(gatewayName);
+      const portBindings = JSON.stringify({
+        [`${String(gatewayPort)}/tcp`]: [{ HostPort: String(gatewayPort) }],
+      });
+      workspace.writeExecutable(
+        "docker",
+        [
+          "#!/usr/bin/env bash",
+          `if [ "$1" = info ]; then printf '%s\\n' ${JSON.stringify(
+            JSON.stringify({
+              ServerVersion: "24.0.0",
+              OperatingSystem: "Docker Desktop",
+              NCPU: 8,
+              MemTotal: 17_179_869_184,
+            }),
+          )}; exit 0; fi`,
+          'if [ "$1" = ps ]; then exit 0; fi',
+          'if [ "$1" = inspect ] && [ "$4" = ' + JSON.stringify(containerName) + " ]; then",
+          '  case "$3" in',
+          '    "{{.State.Running}}") printf "true\\n";;',
+          `    "{{json .NetworkSettings.Ports}}") printf '%s\\n' ${JSON.stringify(portBindings)};;`,
+          '    "{{.Config.Image}}") printf "nvcr.io/nvidia/openshell/cluster:0.0.101\\n";;',
+          "    *) exit 1;;",
+          "  esac",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+      );
+      workspace.writeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
+
+      vi.stubEnv("HOME", workspace.homeDir);
+      vi.stubEnv("PATH", `${workspace.binDir}:${process.env.PATH || ""}`);
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(gatewayPort));
+      vi.stubEnv(
+        "NEMOCLAW_OPENSHELL_GATEWAY_BIN",
+        path.join(workspace.binDir, "openshell-gateway"),
+      );
+      workspace.writeExecutable("sudo", "#!/usr/bin/env bash\nexit 1\n");
+
+      const readiness = createProductionGatewayReadinessDependencies({
+        gatewayName: () => gatewayName,
+        gatewayPort: () => gatewayPort,
+      });
+      const owner = readiness.resolveOwner();
+      for (const result of [
+        await readiness.observeManagedGateway(owner),
+        await readiness.observeManagedGateway(owner),
+      ]) {
+        expect(result.reuseState).toBe("healthy");
+        expect(result.portConflictState).toBe("none");
+      }
     },
   );
 });

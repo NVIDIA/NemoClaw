@@ -1,5 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Repository checks and tests compare tracked files byte-for-byte against
+# pinned digests. The starter-prompt generator rejects a carriage return. A
+# Windows checkout with core.autocrlf=true rewrites those files to CRLF. The
+# checks then fail before a contributor changes a file.
+# text=auto keeps Git's binary detection, so Git does not convert a binary file.
+* text=auto eol=lf
+
 /skills/nemoclaw/** linguist-generated=true
 /skills/nemoclaw/**/*.md diff=markdown
+/tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/**/*.bundle linguist-generated=true -diff

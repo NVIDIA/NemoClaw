@@ -28,9 +28,14 @@ describe("messaging channel config", () => {
       "WECHAT_ACCOUNT_ID",
       "WECHAT_BASE_URL",
       "WECHAT_USER_ID",
+      "WHATSAPP_MODE",
       "MSTEAMS_APP_ID",
       "MSTEAMS_TENANT_ID",
       "MSTEAMS_PORT",
+      "GOOGLECHAT_AUDIENCE_TYPE",
+      "GOOGLECHAT_AUDIENCE",
+      "GOOGLECHAT_APP_PRINCIPAL",
+      "GOOGLECHAT_ALLOWED_USERS",
     ]);
   });
 

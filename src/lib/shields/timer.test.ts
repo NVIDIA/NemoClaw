@@ -6,47 +6,43 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock";
+import type { ManagedMcpPolicyOmission } from "../actions/sandbox/mcp-bridge-policy";
+import {
+  beginCommittedMcpLifecycleContainmentSync,
+  getMcpLifecycleLockPath,
+  withMcpLifecycleLock,
+} from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
+  applyShieldsPolicySnapshot: vi.fn(
+    (): {
+      status: number;
+      managedMcpOmissions?: ManagedMcpPolicyOmission[];
+    } => ({ status: 0 }),
+  ),
+  completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
+  resolvePersistedAutoRestoreTarget: vi.fn() as unknown,
 }));
 
 const PROCESS_TOKEN = "a".repeat(32);
 
-const runMock = vi.fn(() => ({ status: 0 }));
-
-vi.mock("../runner", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../runner")>()),
-  run: runMock,
-}));
-
-vi.mock("../policy", () => ({
-  buildPolicySetCommand: vi.fn((file: string, name: string) => [
-    "openshell",
-    "policy",
-    "set",
-    "--policy",
-    file,
-    "--wait",
-    name,
-  ]),
-}));
-
-vi.mock("../sandbox/config", () => ({
-  DEFAULT_AGENT_CONFIG: Symbol("DEFAULT_AGENT_CONFIG"),
-  resolveAgentConfig: vi.fn(() => ({
-    configPath: "/sandbox/.openclaw/openclaw.json",
-    configDir: "/sandbox/.openclaw",
-  })),
-}));
+interface TimerTestOptions {
+  retryDelayMs?: number;
+  maxRestoreAttempts?: number;
+}
 
 vi.mock("./index", () => ({
+  applyShieldsPolicySnapshot: shieldsIndexMock.applyShieldsPolicySnapshot,
+  completeAutoRestoreTransition: shieldsIndexMock.completeAutoRestoreTransition,
   get lockAgentConfig() {
     return shieldsIndexMock.lockAgentConfig;
   },
   prepareAutoRestoreTransitionTakeover: shieldsIndexMock.prepareAutoRestoreTransitionTakeover,
+  get resolvePersistedAutoRestoreTarget() {
+    return shieldsIndexMock.resolvePersistedAutoRestoreTarget;
+  },
 }));
 
 describe("shields timer authorization", () => {
@@ -55,7 +51,28 @@ describe("shields timer authorization", () => {
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => ({ status: 0 }));
     shieldsIndexMock.lockAgentConfig = vi.fn();
+    shieldsIndexMock.resolvePersistedAutoRestoreTarget = vi.fn(
+      (
+        _sandboxName: string,
+        marker: { agentName?: string; configPath?: string; configDir?: string },
+      ) =>
+        marker.configPath && marker.configDir
+          ? {
+              ...(marker.agentName ? { agentName: marker.agentName } : {}),
+              configPath: marker.configPath,
+              configDir: marker.configDir,
+              sensitiveFiles: [
+                `${marker.configDir.replace(/\/+$/, "")}/.config-hash`,
+                ...(marker.agentName === "hermes"
+                  ? [`${marker.configDir.replace(/\/+$/, "")}/.env`]
+                  : []),
+              ],
+              stateLockPlanInImage: false,
+            }
+          : undefined,
+    );
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -66,15 +83,16 @@ describe("shields timer authorization", () => {
   });
 
   async function invokeTimerAndCaptureExit(
-    runRestoreTimer: (args: any) => Promise<void>,
+    runRestoreTimer: (args: any, options?: TimerTestOptions) => Promise<void>,
     args: unknown,
+    options: TimerTestOptions = { retryDelayMs: 1 },
   ): Promise<number> {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: any) => {
       throw new Error(`process.exit:${String(code ?? 0)}`);
     });
 
     try {
-      await runRestoreTimer(args);
+      await runRestoreTimer(args, options);
       throw new Error("Expected runRestoreTimer to exit");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -86,22 +104,87 @@ describe("shields timer authorization", () => {
     }
   }
 
+  async function waitForRetryBoundary(deadlinePath: string, auditPath: string): Promise<void> {
+    await vi.waitFor(
+      () => {
+        expect(fs.existsSync(deadlinePath)).toBe(true);
+        expect(fs.existsSync(auditPath)).toBe(true);
+      },
+      { interval: 1, timeout: 2_000 },
+    );
+  }
+
   async function invokeTimerAndExpectRetry(
-    runRestoreTimer: (args: any) => Promise<void>,
+    runRestoreTimer: (args: any, options?: TimerTestOptions) => Promise<void>,
     args: unknown,
   ): Promise<void> {
-    vi.useFakeTimers();
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
+    const { markerPath, sandboxName } = args as {
+      markerPath: string;
+      sandboxName: string;
+    };
+    const markerContents = fs.readFileSync(markerPath);
+    const deadlinePath = `${getMcpLifecycleLockPath(
+      sandboxName,
+      path.join(tmpHome, ".nemoclaw", "state"),
+    )}.deadline`;
+    const auditPath = path.join(path.dirname(markerPath), "shields-audit.jsonl");
+    const pending = runRestoreTimer(args, { retryDelayMs: 50 });
     try {
-      await runRestoreTimer(args);
+      await waitForRetryBoundary(deadlinePath, auditPath);
       expect(exitSpy).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(1);
+      expect(fs.existsSync(deadlinePath)).toBe(true);
+      const policyApplicationsBeforeRevocation =
+        shieldsIndexMock.applyShieldsPolicySnapshot.mock.calls.length;
+      fs.rmSync(markerPath, { force: true });
+      await pending;
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(
+        policyApplicationsBeforeRevocation,
+      );
     } finally {
+      fs.writeFileSync(markerPath, markerContents);
       exitSpy.mockRestore();
-      vi.useRealTimers();
     }
+  }
+
+  function createFailedRestoreFixture(
+    sandboxName: string,
+    parseTimerArgs: (argv: string[]) => unknown,
+  ) {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const mutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    const writeMarker = (processToken: string) =>
+      fs.writeFileSync(
+        markerPath,
+        JSON.stringify({
+          pid: process.pid,
+          sandboxName,
+          snapshotPath,
+          restoreAt: restoreAtIso,
+          processToken,
+        }),
+      );
+    writeMarker(PROCESS_TOKEN);
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 1 });
+    const args = parseTimerArgs([sandboxName, snapshotPath, restoreAtIso, "", "", PROCESS_TOKEN]);
+    expect(args).not.toBeNull();
+    return {
+      args,
+      containmentPath: `${mutationLockPath}.containment`,
+      deadlinePath: `${mutationLockPath}.deadline`,
+      markerPath,
+      mutationLockPath,
+      sandboxName,
+      stateDir,
+      writeMarker,
+    };
   }
 
   it("does not restore or rewrite state when marker is missing", async () => {
@@ -124,7 +207,7 @@ describe("shields timer authorization", () => {
     const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
 
     expect(exitCode).toBe(0);
-    expect(runMock).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(stateFile, "utf-8"))).toEqual(initialState);
   });
 
@@ -166,12 +249,63 @@ describe("shields timer authorization", () => {
     const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
 
     expect(exitCode).toBe(0);
-    expect(runMock).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(stateFile, "utf-8"))).toEqual(initialState);
     expect(fs.existsSync(markerPath)).toBe(true);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "does not restore or rewrite state through a symlinked timer marker",
+    async () => {
+      const timer = await import("./timer");
+      const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+      fs.mkdirSync(stateDir, { recursive: true });
+
+      const sandboxName = "alpha";
+      const snapshotPath = path.join(stateDir, "snapshot.yaml");
+      const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+      const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
+      const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+      const markerTargetPath = path.join(stateDir, "operator-owned-marker.json");
+      const initialState = { shieldsDown: true, updatedAt: "2026-01-01T00:00:00.000Z" };
+      const markerTarget = JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+      });
+
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+      fs.writeFileSync(stateFile, JSON.stringify(initialState, null, 2));
+      fs.writeFileSync(markerTargetPath, markerTarget);
+      fs.symlinkSync(markerTargetPath, markerPath);
+      const args = timer.parseTimerArgs([
+        sandboxName,
+        snapshotPath,
+        restoreAtIso,
+        "",
+        "",
+        PROCESS_TOKEN,
+      ]);
+      expect(args).not.toBeNull();
+
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+
+      expect(exitCode).toBe(0);
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+      expect(JSON.parse(fs.readFileSync(stateFile, "utf-8"))).toEqual(initialState);
+      expect(fs.lstatSync(markerPath).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(markerTargetPath, "utf-8")).toBe(markerTarget);
+    },
+  );
+
   it("binds rebuild-only legacy authorization to both argv and the root-owned marker", async () => {
+    const timerControl = await import("./timer-control");
+    const selfStartIdentity = "proc:self-start";
+    const identitySpy = vi
+      .spyOn(timerControl, "readProcessStartIdentity")
+      .mockReturnValue(selfStartIdentity);
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
@@ -187,7 +321,11 @@ describe("shields timer authorization", () => {
         snapshotPath,
         restoreAt: restoreAtIso,
         processToken: PROCESS_TOKEN,
+        timerProcessStartIdentity: selfStartIdentity,
         allowLegacyHermesProtocol: true,
+        agentName: "openclaw",
+        configPath: "/sandbox/.hermes/config.yaml",
+        configDir: "/sandbox/.hermes",
       }),
     );
 
@@ -199,6 +337,9 @@ describe("shields timer authorization", () => {
       "/sandbox/.hermes",
       PROCESS_TOKEN,
       "1",
+      "",
+      "",
+      "openclaw",
     ]);
     const ordinary = timer.parseTimerArgs([
       sandboxName,
@@ -208,12 +349,44 @@ describe("shields timer authorization", () => {
       "/sandbox/.hermes",
       PROCESS_TOKEN,
       "0",
+      "",
+      "",
+      "openclaw",
+    ]);
+    const mismatchedAgent = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "/sandbox/.hermes/config.yaml",
+      "/sandbox/.hermes",
+      PROCESS_TOKEN,
+      "1",
+      "",
+      "",
+      "langchain-deepagents-code",
+    ]);
+    const mismatchedTarget = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "/sandbox/.openclaw/openclaw.json",
+      "/sandbox/.openclaw",
+      PROCESS_TOKEN,
+      "1",
+      "",
+      "",
+      "openclaw",
     ]);
 
     expect(authorized).not.toBeNull();
+    expect(mismatchedAgent).not.toBeNull();
+    expect(mismatchedTarget).not.toBeNull();
     expect(authorized?.allowLegacyHermesProtocol).toBe(true);
     expect(timer.markerMatchesCurrentTimer(authorized!)).toBe(true);
     expect(timer.markerMatchesCurrentTimer(ordinary!)).toBe(false);
+    expect(timer.markerMatchesCurrentTimer(mismatchedAgent!)).toBe(false);
+    expect(timer.markerMatchesCurrentTimer(mismatchedTarget!)).toBe(false);
+    expect(identitySpy).toHaveBeenCalledTimes(1);
     expect(
       timer.parseTimerArgs([sandboxName, snapshotPath, restoreAtIso, "", "", PROCESS_TOKEN, "yes"]),
     ).toBeNull();
@@ -263,7 +436,7 @@ describe("shields timer authorization", () => {
 
       await timer.runRestoreTimer(args!);
 
-      expect(runMock).not.toHaveBeenCalled();
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
       expect(exitSpy).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(1);
       expect(fs.existsSync(markerPath)).toBe(true);
@@ -273,61 +446,88 @@ describe("shields timer authorization", () => {
     }
   });
 
-  it("retains a dead rebuild owner's timer and retries a transient restore failure", async () => {
-    vi.useFakeTimers();
-    const exitSpy = vi
-      .spyOn(process, "exit")
-      .mockImplementation((() => undefined) as typeof process.exit);
-    try {
-      const timer = await import("./timer");
-      const stateDir = path.join(tmpHome, ".nemoclaw", "state");
-      fs.mkdirSync(stateDir, { recursive: true });
-      const sandboxName = "rebuild-dead";
-      const snapshotPath = path.join(stateDir, "snapshot.yaml");
-      const restoreAtIso = new Date().toISOString();
-      const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-      const sandboxMutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-      fs.writeFileSync(
-        markerPath,
-        JSON.stringify({
-          pid: process.pid,
-          sandboxName,
-          snapshotPath,
-          restoreAt: restoreAtIso,
-          processToken: PROCESS_TOKEN,
-          leaseOwnerPid: 2_147_483_000,
-          leaseOwnerStartIdentity: "proc:dead-owner",
-        }),
-      );
-      runMock.mockImplementationOnce(() => {
-        expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
-        return { status: 17 };
-      });
-      const args = timer.parseTimerArgs([
+  it("audits a successful restore retry without stale MCP warnings or timestamps", async () => {
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "rebuild-dead";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const sandboxMutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    const deadlinePath = `${sandboxMutationLockPath}.deadline`;
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
         sandboxName,
         snapshotPath,
-        restoreAtIso,
-        "",
-        "",
-        PROCESS_TOKEN,
-        "0",
-        "2147483000",
-        "proc:dead-owner",
-      ]);
-      expect(args).not.toBeNull();
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+        leaseOwnerPid: 2_147_483_000,
+        leaseOwnerStartIdentity: "proc:dead-owner",
+      }),
+    );
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
+      expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
+      expect(fs.existsSync(deadlinePath)).toBe(true);
+      return {
+        status: 17,
+        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
+      };
+    });
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValueOnce({
+      status: 0,
+      managedMcpOmissions: [],
+    });
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+      "0",
+      "2147483000",
+      "proc:dead-owner",
+    ]);
+    expect(args).not.toBeNull();
 
-      await timer.runRestoreTimer(args!);
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
 
-      expect(runMock).toHaveBeenCalledTimes(1);
-      expect(exitSpy).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(1);
-      expect(fs.existsSync(markerPath)).toBe(true);
-      expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
-    } finally {
-      exitSpy.mockRestore();
-      vi.useRealTimers();
-    }
+    expect(exitCode).toBe(0);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(2);
+    expect(shieldsIndexMock.completeAutoRestoreTransition).toHaveBeenCalledWith(
+      sandboxName,
+      PROCESS_TOKEN,
+      snapshotPath,
+    );
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    const audits = fs
+      .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const successAudits = audits.filter((audit) => audit.action === "shields_auto_restore");
+    expect(successAudits).toEqual([
+      expect.objectContaining({
+        action: "shields_auto_restore",
+        sandbox: sandboxName,
+      }),
+    ]);
+    expect(successAudits[0]).not.toHaveProperty("warning");
+    const failedAudit = audits.find(
+      (audit) =>
+        audit.action === "shields_up_failed" &&
+        audit.error === "Policy restore exited with status 17",
+    );
+    expect(failedAudit).toEqual(expect.objectContaining({ timestamp: expect.any(String) }));
+    expect(Date.parse(successAudits[0].timestamp)).toBeGreaterThan(
+      Date.parse(failedAudit.timestamp),
+    );
   });
 
   it("does not restore or rewrite state when marker pid mismatches", async () => {
@@ -368,7 +568,7 @@ describe("shields timer authorization", () => {
     const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
 
     expect(exitCode).toBe(0);
-    expect(runMock).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
     expect(JSON.parse(fs.readFileSync(stateFile, "utf-8"))).toEqual(initialState);
     expect(fs.existsSync(markerPath)).toBe(true);
   });
@@ -419,6 +619,59 @@ describe("shields timer authorization", () => {
     expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toEqual(replacementMarker);
   });
 
+  it("does not preempt a transition owner after timer authority is revoked", async () => {
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "revoked-takeover";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const mutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    const deadlinePath = `${mutationLockPath}.deadline`;
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+      }),
+    );
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+    ]);
+    expect(args).not.toBeNull();
+    shieldsIndexMock.prepareAutoRestoreTransitionTakeover.mockImplementationOnce(
+      (
+        _sandboxName: string,
+        _processToken: string,
+        _snapshotPath: string,
+        assertTakeoverAuthority: () => void,
+      ) => {
+        expect(fs.existsSync(deadlinePath)).toBe(true);
+        fs.rmSync(markerPath);
+        assertTakeoverAuthority();
+      },
+    );
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+
+    expect(exitCode).toBe(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.completeAutoRestoreTransition).not.toHaveBeenCalled();
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(fs.existsSync(`${mutationLockPath}.containment`)).toBe(false);
+  });
+
   it("restores and updates state when marker matches current timer invocation", async () => {
     const timer = await import("./timer");
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
@@ -453,14 +706,19 @@ describe("shields timer authorization", () => {
     expect(args).not.toBeNull();
 
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
-    runMock.mockImplementationOnce(() => {
+    const deadlinePath = `${sandboxMutationLockPath}.deadline`;
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementationOnce(() => {
       expect(fs.existsSync(sandboxMutationLockPath)).toBe(true);
+      expect(fs.existsSync(deadlinePath)).toBe(true);
       expect(JSON.parse(fs.readFileSync(lockPath, "utf-8"))).toMatchObject({
         sandboxName,
         command: "shields auto-restore",
         takeoverToken: PROCESS_TOKEN,
       });
-      return { status: 0 };
+      return {
+        status: 0,
+        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
+      };
     });
 
     const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
@@ -468,11 +726,288 @@ describe("shields timer authorization", () => {
     const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
 
     expect(exitCode).toBe(0);
-    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
     expect(updatedState.shieldsDown).toBe(false);
     expect(updatedState.shieldsDownAt).toBeNull();
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(shieldsIndexMock.completeAutoRestoreTransition).toHaveBeenCalledWith(
+      sandboxName,
+      PROCESS_TOKEN,
+      snapshotPath,
+    );
+    expect(
+      fs
+        .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line)),
+    ).toContainEqual(
+      expect.objectContaining({
+        action: "shields_auto_restore",
+        warning: "Auto-restore omitted 1 unproven managed MCP policy entries",
+      }),
+    );
+  });
+
+  it("keeps the deadline gate closed while a failed restore retries", async () => {
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "retry-gate";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const mutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+      }),
+    );
+    shieldsIndexMock.applyShieldsPolicySnapshot
+      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValue({ status: 0 });
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+    ]);
+    expect(args).not.toBeNull();
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as typeof process.exit);
+    let contenderEntered = false;
+
+    try {
+      const restore = timer.runRestoreTimer(args!, { retryDelayMs: 100 });
+      await vi.waitFor(
+        () => expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1),
+        {
+          interval: 1,
+          timeout: 2_000,
+        },
+      );
+      expect(fs.existsSync(`${mutationLockPath}.deadline`)).toBe(true);
+
+      const contender = withMcpLifecycleLock(
+        sandboxName,
+        () => {
+          contenderEntered = true;
+        },
+        { stateDir, pollIntervalMs: 5, timeoutMs: 2_000 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(contenderEntered).toBe(false);
+      expect(fs.existsSync(`${mutationLockPath}.deadline`)).toBe(true);
+
+      await Promise.all([restore, contender]);
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(2);
+      expect(contenderEntered).toBe(true);
+      expect(shieldsIndexMock.completeAutoRestoreTransition).toHaveBeenCalledWith(
+        sandboxName,
+        PROCESS_TOKEN,
+        snapshotPath,
+      );
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("commits durable containment after the default seven-attempt auto-restore budget", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture("retry-containment", timer.parseTimerArgs);
+    const {
+      args,
+      containmentPath,
+      deadlinePath,
+      markerPath,
+      mutationLockPath,
+      sandboxName,
+      stateDir,
+    } = fixture;
+    const auditPath = path.join(stateDir, "shields-audit.jsonl");
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+      retryDelayMs: 0,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(7);
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(containmentPath, "utf-8"))).toMatchObject({
+      sandboxName,
+      shieldsTakeoverToken: PROCESS_TOKEN,
+      containmentReason: expect.stringContaining("failed after 7 attempts"),
+    });
+    await expect(withMcpLifecycleLock(sandboxName, () => undefined, { stateDir })).rejects.toThrow(
+      "Sandbox mutation containment is active",
+    );
+    const auditEntries = fs
+      .readFileSync(auditPath, "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(auditEntries).toHaveLength(8);
+    expect(auditEntries.at(-1)).toMatchObject({
+      action: "shields_up_failed",
+      sandbox: sandboxName,
+      error: expect.stringContaining("Durable containment now blocks sandbox mutations"),
+    });
+  });
+
+  it("reclaims its exact containment generation when timer authority changes during publication", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture(
+      "containment-publication-revoked",
+      timer.parseTimerArgs,
+    );
+    const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, writeMarker } =
+      fixture;
+    const replacementToken = "f".repeat(32);
+    const originalLink = fs.linkSync.bind(fs);
+    const publishReplacement = (existingPath: fs.PathLike, newPath: fs.PathLike): void => {
+      originalLink(existingPath, newPath);
+      writeMarker(replacementToken);
+    };
+    const linkHandlers = new Map([[containmentPath, publishReplacement]]);
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
+      return (linkHandlers.get(String(newPath)) ?? originalLink)(existingPath, newPath);
+    });
+
+    try {
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+        retryDelayMs: 0,
+        maxRestoreAttempts: 1,
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      linkSpy.mockRestore();
+    }
+
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toMatchObject({
+      processToken: replacementToken,
+    });
+    expect(fs.existsSync(containmentPath)).toBe(false);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+  });
+
+  it("retains the exact deadline gates when revoked containment rollback cannot be proven", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture("contain-rollback", timer.parseTimerArgs);
+    const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, writeMarker } =
+      fixture;
+    const replacementToken = "e".repeat(32);
+    const originalLink = fs.linkSync.bind(fs);
+    const publishReplacement = (existingPath: fs.PathLike, newPath: fs.PathLike): void => {
+      originalLink(existingPath, newPath);
+      writeMarker(replacementToken);
+    };
+    const linkHandlers = new Map([[containmentPath, publishReplacement]]);
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
+      return (linkHandlers.get(String(newPath)) ?? originalLink)(existingPath, newPath);
+    });
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((oldPath) => {
+      expect(String(oldPath)).toBe(containmentPath);
+      const error = new Error("simulated exact rollback failure") as NodeJS.ErrnoException;
+      error.code = "EACCES";
+      throw error;
+    });
+
+    try {
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+        retryDelayMs: 0,
+        maxRestoreAttempts: 1,
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      renameSpy.mockRestore();
+      linkSpy.mockRestore();
+    }
+
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toMatchObject({
+      processToken: replacementToken,
+    });
+    expect(fs.existsSync(containmentPath)).toBe(true);
+    expect(fs.existsSync(mutationLockPath)).toBe(true);
+    expect(fs.existsSync(deadlinePath)).toBe(true);
+  });
+
+  it("retains the exact deadline gates when durable containment cannot be committed", async () => {
+    const timer = await import("./timer");
+    const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, stateDir } =
+      createFailedRestoreFixture("retry-contain", timer.parseTimerArgs);
+    const originalLink = fs.linkSync.bind(fs);
+    const rejectContainment = (): never => {
+      const error = new Error("simulated containment commit failure") as NodeJS.ErrnoException;
+      error.code = "EROFS";
+      throw error;
+    };
+    const linkHandlers = new Map<string, typeof fs.linkSync>([
+      [containmentPath, rejectContainment],
+    ]);
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation((_existingPath, newPath) => {
+      return (linkHandlers.get(String(newPath)) ?? originalLink)(_existingPath, newPath);
+    });
+
+    try {
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+        retryDelayMs: 1,
+        maxRestoreAttempts: 1,
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      linkSpy.mockRestore();
+    }
+
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(containmentPath)).toBe(false);
+    expect(fs.existsSync(mutationLockPath)).toBe(true);
+    expect(fs.existsSync(deadlinePath)).toBe(true);
+    expect(fs.readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")).toContain(
+      "Correct the state-directory write failure",
+    );
+  });
+
+  it("stops retrying when transition takeover commits durable containment", async () => {
+    const timer = await import("./timer");
+    const { args, markerPath, mutationLockPath, sandboxName, stateDir } =
+      createFailedRestoreFixture("takeover-contain", timer.parseTimerArgs);
+    shieldsIndexMock.prepareAutoRestoreTransitionTakeover.mockImplementationOnce(() => {
+      beginCommittedMcpLifecycleContainmentSync(
+        sandboxName,
+        PROCESS_TOKEN,
+        "transition takeover requires operator recovery",
+        stateDir,
+      );
+      throw new Error("transition takeover stopped");
+    });
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+      retryDelayMs: 1,
+      maxRestoreAttempts: 3,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(shieldsIndexMock.prepareAutoRestoreTransitionTakeover).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(`${mutationLockPath}.deadline`)).toBe(false);
+    expect(fs.existsSync(`${mutationLockPath}.containment`)).toBe(true);
   });
 
   it("retains recovery authority when the locked-state commit cannot be persisted", async () => {
@@ -562,13 +1097,6 @@ describe("shields timer authorization", () => {
       chattrApplied: true,
       fileHashes: sealedHashes,
     }));
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
@@ -587,7 +1115,12 @@ describe("shields timer authorization", () => {
     const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
 
     expect(exitCode).toBe(0);
-    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledWith(
+      sandboxName,
+      snapshotPath,
+      { deadlineAuthoritative: true, transitionProcessToken: PROCESS_TOKEN },
+    );
     // #4663: relockAndReconfirm applies then re-confirms after the settle
     // window (0ms under test), so lockAgentConfig is invoked twice for a clean
     // lock.
@@ -596,6 +1129,77 @@ describe("shields timer authorization", () => {
     expect(updatedState.chattrApplied).toBe(true);
     expect(updatedState.fileHashes).toEqual(sealedHashes);
     expect(updatedState.fileHashes[sensitiveHashPath]).toBeDefined();
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("preserves the Deep Agents lock protocol through shared target resolution (#7977)", async () => {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const sandboxName = "dcode-safety";
+    const agentName = "langchain-deepagents-code";
+    const configPath = "/sandbox/.deepagents/config.toml";
+    const configDir = "/sandbox/.deepagents";
+    const sensitiveHashPath = `${configDir}/.config-hash`;
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+        agentName,
+      }),
+    );
+
+    const lockMock = vi.fn(() => ({
+      chattrApplied: false,
+      fileHashes: {
+        [configPath]: "a".repeat(64),
+        [sensitiveHashPath]: "b".repeat(64),
+      },
+    }));
+    const indexModule = await import("./index");
+    (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
+
+    const timer = await import("./timer");
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      configPath,
+      configDir,
+      PROCESS_TOKEN,
+      "0",
+      "",
+      "",
+      agentName,
+    ]);
+    expect(args).not.toBeNull();
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+    const fallbackTarget = {
+      agentName,
+      configPath,
+      configDir,
+      sensitiveFiles: [sensitiveHashPath],
+      stateLockPlanInImage: false,
+    };
+
+    expect(shieldsIndexMock.resolvePersistedAutoRestoreTarget).toHaveBeenCalledWith(
+      sandboxName,
+      args,
+    );
+    expect(exitCode).toBe(0);
+    expect(lockMock).toHaveBeenCalledTimes(2);
+    expect(lockMock).toHaveBeenNthCalledWith(1, sandboxName, fallbackTarget, false, false);
+    expect(lockMock).toHaveBeenNthCalledWith(2, sandboxName, fallbackTarget, false, false);
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 
@@ -625,13 +1229,6 @@ describe("shields timer authorization", () => {
       }),
     );
 
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [],
-    });
     shieldsIndexMock.lockAgentConfig = undefined;
 
     const timer = await import("./timer");
@@ -653,7 +1250,7 @@ describe("shields timer authorization", () => {
       .split("\n")
       .map((line) => JSON.parse(line));
 
-    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
     expect(updatedState.shieldsDown).toBe(true);
     expect(auditEntries).toContainEqual(
       expect.objectContaining({
@@ -723,13 +1320,6 @@ describe("shields timer authorization", () => {
     };
     const lockMock = vi.fn(() => ({ chattrApplied: true, fileHashes: sealedHashes }));
 
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
@@ -796,13 +1386,6 @@ describe("shields timer authorization", () => {
         );
       });
 
-    const sandboxConfigModule = await import("../sandbox/config");
-    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 

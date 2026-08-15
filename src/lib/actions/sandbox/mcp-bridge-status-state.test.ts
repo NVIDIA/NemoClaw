@@ -8,12 +8,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
   .join(" ");
-const subprocessTimeoutMs = 15_000;
-const subprocessTestTimeoutMs = subprocessTimeoutMs + 5_000;
 const tempHomes = new Set<string>();
 
 function createTempHome(prefix: string): string {
@@ -27,7 +27,11 @@ afterEach(() => {
   tempHomes.clear();
 });
 
-describe("cross-agent MCP status state", { timeout: subprocessTestTimeoutMs }, () => {
+// Each case spawns a Node child that loads the registry and MCP bridge module
+// graph, which the recorded timing hints put at ~5.5s — over the 5s default.
+// Use the same budget as the sibling `mcp-bridge-status-removal` suite so a
+// loaded shard cannot fail these on timing alone.
+describe("cross-agent MCP status state", testTimeoutOptions(15_000), () => {
   it("rejects duplicate static credential keys across bridges in one sandbox", () => {
     const home = createTempHome("nemoclaw-mcp-env-key-");
     const script = `
@@ -64,7 +68,6 @@ bridge.addMcpBridge("openclaw-sandbox", {
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);
@@ -104,7 +107,6 @@ process.stdout.write(JSON.stringify(markers.map((_, index) => registry.getSandbo
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);
@@ -132,10 +134,10 @@ process.stdout.write(JSON.stringify(markers.map((_, index) => registry.getSandbo
     const script = `
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const payloads = [];
 let mismatch = false;
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] !== "sandbox" || args[1] !== "exec") {
     throw new Error("Unexpected OpenShell call: " + args.join(" "));
   }
@@ -169,7 +171,6 @@ const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -212,7 +213,6 @@ registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);
@@ -225,13 +225,78 @@ registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
       }>;
     };
     expect(payload.invalid.exitCode).toBe(2);
-    expect(payload.invalid.message).toContain("Invalid MCP server name '__proto__'");
+    expect(payload.invalid.message).toContain('Invalid MCP server name "__proto__"');
     expect(payload.inherited).toHaveLength(1);
     expect(payload.inherited[0]).toMatchObject({
       server: "constructor",
       provider: { registryPresent: false },
       adapter: { registered: null },
     });
+  });
+
+  it("uses the loaded OpenClaw configuration directory for status inspection", () => {
+    const home = createTempHome("nemoclaw-mcp-status-custom-root-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const agentDefs = require("./src/lib/agent/defs.js");
+const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+agentDefs.loadAgent = () => ({
+  name: "openclaw",
+  displayName: "OpenClaw",
+  configPaths: { dir: "/sandbox/.custom-openclaw" },
+  mcpCapability: { support: "bridge", adapter: "mcporter" },
+});
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
+  recovered: true,
+  attempted: false,
+  before: { state: "healthy_named" },
+  after: { state: "healthy_named" },
+});
+let capturedCommand = "";
+processRecovery.executeSandboxCommand = (_sandboxName, command) => {
+  capturedCommand = command;
+  return { status: 0, stdout: "registered", stderr: "" };
+};
+registry.registerSandbox({
+  name: "custom-root-status",
+  agent: "openclaw",
+  mcp: { bridges: { github: {
+    server: "github",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://mcp.example.test/github",
+    env: [],
+    policyName: "mcp-bridge-github",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  } } },
+});
+const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
+status.statusMcpBridge("custom-root-status", "github").then(
+  (bridges) => process.stdout.write(JSON.stringify({ bridges, capturedCommand })),
+  (error) => {
+    console.error(error);
+    process.exit(1);
+  },
+);
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      bridges: Array<{ adapter: { registered: boolean } }>;
+      capturedCommand: string;
+    };
+    expect(payload.bridges[0]?.adapter.registered).toBe(true);
+    expect(payload.capturedCommand).toContain(
+      '\\"root\\":\\"/sandbox/.custom-openclaw/workspace\\"',
+    );
+    expect(payload.capturedCommand).not.toContain('\\"root\\":\\"/sandbox/.openclaw/workspace\\"');
   });
 
   it("reports each bridge from its persisted adapter or agent capability", () => {
@@ -302,7 +367,6 @@ status.statusMcpBridge("persisted-status").then(
       cwd: process.cwd(),
       encoding: "utf8",
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
-      timeout: subprocessTimeoutMs,
     });
 
     expect(result.status).toBe(0);

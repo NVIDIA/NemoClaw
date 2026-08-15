@@ -124,23 +124,30 @@ type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 // Runtime-facing IDs declared by the built-in messaging manifests. Package
-// selection remains manifest-derived in messaging-build-applier.mts; these IDs
-// describe only the neutral config written after those packages are installed.
-const MANAGED_IMAGE_OPENCLAW_CHANNEL_IDS = [
-  "telegram",
-  "discord",
-  "openclaw-weixin",
-  "slack",
-  "whatsapp",
-  "msteams",
+// selection remains manifest-derived in messaging-build-applier.mts; this
+// paired contract keeps each installed/bundled plugin bound to the channel key
+// that must remain disabled in a neutral managed image.
+export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
+  { channelId: "telegram", pluginId: "telegram" },
+  { channelId: "discord", pluginId: "discord" },
+  { channelId: "openclaw-weixin", pluginId: "openclaw-weixin" },
+  { channelId: "slack", pluginId: "slack" },
+  { channelId: "whatsapp", pluginId: "whatsapp" },
+  { channelId: "msteams", pluginId: "msteams" },
+  { channelId: "googlechat", pluginId: "googlechat" },
+] as const;
+// OpenClaw also ships channel plugins outside NemoClaw's currently supported
+// messaging manifests. Keep those bundled entrypoints explicitly inert without
+// representing them as activatable managed-image capabilities.
+export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
+  { channelId: "imessage", pluginId: "imessage" },
+] as const;
+const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
+  ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
-  "telegram",
-  "discord",
-  "openclaw-weixin",
-  "slack",
-  "whatsapp",
-  "msteams",
+  ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
   "tavily",
@@ -1402,6 +1409,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       baseUrl: inferenceBaseUrl,
       apiKey: "unused",
       api: inferenceApi,
+      timeoutSeconds: agentTimeout,
       models: providerModels,
     },
   };
@@ -1422,8 +1430,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };
   }
+  const webSearchProvider =
+    env.NEMOCLAW_WEB_SEARCH_ENABLED === "1" ? resolveWebSearchProvider(env) : undefined;
 
-  const plugins: JsonObject = { entries: pluginEntries };
+  const plugins: JsonObject = {
+    allow: unique([
+      "nemoclaw",
+      ...openclawPlugins.map((plugin) => plugin.id),
+      ...(openclawOtel ? ["diagnostics-otel"] : []),
+      ...(webSearchProvider ? [webSearchProvider] : []),
+    ]),
+    entries: pluginEntries,
+  };
   const pluginLoadPaths: string[] = [];
   for (const plugin of openclawPlugins) {
     pluginEntries[plugin.id] = { enabled: true };
@@ -1465,7 +1483,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const channels: JsonObject = { defaults: {} };
   if (managedImageCapabilityUnion) {
-    for (const channelId of MANAGED_IMAGE_OPENCLAW_CHANNEL_IDS) {
+    for (const { channelId } of MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
       channels[channelId] = { enabled: false };
     }
   }
@@ -1531,12 +1549,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
     tools.web.search = { enabled: false };
   }
 
-  if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
+  if (webSearchProvider) {
     // OpenClaw 2026.5.x keeps provider-owned credentials under
     // plugins.entries.<provider>.config rather than inline on tools.web.search.
     // Brave is installed externally during the image build; Tavily ships as a
     // bundled OpenClaw extension. Both use the same plugin-scoped config shape.
-    const webSearchProvider = resolveWebSearchProvider(env);
     const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
     tools.web.search = { enabled: true, provider: webSearchProvider };
     config.plugins.entries[webSearchProvider] = {
@@ -1548,26 +1565,73 @@ export function buildConfig(env: Env = process.env): JsonObject {
   return config;
 }
 
-function preserveExistingPluginInstalls(config: JsonObject, configPath: string): void {
-  let existing: unknown;
+function boundedOpenClawMetadataText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value === value.trim() &&
+    Buffer.byteLength(value, "utf8") <= 256 &&
+    !/[\0\r\n]/u.test(value)
+  );
+}
+
+function readExistingOpenClawConfig(configPath: string): JsonObject | null {
+  let value: unknown;
   try {
-    existing = JSON.parse(readFileSync(configPath, "utf-8"));
+    value = JSON.parse(readFileSync(configPath, "utf-8"));
   } catch {
-    return;
+    return null;
   }
-  if (!isObject(existing)) {
-    return;
+  return isObject(value) ? value : null;
+}
+
+function openClawContinuityMetadata(value: unknown): JsonObject | null {
+  if (
+    !isObject(value) ||
+    !boundedOpenClawMetadataText(value.lastTouchedVersion) ||
+    !boundedOpenClawMetadataText(value.lastTouchedAt)
+  ) {
+    return null;
   }
+  return {
+    lastTouchedVersion: value.lastTouchedVersion,
+    lastTouchedAt: value.lastTouchedAt,
+  };
+}
+
+function preserveExistingOpenClawState(config: JsonObject, configPath: string): void {
+  const existing = readExistingOpenClawConfig(configPath);
+
+  // OpenClaw 2026.7 rejects a regenerated config that drops the write
+  // metadata carried by its last-known-good snapshot, then restores the old
+  // config with `missing-meta-vs-last-good`. The final image-generation pass
+  // can leave the active file without metadata while its exact OpenClaw-owned
+  // `.bak` retains it, so prefer the active pair and otherwise inspect only
+  // that one fixed backup path. Copy only the two bounded continuity fields;
+  // every NemoClaw-owned routing field still comes from the managed profile.
+  const continuityMeta =
+    openClawContinuityMetadata(existing?.meta) ??
+    openClawContinuityMetadata(readExistingOpenClawConfig(`${configPath}.bak`)?.meta);
+  if (continuityMeta) config.meta = continuityMeta;
+
+  if (!existing) return;
   const existingPlugins = existing.plugins;
   if (!isObject(existingPlugins)) {
     return;
+  }
+  const currentPlugins = config.plugins;
+  if (Array.isArray(existingPlugins.allow)) {
+    currentPlugins.allow = unique([
+      ...(Array.isArray(currentPlugins.allow) ? currentPlugins.allow : []),
+      ...existingPlugins.allow.filter(
+        (pluginId): pluginId is string => typeof pluginId === "string",
+      ),
+    ]);
   }
   const existingInstalls = existingPlugins.installs;
   if (!isObject(existingInstalls) || Object.keys(existingInstalls).length === 0) {
     return;
   }
-
-  const currentPlugins = config.plugins;
   if (!isObject(currentPlugins.installs)) {
     currentPlugins.installs = {};
   }
@@ -1577,7 +1641,7 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
 export function writeOpenClawConfig(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
-  preserveExistingPluginInstalls(config, configPath);
+  preserveExistingOpenClawState(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);

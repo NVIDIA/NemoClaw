@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
-  resolveGatewayTeardownAuthority: vi.fn(),
+  resolveGatewayRebuildAuthority: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -13,10 +13,12 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(),
 }));
 
-vi.mock("../../onboard/gateway-teardown-authority", () => ({
-  resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
+vi.mock("../../onboard/gateway-teardown-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/gateway-teardown-authority")>()),
+  resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
 }));
 
+import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-types";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -33,6 +35,17 @@ const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
   gatewayName: "nemoclaw-9090",
   gatewayPort: 9090,
+};
+
+const STANDALONE_GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+  mode: "nemoclaw-managed",
+  source: "standalone",
+  endpoint: null,
+  stateDir: null,
+  supervisor: null,
+  requiredCapabilities: [],
 };
 
 const recreateOptions: RebuildRecreateOnboardOpts = {
@@ -212,16 +225,7 @@ describe("rebuild replacement journal", () => {
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     } as registry.SandboxEntry);
-    mocks.resolveGatewayTeardownAuthority.mockReturnValue({
-      gatewayName: "nemoclaw-9090",
-      gatewayPort: 9090,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    });
+    mocks.resolveGatewayRebuildAuthority.mockReturnValue(STANDALONE_GATEWAY_AUTHORITY);
     mocks.captureOpenshell.mockReturnValue(livePresentProbe());
   });
 
@@ -232,6 +236,7 @@ describe("rebuild replacement journal", () => {
   function open() {
     return openRebuildRecreateJournal({
       target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
       agentName: "langchain-deepagents-code",
       targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
       log: vi.fn(),
@@ -251,15 +256,63 @@ describe("rebuild replacement journal", () => {
   });
 
   it("selects the exact gateway authority the journal records", () => {
-    open();
+    const journal = open();
 
-    expect(mocks.resolveGatewayTeardownAuthority).toHaveBeenCalledWith({
+    expect(mocks.resolveGatewayRebuildAuthority).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     });
     const authority = session.checkpoint?.gatewayAuthority;
     expect(authority?.kind).toBe("selected");
     expect(authority?.kind === "selected" && authority.value.gatewayPort).toBe(9090);
+    expect(authority?.kind === "selected" && authority.value.source).toBe("standalone");
+    expect(authority?.kind === "selected" && authority.value).toBe(journal.gatewayAuthority);
+  });
+
+  it("refuses the standalone to package-managed authority change after preflight (#7411)", () => {
+    const onAuthorityRefusal = vi.fn();
+    mocks.resolveGatewayRebuildAuthority.mockReturnValue({
+      ...STANDALONE_GATEWAY_AUTHORITY,
+      source: "packaged-service",
+    });
+
+    expect(() =>
+      openRebuildRecreateJournal({
+        target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
+        agentName: "langchain-deepagents-code",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+        log: vi.fn(),
+        onAuthorityRefusal,
+      }),
+    ).toThrow(/authority changed after authoritative rebuild preflight/);
+
+    expect(onAuthorityRefusal).toHaveBeenCalledOnce();
+    expect(onboardSession.updateSession).not.toHaveBeenCalled();
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+  });
+
+  it("adopts the package-managed to standalone migration and journals standalone (#9088)", () => {
+    const onAuthorityRefusal = vi.fn();
+
+    const journal = openRebuildRecreateJournal({
+      target: NON_DEFAULT_TARGET,
+      expectedGatewayAuthority: {
+        ...STANDALONE_GATEWAY_AUTHORITY,
+        source: "packaged-service",
+      },
+      agentName: "langchain-deepagents-code",
+      targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+      log: vi.fn(),
+      onAuthorityRefusal,
+    });
+
+    expect(onAuthorityRefusal).not.toHaveBeenCalled();
+    expect(journal.gatewayAuthority.source).toBe("standalone");
+    expect(session.checkpoint?.gatewayAuthority).toMatchObject({
+      kind: "selected",
+      value: { source: "standalone" },
+    });
   });
 
   it("starts at deleted when the source sandbox is already absent", () => {
@@ -319,6 +372,7 @@ describe("rebuild replacement journal", () => {
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
@@ -335,6 +389,7 @@ describe("rebuild replacement journal", () => {
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,
@@ -355,6 +410,7 @@ describe("rebuild replacement journal", () => {
     expect(() =>
       openRebuildRecreateJournal({
         target: NON_DEFAULT_TARGET,
+        expectedGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
         agentName: "langchain-deepagents-code",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent({
           ...recreateOptions,

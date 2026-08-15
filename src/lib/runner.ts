@@ -11,8 +11,13 @@ import path from "node:path";
 
 import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
 import { shellQuote } from "./core/shell-quote";
-import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
 import { detectDockerHost } from "./platform";
+import {
+  diagnosticPreview,
+  NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN,
+} from "./sandbox-name-contract";
 import { redact, redactError, writeRedactedResult } from "./security/redact";
 import { buildSubprocessEnv } from "./subprocess-env";
 
@@ -38,13 +43,29 @@ type SpawnResult = SpawnSyncReturns<string | Buffer>;
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
+  if (dockerHost.source === "socket") {
+    delete process.env.DOCKER_CONTEXT;
+  }
 }
 
-function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv): Record<string, string> {
+function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv, executable?: string): Record<string, string> {
   const normalizedExtra: Record<string, string> = {};
   if (extraEnv) {
     for (const [key, value] of Object.entries(extraEnv)) {
       if (value !== undefined) normalizedExtra[key] = value;
+    }
+  }
+  const usesDockerDefaultAuthority =
+    executable !== undefined &&
+    path.basename(executable) === "docker" &&
+    normalizedExtra.DOCKER_HOST === undefined &&
+    process.env.DOCKER_HOST === undefined;
+  if (usesDockerDefaultAuthority) {
+    if (normalizedExtra.DOCKER_CONFIG === undefined && process.env.DOCKER_CONFIG !== undefined) {
+      normalizedExtra.DOCKER_CONFIG = process.env.DOCKER_CONFIG;
+    }
+    if (normalizedExtra.DOCKER_CONTEXT === undefined && process.env.DOCKER_CONTEXT !== undefined) {
+      normalizedExtra.DOCKER_CONTEXT = process.env.DOCKER_CONTEXT;
     }
   }
   return buildSubprocessEnv(normalizedExtra);
@@ -113,7 +134,7 @@ function spawnAndHandle(
     shell: false,
     stdio: effectiveStdio,
     cwd: ROOT,
-    env: buildRunnerEnv(opts.env),
+    env: buildRunnerEnv(opts.env, safeFile),
   });
   if (!opts.suppressOutput) {
     writeRedactedResult(result, effectiveStdio);
@@ -187,7 +208,7 @@ function runArrayCmd(
     shell: false,
     stdio,
     cwd: ROOT,
-    env: buildRunnerEnv(extraEnv),
+    env: buildRunnerEnv(extraEnv, exe),
   });
   if (!suppressOutput) {
     writeRedactedResult(result, stdio);
@@ -288,7 +309,7 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
       ...spawnOpts,
       shell: false,
       cwd: ROOT,
-      env: buildRunnerEnv(extraEnv),
+      env: buildRunnerEnv(extraEnv, exe),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
@@ -352,7 +373,7 @@ function runCaptureEx(
       // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
       // Otherwise curl probes against localhost (Ollama validation, etc.)
       // tunnel through the user's host proxy and fail with HTTP 500.
-      env: buildRunnerEnv(extraEnv),
+      env: buildRunnerEnv(extraEnv, exe),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
@@ -371,7 +392,8 @@ function runCaptureEx(
 }
 
 /**
- * Validate a name (sandbox, instance, container) against RFC 1123 label rules.
+ * Validate a name (sandbox, instance, container) against the canonical
+ * OpenShell-compatible label rules.
  * Rejects shell metacharacters, path traversal, and empty/overlength names.
  */
 function validateName(name: string, label = "name"): string {
@@ -380,11 +402,13 @@ function validateName(name: string, label = "name"): string {
   }
   if (name.length > NAME_MAX_LENGTH) {
     throw new Error(
-      `${label} too long (max ${NAME_MAX_LENGTH} chars): '${name.slice(0, 20)}...'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+      `${label} too long (max ${NAME_MAX_LENGTH} chars): ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
   if (!NAME_VALID_PATTERN.test(name)) {
-    throw new Error(`Invalid ${label}: '${name}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
+    throw new Error(
+      `Invalid ${label}: ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
   }
   return name;
 }

@@ -13,6 +13,7 @@ function fakeAgent(format: string | null) {
       configFile: "openclaw.json",
       envFile: null,
       format,
+      shieldsFiles: [],
     },
   } as unknown as Parameters<typeof buildChannelRuntimeProbe>[0];
 }

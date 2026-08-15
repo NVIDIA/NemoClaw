@@ -27,6 +27,7 @@ const RESUMED = Object.freeze({
   pid: 4_200,
   processStartIdentity: "proc-start-200",
 });
+const HOLDER = Object.freeze({ pid: 9_100, processStartIdentity: "holder-start-100" });
 
 function record(
   phase: PodmanGatewayWatcherLeaseRecord["phase"] = "acquiring",
@@ -34,6 +35,7 @@ function record(
   return Object.freeze({
     ...ORIGINAL,
     schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+    holder: HOLDER,
     leaseId: LEASE_ID,
     phase,
   });
@@ -41,6 +43,7 @@ function record(
 
 function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> = {}) {
   let durable: PodmanGatewayWatcherLeaseRecord | null = null;
+  let holderAlive = true;
   let ownerStopped = false;
   let watchers: PodmanGatewayWatcherSnapshot[] = [ORIGINAL];
   const alive = new Set(["4100:proc-start-100"]);
@@ -80,8 +83,13 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
   const deps: PodmanManagedGatewayWatcherControllerDeps = {
     store,
     captureCurrent: () => ORIGINAL,
+    captureLeaseHolder: () => HOLDER,
     listTargetWatchers: () => watchers,
     isProcessInstanceAlive: (entry) => alive.has(key(entry)),
+    isLeaseHolderAlive: (holder) =>
+      holderAlive &&
+      holder.pid === HOLDER.pid &&
+      holder.processStartIdentity === HOLDER.processStartIdentity,
     isOwnerStopped: () => ownerStopped,
     stopExactOwner,
     resumeSameOwner,
@@ -102,6 +110,9 @@ function harness(overrides: Partial<PodmanManagedGatewayWatcherControllerDeps> =
     resumeSameOwner,
     setDurable: (value: PodmanGatewayWatcherLeaseRecord | null) => {
       durable = value;
+    },
+    setHolderAlive: (value: boolean) => {
+      holderAlive = value;
     },
     setOwnerStopped: (value: boolean) => {
       ownerStopped = value;
@@ -138,6 +149,7 @@ describe("durable Podman OpenShell watcher lease", () => {
   it("clears an acquiring record when the crash preceded the stop request", () => {
     const fake = harness();
     fake.setDurable(record("acquiring"));
+    fake.setHolderAlive(false);
 
     fake.controller.recoverUnfinishedLease();
 
@@ -149,6 +161,7 @@ describe("durable Podman OpenShell watcher lease", () => {
   it("resumes the exact owner when a crash followed stop but preceded the phase write", () => {
     const fake = harness();
     fake.setDurable(record("acquiring"));
+    fake.setHolderAlive(false);
     fake.stopExactOwner();
 
     fake.controller.recoverUnfinishedLease();
@@ -161,6 +174,7 @@ describe("durable Podman OpenShell watcher lease", () => {
   it("recognizes an exact healthy post-resume owner without spawning a duplicate", () => {
     const fake = harness();
     fake.setDurable(record("stopped"));
+    fake.setHolderAlive(false);
     fake.stopExactOwner();
     fake.resumeSameOwner();
     fake.resumeSameOwner.mockClear();
@@ -169,6 +183,19 @@ describe("durable Podman OpenShell watcher lease", () => {
 
     expect(fake.resumeSameOwner).not.toHaveBeenCalled();
     expect(fake.durable()).toBeNull();
+  });
+
+  it("leaves a stopped lease untouched while its exact holder is alive", () => {
+    const fake = harness();
+    fake.setDurable(record("stopped"));
+    fake.stopExactOwner();
+
+    expect(() => fake.controller.recoverUnfinishedLease()).toThrow(
+      "still owned by a live transaction process",
+    );
+    expect(fake.resumeSameOwner).not.toHaveBeenCalled();
+    expect(fake.store.clear).not.toHaveBeenCalled();
+    expect(fake.durable()).toEqual(record("stopped"));
   });
 
   it("refuses ambiguous watcher ownership before persisting or stopping", () => {
@@ -213,6 +240,7 @@ describe("durable Podman OpenShell watcher lease", () => {
   it("leaves recovery authority intact when an unexpected watcher blocks resume", () => {
     const fake = harness();
     fake.setDurable(record("stopped"));
+    fake.setHolderAlive(false);
     fake.stopExactOwner();
     fake.setOwnerStopped(false);
     fake.setWatchers([

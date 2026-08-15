@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 describe("MCP restart policy ordering", () => {
   it("rejects a foreign attached credential key before policy or provider mutation", () => {
@@ -17,7 +17,7 @@ describe("MCP restart policy ordering", () => {
 process.env.HOME = ${JSON.stringify(home)};
 process.env.MCP_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -43,7 +43,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   if (args.join(" ") === "status --output json") {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
@@ -93,7 +93,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, ["8.8.8.8"]),
+  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 
@@ -136,7 +138,7 @@ bridge.restartMcpBridge("alpha", "example").then(
 process.env.HOME = ${JSON.stringify(home)};
 process.env.MCP_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -164,7 +166,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   const command = args.join(" ");
   if (command === "status --output json") {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
@@ -220,7 +222,9 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, ["8.8.8.8"]),
+  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
+    addresses: ["8.8.8.8"],
+  }),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 

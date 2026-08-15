@@ -11,7 +11,11 @@ import {
 } from "../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
-import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
+import {
+  checkpointSandboxName,
+  type OnboardSessionBootstrapDeps,
+  prepareOnboardSession,
+} from "./session-bootstrap";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -27,6 +31,26 @@ function completeSandboxStep(): Session["steps"][string] {
     error: null,
   };
 }
+
+const SERVING_PROFILE_PROVENANCE = {
+  schemaVersion: 1,
+  catalogDigest: `sha256:${"1".repeat(64)}`,
+  preset: {
+    id: "vllm.dgx-spark-gb10.single.example",
+    digest: `sha256:${"2".repeat(64)}`,
+    displayName: "Example Spark profile",
+    supportState: "experimental",
+  },
+  recipe: {
+    id: "vllm.dgx-spark-gb10.single.example",
+    digest: `sha256:${"3".repeat(64)}`,
+    backend: "vllm",
+  },
+  model: { id: "example/model", revision: "revision-1" },
+  runtimeImage: null,
+  estimatedImageDownloadBytes: null,
+  estimatedModelDownloadBytes: null,
+} as const;
 
 function createDeps(
   initialSession: Session | null = null,
@@ -59,6 +83,7 @@ function createDeps(
     exitProcess: vi.fn((code: number) => {
       throw new ExitError(code);
     }) as (code: number) => never,
+    requireHostMountRuntimeSupport: vi.fn(),
     resolveResumeCheckpoint: vi.fn((): CheckpointLoadResult => ({ status: "none" })),
     ...overrides,
   };
@@ -80,6 +105,9 @@ describe("prepareOnboardSession", () => {
         nonInteractive: true,
         requestedToolDisclosure: "direct",
         requestedObservabilityEnabled: true,
+        requestedHostMounts: [
+          { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+        ],
       },
       deps,
     );
@@ -88,10 +116,105 @@ describe("prepareOnboardSession", () => {
     expect(result.fromDockerfile).toBe("/abs/Dockerfile.custom");
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.metadata.fromDockerfile).toBe("/abs/Dockerfile.custom");
+    expect(result.session?.metadata.hostMounts).toEqual([
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+    ]);
     expect(result.session?.toolDisclosure).toBe("direct");
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
+  });
+
+  it("rejects unsupported fresh-session host mounts before changing session state", async () => {
+    const existing = createSession({ sessionId: "old-session" });
+    const requireHostMountRuntimeSupport = vi.fn(() => {
+      throw new Error("unsupported runtime provider");
+    });
+    const { deps } = createDeps(existing, { requireHostMountRuntimeSupport });
+    const mounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: false,
+          fresh: true,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          requestedHostMounts: mounts,
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("unsupported runtime provider");
+
+    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts, undefined);
+    expect(deps.clearSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
+  });
+
+  it("publishes portable runtime intent in the first atomic session envelope", async () => {
+    const { deps } = createDeps();
+    const authority = {
+      schemaVersion: 1 as const,
+      kind: "podman" as const,
+      ownership: "current-user" as const,
+      uid: 1000,
+      homeDir: "/home/alice",
+      configHome: "/home/alice/.config",
+      runtimeDir: "/run/user/1000",
+      socketPath: "/run/user/1000/podman/podman.sock",
+    };
+
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+        checkpointProfile: "portable",
+        portableRuntimeAuthority: authority,
+      },
+      deps,
+    );
+
+    expect(deps.createSession).toHaveBeenCalledTimes(1);
+    expect(deps.saveSession).toHaveBeenCalledTimes(1);
+    expect(deps.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        checkpoint: expect.objectContaining({
+          schemaVersion: 4,
+          profile: { kind: "selected", value: "portable" },
+          runtimeAuthority: { kind: "selected", value: authority },
+        }),
+      }),
+    );
+    expect(result.session?.checkpoint?.runtimeAuthority).toEqual({
+      kind: "selected",
+      value: authority,
+    });
+  });
+
+  it("checkpoints exact serving profile provenance before fresh onboarding effects (#8246)", async () => {
+    const { deps } = createDeps();
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "profile-test",
+        cannotPrompt: true,
+        nonInteractive: true,
+        servingProfileProvenance: SERVING_PROFILE_PROVENANCE,
+      },
+      deps,
+    );
+
+    expect(result.session?.servingProfileProvenance).toEqual(SERVING_PROFILE_PROVENANCE);
   });
 
   it("checkpoints Station Express choices before managed vLLM setup", async () => {
@@ -146,7 +269,11 @@ describe("prepareOnboardSession", () => {
         message: "failed",
         recordedAt: "2026-06-10T00:00:00.000Z",
       },
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: "Dockerfile.recorded" },
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: "Dockerfile.recorded",
+        hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
+      },
       sandboxName: "demo",
       status: "failed",
       observabilityEnabled: true,
@@ -178,7 +305,64 @@ describe("prepareOnboardSession", () => {
     expect(deps.applySessionRecovery).toHaveBeenCalledWith(initial);
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
+    expect(result.session?.metadata.hostMounts).toEqual([
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+    ]);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
+  });
+
+  it("rejects unsupported persisted host mounts before changing a resumed session", async () => {
+    const mounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+    const initial = createSession({
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts: mounts },
+    });
+    const requireHostMountRuntimeSupport = vi.fn(() => {
+      throw new Error("unsupported runtime provider");
+    });
+    const { deps } = createDeps(initial, { requireHostMountRuntimeSupport });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: true,
+          nonInteractive: true,
+          checkpointProfile: "portable",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("unsupported runtime provider");
+
+    expect(requireHostMountRuntimeSupport).toHaveBeenCalledWith(mounts, "portable");
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(deps.applySessionRecovery).not.toHaveBeenCalled();
+  });
+
+  it("preserves recorded serving profile provenance during resume (#8246)", async () => {
+    const initial = createSession({
+      sandboxName: "profile-test",
+      servingProfileProvenance: SERVING_PROFILE_PROVENANCE,
+    });
+    const { deps } = createDeps(initial);
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "profile-test",
+        cannotPrompt: true,
+        nonInteractive: true,
+        servingProfileProvenance: SERVING_PROFILE_PROVENANCE,
+      },
+      deps,
+    );
+
+    expect(result.session?.servingProfileProvenance).toEqual(SERVING_PROFILE_PROVENANCE);
   });
 
   it("persists a recovered terminal snapshot receipt (#6227)", async () => {
@@ -282,6 +466,51 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
   });
 
+  it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {
+    const recordedMount = {
+      source: "/srv/project",
+      target: "/sandbox/project",
+      readOnly: true as const,
+    };
+    const requestedMount = {
+      source: "/srv/reference",
+      target: "/sandbox/reference",
+      readOnly: true as const,
+    };
+    const initial = createSession({
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts: [recordedMount] },
+    });
+    const conflict: ResumeConfigConflict = {
+      field: "host mounts",
+      requested: JSON.stringify([requestedMount]),
+      recorded: JSON.stringify([recordedMount]),
+    };
+    const getResumeConfigConflicts = vi.fn(() => [conflict]);
+    const { deps } = createDeps(initial, { getResumeConfigConflicts });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          requestedHostMounts: [requestedMount],
+          cannotPrompt: false,
+          nonInteractive: false,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(getResumeConfigConflicts).toHaveBeenCalledWith(
+      initial,
+      expect.objectContaining({ hostMounts: [requestedMount] }),
+    );
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(initial.metadata.hostMounts).toEqual([recordedMount]);
+  });
+
   it("still exits on resume conflicts when diagnostic recording fails", async () => {
     const conflict: ResumeConfigConflict = {
       field: "sandbox",
@@ -371,10 +600,110 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).not.toHaveBeenCalled();
   });
 
+  it("allows no-TTY resume after review-stage identity persistence (#8687)", async () => {
+    const session = createSession({
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      status: "failed",
+    });
+    await checkpointSandboxName("review-interrupted", { name: "openclaw" }, (mutator) => {
+      return mutator(session) ?? session;
+    });
+    session.steps.provider_selection.status = "failed";
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session).toMatchObject({
+      sandboxName: "review-interrupted",
+      provider: "ollama-local",
+      model: "qwen3.5:9b",
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "review-interrupted", agent: "openclaw" }),
+      },
+    });
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("persists Hermes review identity for no-TTY resume (#8687)", async () => {
+    const session = createSession({ agent: "hermes", status: "failed" });
+    await checkpointSandboxName("hermes-review", { name: "hermes" }, (mutator) => {
+      return mutator(session) ?? session;
+    });
+    session.steps.provider_selection.status = "failed";
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session).toMatchObject({
+      sandboxName: "hermes-review",
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "hermes-review", agent: "hermes" }),
+      },
+    });
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("waits for canonical sandbox identity persistence before returning (#8687)", async () => {
+    const session = createSession();
+    let release: (() => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let completed = false;
+    const checkpoint = checkpointSandboxName(
+      "review-race",
+      { name: "openclaw" },
+      async (mutator) => {
+        await writeStarted;
+        const next = mutator(session) ?? session;
+        completed = true;
+        return next;
+      },
+    );
+
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(session.checkpoint).toBeNull();
+    release?.();
+    await checkpoint;
+
+    expect(completed).toBe(true);
+    expect(session).toMatchObject({
+      sandboxName: "review-race",
+      sandboxPromptProgress: { sandboxName: true },
+      checkpoint: {
+        sandboxIdentity: decisionSelected({ name: "review-race", agent: "openclaw" }),
+      },
+    });
+  });
+
   it("recovers a non-OpenClaw checkpointed sandbox name after a crash before the legacy field was written (#7022)", async () => {
     const session = createSession({ agent: "hermes", sandboxName: null });
     const checkpoint: OnboardCheckpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",
@@ -427,6 +756,8 @@ describe("prepareOnboardSession", () => {
     });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      profile: { kind: "selected", value: "default" },
+      runtimeAuthority: { kind: "unset" },
       sessionId: session.sessionId,
       machineState: "sandbox",
       updatedAt: "2026-01-01T00:00:00.000Z",

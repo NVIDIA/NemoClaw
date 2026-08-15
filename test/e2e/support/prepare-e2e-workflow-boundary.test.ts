@@ -27,23 +27,9 @@ type Workflow = {
 };
 
 describe("prepare-e2e workflow boundary", () => {
-  it("keeps one canonical bootstrap invocation on every E2E execution job", () => {
+  it("requires one workspace preparation step per E2E job and one candidate CLI build in generate-matrix", () => {
     expect(validatePrepareE2eAction()).toEqual([]);
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);
-  });
-
-  it("keeps the installer-backed security posture matrix on the no-build bootstrap", () => {
-    const workflow = readWorkflow() as Workflow;
-    const securityPostureJob = workflow.jobs["security-posture"];
-    const prepare = securityPostureJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    delete prepare.with;
-
-    expect(validatePrepareE2eInvocations(workflow)).toEqual(
-      expect.arrayContaining([
-        "security-posture prepare-e2e must set build-cli to false",
-        "security-posture prepare-e2e invocation must not override its canonical contract",
-      ]),
-    );
   });
 
   it("rejects action implementation drift", () => {
@@ -89,29 +75,31 @@ describe("prepare-e2e workflow boundary", () => {
 
   it("rejects build-mode, duplicate-step, and ordering drift", () => {
     const workflow = readWorkflow() as Workflow;
-    const buildJob = workflow.jobs["sandbox-operations"];
-    const buildPrepare = buildJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    buildPrepare.with = { "build-cli": "false" };
-    buildJob.steps!.splice(buildJob.steps!.indexOf(buildPrepare), 0, {
+    const artifactProducer = workflow.jobs["generate-matrix"];
+    const producerPrepare = artifactProducer.steps!.find(
+      (step) => step.uses === PREPARE_E2E_ACTION,
+    )!;
+    producerPrepare.with = { "build-cli": "false" };
+
+    const consumerJob = workflow.jobs["messaging-providers"];
+    const consumerPrepare = consumerJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
+    delete consumerPrepare.with;
+    consumerJob.steps!.splice(consumerJob.steps!.indexOf(consumerPrepare), 0, {
       name: "Build CLI",
       run: "npm run build:cli",
     });
 
-    const noBuildJob = workflow.jobs["bootstrap-install-smoke"];
-    const noBuildPrepare = noBuildJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    delete noBuildPrepare.with;
-
     const sharedJob = workflow.jobs["shared-e2e"];
     const sharedPrepare = sharedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    sharedPrepare.with = { "build-cli": "false" };
+    delete sharedPrepare.with;
     sharedJob.env!.E2E_EXECUTION_PROFILE = "credential-free";
     sharedJob.env!.E2E_JOB = "1";
 
-    const untrustedJob = workflow.jobs["inference-routing"];
+    const untrustedJob = workflow.jobs["cloud-onboard"];
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     untrustedPrepare.uses = "./.github/actions/prepare-e2e";
 
-    const orderedJob = workflow.jobs["network-policy"];
+    const orderedJob = workflow.jobs["openclaw-plugin-runtime-exdev"];
     const orderedPrepareIndex = orderedJob.steps!.findIndex(
       (step) => step.name === PREPARE_E2E_STEP,
     );
@@ -120,19 +108,19 @@ describe("prepare-e2e workflow boundary", () => {
 
     expect(validatePrepareE2eInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "sandbox-operations prepare-e2e must use the default CLI build",
-        "sandbox-operations prepare-e2e invocation must not override its canonical contract",
-        "sandbox-operations must not duplicate prepare-e2e step 'Build CLI'",
-        "bootstrap-install-smoke prepare-e2e must set build-cli to false",
-        "bootstrap-install-smoke prepare-e2e invocation must not override its canonical contract",
+        "generate-matrix prepare-e2e must own the only default CLI build",
+        "generate-matrix prepare-e2e invocation must not override its canonical contract",
+        "messaging-providers prepare-e2e must set build-cli to false",
+        "messaging-providers prepare-e2e invocation must not override its canonical contract",
+        "messaging-providers must not duplicate prepare-e2e step 'Build CLI'",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
-        "shared-e2e prepare-e2e must use the default CLI build",
+        "shared-e2e prepare-e2e must set build-cli to false",
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
-        "inference-routing must not load prepare-e2e from the target checkout",
-        "inference-routing must use prepare-e2e exactly once",
-        "network-policy must check out the repository before prepare-e2e",
-        "network-policy must authenticate to Docker Hub before prepare-e2e",
+        "cloud-onboard must not load prepare-e2e from the target checkout",
+        "cloud-onboard must use prepare-e2e exactly once",
+        "openclaw-plugin-runtime-exdev must check out the repository before prepare-e2e",
+        "openclaw-plugin-runtime-exdev must authenticate to Docker Hub before prepare-e2e",
       ]),
     );
   });

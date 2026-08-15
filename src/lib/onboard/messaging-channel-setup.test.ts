@@ -4,12 +4,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential, prompt, saveCredential } from "../credentials/store";
-import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
+import {
+  createBuiltInChannelManifestRegistry,
+  MessagingSetupApplier,
+  type SandboxMessagingPlan,
+} from "../messaging";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
+import { resolveMessagingPlanAuthority } from "../messaging/plan-authority";
+import * as registry from "../state/registry";
 import {
   detectMessagingChannelsFromEnv,
+  detectUnconfiguredMessagingChannels,
+  getRegistrySandboxMessagingAuthority,
   setupMessagingChannels,
   setupSelectedMessagingChannels,
 } from "./messaging-channel-setup";
@@ -68,6 +76,88 @@ function stubTelegramReachability(): void {
     })),
   );
 }
+
+function messagingPlan(
+  sandboxName: string,
+  workflow: SandboxMessagingPlan["workflow"],
+): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent: "openclaw",
+    workflow,
+    channels: [],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
+describe("getRegistrySandboxMessagingAuthority", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the staged plan for a pending registry reservation", () => {
+    const entry = { name: "alpha", pendingRouteReservation: true } as const;
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    const stagedPlan = messagingPlan("alpha", "onboard");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    const getHydratedMessagingPlanFromEntry = vi
+      .spyOn(registry, "getHydratedMessagingPlanFromEntry")
+      .mockReturnValue(registryPlan);
+    const authority = getRegistrySandboxMessagingAuthority("alpha");
+
+    expect(authority).toEqual({ authoritative: false, plan: null });
+    expect(getHydratedMessagingPlanFromEntry).not.toHaveBeenCalled();
+    expect(
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: authority,
+        stagedPlan,
+        sessionPlan: null,
+      }),
+    ).toEqual({ source: "staged", plan: stagedPlan });
+  });
+
+  it("uses the registry plan for a registered sandbox", () => {
+    const entry = { name: "alpha" };
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+    const authority = getRegistrySandboxMessagingAuthority("alpha");
+
+    expect(authority).toEqual({ authoritative: true, plan: registryPlan });
+    expect(
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: authority,
+        stagedPlan: messagingPlan("alpha", "onboard"),
+        sessionPlan: null,
+      }),
+    ).toEqual({ source: "registry", plan: registryPlan });
+  });
+
+  it("keeps a registered sandbox authoritative while its route update is pending", () => {
+    const entry = {
+      name: "alpha",
+      createdAt: "2026-08-12T00:00:00.000Z",
+      pendingRouteReservation: true,
+    } as const;
+    const registryPlan = messagingPlan("alpha", "rebuild");
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    expect(getRegistrySandboxMessagingAuthority("alpha")).toEqual({
+      authoritative: true,
+      plan: registryPlan,
+    });
+  });
+});
 
 describe("setupSelectedMessagingChannels", () => {
   beforeEach(() => {
@@ -342,7 +432,11 @@ describe("setupSelectedMessagingChannels", () => {
       { agent: { name: "hermes" } },
     );
 
-    expect(prompt).not.toHaveBeenCalled();
+    // The reply mode is a config question. Pairing still happens in-sandbox by
+    // QR, so nothing asks for a token and no provider is bound (#8312).
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(
+      "  WhatsApp reply mode [self-chat/bot; default: self-chat]: ",
+    );
     expect(getCredential).not.toHaveBeenCalled();
     expect(plan?.credentialBindings).toEqual([]);
     expect(plan?.channels[0]).toMatchObject({
@@ -409,6 +503,36 @@ describe("setupMessagingChannels", () => {
     expect(notes).toEqual([
       "  [non-interactive] Messaging channel inputs detected: telegram, slack",
     ]);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it("validates a completed non-interactive selection when its credential is supplied (#3631)", async () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:replacement-telegram-token");
+    vi.stubEnv("SLACK_BOT_TOKEN", "xoxb-ambient-slack-token");
+    vi.stubEnv("SLACK_APP_TOKEN", "xapp-ambient-slack-token");
+    const note = vi.fn();
+
+    const result = await setupMessagingChannels(null, ["telegram"], {
+      sandboxName: "tm",
+      selectionCompleted: true,
+      isNonInteractive: () => true,
+      note,
+    });
+
+    expect(result).toEqual(["telegram"]);
+    expect(note).toHaveBeenCalledWith(
+      "  [non-interactive] Messaging channel inputs detected: telegram",
+    );
+    expect(MessagingSetupApplier.requirePlanFromEnv()).toMatchObject({
+      sandboxName: "tm",
+      channels: [
+        expect.objectContaining({
+          channelId: "telegram",
+          active: true,
+          disabled: false,
+        }),
+      ],
+    });
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -506,7 +630,7 @@ describe("setupMessagingChannels", () => {
         selectionCompleted: true,
       }),
     ).rejects.toThrow(
-      "Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.",
+      "A completed messaging selection is missing required credentials for these channels: telegram. Export the missing messaging credential environment variables, then run nemoclaw onboard --resume again.",
     );
 
     expect(note).toHaveBeenCalledWith(
@@ -575,6 +699,43 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("keeps production Google Chat onboarding fail-closed with env-only E2E signals", async () => {
+    // Tracked stubs (not raw process.env mutation) so Vitest reverts them and
+    // these E2E signals cannot leak into later tests in the same run.
+    vi.stubEnv("E2E_TARGET_ID", "channels-stop-start");
+    vi.stubEnv("GOOGLECHAT_APP_PRINCIPAL", "123456789012345678901");
+    vi.stubEnv("GOOGLECHAT_AUDIENCE", "https://e2e-fake.trycloudflare.com/googlechat");
+    vi.stubEnv(
+      "GOOGLECHAT_SERVICE_ACCOUNT",
+      JSON.stringify({
+        client_email: "e2e-fake@e2e-fake.iam.gserviceaccount.com",
+        private_key: "fake-e2e-not-a-real-private-key",
+      }),
+    );
+    vi.stubEnv("NEMOCLAW_E2E_ALLOW_GOOGLECHAT_PRESET_AUDIENCE", "1");
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    const enabled = new Set(["googlechat"]);
+
+    const plan = await setupSelectedMessagingChannels(
+      ["googlechat"],
+      enabled,
+      manifests("googlechat"),
+      {
+        interactive: false,
+        sandboxName: "e2e-oc-ch-cycle",
+      },
+    );
+
+    expect(enabled.has("googlechat")).toBe(false);
+    expect(plan?.channels).toEqual([
+      expect.objectContaining({
+        active: false,
+        channelId: "googlechat",
+      }),
+    ]);
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it("seeds credentialless WhatsApp from its optional allowlist input in non-interactive mode", async () => {
     process.env.WHATSAPP_ALLOWED_IDS = "15551234567,15557654321";
     const notes: string[] = [];
@@ -594,6 +755,12 @@ describe("setupMessagingChannels", () => {
           channelId: "whatsapp",
           active: true,
           inputs: [
+            // Seeded from the manifest default: onboarding never asks for the
+            // mode, and self-chat is the one that needs no allowlist (#8312).
+            {
+              inputId: "mode",
+              value: "self-chat",
+            },
             {
               inputId: "allowedIds",
               value: "15551234567,15557654321",
@@ -822,5 +989,56 @@ describe("detectMessagingChannelsFromEnv", () => {
     process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
 
     expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
+  });
+});
+
+describe("detectUnconfiguredMessagingChannels", () => {
+  function clearMessagingEnv(): void {
+    const envKeys = manifestRegistry
+      .listAvailable({ agent: "openclaw", supportedChannelIds: null })
+      .flatMap((manifest) => manifest.inputs)
+      .map((input) => input.envKey)
+      .filter((envKey): envKey is string => Boolean(envKey));
+    for (const envKey of envKeys) delete process.env[envKey];
+  }
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.clearAllMocks();
+    vi.mocked(getCredential).mockReturnValue(null);
+    clearMessagingEnv();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it("reports a plan channel whose inputs are gone from the environment", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram"], [], null)).toEqual(["telegram"]);
+  });
+
+  it("keeps a plan channel whose inputs are still present", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectUnconfiguredMessagingChannels(["telegram"], [], null)).toEqual([]);
+  });
+
+  it("keeps a plan channel that the current selection still requests", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram"], ["telegram"], null)).toEqual([]);
+  });
+
+  it("keeps an in-sandbox QR-paired channel that the host environment cannot rediscover", () => {
+    expect(detectUnconfiguredMessagingChannels(["whatsapp"], [], null)).toEqual([]);
+  });
+
+  it("reports each channel once when the plan repeats it", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram", "telegram"], [], null)).toEqual([
+      "telegram",
+    ]);
+  });
+
+  it("ignores channel names with no available manifest", () => {
+    expect(detectUnconfiguredMessagingChannels(["not-a-channel"], [], null)).toEqual([]);
   });
 });

@@ -72,6 +72,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 
 ## Verify the Installed Route
 
+The distributed install runs the same managed vLLM entry point as the single-Station path, so it applies the GPU compute-capability check described in [Check GPU Compute Capability](set-up-vllm#check-gpu-compute-capability).
+
 After the installer completes, inspect the live route and the sandbox inference path.
 
 ```bash
@@ -80,8 +82,8 @@ $$nemoclaw my-assistant status
 ```
 
 Confirm that `inference get` reports the `vllm-local` provider and the `nemotron-ultra` model.
-Continue only when the `Inference` row in the status output reports `reachable`.
-This result confirms that the sandbox route returned HTTP `200` through `499`; it does not prove a successful model invocation.
+Continue only when the `Inference` row in the status output reports `healthy`.
+This result confirms that the sandbox route served one inference request; it does not establish results for other requests or models.
 
 ## Review Reboot and Resume Behavior
 
@@ -142,8 +144,8 @@ Follow [Set Up vLLM](set-up-vllm) for that workflow.
 ## Preserve Cleanup Ownership
 
 After readiness and container validation pass, NemoClaw writes an owner-only cleanup receipt.
-It also copies the SSH binding under the selected gateway state root.
-A later onboarding run that reuses the validated pair recreates this cleanup ownership before it accepts the endpoint.
+It copies the SSH binding beside the receipt under the host-global `~/.nemoclaw/` state root so every gateway port uses the same ownership state.
+A later onboarding run recovers and revalidates this cleanup ownership before it accepts the existing endpoint.
 
 The receipt contains no serving API key.
 It records the peer, cluster, and GPU identities needed to revalidate and remove both managed containers.

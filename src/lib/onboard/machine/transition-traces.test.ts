@@ -8,36 +8,30 @@
  * `runtime.test.ts` pins per-operation event shapes, `runner.test.ts` pins
  * handler sequencing without observing events). Descriptive, not
  * aspirational: update a pin in the same PR that changes the ordering.
- * Recovery-path semantics (edges leaving terminal `failed`, the legacy
- * step-mutation bridge) stay out of scope and are owned by #6227.
+ * Recovery-path semantics (edges leaving terminal `failed`) stay out of scope
+ * and are owned by #6227.
  */
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  createSession,
-  filterSafeUpdates,
-  MACHINE_SNAPSHOT_VERSION,
-  normalizeSession,
-  type OnboardMachineSnapshot,
-  type Session,
-  type SessionUpdates,
-  type StepState,
-  sanitizeFailure,
-} from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import { handleSandboxState } from "./handlers/sandbox";
-import { baseOptions, createDeps } from "./handlers/sandbox-test-fixtures";
+import { baseOptions, bindJournaledRecreate, createDeps } from "./handlers/sandbox-test-fixtures";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine } from "./result";
 import { type OnboardStateHandlers, runOnboardMachine } from "./runner";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardMachineState } from "./types";
+import type { OnboardMachineSnapshot, StepState } from "../../state/onboard-session";
+import {
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+  type SessionUpdates,
+  cloneSession,
+  createSession,
+  filterSafeUpdates,
+} from "../../../../test/helpers/onboard-machine-runtime-fixture";
 
 const NOW = "2026-07-04T00:00:00.000Z";
-
-function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
-}
 
 function machineAt(state: OnboardMachineState, revision = 0): OnboardMachineSnapshot {
   return { version: MACHINE_SNAPSHOT_VERSION, state, stateEnteredAt: NOW, revision };
@@ -72,14 +66,12 @@ function createTracedRuntime(initialSession: Session = createSession()) {
     updateSession,
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates) => applySafeUpdates(updates),
-    markStepCompleteRecordOnly: (_stepName, updates) => applySafeUpdates(updates),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (stepName, message) =>
       updateSession((current) => {
-        current.status = "failed";
-        current.failure = sanitizeFailure({ step: stepName, message, recordedAt: NOW });
+        current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
       }),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -217,8 +209,16 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       steps: { sandbox: completedStep() },
     });
     const { runtime, events, updateSession } = createTracedRuntime(resumedSession);
+    await runtime.start({ resumed: true });
+    const session = await runtime.session();
+    const journal = bindJournaledRecreate(session, "my-assistant", "openclaw", updateSession);
+    updateSession((current) => {
+      current.checkpoint = session.checkpoint;
+    });
     const { calls, deps } = createDeps({
       getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
       updateSession,
       recordRepairEvent: (type, options) => runtime.emitRepairEvent(type, options),
       recordStepComplete: async (_stepName, updates) =>
@@ -226,8 +226,6 @@ describe("onboard machine lifecycle traces (#6225)", () => {
           Object.assign(current, filterSafeUpdates(updates));
         }),
     });
-    await runtime.start({ resumed: true });
-    const session = await runtime.session();
 
     const run = await runOnboardMachine({
       context: null,
@@ -246,8 +244,7 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       stopStates: ["openclaw"],
     });
 
-    expect(calls.repairSandbox).toHaveBeenCalledWith("my-assistant");
-    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(journal.completeCreate).toHaveBeenCalledOnce();
     expect(traceOf(events)).toEqual([
       "onboard.resumed:sandbox",
       "state.repair.started:sandbox",

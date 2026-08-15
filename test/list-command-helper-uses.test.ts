@@ -9,7 +9,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const SCRIPT = path.join(REPO_ROOT, "scripts", "list-command-helper-uses.mts");
 
 type HelperMatch = {
@@ -45,7 +44,7 @@ function makeFixture(prefix: string, files: Record<string, string>): string {
 }
 
 function runScript(args: string[], cwd = REPO_ROOT): ReturnType<typeof spawnSync> {
-  return spawnSync(TSX, [SCRIPT, ...args], {
+  return spawnSync(process.execPath, ["--import", "tsx", SCRIPT, ...args], {
     cwd,
     encoding: "utf-8",
   });
@@ -72,6 +71,38 @@ describe("list-command-helper-uses", () => {
     expect(matches[0].runnerBound).toBe(true);
     expect(matches[0].expression).toBe("run");
     expect(matches[0].commandHead).toBe("podman");
+  });
+
+  it("finds runner helper calls in TypeScript module files", () => {
+    const rootDir = makeFixture("nemoclaw-cmd-helper-", {
+      "src/runner.ts":
+        "export function run(cmd: readonly string[]) { return cmd; }\nexport function runShell(cmd: string) { return cmd; }\n",
+      "src/app.mts": 'import { run } from "./runner";\nrun(["podman", "ps"]);\n',
+      "src/tool.cts": 'const { runShell } = require("./runner");\nrunShell("git status");\n',
+    });
+
+    try {
+      const matches = parseJsonOutput<HelperMatch[]>(
+        runScript(["--root", rootDir, "--json", "--list-calls", path.join(rootDir, "src")]),
+      );
+
+      expect(matches).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            filePath: "src/app.mts",
+            runnerBound: true,
+            commandHead: "podman",
+          }),
+          expect.objectContaining({
+            filePath: "src/tool.cts",
+            runnerBound: true,
+            commandHead: "git",
+          }),
+        ]),
+      );
+    } finally {
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 
   it('finds identifier calls bound from require("./runner")', () => {

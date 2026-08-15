@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { resolveDisabledChannels } from "./channel-state";
 import { MessagingSetupApplier } from "../messaging";
 import type { Session } from "../state/onboard-session";
+import { resolveDisabledChannels } from "./channel-state";
 
 function sessionWithPlan(
   sandboxName: string,
@@ -50,36 +49,54 @@ describe("onboard channel state helpers", () => {
     }
   });
 
-  it("prefers disabledChannels from the onboard session mirror", () => {
-    const getRegistryDisabledChannels = vi.fn(() => ["discord"]);
+  it("prefers the registry plan for an existing sandbox", () => {
+    const registryPlan = sessionWithPlan("alpha", ["discord"]).messagingPlan;
 
     expect(
       resolveDisabledChannels("alpha", {
         loadSession: () => sessionWithPlan("alpha", ["telegram"]),
-        getRegistryDisabledChannels,
-      }),
-    ).toEqual(["telegram"]);
-    expect(getRegistryDisabledChannels).not.toHaveBeenCalled();
-  });
-
-  it("falls back to the registry when the session has no mirror", () => {
-    expect(
-      resolveDisabledChannels("alpha", {
-        loadSession: () => sessionWithPlan("beta", ["telegram"]),
-        getRegistryDisabledChannels: (sandboxName) => (sandboxName === "alpha" ? ["discord"] : []),
+        getRegistryMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
       }),
     ).toEqual(["discord"]);
   });
 
-  it("treats an empty session mirror as authoritative", () => {
-    const getRegistryDisabledChannels = vi.fn(() => ["telegram"]);
+  it("uses registry disabled channels without loading the saved session or environment plan", () => {
+    const registryPlan = sessionWithPlan("alpha", ["discord"]).messagingPlan;
+    const loadSession = vi.fn(() => {
+      throw new Error("invalid saved session");
+    });
+    const readMessagingPlanFromEnv = vi.fn(() => {
+      throw new Error("invalid environment plan");
+    });
 
     expect(
       resolveDisabledChannels("alpha", {
-        loadSession: () => sessionWithPlan("alpha", []),
-        getRegistryDisabledChannels,
+        loadSession,
+        readMessagingPlanFromEnv,
+        getRegistryMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
       }),
-    ).toEqual([]);
-    expect(getRegistryDisabledChannels).not.toHaveBeenCalled();
+    ).toEqual(["discord"]);
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
+  });
+
+  it("uses the staged plan for a new sandbox", () => {
+    expect(
+      resolveDisabledChannels("alpha", {
+        loadSession: () => null,
+        readMessagingPlanFromEnv: () => sessionWithPlan("alpha", ["slack"]).messagingPlan,
+        getRegistryMessagingAuthority: () => ({ authoritative: false, plan: null }),
+      }),
+    ).toEqual(["slack"]);
+  });
+
+  it("uses a matching session plan when no registry or staged plan exists", () => {
+    expect(
+      resolveDisabledChannels("alpha", {
+        loadSession: () => sessionWithPlan("alpha", ["telegram"]),
+        readMessagingPlanFromEnv: () => null,
+        getRegistryMessagingAuthority: () => ({ authoritative: false, plan: null }),
+      }),
+    ).toEqual(["telegram"]);
   });
 });

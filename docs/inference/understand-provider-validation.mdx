@@ -16,6 +16,9 @@ The exact request depends on the provider API that the agent uses.
 
 When credential validation fails, the onboarding wizard lets you re-enter the API key, choose another provider, retry, or exit.
 NemoClaw retries transient upstream failures before it reports a provider failure.
+After a fatal provider or inference-validation failure before sandbox creation, NemoClaw attempts to release an unowned NemoClaw-managed OpenShell gateway and remove its registration so provider credentials do not remain in a live process.
+It preserves a gateway that another registered sandbox uses, an external supervisor owns, or whose teardown authority cannot be proven.
+If listener release cannot be confirmed, NemoClaw keeps the gateway registration for recovery and reports the remaining listener.
 
 The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
 OpenRouter keys must be non-empty and begin with `sk-or-`.
@@ -38,6 +41,11 @@ For an OpenAI-compatible endpoint, the runtime defaults to `/v1/chat/completions
 Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding to select `/v1/responses` only after the probe verifies the required streaming behavior.
 Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate Chat Completions only.
 The Responses streaming check waits up to 5 seconds for `response.output_text.delta` before onboarding falls back to Chat Completions.
+Some Chat Completions validation requests require a structured tool call.
+If such a request reaches the output-token limit after producing only reasoning content, NemoClaw retries with a 1024-token output limit and then, when reasoning still uses the full limit, with a 4096-token output limit and a doubled request deadline.
+This applies to local runtimes such as Ollama and vLLM.
+Onboarding continues only when a retry returns a structured tool call.
+If the last retry fails or times out, validation stops without another Chat Completions attempt.
 
 <AgentOnly variant="deepagents">
 
@@ -68,8 +76,25 @@ This is the API surface that the managed OpenAI frontend uses at runtime.
 ## Compatible Endpoint Probes
 
 Compatible endpoint validation sends a real inference request because many proxies do not expose `/models`.
-For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive a retry with a larger response budget before NemoClaw reports failure.
+For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive retries with larger output token limits before NemoClaw reports failure.
 Route, configuration, and authentication failures still fail immediately.
+
+During one onboarding invocation, NemoClaw can reuse one successful Chat Completions validation instead of sending the same immediate host-side request.
+Reuse requires all these inputs to match:
+
+- The public endpoint URL.
+- The model ID.
+- The authentication mode.
+- Whether tool calling is required.
+- The validated DNS IP address set.
+
+Trailing endpoint slashes, duplicate IP addresses, and IP address order do not prevent reuse.
+NemoClaw sends another validation request in any of these cases:
+
+- Any listed input differs after NemoClaw normalizes the endpoint URL and IP address set, including when the DNS IP address set changes.
+- The endpoint URL contains embedded credentials, a query string, or a fragment.
+- Validation uses custom headers.
+- The endpoint is an operator-trusted private endpoint.
 
 An endpoint that is reachable only through `http://host.openshell.internal:<port>` cannot receive the host-side API probe.
 Verify that route from inside the sandbox after onboarding.

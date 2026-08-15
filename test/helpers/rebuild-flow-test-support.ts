@@ -2,10 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
+import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
-import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type {
+  finalizePreparedRebuildImageMessagingPlan,
+  RebuildImagePreflightResult,
+} from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
+import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
@@ -47,6 +52,7 @@ export type RebuildFlowOverrides = {
     secretBoundaryRefused?: boolean;
     mcpReconciliationRefused?: boolean;
   };
+  restartSandboxGateway?: () => GatewayRestartResult;
   onboard?: (
     session: RebuildFlowSession,
     options: RebuildRecreateOnboardOpts,
@@ -108,6 +114,7 @@ export type RebuildFlowOverrides = {
     error?: Error;
   };
   backupPolicyPresets?: string[];
+  backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
@@ -115,6 +122,7 @@ export type RebuildFlowOverrides = {
   versionCheck?: VersionCheckResult;
   hydrateCredentialEnv?: (credentialEnv: string) => string | null;
   customImagePreflight?: RebuildImagePreflightResult;
+  finalizePreparedImage?: typeof finalizePreparedRebuildImageMessagingPlan;
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
   removalReceipt?: SandboxRemovalReceipt | null;
@@ -126,6 +134,7 @@ export type RebuildFlowHarness = {
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
+  restartSandboxGatewaySpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -144,6 +153,7 @@ export type RebuildFlowHarness = {
     defaultSandbox: string | null;
     defaultSelectionRevision: number;
   };
+  registerHermesInferenceProviderSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
@@ -158,6 +168,7 @@ export type RebuildFlowHarness = {
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
   warnUnpreservedUserManagedFilesSpy: MockInstance;
+  finalizePreparedImageSpy: MockInstance;
   session: RebuildFlowSession;
 };
 export const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;

@@ -12,9 +12,11 @@ import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
-import { isExternallySupervised } from "../../onboard/gateway-ownership";
+import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
+  GatewayAuthorityError,
   type GatewayTeardownAuthorityResolver,
+  gatewayAuthorityFailureLines,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
@@ -94,10 +96,26 @@ export function cleanupGatewayAfterLastSandbox(
   if (!perGatewayState) {
     throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
   }
-  const owner = (deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority)(
-    { gatewayName, gatewayPort: perGatewayState.port },
-    { env: process.env },
-  );
+  // The sandbox and its registry entry are already gone when this runs; shared
+  // gateway cleanup is the last, optional step. Rethrowing an authority refusal
+  // here crashed `destroy` outright, and because rebuild and
+  // `onboard --recreate-sandbox` refuse for the same reason the operator was
+  // left with no way to remove the sandbox at all (#8103). Report and keep the
+  // gateway instead, matching the declined-cleanup path.
+  let owner: GatewayOwner;
+  try {
+    owner = (deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority)(
+      { gatewayName, gatewayPort: perGatewayState.port },
+      { env: process.env },
+    );
+  } catch (error) {
+    if (!(error instanceof GatewayAuthorityError)) throw error;
+    for (const line of gatewayAuthorityFailureLines(error, "shared gateway cleanup")) {
+      console.error(line);
+    }
+    console.log("  The shared NemoClaw gateway was left running.");
+    return;
+  }
   const externallySupervised = isExternallySupervised(owner);
   const openshell =
     runOpenshell ??
@@ -210,7 +228,7 @@ export function cleanupGatewayAfterLastSandbox(
    * remove and remove-nonzero fallback while preserving Docker-volume cleanup.
    * Removal condition: remove the fallback when every supported recovery and
    * teardown entry point upgrades OpenShell to the blueprint minimum (currently
-   * 0.0.85) before this function can run.
+   * 0.0.99) before this function can run.
    *
    * macOS previously ran only `gateway destroy`, which current OpenShell
    * rejects as an unrecognized subcommand (#6569). The host-process stop above

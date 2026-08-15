@@ -24,7 +24,12 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 // The CLI's exit code is no longer the success signal — the appearance of
 // the live forward in the list is.
 
-export type ForwardListFetcher = () => string;
+/**
+ * Returns the serialized forward list on success. An empty string means the
+ * list query succeeded with no entries; `null` means ownership is unknown
+ * because the query did not return a result.
+ */
+export type ForwardListFetcher = () => string | null;
 
 export type DetachedForwardSpawnRunner = (stdio: { stdout: number; stderr: number }) => {
   pid?: number;
@@ -56,7 +61,9 @@ export interface DetachedForwardStartOptions {
   onProgress?: (info: { elapsedMs: number; listSnapshot: string }) => void;
   progressIntervalMs?: number;
   // Number of retryable startup attempts after the initial attempt. Honoured
-  // only by `runDetachedForwardStartWithRetries`. Defaults to 3.
+  // only by `runDetachedForwardStartWithRetries`. An explicit value applies
+  // to every retryable outcome. Ordinary failures default to 3 retries; exact
+  // sandbox readiness handoffs use their own longer default below.
   maxRetries?: number;
   // Loopback port-liveness probe. Defaults to `probeLocalPortListening` (a
   // synchronous Node TCP connect to 127.0.0.1:port). The retry wrapper uses it
@@ -101,6 +108,14 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
   );
 }
 
+const OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC =
+  /^Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"$/i;
+
+function looksLikeSandboxNotReadyForwardStart(diagnostic: string): boolean {
+  const normalized = compactText(diagnostic.replace(/[×│]/gu, " "));
+  return OPENSHELL_SANDBOX_NOT_READY_DIAGNOSTIC.test(normalized);
+}
+
 /**
  * True only after openshell reports that the SSH process has definitively
  * stopped waiting for its local listener. Unlike the broader untracked-
@@ -110,13 +125,17 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
  * (#6099).
  *
  * Compatibility boundary: these exact diagnostics are emitted by the pinned
- * OpenShell 0.0.85 forward-start path tracked in #7266. Reassess this matcher
- * when NemoClaw's supported OpenShell range moves beyond 0.0.85, and remove it
+ * OpenShell 0.0.101 forward-start path tracked in #7266. Reassess this matcher
+ * when NemoClaw's supported OpenShell range moves beyond 0.0.101, and remove it
  * once OpenShell either keeps the attempt alive until the listener is ready or
  * exposes a structured retryable outcome. Keep the fragments narrow so an
  * unrelated SSH or gateway failure cannot enter the listener-retry path.
+ * OpenShell 0.0.101 can also reject a forward during the sandbox readiness
+ * handoff. That command has already exited, so list polling cannot recover it;
+ * the retry wrapper below gives the OpenShell gateway a bounded settle interval.
  */
 export function looksLikeForwardListenerStartFailure(diagnostic: string): boolean {
+  if (looksLikeSandboxNotReadyForwardStart(diagnostic)) return true;
   return /ssh exited before local forward listener opened|local forward listener did not open\b/i.test(
     diagnostic,
   );
@@ -173,6 +192,12 @@ function blockingSleepMs(ms: number): void {
 // supported OpenShell version either stops retaining persistent dead rows or
 // exposes an atomic recovery operation.
 const DEAD_FORWARD_GRACE_MS = 2_000;
+const SANDBOX_READY_RETRY_SETTLE_MS = 5_000;
+// A newly created sandbox can remain between OpenShell's create-ready and
+// forward-ready states longer than the ordinary listener retry budget. Keep
+// this exact-diagnostic path bounded to one additional minute without
+// widening retries for authentication, ownership, or listener failures.
+const SANDBOX_READY_MAX_RETRIES = 12;
 
 /**
  * Build a `DetachedForwardSpawnRunner` that spawns the given argv as a
@@ -378,11 +403,16 @@ export function runDetachedForwardStartWithDiagnostics(
     while (Date.now() < deadline) {
       let list = "";
       try {
-        list = fetchForwardList() || "";
-        // Clear the cached transient error so a recovered gateway does not
-        // leave a stale "openshell forward list failed: …" suffix on the
-        // eventual timeout diagnostic.
-        lastFetchError = null;
+        const fetchedList = fetchForwardList();
+        if (fetchedList === null) {
+          lastFetchError = "OpenShell returned no forward list result";
+        } else {
+          list = fetchedList;
+          // Clear the cached transient error so a recovered gateway does not
+          // leave a stale "openshell forward list failed: …" suffix on the
+          // eventual timeout diagnostic.
+          lastFetchError = null;
+        }
       } catch (err) {
         lastFetchError = err instanceof Error ? err.message : String(err);
       }
@@ -492,7 +522,10 @@ export function runDetachedForwardStartWithRetries(
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
   const maxRetries = options.maxRetries ?? 3;
+  const maxSandboxReadyRetries = options.maxRetries ?? SANDBOX_READY_MAX_RETRIES;
+  const sleepImpl = options.sleepMs ?? blockingSleepMs;
   let deadForwardRecoveryAvailable = true;
+  let sandboxReadyRetries = 0;
   const isPortListening = options.isPortListening ?? probeLocalPortListening;
   const runAttempt = (): DetachedForwardStartOutcome =>
     isPortListening(expect.port)
@@ -510,15 +543,26 @@ export function runDetachedForwardStartWithRetries(
       deadForwardRecoveryAvailable = false;
       beforeRetryCleanup();
     } else {
-      const isRetryableStandardFailure =
-        (attempt.reason !== "listener-ownership-conflict" &&
-          looksLikeForwardPortConflict(attempt.diagnostic)) ||
-        attempt.reason === "listener-start-failure";
-      if (!isRetryableStandardFailure || standardRetries >= maxRetries) break;
-      if (looksLikeForwardPortConflict(attempt.diagnostic)) {
-        beforeRetryCleanup();
+      const isSandboxReadinessHandoff =
+        attempt.reason === "listener-start-failure" &&
+        looksLikeSandboxNotReadyForwardStart(attempt.diagnostic);
+      if (isSandboxReadinessHandoff) {
+        if (sandboxReadyRetries >= maxSandboxReadyRetries) break;
+        // Keep the existing sandbox and port ownership intact while the
+        // OpenShell gateway finishes the readiness handoff.
+        sleepImpl(SANDBOX_READY_RETRY_SETTLE_MS);
+        sandboxReadyRetries++;
+      } else {
+        const isRetryableStandardFailure =
+          (attempt.reason !== "listener-ownership-conflict" &&
+            looksLikeForwardPortConflict(attempt.diagnostic)) ||
+          attempt.reason === "listener-start-failure";
+        if (!isRetryableStandardFailure || standardRetries >= maxRetries) break;
+        if (looksLikeForwardPortConflict(attempt.diagnostic)) {
+          beforeRetryCleanup();
+        }
+        standardRetries++;
       }
-      standardRetries++;
     }
     attempt = runAttempt();
   }

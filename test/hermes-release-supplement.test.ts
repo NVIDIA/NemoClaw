@@ -13,7 +13,7 @@ const collector = path.join(
   root,
   ".agents",
   "skills",
-  "nemoclaw-contributor-update-hermes",
+  "nemoclaw-contributor-update-dependencies",
   "scripts",
   "collect-hermes-release-supplement.py",
 );
@@ -137,13 +137,27 @@ function collect(
   );
 }
 
+function readReport(filePath: string): { mode: number; text: string } {
+  const descriptor = fs.openSync(filePath, "r");
+  try {
+    return {
+      mode: fs.fstatSync(descriptor).mode,
+      text: fs.readFileSync(descriptor, "utf8"),
+    };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 describe("Hermes CalVer release supplement", () => {
   it("retains a published four-component release as an adjacent endpoint", () => {
     const testFixture = fixture();
     const result = collect(testFixture);
 
     expect(result.status, String(result.stderr ?? "")).toBe(0);
-    const supplement = JSON.parse(fs.readFileSync(testFixture.output, "utf8")) as {
+    const report = readReport(testFixture.output);
+    expect(report.mode & 0o777).toBe(0o600);
+    const supplement = JSON.parse(report.text) as {
       releaseEndpoints: Array<{
         tag: string;
         commitSha: string;
@@ -201,6 +215,110 @@ describe("Hermes CalVer release supplement", () => {
         changedFileCount: 1,
       },
     ]);
+  });
+
+  it("does not replace an existing report", () => {
+    const testFixture = fixture();
+    fs.writeFileSync(testFixture.output, "keep me\n");
+
+    const result = collect(testFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("refusing to overwrite output path");
+    expect(fs.readFileSync(testFixture.output, "utf8")).toBe("keep me\n");
+  });
+
+  it("does not follow an existing output symlink", () => {
+    const testFixture = fixture();
+    const target = path.join(path.dirname(testFixture.output), "target.json");
+    fs.writeFileSync(target, "keep me\n");
+    fs.symlinkSync(target, testFixture.output);
+
+    const result = collect(testFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("refusing to overwrite output path");
+    expect(fs.readFileSync(target, "utf8")).toBe("keep me\n");
+    expect(fs.readlinkSync(testFixture.output)).toBe(target);
+  });
+
+  it("rejects an output directory writable by other users", () => {
+    const testFixture = fixture();
+    fs.chmodSync(path.dirname(testFixture.output), 0o777);
+
+    const result = collect(testFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "output directory must be owned by the current user and not writable by group or other users",
+    );
+    expect(fs.existsSync(testFixture.output)).toBe(false);
+  });
+
+  it("rejects an output directory symlink", () => {
+    const testFixture = fixture();
+    const target = path.join(path.dirname(testFixture.output), "reports");
+    const link = path.join(path.dirname(testFixture.output), "report-link");
+    fs.mkdirSync(target, { mode: 0o700 });
+    fs.symlinkSync(target, link);
+    testFixture.output = path.join(link, "supplement.json");
+
+    const result = collect(testFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("could not open output directory without following symlinks");
+    expect(fs.existsSync(path.join(target, "supplement.json"))).toBe(false);
+  });
+
+  it("keeps private mode and removes partial output when fsync fails", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-private-output-"));
+    fixtures.push(directory);
+    const secureOutput = path.join(directory, "secure.json");
+    const failedOutput = path.join(directory, "failed.json");
+    const result = spawnSync(
+      command("python3"),
+      [
+        "-c",
+        `
+import importlib.util
+import os
+from pathlib import Path
+import sys
+
+spec = importlib.util.spec_from_file_location("hermes_release_supplement", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+previous_umask = os.umask(0)
+try:
+    module.write_private_output(Path(sys.argv[2]), "secure\\n")
+finally:
+    os.umask(previous_umask)
+
+def fail_fsync(_descriptor):
+    raise OSError("simulated fsync failure")
+
+module.os.fsync = fail_fsync
+try:
+    module.write_private_output(Path(sys.argv[3]), "partial\\n")
+except OSError as error:
+    if str(error) != "simulated fsync failure":
+        raise
+else:
+    raise RuntimeError("expected fsync failure")
+`,
+        collector,
+        secureOutput,
+        failedOutput,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, String(result.stderr ?? "")).toBe(0);
+    const secureReport = readReport(secureOutput);
+    expect(secureReport.mode & 0o777).toBe(0o600);
+    expect(secureReport.text).toBe("secure\n");
+    expect(fs.existsSync(failedOutput)).toBe(false);
   });
 
   it("fails when the authoritative stable list omits an endpoint", () => {

@@ -32,6 +32,7 @@ export function buildMcpBridgeOnboardEnv(options: {
   baseEnv?: NodeJS.ProcessEnv;
   compatibleKey: string;
   compatibleModel: string;
+  corporateCaBundle?: string;
   endpointUrl: string;
   envOverlay?: NodeJS.ProcessEnv;
   sandboxName: string;
@@ -40,6 +41,9 @@ export function buildMcpBridgeOnboardEnv(options: {
     ...buildMcpBridgeExactMainEnv(options),
     COMPATIBLE_API_KEY: options.compatibleKey,
     NVIDIA_INFERENCE_API_KEY: options.compatibleKey,
+    ...(options.corporateCaBundle
+      ? { NEMOCLAW_CORPORATE_CA_BUNDLE: options.corporateCaBundle }
+      : {}),
     NEMOCLAW_AGENT: options.agent,
     NEMOCLAW_ENDPOINT_URL: options.endpointUrl,
     NEMOCLAW_MODEL: options.compatibleModel,
@@ -49,4 +53,12 @@ export function buildMcpBridgeOnboardEnv(options: {
     NEMOCLAW_SANDBOX_NAME: options.sandboxName,
     NEMOCLAW_RECREATE_SANDBOX: "1",
   };
+}
+
+export function requireMcpBridgeTlsCaCert(env: NodeJS.ProcessEnv = process.env): string {
+  const corporateCaBundle = env.NEMOCLAW_MCP_TLS_CA_CERT;
+  if (!corporateCaBundle) {
+    throw new Error("NEMOCLAW_MCP_TLS_CA_CERT is required for routed-private MCP validation");
+  }
+  return corporateCaBundle;
 }

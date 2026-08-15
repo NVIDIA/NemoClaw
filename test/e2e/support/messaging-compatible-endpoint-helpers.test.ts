@@ -67,11 +67,17 @@ describe("messaging compatible endpoint helper coverage", () => {
     "signals only a start-time-matched owned gateway process (#6352)",
     async () => {
       const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-owned-gateway-pid-"));
-      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-        argv0: "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
-        stdio: "ignore",
-      });
+      const child = spawn(
+        process.execPath,
+        ["-e", "process.stdout.write('ready\\n'); setInterval(() => {}, 1000)"],
+        {
+          argv0: "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      );
+      const childReady = once(child.stdout, "data");
       await once(child, "spawn");
+      await childReady;
       const childExit = once(child, "exit");
       const pid = child.pid;
       expect(pid).toBeTypeOf("number");

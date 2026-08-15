@@ -226,6 +226,59 @@ describe("runSandboxCreateStep", () => {
     expect(patch.maybeApplyDuringCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for the create ownership handoff before restart-safe recreation (#8720)", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const patch = makePatch();
+    let ready = false;
+    let resolved = false;
+    const deps = makeDeps(
+      makeLaunch({ sandboxEnv: dockerEnv }),
+      patch,
+      { status: 0, output: "" },
+      {
+        streamCreate: ((command, args, sandboxEnv, options) =>
+          streamSandboxCreate(command, args, sandboxEnv, {
+            ...options,
+            ...makePollingOptions(child),
+          })) as SandboxCreateStepDeps["streamCreate"],
+        isSandboxReady: vi.fn(() => ready),
+      },
+    );
+
+    const create = runSandboxCreateStep(
+      makeContext({
+        prebuild: {
+          buildCtx: "/tmp/ctx",
+          buildId: "b1",
+          dockerDriverGateway: true,
+          origin: "generated",
+        },
+      }),
+      deps,
+    ).then((result) => {
+      resolved = true;
+      return result;
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: alpha\n"));
+    ready = true;
+    await vi.advanceTimersByTimeAsync(6);
+
+    expect(resolved).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+    child.stderr.emit("data", Buffer.from("Setting up NemoClaw...\n"));
+    await vi.advanceTimersByTimeAsync(6);
+
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(patch.maybeApplyDuringCreate).not.toHaveBeenCalled();
+
+    child.emit("close", 143);
+    await expect(create).resolves.toMatchObject({
+      createResult: { status: 0, forcedReady: true },
+    });
+  });
+
   it("threads the terminal-agent early-ready gate into stream options", async () => {
     const terminalDeps = makeDeps(
       makeLaunch(),
@@ -254,7 +307,6 @@ describe("runSandboxCreateStep", () => {
   it.each([
     ["terminal VM", true, vmEnv],
     ["terminal Docker", true, dockerEnv],
-    ["non-terminal Docker", false, dockerEnv],
   ])("detaches immediately for %s", async (_label, isTerminalAgent, env) => {
     vi.useFakeTimers();
 
@@ -293,14 +345,17 @@ describe("runSandboxCreateStep", () => {
     vi.useRealTimers();
   });
 
-  it("waits for startup output for non-terminal VM creates", async () => {
+  it.each([
+    ["VM", vmEnv],
+    ["Docker", dockerEnv],
+  ])("waits for startup output for non-terminal %s creates", async (_label, env) => {
     vi.useFakeTimers();
 
     const child = new FakeChild();
     const logLine = vi.fn();
     const streamOptions = makePollingOptions(child, { logLine });
     const deps = makeDeps(
-      makeLaunch({ sandboxEnv: vmEnv }),
+      makeLaunch({ sandboxEnv: env }),
       makePatch(),
       { status: 0, output: "" },
       {
@@ -355,9 +410,10 @@ describe("runSandboxCreateStep", () => {
     );
 
     const promise = runSandboxCreateStep(makeContext(), deps);
+    await vi.advanceTimersByTimeAsync(0);
     child.stdout.emit("data", Buffer.from("Created sandbox: alpha\n"));
+    child.stderr.emit("data", Buffer.from("Setting up NemoClaw...\n"));
     child.emit("close", 255);
-    await vi.runOnlyPendingTimersAsync();
 
     await expect(promise).resolves.toMatchObject({
       createResult: expect.objectContaining({ status: 0, forcedReady: true }),

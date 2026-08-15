@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../cli/branding";
+import { gatewayStartGuidance } from "../gateway-start-guidance";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
@@ -85,11 +86,10 @@ export interface SandboxInventoryRow {
   openshellDriver: string | null;
   openshellVersion: string | null;
   policies: string[];
-  agent: string | null;
+  agent: string;
   dashboardPort?: number | null;
   isDefault: boolean;
   activeSessionCount: number | null;
-  connected: boolean;
   // #5714: row recovered display-only from the live gateway. Its agent/GPU/
   // inference state is unknown (the gateway sandbox list does not expose it),
   // so the renderer shows "unknown" rather than asserting OpenClaw/CPU defaults.
@@ -130,7 +130,7 @@ export interface ShowStatusCommandDeps {
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
    * Active SSH-session count for a sandbox. When provided, `showStatusCommand`
-   * emits a `Connected:` line under each sandbox row. Returns null when the
+   * emits an `SSH sessions:` line under each sandbox row. Returns null when the
    * probe is not available (e.g. no openshell binary); the line is omitted in
    * that case. #2604.
    */
@@ -143,6 +143,8 @@ export interface ShowStatusCommandDeps {
    * detect the degraded state from `$?` (#3386).
    */
   getGatewayHealth?: () => GatewayHealth;
+  /** Render lifecycle-aware recovery guidance after an unhealthy gateway probe. */
+  getGatewayStartGuidance?: () => string;
   /** Last authority durably selected by onboarding, with secret-free identity fields. */
   getGatewayAuthority?: () => GatewayOwnerDescription | null;
   checkMessagingBridgeHealth?: (
@@ -167,7 +169,7 @@ export interface StatusSandboxRow {
   openshellDriver: string | null;
   openshellVersion: string | null;
   policies: string[];
-  agent: string | null;
+  agent: string;
   dashboardPort?: number | null;
   isDefault: boolean;
 }
@@ -194,6 +196,21 @@ export interface StatusReport {
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
   return redactFull(value);
+}
+
+/**
+ * Resolve the agent every inventory surface reports. The registry stores `null`
+ * or omits `agent` for an OpenClaw sandbox, so text and JSON must resolve that
+ * marker here or they report different agents for the same sandbox.
+ *
+ * #5714: a sandbox recovered display-only from the live gateway has an unknown
+ * agent (the gateway sandbox list does not expose it). Surface "unknown" rather
+ * than the OpenClaw default, which would misrepresent a Hermes or Deep Agents
+ * Code sandbox as OpenClaw.
+ */
+function resolveDisplayAgent(sandbox: SandboxEntry): string {
+  if (sandbox.agent) return sandbox.agent;
+  return sandbox.recoveredFromGateway ? "unknown" : "openclaw";
 }
 
 /**
@@ -225,15 +242,10 @@ function buildSandboxInventoryRow(
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
     policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
-    // #5714: a sandbox recovered display-only from the live gateway has an
-    // unknown agent (the gateway sandbox list does not expose it). Surface
-    // "unknown" instead of letting the renderer's `|| "openclaw"` default
-    // misrepresent a Deep Agents/Hermes sandbox as OpenClaw.
-    agent: sandbox.agent || (sandbox.recoveredFromGateway ? "unknown" : null),
+    agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
-    connected: activeSessionCount !== null && activeSessionCount > 0,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
     ...(sandbox.recoveredFromGateway ? { livePhase: sandbox.livePhase ?? null } : {}),
   };
@@ -346,13 +358,13 @@ export function renderSandboxInventoryText(
         ? "sandbox GPU"
         : "CPU sandbox";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
-    const connected = sandbox.connected ? " ●" : "";
-    const agent = sandbox.agent || "openclaw";
+    const sessionDot = (sandbox.activeSessionCount ?? 0) > 0 ? " ●" : "";
+    const agent = sandbox.agent;
     // #5714: for a gateway-recovered row, surface the trusted live PHASE
     // (e.g. Ready) from `openshell sandbox list` so `list` agrees with
     // `nemoclaw <name> status`; normal registry rows have no live phase.
     const phase = sandbox.recoveredFromGateway ? `  phase: ${sandbox.livePhase || "unknown"}` : "";
-    log(`    ${sandbox.name}${def}${connected}`);
+    log(`    ${sandbox.name}${def}${sessionDot}`);
     log(
       `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}${phase}  policies: ${presets}`,
     );
@@ -411,7 +423,7 @@ function buildStatusSandboxRow(
           .filter((policy): policy is string => typeof policy === "string")
           .map((policy) => safeStatusString(policy) || policy)
       : [],
-    agent: safeStatusString(sandbox.agent || null),
+    agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(dashboardPort != null ? { dashboardPort } : {}),
     isDefault,
   };
@@ -536,11 +548,10 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       if (isDefault && liveModel && liveModel !== inference.model) {
         log(`      (onboarded: ${inference.model || "unknown"})`);
       }
-      // #2604: surface the configured Inference (provider/model) and
-      // Connected (active-session count) as labeled fields. Bare
-      // `nemoclaw status` previously only had the model in parens above —
-      // users had to run `nemoclaw <name> status` to see provider and
-      // connection state.
+      // #2604: surface the configured Inference (provider/model) and the
+      // SSH-session count as labeled fields. Bare `nemoclaw status` previously
+      // only had the model in parens above — users had to run
+      // `nemoclaw <name> status` to see provider and session state.
       if (provider || model) {
         const parts = [provider, model].filter(Boolean).join(" / ");
         log(`      Inference: ${parts}`);
@@ -548,9 +559,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       if (deps.getActiveSessionCount) {
         const count = deps.getActiveSessionCount(sb.name);
         if (count !== null) {
-          log(
-            `      Connected: ${count > 0 ? `yes (${count} session${count > 1 ? "s" : ""})` : "no"}`,
-          );
+          log(`      SSH sessions: ${count > 0 ? count : "none"}`);
         }
       }
     }
@@ -584,9 +593,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       log("");
       const detail = health.reason ? ` (${health.reason})` : "";
       log(`  gateway: down [${health.state}]${detail}`);
-      log(
-        `    Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard --resume' to recover.`,
-      );
+      log(`    ${(deps.getGatewayStartGuidance ?? gatewayStartGuidance)()}`);
       process.exitCode = 1;
     }
   }

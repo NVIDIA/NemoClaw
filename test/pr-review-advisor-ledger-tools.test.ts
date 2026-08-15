@@ -11,6 +11,7 @@ import {
   partialLedgerFailureResult,
   recordSynthesisValidationFailureOnDraft,
   reviewLedgerConsistencyIssues,
+  terminologyReviewConsistencyIssues,
   withCanonicalReviewLedgerFindings,
 } from "../tools/pr-review-advisor/analyze.mts";
 import {
@@ -19,6 +20,7 @@ import {
   REVIEW_LEDGER_READ_TOOL,
   REVIEW_LEDGER_UPDATE_TOOL,
 } from "../tools/pr-review-advisor/review-ledger.mts";
+import { createTerminologyLedger } from "../tools/pr-review-advisor/terminology.mts";
 
 type CallableTool = ToolDefinition & {
   execute(
@@ -187,6 +189,35 @@ describe("PR review ledger tools", () => {
       "sourceOfTruthReview[1] best-effort cleanup must reference an open ledger finding",
     ]);
     expect(canonicalRetryFallback(result, snapshot)).toBeNull();
+  });
+
+  it("rejects draft finding drift before applying canonical ledger findings", () => {
+    const ledger = createReviewFindingLedger();
+    ledger.applyBatch([{ operation: "add", finding: finding() }], "correctness-state");
+    const draft = normalizeReviewResult({ findings: [] }, reviewMetadata());
+
+    expect(canonicalRetryFallback(draft, ledger.snapshot())).toBeNull();
+  });
+
+  it("accepts equivalent terminology receipts with reordered object keys", () => {
+    const metadata = reviewMetadata();
+    const findingSnapshot = createReviewFindingLedger().snapshot();
+    const terminologySnapshot = createTerminologyLedger(metadata.headSha).snapshot();
+    const normalized = normalizeReviewResult(
+      { terminologyReview: terminologySnapshot.review },
+      metadata,
+    );
+    const reordered = {
+      ...normalized,
+      terminologyReview: {
+        noChangesReason: terminologySnapshot.review.noChangesReason,
+        decisions: terminologySnapshot.review.decisions,
+        status: terminologySnapshot.review.status,
+      },
+    };
+
+    expect(terminologyReviewConsistencyIssues(reordered, terminologySnapshot)).toEqual([]);
+    expect(canonicalRetryFallback(reordered, findingSnapshot, terminologySnapshot)).not.toBeNull();
   });
 
   it("preserves canonical findings when a later advisor stage fails", () => {

@@ -1,10 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { HERMES_OPENAI_API_PORT } from "../core/ports";
+import {
+  HERMES_API_PORT_RANGE_END,
+  HERMES_API_PORT_RANGE_START,
+  isHermesApiPort,
+} from "../core/ports";
 
-/** Agent-neutral rejection message when {@link HERMES_OPENAI_API_PORT} is requested as a dashboard port; shared by both #4984 guards. */
-export const RESERVED_HERMES_DASHBOARD_PORT_MESSAGE = `[SECURITY] Invalid dashboard port ${HERMES_OPENAI_API_PORT} - reserved for the Hermes OpenAI-compatible API`;
+/** Agent-neutral rejection when a Hermes API port is requested as a dashboard port; shared by both #4984 guards. */
+export function reservedHermesDashboardPortMessage(port: number): string {
+  return `[SECURITY] Invalid dashboard port ${port} - reserved for the Hermes OpenAI-compatible API (${HERMES_API_PORT_RANGE_START}-${HERMES_API_PORT_RANGE_END})`;
+}
 
 export type PreflightPortKind = "gateway" | "dashboard" | "other";
 
@@ -47,8 +53,10 @@ export function buildRequiredPreflightPorts(opts: {
 }
 
 /**
- * Reject the reserved {@link HERMES_OPENAI_API_PORT} as a dashboard port at
- * preflight (any agent) so onboarding fails fast at [1/8], before any sandbox.
+ * Reject a Hermes API port as a dashboard port at preflight (any agent) so
+ * onboarding fails fast at [1/8], before any sandbox. Every port in the API
+ * range is reserved because each Hermes sandbox allocates its own from that
+ * range, so a dashboard on any of them would collide with a sibling sandbox.
  * Mirrors the createSandbox guard in resolveHermesDashboardOnboardState. (#4984)
  */
 export function assertDashboardPortNotReserved(
@@ -58,7 +66,7 @@ export function assertDashboardPortNotReserved(
     process.exit(1);
   },
 ): void {
-  if (dashboardPort === HERMES_OPENAI_API_PORT) {
-    fail(RESERVED_HERMES_DASHBOARD_PORT_MESSAGE);
+  if (dashboardPort !== null && isHermesApiPort(dashboardPort)) {
+    fail(reservedHermesDashboardPortMessage(dashboardPort));
   }
 }

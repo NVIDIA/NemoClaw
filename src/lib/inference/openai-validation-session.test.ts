@@ -43,6 +43,338 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 
+  it("retries the validation session after an HTTP 200 response omits a structured tool call (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end(
+          observedBodies.length === 1
+            ? '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}'
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":{}}}]}}]}',
+        );
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        retryChatCompletionsToolReadiness: true,
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedBodies).toHaveLength(2);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("stops the validation session after four HTTP 200 responses omit structured tool calls (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end('{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        retryChatCompletionsToolReadiness: true,
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      failures: [
+        expect.objectContaining({
+          diagnosticCodes: ["openai-chat-missing-structured-tool-call"],
+        }),
+      ],
+    });
+    expect(observedBodies).toHaveLength(4);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("uses one larger-token retry when a readiness response contains only reasoning (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        const replies = [
+          '{"choices":[{"finish_reason":"stop","message":{"content":"OK"}}]}',
+          '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+          '{"choices":[{"finish_reason":"tool_calls","message":{"tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":{}}}]}}]}',
+        ];
+        response.end(replies[observedBodies.length - 1]);
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        retryChatCompletionsToolReadiness: true,
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 256, 1024]);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("retries reasoning-only tool-call truncation on the native connection", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end(
+          observedBodies.length === 1
+            ? '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}'
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
+        );
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "qwen3-vl:4b",
+      "test-key",
+      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedBodies).toHaveLength(2);
+    expect(observedBodies[0]).toMatchObject({ max_tokens: 256, tool_choice: "required" });
+    expect(observedBodies[1]).toMatchObject({ max_tokens: 1024, tool_choice: "required" });
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("gives the delayed 4096-token native retry the doubled deadline (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        observedBodies.push(parsed);
+        response.setHeader("content-type", "application/json");
+        const reply =
+          (parsed.max_tokens as number) < 4096
+            ? '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}'
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}';
+        setTimeout(() => response.end(reply), (parsed.max_tokens as number) === 4096 ? 1_200 : 0);
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "nemotron-3-nano:30b",
+      "test-key",
+      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024, 4096]);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("fails after the full retry ladder without replaying the legacy probe (#8714)", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end(
+          '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+        );
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "qwen3-vl:4b",
+      "test-key",
+      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("did not return a tool call"),
+      failures: [
+        expect.objectContaining({
+          diagnosticCodes: [
+            "openai-chat-missing-structured-tool-call",
+            "openai-chat-reasoning-budget-exhausted",
+          ],
+        }),
+      ],
+    });
+    expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024, 4096]);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a transient HTTP failure after the larger-budget retry", async () => {
+    let requestCount = 0;
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const replies = [
+      {
+        statusCode: 200,
+        body: '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+      },
+      {
+        statusCode: 503,
+        body: '{"error":{"message":"temporarily unavailable"}}',
+      },
+    ];
+    const unexpectedThirdReply = {
+      statusCode: 200,
+      body: '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}',
+    };
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        const reply = replies[requestCount] ?? unexpectedThirdReply;
+        requestCount += 1;
+        response.setHeader("content-type", "application/json");
+        response.statusCode = reply.statusCode;
+        response.end(reply.body);
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+
+    try {
+      const result = await probeOpenAiLikeEndpointWithValidationSession(
+        `http://provider.example.test:${port}/v1`,
+        "qwen3-vl:4b",
+        "test-key",
+        { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+        harness,
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("HTTP 503"),
+      });
+      expect(requestCount).toBe(2);
+      expect(observedBodies.map((body) => body.max_tokens)).toEqual([256, 1024]);
+      expect(harness.legacyProbe).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("does not use the legacy probe after an unexpected post-retry failure", async () => {
+    const observedBodies: Array<Record<string, unknown>> = [];
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
+      request.on("end", () => {
+        observedBodies.push(JSON.parse(body));
+        response.setHeader("content-type", "application/json");
+        response.end(
+          observedBodies.length === 1
+            ? '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}'
+            : '{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{}]}}]}',
+        );
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+    harness.hasChatCompletionsToolCall = () => {
+      throw new Error("unexpected parser failure");
+    };
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "qwen3-vl:4b",
+      "test-key",
+      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("failed after the reasoning retry"),
+    });
+    expect(observedBodies).toHaveLength(2);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
   it("uses one connection for Responses semantic fallback and Chat success", async () => {
     let connections = 0;
     const paths: string[] = [];

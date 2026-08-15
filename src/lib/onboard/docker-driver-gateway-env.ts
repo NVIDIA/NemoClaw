@@ -16,19 +16,30 @@ import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
+  getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
+  OpenShellGatewayServiceEnvironmentError,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
+  stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
+import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
+/** Return the configured gateway port used by Docker-driver runtime helpers. */
+export function getConfiguredGatewayPort(): number {
+  return GATEWAY_PORT;
+}
+
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
+  "CONTAINERS_CONF",
   "DOCKER_HOST",
   "OPENSHELL_DRIVERS",
   "OPENSHELL_BIND_ADDRESS",
@@ -43,9 +54,13 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DOCKER_NETWORK_NAME",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
   "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+  "OPENSHELL_PODMAN_SOCKET",
   "OPENSHELL_GATEWAY_CONFIG",
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
+  "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
+  "NETAVARK_FW",
 ] as const;
 
 export interface BuildDockerDriverGatewayEnvOptions {
@@ -53,8 +68,10 @@ export interface BuildDockerDriverGatewayEnvOptions {
   gatewayPort?: number;
   stateDir: string;
   dockerNetworkName?: string;
+  podmanSocketPath?: string;
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
+  enableBindMounts?: boolean;
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
@@ -67,14 +84,17 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
 };
 
 export function getGatewayPortCheckOptions(): { host: string } {
-  return { host: GATEWAY_BIND_ADDRESS };
+  return {
+    host: isPortableExperimentalProfile() ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
+  };
 }
 
 export function getGatewayStartNetworkEnv(
   gatewayPort: number = GATEWAY_PORT,
 ): Record<string, string> {
+  const portable = isPortableExperimentalProfile();
   return {
-    OPENSHELL_BIND_ADDRESS: GATEWAY_BIND_ADDRESS,
+    OPENSHELL_BIND_ADDRESS: portable ? WILDCARD_GATEWAY_BIND_ADDRESS : GATEWAY_BIND_ADDRESS,
     OPENSHELL_SERVER_PORT: String(gatewayPort),
     OPENSHELL_SSH_GATEWAY_HOST: getGatewayConnectHost(),
     OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
@@ -83,6 +103,13 @@ export function getGatewayStartNetworkEnv(
 
 export function assertDockerDriverGatewayBindAddressSafe(gatewayEnv: Record<string, string>): void {
   if (gatewayEnv.OPENSHELL_BIND_ADDRESS !== WILDCARD_GATEWAY_BIND_ADDRESS) return;
+  if (
+    gatewayEnv.OPENSHELL_DRIVERS === "podman" &&
+    gatewayEnv.OPENSHELL_GRPC_ENDPOINT ===
+      `https://${PORTABLE_HOST_GATEWAY_IP}:${gatewayEnv.OPENSHELL_SERVER_PORT}`
+  ) {
+    return;
+  }
   throw new Error(
     "NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 is not supported for the OpenShell Docker-driver gateway while gateway JWT auth is active. Remove the override, or use NEMOCLAW_DASHBOARD_BIND for dashboard exposure.",
   );
@@ -206,18 +233,43 @@ export function buildDockerDriverGatewayEnv({
   gatewayPort = GATEWAY_PORT,
   stateDir,
   dockerNetworkName = "openshell-docker",
+  podmanSocketPath,
   getDockerSupervisorImage,
   resolveSandboxBin,
+  enableBindMounts = false,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
+  const portable = isPortableExperimentalProfile();
   const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: "docker",
+    OPENSHELL_DRIVERS: portable ? "podman" : "docker",
     ...getGatewayStartNetworkEnv(gatewayPort),
     ...buildDockerDriverGatewayLocalTlsEnv(stateDir),
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT: getDockerDriverGatewayEndpoint(gatewayPort),
+    OPENSHELL_GRPC_ENDPOINT: portable
+      ? `https://${PORTABLE_HOST_GATEWAY_IP}:${gatewayPort}`
+      : getDockerDriverGatewayEndpoint(gatewayPort),
     OPENSHELL_DOCKER_NETWORK_NAME: dockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
+  if (enableBindMounts) env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";
+  if (portable) {
+    env.NETAVARK_FW = "iptables";
+    if (podmanSocketPath !== undefined) {
+      const rawSocketPath = String(podmanSocketPath);
+      const normalizedSocketPath = rawSocketPath.trim();
+      if (
+        normalizedSocketPath === "" ||
+        rawSocketPath !== normalizedSocketPath ||
+        /[\0\r\n]/u.test(rawSocketPath) ||
+        !path.isAbsolute(normalizedSocketPath) ||
+        path.normalize(normalizedSocketPath) !== normalizedSocketPath
+      ) {
+        throw new Error("OpenShell Podman gateway socket must be a safe normalized absolute path.");
+      }
+      env.OPENSHELL_PODMAN_SOCKET = normalizedSocketPath;
+    }
+    const containersConf = process.env.CONTAINERS_CONF?.trim();
+    if (containersConf) env.CONTAINERS_CONF = containersConf;
+  }
   if (platform === "linux") {
     const sandboxBin = resolveSandboxBin();
     if (sandboxBin) {
@@ -348,15 +400,24 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
     hasOpenShellGatewayUserService:
       options.hasOpenShellGatewayUserService ??
       (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
+    managedServiceLogCommand:
+      options.managedServiceLogCommand ?? getOpenShellGatewayManagedServiceLogCommand(),
     prepareOpenShellGatewayUserServiceEnv: () => {
-      const serviceGatewayEnv = { ...gatewayEnv };
-      delete serviceGatewayEnv.DOCKER_HOST;
-      const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
-      if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
-      writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
-        env,
-        home: effectiveHome,
-      });
+      try {
+        const serviceGatewayEnv = { ...gatewayEnv };
+        delete serviceGatewayEnv.DOCKER_HOST;
+        const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+        if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+        writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
+          env,
+          home: effectiveHome,
+        });
+      } catch (error) {
+        throw new OpenShellGatewayServiceEnvironmentError(error);
+      }
     },
+    stopOpenShellGatewayUserService:
+      options.stopOpenShellGatewayUserService ??
+      (() => stopOpenShellGatewayUserService({ env, home: effectiveHome })),
   });
 }

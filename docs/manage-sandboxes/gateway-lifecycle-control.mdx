@@ -21,6 +21,9 @@ Built-in OpenClaw and Hermes images support two direct-container lifecycle topol
 
 The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
 It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
+For `recover` and `gateway restart`, the managed controller acquires the expected-exit lock before it inspects the supervisor or gateway.
+Lock acquisition, gateway termination, and replacement health share one recovery deadline.
+If lock acquisition reaches that deadline, the controller returns `SUPERVISOR_BUSY` without publishing an expected-exit marker.
 
 Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
 <AgentOnly variant="hermes">
@@ -39,7 +42,7 @@ For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway
 After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
 
 The controller rechecks the exact managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
-A failed managed probe is authoritative and cannot be overridden by an outer-namespace HTTP response.
+A failed managed probe cannot be overridden by an outer-namespace HTTP response.
 
 Custom agents that recover through an SSH script do not use this controller probe and continue to poll ordinary gateway health.
 

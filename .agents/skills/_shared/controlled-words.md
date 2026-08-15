@@ -5,9 +5,9 @@
 
 # NemoClaw Controlled Word List
 
-This list defines approved NemoClaw technical terms for explanatory text in the scope of the
-[NemoClaw Writing Guide](../../../WRITING.md). It gives each term one project meaning and identifies
-alternatives that can make that meaning unclear.
+This list defines approved NemoClaw technical terms for explanatory text.
+It gives each term one project meaning and identifies alternatives that can make that meaning
+unclear.
 
 This list is not a general English dictionary. It does not copy the ASD-STE100 dictionary, and its
 use does not establish ASD-STE100 compliance.
@@ -159,9 +159,11 @@ other literal identifiers.
 | `host-side` | Adjective | Runs or exists on the host, outside a sandbox. | local, external |
 | `in-sandbox` | Adjective | Runs or exists inside a sandbox. | internal, container-side |
 | `lifecycle authority` | Technical noun | The component that owns create, start, stop, update, and delete decisions for a resource. | owner without the lifecycle responsibility |
+| `locked npm cache seed` | Technical noun | The complete, integrity-verified set of registry archives reachable from one npm lockfile for a selected platform. | BuildKit cache, npm cache when the verified archive set is intended |
 | `OpenShell gateway` | Technical noun | The host service that owns credentials, coordinates sandbox lifecycle, and proxies approved traffic. | agent gateway, gateway when the type is unclear |
 | `port forward` | Technical noun or verb | A connection that maps a host port to a service inside a sandbox, or the act of creating that connection. | tunnel when no general tunnel exists |
 | `provider profile` | Technical noun | An OpenShell declaration of one service provider's credentials, endpoints, allowed binaries, and access policy. | inference profile, provider settings |
+| `runtime provider state mutation` | Technical noun | A bounded, provider-mediated protection transition or restore operation whose selected state, projection digest, active fence, and recovery contract are explicit. | state mutation without the runtime provider modifier, lifecycle mutation |
 | `runtime setting` | Technical noun | A value applied when a process or sandbox runs. | build-time setting, runtime config |
 | `sandbox image` | Technical noun | The built image used to create an agent sandbox. | base image, container |
 | `sandbox registry` | Technical noun | NemoClaw state that records managed sandboxes and their selected agent types. | image registry, container registry |
@@ -182,7 +184,7 @@ other literal identifiers.
 | `custom endpoint` | Technical noun | A user-supplied inference endpoint that is not one of NemoClaw's named provider choices. | compatible endpoint before compatibility is validated |
 | `hosted inference` | Technical noun | Inference served by a remote provider-operated service. | local inference, cloud model |
 | `inference` | Technical noun | Model execution that produces a response from an input. | AI, generation when model execution is intended |
-| `inference health` | Technical noun | The complete classification from the named `inference.local` `/v1/models` status probe: `reachable` for HTTP `200` through `499`, `unhealthy` for HTTP `500` through `599`, or `unreachable` when no qualifying HTTP response arrives. | model health, successful inference, validation request |
+| `inference health` | Technical noun | The classification reported for a sandbox's inference route: the `inference.local` `/v1/models` probe result, and, when that route is reachable and the sandbox records a provider and a model, the result of one inference request sent over the same route. Values are `healthy`, `unauthorized`, `reachable`, `unhealthy`, `unreachable`, and `not probed`. | model health, successful inference |
 | `inference profile` | Technical noun | A blueprint selection that defines an inference provider type, provider name, endpoint, model, credential input, and route settings. | provider profile, model profile |
 | `inference request` | Technical noun | One request sent through an inference route to a model. | API call when the inference purpose matters |
 | `inference route reachability` | Technical noun | The `reachable` inference-health result produced when `https://inference.local/v1/models` returns HTTP `200` through `499`. It does not establish valid credentials, successful model invocation, readiness, compatibility, or support. | inference health, successful inference, validation request |
@@ -335,6 +337,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `code-changing PR` | Technical noun | A PR that changes executable code, build inputs, policy, or behavior-affecting configuration. | code PR, feature PR |
 | `commit` | Technical noun or verb | A Git revision, or the act of recording one. | change when a specific revision is intended |
 | `commit SHA` | Technical noun | The immutable Git object identifier for a commit. | commit ID, hash when the object type matters |
+| `commit under review` | Technical noun | The commit whose diff and evidence the reviewer evaluates. | exact head, review head, reviewed head |
 | `contributor` | Technical noun | A person or agent that proposes or authors a repository change. | developer, submitter |
 | `docs build` | Technical noun | The repository command and result that validate and render the documentation source. | docs test, site build |
 | `documentation-only PR` | Technical noun | A PR whose diff changes explanatory documentation but no executable or behavior-affecting source. | docs PR when scope is not clear |
@@ -347,6 +350,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `guide variant` | Technical noun | One agent-specific rendering of shared documentation source. | copy, flavor |
 | `integration test` | Technical noun | A test of behavior across two or more real project components with external services mocked or isolated as required. | unit test, E2E test |
 | `issue` | Technical noun | A tracked problem, request, or decision record in the repository. | ticket, bug when the issue type is not known |
+| `latest PR commit` | Technical noun | The commit to which the PR source branch currently points. | current head, latest head, head when the Git object is intended |
 | `live E2E` | Technical noun or adjective | An opt-in E2E test that changes real external state. | integration test, end-to-end test without the live qualifier |
 | `maintainer` | Technical noun | A person with repository authority to make the stated project decision or action. | owner unless ownership is established, admin |
 | `Markdown route` | Technical noun | A documentation URL that serves the page content in Markdown form for AI clients. | Markdown page, raw file URL |
@@ -354,7 +358,6 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `package contract` | Technical noun | A testable requirement of the compiled or published package artifact. | integration contract, package test |
 | `passing` | Adjective | A command exited with status 0, or a check concluded with `SUCCESS`. | green when the result is not named |
 | `PR` | Technical noun | A GitHub pull request. Write `pull request (PR)` at first use for an audience that might not know the abbreviation. | change request, merge request |
-| `PR SHA` | Technical noun | The PR-branch commit that the evidence covers. Use its short SHA in reports. Use the full SHA only when a command or API requires it. | relative revision terms without a SHA |
 | `pre-commit hook` | Technical noun | A repository hook that runs before Git records a commit. | precommit, lint hook |
 | `pre-push hook` | Technical noun | A repository hook that runs before Git sends commits to a remote. | push hook, CI check |
 | `regression test` | Technical noun | A test that fails for a previously observed defect and passes when the defect is corrected. | bug test, reproduction only |
@@ -388,7 +391,7 @@ A result can support more than one claim only when its evidence meets each defin
 | Class | Claim | Establishes | Does not establish |
 |---|---|---|---|
 | Operational | `inference route reachability` | The named `/v1/models` route returned HTTP `200` through `499`. | Valid credentials, successful model invocation, readiness, compatibility, or support. |
-| Operational | `inference health` | The named `/v1/models` probe produced a `reachable`, `unhealthy`, or `unreachable` classification. | Valid credentials, successful model invocation, readiness, compatibility, or support. |
+| Operational | `inference health` | The named `/v1/models` probe classification, plus the result of one inference request over the same route when NemoClaw sent one. | Broader API conformance, other requests or models, readiness, compatibility, or support. |
 | Operational | `readiness check` | A service or resource meets named criteria to begin its intended work. | Broader reliability, compatibility, or support. |
 | Operational | `validation request` | One authenticated request succeeded for the named endpoint, API family, model, and request shape. | Broader API conformance, other requests or models, reliability, or support. |
 | Evidence | `verification` | Evidence confirms the stated result for the named revision and environment. | Compatibility or support unless the evidence and decision establish them. |
@@ -418,7 +421,6 @@ For each entry:
 3. Define one meaning. Add another row when the same word has a different controlled meaning.
 4. List only alternatives that writers use for that same meaning.
 5. Keep entries alphabetical within their section.
-6. Add a rewrite example to `WRITING.md` only when the distinction needs sentence context.
 
 Do not add every acceptable English word. Do not use this list to rename a command, identifier,
 schema field, UI label, or third-party product. Such a rename needs its own behavior or interface

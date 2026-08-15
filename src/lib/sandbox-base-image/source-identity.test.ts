@@ -177,10 +177,11 @@ describe("sandbox base-image source identity", () => {
       "agents/openclaw/mcporter-runtime/package.json",
       "agents/openclaw/mcporter-runtime/package-lock.json",
       "scripts/security/build-perl-security-packages.sh",
+      "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
       "scripts/lib/openclaw-npm-remediation.mts",
       "scripts/lib/reviewed-npm-archive.mts",
-      "scripts/checks/node-tar-image-scan.mts",
       "scripts/patch-bundled-npm-brace-expansion.mts",
+      "scripts/lib/patch-bundled-npm-ip-address.mts",
       "scripts/patch-bundled-npm-tar.mts",
       "scripts/upgrade-bundled-npm.mts",
       agentDockerfile,
@@ -372,6 +373,21 @@ describe("sandbox base-image source identity", () => {
     writeFixture(root, "scripts/security/build-perl-security-packages.sh", "#!/bin/sh\nexit 0\n");
     git(root, ["add", "scripts/security/build-perl-security-packages.sh"]);
     git(root, ["commit", "-m", "change Perl package builder"]);
+
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("detects committed Perl test patch changes relative to origin/main (#9028)", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(
+      root,
+      "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
+      "changed test patch\n",
+    );
+    git(root, ["add", "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch"]);
+    git(root, ["commit", "-m", "change Perl test patch"]);
 
     expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);

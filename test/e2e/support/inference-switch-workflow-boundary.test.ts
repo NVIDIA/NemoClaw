@@ -1,154 +1,42 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
+
 import {
-  readInferenceSwitchWorkflow,
-  validateInferenceSwitchWorkflow,
-  validateInferenceSwitchWorkflowBoundary,
-} from "../../../tools/e2e/inference-switch-workflow-boundary.mts";
-import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+  catalogueTarget,
+  E2E_TARGET_CATALOGUE,
+  validateE2eTargetCatalogue,
+} from "../../../tools/e2e/target-catalogue.mts";
 
-describe("inference switch workflow boundary", () => {
-  it("accepts the canonical Anthropic-compatible mode for both agents", () => {
-    expect(validateInferenceSwitchWorkflowBoundary()).toEqual([]);
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
-  });
+describe("inference-switch catalogue boundary", () => {
+  it("keeps both agents on their reviewed provider-switch contracts", () => {
+    expect(() => validateE2eTargetCatalogue(E2E_TARGET_CATALOGUE)).not.toThrow();
+    const openclaw = catalogueTarget("openclaw-inference-switch");
+    expect(openclaw).toMatchObject({
+      profile: "standard",
+      testFile: "test/e2e/live/openclaw-inference-switch.test.ts",
+      environment: {
+        NEMOCLAW_AGENT: "openclaw",
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      },
+    });
 
-  it("rejects removal or misconfiguration of an Anthropic-compatible mode", () => {
-    const missingMode = readInferenceSwitchWorkflow();
-    missingMode.jobs["hermes-inference-switch"].strategy?.matrix?.include?.pop();
-    expect(validateInferenceSwitchWorkflow(missingMode)).toContain(
-      "hermes-inference-switch must run the canonical Anthropic-compatible mode",
-    );
-
-    const failFast = readInferenceSwitchWorkflow();
-    failFast.jobs["hermes-inference-switch"].strategy!["fail-fast"] = true;
-    expect(validateInferenceSwitchWorkflow(failFast)).toContain(
-      "hermes-inference-switch mode matrix must not fail fast",
-    );
-
-    const hardcodedMode = readInferenceSwitchWorkflow();
-    hardcodedMode.jobs["openclaw-inference-switch"].env!.NEMOCLAW_SWITCH_PROVIDER =
-      "compatible-endpoint";
-    expect(validateInferenceSwitchWorkflow(hardcodedMode)).toContain(
-      "openclaw-inference-switch must map NEMOCLAW_SWITCH_PROVIDER from its mode matrix",
-    );
-
-    const broadPermissions = readInferenceSwitchWorkflow();
-    broadPermissions.jobs["openclaw-inference-switch"].permissions!.contents = "write";
-    expect(validateInferenceSwitchWorkflow(broadPermissions)).toContain(
-      "openclaw-inference-switch must pin contents permission to read",
-    );
-
-    const lingeringCredentials = readInferenceSwitchWorkflow();
-    const steps = lingeringCredentials.jobs["openclaw-inference-switch"].steps!;
-    const cleanupIndex = steps.findIndex((step) => step.name === "Clean up Docker auth");
-    const uploadIndex = steps.findIndex(
-      (step) => step.name === "Upload OpenClaw inference switch artifacts",
-    );
-    [steps[cleanupIndex], steps[uploadIndex]] = [steps[uploadIndex], steps[cleanupIndex]];
-    expect(validateInferenceSwitchWorkflow(lingeringCredentials)).toContain(
-      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
-    );
-  });
-
-  it("rejects missing or misconfigured E2E shard mappings", () => {
-    const missingShard = readInferenceSwitchWorkflow();
-    delete missingShard.jobs["hermes-inference-switch"].env!.NEMOCLAW_E2E_SHARD;
-    expect(validateInferenceSwitchWorkflow(missingShard)).toContain(
-      "hermes-inference-switch must map NEMOCLAW_E2E_SHARD from its mode matrix",
-    );
-
-    const hardcodedShard = readInferenceSwitchWorkflow();
-    hardcodedShard.jobs["openclaw-inference-switch"].env!.NEMOCLAW_E2E_SHARD = "hosted";
-    expect(validateInferenceSwitchWorkflow(hardcodedShard)).toContain(
-      "openclaw-inference-switch must map NEMOCLAW_E2E_SHARD from its mode matrix",
-    );
-  });
-
-  it("pins the local Anthropic switch target without hosted credentials", () => {
-    const wrongTarget = readInferenceSwitchWorkflow();
-    const anthropic = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(
-      (entry) => entry.mode === "anthropic",
-    );
-    anthropic!.switch_model = "nvidia/nvidia/nemotron-3-super-v3";
-    expect(validateInferenceSwitchWorkflow(wrongTarget)).toContain(
-      "hermes-inference-switch must run the canonical Anthropic-compatible mode",
-    );
-
-    const unscopedSecret = readInferenceSwitchWorkflow();
-    const runStep = unscopedSecret.jobs["openclaw-inference-switch"].steps!.find(
-      (step) => step.name === "Run OpenClaw inference switch live test",
-    )!;
-    runStep.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
-    expect(validateInferenceSwitchWorkflow(unscopedSecret)).toContain(
-      "openclaw-inference-switch must not expose NVIDIA_INFERENCE_API_KEY in its Anthropic-compatible mode",
-    );
-
-    const unscopedPublicKey = readInferenceSwitchWorkflow();
-    const publicRunStep = unscopedPublicKey.jobs["hermes-inference-switch"].steps!.find(
-      (step) => step.name === "Run Hermes inference switch live Vitest test",
-    )!;
-    publicRunStep.env = { NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}" };
-    expect(validateInferenceSwitchWorkflow(unscopedPublicKey)).toContain(
-      "hermes-inference-switch must not expose NVIDIA_API_KEY in its Anthropic-compatible mode",
-    );
-
-    const publicKey = readInferenceSwitchWorkflow();
-    publicKey.jobs["hermes-inference-switch"].env!.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
-    expect(validateInferenceSwitchWorkflow(publicKey)).toContain(
-      "hermes-inference-switch must not expose NVIDIA_API_KEY at job scope",
-    );
-  });
-
-  it("rejects a step-scoped hosted inference override in a local switch job", () => {
-    const hostedInference = readInferenceSwitchWorkflow();
-    const runStep = hostedInference.jobs["openclaw-inference-switch"].steps!.find(
-      (step) => step.name === "Run OpenClaw inference switch live test",
-    )!;
-    runStep.env = {
-      ...runStep.env,
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-    };
-
-    expect(validateInferenceSwitchWorkflow(hostedInference)).toContain(
-      "openclaw-inference-switch must not define NEMOCLAW_E2E_USE_HOSTED_INFERENCE at step scope for its Anthropic-compatible mode",
-    );
-  });
-
-  it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
-    const workflow = readInferenceSwitchWorkflow();
-    const steps = workflow.jobs["openclaw-inference-switch"].steps!;
-
-    const authenticate = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
-    const authIndex = steps.indexOf(authenticate);
-    steps.splice(authIndex, 1);
-    steps.splice(1, 0, authenticate);
-    authenticate.run = "shared guarded Docker Hub login";
-
-    const cleanup = steps.find((step) => step.name === "Clean up Docker auth")!;
-    cleanup.run = "shared guarded Docker auth cleanup";
-
-    expect(validateInferenceSwitchWorkflow(workflow)).toEqual([]);
-  });
-
-  it("keeps the mode ratchet in the central workflow check", () => {
-    const workflow = readInferenceSwitchWorkflow();
-    workflow.jobs["openclaw-inference-switch"].strategy?.matrix?.include?.pop();
-    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-inference-switch-workflow-"));
-    const workflowPath = join(directory, "workflow.yaml");
-    try {
-      writeFileSync(workflowPath, YAML.stringify(workflow));
-      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "openclaw-inference-switch must run the canonical Anthropic-compatible mode",
-      );
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
+    const hermes = catalogueTarget("hermes-inference-switch");
+    expect(hermes).toMatchObject({
+      profile: "standard",
+      testFile: "test/e2e/live/hermes-inference-switch.test.ts",
+      hostPreparation: "hermes-swap",
+      runnerComparison: true,
+      shard: "anthropic",
+      environment: {
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+        NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+      },
+    });
+    for (const target of [openclaw, hermes]) {
+      expect(target.environment).not.toHaveProperty("NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
     }
   });
 });

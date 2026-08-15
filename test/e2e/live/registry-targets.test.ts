@@ -49,13 +49,12 @@ const REGISTRY_TARGET_PHASES = [
   "record target completion evidence",
 ] as const;
 
-for (const target of listTargets()) {
+for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
   if (!support.supported) {
     if (SELECTED_TARGET_ID === target.id) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
     }
-    // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
     test.skip(
       liveTargetTestName(target),
       { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
@@ -64,7 +63,6 @@ for (const target of listTargets()) {
     continue;
   }
 
-  // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
   test(
     liveTargetTestName(target),
     { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
@@ -118,7 +116,9 @@ for (const target of listTargets()) {
         ? lifecycle.preparePostReboot()
         : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
-      const instance = await onboard.from(ready, { sandboxName: `e2e-${target.id}` });
+      const instance = await onboard.from(ready, {
+        sandboxName: `e2e-reg-${targetIndex.toString(36)}`,
+      });
 
       // Lifecycle phase runs between onboard and state-validation.
       // Targets opt in by setting `environment.lifecycle` to a

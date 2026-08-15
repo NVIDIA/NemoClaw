@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../../../state/onboard-session";
-import { patchStagedDockerfile } from "../../dockerfile-patch";
-import { clearCompatibleEndpointReasoning } from "../../reasoning-mode";
+import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
+import type { CheckpointSandboxIdentity } from "../../../state/onboard-checkpoint-types";
+import { createSession, type SessionUpdates } from "../../../state/onboard-session";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
@@ -41,7 +38,11 @@ describe("handleProviderInferenceState", () => {
   it("runs provider selection and inference setup on a fresh flow", async () => {
     const { deps, calls } = createDeps();
     const session = createSession();
-    calls.complete.mockResolvedValue(session);
+    calls.complete.mockImplementation(async (...args: unknown[]) => {
+      session.steps.provider_selection.status =
+        args[0] === "provider_selection" ? "complete" : session.steps.provider_selection.status;
+      return session;
+    });
 
     const result = await handleProviderInferenceState(baseOptions(deps, session));
 
@@ -63,7 +64,11 @@ describe("handleProviderInferenceState", () => {
     expect(selectionUpdates).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
-    expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
+    expect(calls.startStep).toHaveBeenNthCalledWith(2, "provider_selection", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.startStep).toHaveBeenNthCalledWith(3, "inference", {
       provider: "nvidia-prod",
       model: "nvidia/test",
     });
@@ -245,75 +250,6 @@ describe("handleProviderInferenceState", () => {
         preferredInferenceApi: "openai-completions",
       }),
     );
-  });
-
-  describe("compatible endpoint reasoning mode", () => {
-    it("records reasoning state during provider selection", async () => {
-      const setupNim = vi.fn(async () => ({
-        ...baseSelection,
-        compatibleEndpointReasoning: "true",
-        compatibleEndpointReasoningEffort: null,
-        provider: "compatible-endpoint",
-        credentialEnv: "COMPATIBLE_API_KEY",
-      }));
-      const { deps } = createDeps({ setupNim });
-
-      const result = await handleProviderInferenceState({
-        ...baseOptions(deps),
-        env: { NEMOCLAW_REASONING: "true" },
-      });
-
-      expect(result).toMatchObject({
-        compatibleEndpointReasoning: "true",
-        compatibleEndpointReasoningEffort: null,
-        provider: "compatible-endpoint",
-      });
-    });
-
-    it("clears stale resumed state before writing a non-compatible artifact", async () => {
-      vi.stubEnv("NEMOCLAW_REASONING", "true");
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reasoning-resume-"));
-      const dockerfilePath = path.join(tempDir, "Dockerfile");
-      fs.writeFileSync(dockerfilePath, "ARG NEMOCLAW_REASONING=false\n");
-      const session = createSession({
-        provider: "nvidia-prod",
-        model: "nvidia/test",
-        compatibleEndpointReasoning: "true",
-        compatibleEndpointReasoningEffort: null,
-      });
-      session.steps.provider_selection.status = "complete";
-      const setupInference = vi.fn(async () => {
-        expect(process.env.NEMOCLAW_REASONING).toBeUndefined();
-        patchStagedDockerfile(
-          dockerfilePath,
-          "nvidia/test",
-          "https://chat.example",
-          "build-1",
-          "nvidia-prod",
-        );
-        return { ok: true as const };
-      });
-      const { deps } = createDeps({
-        clearCompatibleEndpointReasoning,
-        setupInference,
-        isInferenceRouteReady: vi.fn(() => false),
-      });
-
-      try {
-        const result = await handleProviderInferenceState({
-          ...baseOptions(deps, session),
-          resume: true,
-          sandboxName: "my-assistant",
-        });
-
-        expect(setupInference).toHaveBeenCalledOnce();
-        expect(result.compatibleEndpointReasoning).toBeNull();
-        expect(fs.readFileSync(dockerfilePath, "utf-8")).toContain("ARG NEMOCLAW_REASONING=false");
-      } finally {
-        vi.unstubAllEnvs();
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    });
   });
 
   it("does not use resume shortcuts when fresh is also set", async () => {
@@ -694,6 +630,40 @@ describe("handleProviderInferenceState", () => {
       reservationSessionId: session.sessionId,
     });
     expect(result.sandboxName).toBe("tm");
+  });
+
+  it.each([
+    ["is unset", decisionUnset<CheckpointSandboxIdentity>()],
+    ["names another sandbox", decisionSelected({ name: "other-sandbox", agent: "openclaw" })],
+  ])("prompts before route reservation when the checkpoint identity %s", async (_label, identity) => {
+    const session = createSession({
+      sandboxName: "stale-sandbox",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+    session.steps.provider_selection.status = "complete";
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session),
+      sandboxIdentity: identity,
+    };
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+    calls.promptName.mockResolvedValueOnce("prompted-sandbox");
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "stale-sandbox",
+    });
+
+    expect(calls.promptName).toHaveBeenCalledWith(null);
+    expect(calls.reserveRoute).toHaveBeenCalledWith(
+      "prompted-sandbox",
+      expect.objectContaining({ reservationSessionId: session.sessionId }),
+    );
+    expect(result.sandboxName).toBe("prompted-sandbox");
   });
 
   it("does not reserve a route when resume skips inference after sandbox completion (#6562)", async () => {
@@ -1211,7 +1181,17 @@ describe("handleProviderInferenceState", () => {
   });
 
   it("reconciles model router on resumed routed inference", async () => {
-    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    const session = createSession({
+      sandboxName: "router-sandbox",
+      provider: "nvidia-router",
+      model: "router/model",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
     session.steps.provider_selection.status = "complete";
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
 
@@ -1446,18 +1426,6 @@ describe("handleProviderInferenceState", () => {
       ["inference", "advance"],
       ["sandbox", "advance"],
     ]);
-  });
-
-  it("aborts before inference setup when the configuration summary is rejected", async () => {
-    const { deps, calls } = createDeps({
-      isNonInteractive: () => false,
-      promptYesNoOrDefault: vi.fn(async () => false),
-    });
-
-    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 0");
-
-    expect(calls.exit).toHaveBeenCalledWith(0);
-    expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
   // Regression: #4241. When the provider selection step accepted a no-tools

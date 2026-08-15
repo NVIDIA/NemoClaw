@@ -35,7 +35,7 @@ NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualifi
 Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires every `DGX_OTA_*` field to be absent, and requires every profile-specific field below:
 
 - April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
-- June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE=2026-06-16-11-48-10`.
+- May and June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE` set to `2026-05-13-18-42-38` or `2026-06-16-11-48-10`.
 
 By default, an unknown version, malformed or unsafe marker, unmatched no-OTA factory image, or other Station generation stops before host preparation.
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
@@ -154,7 +154,8 @@ The Colossus BaseOS path still blocks on `packagekitd`, while generic Ubuntu qui
 When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
 It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
-This compatibility repair is owned by the June 2026 AI Developer Tools factory-image boundary, which can leave its packaged CDI units disabled; it can be removed after repeat clean-host qualification shows that the qualified image consistently advertises `nvidia.com/gpu=all` at boot.
+The qualified May and June 2026 AI Developer Tools factory-image boundary defines this compatibility repair because those images can leave their packaged CDI units disabled.
+NemoClaw maintainers can remove the repair after repeated clean-host qualification confirms that the qualified images consistently advertise `nvidia.com/gpu=all` at boot.
 The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
 Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.

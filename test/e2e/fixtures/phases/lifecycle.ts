@@ -206,7 +206,7 @@ export interface RebuildSandboxOptions {
   verbose?: boolean;
 }
 
-export interface SandboxReadyAfterRebuildOptions {
+export interface SandboxReadyOptions {
   attempts?: number;
   delayMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -282,15 +282,22 @@ export class LifecyclePhaseFixture {
 
   async assertSandboxReadyAfterRebuild(
     instance: NemoClawInstance | string,
-    options: SandboxReadyAfterRebuildOptions = {},
+    options: SandboxReadyOptions = {},
   ): Promise<ShellProbeResult> {
     return await this.waitForSandboxReady(instance, options, "after rebuild");
   }
 
+  async assertSandboxReadyAfterGatewayRestart(
+    instance: NemoClawInstance | string,
+    options: SandboxReadyOptions = {},
+  ): Promise<ShellProbeResult> {
+    return await this.waitForSandboxReady(instance, options, "after gateway restart");
+  }
+
   private async waitForSandboxReady(
     instance: NemoClawInstance | string,
-    options: SandboxReadyAfterRebuildOptions,
-    transition: "after rebuild" | "after the boot restart",
+    options: SandboxReadyOptions,
+    transition: "after rebuild" | "after gateway restart" | "after the boot restart",
   ): Promise<ShellProbeResult> {
     const sandboxName = instanceName(instance);
     const attempts = options.attempts ?? SANDBOX_READY_ATTEMPTS;

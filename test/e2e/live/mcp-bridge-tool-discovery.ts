@@ -3,6 +3,7 @@
 
 import { expect } from "vitest";
 
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -32,9 +33,33 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
   );
 }
 
+export function shouldRetryMcpDiscoveryAfterRestart(
+  requestsSinceAttempt: readonly FakeMcpRequest[],
+): boolean {
+  return requestsSinceAttempt.length === 0;
+}
+
 type McpToolDiscoveryStatusJson = {
-  provider: { credentialResolution?: unknown };
-  toolDiscovery: {
+  provider: Record<string, unknown> & {
+    registryPresent: boolean;
+    gatewayPresent: boolean | null;
+    attached: boolean | null;
+    credentialReady: boolean | null;
+    credentialResolution?: unknown;
+  };
+  policy: Record<string, unknown> & {
+    registryPresent: boolean;
+    gatewayPresent: boolean | null;
+  };
+  adapter: Record<string, unknown> & {
+    registered: boolean | null;
+    detail?: unknown;
+  };
+  trustedPrivateTarget?: Record<string, unknown> & {
+    state: "match" | "drift" | "unresolved";
+    detail?: unknown;
+  };
+  toolDiscovery: Record<string, unknown> & {
     ok: boolean;
     count: number;
     tools: string[];
@@ -42,6 +67,56 @@ type McpToolDiscoveryStatusJson = {
     detail?: string;
   };
 };
+
+function buildMcpToolDiscoveryDiagnostics(
+  status: McpToolDiscoveryStatusJson,
+  requests: readonly FakeMcpRequest[],
+  expectedSecret: string,
+): Record<string, unknown> {
+  return {
+    provider: {
+      registryPresent: status.provider.registryPresent,
+      gatewayPresent: status.provider.gatewayPresent,
+      attached: status.provider.attached,
+      credentialReady: status.provider.credentialReady,
+      credentialResolutionPresent: status.provider.credentialResolution !== undefined,
+    },
+    policy: {
+      registryPresent: status.policy.registryPresent,
+      gatewayPresent: status.policy.gatewayPresent,
+    },
+    adapter: {
+      registered: status.adapter.registered,
+      detailPresent: status.adapter.detail !== undefined,
+    },
+    trustedPrivateTarget: status.trustedPrivateTarget
+      ? {
+          state: status.trustedPrivateTarget.state,
+          detailPresent: status.trustedPrivateTarget.detail !== undefined,
+        }
+      : null,
+    toolDiscovery: {
+      ok: status.toolDiscovery.ok,
+      count: status.toolDiscovery.count,
+      tools: [...status.toolDiscovery.tools],
+      truncated: status.toolDiscovery.truncated,
+      ...(status.toolDiscovery.detail !== undefined ? { detail: status.toolDiscovery.detail } : {}),
+    },
+    requests: requests.map((request) => ({
+      httpMethod: request.method,
+      rpcMethod: request.rpcMethod ?? null,
+      responseStatus: request.responseStatus ?? null,
+      responseHasResult: request.responseHasResult ?? null,
+      sessionMetadataPresent: {
+        sessionId: Boolean(request.sessionId),
+        protocolVersion: Boolean(request.protocolVersion),
+        negotiatedSessionId: Boolean(request.negotiatedSessionId),
+        negotiatedProtocolVersion: Boolean(request.negotiatedProtocolVersion),
+      },
+      credentialRewriteMatched: request.auth === `Bearer ${expectedSecret}`,
+    })),
+  };
+}
 
 export async function assertAuthenticatedMcpRediscovery(
   target: AuthenticatedMcpDiscoveryTarget | undefined,
@@ -132,27 +207,64 @@ export async function assertAuthenticatedMcpDiscovery(
     .toMatchObject({ discovered: true });
 }
 
+type AuthenticatedMcpDiscoveryRestartDeps = {
+  assertDiscovery: typeof assertAuthenticatedMcpDiscovery;
+};
+
+const AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS: AuthenticatedMcpDiscoveryRestartDeps = {
+  assertDiscovery: assertAuthenticatedMcpDiscovery,
+};
+
+export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
+  fakeMcp: FakeMcpHttpsServer,
+  options: {
+    requestOffset: number;
+    expectedSecret: string;
+    label: string;
+    restart: () => Promise<void>;
+  },
+  deps: AuthenticatedMcpDiscoveryRestartDeps = AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS,
+): Promise<void> {
+  try {
+    await deps.assertDiscovery(fakeMcp, options);
+  } catch (error) {
+    if (!shouldRetryMcpDiscoveryAfterRestart(fakeMcp.requests.slice(options.requestOffset))) {
+      throw error;
+    }
+    await options.restart();
+    await deps.assertDiscovery(fakeMcp, {
+      ...options,
+      label: `${options.label} after one bridge restart`,
+    });
+  }
+}
+
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,
   options: {
+    artifacts: Pick<ArtifactSink, "writeJson">;
     sandboxName: string;
     artifactPrefix: string;
+    credentialKey?: string;
     hostSecret: string;
     progress: Pick<TestProgress, "event">;
+    serverName?: string;
   },
 ): Promise<void> {
+  const credentialKey = options.credentialKey ?? "FAKE_MCP_SECRET";
+  const serverName = options.serverName ?? "fake";
   const requestOffset = fakeMcp.requests.length;
   let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
   let statusJson: McpToolDiscoveryStatusJson | undefined;
   for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
     status = await host.nemoclaw(
-      [options.sandboxName, "mcp", "status", "fake", "--tools", "--json"],
+      [options.sandboxName, "mcp", "status", serverName, "--tools", "--json"],
       {
         artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
         env: {
           ...buildAvailabilityProbeEnv(),
-          FAKE_MCP_SECRET: options.hostSecret,
+          [credentialKey]: options.hostSecret,
         },
         redactionValues: [options.hostSecret],
         timeoutMs: 60_000,
@@ -160,7 +272,6 @@ export async function assertAuthenticatedMcpToolDiscovery(
     );
     assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
     statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
-    expect(statusJson.provider.credentialResolution).toBeUndefined();
     if (
       !shouldRetryMcpToolDiscoveryTransportFailure(
         statusJson.toolDiscovery,
@@ -176,6 +287,12 @@ export async function assertAuthenticatedMcpToolDiscovery(
     await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
   }
   if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
+  const discoveryRequests = fakeMcp.requests.slice(requestOffset);
+  await options.artifacts.writeJson(
+    `${options.artifactPrefix}-mcp-tool-discovery-diagnostics.json`,
+    buildMcpToolDiscoveryDiagnostics(statusJson, discoveryRequests, options.hostSecret),
+  );
+  expect(statusJson.provider.credentialResolution).toBeUndefined();
   expect(statusJson.toolDiscovery).toMatchObject({
     ok: true,
     count: 2,
@@ -183,7 +300,6 @@ export async function assertAuthenticatedMcpToolDiscovery(
     truncated: false,
   });
   expect(status.stdout).not.toContain(options.hostSecret);
-  const discoveryRequests = fakeMcp.requests.slice(requestOffset);
   const discoveryProtocolRequests = discoveryRequests.filter(
     (request) =>
       (request.method === "POST" || request.method === "DELETE") && request.path === "/mcp",

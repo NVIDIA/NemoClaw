@@ -29,6 +29,8 @@ const resumeInput = {
 
 const loadedCheckpoint: OnboardCheckpoint = {
   schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+  profile: { kind: "selected", value: "default" },
+  runtimeAuthority: { kind: "unset" },
   sessionId: "s1",
   machineState: "sandbox",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -63,6 +65,7 @@ function makeDeps(overrides: Partial<OnboardSessionBootstrapDeps>): OnboardSessi
     exitProcess: (code) => {
       throw new ExitError(code);
     },
+    requireHostMountRuntimeSupport: () => {},
     resolveResumeCheckpoint: (): CheckpointLoadResult => ({ status: "none" }),
     ...overrides,
   };
@@ -117,7 +120,7 @@ describe("resume checkpoint fail-safe (#6228)", () => {
     expect(resolveResumeCheckpoint).toHaveBeenCalled();
   });
 
-  it("persists a migrated legacy checkpoint onto the session instead of re-deriving it every resume (#7022)", async () => {
+  it("refuses a legacy checkpoint without updating the session (#9035)", async () => {
     let persistedSession = createSession({ sessionId: "s1", agent: "openclaw" });
     const updateSession = vi.fn((mutator: (session: typeof persistedSession) => void) => {
       mutator(persistedSession);
@@ -125,17 +128,10 @@ describe("resume checkpoint fail-safe (#6228)", () => {
     });
     const deps = makeDeps({
       updateSession,
-      resolveResumeCheckpoint: (): CheckpointLoadResult => ({
-        status: "migrated",
-        checkpoint: loadedCheckpoint,
-        fromVersion: 0,
-      }),
-      getResumeConfigConflicts: () => {
-        throw new Error("PAST_GUARD");
-      },
+      resolveResumeCheckpoint: (): CheckpointLoadResult => ({ status: "legacy" }),
     });
-    await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow("PAST_GUARD");
-    expect(updateSession).toHaveBeenCalled();
-    expect(persistedSession.checkpoint).toEqual(loadedCheckpoint);
+    await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow();
+    expect(updateSession).not.toHaveBeenCalled();
+    expect(persistedSession.checkpoint).toBeNull();
   });
 });

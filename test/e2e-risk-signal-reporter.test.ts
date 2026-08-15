@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TestModule, TestSpecification, Vitest } from "vitest/node";
 import {
   classifyLiveTestOutcome,
@@ -30,8 +30,8 @@ vi.mock("node:child_process", () => ({
 }));
 
 const EXPECTED_SHA = "a".repeat(40);
-const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
+const ORIGINAL_PROCESS_EXIT_CODE = process.exitCode;
 
 function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
   return {
@@ -79,18 +79,58 @@ function environment(artifactDir: string): RiskSignalEnvironment {
     shardId: "default",
     expectedSha: EXPECTED_SHA,
     testedSha: EXPECTED_SHA,
-    planHash: PLAN_HASH,
     correlationId: CORRELATION_ID,
   };
 }
 
 describe("E2E risk signal reporter", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = ORIGINAL_PROCESS_EXIT_CODE;
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
+    process.exitCode = ORIGINAL_PROCESS_EXIT_CODE;
   });
 
   it("stays disabled when no expected commit is configured", () => {
-    expect(configuredEnvironment({})).toBeNull();
+    expect(
+      configuredEnvironment({
+        NEMOCLAW_E2E_CORRELATION_ID: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: "",
+      }),
+    ).toBeNull();
+  });
+
+  it("stays disabled when the workflow preserves candidate identity without a risk signal", () => {
+    expect(
+      configuredEnvironment({
+        NEMOCLAW_E2E_CORRELATION_ID: "",
+        NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+        NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "",
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["missing correlation ID", undefined],
+    ["uppercase correlation ID", CORRELATION_ID.toUpperCase()],
+    ["non-v4 correlation ID", "12345678-1234-1123-8123-123456789abc"],
+    ["malformed correlation ID", "not-a-uuid"],
+  ])("fails closed for an activated risk signal with a %s", (_case, correlationId) => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "llama-cpp-generic-gpu",
+      GITHUB_WORKSPACE: "/workspace",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: correlationId,
+      NEMOCLAW_E2E_SHARD: "default",
+    };
+
+    expect(() => configuredEnvironment(env, () => EXPECTED_SHA)).toThrow(
+      /lowercase UUIDv4 correlation id/u,
+    );
   });
 
   it("fails closed when run metadata is incomplete", () => {
@@ -99,19 +139,49 @@ describe("E2E risk signal reporter", () => {
     );
   });
 
-  it("attests the checked-out HEAD instead of echoing only the expected SHA", () => {
+  it("enables reporting for a complete manual PR identity", () => {
     const env = {
       E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
-      E2E_TARGET_ID: "onboard-resume",
+      E2E_TARGET_ID: "llama-cpp-generic-gpu",
       GITHUB_WORKSPACE: "/workspace",
       NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
-      NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
       NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
       NEMOCLAW_E2E_SHARD: "default",
     };
 
     expect(configuredEnvironment(env, () => EXPECTED_SHA)?.testedSha).toBe(EXPECTED_SHA);
     expect(() => configuredEnvironment(env, () => "c".repeat(40))).toThrow(/checked-out HEAD/u);
+  });
+
+  it("attests an explicit tested root when trusted code runs beside the candidate checkout", () => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "managed-image-protected-runtime",
+      GITHUB_WORKSPACE: "/workspace/trusted",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
+      NEMOCLAW_E2E_TESTED_ROOT: "/workspace/trusted/.candidate-runtime",
+    };
+    const resolveHead = vi.fn(() => EXPECTED_SHA);
+
+    expect(configuredEnvironment(env, resolveHead)?.testedSha).toBe(EXPECTED_SHA);
+    expect(resolveHead).toHaveBeenCalledWith("/workspace/trusted/.candidate-runtime");
+  });
+
+  it("rejects a relative tested root before resolving its HEAD", () => {
+    const env = {
+      E2E_ARTIFACT_DIR: "/tmp/e2e-risk-signal-test",
+      E2E_TARGET_ID: "managed-image-protected-runtime",
+      NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
+      NEMOCLAW_E2E_TESTED_ROOT: ".candidate-runtime",
+    };
+    const resolveHead = vi.fn(() => EXPECTED_SHA);
+
+    expect(() => configuredEnvironment(env, resolveHead)).toThrow(/absolute tested root/u);
+    expect(resolveHead).not.toHaveBeenCalled();
   });
 
   it("writes pass, failure, skip, and pending counts for the tested commit", () => {
@@ -161,7 +231,6 @@ describe("E2E risk signal reporter", () => {
       vi.stubEnv("E2E_ARTIFACT_DIR", dir);
       vi.stubEnv("E2E_TARGET_ID", "network-policy");
       vi.stubEnv("NEMOCLAW_E2E_EXPECTED_SHA", EXPECTED_SHA);
-      vi.stubEnv("NEMOCLAW_E2E_PLAN_HASH", PLAN_HASH);
       vi.stubEnv("NEMOCLAW_E2E_CORRELATION_ID", CORRELATION_ID);
       vi.stubEnv("NEMOCLAW_E2E_SHARD", "live-probes");
 
@@ -245,6 +314,43 @@ describe("E2E risk signal reporter", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("fails a successful live selection when every selected test skips (#9022)", () => {
+    vi.stubEnv("NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST", "1");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    process.exitCode = undefined;
+    const reporter = new E2eRiskSignalReporter();
+
+    reporter.onTestRunEnd([moduleWithStates(["skipped"])], [], "passed");
+
+    expect(process.exitCode).toBe(1);
+    expect(stderr).toHaveBeenCalledWith(
+      "::error::Live E2E selection ran no tests (1 skipped, 0 pending)\n",
+    );
+  });
+
+  it("keeps a successful live selection successful when a test passes (#9022)", () => {
+    vi.stubEnv("NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST", "1");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    process.exitCode = undefined;
+    const reporter = new E2eRiskSignalReporter();
+
+    reporter.onTestRunEnd([moduleWithStates(["passed", "skipped"])], [], "passed");
+
+    expect(process.exitCode).toBeUndefined();
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicit unsupported registry skips outside catalogue execution (#9022)", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    process.exitCode = undefined;
+    const reporter = new E2eRiskSignalReporter();
+
+    reporter.onTestRunEnd([moduleWithStates(["skipped"])], [], "passed");
+
+    expect(process.exitCode).toBeUndefined();
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it("refuses a symlinked prior signal without modifying its target", () => {

@@ -10,7 +10,7 @@ import type {
   ManagedBootstrapAuthorityStore,
   ManagedBootstrapCreateReceipt,
   ManagedBootstrapImageIdentity,
-  ManagedBootstrapRecoveryReceipt,
+  ManagedBootstrapRecoveryReport,
 } from "./adapter";
 
 export interface ManagedBootstrapRuntimeCommandResult {
@@ -60,6 +60,7 @@ export interface ManagedBootstrapRuntimePatch {
 
 export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly providerId: string;
+  readonly stateRoot: string;
   readonly bootstrapIdentity: string;
   readonly request: ManagedStartupRootApplyRequest;
   readonly image: ManagedBootstrapImageIdentity;
@@ -69,7 +70,6 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly launchArgv: readonly string[];
   readonly heldWorkloadArgv: readonly string[];
   readonly authorityStore: ManagedBootstrapAuthorityStore;
-  /** Protected tests can wrap the real provider adapter at this boundary. */
   readonly adapterOverride?: ManagedBootstrapAdapter;
   readonly route: ManagedBootstrapRuntimeRoute;
   readonly persistStartupCommand: boolean;
@@ -80,7 +80,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly onPatchFailure?: (error: unknown) => never;
   readonly network: {
     readonly inferenceProvider: string;
-    readonly dockerDriverGateway: boolean;
+    readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;
@@ -91,10 +91,51 @@ export interface ManagedBootstrapRuntimeCreateLaunchResult<T> {
   readonly receipt: ManagedBootstrapCreateReceipt;
 }
 
+export type ManagedBootstrapTerminalOutcome = "commit" | "rollback";
+
+export interface ManagedBootstrapTerminalFinalizer {
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+}
+
+/**
+ * Claim one terminal outcome before driver finalization starts. Duplicate calls
+ * for that outcome share the in-flight promise; the opposite outcome fails
+ * closed even when finalization loses acknowledgement.
+ */
+export function createManagedBootstrapTerminalFinalizer(
+  finalize: (outcome: ManagedBootstrapTerminalOutcome) => Promise<void>,
+): ManagedBootstrapTerminalFinalizer {
+  let claimedOutcome: ManagedBootstrapTerminalOutcome | null = null;
+  let pending: Promise<void> | null = null;
+  const run = (outcome: ManagedBootstrapTerminalOutcome): Promise<void> => {
+    if (claimedOutcome === outcome && pending !== null) return pending;
+    if (claimedOutcome !== null) {
+      return Promise.reject(
+        new Error(
+          `Managed bootstrap ${outcome} is no longer legal after ${claimedOutcome} finalization began.`,
+        ),
+      );
+    }
+    claimedOutcome = outcome;
+    pending = Promise.resolve().then(() => finalize(outcome));
+    return pending;
+  };
+  return Object.freeze({
+    commit: () => run("commit"),
+    rollback: () => run("rollback"),
+  });
+}
+
 export interface ManagedBootstrapRuntimeCreateLifecycle {
   readonly launchArgv: readonly string[];
   readonly patch: ManagedBootstrapRuntimePatch;
-  recoverUnfinished(): Promise<readonly ManagedBootstrapRecoveryReceipt[]>;
+  /**
+   * Inspect the exact activated native runtime when provider authority is available.
+   * `undefined` means activation has not selected a runtime yet; `null` fails closed.
+   */
+  inspectNativeRuntime?(): ManagedBootstrapRuntimeSnapshot | null | undefined;
+  recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(
     launch: (input: {

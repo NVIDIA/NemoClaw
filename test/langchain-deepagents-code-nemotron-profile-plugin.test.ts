@@ -664,6 +664,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     const expected = [...MANAGED_MODEL_IDS].sort();
     for (const sourcePath of [
       path.join(agentDir, "generate-config.ts"),
+      path.join(agentDir, "patch-managed-deepagents-code.py"),
       validatorPath,
       pluginSourcePath,
       e2eProfileCheckPath,

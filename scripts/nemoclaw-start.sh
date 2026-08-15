@@ -38,6 +38,12 @@ set -euo pipefail
 # cannot resolve id/chown/chmod/tee from an attacker-controlled location.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Keep process-control variables out of the OCI image environment: managed
+# bootstrap rejects them before recreating the root supervisor. Establish the
+# image-owned DNS policy only after the trusted entrypoint has started, replacing
+# any ambient NODE_OPTIONS before this script launches a Node process.
+export NODE_OPTIONS="--dns-result-order=ipv4first"
+
 # managed-entrypoint-env-wrapper begin
 _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
 if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
@@ -831,11 +837,26 @@ prepare_openclaw_config_startup() {
   fi
 
   run_openclaw_config_guard recover --startup-owner || return 1
-  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
-    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+  local config_posture journal_posture state_lock_reason=""
+  config_posture="$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)"
+  journal_posture="$(stat -c '%f %U:%G' \
+    /sandbox/.openclaw/devices/pending.json.nemoclaw-self-approval-journal \
+    2>/dev/null || true)"
+  if [ "$config_posture" = "500 root:root" ]; then
+    state_lock_reason="resuming interrupted recursive OpenClaw state lock"
+  elif [ "$journal_posture" = "8180 root:sandbox" ]; then
+    # Shields created before the #8304 mode correction can retain this exact
+    # unreadable regular-file posture (GNU stat %f: 0x8000 | 0600). Re-run the
+    # descriptor-safe lock before the gateway reads it; current and future
+    # locks publish it group-readable.
+    state_lock_reason="repairing legacy unreadable OpenClaw state"
+  fi
+  if [ -n "$state_lock_reason" ]; then
+    printf '[config-guard] %s\n' "$state_lock_reason" >&2
     timeout --signal=TERM --kill-after=5s 12m \
       python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
-      --config-dir /sandbox/.openclaw || return 1
+      --config-dir /sandbox/.openclaw \
+      --plan-file /usr/local/share/nemoclaw/state-lock-plan.json || return 1
   fi
 }
 
@@ -2316,6 +2337,11 @@ try {
   const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
   const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
   auth.token = tokenUrlSafe(32);
+  const meta = cfg.meta && typeof cfg.meta === "object" ? cfg.meta : (cfg.meta = {});
+  // Record OpenClaw's configuration-write metadata. Without this field,
+  // OpenClaw 2026.7 can classify the authenticated configuration as overwritten
+  // and restore the tokenless build-time backup before gateway authentication resolves.
+  meta.lastTouchedAt = new Date().toISOString();
 
   const dirPath = pathModule.dirname(path);
   let fd;
@@ -2409,6 +2435,21 @@ needs_gateway_token_for_current_command() {
 
 prepare_gateway_token_for_current_command() {
   if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    # OpenShell launches the persisted workload as the sandbox user. When
+    # Shields are up, the root-owned config seal deliberately prevents that
+    # identity from replacing openclaw.json. Preserve the sealed startup token
+    # rather than weakening the lock; mutable and root-owned startup paths keep
+    # rotating it. A sealed config without a token cannot be repaired safely by
+    # this identity, so fail before attempting a write.
+    if [ "$(id -u)" -ne 0 ] \
+      && [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
+      if [ -n "$(_read_gateway_token)" ]; then
+        printf '[token] Shields are up; preserving the sealed gateway token for startup\n' >&2
+        return 0
+      fi
+      printf '[SECURITY] Shields are up but the sealed OpenClaw config has no gateway token; lower Shields before restarting\n' >&2
+      return 1
+    fi
     ensure_gateway_token
     return $?
   fi
@@ -2436,6 +2477,17 @@ write_auth_profile() {
   # fallback in v0.0.90.
   # See: https://github.com/NVIDIA/NemoClaw/issues/1332
   local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
+  local auth_profile_path="${HOME}/.openclaw/agents/main/agent/auth-profiles.json"
+
+  if [ "$(id -u)" -ne 0 ] \
+    && [ "$(openclaw_config_dir_owner "${HOME}/.openclaw")" = "root" ]; then
+    if [ -L "$auth_profile_path" ] || [ ! -f "$auth_profile_path" ]; then
+      printf '[SECURITY] Shields are up but the sealed OpenClaw auth profile is unavailable; lower Shields before restarting\n' >&2
+      return 1
+    fi
+    printf '[auth] Shields are up; preserving the sealed OpenClaw auth profile\n' >&2
+    return 0
+  fi
 
   python3 - "$provider_key" <<'PYAUTH'
 import json
@@ -3155,6 +3207,17 @@ _nemoclaw_ca_merge_warn() {
   echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
 }
 merge_corporate_proxy_ca() {
+  # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
+  # symlink makes the merge below read the link target instead, adding
+  # attacker-selected bytes to the trust bundle that curl, python, git, and node
+  # verify against. The image bakes this path as a root-owned 0444 regular file,
+  # so a symlink here is never a legitimate state. This is not the recoverable
+  # "merge failed" case below, which safely keeps OpenShell-only trust, so it
+  # fails closed instead of warning.
+  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
+    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
+    exit 1
+  fi
   [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
   _base_bundle=""
   if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
@@ -3194,11 +3257,46 @@ merge_corporate_proxy_ca() {
       return 0
     }
   fi
-  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
+  # Append through a descriptor opened with O_NOFOLLOW and verified as a regular
+  # file (#8650). The check above rejects a planted symlink; this rejects one
+  # swapped in afterwards, because the type check and the read share one
+  # descriptor and no path is resolved twice. Status 2 means the source was
+  # rejected as a trust anchor; any other non-zero status is an ordinary read
+  # failure that keeps the existing warn-and-continue behavior.
+  _ca_append_status=0
+  python3 -I - "$_NEMOCLAW_CORPORATE_CA_FILE" "$_tmp" <<'PY_APPEND_CORPORATE_CA' || _ca_append_status=$?
+import errno
+import os
+import stat
+import sys
+
+source, target = sys.argv[1], sys.argv[2]
+try:
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+except OSError as error:
+    raise SystemExit(2 if error.errno == errno.ELOOP else 3)
+try:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise SystemExit(2)
+    with open(target, "ab") as merged:
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            merged.write(chunk)
+finally:
+    os.close(descriptor)
+PY_APPEND_CORPORATE_CA
+  if [ "$_ca_append_status" -eq 2 ]; then
+    rm -f "$_tmp"
+    echo "[nemoclaw] refusing corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file, not a symlink (#8650)" >&2
+    exit 1
+  fi
+  if [ "$_ca_append_status" -ne 0 ]; then
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "append corporate CA"
     return 0
-  }
+  fi
   chmod 0444 "$_tmp" 2>/dev/null || {
     rm -f "$_tmp"
     _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
@@ -3356,6 +3454,31 @@ _RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL
 
 write_runtime_shell_env() {
   _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+  _emit_gateway_token_reconcile() {
+    local _escaped_intended_gateway_token="$1"
+    cat <<'GATEWAYTOKENRECONCILESTART'
+# nemoclaw-gateway-token-reconcile start
+# The proxy-env file is the trust anchor for OPENCLAW_GATEWAY_TOKEN. Probe
+# writability in a subshell so a readonly pin cannot abort sourcing: advance the
+# anchor when writable (also the fresh-source and repeated-source paths), stay
+# silent when it already holds the intended value, and otherwise emit a
+# controlled conflict diagnostic that never echoes the trusted token.
+GATEWAYTOKENRECONCILESTART
+    printf "if ( OPENCLAW_GATEWAY_TOKEN='%s' ) 2>/dev/null; then\n" \
+      "$_escaped_intended_gateway_token"
+    printf "  OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_intended_gateway_token"
+    printf "else\n  case \"\${OPENCLAW_GATEWAY_TOKEN-}\" in\n"
+    printf "    '%s') : ;;\n" "$_escaped_intended_gateway_token"
+    cat <<'GATEWAYTOKENRECONCILEEND'
+    *)
+      /usr/bin/printf '%s\n' 'Error: conflicting trust anchor' >&2
+      /usr/bin/false
+      ;;
+  esac
+fi
+# nemoclaw-gateway-token-reconcile end
+GATEWAYTOKENRECONCILEEND
+  }
   {
     cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
@@ -3421,7 +3544,7 @@ GATEWAYURLENVEOF
     # src/lib/onboard/sandbox-create-launch.ts) and is the only in-container
     # source of the name; capture it here for the renderer below.
     #
-    # Apply the same RFC-1123 allowlist the renderer uses (mirrors
+    # Apply the same canonical sandbox-name allowlist the renderer uses (mirrors
     # NAME_VALID_PATTERN in src/lib/name-validation.ts). Missing or invalid
     # values cannot reach a copyable command. An accepted value is limited to
     # [a-z0-9-] and needs no further escaping.
@@ -3434,9 +3557,9 @@ GATEWAYURLENVEOF
       _sandbox_label=""
       case "$_sandbox_label_src" in
         "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-        [!a-z]* | *- | *[!a-z0-9-]*) ;;
+        [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
         *)
-          if [ "${#_sandbox_label_src}" -le 63 ]; then
+          if [ "${#_sandbox_label_src}" -le 19 ]; then
             _sandbox_label="$_sandbox_label_src"
           fi
           ;;
@@ -3909,11 +4032,12 @@ _nemoclaw_valid_sandbox_label() {
   # The candidates are untrusted input interpolated into a copyable `nemoclaw …`
   # command, so allowlist rather than merely strip: only render a value that is
   # a valid sandbox name. This mirrors NAME_VALID_PATTERN in
-  # src/lib/name-validation.ts (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts
-  # with a lowercase letter, then lowercase alphanumerics/hyphens, no trailing
-  # hyphen. Anything else (digit-leading labels, control characters, ANSI
-  # escapes, shell metacharacters, whitespace) is rejected, and the caller falls
-  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
+  # src/lib/name-validation.ts (lowercase, max 19, no consecutive hyphens):
+  # starts with a lowercase letter, then lowercase alphanumerics/single internal
+  # hyphens, with no trailing hyphen. Anything else (digit-leading labels,
+  # control characters, ANSI escapes, shell metacharacters, whitespace) is
+  # rejected, and the caller falls back to a placeholder the user resolves with
+  # `nemoclaw list`. Shell `case`
   # globs match newlines as ordinary characters, so an embedded newline is
   # rejected by the metacharacter class. The boolean forms are OpenShell's older
   # "this is a sandbox" marker rather than a name.
@@ -3926,9 +4050,9 @@ _nemoclaw_valid_sandbox_label() {
   LC_ALL=C
   case "${1:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) ;;
-    [!a-z]* | *- | *[!a-z0-9-]*) ;;
+    [!a-z]* | *- | *--* | *[!a-z0-9-]*) ;;
     *)
-      if [ "${#1}" -le 63 ]; then
+      if [ "${#1}" -le 19 ]; then
         printf '%s' "$1"
       fi
       ;;
@@ -4041,11 +4165,19 @@ GUARDENVEOF
       # URL, including loopback, while WhatsApp revalidates its local override
       # immediately at the specialized exec boundary.
       printf 'export OPENCLAW_GATEWAY_TOKEN\n'
+      # Bake the intended value into each URL-case arm, then reconcile it against
+      # any pre-existing value. Avoiding a caller-visible temporary variable is
+      # required because the sourcing shell can already have any variable name
+      # pinned readonly. A blind assignment would abort sourcing with the shell's
+      # raw readonly error (exit 2) — and could echo the failing assignment line
+      # — when OPENCLAW_GATEWAY_TOKEN is already readonly and conflicting (#8428).
       cat <<'GATEWAYTOKENENVEOF'
 case "${OPENCLAW_GATEWAY_URL:-}" in
   *@*)
-    OPENCLAW_GATEWAY_TOKEN=
-    ;;
+GATEWAYTOKENENVEOF
+      _emit_gateway_token_reconcile ""
+      printf '    ;;\n'
+      cat <<'GATEWAYTOKENENVEOF'
   '' | ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
     ws://localhost | ws://localhost:* | ws://localhost/* | \
@@ -4053,10 +4185,10 @@ case "${OPENCLAW_GATEWAY_URL:-}" in
     "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
     "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
 GATEWAYTOKENENVEOF
-      printf "    OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
+      _emit_gateway_token_reconcile "$_escaped_gateway_token"
       printf '    ;;\n'
       printf '  *)\n'
-      printf '    OPENCLAW_GATEWAY_TOKEN=\n'
+      _emit_gateway_token_reconcile ""
       printf '    ;;\n'
       printf 'esac\n'
     fi
@@ -4154,16 +4286,6 @@ ensure_mutable_for_migration() {
   fi
   echo "[SECURITY] ${label}: ${target} is immutable; run 'nemoclaw <sandbox> shields down' before migration" >&2
   return 1
-}
-
-restore_immutable_if_possible() {
-  command -v chattr >/dev/null 2>&1 || return 0
-  local target
-  for target in "$@"; do
-    [ -e "$target" ] || [ -L "$target" ] || continue
-    [ -L "$target" ] && continue
-    chattr +i "$target" 2>/dev/null || true
-  done
 }
 
 chown_tree_no_symlink_follow() {
@@ -4315,6 +4437,26 @@ migrate_legacy_layout() {
     chown_tree_no_symlink_follow sandbox:sandbox "$entry"
   done
 
+  # Reapply the canonical shields posture before committing the migration.
+  # The config guard verifies that the protected config/hash pair is still
+  # sealed. The state-dir guard derives every recursive permission from the
+  # installed agent manifest plan. Keep the legacy data directory until both
+  # guards succeed so a failed relock remains retryable on the next startup.
+  if [ "$shields_were_active" = "true" ]; then
+    echo "[migration] Reapplying Shields up posture on ${config_dir}" >&2
+    if ! run_openclaw_config_guard recover --startup-owner; then
+      echo "[SECURITY] ${label}: canonical config guard refused the migrated layout" >&2
+      return 1
+    fi
+    if ! timeout --signal=TERM --kill-after=5s 12m \
+      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
+      --config-dir "$config_dir" \
+      --plan-file /usr/local/share/nemoclaw/state-lock-plan.json; then
+      echo "[SECURITY] ${label}: canonical state-dir guard refused the migrated layout" >&2
+      return 1
+    fi
+  fi
+
   rm -rf "$data_dir"
   assert_no_legacy_layout "$config_dir" "$data_dir" "$label" || return 1
 
@@ -4323,33 +4465,6 @@ migrate_legacy_layout() {
   printf 'migrated=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$sentinel"
   chown root:root "$sentinel" 2>/dev/null || true
   chmod 444 "$sentinel" 2>/dev/null || true
-
-  # Reapply shields-up ownership if config dir was previously root-locked.
-  if [ "$shields_were_active" = "true" ]; then
-    echo "[migration] Reapplying shields-up ownership on ${config_dir}" >&2
-    chown root:root "$config_dir" 2>/dev/null || true
-    chmod 755 "$config_dir" 2>/dev/null || true
-    # Re-lock known sensitive files if they exist
-    for f in "$config_dir"/openclaw.json "$config_dir"/.config-hash "$config_dir"/.env; do
-      if [ -f "$f" ]; then
-        chown root:root "$f" 2>/dev/null || true
-        chmod 444 "$f" 2>/dev/null || true
-      fi
-    done
-    for subdir in skills hooks cron agents extensions plugins; do
-      if [ -d "$config_dir/$subdir" ]; then
-        chown_tree_no_symlink_follow root:root "$config_dir/$subdir"
-        chmod 755 "$config_dir/$subdir" 2>/dev/null || true
-        chmod -R go-w "$config_dir/$subdir" 2>/dev/null || true
-        restore_immutable_if_possible "$config_dir/$subdir"
-      fi
-    done
-    restore_immutable_if_possible \
-      "$config_dir"/openclaw.json \
-      "$config_dir"/.config-hash \
-      "$config_dir"/.env \
-      "$config_dir"
-  fi
 
   echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
 }
@@ -4625,6 +4740,7 @@ seed_default_workspace_templates_as_sandbox() {
 setup_auth_profile_as_sandbox() {
   run_step_down_as_sandbox \
     "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
+    openclaw_config_dir_owner \
     write_auth_profile \
     harden_auth_profiles
 }
@@ -4704,15 +4820,91 @@ start_plugin_registry_refresh() {
 # config reloader can SIGUSR1-restart the gateway in-process; in containers a
 # failed restart parks the process alive with its listener closed ("gateway
 # startup failed: ... Process will stay alive"). The #2757 respawn loop only
-# observes process exit, so an alive-but-deaf gateway would stay wedged until
-# a human runs `nemoclaw <sandbox> recover`. This watchdog probes the local
-# health endpoint and — once it has seen a listener at least once — kills the
-# gateway after sustained connection-refused so the respawn loop relaunches
-# it. Only curl exit 7 counts as "listener gone": 200/401 mean serving, and
-# timeout / HTTP-error outcomes (curl 28/22) mean a listener exists and remain
-# the Docker HEALTHCHECK's responsibility. Arming only after the first
-# non-refused probe means a slow first boot is never killed; failed first
-# boots stay the respawn loop's and HEALTHCHECK's job.
+# observes process exit, so a gateway process that is alive but not serving
+# would remain in that state until a human runs `nemoclaw <sandbox> recover`.
+# This watchdog probes the local health endpoint. After the gateway returns a
+# serving response, the watchdog kills it after the configured number of
+# not-serving probes without another serving response. Before the gateway has
+# served, the watchdog preserves it through the longer boot grace window, then
+# kills it if it still does not serve. In both cases, the respawn loop relaunches
+# the gateway after the watchdog terminates it.
+#
+# "Serving" uses the same response requirement as the boot-time readiness gate
+# (openclaw_gateway_healthy): /health must answer 200 or 401. Before #7377 the
+# watchdog instead armed on "curl did not exit 7", so only an unbroken series
+# of pure connection-refused probes could ever trigger recovery. Every other
+# not-serving outcome read as "serving" and silently reset the count:
+#
+#   * curl 28: the socket accepts but nothing answers within the timeout
+#   * curl 52/56: accepted then dropped without a reply, which is what the
+#     `gateway closed (1006 abnormal closure (no close frame))` transport
+#     error on the WebSocket side looks like from an HTTP probe
+#   * curl 0 with an HTTP error status: the process answers /health but is
+#     not serving sessions
+#
+# Those outcomes were delegated to the Docker HEALTHCHECK, but an unhealthy
+# OpenShell sandbox container is never restarted by anything, so the gateway
+# stopped serving indefinitely. A gateway that alternated between refused and
+# any other failure also reset the consecutive-refusal counter on every other
+# probe and never reached the threshold, leaving a running watchdog that
+# logged nothing and recovered nothing (#7377).
+#
+# A missing `curl` command disables the watchdog before it probes. Other local
+# failures that prevent a probe from running are inconclusive. They preserve
+# the armed state and not-serving count, so a broken probe cannot create a kill
+# loop.
+#
+# Source boundary: the condition originates inside OpenClaw's gateway
+# lifecycle, which can leave the process running after its listener is gone
+# instead of exiting. NemoClaw cannot repair that from outside the process, so
+# it does two things it can do: the generated config pins `gateway.reload.mode`
+# to `hot` to remove the configuration-change trigger, and this watchdog
+# turns the surviving cases back into process exits that the #2757 respawn loop
+# already handles. Remove this watchdog once an OpenClaw gateway that cannot
+# serve exits on its own. The respawn loop then observes the exit directly, so
+# no external probe is needed.
+
+# Human-readable cause for a not-serving probe, used in the watchdog's log
+# lines so an operator can distinguish a refused port from one that accepts a
+# connection but does not serve a response.
+gateway_watchdog_curl_reason() {
+  case "$1" in
+    7) printf 'connection refused' ;;
+    28) printf 'probe timeout' ;;
+    52) printf 'empty reply from gateway' ;;
+    55) printf 'send error' ;;
+    56) printf 'connection reset' ;;
+    *) printf 'curl exit %s' "$1" ;;
+  esac
+}
+
+# Classify one health probe of the local gateway port.
+#   0: serving: /health answered 200 or 401
+#   1: not serving: refused, timed out, reset, or answered an HTTP error
+#   2: inconclusive: the probe itself could not run; change no watchdog state
+# GATEWAY_WATCHDOG_PROBE_REASON carries the cause for the two failure returns.
+gateway_watchdog_probe_gateway() {
+  local port="$1"
+  local rc=0 code
+  GATEWAY_WATCHDOG_PROBE_REASON=""
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+    "http://127.0.0.1:${port}/health" 2>/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    GATEWAY_WATCHDOG_PROBE_REASON="$(gateway_watchdog_curl_reason "$rc")"
+    # Only transport outcomes prove the gateway is not serving. Anything else
+    # (curl absent, bad invocation, an unexpected local failure) is a broken
+    # probe, not a broken gateway, and must never escalate to a kill.
+    case "$rc" in
+      7 | 28 | 52 | 55 | 56) return 1 ;;
+      *) return 2 ;;
+    esac
+  fi
+  case "$code" in
+    200 | 401) return 0 ;;
+  esac
+  GATEWAY_WATCHDOG_PROBE_REASON="HTTP ${code:-000}"
+  return 1
+}
 
 # PID-reuse / tamper defense: only kill a process whose cmdline still looks
 # like the OpenClaw gateway. Match the PID 1 launch argv
@@ -4729,33 +4921,76 @@ gateway_pid_is_openclaw_gateway() {
   printf '%s' "$cmdline" | grep -qE 'openclaw([ -]gateway| gateway run|$)'
 }
 
-# Positive integer guard used by the gateway watchdog env validation. Extracted
-# so a regression test can exercise the regex against trailing-non-digit and
-# zero/garbage inputs without spinning up the whole watcher.
+# Positive integer guard used by the gateway watchdog environment variable
+# validation. Extracted so a regression test can exercise the regex against
+# trailing non-digit and zero or invalid inputs without starting the watcher.
 gateway_watchdog_positive_int_ok() {
-  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+  # Bound the length as well as the shape. A longer decimal still looks like a
+  # positive integer but overflows Bash arithmetic to a negative value, and a
+  # negative threshold makes every "count is below the threshold" test false,
+  # so the watchdog would kill the gateway on its first not-serving probe.
+  # Nine digits is far above any useful interval or probe count.
+  [[ "$1" =~ ^[1-9][0-9]{0,8}$ ]]
+}
+
+# Validate that this PID is still the tracked gateway process, regardless of
+# its current parent. The Docker HEALTHCHECK uses the same evidence.
+# The kernel's start time from /proc/<pid>/stat pins the identity against PID reuse, and the
+# cmdline check keeps an unrelated process from matching. It deliberately omits
+# the parent-process test in openclaw_supervised_pid_is_live, because being
+# reparented does not change which process this is; it only changes who can
+# relaunch it. The watchdog uses this to report an orphaned gateway rather than
+# failing the liveness test and going silent (#7377).
+gateway_watchdog_pid_is_tracked_gateway() {
+  local pid="$1"
+  local expected_identity="$2"
+  [ -n "$expected_identity" ] || return 1
+  gateway_control_pid_is_live "$pid" || return 1
+  openclaw_load_pid_identity "$pid" || return 1
+  [ "$OPENCLAW_OBSERVED_START_IDENTITY" = "$expected_identity" ] || return 1
+  gateway_pid_is_openclaw_gateway "$pid"
 }
 
 start_gateway_serving_watchdog() {
   (
-    local interval refused_threshold armed=0 refused_streak=0
-    local pid start_identity extra tracked_identity last_identity="" rc msg
+    local interval not_serving_threshold armed=0 not_serving_count=0
+    local pid start_identity extra tracked_identity last_identity="" msg
+    local probe_rc inconclusive_logged=0 unsupervised_logged=0
+    local boot_grace_probes effective_threshold since
     interval="${NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS:-30}"
-    refused_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
-    # Both knobs must be positive integers: a zero/garbage interval would
-    # busy-loop the probe, and a zero threshold would kill on the first
-    # refusal. Fall back to the defaults rather than trusting bad input.
+    # Environment variable name kept from #4710 for compatibility; it now
+    # sets the number of not-serving probes since the last serving response
+    # that triggers recovery.
+    not_serving_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
+    # Recovery bound for a gateway that has never served on this port. It is
+    # deliberately much larger than the post-serving threshold: the watchdog
+    # cannot tell a still-booting gateway from one that came up broken, so it
+    # waits out the slowest plausible boot before acting. At the default
+    # interval this is 10 minutes, well past the 90-second startup readiness
+    # wait and the Docker HEALTHCHECK start period.
+    boot_grace_probes="${NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES:-20}"
+    # All three environment values must be positive integers. A zero or invalid
+    # interval would busy-loop the probe, and a zero threshold would kill on
+    # the first refusal. Fall back to the defaults for invalid input.
     # gateway_watchdog_positive_int_ok uses regex (=~), not glob, so trailing
     # non-digit input like "12x" or "30abc" is rejected, not coerced.
     if ! gateway_watchdog_positive_int_ok "$interval"; then
       echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
       interval=30
     fi
-    if ! gateway_watchdog_positive_int_ok "$refused_threshold"; then
-      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${refused_threshold}'; defaulting to 4" >&2
-      refused_threshold=4
+    if ! gateway_watchdog_positive_int_ok "$not_serving_threshold"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${not_serving_threshold}'; defaulting to 4" >&2
+      not_serving_threshold=4
+    fi
+    if ! gateway_watchdog_positive_int_ok "$boot_grace_probes"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_BOOT_GRACE_PROBES='${boot_grace_probes}'; defaulting to 20" >&2
+      boot_grace_probes=20
     fi
     [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
+    if ! command -v curl >/dev/null 2>&1; then
+      echo "[gateway-watchdog] curl is unavailable; serving watchdog disabled (#7377)" >&2
+      exit 0
+    fi
     while :; do
       sleep "$interval"
       pid=""
@@ -4766,7 +5001,7 @@ start_gateway_serving_watchdog() {
         '' | *[!0-9]*)
           last_identity=""
           armed=0
-          refused_streak=0
+          not_serving_count=0
           continue
           ;;
       esac
@@ -4774,59 +5009,93 @@ start_gateway_serving_watchdog() {
         '' | *[!0-9]*)
           last_identity=""
           armed=0
-          refused_streak=0
+          not_serving_count=0
           continue
           ;;
       esac
       if [ -n "$extra" ]; then
         last_identity=""
         armed=0
-        refused_streak=0
+        not_serving_count=0
         continue
       fi
       tracked_identity="${pid}:${start_identity}"
-      # A respawned gateway must earn its own armed state — never inherit
-      # the previous process identity's serve history, even if the kernel has
-      # already recycled the same numeric PID for the replacement.
+      # A respawned gateway must earn its own armed state. It must not inherit
+      # the previous process identity's serving history, even if the kernel
+      # has already recycled the same numeric PID for the replacement.
       if [ "$tracked_identity" != "$last_identity" ]; then
         last_identity="$tracked_identity"
         armed=0
-        refused_streak=0
+        not_serving_count=0
       fi
       if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
-        # Process exit is the respawn loop's signal, not ours.
+        # Process exit is the respawn loop's signal, not ours. A tracked
+        # gateway that is still alive and still matches its recorded identity
+        # is a different case: this shell is no longer its parent, so the
+        # respawn loop that recovery depends on is gone. Say so once. Staying
+        # silent there is what left #7377 with an unrecoverable gateway and no
+        # explanation in the container log.
+        if [ "$unsupervised_logged" -eq 0 ] \
+          && gateway_watchdog_pid_is_tracked_gateway "$pid" "$start_identity"; then
+          echo "[gateway-watchdog] CRITICAL: gateway pid $pid is alive and still matches its recorded identity, but this supervisor is no longer its parent (ppid ${OPENCLAW_OBSERVED_PARENT_PID:-unknown}, expected $$); the respawn loop cannot relaunch it, so the watchdog is standing down (#7377)" >&2
+          unsupervised_logged=1
+        fi
         last_identity=""
         armed=0
-        refused_streak=0
+        not_serving_count=0
         continue
       fi
-      rc=0
-      curl -s -o /dev/null --max-time 5 "http://127.0.0.1:${_DASHBOARD_PORT}/health" 2>/dev/null || rc=$?
-      if [ "$rc" -ne 7 ]; then
+      unsupervised_logged=0
+      probe_rc=0
+      gateway_watchdog_probe_gateway "$_DASHBOARD_PORT" || probe_rc=$?
+      if [ "$probe_rc" -eq 2 ]; then
+        # A probe that could not run tells us nothing about the gateway.
+        # Preserve the current armed state and not-serving count. Log once
+        # until a conclusive probe so silence is not mistaken for a serving
+        # gateway.
+        if [ "$inconclusive_logged" -eq 0 ]; then
+          echo "[gateway-watchdog] health probe inconclusive (${GATEWAY_WATCHDOG_PROBE_REASON}); leaving gateway pid $pid untouched (#7377)" >&2
+          inconclusive_logged=1
+        fi
+        continue
+      fi
+      inconclusive_logged=0
+      if [ "$probe_rc" -eq 0 ]; then
         armed=1
-        refused_streak=0
+        not_serving_count=0
         continue
       fi
-      [ "$armed" -eq 1 ] || continue
-      refused_streak=$((refused_streak + 1))
-      if [ "$refused_streak" -lt "$refused_threshold" ]; then
-        echo "[gateway-watchdog] gateway pid $pid alive but port ${_DASHBOARD_PORT} refused connection ($refused_streak/$refused_threshold) (#4710)" >&2
+      not_serving_count=$((not_serving_count + 1))
+      if [ "$armed" -eq 1 ]; then
+        effective_threshold="$not_serving_threshold"
+        since="since the last serving response"
+      else
+        # The gateway has never answered on this port. Before #7377 the
+        # watchdog simply never acted here, so a sandbox whose gateway came up
+        # already unable to serve stayed wedged forever with nothing logged.
+        # A slow boot still must not be killed, so an unproven gateway gets a
+        # much longer grace window than one that served and then stopped.
+        effective_threshold="$boot_grace_probes"
+        since="since launch, having never served"
+      fi
+      if [ "$not_serving_count" -lt "$effective_threshold" ]; then
+        echo "[gateway-watchdog] gateway pid $pid alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count/$effective_threshold $since) (#7377)" >&2
         continue
       fi
       if ! gateway_pid_is_openclaw_gateway "$pid"; then
         echo "[gateway-watchdog] pid $pid no longer looks like the openclaw gateway; not killing (#4710)" >&2
         armed=0
-        refused_streak=0
+        not_serving_count=0
         continue
       fi
       if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
         echo "[gateway-watchdog] pid $pid start identity changed; not killing (#4710)" >&2
         last_identity=""
         armed=0
-        refused_streak=0
+        not_serving_count=0
         continue
       fi
-      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but dropped its HTTP listener on port ${_DASHBOARD_PORT} ($refused_streak consecutive refused probes); killing it so the respawn loop can relaunch (#4710)"
+      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count not-serving probes $since); killing it so the respawn loop can relaunch (#7377)"
       echo "$msg" >&2
       append_openclaw_gateway_log_line "$msg" || true
       record_gateway_watchdog_kill "$tracked_identity"
@@ -4839,7 +5108,7 @@ start_gateway_serving_watchdog() {
         kill -KILL "$pid" 2>/dev/null || true
       fi
       armed=0
-      refused_streak=0
+      not_serving_count=0
     done
   ) &
   GATEWAY_WATCHDOG_PID=$!
@@ -4898,6 +5167,105 @@ arm_openclaw_gateway_supervisor_cleanup() {
   trap clear_in_container_gateway_marker EXIT
 }
 
+launch_openclaw_gateway_process() {
+  local log_mode="$1"
+  local launch_identity="$2"
+  local -a gateway_launch_prefix=()
+  shift 2
+  case "$launch_identity" in
+    current) ;;
+    gateway)
+      gateway_launch_prefix=(
+        "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c
+        'umask 0007; exec "$@"' sh
+      )
+      ;;
+    *)
+      echo "[gateway] invalid gateway launch identity: $launch_identity" >&2
+      return 1
+      ;;
+  esac
+  case "$log_mode" in
+    append) ;;
+    truncate)
+      # Replace the predictable log path immediately before the initial launch.
+      # The descriptor-safe launcher below then pins that exact regular file.
+      if [ "$launch_identity" = gateway ] && [ "$(id -u)" -eq 0 ]; then
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway || return 1
+      else
+        _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 || return 1
+      fi
+      ;;
+    *)
+      echo "[gateway] invalid gateway log mode: $log_mode" >&2
+      return 1
+      ;;
+  esac
+
+  nohup /usr/bin/env -u OPENCLAW_GATEWAY_TOKEN \
+    "${gateway_launch_prefix[@]+"${gateway_launch_prefix[@]}"}" \
+    python3 -I - "$log_mode" "$@" <<'PYGATEWAYLAUNCH' &
+import os
+import stat
+import sys
+
+log_path = "/tmp/gateway.log"
+log_mode = sys.argv[1]
+argv = sys.argv[2:]
+if not argv:
+    print("[gateway] refusing empty gateway launch command", file=sys.stderr)
+    raise SystemExit(1)
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] refusing gateway launch because O_NOFOLLOW is unavailable", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    before = os.lstat(log_path)
+except OSError as exc:
+    print(f"[SECURITY] refusing unavailable gateway log path: {log_path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+    print(f"[SECURITY] refusing unsafe gateway log path: {log_path}", file=sys.stderr)
+    raise SystemExit(1)
+
+flags = os.O_WRONLY | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+if log_mode == "append":
+    flags |= os.O_APPEND
+elif log_mode != "truncate":
+    print(f"[gateway] invalid gateway log mode: {log_mode}", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    descriptor = os.open(log_path, flags)
+except OSError as exc:
+    print(f"[SECURITY] refusing unsafe gateway log path: {log_path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+    ):
+        print(f"[SECURITY] refusing replaced gateway log path: {log_path}", file=sys.stderr)
+        raise SystemExit(1)
+    if log_mode == "truncate":
+        os.ftruncate(descriptor, 0)
+    os.dup2(descriptor, 1)
+    os.dup2(descriptor, 2)
+finally:
+    if descriptor > 2:
+        os.close(descriptor)
+
+environment = os.environ.copy()
+environment.pop("OPENCLAW_GATEWAY_TOKEN", None)
+os.execvpe(argv[0], argv, environment)
+PYGATEWAYLAUNCH
+  GATEWAY_PID=$!
+}
+
 launch_openclaw_gateway() {
   # Drop the gateway marker whenever this supervisor exits -- clean gateway
   # exit (`exit 0` below), a forwarded signal (cleanup_openclaw_on_signal ends
@@ -4910,10 +5278,8 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
-    'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
-    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" &
-  GATEWAY_PID=$!
+  launch_openclaw_gateway_process truncate gateway \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
     # An uncaptured numeric PID is never safe to signal: Bash may already have
     # reaped the short-lived child and the kernel may have reused its PID. Fail
@@ -4933,8 +5299,8 @@ launch_openclaw_gateway() {
 launch_openclaw_gateway_non_root() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
-  GATEWAY_PID=$!
+  launch_openclaw_gateway_process truncate current \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" || return 1
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
@@ -5454,7 +5820,7 @@ fi
 
 # ── Non-root fallback ──────────────────────────────────────────
 # OpenShell runs containers with --security-opt=no-new-privileges, which
-# blocks gosu's setuid syscall. When we're not root, skip privilege
+# blocks setpriv's setuid syscall. When we're not root, skip privilege
 # separation and run everything as the current user (sandbox).
 # Gateway process isolation is not available in this mode.
 if [ "$(id -u)" -ne 0 ]; then
@@ -5528,10 +5894,6 @@ if [ "$(id -u)" -ne 0 ]; then
   write_auth_profile
   harden_auth_profiles
 
-  # In non-root mode, detach gateway stdout/stderr from the sandbox-create
-  # stream so openshell sandbox create can return once the container is ready.
-  _nemoclaw_safe_create_tmp_file /tmp/gateway.log 644
-
   # Separate log for auto-pair in non-root mode as well.
   _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
 
@@ -5604,8 +5966,8 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
     prepare_openclaw_automatic_respawn || exit 1
-    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
-    GATEWAY_PID=$!
+    launch_openclaw_gateway_process append current \
+      "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}"
     capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
     record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
     # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
@@ -5616,6 +5978,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
+
+echo "[gateway] NEMOCLAW_ENTRYPOINT_MODE=root" >&2
 
 # Empty-config recovery runs before integrity check so a #3118 truncation
 # (openshell inference set inside the sandbox) is restored from baseline
@@ -5643,7 +6007,7 @@ ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
 # Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
-# gosu/setpriv preserve the environment, so the export reaches the gateway user.
+# setpriv preserves the environment, so the export reaches the gateway user.
 apply_messaging_runtime_env_aliases
 
 # Messaging channel config was announced before placeholder refresh so the
@@ -5663,10 +6027,6 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
 fi
-
-# Gateway log: owned by gateway user, world-readable for diagnostics.
-# The sandbox user can read but not truncate/overwrite (not owner, sticky /tmp).
-_nemoclaw_safe_create_tmp_file /tmp/gateway.log 644 gateway:gateway
 
 # Separate log for auto-pair so sandbox user can write to it
 _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 sandbox:sandbox

@@ -58,6 +58,10 @@ export function renderMcpBridgeStatus(
     console.log(`    support: ${status.support.mode}`);
     if (status.support.reason) console.log(`    reason: ${status.support.reason}`);
     if (status.url) console.log(`    endpoint: ${status.url}`);
+    if (status.trustedPrivateTarget) {
+      console.log(`    trusted private host: ${status.trustedPrivateTarget.host}`);
+      console.log(`    private address pins: ${status.trustedPrivateTarget.state}`);
+    }
     if (status.addState) console.log(`    add transaction: incomplete (${status.addState})`);
     console.log(
       `    provider: ${status.provider.registryPresent ? status.provider.name : "(none)"}`,

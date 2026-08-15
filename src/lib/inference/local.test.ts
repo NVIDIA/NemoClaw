@@ -17,8 +17,10 @@ const LARGE_OLLAMA_FIT_MEMORY_MB = Math.max(
 );
 
 import {
+  buildOllamaProbeOptions,
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
+  findReachableOllamaHost,
   getBootstrapOllamaModelOptions,
   getDefaultOllamaModel,
   getLocalProviderBaseUrl,
@@ -31,6 +33,7 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
@@ -40,6 +43,8 @@ import {
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
   resetOllamaContainerPortCache,
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
   validateLocalProvider,
   validateOllamaModel,
 } from "./local";
@@ -82,11 +87,80 @@ describe("local inference helpers", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
+    resetOllamaHostCache();
     if (originalSandboxHostUrl === undefined) {
       delete process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
     } else {
       process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = originalSandboxHostUrl;
     }
+  });
+
+  it("uses Docker-context validation only for Windows-host Ollama (#8127)", () => {
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      allowHostDockerInternal: false,
+      probeFromDocker: null,
+    });
+
+    setResolvedOllamaHost("host.docker.internal");
+
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      allowHostDockerInternal: true,
+      probeFromDocker: { expectedPort: 11434 },
+    });
+  });
+
+  it("enables retries for missing structured tool calls only when Ollama tool calls are required (#8714)", () => {
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      requireChatCompletionsToolCalling: true,
+      retryChatCompletionsToolReadiness: true,
+    });
+    expect(buildOllamaProbeOptions(true)).toMatchObject({
+      requireChatCompletionsToolCalling: false,
+      retryChatCompletionsToolReadiness: false,
+    });
+  });
+
+  it("builds a credential-free Docker Desktop probe for Windows-host Ollama (#8127)", () => {
+    expect(getWindowsHostOllamaDockerReachabilityArgs()).toEqual([
+      "run",
+      "--rm",
+      CONTAINER_REACHABILITY_IMAGE,
+      "-sf",
+      "--connect-timeout",
+      "2",
+      "--max-time",
+      "5",
+      "http://host.docker.internal:11434/api/tags",
+    ]);
+  });
+
+  it("probes WSL loopback before Windows-host Ollama", () => {
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    const commands: string[][] = [];
+    const endpoints: string[] = [];
+
+    const host = findReachableOllamaHost(
+      (command) => {
+        commands.push([...command]);
+        const endpoint = command.at(-1) ?? "";
+        endpoints.push(endpoint);
+        return endpoint.includes("host.docker.internal") ? "ollama" : "";
+      },
+      // Pin the WSL decision: isWsl answers false off Linux before it reads
+      // WSL_DISTRO_NAME, so the stub above cannot reach the WSL candidate order.
+      { isWsl: true },
+    );
+
+    expect(host).toBe("host.docker.internal");
+    expect(endpoints).toEqual([
+      "http://127.0.0.1:11434/api/tags",
+      "http://host.docker.internal:11434/api/tags",
+    ]);
+    expect(commands.map((command) => command.slice(2, 6))).toEqual([
+      ["--connect-timeout", "3", "--max-time", "5"],
+      ["--connect-timeout", "3", "--max-time", "5"],
+    ]);
   });
 
   it("returns the expected base URL for vllm-local", () => {
@@ -265,7 +339,7 @@ describe("local inference helpers", () => {
     const result = validateLocalProvider("ollama-local", mockCapture, mockSleep);
     expect(result.ok).toBe(false);
     expect(result.diagnostic).toMatch(/HTTP 502/);
-    expect(result.diagnostic).toMatch(/host-gateway resolved to/);
+    expect(result.diagnostic).toMatch(/host\.openshell\.internal resolved to/);
     expect(sleepCalls).toEqual([2, 2]);
   });
 
@@ -531,12 +605,38 @@ describe("local inference helpers", () => {
     });
   });
 
-  it("loads the Ollama proxy token only from the selected nondefault gateway root", async () => {
+  it("skips the auth-proxy subprobe when connect probes it separately (#8669)", () => {
+    const commands: string[][] = [];
+    const result = probeLocalProviderHealth("ollama-local", {
+      skipOllamaAuthProxySubprobe: true,
+      loadOllamaProxyTokenImpl: () => {
+        throw new Error("auth-proxy token should not be loaded");
+      },
+      runCurlProbeImpl: (command) => {
+        commands.push([...command]);
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: '{"models":[]}',
+          stderr: "",
+          message: "HTTP 200",
+        };
+      },
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.at(-1)).toBe("http://127.0.0.1:11434/api/tags");
+    expect(result?.ok).toBe(true);
+    expect(result?.subprobes).toBeUndefined();
+  });
+
+  it("loads the Ollama proxy token from the shared host root on a nondefault gateway port (#8704)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-port-token-"));
     const defaultRoot = path.join(home, ".nemoclaw");
     const selectedRoot = path.join(defaultRoot, "gateways", "9123");
     fs.mkdirSync(selectedRoot, { recursive: true });
-    fs.writeFileSync(path.join(defaultRoot, "ollama-proxy-token"), "default-root-token\n");
+    fs.writeFileSync(path.join(defaultRoot, "ollama-proxy-token"), "shared-root-token\n");
     fs.writeFileSync(path.join(selectedRoot, "ollama-proxy-token"), "selected-port-token\n");
     vi.stubEnv("HOME", home);
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
@@ -561,8 +661,8 @@ describe("local inference helpers", () => {
       });
 
       expect(result?.ok).toBe(true);
-      expect(authConfig).toContain("selected-port-token");
-      expect(authConfig).not.toContain("default-root-token");
+      expect(authConfig).toContain("shared-root-token");
+      expect(authConfig).not.toContain("selected-port-token");
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();

@@ -60,6 +60,28 @@ function withMockedSpawnSync<T>(
   }
 }
 
+/** Answer /api/ps with the named models loaded, and every other call with an empty 200. */
+function respondWithLoadedModels(...names: string[]) {
+  return ({ args }: SpawnCall): SpawnSyncReturns<string> =>
+    args.some((a) => a.endsWith("/api/ps"))
+      ? ok(JSON.stringify({ models: names.map((name) => ({ name })) }))
+      : ok();
+}
+
+/** The endpoint path and POST body of each unload request, in the order issued. */
+function unloadRequests(calls: readonly SpawnCall[]) {
+  return calls
+    .filter(({ args }) => args.includes("POST"))
+    .map(({ args }) => ({
+      target: new URL(args[args.length - 1]).pathname,
+      body: args[args.indexOf("-d") + 1],
+    }));
+}
+
+function unloadOf(model: string) {
+  return { target: "/api/generate", body: JSON.stringify({ model, keep_alive: 0 }) };
+}
+
 describe("Ollama GPU cleanup", () => {
   it("calls curl synchronously to unload every running model via /api/generate", () => {
     withMockedSpawnSync(
@@ -73,19 +95,20 @@ describe("Ollama GPU cleanup", () => {
         const { unloadOllamaModels } = require(modulePath);
         unloadOllamaModels();
 
-        expect(calls).toHaveLength(3);
+        const curlCalls = calls.filter(({ command }) => command === "curl");
+        expect(curlCalls).toHaveLength(3);
 
-        expect(calls[0].command).toBe("curl");
-        expect(calls[0].args).toContain("--max-time");
-        expect(calls[0].args[calls[0].args.length - 1]).toMatch(/\/api\/ps$/);
+        expect(curlCalls[0].args).toContain("--max-time");
+        expect(curlCalls[0].args[curlCalls[0].args.length - 1]).toMatch(/\/api\/ps$/);
 
-        expect(calls[1].command).toBe("curl");
-        expect(calls[1].args).toContain("-X");
-        expect(calls[1].args).toContain("POST");
-        expect(calls[1].args).toContain(JSON.stringify({ model: "llama3.1:8b", keep_alive: 0 }));
-        expect(calls[1].args[calls[1].args.length - 1]).toMatch(/\/api\/generate$/);
+        expect(curlCalls[1].args).toContain("-X");
+        expect(curlCalls[1].args).toContain("POST");
+        expect(curlCalls[1].args).toContain(
+          JSON.stringify({ model: "llama3.1:8b", keep_alive: 0 }),
+        );
+        expect(curlCalls[1].args[curlCalls[1].args.length - 1]).toMatch(/\/api\/generate$/);
 
-        expect(calls[2].args).toContain(JSON.stringify({ model: "qwen:7b", keep_alive: 0 }));
+        expect(curlCalls[2].args).toContain(JSON.stringify({ model: "qwen:7b", keep_alive: 0 }));
       },
     );
   });
@@ -130,6 +153,46 @@ describe("Ollama GPU cleanup", () => {
         const { unloadOllamaModels } = require(modulePath);
         expect(() => unloadOllamaModels()).not.toThrow();
         expect(calls).toHaveLength(1);
+      },
+    );
+  });
+
+  it("unloads only the named models when a filter is supplied (#9110)", () => {
+    withMockedSpawnSync(
+      respondWithLoadedModels("keep-me:7b", "drop-me:7b"),
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        unloadOllamaModels(["drop-me:7b"]);
+
+        const curlCalls = calls.filter(({ command }) => command === "curl");
+        expect(curlCalls).toHaveLength(2);
+        expect(unloadRequests(curlCalls)).toEqual([unloadOf("drop-me:7b")]);
+      },
+    );
+  });
+
+  it.each([
+    ["an untagged filter against a tagged daemon entry", "llama3", "llama3:latest"],
+    ["a tagged filter against an untagged daemon entry", "llama3:latest", "llama3"],
+  ])("matches %s (#9110)", (_label, filterRef, loadedRef) => {
+    withMockedSpawnSync(respondWithLoadedModels(loadedRef), (calls) => {
+      const { unloadOllamaModels } = require(modulePath);
+      unloadOllamaModels([filterRef]);
+
+      expect(unloadRequests(calls)).toEqual([unloadOf(loadedRef)]);
+    });
+  });
+
+  it("unloads every loaded model when the filter is empty (#9110)", () => {
+    withMockedSpawnSync(
+      respondWithLoadedModels("one:7b", "two:7b"),
+      (calls) => {
+        const { unloadOllamaModels } = require(modulePath);
+        unloadOllamaModels([]);
+
+        const curlCalls = calls.filter(({ command }) => command === "curl");
+        expect(curlCalls).toHaveLength(3);
+        expect(unloadRequests(curlCalls)).toEqual([unloadOf("one:7b"), unloadOf("two:7b")]);
       },
     );
   });

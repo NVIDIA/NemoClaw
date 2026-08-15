@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   buildListCommandDeps: vi.fn(),
   buildStatusCommandDeps: vi.fn(),
+  createOnboardActionRuntimeDeps: vi.fn(),
   getSandboxInventory: vi.fn(),
   getStatusReport: vi.fn(),
   renderSandboxInventoryText: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   runOnboardAction: vi.fn(),
   runUpgradeSandboxesAction: vi.fn(),
   showStatusCommand: vi.fn(),
+  onboardRuntimeDeps: { googlechatTunnelRuntime: {} },
 }));
 
 vi.mock("../lib/inventory", () => ({
@@ -38,6 +40,10 @@ vi.mock("../lib/actions/global", () => ({
   runGarbageCollectImagesAction: mocks.runGarbageCollectImagesAction,
   runOnboardAction: mocks.runOnboardAction,
   runUpgradeSandboxesAction: mocks.runUpgradeSandboxesAction,
+}));
+
+vi.mock("../lib/cli/onboard-runtime-deps", () => ({
+  createOnboardActionRuntimeDeps: mocks.createOnboardActionRuntimeDeps,
 }));
 
 vi.mock("../lib/actions/inference-set", () => ({
@@ -86,6 +92,7 @@ describe("global oclif command adapters", () => {
     mocks.buildStatusCommandDeps.mockReturnValue({ statusDeps: true });
     mocks.getSandboxInventory.mockResolvedValue({ sandboxes: [] });
     mocks.getStatusReport.mockReturnValue({ sandboxes: [] });
+    mocks.createOnboardActionRuntimeDeps.mockReturnValue(mocks.onboardRuntimeDeps);
     mocks.runInferenceSet.mockResolvedValue({
       sandboxName: "alpha",
       provider: "nvidia-prod",
@@ -215,11 +222,13 @@ describe("global oclif command adapters", () => {
     expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ name: "alpha", resume: true }),
+      mocks.onboardRuntimeDeps,
     );
     expect(mocks.runOnboardAction.mock.calls[1]).toEqual(mocks.runOnboardAction.mock.calls[0]);
     expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({ "control-ui-port": 18080 }),
+      mocks.onboardRuntimeDeps,
     );
   });
 

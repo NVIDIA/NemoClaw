@@ -11,6 +11,7 @@ import {
 } from "../../messaging/post-agent-install-selection";
 import {
   fingerprintManagedStartupProfile,
+  MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupProfile,
 } from "./profile";
@@ -93,8 +94,9 @@ export interface ManagedStartupSharedTransactionOptions {
   /** Test seam. Production always retains the root:root defaults. */
   readonly trustedGid?: number;
   /**
-   * Rollback-helper seam. The host copy is mounted read-only at a fixed path,
-   * so ownership may reflect the Docker CLI user instead of container root.
+   * Immutable copied-receipt helper seam. The host copy is mounted read-only
+   * at a fixed path, so ownership may reflect the Docker CLI user instead of
+   * container root.
    */
   readonly readOnlyReceipt?: boolean;
   /** One-attempt identity for managed bootstrap; null for legacy root application. */
@@ -339,6 +341,8 @@ function agentRoot(agent: ManagedStartupAgent, sandboxRoot: string): string {
       return path.join(sandboxRoot, ".hermes");
     case "langchain-deepagents-code":
       return path.join(sandboxRoot, ".deepagents");
+    case "pi":
+      return path.join(sandboxRoot, ".pi");
   }
 }
 
@@ -383,6 +387,10 @@ function managedOutputTargets(
       files.add(path.join(root, "config.toml"));
       directories.add(path.join(root, ".state"));
       directories.add(path.join(root, "skills"));
+      break;
+    case "pi":
+      directories.add(path.join(root, "agent"));
+      files.add(path.join(root, "agent", "models.json"));
       break;
   }
 
@@ -538,6 +546,20 @@ function canonicalManifest(manifest: TransactionManifest): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+function canonicalLegacyManifest(manifest: TransactionManifest): string {
+  return `${JSON.stringify(
+    {
+      schemaVersion: manifest.schemaVersion,
+      agent: manifest.agent,
+      profileFingerprint: manifest.profileFingerprint,
+      files: manifest.files,
+      directories: manifest.directories,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 function canonicalCommitReceipt(receipt: CommitReceipt): string {
   return `${JSON.stringify(receipt, null, 2)}\n`;
 }
@@ -562,7 +584,7 @@ function parseCommitReceipt(text: string): CommitReceipt {
   requireExactKeys(record, ["agent", "bootstrapIdentity", "profileFingerprint", "schemaVersion"]);
   if (
     record.schemaVersion !== TRANSACTION_SCHEMA_VERSION ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
     typeof record.bootstrapIdentity !== "string" ||
@@ -597,23 +619,29 @@ function parseManifest(text: string): TransactionManifest {
     fail("transaction manifest must be an object");
   }
   const record = parsed as Record<string, unknown>;
-  requireExactKeys(record, [
-    "agent",
-    "bootstrapIdentity",
-    "directories",
-    "files",
-    "profileFingerprint",
-    "schemaVersion",
-  ]);
+  const hasBootstrapIdentity = Object.hasOwn(record, "bootstrapIdentity");
+  requireExactKeys(
+    record,
+    hasBootstrapIdentity
+      ? [
+          "agent",
+          "bootstrapIdentity",
+          "directories",
+          "files",
+          "profileFingerprint",
+          "schemaVersion",
+        ]
+      : ["agent", "directories", "files", "profileFingerprint", "schemaVersion"],
+  );
+  const bootstrapIdentity = hasBootstrapIdentity ? record.bootstrapIdentity : null;
   if (
     record.schemaVersion !== TRANSACTION_SCHEMA_VERSION ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
+    !(MANAGED_STARTUP_AGENTS as readonly string[]).includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
     !(
-      record.bootstrapIdentity === null ||
-      (typeof record.bootstrapIdentity === "string" &&
-        /^[a-f0-9]{64}$/u.test(record.bootstrapIdentity))
+      bootstrapIdentity === null ||
+      (typeof bootstrapIdentity === "string" && /^[a-f0-9]{64}$/u.test(bootstrapIdentity))
     ) ||
     !Array.isArray(record.files) ||
     !Array.isArray(record.directories) ||
@@ -709,11 +737,14 @@ function parseManifest(text: string): TransactionManifest {
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: record.agent as ManagedStartupAgent,
     profileFingerprint: record.profileFingerprint,
-    bootstrapIdentity: record.bootstrapIdentity as string | null,
+    bootstrapIdentity,
     files,
     directories,
   };
-  if (canonicalManifest(manifest) !== text) {
+  const canonical = hasBootstrapIdentity
+    ? canonicalManifest(manifest)
+    : canonicalLegacyManifest(manifest);
+  if (canonical !== text) {
     fail("transaction manifest is not canonical");
   }
   return manifest;
@@ -752,9 +783,9 @@ function requireReadOnlyReceiptMount(target: string, options: ResolvedOptions): 
   } catch (error) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
     if ((error as NodeJS.ErrnoException).code === "EROFS") return;
-    fail("rollback receipt must be mounted on a read-only filesystem");
+    fail("copied receipt must be mounted on a read-only filesystem");
   }
-  fail("rollback receipt mount is writable");
+  fail("copied receipt mount is writable");
 }
 
 function loadManifest(options: ResolvedOptions): TransactionManifest | null {
@@ -1078,7 +1109,9 @@ export function beginManagedStartupSharedStateTransaction(
       pending.profileFingerprint !== profileFingerprint ||
       pending.bootstrapIdentity !== options.bootstrapIdentity
     ) {
-      fail("a pending managed startup transaction belongs to a different profile");
+      fail(
+        "a pending managed startup transaction belongs to a different agent, profile fingerprint, or bootstrap attempt",
+      );
     }
     verifyAllBackups(pending.files, options);
     return false;
@@ -1399,8 +1432,8 @@ export function commitManagedStartupSharedStateTransaction(
 /**
  * Retire one exact durable bootstrap commit only after the runtime owner has
  * proven its external rollback backup is gone. This prevents a completed
- * attempt's image-owned receipt from blocking a later legitimate bootstrap in
- * the same persisted workload.
+ * attempt's image-owned receipt from blocking a later bootstrap with a
+ * different identity in the same persisted workload.
  */
 export function clearManagedStartupSharedStateCommitReceipt(
   expectedAgent: ManagedStartupAgent,
@@ -1459,7 +1492,9 @@ export function getManagedStartupSharedStateTransactionStatus(
       manifest.profileFingerprint !== expected.profileFingerprint ||
       manifest.bootstrapIdentity !== expected.bootstrapIdentity
     ) {
-      fail("pending transaction does not match the expected bootstrap identity");
+      fail(
+        "pending transaction does not match the expected agent, profile fingerprint, or bootstrap identity",
+      );
     }
     verifyAllBackups(manifest.files, options);
     return "pending";

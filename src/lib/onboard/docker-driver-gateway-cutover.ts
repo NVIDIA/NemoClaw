@@ -70,6 +70,14 @@ export interface DockerDriverGatewayCutoverDeps {
   log(message: string): void;
 }
 
+export async function runDockerDriverGatewayManagedFallback(
+  startManagedGateway: () => Promise<boolean>,
+  runStandaloneCutover: () => Promise<"reused" | "launch">,
+): Promise<"managed" | "reused" | "launch"> {
+  if (await startManagedGateway()) return "managed";
+  return runStandaloneCutover();
+}
+
 /**
  * Resolve reuse, adoption, or replacement for the host Docker-driver gateway.
  * Every reuse path requires a complete listener scan; replacement reaps only

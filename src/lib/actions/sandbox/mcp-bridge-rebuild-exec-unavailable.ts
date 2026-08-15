@@ -20,6 +20,7 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
+import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
 type ReadOnlyValidationSnapshot = {
@@ -123,13 +124,13 @@ function providerFingerprint(provider: ReturnType<typeof inspectExactMcpDestroyP
   });
 }
 
-function targetFingerprint(addresses: readonly string[] | undefined): string {
-  if (!addresses || addresses.length === 0) {
+function targetFingerprint(target: McpBridgeTargetValidation | undefined): string {
+  if (!target || target.addresses.length === 0) {
     throw new McpBridgeError(
-      "Resolved MCP target validation returned no exact public address pins. Refusing host-side rebuild recovery.",
+      "Resolved MCP target validation returned no exact address pins. Refusing host-side rebuild recovery.",
     );
   }
-  return JSON.stringify([...addresses].sort());
+  return JSON.stringify([...target.addresses].sort());
 }
 
 async function inspectReadOnlyRecoveryState(
@@ -147,17 +148,19 @@ async function inspectReadOnlyRecoveryState(
   const providerByServer = new Map<string, string>();
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
-    const resolvedAddresses = resolvedTargets.get(entry.server);
+    const target = resolvedTargets.get(entry.server);
     const policy = assertGeneratedPolicyExactReadOnly(
       sandboxName,
       entry,
       adapter,
-      resolvedAddresses ?? [],
+      target ?? {
+        addresses: [],
+      },
     );
     policyByServer.set(entry.server, policyFingerprint(policy));
     const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     providerByServer.set(entry.server, providerFingerprint(provider));
-    targetsByServer.set(entry.server, targetFingerprint(resolvedAddresses));
+    targetsByServer.set(entry.server, targetFingerprint(target));
   }
   return { policyByServer, providerByServer, targetsByServer };
 }

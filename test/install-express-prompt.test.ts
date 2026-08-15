@@ -7,151 +7,40 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
+import { runExpressPromptWithTty } from "./helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  function runExpressPromptWithTty(
-    answer: string,
-    stdinMode: "pipe" | "tty",
-    platform = "DGX Spark",
-    extraEnv: Record<string, string> = {},
-    entrypoint: "prompt" | "accepted-station-main" = "prompt",
-    entrypointArgs: string[] = [],
-  ) {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
-    const python =
-      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
-        encoding: "utf-8",
-      }).stdout.trim() || "python3";
-    const ptyRunner = `
-import os
-import pty
-import select
-import signal
-import sys
-import time
+  it("drains PTY output after the child exits", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
+    try {
+      const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+        mode: "post-exit-tail",
+        pidFile: path.join(fixtureDir, "child.pid"),
+      });
+      const output = `${result.stdout}${result.stderr}`;
 
-installer = sys.argv[1]
-answer = sys.argv[2].encode()
-stdin_mode = sys.argv[3]
-platform = sys.argv[4]
-entrypoint = sys.argv[5]
-entrypoint_args = sys.argv[6:]
-if entrypoint == "accepted-station-main":
-    script = r'''
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
-print_banner() { :; }
-ensure_docker() { :; }
-ensure_openshell_build_deps() { :; }
-# Stop immediately after the real Station express prompt configures its recipe,
-# before setup-jetson.sh or any installation side effect can run.
-classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
-station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
-station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
-bash() {
-  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \
-    "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
-    "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \
-    "\${NEMOCLAW_STATION_EXPRESS:-}"
-  exit 0
-}
-main "$@"
-'''
-else:
-    script = r'''
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
-classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
-NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
-NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
-NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
-if [ "\${FORCE_EXPRESS_PROMPT_READ_FAILURE:-}" = "1" ]; then
-  read() { return 1; }
-fi
-maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \\
-  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \\
-  "\${NEMOCLAW_STATION_EXPRESS:-}"
-'''
-env = dict(os.environ)
-env["INSTALLER_UNDER_TEST"] = installer
-env["EXPRESS_PLATFORM"] = platform
-pid, fd = pty.fork()
-if pid == 0:
-    if stdin_mode == "pipe":
-        devnull = os.open(os.devnull, os.O_RDONLY)
-        os.dup2(devnull, 0)
-        os.close(devnull)
-    os.execvpe("bash", ["bash", "-c", script, "nemoclaw-express-prompt", *entrypoint_args], env)
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("PTY_POST_EXIT_TAIL");
+      expect(fs.existsSync(result.temporaryDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
 
-output = bytearray()
-os.set_blocking(fd, False)
-sent = False
-exit_code = 124
-deadline = time.time() + 10
-while True:
-    ready, _, _ = select.select([fd], [], [], 0.1)
-    if ready:
-        try:
-            chunk = os.read(fd, 4096)
-        except BlockingIOError:
-            chunk = b""
-        except OSError:
-            chunk = b""
-        if chunk:
-            output.extend(chunk)
-        if (not sent) and b"[Y/n]" in output:
-            os.write(fd, answer)
-            sent = True
-    waited = os.waitpid(pid, os.WNOHANG)
-    if waited[0] == pid:
-        exit_code = os.waitstatus_to_exitcode(waited[1])
-        break
-    if time.time() > deadline:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
-        break
+  it("reaps the PTY child after the harness timeout", () => {
+    const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+      mode: "timeout",
+      timeoutSeconds: 1,
+    });
+    const output = `${result.stdout}${result.stderr}`;
 
-try:
-    os.close(fd)
-except OSError:
-    pass
-sys.stdout.buffer.write(output)
-sys.exit(exit_code)
-`;
-    return spawnSync(
-      python,
-      [
-        "-c",
-        ptyRunner,
-        INSTALLER_PAYLOAD,
-        answer,
-        stdinMode,
-        platform,
-        entrypoint,
-        ...entrypointArgs,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        timeout: 15_000,
-        killSignal: "SIGKILL",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          ...extraEnv,
-        },
-      },
-    );
-  }
+    expect(result.error, output).toBeUndefined();
+    expect(result.status, output).toBe(124);
+    expect(output).toContain("PTY_TIMEOUT_STARTED");
+    expect(output).toContain("PTY_CHILD_REAPED");
+  });
 
   function detectExpressPlatform(
     productName: string,
@@ -166,7 +55,7 @@ sys.exit(exit_code)
 source "$INSTALLER_UNDER_TEST" >/dev/null
 classify_dgx_station_release() {
   if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
-    bash "$STATION_PREPARE" --classify-dgx-release
+    printf "generic-ubuntu"
     return
   fi
   bash -c '
@@ -288,24 +177,58 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
   });
 
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe");
+    const result = runExpressPromptWithTty("\ny\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Choose the DGX Spark inference setup/);
+    expect(output).toMatch(/Managed vLLM with automatic serving-profile selection \(default\)/);
+    expect(output).toMatch(/Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/);
     expect(output).toMatch(
-      /Express install will configure managed local vLLM using the DGX Spark profile default model/,
+      /Express install will configure managed vLLM with automatic DGX Spark serving-profile selection/,
     );
-    expect(output).toMatch(
-      /Managed vLLM pulls the configured vLLM image\/model and runs a local vLLM inference container/,
-    );
+    expect(output).toMatch(/ordinary no-match keeps the existing single-host DGX Spark profile/);
     expect(output).toMatch(/Sandbox name: my-assistant/);
     expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE= PROFILE_RUNTIME= SPARK_SELECTION=managed-vllm/,
     );
     expect(output).toMatch(/STATION_EXPRESS=\s/);
+  });
+
+  it("offers the fixed catalog-backed vLLM profile as the second Spark Express option", () => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Choose 1 or 2 \[1\]/);
+    expect(output).toMatch(
+      /Express install will configure Qwen3\.6 35B-A3B NVFP4 with the fixed catalog-backed vLLM profile/,
+    );
+    expect(output).toMatch(/The serving catalog owns the model, image, port, and vLLM arguments/);
+    expect(output).toMatch(/installer rejects provider and model overrides/);
+    expect(output).toMatch(
+      /dedicated local-model onboarder rejects vLLM model, port, and serve-argument overrides/,
+    );
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
+    );
+  });
+
+  it.each([
+    ["port", { NEMOCLAW_VLLM_PORT: "18000" }],
+    ["serve arguments", { NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '["--max-model-len","4096"]' }],
+  ])("rejects a preset %s before activating the fixed Spark Express profile", (_, extraEnv) => {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", extraEnv);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      "The fixed DGX Spark vLLM profile does not accept provider, model, port, or serve-argument overrides.",
+    );
+    expect(output).not.toContain("RESULT NON_INTERACTIVE=");
+    expect(output).not.toContain("PROFILE_GATE=1");
   });
 
   it("preserves a preset Spark vLLM model in the prompt and exported env", () => {
@@ -318,16 +241,31 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /Express install will configure managed local vLLM with model custom-qwen3\.6/,
     );
-    expect(output).toMatch(
-      /Managed vLLM pulls the configured vLLM image\/model and runs a local vLLM inference container/,
-    );
+    expect(output).toMatch(/The explicit model remains authoritative/);
+    expect(output).toMatch(/keeps the existing single-host DGX Spark profile/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-assistant/,
+    );
+    expect(output).toMatch(/PROFILE_GATE= PROFILE_RUNTIME=/);
+  });
+
+  it("keeps an explicit generic model on the customizable Spark Express path", () => {
+    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+      NEMOCLAW_MODEL: "catalog/model",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).not.toMatch(/Choose the DGX Spark inference setup/);
+    expect(output).not.toMatch(/fixed catalog-backed vLLM profile/);
+    expect(output).toMatch(/managed local vLLM with explicit model intent catalog\/model/);
+    expect(output).toMatch(/does not offer the fixed profile/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=catalog\/model VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant STATION_EXPRESS= PROFILE_GATE= PROFILE_RUNTIME= SPARK_SELECTION=/,
     );
   });
 
   it("preserves an explicit NEMOCLAW_SANDBOX_NAME over the DGX Spark default (#6525)", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe", "DGX Spark", {
+    const result = runExpressPromptWithTty("2\ny\n", "pipe", "DGX Spark", {
       NEMOCLAW_SANDBOX_NAME: "custom-spark",
     });
     const output = `${result.stdout}${result.stderr}`;
@@ -335,7 +273,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(/Sandbox name: custom-spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER= MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark STATION_EXPRESS= PROFILE_GATE=1 PROFILE_RUNTIME=vllm SPARK_SELECTION=fixed-vllm/,
     );
   });
 
@@ -1295,6 +1233,17 @@ detect_express_platform
       "DGX Station GB300",
       noOtaFactoryRelease(profile),
     );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as Station Express (#7979)", () => {
+    const release = noOtaFactoryRelease("ai-developer-tools").replace(
+      "2026-06-16-11-48-10",
+      "2026-05-13-18-42-38",
+    );
+    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("DGX Station");

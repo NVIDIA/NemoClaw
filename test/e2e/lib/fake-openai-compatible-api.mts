@@ -28,6 +28,9 @@ const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
 const requireAuthModels = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
+const launchReplyFromPrompt =
+  process.env.NEMOCLAW_FAKE_OPENAI_LAUNCH_REPLY_FROM_PROMPT === "1";
+const requestCanaryMarker = process.env.NEMOCLAW_FAKE_OPENAI_REQUEST_CANARY_MARKER || "";
 const forbiddenMarkers = (() => {
   try {
     const parsed = JSON.parse(process.env.NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS || "[]");
@@ -137,6 +140,34 @@ function forbiddenMarkerMatches(req: IncomingMessage, raw: Buffer): number {
   return forbiddenMarkers.filter((marker) => requestMaterial.includes(marker)).length;
 }
 
+function requestCanaryPresent(req: IncomingMessage, raw: Buffer): boolean | undefined {
+  if (!requestCanaryMarker) return undefined;
+  const headerValues = Object.values(req.headers).flatMap((value) => value ?? []);
+  const requestMaterial = [req.url ?? "", ...headerValues, raw.toString("utf8")].join("\n");
+  return requestMaterial.includes(requestCanaryMarker);
+}
+
+function latestUserPrompt(payload: JsonObject): string | null {
+  const entries = Array.isArray(payload.messages) ? payload.messages : [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || typeof entry !== "object") continue;
+    const message = entry as JsonObject;
+    if (message.role !== "user") continue;
+    if (typeof message.content === "string") return message.content;
+  }
+  return null;
+}
+
+function requestedLaunchReply(payload: JsonObject): string | null {
+  if (!launchReplyFromPrompt) return null;
+  const prompt = latestUserPrompt(payload);
+  const match = prompt?.match(
+    /^Join these four fragments with underscores and put only the result on its own line: NEMOCLAW, ([0-9A-F]{12}), (FIRST|SECOND), OK\. Do not use tools\.(?:\n\n[\s\S]+)?$/u,
+  );
+  return match ? `NEMOCLAW_${match[1]}_${match[2]}_OK` : null;
+}
+
 const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
@@ -153,6 +184,7 @@ const server = createServer(async (req, res) => {
       // credential without leaking it into the requests log (#6177).
       authorizationSent: Boolean(req.headers.authorization),
       forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
+      requestCanaryPresent: requestCanaryPresent(req, Buffer.alloc(0)),
     });
     if (!modelsAuthOk) {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
@@ -178,6 +210,7 @@ const server = createServer(async (req, res) => {
     model: payload.model,
     stream: Boolean(payload.stream),
     forbiddenMarkerMatches: forbiddenMarkerMatches(req, raw),
+    requestCanaryPresent: requestCanaryPresent(req, raw),
   });
 
   if (req.method === "POST" && ["/v1/chat/completions", "/chat/completions"].includes(path)) {
@@ -188,8 +221,9 @@ const server = createServer(async (req, res) => {
       sendJson(res, 401, { error: { message: "missing bearer credential" } });
       return;
     }
+    const content = requestedLaunchReply(payload) ?? chatContent;
     if (payload.stream) {
-      sendChatSse(res, chatContent);
+      sendChatSse(res, content);
       return;
     }
     sendJson(res, 200, {
@@ -200,7 +234,7 @@ const server = createServer(async (req, res) => {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: chatContent },
+          message: { role: "assistant", content },
           finish_reason: "stop",
         },
       ],

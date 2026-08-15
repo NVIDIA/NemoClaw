@@ -51,27 +51,49 @@ If the command trace contains no reviewer-request write, report the event as an 
 ## Monitor checks
 
 ```bash
-PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number -q .number)}
-gh pr checks "$PR_NUMBER" --watch
+REPOSITORY=NVIDIA/NemoClaw
+PR_NUMBER=${PR_NUMBER:-$(gh pr view --repo "$REPOSITORY" --json number -q .number)}
+gh pr checks "$PR_NUMBER" --repo "$REPOSITORY" --watch
 ```
 
 When the checks stop, inspect their status:
 
 ```bash
-gh pr view "$PR_NUMBER" --json url,statusCheckRollup,comments,reviews,reviewDecision
+gh pr view "$PR_NUMBER" --repo "$REPOSITORY" \
+  --json url,headRefOid,statusCheckRollup,comments,reviews,reviewDecision
 ```
 
-## Review feedback
+## Review Feedback
 
-Check PR comments and inline review comments from CodeRabbit and the PR Review Advisor:
+Collect review evidence through host capabilities that expose pagination, source commits, thread resolution, and check results. Bind every read to `NVIDIA/NemoClaw` and one PR number.
 
-```bash
-gh api "repos/NVIDIA/NemoClaw/issues/${PR_NUMBER}/comments" --paginate \
-  --jq '.[] | select((.body // "") | test("CodeRabbit|coderabbit|PR Review Advisor|nemoclaw-pr-review-advisor"; "i")) | {author: .user.login, updated_at, body}'
+Capture the PR `headRefOid` before collecting evidence. Read comments, reviews, and threads until the host reports that no next page remains. Record each page count and terminal pagination signal. Collect the status, conclusion, and evaluated commit of every required check, including pending, cancelled, and skipped results. Capture `headRefOid` again after collection. Restart collection if the two SHAs differ.
 
-gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
-  --jq '.[] | select((.body // "") | test("CodeRabbit|coderabbit|PR Review Advisor|nemoclaw-pr-review-advisor"; "i")) | {author: .user.login, path, line, updated_at, body}'
-```
+Record this identity and completeness evidence with the collection:
+
+- Repository and PR number.
+- Initial and final PR `headRefOid`.
+- Local candidate `HEAD`.
+- Page counts and terminal pagination status for comments, reviews, and threads.
+- Every required check and the commit it evaluates.
+
+Report the collection as `blocked` if the host cannot establish every condition in this list. Do not edit, commit, or push from a blocked collection.
+
+Re-evaluate findings from an earlier review against the local candidate `HEAD`. Record whether each finding remains in that commit. Apply reviewer or bot filters only after collection is complete.
+
+Record whether the host retains collection evidence. If the host returns an artifact path or identifier, record it, remove that exact artifact after classification, and verify its absence. If the host retains no artifact, record `retained evidence: none`. Report the collection as `blocked` when the host retains evidence but cannot remove it or verify its absence.
+
+## Collect One Complete Review Cycle
+
+Before editing, collect and classify all review signals for the latest PR commit as follows. The initial and final `headRefOid` values must match:
+
+1. Re-read `headRefOid`. Collect current required-check failures, issue comments, submitted reviews, inline threads with resolution state, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it. Otherwise, record the latest PR commit SHA.
+2. Re-evaluate findings created for an earlier PR commit against the latest PR commit. Exclude a finding only when the changed code is gone or evidence shows that the defect is resolved. Record the disposition before editing.
+3. Group findings by root cause. Name the behavior contract and acceptance evidence for each group.
+4. Decide which groups are valid, false positives, design-changing, or blocked.
+5. Apply the shared [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md), starting from the change set that the valid groups imply. Record the sibling paths checked, the operation and failure class each group belongs to, and the sensitive-workflow state outcomes.
+
+Do not create a separate commit or push for each finding. Apply all findings in the same root-cause group as one coherent change set. Classify every finding collected for the unchanged latest PR commit before beginning that change set. If the user tells you to stop, remove retained collection evidence by its exact artifact path or identifier and verify its absence. If the host retained no artifact, record `retained evidence: none`. Then stop without further edits, commits, or pushes. The user may explicitly defer a non-blocking suggestion or allow work to proceed without an optional pending review. Record that decision before editing. Do not proceed without a required review. Deferral does not authorize a push with an unresolved blocking, correctness, security, data safety, supported-contract, required-review, or required-check finding.
 
 ## Handle results
 
@@ -87,12 +109,32 @@ gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
   - A supported contract.
   - Unnecessary complexity in changed code.
   - Ambiguity in changed text that can change behavior, security, data safety, test meaning, or release meaning.
-- **CI failure:** Inspect the job logs and fix the cause. Run the related local checks. Commit, push, and monitor the PR again.
-- **Valid CodeRabbit or PR Review Advisor finding:** Fix correctness, security, or test-coverage problems. Run the related checks. Commit, push, and monitor the PR again.
+- **CI failure:** Add the failure to the current review cycle. Apply the shared [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md), starting from the failing paths. Correlate the same root cause across the other required checks, including pending, cancelled, and skipped results. Apply the complete fix group, then run the related local checks.
+- **Valid CodeRabbit or PR Review Advisor finding:** Add the finding to its root-cause group. Apply the shared [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) before editing, including the correctness, security, and test paths adjacent to the finding. Apply the group as one change set.
 - **Style comment or false positive:** Avoid unnecessary changes. Explain your decision in the final report. Comment on the PR when reviewers need the explanation.
 - **Ambiguous, risky, broad, or design-changing feedback:** Stop and ask the user before you change code.
 
-Repeat this workflow until required CI passes and no actionable automated-review findings remain. Stop if the user tells you to stop.
+After editing:
+
+1. Run targeted validation.
+2. Commit the candidate change set after validation passes.
+3. Run the independent documentation writer review against that commit.
+4. If the review reports valid findings, apply them and rerun affected validation.
+5. Commit the corrections and review the new `HEAD`.
+6. Run one final complete collection for the latest PR commit. Restart the collection if `headRefOid` changes.
+7. Classify every finding.
+8. After classification, remove retained collection evidence by its exact artifact path or identifier. Verify its absence.
+9. Determine which unresolved findings require a change. If the user explicitly defers a non-blocking suggestion, that suggestion does not require a change in this review cycle.
+10. If any unresolved finding requires a change, do not push. Complete these actions:
+    - Repair each unresolved finding that requires a change.
+    - Rerun affected validation.
+    - Commit the corrections.
+    - Run the independent documentation writer review with that commit as the commit under review.
+    - Repeat the final collection.
+11. Push once when the receipt identifies the reviewed `HEAD` and no unresolved finding requires a change.
+12. Monitor the latest PR commit for new findings that require a change.
+
+Repeat the applicable steps whenever an unresolved finding requires a change. Stop if the user tells you to stop.
 
 If a push or GitHub query has an access error, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md).
 Resolve merge conflicts and dirty-worktree problems in the PR workflow.

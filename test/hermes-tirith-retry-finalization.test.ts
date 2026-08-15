@@ -170,6 +170,7 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
   it("runs reset-aware retry preparation in the root startup path", () => {
     const run = runTirithFinalizer([
       "verify_hermes_config_integrity() { :; }",
+      "prepare_hermes_lazy_dependencies() { :; }",
       "ensure_hermes_config_root_mode() { :; }",
       "ensure_hermes_runtime_api_server_key() { :; }",
       "apply_shields_up_runtime_env() { :; }",

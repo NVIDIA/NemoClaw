@@ -24,7 +24,7 @@ export const enableDockerDesktopWslIntegration: AdvisoryCheck<HostAssessment> = 
   severity: "blocking",
   resumeSafe: false,
   check(host) {
-    if (!wslDockerBlocksRemainingChecks(host)) return null;
+    if (host.dockerHostInvalid || !wslDockerBlocksRemainingChecks(host)) return null;
     const dockerMissing = !host.dockerInstalled;
     return hostAdvisory(enableDockerDesktopWslIntegration, {
       title: "Enable Docker Desktop WSL integration",
@@ -72,7 +72,7 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
   severity: "blocking",
   resumeSafe: false,
   check(host) {
-    if (!host.dockerHostInvalid || !host.dockerInstalled || host.isWsl) {
+    if (!host.dockerHostInvalid || !host.dockerInstalled) {
       return null;
     }
     return hostAdvisory(invalidDockerHost, {

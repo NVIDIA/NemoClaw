@@ -12,6 +12,7 @@ import {
 } from "./docker-driver-gateway-compat";
 import {
   buildDockerDriverGatewayConfigToml,
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import {
@@ -53,14 +54,25 @@ export type DockerDriverGatewayRuntimeIdentity = {
   identityGatewayBin: string | null;
 };
 
+export type DockerDriverGatewayLog = {
+  fd: number;
+  startOffset: number;
+};
+
 export function openDockerDriverGatewayLog(
   logPath: string,
   options: { exitOnFailure?: boolean } = {},
-): number {
+): DockerDriverGatewayLog {
   const appendNoFollow =
     fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW;
   try {
-    return fs.openSync(logPath, appendNoFollow, 0o600);
+    const fd = fs.openSync(logPath, appendNoFollow, 0o600);
+    try {
+      return { fd, startOffset: fs.fstatSync(fd).size };
+    } catch (error) {
+      fs.closeSync(fd);
+      throw error;
+    }
   } catch (error) {
     console.error(
       `  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`,
@@ -113,6 +125,9 @@ function buildGatewayProcessEnv(
   const env = { ...baseEnv, ...gatewayEnv };
   if (!("OPENSHELL_DISABLE_GATEWAY_AUTH" in gatewayEnv)) {
     delete env.OPENSHELL_DISABLE_GATEWAY_AUTH;
+  }
+  if (!(NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV in gatewayEnv)) {
+    delete env[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV];
   }
   return env;
 }
@@ -177,6 +192,7 @@ export function buildDockerDriverGatewayRuntimeIdentity(
     ...Object.keys(options.gatewayEnv),
     "OPENSHELL_DOCKER_SUPERVISOR_BIN",
     "OPENSHELL_GATEWAY_CONFIG",
+    NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   ]);
   const desiredEnv = Object.fromEntries(
     Object.entries(launch.env).filter(

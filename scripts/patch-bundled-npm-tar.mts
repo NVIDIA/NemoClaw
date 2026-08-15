@@ -39,7 +39,7 @@ export const MINIMUM_SAFE_TAR_VERSION = "7.5.19";
  * The Dockerfile contract test forces that review whenever either pin changes.
  */
 export const NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH = [
-  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
   "node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c",
 ] as const;
 

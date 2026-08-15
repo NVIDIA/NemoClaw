@@ -195,6 +195,25 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(sleep).toHaveBeenCalledWith(1_000);
   });
 
+  it("hands a running container to lifecycle verification while Docker health is starting (#8112)", () => {
+    const sleep = vi.fn();
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
+        "running\tstarting",
+      ]),
+      dockerStart: fakeStart(0),
+      readiness: "runtime-running",
+      sleep,
+    });
+
+    expect(result).toEqual({
+      recovered: true,
+      via: "started-stopped-original",
+      containerName: "openshell-e2e-x",
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("accepts a running container whose image has no Docker health check", () => {
     const sleep = vi.fn();
     const result = recoverDockerDriverSandbox("e2e-x", {
@@ -317,6 +336,27 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
       "openshell-e2e-x",
       expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it("hands a renamed backup to lifecycle verification while Docker health is starting (#8112)", () => {
+    const sleep = vi.fn();
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture(
+        "openshell-e2e-x-nemoclaw-gpu-backup-1717280000000\tExited (0) 5 minutes ago\n",
+        ["running\tstarting"],
+      ),
+      dockerRename: fakeRename(0),
+      dockerStart: fakeStart(0),
+      readiness: "runtime-running",
+      sleep,
+    });
+
+    expect(result).toEqual({
+      recovered: true,
+      via: "renamed-and-started-backup",
+      containerName: "openshell-e2e-x",
+    });
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("picks the most recent backup when several siblings exist", () => {

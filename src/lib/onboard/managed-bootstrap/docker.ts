@@ -15,7 +15,11 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
-import { buildDockerGpuCloneRunArgs, dockerContainerName } from "../docker-gpu-patch-clone";
+import {
+  buildDockerGpuCloneRunArgs,
+  dockerContainerName,
+  shouldOmitOpenShellOciImageUser,
+} from "../docker-gpu-patch-clone";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -27,10 +31,12 @@ import type {
   DockerGpuPatchModeKind,
   DockerUlimit,
 } from "../docker-gpu-patch-types";
-import { waitForOpenShellSupervisorReconnect } from "../docker-gpu-supervisor-reconnect";
+import {
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+} from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
-  isImmutableDockerImageId,
   OPENSHELL_MANAGED_BY_LABEL,
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_ID_LABEL,
@@ -45,6 +51,7 @@ import {
   createManagedBootstrapIdentity,
   createManagedBootstrapPlanFingerprint,
   createManagedBootstrapPreparedAuthority,
+  MANAGED_BOOTSTRAP_IDENTITY_ENV,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
   ManagedBootstrapCommitStateIndeterminateError,
@@ -59,20 +66,26 @@ import {
   type ManagedBootstrapObservedSnapshot,
   ManagedBootstrapOwnerCleanupRequiredError,
   type ManagedBootstrapPreparedReplacementHandle,
+  type ManagedBootstrapRecoveryFailure,
   type ManagedBootstrapRecoveryReceipt,
+  type ManagedBootstrapRecoveryReport,
   type ManagedBootstrapReplacementHandle,
   type ManagedBootstrapReplacementOptions,
   type ManagedBootstrapSandboxIdentity,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
 import {
   createFileDockerManagedBootstrapJournalStore,
   DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
   DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
+  type DockerManagedBootstrapFinalizationContext,
   type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalStore,
+  DockerManagedBootstrapLegacyRecordRequiresAgentError,
   parseDockerManagedBootstrapJournal,
   serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
@@ -92,19 +105,66 @@ import {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
   MANAGED_BOOTSTRAP_REQUEST_FILE,
   parseManagedBootstrapImageCompletion,
-  serializeManagedBootstrapEnvelope,
+  serializeManagedBootstrapEnvelopeTar,
 } from "./envelope";
 
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const FULL_SHA256_RE = /^sha256:[a-f0-9]{64}$/u;
 const MAX_ARGV_BYTES = 128 * 1024;
 const MAX_CONTAINER_NAME_LENGTH = 253;
-const REQUEST_TEMP_PREFIX = "nemoclaw-managed-bootstrap-request";
 const COMPLETION_TEMP_PREFIX = "nemoclaw-managed-bootstrap-completion";
 const COMPLETION_MAX_BYTES = 4096;
 const DOCKER_DRIVER_ID = "docker";
+const MAX_RECOVERY_FAILURE_DETAIL_BYTES = 8 * 1024;
+const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
 export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
+
+function boundedRecoveryFailureDetail(error: unknown): string {
+  const raw = (error instanceof Error ? error.message : String(error)).replaceAll("\0", "�");
+  const detail = raw.length > 0 ? raw : "Docker recovery failed without diagnostic detail";
+  const bytes = Buffer.from(detail, "utf8");
+  if (bytes.length <= MAX_RECOVERY_FAILURE_DETAIL_BYTES) return detail;
+  let bounded = bytes.subarray(0, MAX_RECOVERY_FAILURE_DETAIL_BYTES).toString("utf8");
+  while (Buffer.byteLength(bounded, "utf8") > MAX_RECOVERY_FAILURE_DETAIL_BYTES) {
+    bounded = [...bounded].slice(0, -1).join("");
+  }
+  return bounded;
+}
+
+function dockerManagedBootstrapRecoveryFailure(
+  bootstrapIdentity: string,
+  journal: DockerBootstrapTransaction | null,
+  error: unknown,
+): ManagedBootstrapRecoveryFailure {
+  const legacyJournalContext =
+    error instanceof DockerManagedBootstrapLegacyRecordRequiresAgentError
+      ? error.journalContext
+      : null;
+  const classified =
+    error instanceof ManagedBootstrapOwnerCleanupRequiredError
+      ? { code: "owner-cleanup-required", retryable: true }
+      : error instanceof ManagedBootstrapDurableCommitCleanupPendingError
+        ? { code: "durable-cleanup-pending", retryable: true }
+        : error instanceof ManagedBootstrapCommitStateIndeterminateError
+          ? { code: "commit-state-indeterminate", retryable: true }
+          : error instanceof DockerManagedBootstrapLegacyRecordRequiresAgentError
+            ? { code: "legacy-agent-required", retryable: true }
+            : { code: "provider-recovery-failed", retryable: true };
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    providerId: journal?.providerId ?? legacyJournalContext?.providerId ?? DOCKER_DRIVER_ID,
+    // A legacy cutover decision sidecar may have advanced beyond the phase in
+    // the journal body. Keep the provider phase unknown until agent-bound
+    // recovery can validate both records, while retaining its exact sandbox.
+    sourcePhase: journal?.phase ?? null,
+    sandbox: journal?.sandbox ?? legacyJournalContext?.sandbox ?? null,
+    bootstrapIdentity,
+    code: classified.code,
+    retryable: classified.retryable,
+    detail: boundedRecoveryFailureDetail(error),
+  });
+}
 
 type DockerCommandResult = {
   readonly status?: number | null;
@@ -312,6 +372,15 @@ function isExplicitlyStopped(inspect: DockerContainerInspect): boolean {
   );
 }
 
+function isExactRestartLoop(inspect: DockerContainerInspect): boolean {
+  return (
+    inspect.State?.Running === true &&
+    inspect.State.Paused === false &&
+    inspect.State.Restarting === true &&
+    inspect.State.Dead === false
+  );
+}
+
 function assertExplicitlyStopped(inspect: DockerContainerInspect, label: string): void {
   if (!isExplicitlyStopped(inspect)) {
     throw new Error(`Managed bootstrap Docker ${label} is not explicitly stopped.`);
@@ -342,9 +411,13 @@ function assertImage(
   }
   const expectedReference = expectedImageReference(image.repository, image.manifestDigest);
   const configuredImage = String(inspect.Config?.Image ?? "").trim();
-  if (configuredImage !== expectedReference) {
+  // OpenShell's Docker driver creates the sandbox from the inspected immutable image ID, so
+  // Docker records that ID in Config.Image. NemoClaw-created replacements retain the exact
+  // repository@manifestDigest instead. Accept only those two immutable spellings; the image
+  // inspection below still proves that the reviewed manifest resolves to this runtime content.
+  if (configuredImage !== expectedReference && configuredImage !== runtimeContentId) {
     throw new Error(
-      "Managed bootstrap Docker configured image is not the exact repository@manifestDigest.",
+      "Managed bootstrap Docker configured image is neither the exact repository@manifestDigest nor its immutable runtime content ID.",
     );
   }
   const imageOutput = deps.dockerCapture(["image", "inspect", expectedReference], {
@@ -404,34 +477,28 @@ function assertHeldCommand(
   bootstrapIdentity: string,
 ): void {
   assertManagedBootstrapIdentity(bootstrapIdentity);
-  const expected = openshellSandboxCommandEnvValue(heldWorkloadArgv);
-  const observed = envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND");
-  if (!expected || observed !== expected) {
-    throw new Error(
-      "Managed bootstrap Docker workload does not contain the exact identity-bound hold.",
-    );
-  }
   const identityIndexes = heldWorkloadArgv
     .map((value, index) => (value === bootstrapIdentity ? index : -1))
     .filter((index) => index >= 0);
   if (identityIndexes.length !== 1) {
     throw new Error("Managed bootstrap hold does not contain exactly one bootstrap identity.");
   }
+  assertBootstrapIdentityEnvironment(inspect, bootstrapIdentity);
+  if (
+    envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND") !== OPENSHELL_DRIVER_IDLE_COMMAND
+  ) {
+    throw new Error("Managed bootstrap Docker workload left the OpenShell idle hold boundary.");
+  }
 }
 
-function assertBootstrapIdentityInObservedHold(
+function assertBootstrapIdentityEnvironment(
   inspect: DockerContainerInspect,
   bootstrapIdentity: string,
 ): void {
   assertManagedBootstrapIdentity(bootstrapIdentity);
-  const observed = envValue(inspect.Config?.Env, "OPENSHELL_SANDBOX_COMMAND");
-  if (!observed) {
-    throw new Error("Managed bootstrap Docker workload is missing its held command.");
-  }
-  const occurrences = observed.split(bootstrapIdentity).length - 1;
-  if (occurrences !== 1) {
+  if (envValue(inspect.Config?.Env, MANAGED_BOOTSTRAP_IDENTITY_ENV) !== bootstrapIdentity) {
     throw new Error(
-      "Managed bootstrap Docker held command does not contain one exact bootstrap identity.",
+      "Managed bootstrap Docker workload does not contain one exact persisted bootstrap identity.",
     );
   }
 }
@@ -493,32 +560,11 @@ function replacementStagingName(originalName: string, bootstrapIdentity: string)
   return `${originalName.slice(0, Math.max(1, MAX_CONTAINER_NAME_LENGTH - suffix.length))}${suffix}`;
 }
 
-function writeProtectedEnvelope(
+function protectedEnvelopeArchive(
   bootstrapIdentity: string,
-  request: Parameters<typeof serializeManagedBootstrapEnvelope>[0]["rootApplyRequest"],
-): string {
-  const file = secureTempFile(REQUEST_TEMP_PREFIX, ".json");
-  try {
-    fs.writeFileSync(
-      file,
-      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest: request }),
-      { encoding: "utf8", flag: "wx", mode: 0o400 },
-    );
-    fs.chmodSync(file, 0o400);
-    const stat = fs.lstatSync(file);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      stat.nlink !== 1 ||
-      (stat.mode & 0o777) !== 0o400
-    ) {
-      throw new Error("Managed bootstrap request source is not one protected 0400 file.");
-    }
-    return file;
-  } catch (error) {
-    cleanupTempDir(file, REQUEST_TEMP_PREFIX);
-    throw error;
-  }
+  request: Parameters<typeof serializeManagedBootstrapEnvelopeTar>[0]["rootApplyRequest"],
+): Buffer {
+  return serializeManagedBootstrapEnvelopeTar({ bootstrapIdentity, rootApplyRequest: request });
 }
 
 function readProtectedImageCompletion(
@@ -727,6 +773,27 @@ function assertExactStringSet(observed: unknown, expected: readonly string[], la
   }
 }
 
+function capabilitySet(value: unknown, label: string): string[] {
+  const normalized = exactStringArray(value ?? [], label).map((entry) => {
+    const raw = entry.trim().toUpperCase();
+    return raw === "ALL" || raw.startsWith("CAP_") ? raw : `CAP_${raw}`;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate capabilities.`);
+  }
+  return normalized.sort();
+}
+
+function assertExactCapabilitySet(
+  observed: unknown,
+  expected: readonly string[],
+  label: string,
+): void {
+  if (!exactArrayEqual(capabilitySet(observed, label), capabilitySet(expected, label))) {
+    throw new Error(`Managed bootstrap Docker ${label} changed outside declared deltas.`);
+  }
+}
+
 function modeEnvironment(mode: DockerGpuPatchMode): string[] {
   const values: string[] = [];
   for (let index = 0; index < mode.args.length; index += 1) {
@@ -742,11 +809,27 @@ function modeEnvironment(mode: DockerGpuPatchMode): string[] {
   return values;
 }
 
+function canonicalEnvironmentBindings(value: unknown, label: string): string[] {
+  const entries = exactStringArray(value ?? [], label);
+  const keys = entries.map((entry) => {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) {
+      throw new Error(`Managed bootstrap Docker ${label} contains an invalid binding.`);
+    }
+    return entry.slice(0, separator);
+  });
+  if (new Set(keys).size !== keys.length) {
+    throw new Error(`Managed bootstrap Docker ${label} contains duplicate keys.`);
+  }
+  return entries.sort();
+}
+
 function assertExactEnvironmentDelta(
   original: Record<string, unknown>,
   replacement: Record<string, unknown>,
   mode: DockerGpuPatchMode,
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): void {
   const gpuAugment = mode.kind !== "startup-command";
   const originalEnv = exactStringArray(original.Env ?? [], "original environment");
@@ -754,14 +837,20 @@ function assertExactEnvironmentDelta(
     ...modeEnvironment(mode),
     ...originalEnv
       .filter((entry) => !gpuAugment || !REPLACED_GPU_ENV_KEYS.has(entry.split("=", 1)[0] ?? ""))
+      .filter((entry) => !omitOciImageUser || !entry.startsWith("OPENSHELL_OCI_IMAGE_USER="))
       .map((entry) =>
         entry.startsWith("OPENSHELL_SANDBOX_COMMAND=")
           ? `OPENSHELL_SANDBOX_COMMAND=${intendedSandboxCommand}`
           : entry,
       ),
   ];
-  const observed = exactStringArray(replacement.Env ?? [], "replacement environment");
-  if (!exactArrayEqual(observed, expected)) {
+  const observed = canonicalEnvironmentBindings(replacement.Env ?? [], "replacement environment");
+  if (
+    !exactArrayEqual(
+      observed,
+      canonicalEnvironmentBindings(expected, "expected replacement environment"),
+    )
+  ) {
     throw new Error(
       "Managed bootstrap Docker replacement environment changed outside declared deltas.",
     );
@@ -806,9 +895,7 @@ function expectedUlimits(original: unknown, required: readonly DockerUlimit[]): 
       Hard: requiredEntry.hard,
     });
   }
-  return JSON.stringify(
-    [...merged.values()].sort((left, right) => left.Name.localeCompare(right.Name)),
-  );
+  return canonicalUlimits([...merged.values()], "expected ulimits");
 }
 
 function assertExactDeviceRequests(
@@ -891,6 +978,32 @@ function scrubVerifiedReplacementDeltas(canonicalJson: string): string {
   return JSON.stringify(root);
 }
 
+function differingJsonPaths(
+  left: unknown,
+  right: unknown,
+  path = "$",
+  result: string[] = [],
+): string[] {
+  if (JSON.stringify(left) === JSON.stringify(right)) return result;
+  if (
+    typeof left !== "object" ||
+    left === null ||
+    typeof right !== "object" ||
+    right === null ||
+    Array.isArray(left) ||
+    Array.isArray(right)
+  ) {
+    result.push(path);
+    return result;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])) {
+    differingJsonPaths(leftRecord[key], rightRecord[key], `${path}.${key}`, result);
+  }
+  return result;
+}
+
 function assertReplacementMatchesIntent(
   originalCanonicalJson: string,
   replacement: DockerContainerInspect,
@@ -901,6 +1014,7 @@ function assertReplacementMatchesIntent(
     readonly extraGroupGids: readonly string[];
   },
   intendedSandboxCommand: string,
+  omitOciImageUser: boolean,
 ): string {
   const original = canonicalObject(originalCanonicalJson);
   const originalInspect = objectField(original, "inspect");
@@ -915,12 +1029,19 @@ function assertReplacementMatchesIntent(
   const observedConfig = objectField(observedInspect, "Config");
   const observedHost = objectField(observedInspect, "HostConfig");
   const gpuAugment = plan.mode.kind !== "startup-command";
-  assertExactEnvironmentDelta(originalConfig, observedConfig, plan.mode, intendedSandboxCommand);
-  assertExactStringSet(
+  assertExactEnvironmentDelta(
+    originalConfig,
+    observedConfig,
+    plan.mode,
+    intendedSandboxCommand,
+    omitOciImageUser,
+  );
+  const originalCapabilities = capabilitySet(originalHost.CapAdd, "original capability additions");
+  assertExactCapabilitySet(
     observedHost.CapAdd,
     [
-      ...stringSet(originalHost.CapAdd, "original capability additions"),
-      ...(gpuAugment ? ["SYS_PTRACE"] : []),
+      ...originalCapabilities,
+      ...(gpuAugment && !originalCapabilities.includes("CAP_SYS_PTRACE") ? ["CAP_SYS_PTRACE"] : []),
     ].filter((value, index, values) => values.indexOf(value) === index),
     "capability additions",
   );
@@ -951,17 +1072,24 @@ function assertReplacementMatchesIntent(
     ].filter((value, index, values) => values.indexOf(value) === index),
     "supplementary groups",
   );
-  if (
-    canonicalUlimits(observedHost.Ulimits, "replacement ulimits") !==
-    expectedUlimits(originalHost.Ulimits, plan.requiredUlimits)
-  ) {
-    throw new Error("Managed bootstrap Docker ulimits changed outside declared requirements.");
+  const observedUlimits = canonicalUlimits(observedHost.Ulimits, "replacement ulimits");
+  const intendedUlimits = expectedUlimits(originalHost.Ulimits, plan.requiredUlimits);
+  if (observedUlimits !== intendedUlimits) {
+    throw new Error(
+      `Managed bootstrap Docker ulimits changed outside declared requirements: expected ${intendedUlimits}, observed ${observedUlimits}.`,
+    );
   }
   const expectedPreserved = scrubVerifiedReplacementDeltas(originalCanonicalJson);
   const observedPreserved = scrubVerifiedReplacementDeltas(replacementSpec.canonicalJson);
   if (observedPreserved !== expectedPreserved) {
+    const changedPaths = differingJsonPaths(
+      JSON.parse(expectedPreserved),
+      JSON.parse(observedPreserved),
+    )
+      .sort()
+      .slice(0, 16);
     throw new Error(
-      "Managed bootstrap Docker replacement normalized spec changed outside declared deltas.",
+      `Managed bootstrap Docker replacement normalized spec changed outside declared deltas: ${changedPaths.join(", ")}.`,
     );
   }
   return replacementSpec.hash;
@@ -1192,7 +1320,7 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
   }
 }
 
-function removeOwnedWorkload(
+function retainOwnedWorkloadForOwnerCleanup(
   sandbox: ManagedBootstrapSandboxIdentity,
   deps: ResolvedDeps,
   expectedRuntimeId?: string,
@@ -1272,24 +1400,26 @@ function removeOwnedWorkload(
       `Managed bootstrap owner cleanup refused retention after exact runtime ${runtimeId} ownership changed for sandbox ${sandbox.sandboxId}.`,
     );
   }
-  let stopped: DockerCommandResult;
-  try {
-    stopped = deps.dockerStop(runtimeId, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
-    });
-  } catch (error) {
-    throw new Error(
-      `Managed bootstrap could not quiesce retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+  if (!isExplicitlyStopped(inspect)) {
+    let stopped: DockerCommandResult;
+    try {
+      stopped = deps.dockerStop(runtimeId, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+      });
+    } catch (error) {
+      throw new Error(
+        `Managed bootstrap could not quiesce retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    assertZero(
+      stopped,
+      `Managed bootstrap could not quiesce retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}`,
     );
   }
-  assertZero(
-    stopped,
-    `Managed bootstrap could not quiesce retained sandbox ${sandbox.sandboxId} exact runtime ${runtimeId}`,
-  );
   let retained: DockerContainerInspect;
   try {
     retained = inspectExact(runtimeId, deps);
@@ -1387,6 +1517,16 @@ function resolveIncompleteCreateSandbox(
     sandboxId,
     driverId: input.plan.driverId,
   });
+  if (
+    input.createReceipt.ready !== true ||
+    input.createReceipt.sandbox.sandboxName !== sandbox.sandboxName ||
+    input.createReceipt.sandbox.sandboxId !== sandbox.sandboxId ||
+    input.createReceipt.sandbox.driverId !== sandbox.driverId
+  ) {
+    throw new Error(
+      "Managed bootstrap Docker incomplete-create workload does not match the exact validated create receipt.",
+    );
+  }
   assertImage(inspect, input.plan.image, deps);
   assertMetadata(inspect, sandbox, input.plan.metadata);
   assertHeldCommand(inspect, input.heldWorkloadArgv, input.bootstrapIdentity);
@@ -1446,13 +1586,6 @@ function sameDockerBootstrapPreparedAuthority(
   );
 }
 
-function sameDurablePreparationReceipt(
-  left: ManagedBootstrapDurablePreparationReceipt,
-  right: ManagedBootstrapDurablePreparationReceipt,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 function createDockerBootstrapJournalDurably(
   journal: DockerBootstrapTransaction,
   deps: ResolvedDeps,
@@ -1474,7 +1607,7 @@ function createDockerBootstrapJournalDurably(
 
 function transitionDockerBootstrapJournalDurably(
   journal: DockerBootstrapTransaction,
-  next: "cutover" | "rollback-authorized" | "shared-state-committed",
+  next: "cutover" | "rollback-authorized" | "owner-cleanup-required" | "shared-state-committed",
   deps: ResolvedDeps,
 ): DockerBootstrapTransaction {
   try {
@@ -1573,7 +1706,10 @@ function assertDockerBootstrapTransactionAuthority(
     (durablePreparation !== undefined &&
       durablePreparation !== null &&
       (transaction.preparationReceipt === null ||
-        !sameDurablePreparationReceipt(transaction.preparationReceipt, durablePreparation))) ||
+        !sameManagedBootstrapDurablePreparationReceipt(
+          transaction.preparationReceipt,
+          durablePreparation,
+        ))) ||
     (prepared !== undefined &&
       prepared !== null &&
       (transaction.originalRuntimeId !== prepared.originalRuntimeId ||
@@ -1660,30 +1796,6 @@ function reconstructDockerBootstrapTransaction(
   return transaction;
 }
 
-function rollbackReplacementSharedStateIfPending(
-  input: {
-    readonly handle: ManagedBootstrapHeldWorkloadHandle;
-    readonly replacementRuntimeId: string;
-    readonly runtimeImageContentId: string;
-  },
-  deps: ResolvedDeps,
-): void {
-  if (!tryInspectExact(input.replacementRuntimeId, deps)) {
-    throw new Error(
-      "Managed bootstrap replacement disappeared before shared-state rollback could be proven; the preserved original remains stopped.",
-    );
-  }
-  const transaction = managedSharedStateTransaction(
-    input.handle,
-    input.replacementRuntimeId,
-    input.runtimeImageContentId,
-  );
-  finalizeDockerManagedStartupSharedState(
-    { transaction, supervisorReady: false, retainContainerAfterRollback: true },
-    deps,
-  );
-}
-
 function cleanupUnjournaledPreparedContainer(
   input: {
     readonly snapshot: ManagedBootstrapObservedSnapshot;
@@ -1764,34 +1876,8 @@ export function createDockerManagedBootstrapAdapter(
   dependencies: DockerManagedBootstrapDeps = {},
 ): DockerManagedBootstrapAdapter {
   const deps = resolveDeps(dependencies);
-  const finalizationRecord = (
-    handle: ManagedBootstrapHeldWorkloadHandle,
-  ): DockerManagedBootstrapFinalizationRecord | null => {
-    const record = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
-    if (!record) return null;
-    if (
-      record.providerId !== handle.sandbox.driverId ||
-      record.sandbox.sandboxName !== handle.sandbox.sandboxName ||
-      record.sandbox.sandboxId !== handle.sandbox.sandboxId ||
-      record.sandbox.driverId !== handle.sandbox.driverId ||
-      record.planFingerprint !== createManagedBootstrapPlanFingerprint(handle.plan) ||
-      record.profileFingerprint !== handle.plan.profile.fingerprint ||
-      record.imageReference !==
-        expectedImageReference(handle.plan.image.repository, handle.plan.image.manifestDigest)
-    ) {
-      throw new Error("Managed bootstrap finalization record does not match its durable identity.");
-    }
-    return record;
-  };
-  const persistFinalization = (
-    handle: ManagedBootstrapHeldWorkloadHandle,
-    phase: "committed" | "rolled-back",
-    commitReceipt: ManagedBootstrapCompletionReceipt | null,
-    cleanupReceipt: ManagedBootstrapFinalizationReceipt,
-  ): ManagedBootstrapFinalizationReceipt => {
-    const record = Object.freeze({
-      schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
-      phase,
+  const finalizationContext = (handle: ManagedBootstrapHeldWorkloadHandle) =>
+    Object.freeze({
       bootstrapIdentity: handle.bootstrapIdentity,
       providerId: handle.sandbox.driverId,
       agent: handle.plan.profile.agent,
@@ -1802,14 +1888,37 @@ export function createDockerManagedBootstrapAdapter(
         handle.plan.image.repository,
         handle.plan.image.manifestDigest,
       ),
-      commitReceipt,
-      cleanupReceipt,
-    } satisfies DockerManagedBootstrapFinalizationRecord);
+    });
+  const finalizationRecord = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+  ): DockerManagedBootstrapFinalizationRecord | null => {
+    const context = finalizationContext(handle);
+    const record = deps.journalStore.loadFinalization(handle.bootstrapIdentity, context);
+    if (!record) return null;
+    if (
+      record.bootstrapIdentity !== context.bootstrapIdentity ||
+      record.providerId !== context.providerId ||
+      record.agent !== context.agent ||
+      record.sandbox.sandboxName !== context.sandbox.sandboxName ||
+      record.sandbox.sandboxId !== context.sandbox.sandboxId ||
+      record.sandbox.driverId !== context.sandbox.driverId ||
+      record.planFingerprint !== context.planFingerprint ||
+      record.profileFingerprint !== context.profileFingerprint ||
+      record.imageReference !== context.imageReference
+    ) {
+      throw new Error("Managed bootstrap finalization record does not match its durable identity.");
+    }
+    return record;
+  };
+  const persistFinalizationRecord = (
+    record: DockerManagedBootstrapFinalizationRecord,
+    context: DockerManagedBootstrapFinalizationContext,
+  ): ManagedBootstrapFinalizationReceipt => {
     const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
     try {
-      deps.journalStore.recordFinalization(record);
+      deps.journalStore.recordFinalization(record, context);
     } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+      const recovered = deps.journalStore.loadFinalization(record.bootstrapIdentity, context);
       if (
         !recovered ||
         serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
@@ -1817,11 +1926,33 @@ export function createDockerManagedBootstrapAdapter(
         throw error;
       }
     }
-    const persisted = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+    const persisted = deps.journalStore.loadFinalization(record.bootstrapIdentity, context);
     if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
       throw new Error("Managed bootstrap finalization receipt was not durably re-readable.");
     }
     return persisted.cleanupReceipt;
+  };
+  const persistFinalization = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+    phase: "committed" | "rolled-back",
+    commitReceipt: ManagedBootstrapCompletionReceipt | null,
+    cleanupReceipt: ManagedBootstrapFinalizationReceipt,
+  ): ManagedBootstrapFinalizationReceipt => {
+    const context = finalizationContext(handle);
+    const record = Object.freeze({
+      schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
+      phase,
+      bootstrapIdentity: context.bootstrapIdentity,
+      providerId: context.providerId,
+      agent: context.agent,
+      sandbox: context.sandbox,
+      planFingerprint: context.planFingerprint,
+      profileFingerprint: context.profileFingerprint,
+      imageReference: context.imageReference,
+      commitReceipt,
+      cleanupReceipt,
+    } satisfies DockerManagedBootstrapFinalizationRecord);
+    return persistFinalizationRecord(record, context);
   };
   const completedRollback = (
     handle: ManagedBootstrapHeldWorkloadHandle,
@@ -1840,19 +1971,71 @@ export function createDockerManagedBootstrapAdapter(
     } satisfies ManagedBootstrapFinalizationReceipt);
     return persistFinalization(handle, "rolled-back", null, receipt);
   };
+  const requireExactOwnerCleanup = (journal: DockerBootstrapTransaction): void => {
+    const presence = probeExactDockerContainerAbsence(journal.originalRuntimeId, deps);
+    if (presence === "unknown") {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.originalRuntimeId,
+        detail: "exact owner-cleanup runtime presence is unknown",
+      });
+    }
+    if (presence === "absent") return;
+    const original = inspectExact(journal.originalRuntimeId, deps);
+    assertTransactionOriginal(journal, original);
+    if (
+      dockerContainerName(original) !== journal.originalName ||
+      normalizeDockerManagedBootstrapLaunchSpec(original).hash !== journal.originalSpecHash ||
+      (journal.phase === "owner-cleanup-required" && !isExplicitlyStopped(original)) ||
+      (journal.phase !== "owner-cleanup-required" &&
+        !isExplicitlyStopped(original) &&
+        !isStableRunning(original))
+    ) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.originalRuntimeId,
+        detail: "owner-cleanup runtime does not match its exact restored durable authority",
+      });
+    }
+    try {
+      retainOwnedWorkloadForOwnerCleanup(journal.sandbox, deps, journal.originalRuntimeId);
+    } catch (error) {
+      if (!(error instanceof ManagedBootstrapOwnerCleanupRequiredError)) throw error;
+      if (error.runtimeId !== journal.originalRuntimeId) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          runtimeId: journal.originalRuntimeId,
+          detail: "owner cleanup retained a runtime other than the durable original",
+        });
+      }
+      if (journal.phase !== "owner-cleanup-required") {
+        if (journal.phase !== "staged" && journal.phase !== "rollback-authorized") {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: journal.bootstrapIdentity,
+            runtimeId: journal.originalRuntimeId,
+            detail: `owner cleanup cannot be retained from durable phase ${journal.phase}`,
+          });
+        }
+        const current = deps.journalStore.load(journal.bootstrapIdentity);
+        if (!current || !sameDockerBootstrapJournal(current, journal)) {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: journal.bootstrapIdentity,
+            runtimeId: journal.originalRuntimeId,
+            detail: "durable authority changed before owner cleanup was retained",
+          });
+        }
+        transitionDockerBootstrapJournalDurably(journal, "owner-cleanup-required", deps);
+      }
+      throw error;
+    }
+  };
   const completeRollbackTransaction = (
     handle: ManagedBootstrapHeldWorkloadHandle,
     journal: DockerBootstrapTransaction,
   ): ManagedBootstrapFinalizationReceipt => {
-    let ownerCleanupFailure: { readonly error: unknown } | null = null;
-    try {
-      removeOwnedWorkload(handle.sandbox, deps, journal.originalRuntimeId);
-    } catch (error) {
-      ownerCleanupFailure = { error };
-    }
+    requireExactOwnerCleanup(journal);
     const finalization = completedRollback(handle, false);
     removeDockerBootstrapJournalDurably(journal, deps);
-    if (ownerCleanupFailure) throw ownerCleanupFailure.error;
     return finalization;
   };
   const completedCommit = (
@@ -1908,23 +2091,7 @@ export function createDockerManagedBootstrapAdapter(
       commitReceipt,
       cleanupReceipt,
     } satisfies DockerManagedBootstrapFinalizationRecord);
-    const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
-    try {
-      deps.journalStore.recordFinalization(record);
-    } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
-      if (
-        !recovered ||
-        serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
-      ) {
-        throw error;
-      }
-    }
-    const persisted = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
-    if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
-      throw new Error("Managed bootstrap recovered finalization was not durably re-readable.");
-    }
-    return persisted.cleanupReceipt;
+    return persistFinalizationRecord(record, journal);
   };
   const recoveredReceipt = (
     journal: DockerBootstrapTransaction,
@@ -1944,15 +2111,18 @@ export function createDockerManagedBootstrapAdapter(
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
   ): ManagedBootstrapRecoveryReceipt | null => {
-    const finalization = deps.journalStore.loadFinalization(journal.bootstrapIdentity);
+    const finalization = deps.journalStore.loadFinalization(journal.bootstrapIdentity, journal);
     if (!finalization) return null;
     const phaseMatches =
       (finalization.phase === "committed" &&
         journal.phase === "shared-state-committed" &&
         finalization.commitReceipt !== null &&
-        JSON.stringify(finalization.commitReceipt) === JSON.stringify(journal.commitReceipt)) ||
+        journal.commitReceipt !== null &&
+        sameManagedBootstrapCompletionReceipt(finalization.commitReceipt, journal.commitReceipt)) ||
       (finalization.phase === "rolled-back" &&
-        (journal.phase === "staged" || journal.phase === "rollback-authorized") &&
+        (journal.phase === "staged" ||
+          journal.phase === "rollback-authorized" ||
+          journal.phase === "owner-cleanup-required") &&
         finalization.commitReceipt === null);
     if (
       !phaseMatches ||
@@ -1975,6 +2145,7 @@ export function createDockerManagedBootstrapAdapter(
         detail: "terminal finalization does not match its retained durable journal",
       });
     }
+    if (finalization.phase === "rolled-back") requireExactOwnerCleanup(journal);
     removeDockerBootstrapJournalDurably(journal, deps);
     return recoveredReceipt(journal, sourcePhase, finalization.cleanupReceipt);
   };
@@ -1982,14 +2153,15 @@ export function createDockerManagedBootstrapAdapter(
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
   ): ManagedBootstrapRecoveryReceipt => {
+    requireExactOwnerCleanup(journal);
     const cleanupReceipt = Object.freeze({
       schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
       sandbox: journal.sandbox,
       bootstrapIdentity: journal.bootstrapIdentity,
       outcome: "rolled-back",
-      restoredRuntimeId: journal.originalRuntimeId,
-      restoredSpecHash: journal.originalSpecHash,
-      heldWorkloadRemoved: false,
+      restoredRuntimeId: null,
+      restoredSpecHash: null,
+      heldWorkloadRemoved: true,
       alreadyRolledBack: false,
       finalizedAt: deps.now().toISOString(),
     } satisfies ManagedBootstrapFinalizationReceipt);
@@ -2081,7 +2253,17 @@ export function createDockerManagedBootstrapAdapter(
       }
     }
     if (sharedStatus === "committed") {
-      clearDockerManagedStartupSharedStateCommitReceipt(sharedTransaction, deps);
+      try {
+        clearDockerManagedStartupSharedStateCommitReceipt(sharedTransaction, deps);
+      } catch (error) {
+        throw new ManagedBootstrapDurableCommitCleanupPendingError({
+          bootstrapIdentity: journal.bootstrapIdentity,
+          cleanupRuntimeId: journal.replacementRuntimeId,
+          detail: `the image-owned commit receipt could not be retired during restart recovery: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
     }
     if (probeExactDockerContainerAbsence(journal.originalRuntimeId, deps) !== "absent") {
       throw new ManagedBootstrapDurableCommitCleanupPendingError({
@@ -2114,6 +2296,9 @@ export function createDockerManagedBootstrapAdapter(
     journal: DockerBootstrapTransaction,
     sourcePhase: DockerBootstrapTransaction["phase"],
   ): ManagedBootstrapRecoveryReceipt => {
+    if (journal.phase === "owner-cleanup-required") {
+      return finishRecoveredRollback(journal, sourcePhase);
+    }
     const original = inspectTransactionRuntime(journal, journal.originalRuntimeId, deps);
     if (!original) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2244,7 +2429,7 @@ export function createDockerManagedBootstrapAdapter(
           detail: "Docker replacement authority exists without its observed snapshot",
         });
       }
-      removeOwnedWorkload(handle.sandbox, deps);
+      retainOwnedWorkloadForOwnerCleanup(handle.sandbox, deps);
       return completedRollback(handle, false);
     }
 
@@ -2325,7 +2510,7 @@ export function createDockerManagedBootstrapAdapter(
           });
         }
       }
-      removeOwnedWorkload(handle.sandbox, deps, snapshot.runtimeId);
+      retainOwnedWorkloadForOwnerCleanup(handle.sandbox, deps, snapshot.runtimeId);
       return completedRollback(handle, true);
     }
 
@@ -2351,6 +2536,9 @@ export function createDockerManagedBootstrapAdapter(
       replacement,
       durablePreparation,
     );
+    if (journal.phase === "owner-cleanup-required") {
+      return completeRollbackTransaction(handle, journal);
+    }
     const original = inspectTransactionRuntime(journal, journal.originalRuntimeId, deps);
     if (!original) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2413,7 +2601,9 @@ export function createDockerManagedBootstrapAdapter(
     const replacementAtTargetRecoverable =
       replacementNameNow === journal.originalName &&
       observedReplacement !== null &&
-      (isStableRunning(observedReplacement) || isExplicitlyStopped(observedReplacement));
+      (isStableRunning(observedReplacement) ||
+        isExplicitlyStopped(observedReplacement) ||
+        isExactRestartLoop(observedReplacement));
     const validCutoverState =
       (originalAtTargetRecoverable && replacementAtStagingRecoverable) ||
       (originalAtBackupRecoverable && replacementAtStagingRecoverable) ||
@@ -2684,7 +2874,7 @@ export function createDockerManagedBootstrapAdapter(
       if (
         finalized.phase !== "committed" ||
         !finalized.commitReceipt ||
-        JSON.stringify(finalized.commitReceipt) !== JSON.stringify(completion)
+        !sameManagedBootstrapCompletionReceipt(finalized.commitReceipt, completion)
       ) {
         throw new ManagedBootstrapCommitStateIndeterminateError({
           bootstrapIdentity: handle.bootstrapIdentity,
@@ -2764,7 +2954,7 @@ export function createDockerManagedBootstrapAdapter(
     );
     if (
       journal.commitReceipt === null ||
-      JSON.stringify(journal.commitReceipt) !== JSON.stringify(completion)
+      !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, completion)
     ) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -2825,7 +3015,7 @@ export function createDockerManagedBootstrapAdapter(
                   "durable authority changed after shared-state rollback and before restoration",
               });
             }
-            journal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
+            transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
             await rollbackBootstrapNow({
               handle,
               snapshot,
@@ -2858,17 +3048,39 @@ export function createDockerManagedBootstrapAdapter(
   return {
     async recoverUnfinishedTransactions() {
       const receipts: ManagedBootstrapRecoveryReceipt[] = [];
-      for (const journal of deps.journalStore.listUnfinished()) {
-        const sourcePhase = journal.phase;
-        const finalized = compactRecoveredFinalization(journal, sourcePhase);
-        receipts.push(
-          finalized ??
-            (journal.phase === "shared-state-committed"
-              ? finishRecoveredCommit(journal, sourcePhase)
-              : finishRecoveredRollbackPhase(journal, sourcePhase)),
-        );
+      const failures: ManagedBootstrapRecoveryFailure[] = [];
+      for (const bootstrapIdentity of deps.journalStore.listUnfinishedIdentities()) {
+        let journal: DockerBootstrapTransaction | null = null;
+        try {
+          journal = deps.journalStore.load(bootstrapIdentity);
+          if (!journal) {
+            throw new Error("durable journal disappeared after identity enumeration");
+          }
+          const sourcePhase = journal.phase;
+          const finalized = compactRecoveredFinalization(journal, sourcePhase);
+          receipts.push(
+            finalized ??
+              (journal.phase === "shared-state-committed"
+                ? finishRecoveredCommit(journal, sourcePhase)
+                : finishRecoveredRollbackPhase(journal, sourcePhase)),
+          );
+        } catch (error) {
+          try {
+            journal = deps.journalStore.load(bootstrapIdentity) ?? journal;
+          } catch {
+            // Preserve the first per-record failure when the durable re-read also fails.
+          }
+          failures.push(dockerManagedBootstrapRecoveryFailure(bootstrapIdentity, journal, error));
+        }
       }
-      return Object.freeze(receipts);
+      const byBootstrapIdentity = (
+        left: ManagedBootstrapRecoveryReceipt | ManagedBootstrapRecoveryFailure,
+        right: ManagedBootstrapRecoveryReceipt | ManagedBootstrapRecoveryFailure,
+      ) => left.bootstrapIdentity.localeCompare(right.bootstrapIdentity);
+      return Object.freeze({
+        receipts: Object.freeze(receipts.sort(byBootstrapIdentity)),
+        failures: Object.freeze(failures.sort(byBootstrapIdentity)),
+      } satisfies ManagedBootstrapRecoveryReport);
     },
 
     async createHeldWorkload(input) {
@@ -2911,7 +3123,7 @@ export function createDockerManagedBootstrapAdapter(
 
     async cleanupIncompleteCreate(input) {
       const { sandbox, runtimeId } = resolveIncompleteCreateSandbox(input, deps);
-      removeOwnedWorkload(sandbox, deps, runtimeId);
+      retainOwnedWorkloadForOwnerCleanup(sandbox, deps, runtimeId);
       return Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox,
@@ -2948,7 +3160,7 @@ export function createDockerManagedBootstrapAdapter(
       assertRootSupervisor(inspect);
       assertImage(inspect, input.expectedImage, deps);
       assertMetadata(inspect, input.sandbox, input.metadata);
-      assertBootstrapIdentityInObservedHold(inspect, input.bootstrapIdentity);
+      assertBootstrapIdentityEnvironment(inspect, input.bootstrapIdentity);
       return Object.freeze({
         sandbox: input.sandbox,
         runtimeId,
@@ -3017,11 +3229,20 @@ export function createDockerManagedBootstrapAdapter(
       ) {
         throw new Error("Managed bootstrap Docker replacement identities do not match.");
       }
+      if (
+        snapshot.image.repository !== handle.plan.image.repository ||
+        snapshot.image.manifestDigest !== handle.plan.image.manifestDigest
+      ) {
+        throw new Error(
+          "Managed bootstrap Docker replacement snapshot image does not match its plan.",
+        );
+      }
       const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
       const normalizedOriginal = normalizeDockerManagedBootstrapLaunchSpec(parsed.inspect);
       if (normalizedOriginal.hash !== snapshot.specHash) {
         throw new Error("Managed bootstrap Docker replacement snapshot is not exact.");
       }
+      assertNoRootProcessInjectionEnvironment(parsed.inspect.Config?.Env);
       if (parsed.inspect.HostConfig?.ReadonlyRootfs === true) {
         throw new Error(
           "Managed bootstrap cannot stage its root-owned request in a read-only root filesystem.",
@@ -3041,6 +3262,10 @@ export function createDockerManagedBootstrapAdapter(
         });
       }
       const trampolineCommand = replacementCommand(handle, snapshot);
+      const omitOciImageUser = shouldOmitOpenShellOciImageUser(
+        parsed.inspect,
+        handle.intendedWorkloadArgv,
+      );
       const cloneArgs = buildDockerGpuCloneRunArgs(parsed.inspect, plan.mode, {
         image: expectedImageReference(snapshot.image.repository, snapshot.image.manifestDigest),
         openshellSandboxCommand: handle.intendedWorkloadArgv,
@@ -3056,7 +3281,6 @@ export function createDockerManagedBootstrapAdapter(
         timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
       };
 
-      let requestFile = "";
       let replacementRuntimeId = "";
       let stagedAuthority: DockerBootstrapTransaction | null = null;
       try {
@@ -3097,13 +3321,20 @@ export function createDockerManagedBootstrapAdapter(
         }
         assertMetadata(createdInspect, handle.sandbox, snapshot.metadata);
         assertRootSupervisor(createdInspect);
+        const intendedSandboxCommand = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
+        if (!intendedSandboxCommand) {
+          throw new Error(
+            "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
+          );
+        }
         assertReplacementBoundary(createdInspect, handle, snapshot);
         const expectedActivatedSpecHash = assertReplacementMatchesIntent(
           snapshot.specCanonicalJson,
           createdInspect,
           originalName,
           plan,
-          openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv) as string,
+          intendedSandboxCommand,
+          omitOciImageUser,
         );
         const preparedSpec = normalizeDockerManagedBootstrapLaunchSpec(createdInspect);
         const expectedActivatedSpec = normalizeDockerManagedBootstrapLaunchSpec({
@@ -3140,11 +3371,12 @@ export function createDockerManagedBootstrapAdapter(
           commitReceipt: null,
         });
 
-        requestFile = writeProtectedEnvelope(handle.bootstrapIdentity, request);
-        const copied = deps.dockerRun(
-          ["cp", requestFile, replacementRuntimeId + ":" + MANAGED_BOOTSTRAP_REQUEST_FILE],
-          options,
-        );
+        const requestArchive = protectedEnvelopeArchive(handle.bootstrapIdentity, request);
+        const copied = deps.dockerRun(["cp", "-", replacementRuntimeId + ":/"], {
+          ...options,
+          input: requestArchive,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
         assertZero(
           copied,
           "Managed bootstrap could not stage its protected root-owned 0400 envelope",
@@ -3210,8 +3442,6 @@ export function createDockerManagedBootstrapAdapter(
         const failure = error instanceof Error ? error : new Error(String(error));
         if (rollbackError) attachManagedBootstrapRollbackError(failure, rollbackError);
         throw failure;
-      } finally {
-        if (requestFile) cleanupTempDir(requestFile, REQUEST_TEMP_PREFIX);
       }
     },
     async activateBootstrapReplacement({ handle, snapshot, prepared, durablePreparation }) {
@@ -3231,11 +3461,13 @@ export function createDockerManagedBootstrapAdapter(
           null,
           durablePreparation,
         );
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: existingJournal.bootstrapIdentity,
-          runtimeId: existingJournal.replacementRuntimeId,
-          detail: `activation requires rollback or commit from durable phase ${existingJournal.phase}`,
-        });
+        if (existingJournal.phase !== "staged") {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: existingJournal.bootstrapIdentity,
+            runtimeId: existingJournal.replacementRuntimeId,
+            detail: `activation requires rollback or commit from durable phase ${existingJournal.phase}`,
+          });
+        }
       }
       const options = {
         ignoreError: true,
@@ -3260,7 +3492,8 @@ export function createDockerManagedBootstrapAdapter(
           );
         }
 
-        let journal = createDockerBootstrapJournalDurably(durableAuthority, deps);
+        let journal =
+          existingJournal ?? createDockerBootstrapJournalDurably(durableAuthority, deps);
         const originalAtFence = inspectExact(snapshot.runtimeId, deps);
         const replacementAtFence = inspectExact(prepared.preparedRuntimeId, deps);
         assertTransactionOriginal(journal, originalAtFence);
@@ -3401,7 +3634,14 @@ export function createDockerManagedBootstrapAdapter(
         throw new Error("Managed bootstrap Docker replacement image content changed.");
       }
       assertReplacementBoundary(before, handle, snapshot);
-      if (!waitForOpenShellSupervisorReconnect(handle.sandbox.sandboxName, timeoutSecs, deps)) {
+      const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(timeoutSecs);
+      if (
+        !waitForOpenShellSupervisorReconnect(
+          handle.sandbox.sandboxName,
+          supervisorReconnectTimeoutSecs,
+          deps,
+        )
+      ) {
         throw new Error("Managed bootstrap Docker supervisor did not reconnect.");
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);

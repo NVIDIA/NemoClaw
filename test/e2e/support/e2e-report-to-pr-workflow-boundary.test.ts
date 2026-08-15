@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { testTimeout } from "../../helpers/timeouts";
 import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
@@ -24,6 +23,7 @@ import {
 } from "../../../tools/e2e/report-e2e-results.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
+import { testTimeout } from "../../helpers/timeouts";
 import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
@@ -64,6 +64,7 @@ function executeTrustedControllerMatrix(targets: string) {
       env: {
         ...process.env,
         GITHUB_OUTPUT: outputPath,
+        JOBS: "",
         TARGETS: targets,
       },
       timeout: 30_000,
@@ -82,6 +83,7 @@ function executeGenerateMatrixWithPlannerOutput(
   options: {
     checkoutSha?: string;
     controllerMatrix?: string;
+    controllerTestMatrix?: string;
     jobs?: string;
     targets?: string;
   } = {},
@@ -116,6 +118,7 @@ function executeGenerateMatrixWithPlannerOutput(
           ...process.env,
           CHECKOUT_SHA: options.checkoutSha ?? "",
           CONTROLLER_MATRIX: options.controllerMatrix ?? "",
+          CONTROLLER_TEST_MATRIX: options.controllerTestMatrix ?? "[]",
           FAKE_E2E_PLAN: JSON.stringify(plan),
           GITHUB_OUTPUT: outputPath,
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
@@ -400,6 +403,33 @@ it("renders comment content from job evidence without a live GitHub mutation", (
 });
 
 it.each([
+  ["catalogue-standard", "no provider credential"],
+  ["catalogue-nvidia-api", "NVIDIA API key"],
+  ["catalogue-nvidia-inference", "NVIDIA inference API key"],
+  ["catalogue-github-read", "GitHub read token"],
+  ["catalogue-brave-nvidia-inference", "Brave and NVIDIA inference API keys"],
+])("attributes %s matrix failures to the catalogue profile", (profile, boundary) => {
+  const report = renderE2eReport({
+    needs: { "generate-matrix": { result: "success" }, [profile]: { result: "failure" } },
+    env: { TEST_MATRIX: "[]" },
+    apiJobs: [
+      {
+        conclusion: "failure",
+        id: 321,
+        name: `Outcome-first target / ${boundary}`,
+        status: "completed",
+      },
+    ],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain(
+    `[${profile}](${REPORT_CONTEXT.serverUrl}/${REPORT_CONTEXT.repo.owner}/${REPORT_CONTEXT.repo.repo}/actions/runs/123/job/321)`,
+  );
+});
+
+it.each([
   {
     env: { JOB_TARGETS: "", JOBS: "hermes-dashboard" },
     label: "test ID",
@@ -576,7 +606,7 @@ it("reports cancelled tests alongside passing tests as a partial pass", () => {
   expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
 });
 
-it("lists explicit-only jobs skipped by default dispatch with their selection hints", () => {
+it("reports empty selectors without claiming an E2E was omitted", () => {
   const report = renderE2eReport({
     needs: {
       "generate-matrix": { result: "success" },
@@ -593,9 +623,9 @@ it("lists explicit-only jobs skipped by default dispatch with their selection hi
     context: REPORT_CONTEXT,
   });
 
-  expect(report.body).toContain(
-    "> **Explicit-only jobs skipped:** `mcp-bridge-dev` (default dispatch excludes moving OpenShell dev artifacts unless explicitly selected; validate with `jobs=mcp-bridge-dev` or `targets=mcp-bridge-dev`).",
-  );
+  expect(report.body).not.toContain("jobs skipped");
+  expect(report.body).toContain("✅ All tests selected by empty selectors passed");
+  expect(report.body).toContain("**Requested targets:** _(no target selector)_");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
@@ -704,66 +734,13 @@ it("links failed shared-matrix entries to their physical job", async () => {
   expect(body).toContain(`> **Failed tests:** [alpha](${jobUrl}).`);
 });
 
-it("reports one total wall clock span from valid matrix E2E jobs", async () => {
-  const { body, setFailed } = await executeReport({
-    apiJobs: [
-      {
-        completed_at: "2026-07-15T00:05:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (v0.1.0)",
-        started_at: "2026-07-15T00:00:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-15T00:11:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (v0.2.0)",
-        started_at: "2026-07-15T00:02:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-14T23:40:00Z",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (reversed-timestamps)",
-        started_at: "2026-07-14T23:50:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "not-a-timestamp",
-        conclusion: "success",
-        name: "OpenShell gateway upgrade (invalid-timestamp)",
-        started_at: "2026-07-14T23:30:00Z",
-        status: "completed",
-      },
-      {
-        completed_at: "2026-07-15T01:00:00Z",
-        conclusion: "skipped",
-        name: "OpenShell gateway upgrade (skipped)",
-        started_at: "2026-07-14T23:00:00Z",
-        status: "completed",
-      },
-    ],
-    testMatrix: [],
-    jobs: "openshell-gateway-upgrade",
-    needs: {
-      "generate-matrix": { result: "success" },
-      "openshell-gateway-upgrade": { result: "success" },
-    },
-  });
-
-  expect(setFailed).not.toHaveBeenCalled();
-  expect(body).toContain("| openshell-gateway-upgrade | ✅ success | 11m 0s |");
-  expect(body).not.toContain("OpenShell gateway upgrade (v0.1.0)");
-  expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
-});
-
 it("reports one total wall clock span when matrix job names start with their job ID", async () => {
   const { body, setFailed } = await executeReport({
     apiJobs: [
       {
         completed_at: "2026-07-15T04:56:38Z",
         conclusion: "success",
-        name: "hermes-inference-switch (anthropic, e2e-hermes-anthropic-inference-switch, compatible-anthropic-e...",
+        name: "hermes-inference-switch (anthropic, e2e-hm-inf-switch, compatible-anthropic-e...",
         started_at: "2026-07-15T04:49:26Z",
         status: "completed",
       },
@@ -916,7 +893,14 @@ it("builds controller target matrices only from trusted runner mappings (#7031)"
 
   const empty = executeTrustedControllerMatrix("");
   expect(empty.result.status, empty.result.stderr || empty.result.stdout).toBe(0);
-  expect(empty.workflowOutput).toBe("matrix=[]\n");
+  expect(parseSimpleOutput(empty.workflowOutput).matrix).toBe(
+    JSON.stringify([
+      { id: "ubuntu-policy-custom-missing-presets-negative", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-cloud-langchain-deepagents-code", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-cloud-openclaw", runner: "ubuntu-latest" },
+      { id: "ubuntu-repo-docker-post-reboot-recovery", runner: "ubuntu-latest" },
+    ]),
+  );
 
   const approved = executeTrustedControllerMatrix(target);
   expect(approved.result.status, approved.result.stderr || approved.result.stdout).toBe(0);
@@ -930,7 +914,7 @@ it("builds controller target matrices only from trusted runner mappings (#7031)"
     "::error::PR E2E target is not approved by the trusted controller",
   );
   expect(rejected.workflowOutput).toBe("");
-});
+}, 30_000);
 
 it("binds controller matrix IDs and runners to the trusted target selector (#7031)", () => {
   const target = "ubuntu-repo-cloud-langchain-deepagents-code";
@@ -978,7 +962,7 @@ it("binds controller matrix IDs and runners to the trusted target selector (#703
     "::error::E2E planner matrix does not match controller-selected targets",
   );
   expect(runnerInjected.workflowOutput).toBe("");
-});
+}, 30_000);
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));

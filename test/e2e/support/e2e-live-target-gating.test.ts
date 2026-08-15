@@ -11,11 +11,7 @@ import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
-const SPECIAL_GATE_ENV = [
-  "NEMOCLAW_E2E_CONNECT_RLIMITS",
-  "NEMOCLAW_ISSUE_4434_LIVE",
-  "NEMOCLAW_MCP_BRIDGE_AGENT",
-] as const;
+const SPECIAL_GATE_ENV = ["NEMOCLAW_ISSUE_4434_LIVE", "NEMOCLAW_MCP_BRIDGE_AGENT"] as const;
 
 function liveTestFiles(root = LIVE_E2E_ROOT): string[] {
   return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
@@ -123,7 +119,6 @@ describe("live E2E target gating", () => {
     testTimeoutOptions(15_000),
     () => {
       const gatedFiles = [
-        ["sandbox-rlimits-connect.test.ts", "NEMOCLAW_E2E_CONNECT_RLIMITS"],
         ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
       ] as const;
       const files = gatedFiles.map(([file]) => file);

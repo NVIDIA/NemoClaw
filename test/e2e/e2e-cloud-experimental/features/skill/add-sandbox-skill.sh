@@ -89,12 +89,29 @@ print(tpl, end="")
 fi
 
 ssh_config="$(mktemp)"
+known_hosts="$(mktemp)"
 remote_script="$(mktemp)"
-trap 'rm -f "${cleanup_payload:-}" "$ssh_config" "$remote_script"' EXIT
+trap 'rm -f "${cleanup_payload:-}" "$ssh_config" "$known_hosts" "$remote_script"' EXIT
 
 command -v openshell >/dev/null 2>&1 || die "openshell not on PATH"
 openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null \
   || die "openshell sandbox ssh-config failed for '${SANDBOX_NAME}'"
+
+ssh_host="openshell-${SANDBOX_NAME}.default"
+# OpenShell authenticates this sandbox-scoped proxy connection, while its
+# supervisor generates an ephemeral SSH host key. Pin that key inside this
+# fixture before either operation that transfers or reads the skill payload.
+set +e
+host_key_out=$(ssh -F "$ssh_config" \
+  -o StrictHostKeyChecking=accept-new \
+  -o UserKnownHostsFile="$known_hosts" \
+  -o ConnectTimeout=10 \
+  -o LogLevel=ERROR \
+  "$ssh_host" true 2>&1)
+host_key_rc=$?
+set -e
+[ "$host_key_rc" -eq 0 ] \
+  || die "ssh host-key pinning failed (exit ${host_key_rc}): ${host_key_out:0:300}"
 
 remote_skill_dir="${SKILL_ROOT%/}/${SKILL_ID}"
 remote_skill_file="${remote_skill_dir}/SKILL.md"
@@ -103,11 +120,11 @@ info "Copying skill payload to sandbox '${SANDBOX_NAME}'..."
 set +e
 upload_out=$(
   ssh -F "$ssh_config" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$known_hosts" \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
+    "$ssh_host" \
     "cat > '/tmp/${SKILL_ID}.md'" <"$payload_source" 2>&1
 )
 upload_rc=$?
@@ -159,11 +176,11 @@ command -v gtimeout >/dev/null 2>&1 && TIMEOUT_CMD="gtimeout 60"
 set +e
 query_out=$(
   $TIMEOUT_CMD ssh -F "$ssh_config" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
+    -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$known_hosts" \
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
+    "$ssh_host" \
     "sh -s -- '$remote_skill_dir' '$remote_skill_file' '/tmp/${SKILL_ID}.md'" <"$remote_script" 2>&1
 )
 query_rc=$?

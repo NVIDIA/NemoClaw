@@ -54,15 +54,39 @@ describe("credential rotation documentation", () => {
     }
   });
 
-  it("documents messaging rebuilds and web search recreation", () => {
+  it("documents onboarding-managed messaging and web search recreation", () => {
     const guide = readGuide();
     const bash = fencedBlocks(guide, "bash");
 
-    for (const channel of ["slack", "telegram", "discord"]) {
-      const example = bash.find((block) => block.includes(`channels add ${channel}`));
-      expect(example, channel).toBeDefined();
-      expect(example, channel).toContain("rebuild --yes");
+    for (const credential of ["SLACK_BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN"]) {
+      const example = bash.find(
+        (block) => block.includes(credential) && block.includes("onboard --name <sandbox>"),
+      );
+      expect(example, credential).toBeDefined();
+      expect(example, credential).toContain("--yes-i-accept-third-party-software");
+      expect(example, credential).not.toContain("channels add");
+      expect(example, credential).not.toContain("rebuild --yes");
     }
+
+    expect(guide).toContain("WECHAT_BOT_TOKEN");
+    expect(guide).toContain("MSTEAMS_APP_PASSWORD");
+    expect(guide).toContain("Telegram, Discord, Slack, WeChat, or Microsoft Teams");
+    expect(guide).toContain("backs up supported workspace and manifest-declared state");
+    expect(guide).toContain("Files outside those state paths are not preserved.");
+    expect(guide).toContain("If the recorded channel state changes during rotation");
+    expect(guide).toContain("A channel stopped with `channels stop` remains inactive");
+    expect(guide).toContain("The sandbox registry stores the credential hash");
+    expect(guide).toContain("OpenShell retains the registered credential");
+    expect(guide).toContain(
+      "Discord and Microsoft Teams require non-empty replacement input but cannot prove upstream credential validity before recreation.",
+    );
+    expect(guide).toContain("verify a live messaging request after onboarding finishes");
+    expect(guide).not.toContain("validates each changed value");
+    expect(guide).not.toContain("restores the sandbox");
+    expect(guide).toContain(
+      "Plan for recreation downtime when automating messaging or web search rotation.",
+    );
+    expect(guide).not.toContain("rebuild downtime");
 
     const searchExamples = bash.filter((block) => block.includes("NEMOCLAW_WEB_SEARCH_PROVIDER"));
     expect(searchExamples.length).toBeGreaterThan(0);

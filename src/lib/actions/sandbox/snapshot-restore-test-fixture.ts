@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import type { SandboxWorkloadReceipt } from "../../state/registry/types";
+import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
+import type {
+  SandboxEntry,
+  SandboxHostLocalInferenceProvenance,
+  SandboxWorkloadReceipt,
+} from "../../state/registry/types";
+import { dcodeProbeOutput } from "./dcode-probe-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -41,23 +47,27 @@ export type SandboxRecord = {
   }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
+  gatewayPort?: number | null;
   imageTag?: string | null;
   workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
   provider?: string | null;
   model?: string | null;
+  endpointUrl?: string | null;
+  endpointSource?: SandboxEntry["endpointSource"];
+  credentialEnv?: string | null;
+  preferredInferenceApi?: string | null;
+  lifecycleGeneration?: string;
+  hostLocalInferenceReceipt?: string | null;
+  hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
 };
-export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
-
-export function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
-  return `${SANDBOX_EXEC_STARTED_MARKER}\nNEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
-}
+export { type DcodeProbeState, dcodeProbeOutput } from "./dcode-probe-test-fixture";
 
 export function captureOpenshellStreams(
   args: string[],
@@ -75,10 +85,19 @@ export function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
-  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
-    status: 0,
-    output: "",
-  };
+  const command = `${args[0] ?? ""} ${args[1] ?? ""}`;
+  const sandboxName = String(args.at(-1) ?? "sandbox");
+  const result =
+    responses[command] ??
+    (command === "sandbox get"
+      ? {
+          status: 0,
+          output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
+        }
+      : {
+          status: 0,
+          output: "",
+        });
   return captureOpenshellStreams(args, result);
 }
 
@@ -156,14 +175,7 @@ export const removePresetMock = vi.fn((_sandbox: string, _preset: string) => tru
 export const getPresetContentGatewayStateMock = vi.fn<
   (_sandbox: string, _content: string, _policyKey?: string) => "match" | "absent" | "drift" | null
 >(() => "absent");
-export const resolveAgentBaselinePolicyMock = vi.fn((agent: string) => ({
-  agent,
-  policyPath:
-    agent === "openclaw"
-      ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
-      : `/repo/agents/${agent}/policy-additions.yaml`,
-  content: "version: 1\nnetwork_policies: {}\n",
-}));
+export const resolveAgentBaselinePolicyMock = vi.fn(resolveTestAgentBaselinePolicy);
 export const builtinObservabilityPolicy =
   "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: host.openshell.internal\n";
 export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string) =>
@@ -185,6 +197,7 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
   }),
 );
 export const registerSandboxMock = vi.fn();
+export const reserveSandboxInferenceRouteMock = vi.fn(() => true);
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
 export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
@@ -282,6 +295,8 @@ vi.mock("../../shields/timer-bound-lock", () => ({
 }));
 
 vi.mock("../../shields/timer-control", () => ({
+  isProcessAlive: vi.fn(() => true),
+  readProcessStartIdentity: vi.fn(() => "snapshot-test-process-start"),
   readTimerMarker: lifecycleMock.readTimerMarkerMock,
 }));
 
@@ -307,6 +322,7 @@ vi.mock("../../state/registry", () => ({
     defaultSandbox: "alpha",
   }),
   registerSandbox: registerSandboxMock,
+  reserveSandboxInferenceRoute: reserveSandboxInferenceRouteMock,
   removeSandbox: vi.fn(),
   updateSandbox: updateSandboxMock,
 }));
@@ -375,19 +391,13 @@ export function resetSnapshotRestoreMocks(): void {
     name,
     policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
   }));
-  resolveAgentBaselinePolicyMock.mockImplementation((agent: string) => ({
-    agent,
-    policyPath:
-      agent === "openclaw"
-        ? "/repo/nemoclaw-blueprint/policies/openclaw-sandbox.yaml"
-        : `/repo/agents/${agent}/policy-additions.yaml`,
-    content: "version: 1\nnetwork_policies: {}\n",
-  }));
+  resolveAgentBaselinePolicyMock.mockImplementation(resolveTestAgentBaselinePolicy);
   prepareInitialSandboxCreatePolicyMock.mockImplementation((policyPath: string) => ({
     policyPath,
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
+  reserveSandboxInferenceRouteMock.mockReset().mockReturnValue(true);
   removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({

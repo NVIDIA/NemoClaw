@@ -6,11 +6,18 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "../../actions/sandbox/gateway-failure-classifier";
+import { parseDockerDaemonObservation } from "../../domain/docker-host";
 import { cliName } from "../branding";
 import {
   findLabeledSandboxContainers,
   recoverDockerDriverSandbox,
 } from "../docker-driver-sandbox-recovery";
+import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
+import {
+  hasPortableDemoSandboxLifecycleReceipt,
+  recoverPortableDemoSandboxLifecycle,
+  stopPortableDemoSandboxLifecycle,
+} from "../experimental/portable-demo-lifecycle";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -32,6 +39,8 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import { createDockerLlamaCppHostLocalOperation } from "./docker-llama-cpp-operation";
+import { createDockerStateMutationSurface } from "./docker-state-mutation";
 import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
@@ -49,12 +58,15 @@ export interface DockerRuntimeProviderDependencies {
     timeout?: number,
   ) => RuntimeProviderCommandCapture;
   readonly findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
+  readonly hasPortableLifecycleReceipt: typeof hasPortableDemoSandboxLifecycleReceipt;
   readonly isRuntimeDown: typeof isDockerRuntimeDown;
   readonly printRuntimeDownGuidance: typeof printDockerRuntimeDownGuidance;
   readonly recoverSandbox: typeof recoverDockerDriverSandbox;
+  readonly recoverPortableSandbox: typeof recoverPortableDemoSandboxLifecycle;
   readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
   readonly stopContainer: DockerStop;
+  readonly stopPortableSandbox: typeof stopPortableDemoSandboxLifecycle;
   readonly unpauseContainer: DockerUnpause;
 }
 
@@ -82,15 +94,21 @@ function resolveDependencies(
       ((command, args, timeout) => captureHostCommand(command, args, timeout)),
     findLabeledSandboxContainers:
       overrides.findLabeledSandboxContainers ?? findLabeledSandboxContainers,
+    hasPortableLifecycleReceipt:
+      overrides.hasPortableLifecycleReceipt ?? hasPortableDemoSandboxLifecycleReceipt,
     isRuntimeDown: overrides.isRuntimeDown ?? isDockerRuntimeDown,
     printRuntimeDownGuidance: overrides.printRuntimeDownGuidance ?? printDockerRuntimeDownGuidance,
     recoverSandbox: overrides.recoverSandbox ?? recoverDockerDriverSandbox,
+    recoverPortableSandbox:
+      overrides.recoverPortableSandbox ?? recoverPortableDemoSandboxLifecycle,
     queryRuntimeSnapshot:
       overrides.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
     removeImage:
       overrides.removeImage ??
       ((reference, options) => loadDockerRemoveImage()(reference, options)),
     stopContainer: overrides.stopContainer ?? ((name, options) => loadDockerStop()(name, options)),
+    stopPortableSandbox:
+      overrides.stopPortableSandbox ?? stopPortableDemoSandboxLifecycle,
     unpauseContainer:
       overrides.unpauseContainer ?? ((name, options) => loadDockerUnpause()(name, options)),
   };
@@ -101,21 +119,17 @@ function oneLine(value = ""): string {
 }
 
 function inspectDockerHost(deps: DockerRuntimeProviderDependencies): RuntimeProviderDoctorCheck {
-  const result = deps.captureHostCommand(
-    "docker",
-    ["info", "--format", "{{.ServerVersion}}"],
-    8000,
-  );
+  const result = deps.captureHostCommand("docker", ["info", "--format", "{{json .}}"], 8000);
+  const observation = parseDockerDaemonObservation(result.stdout);
+  const reachable = result.status === 0 && observation.reachable;
   return {
     group: "Host",
     label: "Docker daemon",
-    status: result.status === 0 ? "ok" : "fail",
-    detail:
-      result.status === 0
-        ? `server ${result.stdout.trim() || "unknown"}`
-        : oneLine(result.stderr || result.error?.message || "docker info failed"),
-    hint:
-      result.status === 0 ? undefined : "start Docker and verify your user can access the daemon",
+    status: reachable ? "ok" : "fail",
+    detail: reachable
+      ? `server ${observation.serverVersion ?? "unknown"}`
+      : oneLine(result.stderr || result.error?.message || "docker info failed"),
+    hint: reachable ? undefined : "start Docker and verify your user can access the daemon",
   };
 }
 
@@ -124,6 +138,14 @@ function dockerLifecyclePreflight(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult | null {
+  try {
+    if (deps.hasPortableLifecycleReceipt(input.sandboxName, input.environment)) return null;
+  } catch (error) {
+    return {
+      exitCode: 1,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
   if (!deps.isRuntimeDown(input.sandboxName)) return null;
   deps.printRuntimeDownGuidance(input.sandboxName, { retryCommand: action });
   return { exitCode: 1 };
@@ -141,6 +163,22 @@ function startDockerSandbox(
   input: RuntimeProviderLifecycleInput,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleResult {
+  try {
+    const portable = deps.recoverPortableSandbox(
+      input.sandboxName,
+      {
+        agent: input.sandbox.agent,
+        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
+        lifecycleGeneration: input.sandbox.lifecycleGeneration,
+        openshellDriver: input.sandbox.openshellDriver,
+        provider: input.sandbox.provider,
+      },
+      { env: input.environment, log: input.log },
+    );
+    if (portable.kind !== "not-installed") return { exitCode: 0 };
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
+  }
   const containers = deps.findLabeledSandboxContainers(input.sandboxName);
   const paused = containers.find((container) => isPausedStatus(container.status));
   if (paused) {
@@ -158,7 +196,13 @@ function startDockerSandbox(
     return { exitCode: 0 };
   }
 
-  const recovery = deps.recoverSandbox(input.sandboxName);
+  // Docker health is an image-level signal, not the lifecycle authority for
+  // `start`. Once the container is running, verifyStarted performs the
+  // provider-owned OpenShell, managed gateway, and host-forward recovery.
+  // Waiting for Docker health here can prevent that repair from running.
+  const recovery = deps.recoverSandbox(input.sandboxName, {
+    readiness: "runtime-running",
+  });
   if (!recovery.recovered) {
     return {
       exitCode: 1,
@@ -180,6 +224,26 @@ function stopDockerSandbox(
   hooks: RuntimeProviderLifecycleStopHooks,
   deps: DockerRuntimeProviderDependencies,
 ): RuntimeProviderLifecycleStopOutcome {
+  try {
+    const portable = deps.stopPortableSandbox(
+      input.sandboxName,
+      {
+        agent: input.sandbox.agent,
+        gatewayName: input.sandbox.gatewayName ?? "nemoclaw",
+        lifecycleGeneration: input.sandbox.lifecycleGeneration,
+        openshellDriver: input.sandbox.openshellDriver,
+        provider: input.sandbox.provider,
+      },
+      hooks.beforeStop,
+      { env: input.environment, log: input.log },
+    );
+    if (portable.kind === "already-stopped") {
+      return { exitCode: 0, state: "already-stopped" };
+    }
+    if (portable.kind === "stopped") return { exitCode: 0, state: "stopped" };
+  } catch (error) {
+    return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
+  }
   const containers = deps.findLabeledSandboxContainers(input.sandboxName);
   if (containers.length === 0) {
     return {
@@ -278,6 +342,7 @@ function acceptsReceipt(
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
+  if (receipt.kind === "native-artifact") return false;
   if (receipt.platform === undefined) return false;
   return (
     profile.support !== null &&
@@ -311,6 +376,7 @@ export function createDockerRuntimeProviderBundle(
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
+      readOnlyHostMounts: { supported: true, hostPlatforms: ["linux"] },
     },
     preflightDoctor: {
       providerId,
@@ -330,10 +396,12 @@ export function createDockerRuntimeProviderBundle(
       profile: COMPLETE_MANAGED_IMAGE_V1_PROFILE,
       acceptsReceipt: (receipt) => acceptsReceipt(COMPLETE_MANAGED_IMAGE_V1_PROFILE, receipt),
     },
-    hostLocalInference: unsupported(
+    hostLocalInference: {
       providerId,
-      "The legacy Docker inference path has not migrated to the provider-owned runtime surface.",
-    ),
+      supported: true,
+      services: ["llama-cpp"],
+      createOperation: ({ env }) => createDockerLlamaCppHostLocalOperation(env),
+    },
     lifecycle: {
       providerId,
       supported: true,
@@ -357,7 +425,8 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    bootstrap: unsupported(providerId, futureReason),
+    stateMutation: createDockerStateMutationSurface(),
+    bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
       queryRuntimeSnapshot: deps.queryRuntimeSnapshot,
@@ -376,6 +445,7 @@ export function createDockerRuntimeProviderBundle(
       identities: [
         { operation: "host-doctor", engineId: "docker", displayName: "Docker" },
         { operation: "gateway-inspection", engineId: "docker", displayName: "Docker" },
+        { operation: "host-local-inference", engineId: "docker", displayName: "Docker" },
         { operation: "sandbox-lifecycle", engineId: "docker", displayName: "Docker" },
         { operation: "workload-cleanup", engineId: "docker", displayName: "Docker" },
       ],
@@ -405,10 +475,15 @@ export function createKubernetesRuntimeProviderBundle(
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: true,
+      hostLocalInference: false,
       directLifecycle: false,
       legacyGatewayContainerInspection: true,
       workloadImageCleanup: true,
+      readOnlyHostMounts: {
+        supported: false,
+        reason:
+          "Kubernetes hostPath semantics have not passed NemoClaw security and lifecycle qualification.",
+      },
     },
     preflightDoctor: {
       providerId,
@@ -430,7 +505,7 @@ export function createKubernetesRuntimeProviderBundle(
     },
     hostLocalInference: unsupported(
       providerId,
-      "The legacy Kubernetes inference path has not migrated to the provider-owned runtime surface.",
+      "Kubernetes does not provide the managed llama.cpp host-local-inference lifecycle.",
     ),
     lifecycle: unsupported(
       providerId,
@@ -448,6 +523,7 @@ export function createKubernetesRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
+    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),

@@ -22,6 +22,59 @@ function runPython(script: string): string {
 }
 
 describe("Hermes NemoClaw plugin handlers", () => {
+  it("uses only allocated ASCII API ports from the supervisor or marker (#8543)", () => {
+    const output = runPython(`
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def missing_marker(*_args, **_kwargs):
+    raise OSError("missing marker")
+
+module.open = missing_marker
+environment_ports = {}
+for value in ("8645", "²", "9000"):
+    os.environ["NEMOCLAW_HERMES_API_PORT"] = value
+    environment_ports[value] = module._hermes_api_port()
+
+marker_ports = {}
+for value in ("8646", "9000", "not-a-port"):
+    module.open = lambda *_args, **_kwargs: io.StringIO(value + "\\n")
+    os.environ["NEMOCLAW_HERMES_API_PORT"] = ""
+    marker_ports[value] = module._hermes_api_port()
+
+print(json.dumps({
+    "environment": environment_ports,
+    "marker": marker_ports,
+}, sort_keys=True))
+`);
+
+    expect(JSON.parse(output)).toEqual({
+      environment: {
+        "8645": 8645,
+        "9000": 8642,
+        "²": 8642,
+      },
+      marker: {
+        "8646": 8646,
+        "9000": 8642,
+        "not-a-port": 8642,
+      },
+    });
+  });
+
   it("accepts Hermes dispatch kwargs for status, info, and reload handlers", () => {
     const output = runPython(`
 import importlib.util

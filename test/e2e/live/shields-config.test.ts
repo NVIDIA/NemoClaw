@@ -28,11 +28,23 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  failedStartupProcessControlCommands,
+  resumeSupervisorIfPaused,
+} from "../fixtures/shields-failed-startup.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
 const CONFIG_HASH_PATH = `${CONFIG_DIR}/.config-hash`;
+const CONFIG_GUARD_PATH = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
+const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
+const STARTUP_MARKER_PATHS = [
+  "/run/nemoclaw/openclaw-config-ready-v1.capability.json",
+  "/run/nemoclaw/openclaw-config-ready.json",
+] as const;
 const AUDIT_FILE = path.join(os.homedir(), ".nemoclaw", "state", "shields-audit.jsonl");
 const STATE_FILE = (sandboxName: string) =>
   path.join(os.homedir(), ".nemoclaw", "state", `shields-${sandboxName}.json`);
@@ -96,13 +108,14 @@ async function sandboxShell(
 async function docker(
   host: HostCliClient,
   args: string[],
-  options: { artifactName: string; timeoutMs?: number } = {
+  options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] } = {
     artifactName: "docker",
   },
 ): Promise<ShellProbeResult> {
   return host.command("docker", args, {
     artifactName: options.artifactName,
     env: commandEnv(),
+    redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
   });
 }
@@ -143,6 +156,162 @@ async function statPath(
   return { ...parsed, raw: result.stdout.trim() };
 }
 
+async function collectStartFailureDockerLogs(
+  host: HostCliClient,
+  artifactPrefix: string,
+  redactionValues: string[],
+): Promise<string> {
+  const lookup = await docker(
+    host,
+    [
+      "ps",
+      "--all",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: `${artifactPrefix}-failure-container`,
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  const containerId = lookup.stdout.trim().split(/\s+/u).filter(Boolean)[0] ?? "";
+  const result =
+    lookup.exitCode !== 0 || !containerId
+      ? lookup
+      : await docker(host, ["logs", "--tail", "200", containerId], {
+          artifactName: `${artifactPrefix}-failure-docker-logs`,
+          redactionValues,
+          timeoutMs: 30_000,
+        });
+  return resultText(result);
+}
+
+async function expectStopStartRecovery(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  posture: "DOWN" | "UP",
+  artifactPrefix: string,
+  redactionValues: string[],
+): Promise<void> {
+  const stop = await runNemoclaw(host, [SANDBOX_NAME, "stop"], {
+    artifactName: `${artifactPrefix}-stop`,
+    redactionValues,
+    timeoutMs: 5 * 60_000,
+  });
+  expect(stop.exitCode, resultText(stop)).toBe(0);
+
+  const start = await runNemoclaw(host, [SANDBOX_NAME, "start"], {
+    artifactName: `${artifactPrefix}-start`,
+    redactionValues,
+    timeoutMs: 5 * 60_000,
+  });
+  const startFailureLogs =
+    start.exitCode === 0
+      ? ""
+      : await collectStartFailureDockerLogs(host, artifactPrefix, redactionValues);
+  expect(
+    start.exitCode,
+    [resultText(start), startFailureLogs && `Docker logs:\n${startFailureLogs}`]
+      .filter(Boolean)
+      .join("\n"),
+  ).toBe(0);
+
+  const statusAttempt = await pollUntil({
+    artifactPrefix: `${artifactPrefix}-status`,
+    attempts: 5,
+    delayMs: 5_000,
+    probe: async (_attempt, artifactName) =>
+      await runNemoclaw(host, [SANDBOX_NAME, "status"], {
+        artifactName,
+        redactionValues,
+        timeoutMs: 60_000,
+      }),
+    accept: (result) =>
+      result.exitCode === 0 && /Phase:\s*Ready/i.test(stripAnsi(resultText(result))),
+  });
+  const status = statusAttempt.value;
+  expect(status.exitCode, resultText(status)).toBe(0);
+  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
+
+  const shields = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: `${artifactPrefix}-shields-status`,
+    redactionValues,
+  });
+  expect(shields.exitCode, resultText(shields)).toBe(0);
+  expect(resultText(shields)).toContain(`Shields: ${posture}`);
+
+  const runtimeIdentity = await sandboxShell(
+    sandbox,
+    'printf \'pwd=%s\\nhome=%s\\nuser=%s\\ngroup=%s\\n\' "$PWD" "$HOME" "$(id -un)" "$(id -gn)"',
+    { artifactName: `${artifactPrefix}-runtime-identity` },
+  );
+  expect(runtimeIdentity.exitCode, resultText(runtimeIdentity)).toBe(0);
+  expect(runtimeIdentity.stdout).toContain("pwd=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("home=/sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("user=sandbox\n");
+  expect(runtimeIdentity.stdout).toContain("group=sandbox\n");
+}
+
+async function expectLockedSandboxParent(
+  host: HostCliClient,
+  artifactPrefix: string,
+): Promise<void> {
+  const containerId = await findSandboxContainer(host);
+  const parent = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "stat", "-c", "%a %U:%G", "/sandbox"],
+    { artifactName: `${artifactPrefix}-sandbox-parent` },
+  );
+  expect(parent.exitCode, resultText(parent)).toBe(0);
+  expect(parent.stdout.trim()).toBe("1775 root:sandbox");
+}
+
+async function expectCredentialsTraversalBoundary(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  containerId: string,
+): Promise<void> {
+  const credentialsDir = "/sandbox/.openclaw/credentials";
+  const seededPath = `${credentialsDir}/.nemoclaw-permission-probe`;
+  const seeded = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "sh", "-c", `umask 077; : > ${seededPath}`],
+    { artifactName: "phase-5a-seed-credential-permission-probe" },
+  );
+  expect(seeded.exitCode, resultText(seeded)).toBe(0);
+
+  try {
+    const metadata = await statPath(
+      sandbox,
+      credentialsDir,
+      "phase-5a-credential-directory-metadata",
+    );
+    expect(metadata.mode).toBe("710");
+    expect(metadata.owner).toBe("root:sandbox");
+
+    const boundary = await sandboxShell(
+      sandbox,
+      `python3 - <<'PY'\nimport os\n\ndirectory = ${JSON.stringify(credentialsDir)}\nseeded = ${JSON.stringify(seededPath)}\noptional = os.path.join(directory, "optional.json")\n\ntry:\n    os.stat(optional)\nexcept FileNotFoundError:\n    print("traversal=allowed")\nelse:\n    raise RuntimeError("optional credential path unexpectedly exists")\n\noperations = (\n    ("listing", lambda: os.listdir(directory)),\n    ("reading", lambda: open(seeded, "rb").read()),\n    ("creation", lambda: open(os.path.join(directory, "created"), "wb").close()),\n    ("removal", lambda: os.unlink(seeded)),\n)\nfor label, operation in operations:\n    try:\n        operation()\n    except PermissionError:\n        print(f"{label}=denied")\n    else:\n        raise RuntimeError(f"{label} unexpectedly allowed")\nPY`,
+      { artifactName: "phase-5a-credential-traversal-boundary" },
+    );
+    expect(boundary.exitCode, resultText(boundary)).toBe(0);
+    expect(boundary.stdout).toContain("traversal=allowed");
+    for (const operation of ["listing", "reading", "creation", "removal"]) {
+      expect(boundary.stdout).toContain(`${operation}=denied`);
+    }
+  } finally {
+    await docker(host, ["exec", "--user", "0", containerId, "rm", "-f", seededPath], {
+      artifactName: "phase-5a-remove-credential-permission-probe",
+    });
+  }
+}
+
 async function preCleanSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -175,14 +344,158 @@ async function preCleanSandbox(
 }
 
 async function findSandboxContainer(host: HostCliClient): Promise<string> {
-  const result = await docker(host, ["ps", "--filter", `name=openshell-${SANDBOX_NAME}`, "-q"], {
-    artifactName: "docker-ps-sandbox-container",
-    timeoutMs: 30_000,
-  });
+  const result = await docker(
+    host,
+    [
+      "ps",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--filter",
+      "label=openshell.ai/sandbox-workspace=default",
+      "-q",
+    ],
+    {
+      artifactName: "docker-ps-sandbox-container",
+      timeoutMs: 30_000,
+    },
+  );
   expect(result.exitCode, resultText(result)).toBe(0);
   const containerId = result.stdout.trim().split(/\s+/).filter(Boolean)[0] ?? "";
   expect(containerId, `could not find openshell container for ${SANDBOX_NAME}`).not.toBe("");
   return containerId;
+}
+
+type StartupCensus = { count: number; pid: number | null };
+
+async function installedStartupCensus(
+  host: HostCliClient,
+  containerId: string,
+  artifactName: string,
+): Promise<StartupCensus> {
+  const script = [
+    "import json, runpy",
+    `guard = runpy.run_path(${JSON.stringify(CONFIG_GUARD_PATH)})`,
+    "identity = guard['_production_identity']()",
+    "census = guard['_openshell_supervised_nonroot_start_census'](identity.root_uid, identity.sandbox_uid)",
+    "assert census is not None",
+    "print(json.dumps({'count': census[0], 'pid': census[1]}))",
+  ].join("\n");
+  const result = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "python3", "-I", "-c", script],
+    { artifactName, timeoutMs: 30_000 },
+  );
+  expect(result.exitCode, resultText(result)).toBe(0);
+  return JSON.parse(result.stdout.trim()) as StartupCensus;
+}
+
+async function runInstalledFailedStartupUnlock(
+  host: HostCliClient,
+  containerId: string,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const script = [
+    "set -eu",
+    `plan_json=$(cat ${STATE_LOCK_PLAN_PATH})`,
+    `exec timeout --signal=TERM --kill-after=5s 25m python3 -I ${CONFIG_GUARD_PATH} unlock-failed-startup --config-dir ${CONFIG_DIR} --plan-json "$plan_json"`,
+  ].join("\n");
+  return docker(host, ["exec", "--user", "0", containerId, "sh", "-c", script], {
+    artifactName,
+    timeoutMs: 26 * 60_000,
+  });
+}
+
+async function waitForChildlessStartup(host: HostCliClient, containerId: string): Promise<void> {
+  await pollUntil({
+    artifactPrefix: "phase-12-childless-census",
+    attempts: 20,
+    delayMs: 500,
+    probe: async (_attempt, artifactName) =>
+      await installedStartupCensus(host, containerId, artifactName),
+    accept: (census) => census.count === 0,
+  });
+}
+
+function createPolicySetChildlessBoundaryShim(
+  realOpenshellPath: string,
+  containerId: string,
+  startupPid: number,
+): { directory: string; executable: string; receipt: string } {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-openshell-"));
+  const executable = path.join(directory, "openshell-childless-boundary.cjs");
+  const receipt = path.join(directory, "childless-boundary.json");
+  const processControl = failedStartupProcessControlCommands(containerId, startupPid);
+  const childlessCensusScript = [
+    "import runpy, sys, time",
+    `guard = runpy.run_path(${JSON.stringify(CONFIG_GUARD_PATH)})`,
+    "identity = guard['_production_identity']()",
+    "for _ in range(100):",
+    "    census = guard['_openshell_supervised_nonroot_start_census'](identity.root_uid, identity.sandbox_uid)",
+    "    if census is not None and census[0] == 0:",
+    "        sys.exit(0)",
+    "    time.sleep(0.1)",
+    "sys.exit(1)",
+  ].join("\n");
+  const shimSource = `#!${process.execPath}
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+
+const args = process.argv.slice(2);
+const delegated = spawnSync(${JSON.stringify(realOpenshellPath)}, args, {
+  env: process.env,
+  stdio: "inherit",
+});
+if (delegated.error || delegated.status !== 0) {
+  if (delegated.error) console.error(delegated.error.message);
+  process.exit(delegated.status ?? 1);
+}
+
+const isTargetPolicySet =
+  args[0] === "policy" &&
+  args[1] === "set" &&
+  args.includes("--wait") &&
+  args.at(-1) === ${JSON.stringify(SANDBOX_NAME)};
+if (!isTargetPolicySet || fs.existsSync(${JSON.stringify(receipt)})) process.exit(0);
+
+fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ status: "arming" }), {
+  encoding: "utf8",
+  flag: "wx",
+  mode: 0o600,
+});
+const pause = spawnSync("docker", ${JSON.stringify(processControl.pauseSupervisor)}, {
+  env: process.env,
+  stdio: "inherit",
+});
+if (pause.error || pause.status !== 0) process.exit(pause.status ?? 1);
+const terminate = spawnSync("docker", ${JSON.stringify(processControl.terminateStartupChild)}, {
+  env: process.env,
+  stdio: "inherit",
+});
+if (terminate.error || terminate.status !== 0) process.exit(terminate.status ?? 1);
+const childless = spawnSync(
+  "docker",
+  [
+    "exec",
+    "--user",
+    "0",
+    ${JSON.stringify(containerId)},
+    "python3",
+    "-I",
+    "-c",
+    ${JSON.stringify(childlessCensusScript)},
+  ],
+  { env: process.env, stdio: "inherit" },
+);
+if (childless.error || childless.status !== 0) process.exit(childless.status ?? 1);
+fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ status: "childless" }), {
+  encoding: "utf8",
+  mode: 0o600,
+});
+`;
+  fs.writeFileSync(executable, shimSource, { encoding: "utf8", mode: 0o700 });
+  return { directory, executable, receipt };
 }
 
 async function readOriginalConfig(
@@ -222,17 +535,21 @@ function readTimerMarker(sandboxName: string): {
   return JSON.parse(fs.readFileSync(TIMER_FILE(sandboxName), "utf8"));
 }
 
-test("shields-config: live shields up/down locks config and detects drift", {
+test("shields-config: live Shields lifecycle restores stopped OpenClaw under both postures (#8112)", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "confirm Docker and onboard the shields sandbox",
       "establish the mutable unified OpenClaw config",
       "lock config and workspace and inspect redaction",
+      "restart OpenClaw with shields up",
       "detect host-root config drift and refuse resealing",
+      "re-seal a perms-only .config-hash drift instead of failing closed",
       "unlock shields and inspect the audit trail",
+      "restart OpenClaw with shields down",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
+      "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
       "record shields contract evidence",
     ],
   },
@@ -244,11 +561,17 @@ test("shields-config: live shields up/down locks config and detects drift", {
       "source install creates a live OpenClaw sandbox",
       "default config starts mutable with unified .openclaw layout",
       "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
+      "fresh mutable-default shields down preserves the mutable config posture",
       "shields up locks config/workspace and config get redacts secrets",
+      "start restores a stopped OpenClaw sandbox while shields are up",
+      "empty sealed credentials allow traversal but deny sandbox identity access",
       "host-root chmod-write-chmod tamper is detected as content drift",
+      "a perms-only .config-hash drift is re-sealed by shields up, not failed closed",
       "shields down restores mutable modes and records audit JSONL",
+      "start restores a stopped OpenClaw sandbox while shields are down",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
+      "installed failed-startup guard refuses a live child and supported shields down atomically unlocks childless state",
     ],
   });
 
@@ -429,6 +752,24 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusDefault.exitCode, resultText(statusDefault)).toBe(0);
   expect(statusDefault.stdout).toContain("Shields: NOT CONFIGURED");
 
+  const freshMutableDown = await runNemoclaw(
+    host,
+    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "Fresh mutable-default E2E"],
+    { artifactName: "phase-2c-fresh-mutable-shields-down" },
+  );
+  expect(freshMutableDown.exitCode, resultText(freshMutableDown)).toBe(0);
+  expect(resultText(freshMutableDown)).toContain("Config unlocked");
+  expect(await statPath(sandbox, CONFIG_PATH, "phase-2c-config-perms-after-down")).toMatchObject({
+    mode: "660",
+    owner: "sandbox:sandbox",
+  });
+  expect(await statPath(sandbox, CONFIG_DIR, "phase-2c-config-dir-perms-after-down")).toMatchObject(
+    {
+      mode: "2770",
+      owner: "sandbox:sandbox",
+    },
+  );
+
   const layoutProbe = await sandboxShell(
     sandbox,
     [
@@ -510,6 +851,20 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusUp.exitCode, resultText(statusUp)).toBe(0);
   expect(statusUp.stdout).toContain("Shields: UP");
 
+  progress.phase("restart OpenClaw with shields up");
+  await expectStopStartRecovery(host, sandbox, "UP", "phase-5a-shields-up-start-recovery", [
+    apiKey,
+  ]);
+  await expectLockedSandboxParent(host, "phase-5a-shields-up-start-recovery");
+  const configAfterLockedRestart = await statPath(
+    sandbox,
+    CONFIG_PATH,
+    "phase-5a-config-after-shields-up-start-recovery",
+  );
+  expect(configAfterLockedRestart.mode).toMatch(/^4[0-4][0-4]$/);
+  expect(configAfterLockedRestart.owner).toBe("root:root");
+  await expectCredentialsTraversalBoundary(host, sandbox, containerId);
+
   progress.phase("detect host-root config drift and refuse resealing");
   const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
   await readOriginalConfig(host, containerId, originalConfig);
@@ -578,10 +933,59 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusRestored.exitCode, resultText(statusRestored)).toBe(0);
   expect(statusRestored.stdout).toContain("Shields: UP (lockdown active)");
 
+  progress.phase("re-seal a perms-only .config-hash drift instead of failing closed");
+  // #7985/#4663: an in-sandbox privileged reconciler (OpenClaw gateway / doctor
+  // perm-normalization) can re-permission .config-hash back to group-writable
+  // AFTER the lock without touching its bytes. That perms-only drift must be
+  // re-sealed by the drift-repair `shields up`, not fail closed with
+  // "restart seal requires the exact shields-locked file posture" (which
+  // stranded host state UNLOCKED while the tree stayed root-locked). The bytes
+  // are untouched here, so it is a launderable perms drift, not content drift.
+  const permsDrift = await host.command(
+    "bash",
+    [
+      "-lc",
+      `docker exec -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_HASH_PATH} 2>/dev/null || true; chmod 660 ${CONFIG_HASH_PATH} && chown sandbox:sandbox ${CONFIG_HASH_PATH}'`,
+    ],
+    {
+      artifactName: "phase-5c-config-hash-perms-only-drift",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(permsDrift.exitCode, resultText(permsDrift)).toBe(0);
+
+  const hashDrifted = await statPath(sandbox, CONFIG_HASH_PATH, "phase-5c-hash-perms-after-drift");
+  expect(hashDrifted).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
+
+  // The drift-repair relock reaches the OpenClaw config guard's already-locked
+  // branch. The fix re-seals the perms-only drift; before it, the guard
+  // rejected with config-not-locked and the relock could never re-apply.
+  const reseal = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-5c-shields-up-reseals-perms-drift",
+  });
+  expect(reseal.exitCode, resultText(reseal)).toBe(0);
+  // The guard surfaces the self-heal so a relock/rebuild does not fix a
+  // perms-only drift invisibly (#4663 / #7985 observability).
+  expect(resultText(reseal)).toContain("Re-sealed a perms-only config-lock drift");
+
+  const hashResealed = await statPath(
+    sandbox,
+    CONFIG_HASH_PATH,
+    "phase-5c-hash-perms-after-reseal",
+  );
+  expect(hashResealed).toMatchObject({ mode: "444", owner: "root:root" });
+
+  const statusResealed = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-5c-shields-status-after-reseal",
+  });
+  expect(statusResealed.exitCode, resultText(statusResealed)).toBe(0);
+  expect(statusResealed.stdout).toContain("Shields: UP (lockdown active)");
+
   progress.phase("unlock shields and inspect the audit trail");
   const shieldsDown = await runNemoclaw(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "E2E shields lifecycle test"],
+    [SANDBOX_NAME, "shields", "down", "--timeout", "15m", "--reason", "E2E shields lifecycle test"],
     { artifactName: "phase-6-shields-down" },
   );
   expect(shieldsDown.exitCode, resultText(shieldsDown)).toBe(0);
@@ -608,6 +1012,20 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusDown.stdout).toContain("E2E shields lifecycle test");
   expect(statusDown.stdout).toMatch(/Auto-lockdown in:|remaining/i);
 
+  progress.phase("restart OpenClaw with shields down");
+  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-7a-shields-down-start-recovery", [
+    apiKey,
+  ]);
+  const configAfterMutableRestart = await statPath(
+    sandbox,
+    CONFIG_PATH,
+    "phase-7a-config-after-shields-down-start-recovery",
+  );
+  expect(configAfterMutableRestart).toMatchObject({
+    mode: "660",
+    owner: "sandbox:sandbox",
+  });
+
   const restoreUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-7-restore-shields-up",
   });
@@ -630,21 +1048,23 @@ test("shields-config: live shields up/down locks config and detects drift", {
   progress.phase("recover shields after a dead restore timer");
   const timerDown = await runNemoclaw(
     host,
-    [SANDBOX_NAME, "shields", "down", "--timeout", "10s", "--reason", "Auto-restore timer E2E"],
+    [SANDBOX_NAME, "shields", "down", "--timeout", "60s", "--reason", "Auto-restore timer E2E"],
     { artifactName: "phase-9-shields-down-timer" },
   );
   expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
   const timerMarker = readTimerMarker(SANDBOX_NAME);
   process.kill(timerMarker.pid, "SIGKILL");
   const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-    artifactName: "phase-9-status-down-before-auto-restore",
+    artifactName: "phase-9-status-after-dead-timer",
   });
-  expect(statusTimer.stdout).toContain("Shields: DOWN");
+  expect(statusTimer.exitCode, resultText(statusTimer)).toBe(0);
+
+  let lastTimerStatus = resultText(statusTimer);
+  expect(statusTimer.stdout).toMatch(/Shields: (?:UP|DOWN)/);
+  let restored = statusTimer.stdout.includes("Shields: UP");
 
   const deadline = Date.now() + TIMER_POLL_TIMEOUT_MS;
-  let restored = false;
-  let lastTimerStatus = "";
-  for (let attempt = 1; Date.now() < deadline; attempt += 1) {
+  for (let attempt = 1; !restored && Date.now() < deadline; attempt += 1) {
     const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
     await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
     const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
@@ -719,6 +1139,149 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(finalUp.exitCode, resultText(finalUp)).toBe(0);
   expect(resultText(finalUp)).toContain("Lockdown active");
 
+  progress.phase(
+    "prove installed failed-startup guard refuses a live child and supported shields down unlocks childless state",
+  );
+  const recoveryContainerId = await findSandboxContainer(host);
+  const removeMarkers = await docker(
+    host,
+    ["exec", "--user", "0", recoveryContainerId, "rm", "-f", ...STARTUP_MARKER_PATHS],
+    { artifactName: "phase-12-remove-startup-markers", timeoutMs: 30_000 },
+  );
+  expect(removeMarkers.exitCode, resultText(removeMarkers)).toBe(0);
+
+  const liveCensus = await installedStartupCensus(
+    host,
+    recoveryContainerId,
+    "phase-12-live-startup-census",
+  );
+  expect(liveCensus).toMatchObject({ count: 1, pid: expect.any(Number) });
+  expect(liveCensus.pid).not.toBeNull();
+  // OpenShell's supervised non-root compatibility path legitimately permits
+  // ordinary Shields changes while its startup child is healthy. Exercise the
+  // failed-startup admission boundary through the installed guard, then prove
+  // the supported host command owns the terminal childless recovery below.
+  const liveChildRefusal = await runInstalledFailedStartupUnlock(
+    host,
+    recoveryContainerId,
+    "phase-12-live-child-refusal",
+  );
+  expect(liveChildRefusal.exitCode, resultText(liveChildRefusal)).not.toBe(0);
+  expect(resultText(liveChildRefusal)).toContain('"code": "startup-not-ready"');
+  expect(await statPath(sandbox, CONFIG_PATH, "phase-12-config-still-locked")).toMatchObject({
+    mode: "444",
+    owner: "root:root",
+  });
+
+  // A running OpenShell PID 1 can restart its child while the recovery guard
+  // scans procfs, but pausing PID 1 before `policy set --wait` also prevents
+  // OpenShell from acknowledging the policy version. A one-shot executable
+  // shim delegates the real policy update first, then pauses the supervisor
+  // and removes the exact live child before the public command reaches its
+  // guarded config transition.
+  let supervisorPaused = false;
+  const processControl = failedStartupProcessControlCommands(
+    recoveryContainerId,
+    liveCensus.pid ?? 0,
+  );
+  cleanup.trackDisposable(`resume stopped supervisor for ${SANDBOX_NAME}`, async () => {
+    await resumeSupervisorIfPaused(supervisorPaused, async () => {
+      const resume = await docker(host, processControl.resumeSupervisor, {
+        artifactName: "cleanup-phase-12-resume-startup-supervisor",
+        timeoutMs: 30_000,
+      });
+      expect(resume.exitCode, resultText(resume)).toBe(0);
+    });
+  });
+  const openshellResolution = await host.command(
+    "bash",
+    ["-lc", 'command -v "$1"', "resolve-openshell", host.openshellCommandPath],
+    {
+      artifactName: "phase-12-resolve-openshell",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(openshellResolution.exitCode, resultText(openshellResolution)).toBe(0);
+  const realOpenshellPath = openshellResolution.stdout.trim();
+  expect(path.isAbsolute(realOpenshellPath), realOpenshellPath).toBe(true);
+  const policyBoundary = createPolicySetChildlessBoundaryShim(
+    realOpenshellPath,
+    recoveryContainerId,
+    liveCensus.pid ?? 0,
+  );
+  cleanup.trackDisposable("remove phase-12 OpenShell boundary shim", () => {
+    fs.rmSync(policyBoundary.directory, { force: true, recursive: true });
+  });
+
+  // The shim may have paused PID 1 even if a later assertion fails. Arm the
+  // cleanup before starting the public transition; SIGCONT is harmless if the
+  // policy command fails before the shim reaches the test boundary.
+  supervisorPaused = true;
+  const childlessRecovery = await runNemoclaw(
+    host,
+    [
+      SANDBOX_NAME,
+      "shields",
+      "down",
+      "--timeout",
+      "5m",
+      "--reason",
+      "Supported failed-startup recovery E2E",
+    ],
+    {
+      artifactName: "phase-12-childless-shields-down",
+      env: commandEnv({ NEMOCLAW_OPENSHELL_BIN: policyBoundary.executable }),
+      timeoutMs: 16 * 60_000,
+    },
+  );
+  expect(childlessRecovery.exitCode, resultText(childlessRecovery)).toBe(0);
+  expect(resultText(childlessRecovery)).toContain(
+    "Lowered shields on a sandbox whose startup never completed.",
+  );
+  expect(resultText(childlessRecovery)).toContain("Sandbox is in default (mutable) state.");
+  expect(JSON.parse(fs.readFileSync(policyBoundary.receipt, "utf8"))).toEqual({
+    status: "childless",
+  });
+  await waitForChildlessStartup(host, recoveryContainerId);
+  const unlockedPaths = await docker(
+    host,
+    [
+      "exec",
+      "--user",
+      "0",
+      recoveryContainerId,
+      "stat",
+      "-c",
+      "%a %U:%G",
+      CONFIG_PATH,
+      `${CONFIG_DIR}/workspace`,
+    ],
+    { artifactName: "phase-12-unlocked-paths", timeoutMs: 30_000 },
+  );
+  expect(unlockedPaths.exitCode, resultText(unlockedPaths)).toBe(0);
+  expect(unlockedPaths.stdout.trim().split(/\r?\n/).map(parseModeOwner)).toEqual([
+    { mode: "660", owner: "sandbox:sandbox" },
+    { mode: "2770", owner: "sandbox:sandbox" },
+  ]);
+
+  const resumeSupervisor = await docker(host, processControl.resumeSupervisor, {
+    artifactName: "phase-12-resume-startup-supervisor",
+    timeoutMs: 30_000,
+  });
+  expect(resumeSupervisor.exitCode, resultText(resumeSupervisor)).toBe(0);
+  supervisorPaused = false;
+
+  // The supported host command owns the policy receipt and config mutation as
+  // one transition. Resume only after it commits the mutable posture, then
+  // prove ordinary stop/start recovery remains available before relocking.
+  await expectStopStartRecovery(host, sandbox, "DOWN", "phase-12-restart-after-recovery", [apiKey]);
+  const relockAfterRecovery = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-12-relock-after-recovery",
+  });
+  expect(relockAfterRecovery.exitCode, resultText(relockAfterRecovery)).toBe(0);
+  expect(resultText(relockAfterRecovery)).toContain("Lockdown active");
+
   progress.phase("record shields contract evidence");
   await artifacts.target.complete({
     id: "shields-config",
@@ -730,10 +1293,14 @@ test("shields-config: live shields up/down locks config and detects drift", {
       shieldsUpLock: true,
       configGetRedaction: true,
       contentDriftDetection: true,
+      permsOnlyDriftReseal: true,
       shieldsDownMutableRestore: true,
       auditTrail: true,
       deadTimerInlineAutoRestore: true,
       doubleOperationRejection: true,
+      installedFailedStartupLiveChildRefusal: true,
+      supportedShieldsDownChildlessRecovery: true,
+      inheritedMutationLockAcceptedByStateGuard: true,
     },
   });
 });

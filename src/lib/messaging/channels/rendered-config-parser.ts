@@ -4,6 +4,7 @@
 import type { ChannelManifest } from "../manifest";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
 import { discordRenderedConfigParser } from "./discord/rendered-config-parser";
+import { googlechatRenderedConfigParser } from "./googlechat/rendered-config-parser";
 import type { RenderedChannelConfigParser } from "./rendered-config-parser-utils";
 import { slackRenderedConfigParser } from "./slack/rendered-config-parser";
 import { teamsRenderedConfigParser } from "./teams/rendered-config-parser";
@@ -32,6 +33,8 @@ function renderedConfigParserForBuiltInManifest(
   switch (manifest.id) {
     case "discord":
       return discordRenderedConfigParser;
+    case "googlechat":
+      return googlechatRenderedConfigParser;
     case "slack":
       return slackRenderedConfigParser;
     case "teams":

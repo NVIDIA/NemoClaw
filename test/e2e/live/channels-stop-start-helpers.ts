@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect } from "../fixtures/e2e-test.ts";
+import { startChannelsStopStartProgress } from "./channels-stop-start-progress.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import {
   type AgentKind,
@@ -17,6 +18,7 @@ import {
   installSandboxOrSkipOnRateLimit,
   phase6Env,
   precleanSandbox,
+  REPO_ROOT,
   resultText,
   sandboxSh,
   shellQuote,
@@ -30,16 +32,30 @@ const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
 if (AGENT !== "openclaw" && AGENT !== "hermes") {
   throw new Error(`NEMOCLAW_CHANNELS_STOP_START_AGENT must be openclaw or hermes, got ${AGENT}`);
 }
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
-assertChannelsStopStartSandboxName(SANDBOX_NAME);
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ??
+  (AGENT === "openclaw" ? "e2e-oc-ch-cycle" : "e2e-hm-ch-cycle");
+assertChannelsStopStartSandboxName(SANDBOX_NAME, AGENT);
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
-const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
+// Google Chat is OpenClaw-only; Teams remains supported on both agent arms.
+const BASE_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"] as const;
+const CHANNELS: readonly string[] =
+  AGENT === "openclaw" ? [...BASE_CHANNELS, "googlechat"] : BASE_CHANNELS;
+const GOOGLECHAT_ENABLED = CHANNELS.includes("googlechat");
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
   discord: (sandbox) => [`${sandbox}-discord-bridge`],
   wechat: (sandbox) => [`${sandbox}-wechat-bridge`],
   slack: (sandbox) => [`${sandbox}-slack-bridge`, `${sandbox}-slack-app`],
   whatsapp: () => [],
+  teams: (sandbox) => [`${sandbox}-teams-bridge`],
+  googlechat: (sandbox) => [`${sandbox}-googlechat-bridge`],
+};
+// Channels that emit no credentialBinding, each for its own reason. Independent oracle —
+// hardcoded on purpose, not derived from the manifest under test (that would be circular).
+const CHANNELS_WITHOUT_CREDENTIAL_BINDING: Record<string, string> = {
+  whatsapp: "in-sandbox pairing — no host credential",
+  googlechat: "gateway bridge-refresh material — not a per-channel binding",
 };
 export const LIVE_TIMEOUT_MS = 80 * 60_000;
 
@@ -51,6 +67,8 @@ type Phase6Tokens = {
   slackBot: string;
   slackApp: string;
   wechat: string;
+  teams: string;
+  googlechat: string;
 };
 
 function phase6Tokens(suffix: string): Phase6Tokens {
@@ -60,6 +78,13 @@ function phase6Tokens(suffix: string): Phase6Tokens {
     slackBot: process.env.SLACK_BOT_TOKEN ?? `xoxb-fake-slack-token-${suffix}`,
     slackApp: process.env.SLACK_APP_TOKEN ?? `xapp-fake-slack-token-${suffix}`,
     wechat: process.env.WECHAT_BOT_TOKEN ?? `test-fake-wechat-token-${suffix}`,
+    teams: process.env.MSTEAMS_APP_PASSWORD ?? `test-fake-teams-secret-${suffix}`,
+    googlechat:
+      process.env.GOOGLECHAT_SERVICE_ACCOUNT ??
+      JSON.stringify({
+        client_email: `e2e-fake-${suffix}@e2e-fake.iam.gserviceaccount.com`,
+        private_key: "fake-e2e-not-a-real-private-key",
+      }),
   };
 }
 
@@ -85,7 +110,14 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
     WECHAT_USER_ID: process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
     WECHAT_ALLOWED_IDS:
       process.env.WECHAT_ALLOWED_IDS ?? process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
+    WHATSAPP_MODE: "bot",
     WHATSAPP_ALLOWED_IDS: process.env.WHATSAPP_ALLOWED_IDS ?? "15551234567,15557654321",
+    MSTEAMS_APP_ID: process.env.MSTEAMS_APP_ID ?? "00000000-0000-0000-0000-000000000000",
+    MSTEAMS_APP_PASSWORD: tokens.teams,
+    MSTEAMS_TENANT_ID: process.env.MSTEAMS_TENANT_ID ?? "11111111-1111-1111-1111-111111111111",
+    TEAMS_ALLOWED_USERS: process.env.TEAMS_ALLOWED_USERS ?? "22222222-2222-2222-2222-222222222222",
+    MSTEAMS_PORT: process.env.MSTEAMS_PORT ?? "3978",
+    TEAMS_REQUIRE_MENTION: process.env.TEAMS_REQUIRE_MENTION ?? "0",
   };
   if (tokens.telegram.includes("fake")) env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   if (
@@ -94,7 +126,32 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
   ) {
     env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   }
+  // Google Chat only runs on the OpenClaw arm (its sole supported agent). The
+  // initial production onboarding receives an environment with these values
+  // stripped. A test-only composition entrypoint later grants the explicit
+  // process-local audience capability and adds the channel.
+  if (GOOGLECHAT_ENABLED) {
+    env.GOOGLECHAT_SERVICE_ACCOUNT = tokens.googlechat;
+    env.GOOGLECHAT_AUDIENCE =
+      process.env.GOOGLECHAT_AUDIENCE ?? "https://e2e-fake.trycloudflare.com/googlechat";
+    env.GOOGLECHAT_APP_PRINCIPAL = process.env.GOOGLECHAT_APP_PRINCIPAL ?? "123456789012345678901";
+    env.GOOGLECHAT_ALLOWED_USERS = process.env.GOOGLECHAT_ALLOWED_USERS ?? "users/1234567890";
+  }
   return env;
+}
+
+const GOOGLECHAT_ONBOARD_ENV_KEYS = [
+  "GOOGLECHAT_SERVICE_ACCOUNT",
+  "GOOGLECHAT_AUDIENCE_TYPE",
+  "GOOGLECHAT_AUDIENCE",
+  "GOOGLECHAT_APP_PRINCIPAL",
+  "GOOGLECHAT_ALLOWED_USERS",
+] as const;
+
+function withoutGooglechatOnboardInputs(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const onboardingEnv = { ...env };
+  for (const key of GOOGLECHAT_ONBOARD_ENV_KEYS) delete onboardingEnv[key];
+  return onboardingEnv;
 }
 
 function redactionValues(apiKey: string | undefined, tokens: Phase6Tokens): string[] {
@@ -181,7 +238,7 @@ function expectPlanChannelState(channelId: string, expected: ChannelState): void
     `${channelId} policy entry`,
   ).toBe(true);
   const credentialBindings = arrayRecords(plan.credentialBindings);
-  if (channelId !== "whatsapp") {
+  if (!Object.hasOwn(CHANNELS_WITHOUT_CREDENTIAL_BINDING, channelId)) {
     expect(
       credentialBindings.some((entry) => entry.channelId === channelId),
       `${channelId} credential binding`,
@@ -217,8 +274,23 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
     wechat: {
       allowedIds: requireEnvValue(env, "WECHAT_ALLOWED_IDS"),
     },
-    whatsapp: { allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS") },
+    whatsapp: {
+      mode: requireEnvValue(env, "WHATSAPP_MODE"),
+      allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS"),
+    },
+    teams: {
+      appId: requireEnvValue(env, "MSTEAMS_APP_ID"),
+      tenantId: requireEnvValue(env, "MSTEAMS_TENANT_ID"),
+      allowedUsers: requireEnvValue(env, "TEAMS_ALLOWED_USERS"),
+      webhookPort: requireEnvValue(env, "MSTEAMS_PORT"),
+      requireMention: requireEnvValue(env, "TEAMS_REQUIRE_MENTION"),
+    },
   };
+  if (GOOGLECHAT_ENABLED) {
+    // Google Chat's audience is derived by the enroll gate, but appPrincipal is a
+    // plain config input that must round-trip from env into the persisted plan.
+    expected.googlechat = { appPrincipal: requireEnvValue(env, "GOOGLECHAT_APP_PRINCIPAL") };
+  }
   for (const [channelId, inputs] of Object.entries(expected)) {
     const channel = planChannel(channelId);
     const planInputs = arrayRecords(channel?.inputs);
@@ -232,7 +304,9 @@ function expectChannelInputs(env: NodeJS.ProcessEnv): void {
 }
 
 function openClawChannelKey(channel: string): string {
-  return channel === "wechat" ? "openclaw-weixin" : channel;
+  if (channel === "wechat") return "openclaw-weixin";
+  if (channel === "teams") return "msteams";
+  return channel;
 }
 
 async function agentConfigContains(
@@ -264,8 +338,12 @@ async function agentConfigContains(
       'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
     slack:
       'grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env',
+    // The DM policy is derived from the mode and the allowlist rather than
+    // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:
-      'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env',
+      'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_DM_POLICY=allowlist$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
+    teams:
+      'grep -Eq "^TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD$" /sandbox/.hermes/.env',
   };
   const result = await sandboxSh(
     sandbox,
@@ -366,6 +444,38 @@ async function rebuildSandbox(
   });
 }
 
+async function addGooglechatForLiveE2e(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+): Promise<void> {
+  const entrypoint = path.join(REPO_ROOT, "test/e2e/live/channels-stop-start-googlechat-entry.ts");
+  const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
+  const add = await host.command("node", [tsx, entrypoint, SANDBOX_NAME], {
+    artifactName: "channels-stop-start-add-googlechat-live-e2e",
+    env,
+    redactionValues: redactions,
+    timeoutMs: 10 * 60_000,
+  });
+  expectExitZero(add, "add Google Chat through live-E2E capability composition");
+
+  const rebuild = await rebuildSandbox(
+    host,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "rebuild-add-googlechat-live-e2e",
+  );
+  expectExitZero(rebuild, "rebuild after adding Google Chat through live-E2E composition");
+  await expectSandboxReady(
+    host,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "sandbox-list-after-googlechat-live-e2e-add",
+  );
+}
+
 async function policyPresetState(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -443,6 +553,9 @@ export async function runChannelsStopStartTarget({
     channels: CHANNELS,
   });
 
+  const heartbeat = startChannelsStopStartProgress(AGENT);
+  cleanup.trackDisposable("stop channels stop/start heartbeat", heartbeat.stop);
+
   cleanup.trackGateway(host, "nemoclaw", {
     artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,
     env,
@@ -476,9 +589,10 @@ export async function runChannelsStopStartTarget({
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
   progress.phase("onboard sandbox with all messaging channels");
+  const onboardingEnv = GOOGLECHAT_ENABLED ? withoutGooglechatOnboardInputs(env) : env;
   const install = await installSandboxOrSkipOnRateLimit(
     host,
-    env,
+    onboardingEnv,
     redactions,
     `install-channels-stop-start-${AGENT}`,
     skip,
@@ -492,6 +606,9 @@ export async function runChannelsStopStartTarget({
     redactions,
     `sandbox-list-channels-stop-start-${AGENT}`,
   );
+  if (GOOGLECHAT_ENABLED) {
+    await addGooglechatForLiveE2e(host, env, redactions);
+  }
 
   progress.phase("validate active channel integrations");
   expectChannelInputs(env);
@@ -517,6 +634,7 @@ export async function runChannelsStopStartTarget({
     `rebuild-stop-all-${AGENT}`,
   );
   expectExitZero(stopRebuild, "rebuild after stopping all channels");
+  expectChannelInputs(env);
   await expectAgentConfig(sandbox, "absent", redactions);
   await expectProvidersExist(host, env, redactions, "after-stop");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
@@ -527,29 +645,26 @@ export async function runChannelsStopStartTarget({
     ).toBe("inactive");
   }
 
-  progress.phase("re-enable channels and validate lifecycle state");
+  progress.phase("re-enable channels, rebuild sandbox, and validate lifecycle state");
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  if (AGENT === "openclaw") {
-    const startRebuild = await rebuildSandbox(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      `rebuild-start-all-${AGENT}`,
-    );
-    expectExitZero(startRebuild, "rebuild after starting all channels");
-    await expectAgentConfig(sandbox, "present", redactions);
-  } else {
-    await expectAgentConfig(sandbox, "absent", redactions);
-  }
+  const startRebuild = await rebuildSandbox(
+    host,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    `rebuild-start-all-${AGENT}`,
+  );
+  expectExitZero(startRebuild, "rebuild after starting all channels");
+  expectChannelInputs(env);
+  await expectAgentConfig(sandbox, "present", redactions);
   await expectProvidersExist(host, env, redactions, "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   for (const channel of CHANNELS) {
     expect(
       await policyPresetState(host, env, redactions, channel),
-      `${channel} policy active after start${AGENT === "openclaw" ? "+rebuild" : ""}`,
+      `${channel} policy active after start+rebuild`,
     ).toBe("active");
   }
 }

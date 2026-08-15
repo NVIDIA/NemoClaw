@@ -188,10 +188,14 @@ function bundle(providerId: string): RuntimeProviderBundle {
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: true,
+      hostLocalInference: false,
       directLifecycle: false,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: "not used by the rebuild transaction contract test",
+      },
     },
     preflightDoctor: {
       providerId,
@@ -233,6 +237,7 @@ function bundle(providerId: string): RuntimeProviderBundle {
       supported: true,
       operations: ["rebuild"],
     },
+    stateMutation: unsupported(providerId),
     bootstrap: unsupported(providerId),
     snapshot: unsupported(providerId),
     recovery: unsupported(providerId),

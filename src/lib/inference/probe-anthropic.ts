@@ -60,7 +60,7 @@ export interface AnthropicProbeOptions {
    * a private/internal address after the public preflight (TOCTOU — #6293).
    */
   pinnedAddresses?: readonly string[];
-  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  /** Non-forgeable proof of the exact host and complete pins admitted by SSRF preflight. */
   trustedPrivateCapability?: TrustedPrivateEndpointCapability;
 }
 

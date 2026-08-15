@@ -35,7 +35,12 @@ installMock(source("state", "registry.js"), {
 });
 installMock(source("agent", "defs.js"), {
   loadAgent: () => ({
-    configPaths: { dir: "/sandbox/.hermes", configFile: "config.yaml", format: "yaml" },
+    configPaths: {
+      dir: "/sandbox/.hermes",
+      configFile: "config.yaml",
+      format: "yaml",
+      shieldsFiles: [".env"],
+    },
   }),
 });
 installMock(source("adapters", "openshell", "client.js"), {
@@ -47,6 +52,7 @@ installMock(source("sandbox", "privileged-exec.js"), {
     capturedPrivilegedExec = { command, sanitizeEnvironment };
     return ["docker", "exec", ...(stdin ? ["-i"] : []), sandboxName, ...command];
   },
+  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),
 });
 installMock(source("adapters", "docker", "exec.js"), {
   dockerExecFileSync: (argv, options) => {

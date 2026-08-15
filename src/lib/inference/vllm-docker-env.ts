@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { isIP } from "node:net";
 
 import { buildSubprocessEnv } from "../subprocess-env";
@@ -8,6 +9,7 @@ import {
   assertDualStationSshBindingFiles,
   type DualStationSshBinding,
   dualStationDockerSshUri,
+  dualStationPinnedSshArgs,
 } from "./vllm-station-ssh-binding";
 
 const DOCKER_CLIENT_ENV_NAMES = [
@@ -43,6 +45,30 @@ const SSH_TRANSPORT_ENV_NAMES = [
 const CANONICAL_SSH_HOST_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 const CANONICAL_SSH_USERNAME_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
+const LISTENER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
+
+function captureListenerCommand(
+  argv: readonly [string, ...string[]],
+  env: Readonly<Record<string, string>>,
+  timeoutMs: number,
+): string {
+  const [file, ...args] = argv;
+  const result = spawnSync(file, args, {
+    encoding: "utf8",
+    env,
+    killSignal: "SIGKILL",
+    maxBuffer: LISTENER_PROBE_MAX_BUFFER_BYTES,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: timeoutMs,
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`managed vLLM listener probe exited with status ${String(result.status)}`);
+  }
+  return (result.stdout ?? "").trim();
+}
 
 function validateRemoteDockerSshUri(value: string): string {
   const invalid = () =>
@@ -122,6 +148,9 @@ export function buildLocalDualStationDockerEnv(
   return env;
 }
 
+/** Cardinality-neutral name for managed-cluster consumers. */
+export const buildLocalManagedVllmDockerEnv = buildLocalDualStationDockerEnv;
+
 /** Minimal environment shared by strict SSH probes and Docker's SSH helper. */
 export function buildVllmSshTransportEnv(
   extra: Record<string, string> = {},
@@ -133,6 +162,35 @@ export function buildVllmSshTransportEnv(
     if (value !== undefined) env[name] = value;
   }
   return { ...env, ...extra };
+}
+
+/** Capture the listening TCP sockets from one node in a pinned managed-vLLM cluster. */
+export function captureManagedVllmTcpListeners(
+  role: "head" | "worker",
+  binding: DualStationSshBinding,
+  timeoutMs: number,
+): string {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("managed vLLM listener probe timeout must be a positive integer");
+  }
+  if (role === "head") {
+    return captureListenerCommand(
+      ["ss", "-H", "-lnt"],
+      buildSubprocessEnv({ LC_ALL: "C" }),
+      timeoutMs,
+    );
+  }
+  return captureListenerCommand(
+    [
+      "/usr/bin/ssh",
+      ...dualStationPinnedSshArgs(binding),
+      "--",
+      binding.peerTarget,
+      "LC_ALL=C ss -H -lnt",
+    ],
+    buildVllmSshTransportEnv({ LC_ALL: "C" }),
+    timeoutMs,
+  );
 }
 
 /**

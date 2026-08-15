@@ -22,21 +22,24 @@ NemoClaw detects Ollama on the host and can install, start, or upgrade it on sup
 
 ## Install or Upgrade Ollama
 
-If Ollama is installed but not started, NemoClaw starts it for you.
+During onboarding, if Ollama is installed but not started, NemoClaw starts it for you.
 On macOS and Linux, the wizard can offer to install Ollama when it is not present.
 
-When either the Ollama CLI or running daemon is below the minimum version for the starter models, currently `0.7.0`, the wizard displays an explicit **Upgrade Ollama** entry.
+When either the Ollama CLI or running daemon is below `0.32.9`, the wizard displays an explicit **Upgrade Ollama** entry.
+Older versions can return tool calls as message text instead of structured tool calls, which causes onboarding validation to stop.
 The wizard checks `ollama --version` and `/api/version` on port `11434` independently, so the entry appears when either side is stale.
+If NemoClaw detects an installed CLI or local running daemon but cannot read its version, onboarding uses the upgrade path instead of reusing it.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.
 On Linux, the wizard uses the official `https://ollama.com/install.sh` path.
 Linux upgrades use the sudo-driven system path because a user-local fallback would leave an existing system daemon serving the stale binary.
 If sudo is unavailable in a non-interactive run, rerun interactively or upgrade Ollama manually.
 
-After an upgrade, NemoClaw probes the running daemon again and stops if its reported version remains below the minimum.
+After an upgrade, NemoClaw probes the running daemon again.
+If the version remains below the minimum or cannot be read, interactive onboarding returns to provider selection, and non-interactive onboarding exits.
 Fresh installs skip this second probe because the bundled installers provide a daemon at or above the minimum.
 
-The version gate does not apply to Windows-host Ollama reached from WSL through `host.docker.internal`.
+The version gate does not apply to Windows-host Ollama reached from Docker Desktop through `host.docker.internal`.
 The Windows-host menu entries perform their own actions on the Windows side.
 
 ## Choose a Linux Install Mode
@@ -51,7 +54,22 @@ Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` or `NEMOCLAW_OLLAMA_INSTALL_MODE=user`
 
 The user-local mode downloads and extracts the Ollama release to `${HOME}/.local`, then starts `${HOME}/.local/bin/ollama serve` once.
 It does not configure a systemd service, create the `ollama` system user, or install CUDA drivers.
-Restart the daemon manually after a reboot.
+For ordinary user-local installs, restart the daemon manually after a reboot.
+
+<AgentOnly variant="openclaw">
+For a sandbox created with the portable experimental profile, `$$nemoclaw <name> connect --probe-only` and `$$nemoclaw <name> recover` can restart the user-local daemon that NemoClaw installed.
+Before it decides whether to start Ollama, recovery probes `http://127.0.0.1:11434/api/tags`.
+If the API is unhealthy, recovery starts Ollama only when the sandbox records `ollama-local` and a valid ownership receipt names the fixed regular executable.
+NemoClaw releases that predate this receipt do not claim an existing executable after an upgrade.
+To authorize recovery for a previous NemoClaw user-local install, first verify that `${HOME}/.local/bin/ollama` is the executable you want NemoClaw to manage, then run `NEMOCLAW_PORTABLE_OLLAMA_REENROLL=1 nemoclaw <name> recover` once.
+The command rejects a symlink or non-executable file before it records ownership.
+It refuses to launch a duplicate when another `ollama` process exists but the API is unhealthy.
+After it launches the daemon, it waits up to 30 seconds for `/api/tags` to return valid JSON with a `models` array.
+Recovery then verifies the authenticated proxy and requires HTTP 2xx from the sandbox `inference.local/v1/models` route.
+If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+The command exits non-zero with recovery guidance when startup or route validation fails.
+It does not start, stop, or replace a system service or another user-managed Ollama daemon.
+</AgentOnly>
 
 NemoClaw prints a `PATH` hint when `${HOME}/.local/bin` is missing from your `PATH`.
 Add `export PATH="${HOME}/.local/bin:$PATH"` to your shell profile if you want to invoke `ollama` directly.
@@ -80,6 +98,20 @@ The starter list includes `qwen3.6:35b` and selects it by default when current G
 When another GPU workload consumes most of the available memory, NemoClaw selects the largest starter model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
 
+For Local Ollama strict tool-call validation, NemoClaw uses the missing-tool-call retry schedule only when all these conditions apply:
+
+- Ollama returns HTTP `200`.
+- The response contains no structured tool call.
+- The response contains no tool-call JSON in plain message text.
+- The response does not stop at the output token limit after producing only reasoning.
+
+If a response stops at the output token limit after producing only reasoning, NemoClaw retries with a 1024-token output limit and then, when reasoning still uses the full output token limit, with a 4096-token output limit and a doubled request deadline.
+When reasoning also uses the full 4096-token output limit, onboarding stops and reports `reasoning used the full output-token budget before a tool call` alongside `missing structured tool call`.
+NemoClaw waits 5, 15, and 30 seconds before the second, third, and fourth validation requests.
+If four consecutive responses meet these conditions, onboarding stops and reports `missing structured tool call` without displaying the response body.
+NemoClaw does not apply the missing-tool-call retry schedule to other compatible endpoints.
+
+
 <AgentOnly variant="openclaw">
 When Ollama reports a loaded-model context length, NemoClaw uses it for the `contextWindow` written to `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW`.
 Onboarding stops when the selected model does not declare tool support or returns tool-call JSON as plain message text instead of structured tool calls.
@@ -107,8 +139,9 @@ When NemoClaw runs in WSL, the provider menu can offer these Windows-host action
 - Start Ollama when it is installed but not running.
 - Install Ollama when it is not installed on Windows.
 
-The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on Windows so Docker and WSL can reach the daemon through `host.docker.internal`.
-NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and waits for the endpoint to respond.
+The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on Windows so Docker Desktop containers can reach the daemon through `host.docker.internal`.
+NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and checks the endpoint from Docker Desktop's network context.
+A direct request from WSL can fail because Docker Desktop defines this hostname for its containers.
 It pulls missing models through the Ollama HTTP API without requiring an Ollama CLI inside WSL.
 
 <Warning>
@@ -141,15 +174,31 @@ The agent inside the sandbox never receives the token directly because the OpenS
 The wizard manages the proxy lifecycle:
 
 - It generates a random 24-byte token and stores it in `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
-- It starts and verifies the proxy after Ollama.
+- It starts and verifies the proxy only after you accept the onboarding configuration.
 - It removes stale matching proxy processes from previous runs.
 - It probes the sandbox Docker network path before saving the inference route.
-- It stops matching proxy processes during uninstall.
+- It stops matching proxy processes when uninstall removes the final or only gateway that uses the proxy.
+- A scoped uninstall preserves the shared proxy process and state while another gateway remains.
 - It reuses the persisted token after a host reboot and during re-onboarding for the committed local Ollama route.
+- It reuses that same token for every gateway port on the host, because one proxy serves them all.
+- NemoClaw records the selected proxy port in shared host state. Export the same `NEMOCLAW_OLLAMA_PROXY_PORT` for every gateway port on the host. A different value stops before NemoClaw changes the shared proxy process.
+
+<Warning title="Conflicting Legacy Proxy State">
+An older multi-gateway installation can contain proxy token or backend files in more than one gateway state root.
+During Local Ollama onboarding, NemoClaw copies one consistent credential and backend URL into the shared host root.
+If token values conflict, NemoClaw uses a running proxy only when one token receives an authenticated response.
+NemoClaw stops before proxy restart when it cannot select one token or one backend URL.
+For token conflicts, the error lists the token files that require review.
+Keep every token file private.
+Back up the gateway state roots and confirm which token and backend serve the active sandboxes before you remove stale legacy files.
+Rerun onboarding for every affected Local Ollama gateway after you resolve the conflict.
+Scoped uninstall preserves the shared proxy state while a sibling gateway remains; removing the final gateway stops the proxy and removes that state.
+</Warning>
 
 All proxy endpoints require the token, including `GET /api/tags`.
 The host-side proxy liveness check treats any HTTP response, including `401`, as evidence that the proxy answered.
-The authoritative `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as `healthy`, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
+The `status` and `doctor` route probe runs inside the sandbox and reports HTTP `200` through `499` as reachable, HTTP `500` through `599` as `unhealthy`, and transport failures or unavailable probes as `unreachable` or `not probed`.
+`status` then sends one inference request over the reachable route and reports `healthy` when the route served it, or `unauthorized` when the proxy token is no longer accepted.
 
 If Ollama is already bound to a non-loopback address, onboarding restarts it on `127.0.0.1:11434` so the proxy becomes the only network path.
 
@@ -194,7 +243,7 @@ The following settings control non-interactive selection:
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Optional Ollama model tag. |
-| `NEMOCLAW_PROVIDER_MODEL` | Compatibility fallback for the NVIDIA QA non-interactive Ollama invocation tracked in [#6869](https://github.com/NVIDIA/NemoClaw/issues/6869). Ignored when `NEMOCLAW_MODEL` is set; remove after that workflow migrates to `NEMOCLAW_MODEL`. |
+| `NEMOCLAW_PROVIDER_MODEL` | Compatibility fallback for an external NVIDIA QA non-interactive Ollama invocation. `NEMOCLAW_MODEL` takes precedence. Non-interactive re-onboarding ignores this fallback when the requested provider differs from the recorded provider. |
 | `NEMOCLAW_YES` | Optional model download authorization when set to `1`. |
 
 Under `--non-interactive`, include `--yes` or set `NEMOCLAW_YES=1` to authorize a model download.
@@ -217,6 +266,12 @@ The following command uses `8990` as an example; choose another unused port when
 ```bash
 NEMOCLAW_GATEWAY_PORT=8990 NEMOCLAW_MODEL=qwen3.5:9b $$nemoclaw onboard
 ```
+
+Every gateway port on the host shares one authenticated proxy and one token.
+When token and backend state are compatible, onboarding another gateway port restarts the shared proxy with the token already stored on the host.
+Sandboxes on the gateway you onboarded first keep reaching Ollama after the restart.
+If the restart fails, onboarding reports the port owner or the startup error.
+No sandbox on any gateway port can reach Ollama until you resolve the error and rerun onboarding.
 
 Interactive onboarding filters installed registry-known tags that do not fit current GPU memory.
 If no installed known tag fits, NemoClaw displays starter choices and warns when even the smallest tag might not fit.
@@ -244,7 +299,10 @@ This retry also applies to tight-VRAM hosts where model warm-up can spill from G
 
 ## Release GPU Memory
 
-When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
+When you destroy an Ollama-backed sandbox or stop host services, NemoClaw asks Ollama to unload each currently loaded model by sending `keep_alive: 0`.
+When you stop a single Ollama-backed sandbox, NemoClaw unloads only that sandbox's own model, and leaves it loaded when another Ollama-backed sandbox uses the same model.
+When you re-onboard an existing Ollama-backed sandbox onto a different model, NemoClaw unloads the model it replaced, with the same sibling protection.
+A re-onboard that keeps the same model leaves it loaded, because the new route can still be served by the same Ollama daemon.
 This cleanup runs on a best-effort basis and does not delete downloaded model files.
 
 ## Related Topics

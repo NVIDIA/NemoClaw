@@ -3,14 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createSession,
-  filterSafeUpdates,
-  MACHINE_SNAPSHOT_VERSION,
-  normalizeSession,
-  type Session,
-  type SessionUpdates,
-} from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
 import {
   coreOnboardFlowPhases,
@@ -23,10 +15,14 @@ import {
 import { advanceTo, branchTo, completeOnboardMachine } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardSequencePhase } from "./sequence-runner";
-
-function cloneSession(session: Session): Session {
-  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
-}
+import {
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+  type SessionUpdates,
+  cloneSession,
+  createSession,
+  filterSafeUpdates,
+} from "../../../../test/helpers/onboard-machine-runtime-fixture";
 
 function runtime(initialSession: Session = createSession()) {
   let session = cloneSession(initialSession);
@@ -45,11 +41,8 @@ function runtime(initialSession: Session = createSession()) {
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
-    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: () => cloneSession(session),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: () => cloneSession(session),
     filterSafeUpdates,
     emitEvent: () => undefined,

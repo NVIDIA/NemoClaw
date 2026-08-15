@@ -17,8 +17,6 @@ const OPENCLAW_CONFIG_GENERATOR_RE =
 const SAFE_VALIDATION_GENERATOR_RE =
   /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
-const NODE_TAR_IMAGE_SCAN_COPY_RE =
-  /^COPY scripts\/checks\/node-tar-image-scan\.mts \/scripts\/checks\/node-tar-image-scan\.mts$/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
 const CONFIG_HASH_RE =
   /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
@@ -39,12 +37,13 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "6f457f365f5c0d128e5e3b549a630b5bd9ebd223919f2c2c8e6a31235d763781",
   "dca7d3dbc030e4efa77c850b9d21a826358c69c7d2062f3eee2f5a57eeb07aa2",
   "b01b5f5d2cba5778cd8eb87139f2c6a8174082a7f6775e443a1dbdc0629ce7e5",
-  "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
+  "4a48c125d519e3967d4dfc45bb9970ab1a7ba60336854cc4aed03cde81336f88",
   "e7256f12c618bb424f53fec801378d92446d880c5935965ebb3b548694866b63",
   "4e548aafe9484a887a0ab0cf92ec82f77843fd346de7a2dff50b93ebd632b044",
   "737edaaa69f80cf10d42fd349e0be068c1ef6e7375d5dcb4055b012420b58736",
   "5b814e92449a6778385f588877fe72ebed80e601f8eb0c90c2842b17a489f3da",
   "0e1a9a7bab2fab0a974577c3af8785157b4b9be2b4db32d5f4f9e5aa3c8c8171",
+  "ede14966118316b58139830b4a1ffaceca86a6d0857cd0c1705d69db109907b0",
   "a68297161e2c6463440b822f4e4be0518e745fb5fba8c61ab53b876724f7b666",
   "a54e2ac58ef00d7080ad697cb1892bf91b7bffe011f698df17b936c9906cd4af",
   "ca493ae7905fae5c587a8e5c31fcb3d423235940589c2decee99d7b338e87d88",
@@ -57,11 +56,18 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "a0a554d474cb70087e50686d998915eae06201d6182a2410d3ccc4879e5058e6",
   "5af905889f94ffed2f6c371111d0589e38eed7b0de54ddb0dd68ad912a23149a",
   "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
-  "5cc53ef9c588470f325c5df8189a2eb1525140d947332ae2c0a80fccb2f36ccb",
+  "a619aead6cdf253dc7bf4504267e6b1d724fed672597072394b7400c08f81fd0",
+  "c0b409e1bf4d33a9e44f407c6bd9b0445b2ffd0b796823fe3cfa5989314d6603",
+  "9fcc674a44a152707380cdb09a67f8594f568288406c96f5354f1c87f5b939a6",
   "83567d1fa0e73bef6a3333383c13ace05e26704964ae6a7a76ee24a2f2be3d7e",
   "ca1f7b1cb9dd5d467f806792c4072a84ef1e6402c3e8650b6325b95cc186ccdf",
+  "4165899eb1f0f948f8883eddf4136136caac21cee1df39b12afea7672b23a378",
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
+  "e958e532c3e770fa426a6662652dbde2ddaeb41a214ccffe2def5a43a8b5b023",
+  "fdcd85bae7b2ac4ee20e6d176411d2d926c270cc94d59ec626113909235beca5",
+  "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
+  "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
 ]);
 
 function instructionSha256(text: string): string {
@@ -71,7 +77,6 @@ function instructionSha256(text: string): string {
 const postGeneratorInstructionAllowed = (instruction: DockerfileInstruction): boolean => {
   const { text } = instruction;
   if (PASSIVE_FINAL_STAGE_INSTRUCTION_RE.test(text)) return true;
-  if (NODE_TAR_IMAGE_SCAN_COPY_RE.test(text)) return true;
   if (SAFE_VALIDATION_GENERATOR_RE.test(text)) return true;
   if (EXACT_CUSTOM_POST_GENERATOR_RUN_RE.some((pattern) => pattern.test(text))) return true;
   return CANONICAL_POST_GENERATOR_RUN_SHA256.has(instructionSha256(text));

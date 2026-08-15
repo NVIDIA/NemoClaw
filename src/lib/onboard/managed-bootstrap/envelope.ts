@@ -10,8 +10,13 @@ import {
 
 export const MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_REQUEST_FILE = "/var/lib/nemoclaw-managed-bootstrap-request.json";
+export const MANAGED_BOOTSTRAP_REQUEST_TAR_PATH = MANAGED_BOOTSTRAP_REQUEST_FILE.replace(
+  /^\/+/,
+  "",
+);
 export const MANAGED_BOOTSTRAP_COMPLETION_FILE = "/run/nemoclaw/managed-bootstrap-completion.json";
-export const MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES = MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES + 1024;
+export const MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES =
+  Math.ceil(MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES / 3) * 4 + 1024;
 export const MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES = 1024;
 
 const BOOTSTRAP_IDENTITY_RE = /^[a-f0-9]{64}$/u;
@@ -29,6 +34,18 @@ export interface ManagedBootstrapImageCompletion {
   readonly agent: ManagedStartupRootApplyRequest["agent"];
   readonly profileFingerprint: string;
   readonly transactionPending: boolean;
+}
+
+function writeTarText(header: Buffer, offset: number, length: number, value: string): void {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.length > length) fail("protected request tar field exceeds its bound");
+  bytes.copy(header, offset);
+}
+
+function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
+  const encoded = value.toString(8).padStart(length - 1, "0");
+  if (encoded.length !== length - 1) fail("protected request tar integer exceeds its bound");
+  writeTarText(header, offset, length, `${encoded}\0`);
 }
 
 function fail(message: string): never {
@@ -57,12 +74,48 @@ export function serializeManagedBootstrapEnvelope(input: {
   return serialized;
 }
 
+/**
+ * Serialize one root-owned request as a minimal POSIX ustar stream for a
+ * provider's archive-copy operation. Path-based container copies can preserve
+ * the host caller's numeric ownership; the tar header makes the in-container
+ * root:root 0400 boundary explicit without starting the stopped replacement
+ * before its authenticated bootstrap entrypoint.
+ */
+export function serializeManagedBootstrapEnvelopeTar(input: {
+  readonly bootstrapIdentity: string;
+  readonly rootApplyRequest: ManagedStartupRootApplyRequest;
+}): Buffer {
+  const payload = Buffer.from(serializeManagedBootstrapEnvelope(input), "utf8");
+  const header = Buffer.alloc(512);
+  writeTarText(header, 0, 100, MANAGED_BOOTSTRAP_REQUEST_TAR_PATH);
+  writeTarOctal(header, 100, 8, 0o400);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, payload.length);
+  writeTarOctal(header, 136, 12, 0);
+  header.fill(0x20, 148, 156);
+  header[156] = "0".charCodeAt(0);
+  writeTarText(header, 257, 6, "ustar\0");
+  writeTarText(header, 263, 2, "00");
+  writeTarText(header, 265, 32, "root");
+  writeTarText(header, 297, 32, "root");
+  writeTarOctal(header, 329, 8, 0);
+  writeTarOctal(header, 337, 8, 0);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  const checksumText = checksum.toString(8).padStart(6, "0");
+  if (checksumText.length !== 6) fail("protected request tar checksum exceeds its bound");
+  writeTarText(header, 148, 8, `${checksumText}\0 `);
+
+  const paddedPayloadBytes = Math.ceil(payload.length / 512) * 512;
+  const archive = Buffer.alloc(512 + paddedPayloadBytes + 1024);
+  header.copy(archive, 0);
+  payload.copy(archive, 512);
+  return archive;
+}
+
 export function parseManagedBootstrapEnvelope(text: string): ManagedBootstrapEnvelope {
-  if (
-    text.length === 0 ||
-    Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES ||
-    text.includes("\0")
-  ) {
+  if (text.includes("\0")) fail("serialized envelope contains NUL");
+  if (text.length === 0 || Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES) {
     fail("serialized envelope is empty or too large");
   }
   let parsed: unknown;
@@ -107,11 +160,15 @@ export function serializeManagedBootstrapImageCompletion(
 ): string {
   if (
     !BOOTSTRAP_IDENTITY_RE.test(completion.bootstrapIdentity) ||
-    !BOOTSTRAP_IDENTITY_RE.test(completion.profileFingerprint) ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent) ||
-    typeof completion.transactionPending !== "boolean"
+    !BOOTSTRAP_IDENTITY_RE.test(completion.profileFingerprint)
   ) {
     fail("image completion identity is invalid");
+  }
+  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent)) {
+    fail("image completion agent is invalid");
+  }
+  if (typeof completion.transactionPending !== "boolean") {
+    fail("image completion transaction state is invalid");
   }
   return `${JSON.stringify({
     agent: completion.agent,
@@ -125,10 +182,10 @@ export function serializeManagedBootstrapImageCompletion(
 export function parseManagedBootstrapImageCompletion(
   text: string,
 ): ManagedBootstrapImageCompletion {
+  if (text.includes("\0")) fail("image completion contains NUL");
   if (
     text.length === 0 ||
-    Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES ||
-    text.includes("\0")
+    Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES
   ) {
     fail("image completion is empty or too large");
   }
@@ -136,10 +193,10 @@ export function parseManagedBootstrapImageCompletion(
   try {
     parsed = JSON.parse(text);
   } catch {
-    return fail("image completion is not valid JSON");
+    fail("image completion is not valid JSON");
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return fail("image completion must be an object");
+    fail("image completion must be an object");
   }
   const completion = parsed as Record<string, unknown>;
   if (
@@ -156,7 +213,7 @@ export function parseManagedBootstrapImageCompletion(
     !BOOTSTRAP_IDENTITY_RE.test(completion.profileFingerprint) ||
     typeof completion.transactionPending !== "boolean"
   ) {
-    return fail("image completion schema is invalid");
+    fail("image completion schema is invalid");
   }
   const normalized = Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION,
@@ -166,7 +223,7 @@ export function parseManagedBootstrapImageCompletion(
     transactionPending: completion.transactionPending,
   });
   if (serializeManagedBootstrapImageCompletion(normalized) !== text) {
-    return fail("image completion is not canonical");
+    fail("image completion is not canonical");
   }
   return normalized;
 }

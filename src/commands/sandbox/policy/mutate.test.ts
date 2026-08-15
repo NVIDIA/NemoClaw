@@ -37,6 +37,32 @@ describe("policy mutation oclif commands", () => {
       dryRun: true,
       fromFile: "/tmp/preset.yaml",
       fromDir: undefined,
+      trustedPrivateHosts: undefined,
+    });
+  });
+
+  it("maps repeatable trusted private hosts for custom policy input (#8176)", async () => {
+    await PolicyAddCommand.run(
+      [
+        "alpha",
+        "--from-file",
+        "/tmp/preset.yaml",
+        "--trusted-private-host",
+        "api.corp.example",
+        "--trusted-private-host",
+        "10.20.30.40",
+      ],
+      rootDir,
+    );
+
+    expect(mocks.addSandboxPolicy).toHaveBeenCalledWith("alpha", {
+      preset: undefined,
+      yes: false,
+      force: false,
+      dryRun: false,
+      fromFile: "/tmp/preset.yaml",
+      fromDir: undefined,
+      trustedPrivateHosts: ["api.corp.example", "10.20.30.40"],
     });
   });
 
@@ -89,6 +115,35 @@ describe("policy mutation oclif commands", () => {
       yes: false,
       force: false,
       dryRun: true,
+    });
+  });
+
+  it("accepts the same acknowledgement flags on restore as on exclude (#8114)", async () => {
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "-y"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenCalledWith("alpha", {
+      key: "nous_research",
+      yes: true,
+      force: false,
+      dryRun: false,
+    });
+
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "--yes"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenLastCalledWith("alpha", {
+      key: "nous_research",
+      yes: true,
+      force: false,
+      dryRun: false,
+    });
+
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "--force"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenLastCalledWith("alpha", {
+      key: "nous_research",
+      yes: false,
+      force: true,
+      dryRun: false,
     });
   });
 

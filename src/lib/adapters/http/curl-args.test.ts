@@ -4,9 +4,33 @@
 import { describe, expect, it } from "vitest";
 
 import { assertEndpointResolvesPublic } from "../../inference/endpoint-ssrf-preflight";
-import { validateCurlProbeArgs } from "./curl-args";
+import { buildBoundedCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 
 describe("validateCurlProbeArgs — credential-leak defence", () => {
+  it("allows a fixed response-byte cap for bounded llama.cpp probes (#8161)", () => {
+    expect(
+      validateCurlProbeArgs(["-sS", "--max-filesize", "262144", "http://127.0.0.1:8081/v1/models"])
+        .args,
+    ).toEqual(["-sS", "--max-filesize", "262144"]);
+  });
+
+  it("rebuilds bounded llama.cpp probe argv from validated fields (#8161)", () => {
+    expect(
+      buildBoundedCurlProbeSpawnArgs(
+        ["-sS", "--max-filesize", "262144"],
+        "http://127.0.0.1:8081/v1/models",
+        "\n__NEMOCLAW_HTTP_STATUS_test__:",
+      ),
+    ).toEqual([
+      "-sS",
+      "--max-filesize",
+      "262144",
+      "-w",
+      "\n__NEMOCLAW_HTTP_STATUS_test__:%{http_code}",
+      "http://127.0.0.1:8081/v1/models",
+    ]);
+  });
+
   it("rejects an inline Authorization header so credentials cannot reach argv", () => {
     expect(() =>
       validateCurlProbeArgs([
@@ -155,6 +179,81 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
     ).not.toThrow();
   });
 
+  it("rejects capability reuse for a different host on the same private address (#8176)", async () => {
+    const preflight = await assertEndpointResolvesPublic(
+      "https://a.corp.example/v1/models",
+      async () => [{ address: "10.0.0.8", family: 4 }],
+      { trustedPrivateHosts: ["a.corp.example"] },
+    );
+
+    expect(() =>
+      validateCurlProbeArgs(
+        ["-sS", "--resolve", "b.corp.example:443:10.0.0.8", "https://b.corp.example/v1/models"],
+        {
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: preflight.trustedPrivateCapability,
+        },
+      ),
+    ).toThrow(/capability host 'a\.corp\.example' does not match 'b\.corp\.example'/);
+  });
+
+  it("canonicalizes an expanded ULA answer before curl pin validation (#8176)", async () => {
+    const endpointUrl = "https://llm.corp.example/v1/models";
+    const preflight = await assertEndpointResolvesPublic(
+      endpointUrl,
+      async () => [{ address: "fd00:0:0:0:0:0:0:10", family: 6 }],
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+
+    expect(preflight.addresses).toEqual(["fd00::10"]);
+    expect(() =>
+      validateCurlProbeArgs(["-sS", "--resolve", "llm.corp.example:443:[fd00::10]", endpointUrl], {
+        pinnedAddresses: preflight.addresses,
+        trustedPrivateCapability: preflight.trustedPrivateCapability,
+      }),
+    ).not.toThrow();
+  });
+
+  it("requires the exact mixed public and private pin set at the curl boundary (#8176)", async () => {
+    const endpointUrl = "https://llm.corp.example/v1/models";
+    const preflight = await assertEndpointResolvesPublic(
+      endpointUrl,
+      async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "10.0.0.8", family: 4 },
+      ],
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+    const options = {
+      pinnedAddresses: preflight.addresses,
+      trustedPrivateCapability: preflight.trustedPrivateCapability,
+    };
+
+    expect(() =>
+      validateCurlProbeArgs(
+        ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8,93.184.216.34", endpointUrl],
+        options,
+      ),
+    ).not.toThrow();
+
+    for (const mapping of [
+      "llm.corp.example:443:10.0.0.8",
+      "llm.corp.example:443:93.184.216.34",
+      "llm.corp.example:443:10.0.0.8,93.184.216.34,8.8.8.8",
+    ]) {
+      expect(() =>
+        validateCurlProbeArgs(["-sS", "--resolve", mapping, endpointUrl], options),
+      ).toThrow(/exactly match pinnedAddresses/);
+    }
+
+    expect(() =>
+      validateCurlProbeArgs(
+        ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8,93.184.216.34", endpointUrl],
+        { pinnedAddresses: preflight.addresses },
+      ),
+    ).toThrow(/unauthorized private address/);
+  });
+
   it("rejects a forged private authorization even when the address is otherwise trustable (#6861)", () => {
     expect(() =>
       validateCurlProbeArgs(
@@ -208,7 +307,7 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
       validateCurlProbeArgs(["-sS", "http://10.0.0.8/v1/models"], options),
     ).not.toThrow();
     expect(() => validateCurlProbeArgs(["-sS", "http://10.0.0.9/v1/models"], options)).toThrow(
-      /match the exact private IP URL/,
+      /capability host '10\.0\.0\.8' does not match '10\.0\.0\.9'/,
     );
   });
 

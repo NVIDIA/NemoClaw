@@ -1,0 +1,44 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.101
+
+NemoClaw v0.0.101 adds experimental Google Chat support for OpenClaw and improves runtime status, failed-gateway cleanup, inference-route cleanup, backup handling, and preservation of Hermes home-channel assignments during rebuilds.
+It also strengthens backup sanitization, lays dormant provider-neutral foundations for managed workload replacement, and expands trusted review and end-to-end (E2E) coverage.
+
+- OpenClaw sandboxes can now use experimental Google Chat through a restricted webhook endpoint.
+  NemoClaw keeps the service-account private key on the host, injects gateway-minted outbound credentials through OpenShell, and limits the public endpoint to Google Chat webhook traffic.
+  For more information, refer to [Set Up Google Chat](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-google-chat).
+- `nemoclaw status` now reports the number of local SSH sessions instead of presenting that count as a general connection signal.
+  `nemoclaw list --json` reports each sandbox's `activeSessionCount`, while text output marks sandboxes that have an active session.
+  Hermes status also recognizes the managed `hermes.real` gateway entrypoint, and in-sandbox host-side command hints include the sandbox name.
+  For more information, refer to the OpenClaw [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and the Hermes [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands) and [Troubleshooting](/user-guide/hermes/reference/troubleshooting).
+- HTTPS Pin Runtime route revocation now reuses the policy that authenticated the running adapter, so switching providers removes the superseded route and its in-memory credentials.
+  Negative timeout and polling overrides now fall back to their configured defaults instead of becoming zero-length budgets.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security) and [Configure Inference Timeouts](/user-guide/openclaw/inference/manage-inference/configure-inference-timeouts).
+- Onboarding now cleans up a failed managed OpenShell gateway service and continues through the existing ownership-gated standalone path.
+  Recovery and sandbox entry also enforce their declared durable states, invalidate agent-scoped checkpoint choices after an agent change, and preserve authoritative sandbox identity during resume.
+  For more information, refer to [Quickstart](/user-guide/openclaw/get-started/quickstart) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Rebuilds preserve recorded Hermes home-channel assignments while regenerating credentials and other environment values.
+  NemoClaw can lock Deep Agents Code configuration when the sandbox image did not ship a configuration hash.
+  Uninstall no longer mistakes the selected gateway for a sibling that must preserve shared host resources.
+  For more information, refer to [Choose Messaging Channels](/user-guide/hermes/manage-sandboxes/messaging-channels/choose-messaging-channels), the Deep Agents Code [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- Migration and rebuild backups now apply the same recursive credential filtering and fail closed when sanitization, cleanup, or filesystem identity checks fail.
+  NemoClaw deletes incomplete output when cleanup succeeds and reports when an incomplete backup remains.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- CLI validation diagnostics now escape and bound rejected sandbox, MCP server, and credential environment names before writing them to terminals or CI logs.
+  Snapshot helpers also validate maximum-size Base64 payloads with a bounded linear parser while rejecting malformed, non-canonical, oversized, or invalid UTF-8 content.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Runtime orchestration now uses a provider-neutral policy seam.
+  Provider-neutral authority now binds existing Docker snapshot and restore behavior to immutable runtime snapshots.
+  Managed workload replacement, clone handoff, transactional bootstrap, and Docker rollback contracts remain dormant.
+  These changes do not register Podman, activate buildless onboarding, or add a new supported runtime provider.
+- Trusted CI approves a workflow run only when its recorded commit matches the current PR head for an eligible same-repository maintainer.
+  It provisions pinned search tools before untrusted CLI tests run and reviews changed repository terminology.
+  Live E2E selection now covers Microsoft Teams stop and start behavior, Hermes managed-policy changes, Hermes adapter lifecycle changes, and consolidated sandbox resource-limit probes.
+- Documentation now clarifies Slack conflict detection across independent OpenShell gateways.
+  For more information, refer to [Set Up Slack](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-slack) and [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
+- Documentation also adds durable guidance for inference-route timing, validation reuse boundaries, replacement-image cleanup, and recovery.
+  For more information, refer to [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation), [Verify Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route), and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).

@@ -8,7 +8,7 @@ import {
   assertEndpointResolvesPublic,
   buildResolvePinArgs,
   type EndpointDnsLookupFn,
-  parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
   type TrustedPrivateEndpointCapability,
 } from "./endpoint-ssrf-preflight";
 import {
@@ -47,7 +47,7 @@ export type CompatibleEndpointModelsFetcher = (
    * fakes can ignore it.
    */
   pinnedAddresses?: string[],
-  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  /** Non-forgeable proof of the exact host and complete pins admitted by SSRF preflight. */
   trustedPrivateCapability?: TrustedPrivateEndpointCapability,
 ) => unknown | null;
 
@@ -246,9 +246,7 @@ export async function applyCompatibleEndpointContextWindow(
   // options.resolveHost. No env-gated bypass: an ambient VITEST flag must never
   // disable SSRF enforcement (cv review, PR #6293).
   const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost, {
-    trustedPrivateHosts: parseTrustedPrivateInferenceHosts(
-      env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS,
-    ),
+    trustedPrivateHosts: parseTrustedPrivateInferenceHostsFromEnv(env),
   });
   if (!preflight.ok) {
     logger.warn(
