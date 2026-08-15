@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
@@ -35,18 +35,11 @@ async function withProcessEnvironment<T>(
   values: Record<string, string | undefined>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = new Map(Object.keys(values).map((name) => [name, process.env[name]] as const));
-  for (const [name, value] of Object.entries(values)) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
+  for (const [name, value] of Object.entries(values)) vi.stubEnv(name, value);
   try {
     return await run();
   } finally {
-    for (const [name, value] of previous) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
+    vi.unstubAllEnvs();
   }
 }
 

@@ -156,6 +156,11 @@ describe("Deep Agents Code published base runtime evidence", () => {
       /did not use the published linux\/amd64 base digest/,
     ],
     [
+      "a pinned fallback reference",
+      resolutionMetadata({ pinnedRemoteRef: AMD64_REFERENCE }),
+      /did not use the published linux\/amd64 base digest/,
+    ],
+    [
       "an unsupported platform",
       resolutionMetadata({ architecture: "ppc64le" }),
       /used unsupported platform/,
