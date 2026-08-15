@@ -29,6 +29,7 @@ import {
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
+  managedImageStartupDiagnosticsProbe,
   parseManagedImageOpenShellE2eInputs,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
@@ -190,6 +191,20 @@ describe("protected managed-image runtime contract", () => {
     } finally {
       fs.rmSync(stateDir, { force: true, recursive: true });
     }
+  });
+
+  it("collects only bounded, redacted-safe startup diagnostics after a probe timeout", () => {
+    const probe = managedImageStartupDiagnosticsProbe();
+    const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
+
+    expect(syntax.status, syntax.stderr).toBe(0);
+    expect(probe).toContain("/tmp/nemoclaw-start.log");
+    expect(probe).toContain("/tmp/gateway.log");
+    expect(probe).toContain("tail -n 80");
+    expect(probe).toContain('test "$process_count" -ge 40');
+    expect(probe).not.toMatch(/\b(?:env|printenv)\b/u);
+    expect(probe).not.toContain("/proc/[0-9]*/cmdline");
+    expect(probe).not.toContain("/proc/[0-9]*/environ");
   });
 
   it("removes gateway state only after scoped stop and gateway removal succeed (#7744)", () => {

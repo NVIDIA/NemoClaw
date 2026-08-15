@@ -215,6 +215,52 @@ describe("onboard dashboard helpers", () => {
     ).toBe(false);
   });
 
+  it("waits for a stopped same-sandbox listener before reusing a fixed agent port", () => {
+    const sandboxName = "my-sandbox";
+    const targetPort = 8642;
+    let stopped = false;
+    let started = false;
+    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+      if (args.join(" ") === `forward stop ${targetPort} ${sandboxName}`) stopped = true;
+      return { status: 0 };
+    });
+    const forwardRow = `${sandboxName} 127.0.0.1 ${targetPort} 42001 running`;
+    const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+      if (args.join(" ") !== "forward list") return "";
+      return !stopped || started ? `SANDBOX BIND PORT PID STATUS\n${forwardRow}` : "";
+    });
+    const isPortBoundOnHost = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const sleep = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell,
+      openshellArgv: (args: string[]) => {
+        started = true;
+        return [process.execPath, "-e", "", ...args];
+      },
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep,
+      isPortBoundOnHost,
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(
+      helpers.ensureDashboardForward(sandboxName, `http://127.0.0.1:${targetPort}`, {
+        allowPortReallocation: false,
+      }),
+    ).toBe(targetPort);
+
+    expect(isPortBoundOnHost).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(0.25);
+  });
+
   it("uses the default dashboard URL when an empty environment override is passed", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";

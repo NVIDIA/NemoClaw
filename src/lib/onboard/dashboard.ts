@@ -8,6 +8,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
+import { waitUntil } from "../core/wait";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
@@ -28,6 +29,7 @@ import {
   getOccupiedPorts,
   getPersistedDashboardPort,
   getRegistryOccupiedDashboardPorts,
+  isPortBoundOnHost,
   isLiveForwardStatus,
   type ListSandboxesFn,
 } from "./dashboard-port";
@@ -46,6 +48,8 @@ import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
+const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
+const FORWARD_RELEASE_POLL_MS = 250;
 
 type CommandResult = { status: number | null };
 
@@ -71,6 +75,8 @@ export interface OnboardDashboardDeps {
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
   // callers leave it unset and the helper falls back to the live registry.
   listSandboxes?: ListSandboxesFn;
+  /** Host-listener probe injected by forward release race tests. */
+  isPortBoundOnHost?: typeof isPortBoundOnHost;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -180,6 +186,20 @@ function dashboardUrlForDisplay(url: string, deps: OnboardDashboardDeps): string
   return dashboardAccess.dashboardUrlForDisplay(url, deps.redact);
 }
 
+function waitForStoppedForwardPortRelease(
+  port: number,
+  isPortBound: (port: number) => boolean,
+  sleepSeconds: (seconds: number) => void,
+): boolean {
+  return waitUntil(() => !isPortBound(port), {
+    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
+    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
+    backoffFactor: 1,
+    maxAttempts: Math.ceil(FORWARD_RELEASE_TIMEOUT_MS / FORWARD_RELEASE_POLL_MS) + 1,
+    sleep: (milliseconds) => sleepSeconds(milliseconds / 1_000),
+  });
+}
+
 function printWslFallback(fallbackDashboardUrls: string[], indent: string): void {
   if (fallbackDashboardUrls.length === 0) return;
   console.log("");
@@ -285,7 +305,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       preferredEntry &&
       (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
     ) {
-      stopForwardForSandbox(preferredPort);
+      const stopResult = stopForwardForSandbox(preferredPort);
+      if (
+        preferredEntry.sandboxName === sandboxName &&
+        (stopResult === "stopped" || stopResult === "no-entry")
+      ) {
+        // OpenShell can remove forward metadata before the SSH listener exits.
+        // Do not classify that retiring listener as a foreign fixed-port
+        // conflict; use the same bounded five-second release window as runtime
+        // forward recovery.
+        waitForStoppedForwardPortRelease(
+          preferredPort,
+          deps.isPortBoundOnHost ?? isPortBoundOnHost,
+          deps.sleep,
+        );
+      }
       existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     }
     let actualPort: number;
@@ -294,7 +328,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         sandboxName,
         preferredPort,
         existingForwards,
-        undefined,
+        deps.isPortBoundOnHost ?? isPortBoundOnHost,
         getRegistryOccupiedDashboardPorts(sandboxName, deps.listSandboxes),
       );
     } catch (err) {

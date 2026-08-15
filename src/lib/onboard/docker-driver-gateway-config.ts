@@ -25,6 +25,7 @@ export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-
 // See docs/security/gateway-authentication-controls.mdx for the public compatibility boundary.
 export const DOCKER_DRIVER_GATEWAY_CONFIG_NAME = "openshell-gateway.toml";
 export const DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 0;
+const LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS = 3600;
 export const NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV = "NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE";
 
 type DockerDriverGatewayDriver = "docker" | "podman";
@@ -209,8 +210,15 @@ function openOwnedLegacyJwtBundle(stateDir: string, ownerUid: number): LegacyJwt
   }
 }
 
-function gatewayStateHasDurableIdentityEvidence(stateDir: string): boolean {
-  for (const name of ["jwt", "openshell.db", "openshell-gateway.pid", "runtime.json"]) {
+function gatewayStateHasDurableIdentityEvidence(
+  stateDir: string,
+  names: readonly string[],
+): boolean {
+  // A PID file and runtime marker describe a launch, not a durable gateway
+  // identity. Pre-config OpenShell releases legitimately leave those files
+  // behind when the installer retires their process. Only the database or JWT
+  // bundle makes generating a new identity ambiguous.
+  for (const name of names) {
     try {
       fs.lstatSync(path.join(stateDir, name));
       return true;
@@ -309,6 +317,7 @@ function isNonEmptyString(value: unknown): value is string {
 function existingGatewayIdentityFromConfig(
   stateDir: string,
   driver: DockerDriverGatewayDriver,
+  allowPreAuthGatewayDatabase = false,
 ): DockerDriverGatewayIdentity | null {
   const configPath = path.join(stateDir, DOCKER_DRIVER_GATEWAY_CONFIG_NAME);
   let configFile: OpenRegularFile | null = null;
@@ -330,7 +339,12 @@ function existingGatewayIdentityFromConfig(
     config = fs.lstatSync(configPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    if (gatewayStateHasDurableIdentityEvidence(stateDir)) {
+    if (
+      gatewayStateHasDurableIdentityEvidence(
+        stateDir,
+        allowPreAuthGatewayDatabase ? ["jwt"] : ["jwt", "openshell.db"],
+      )
+    ) {
       throw ambiguousGatewayConfig(configPath, "durable gateway state exists without a config");
     }
     return null;
@@ -433,6 +447,7 @@ function existingGatewayIdentityFromConfig(
     }
 
     const configuredGatewayId = gatewayJwt.gateway_id;
+    const configuredGatewayJwtTtl = gatewayJwt.ttl_secs;
     const namespace = driverConfig.sandbox_namespace;
     const legacyGatewayId = legacyGatewayIdForStateDir(stateDir);
     const scopedGatewayId = gatewayIdForStateDir(stateDir);
@@ -450,6 +465,10 @@ function existingGatewayIdentityFromConfig(
         "the JWT issuer and sandbox namespace are neither the legacy nor scoped identity",
       );
     }
+    const canonicalGatewayJwtTtl =
+      isLegacy && configuredGatewayJwtTtl === LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS
+        ? LEGACY_DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS
+        : DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS;
 
     const parsedEnv: Record<string, string> = {
       OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
@@ -470,6 +489,7 @@ function existingGatewayIdentityFromConfig(
       gatewayJwtBundlePaths(stateDir),
       String(configuredGatewayId),
       typeof namespace === "string" ? namespace : null,
+      canonicalGatewayJwtTtl,
     );
     if (originalToml !== canonicalToml) {
       throw ambiguousGatewayConfig(
@@ -511,10 +531,15 @@ function existingGatewayIdentityFromConfig(
 function resolveDockerDriverGatewayIdentity(
   stateDir: string,
   gatewayEnv: Record<string, string>,
+  allowPreAuthGatewayDatabase = false,
 ): DockerDriverGatewayIdentity {
   const driver: DockerDriverGatewayDriver =
     gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
-  const existing = existingGatewayIdentityFromConfig(stateDir, driver);
+  const existing = existingGatewayIdentityFromConfig(
+    stateDir,
+    driver,
+    allowPreAuthGatewayDatabase,
+  );
   if (existing) return existing;
   const gatewayId = gatewayIdForStateDir(stateDir);
   return { configProof: null, kind: "scoped", gatewayId, sandboxNamespace: gatewayId };
@@ -548,6 +573,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
   jwtBundle?: DockerDriverGatewayJwtBundle | null,
   gatewayId = "nemoclaw",
   sandboxNamespace: string | null = gatewayId,
+  gatewayJwtTtlSecs = DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
 ): string {
   const driver = gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
@@ -605,7 +631,7 @@ function buildDockerDriverGatewayConfigTomlForIdentity(
       `public_key_path = ${tomlString(jwtBundle.publicKeyPath)}`,
       `kid_path = ${tomlString(jwtBundle.kidPath)}`,
       `gateway_id = ${tomlString(gatewayId)}`,
-      `ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`,
+      `ttl_secs = ${gatewayJwtTtlSecs}`,
       "",
       "[openshell.gateway.auth]",
       "allow_unauthenticated_users = false",
@@ -701,8 +727,13 @@ export function prepareDockerDriverGatewayConfigEnv(
   gatewayEnv: Record<string, string>,
   stateDir: string,
   sandboxBin?: string | null,
+  options: { allowPreAuthGatewayDatabase?: boolean } = {},
 ): Record<string, string> {
-  const identity = resolveDockerDriverGatewayIdentity(stateDir, gatewayEnv);
+  const identity = resolveDockerDriverGatewayIdentity(
+    stateDir,
+    gatewayEnv,
+    options.allowPreAuthGatewayDatabase === true,
+  );
   gatewayEnv.OPENSHELL_GATEWAY_CONFIG = writeDockerDriverGatewayConfigWithIdentity(
     stateDir,
     gatewayEnv,

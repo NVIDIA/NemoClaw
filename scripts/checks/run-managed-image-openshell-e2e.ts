@@ -46,6 +46,7 @@ import {
   type SandboxGpuCreateFlowInput,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
+import { redactFull } from "../../src/lib/security/redact.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -479,6 +480,30 @@ export function managedImageOpenShellCommittedProbe(): string {
   ].join("\n");
 }
 
+export function managedImageStartupDiagnosticsProbe(): string {
+  return [
+    "set +e",
+    "printf '%s\\n' 'managed-image startup process status:'",
+    "process_count=0",
+    "for status_path in /proc/[0-9]*/status; do",
+    "  test \"$process_count\" -ge 40 && break",
+    "  if test -r \"$status_path\"; then",
+    "    /usr/bin/awk '/^(Name|State|Pid|PPid|Uid):/ { print }' \"$status_path\"",
+    "    printf '%s\\n' '--'",
+    "    process_count=$((process_count + 1))",
+    "  fi",
+    "done",
+    "for log_path in /tmp/nemoclaw-start.log /tmp/gateway.log; do",
+    "  printf 'managed-image startup log: %s\\n' \"$log_path\"",
+    "  if test -f \"$log_path\" && test ! -L \"$log_path\"; then",
+    "    /usr/bin/tail -n 80 -- \"$log_path\"",
+    "  else",
+    "    printf '%s\\n' '[missing or unsafe log path]'",
+    "  fi",
+    "done",
+  ].join("\n");
+}
+
 async function waitForCommittedSandboxProbe(
   onboard: OnboardModule,
   input: Inputs,
@@ -487,6 +512,7 @@ async function waitForCommittedSandboxProbe(
 ): Promise<void> {
   const healthProbe = managedImageOpenShellProbe(input.agent, input.model ?? MODEL);
   const committedProbe = managedImageOpenShellCommittedProbe();
+  const diagnosticsProbe = managedImageStartupDiagnosticsProbe();
   const deadline = Date.now() + 240_000;
   const runProbe = (probe: string, timeoutMs: number) =>
     commandResult(
@@ -525,8 +551,10 @@ async function waitForCommittedSandboxProbe(
     const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
     if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
+  const diagnostics = runProbe(diagnosticsProbe, 15_000);
+  const redactedDiagnostics = redactFull(commandDetail(diagnostics));
   throw new Error(
-    `OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: ${lastHealthDetail}`,
+    `OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: ${lastHealthDetail}\nRedacted startup diagnostics:\n${redactedDiagnostics}`,
   );
 }
 

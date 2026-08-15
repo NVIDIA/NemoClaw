@@ -578,21 +578,6 @@ export async function collectSandboxStatusSnapshot(
   // providers without a registered host-side health probe (#6192).
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
-    try {
-      const probe =
-        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
-      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
-      for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        gatewayChain = await probe(sandboxName);
-        if (gatewayChain?.ok || attempt === attempts) break;
-        await (opts.deps?.delayInferenceRecoveryProbe ?? sleep)(RECOVERED_INFERENCE_PROBE_DELAY_MS);
-      }
-    } catch (error) {
-      // This is a permanent fail-closed runtime boundary, but unexpected
-      // OpenShell/transport exceptions must remain observable for diagnosis.
-      reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
-      gatewayChain = null;
-    }
     // Take the provider and model as one pair. Falling back per field can pair
     // a live model with a recorded provider and request a route neither one
     // describes.
@@ -614,23 +599,46 @@ export async function collectSandboxStatusSnapshot(
           };
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
-    const invocation =
-      gatewayChain?.ok && invocationModel && invocationProvider
-        ? runSandboxInferenceInvocationProbe(
-            {
-              sandboxName,
-              provider: invocationProvider,
-              model: invocationModel,
-              preferredInferenceApi: invocationRoute.preferredInferenceApi,
-            },
-            opts.deps?.probeSandboxInferenceInvocationImpl,
-            (error) =>
-              reportInferenceProbeError(
-                error,
-                opts.deps?.reportInferenceProbeError ?? console.error,
-              ),
-          )
-        : null;
+    const canProbeInvocation = Boolean(invocationModel && invocationProvider);
+    let invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null = null;
+    try {
+      const probe =
+        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
+      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        gatewayChain = await probe(sandboxName);
+        invocation =
+          gatewayChain?.ok && canProbeInvocation
+            ? runSandboxInferenceInvocationProbe(
+                {
+                  sandboxName,
+                  provider: invocationProvider,
+                  model: invocationModel,
+                  preferredInferenceApi: invocationRoute.preferredInferenceApi,
+                },
+                opts.deps?.probeSandboxInferenceInvocationImpl,
+                (error) =>
+                  reportInferenceProbeError(
+                    error,
+                    opts.deps?.reportInferenceProbeError ?? console.error,
+                  ),
+              )
+            : null;
+        if (
+          (gatewayChain?.ok && (!canProbeInvocation || invocation?.ok)) ||
+          attempt === attempts
+        ) {
+          break;
+        }
+        await (opts.deps?.delayInferenceRecoveryProbe ?? sleep)(RECOVERED_INFERENCE_PROBE_DELAY_MS);
+      }
+    } catch (error) {
+      // This is a permanent fail-closed runtime boundary, but unexpected
+      // OpenShell/transport exceptions must remain observable for diagnosis.
+      reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
+      gatewayChain = null;
+      invocation = null;
+    }
     inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");

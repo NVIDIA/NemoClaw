@@ -183,6 +183,29 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
+  it("preserves the v0.0.74 gateway identity while upgrading its reviewed JWT TTL", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-v0-0-74-"));
+    try {
+      const { configPath, env, gatewayId } = writePreScopedGatewayConfig(stateDir);
+      const legacyToml = fs
+        .readFileSync(configPath, "utf-8")
+        .replace(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`, "ttl_secs = 3600");
+      fs.writeFileSync(configPath, legacyToml, { encoding: "utf-8", mode: 0o600 });
+      const signingKeyPath = jwtBundlePaths(stateDir).signingKeyPath;
+      const signingKeyBefore = fs.readFileSync(signingKeyPath, "utf-8");
+
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+
+      const rewritten = fs.readFileSync(configPath, "utf-8");
+      expect(parseTomlString(rewritten, "gateway_id")).toBe(gatewayId);
+      expect(rewritten).toContain(`ttl_secs = ${DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS}`);
+      expect(rewritten).not.toContain("ttl_secs = 3600");
+      expect(fs.readFileSync(signingKeyPath, "utf-8")).toBe(signingKeyBefore);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("recognizes an explicitly restored default namespace as the legacy identity", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-restored-"));
     try {
@@ -387,6 +410,28 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
+  it("creates the first authenticated config for a prepared v0.0.55 database recovery", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-v0-0-55-"));
+    try {
+      fs.writeFileSync(path.join(stateDir, "openshell.db"), "legacy-database", { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, "runtime.json"), "legacy-runtime", { mode: 0o600 });
+      const env = baseGatewayEnv(stateDir);
+
+      prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox", {
+        allowPreAuthGatewayDatabase: true,
+      });
+
+      const config = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
+      expect(parseTomlString(config, "gateway_id")).toBe(gatewayIdForStateDir(stateDir));
+      expect(parseTomlString(config, "sandbox_namespace")).toBe(gatewayIdForStateDir(stateDir));
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
+        "legacy-database",
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not recreate a missing config when only the gateway JWT identity remains", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-jwt-only-"));
     try {
@@ -403,6 +448,26 @@ describe("docker-driver-gateway config TOML", () => {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
+
+  it.each(["openshell-gateway.pid", "runtime.json"])(
+    "creates a fresh config when only legacy runtime marker %s remains",
+    (marker) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-pre-config-"));
+      try {
+        fs.writeFileSync(path.join(stateDir, marker), "retired-runtime", { mode: 0o600 });
+        const env = baseGatewayEnv(stateDir);
+
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+
+        expect(fs.existsSync(path.join(stateDir, "openshell-gateway.toml"))).toBe(true);
+        expect(
+          parseTomlString(fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8"), "gateway_id"),
+        ).toBe(gatewayIdForStateDir(stateDir));
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not trust or mutate a legacy JWT bundle in a non-private directory", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-jwt-mode-"));
