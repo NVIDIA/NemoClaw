@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { PORTABLE_CPU_DELEGATION_PREPARE_SCRIPT } from "../../../tools/e2e/portable-cpu-delegation-prepare.mts";
 import {
   readRepoText,
   readYaml,
@@ -88,6 +89,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(parsed.on.pull_request.paths).toContain(
       "test/e2e/live/portable-cpu-delegation-proof.test.ts",
     );
+    expect(parsed.on.pull_request.paths).toContain("tools/e2e/portable-cpu-delegation-prepare.mts");
     expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
@@ -114,8 +116,10 @@ describe("native Podman CPU proof workflow", () => {
     expect(installOpenShell).toContain("$HOME/.local/bin");
     expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("${{ secrets.");
     const delegation = delegationJob();
-    const prepare =
-      namedDelegationStep("Prepare CPU controller settings without service delegation").run ?? "";
+    const prepareStep = namedDelegationStep(
+      "Prepare CPU controller settings without service delegation",
+    );
+    const prepare = PORTABLE_CPU_DELEGATION_PREPARE_SCRIPT;
     const reject =
       namedDelegationStep(
         "Verify missing delegation blocks portable configuration and service activation",
@@ -139,6 +143,11 @@ describe("native Podman CPU proof workflow", () => {
     expect(namedDelegationStep("Build shared sandbox-name contract").run).toBe(
       "npm run build:policy-boundary",
     );
+    expect(prepareStep.run).toBe(
+      "node --experimental-strip-types --no-warnings tools/e2e/portable-cpu-delegation-prepare.mts",
+    );
+    const prepareSyntax = spawnSync("bash", ["-n"], { encoding: "utf8", input: prepare });
+    expect(prepareSyntax.status, prepareSyntax.stderr).toBe(0);
     expect(prepare).toContain('useradd --create-home --shell /bin/bash --comment "$user_comment"');
     expect(prepare).toContain("CPUWeight=100");
     expect(prepare.match(/CPUWeight=100/gu)).toHaveLength(2);
@@ -280,8 +289,7 @@ describe("native Podman CPU proof workflow", () => {
   });
 
   it("preserves the workspace mode receipt when preparation rollback cannot restore a mode", () => {
-    const prepare =
-      namedDelegationStep("Prepare CPU controller settings without service delegation").run ?? "";
+    const prepare = PORTABLE_CPU_DELEGATION_PREPARE_SCRIPT;
     const functionStart = prepare.indexOf("cleanup_failed_prepare() {");
     const functionEnd = prepare.indexOf("\ntrap cleanup_failed_prepare EXIT", functionStart);
     expect(functionStart).toBeGreaterThanOrEqual(0);
