@@ -7,6 +7,7 @@ import { startSandbox } from "../../actions/sandbox/start";
 import { stopSandbox } from "../../actions/sandbox/stop";
 import {
   createPodmanContainerEngine,
+  type PodmanBoundContainerEngine,
   type PodmanContainerEngine,
   type PodmanExecutableAuthorityDeps,
   type PodmanExecutableStat,
@@ -419,6 +420,44 @@ describe("dormant Podman runtime provider", () => {
         },
       }),
     ).toThrow("same endpoint authority");
+  });
+
+  it("rejects a state-mutation engine with another operation scope", () => {
+    const engines = realOperationEngines();
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: {
+          ...engines,
+          stateMutation: engines.sandboxLifecycle as PodmanBoundContainerEngine,
+        },
+      }),
+    ).toThrow("'state-mutation' Podman engine");
+  });
+
+  it("rejects a state-mutation engine bound to another endpoint authority", () => {
+    const engines = realOperationEngines();
+    const driftedStateMutation = realOperationEngines({
+      ...REAL_SOCKET_AUTHORITY,
+      inode: "9002",
+    }).stateMutation;
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines: { ...engines, stateMutation: driftedStateMutation },
+      }),
+    ).toThrow("same endpoint authority");
+  });
+
+  it("rejects state-mutation options without a state-mutation engine", () => {
+    const { stateMutation: _stateMutation, ...engines } = realOperationEngines();
+
+    expect(() =>
+      createPodmanRuntimeProviderBundle({
+        engines,
+        stateMutation: {},
+      }),
+    ).toThrow("state-mutation engine with its options");
   });
 
   it("rejects a mismatched engine scope before bundle registration", () => {

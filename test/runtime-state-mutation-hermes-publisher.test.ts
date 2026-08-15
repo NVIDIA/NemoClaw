@@ -139,9 +139,6 @@ with tempfile.TemporaryDirectory() as temporary:
 
     publisher._run_guard = fake_guard
     selected = marker()
-    results["podman_provider"] = publisher._normalize_marker(
-        marker(provider_id="podman"), "locked"
-    )["providerId"]
     first = publisher.apply_plan_posture(selected, "locked")
     results["first"] = first
     first_event_count = len(events)
@@ -162,6 +159,44 @@ with tempfile.TemporaryDirectory() as temporary:
     extra["planSha256"] = hashlib.sha256(extra["plan"].encode()).hexdigest()
     results["extra_selector"] = code(
         lambda: publisher.apply_plan_posture(extra, "locked")
+    )
+
+with tempfile.TemporaryDirectory() as temporary:
+    durable = os.path.join(temporary, "durable")
+    os.mkdir(durable, 0o711)
+    plan_path = os.path.join(temporary, "state-lock-plan.json")
+    shutil.copyfile(sys.argv[2], plan_path)
+    os.chmod(plan_path, 0o444)
+    publisher.DURABLE_DIRECTORY = durable
+    publisher.STATE_LOCK_PLAN_PATH = plan_path
+    publisher._verify_final_posture = lambda posture, plan_json: "4" * 64
+    podman_token = "3" * 64
+
+    def podman_guard(action, arguments):
+        state_path = os.path.join(durable, publisher.GUARD_STATE_NAME)
+        if action == "begin-shields-transition":
+            posture = arguments[arguments.index("--shields-mode") + 1]
+            rollback = arguments[arguments.index("--rollback-shields-mode") + 1]
+            state = {
+                "version": 1,
+                "phase": "shields-transition-pending",
+                "mutation_lock_token": podman_token,
+                "mutation_lock_path": os.path.join(durable, "hermes-config-mutation.lock"),
+                "hermes_dir": "/sandbox/.hermes",
+                "hash_file": "/etc/nemoclaw/hermes.config-hash",
+                "shields_transition": {"mode": posture, "rollback_mode": rollback},
+            }
+            with open(state_path, "w", encoding="utf-8") as stream:
+                json.dump(state, stream, separators=(",", ":"))
+            os.chmod(state_path, 0o600)
+            return f"lock_token={podman_token} original_locked=0\n"
+        if action == "finish-shields-transition":
+            os.unlink(state_path)
+        return "ok\n"
+
+    publisher._run_guard = podman_guard
+    results["podman_public"] = publisher.apply_plan_posture(
+        marker(nonce="4" * 64, provider_id="podman"), "locked"
     )
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -299,7 +334,11 @@ describe("Hermes runtime state mutation publisher", () => {
       posture: "locked",
       nonce: "d".repeat(64),
     });
-    expect(result.podman_provider).toBe("podman");
+    expect(result.podman_public).toMatchObject({
+      protocol: "nemoclaw-runtime-state-mutation-publisher-v1",
+      posture: "locked",
+      nonce: "4".repeat(64),
+    });
     expect(result.retry).toMatchObject({ posture: "locked" });
     expect(result.rollback).toMatchObject({ posture: "mutable" });
     const expectedStatePlan = JSON.parse(fs.readFileSync(STATE_PLAN, "utf8")) as Record<
