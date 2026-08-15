@@ -9,6 +9,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { V00103_SANDBOX_BUILD_DIGESTS } from "./helpers/openshell-release-fixtures";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const PARSER = path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -21,6 +23,10 @@ const BREV_TEMPLATE = fs.readFileSync(
 );
 const BLUEPRINT_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "nemoclaw-blueprint/blueprint.yaml"),
+  "utf8",
+);
+const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
   "utf8",
 );
 const ARBITRARY_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
@@ -71,15 +77,19 @@ function runParser(mutate: (source: string) => string = (source) => source) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sandbox-build-trust-"));
   const scriptsDir = path.join(root, "scripts");
   const blueprintDir = path.join(root, "nemoclaw-blueprint");
+  const supervisorRuntimeDir = path.join(root, "src/lib/onboard");
   const installer = path.join(scriptsDir, "install-openshell.sh");
   const brevInstaller = path.join(scriptsDir, "brev-launchable-ci-cpu.sh");
   const blueprint = path.join(blueprintDir, "blueprint.yaml");
+  const supervisorRuntime = path.join(supervisorRuntimeDir, "docker-driver-gateway-runtime.ts");
   tempDirs.push(root);
   fs.mkdirSync(scriptsDir, { recursive: true });
   fs.mkdirSync(blueprintDir, { recursive: true });
+  fs.mkdirSync(supervisorRuntimeDir, { recursive: true });
   fs.writeFileSync(installer, mutate(INSTALLER_TEMPLATE));
   fs.writeFileSync(brevInstaller, BREV_TEMPLATE);
   fs.writeFileSync(blueprint, BLUEPRINT_TEMPLATE);
+  fs.writeFileSync(supervisorRuntime, SUPERVISOR_RUNTIME_TEMPLATE);
   return spawnSync(
     "node",
     [
@@ -92,6 +102,8 @@ function runParser(mutate: (source: string) => string = (source) => source) {
       installer,
       "--brev-installer",
       brevInstaller,
+      "--supervisor-runtime",
+      supervisorRuntime,
       "--format",
       "tsv",
     ],
@@ -106,6 +118,14 @@ describe("standalone sandbox build trust", () => {
 
   it("accepts the selected reviewed v0.0.101 identities", () => {
     expect(runParser().status).toBe(0);
+  });
+
+  it("accepts the base-trusted OpenShell 0.0.103 sandbox identities before version selection (#8893)", () => {
+    const result = runParser((source) =>
+      addSandboxBuildPins(source, "0.0.103", V00103_SANDBOX_BUILD_DIGESTS),
+    );
+
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it("rejects an arbitrary structurally valid identity addition", () => {
