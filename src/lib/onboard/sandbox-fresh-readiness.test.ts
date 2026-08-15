@@ -54,6 +54,10 @@ import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowDeps } from "./sandbo
 
 type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
+const SANDBOX_NOT_READY_OUTPUT =
+  `Error:   × code: 'The system is not in a state required for the operation's\n` +
+  '  │ execution\', message: "sandbox is not ready"\n';
+
 function readySandboxGetResult(): OpenShellResult {
   return {
     status: 0,
@@ -76,13 +80,13 @@ function mockExit() {
   });
 }
 
-function timedOutOpenShellResult(): OpenShellResult {
+function timedOutOpenShellResult(stderr = ""): OpenShellResult {
   const error = new Error("spawn openshell timed out") as NodeJS.ErrnoException;
   error.code = "ETIMEDOUT";
   return {
     status: null,
     stdout: "",
-    stderr: "",
+    stderr,
     error,
     signal: "SIGKILL",
   } as OpenShellResult;
@@ -103,9 +107,7 @@ describe("fresh sandbox executable readiness", () => {
             {
               status: 1,
               stdout: "",
-              stderr:
-                `Error:   × code: 'The system is not in a state required for the operation's\n` +
-                '  │ execution\', message: "sandbox is not ready"\n',
+              stderr: SANDBOX_NOT_READY_OUTPUT,
             },
             { status: 0, stdout: "", stderr: "" },
           ],
@@ -152,7 +154,28 @@ describe("fresh sandbox executable readiness", () => {
     });
   });
 
-  it("bounds a stalled executable readiness probe and cleans up the fresh sandbox (#9050)", async () => {
+  it("fails when the identity probe times out after emitting not-ready output (#9050)", async () => {
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get alpha", [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)]],
+      ]),
+    );
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "true"],
+      expect.anything(),
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("fails when the executable probe times out after emitting not-ready output (#9050)", async () => {
     const deps = createDeps();
     const input = createInput();
     input.sandboxReadyTimeoutSecs = 0.5;
@@ -161,7 +184,7 @@ describe("fresh sandbox executable readiness", () => {
         ["sandbox get alpha", [readySandboxGetResult()]],
         [
           ["sandbox", "exec", "--name", "alpha", "--", "true"].join(" "),
-          [timedOutOpenShellResult()],
+          [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)],
         ],
       ]),
     );
