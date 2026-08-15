@@ -137,7 +137,7 @@ function appendedMessages(fileName, baseline) {
   return messages;
 }
 
-function qualifyTurns() {
+function qualifyTurns(requireAssistant) {
   const expectedTurns = Number(expectedTurnsText);
   if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
     finish(2, "expected_turn_count_invalid");
@@ -169,13 +169,15 @@ function qualifyTurns() {
     }
     if (!message.hasStructuredContent) finish(2, "message_content_empty", { sessionId });
   }
-  if (messages.length < expectedRoles.length) finish(1);
+  const requiredMessages = expectedRoles.length - (requireAssistant ? 0 : 1);
+  if (messages.length < requiredMessages) finish(1);
   finish(0);
 }
 
 try {
   if (mode === "baseline") recordBaseline();
-  if (mode === "qualify") qualifyTurns();
+  if (mode === "qualify") qualifyTurns(true);
+  if (mode === "qualify-input") qualifyTurns(false);
 } catch {
   finish(2, "verifier_failed");
 }
@@ -280,17 +282,33 @@ wait_for_turn_count() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
-wait_for_launch_readiness() {
-  for _ in {1..1800}; do
-    if grep -Fq -- "gateway connected | idle" "$capture"; then
-      return 0
-    fi
+submit_turn() {
+  local expected_turns="$1"
+  local content="$2"
+  local evidence_status
+  for _ in {1..90}; do
     if ! kill -0 "$session_pid" 2>/dev/null; then
       break
     fi
-    sleep 0.1
+    if ! printf '%s\r' "$content" >&3; then
+      break
+    fi
+    for _ in {1..2}; do
+      if session_evidence qualify-input "$expected_turns" >/dev/null 2>"$evidence_error"; then
+        return 0
+      else
+        evidence_status=$?
+      fi
+      if [[ "$evidence_status" != 1 ]]; then
+        fail_launch_session "structured session input evidence was invalid or unavailable (status $evidence_status)"
+      fi
+      if ! kill -0 "$session_pid" 2>/dev/null; then
+        break 2
+      fi
+      sleep 1
+    done
   done
-  fail_launch_session "launch did not report OpenClaw readiness"
+  fail_launch_session "launch did not record PTY input in the structured session"
 }
 
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
@@ -328,10 +346,9 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-wait_for_launch_readiness
-printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3
+submit_turn 1 "$NEMOCLAW_LAUNCH_FIRST_INPUT"
 wait_for_turn_count 1
-printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3
+submit_turn 2 "$NEMOCLAW_LAUNCH_SECOND_INPUT"
 wait_for_turn_count 2
 
 if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then

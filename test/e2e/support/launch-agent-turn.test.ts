@@ -26,7 +26,7 @@ import {
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
-  | "delayed-ready"
+  | "delayed-input"
   | "invalid-order"
   | "nonzero"
   | "nonzero-cleanup-failure"
@@ -62,6 +62,7 @@ function runEvidenceFixture(input: {
   afterFinalNewline?: boolean;
   before?: SessionRecords;
   expectedTurns: number;
+  mode?: "qualify" | "qualify-input";
 }) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "nemoclaw-launch-evidence-"));
   const baselinePath = join(fixtureRoot, "baseline.json");
@@ -80,7 +81,7 @@ function runEvidenceFixture(input: {
       [
         "-e",
         OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        "qualify",
+        input.mode ?? "qualify",
         sessionRoot,
         baselinePath,
         String(input.expectedTurns),
@@ -158,17 +159,8 @@ const append = (role, content) => fs.appendFileSync(
 );
 
 (async () => {
-  if (mode === "delayed-ready") {
-    process.stdout.write("starting gateway\n");
-    let inputBeforeReadiness = false;
-    const recordEarlyInput = () => { inputBeforeReadiness = true; };
-    process.stdin.on("data", recordEarlyInput);
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    process.stdin.off("data", recordEarlyInput);
-    process.stdout.write("gateway connected | idle\n");
-    if (inputBeforeReadiness) process.exit(67);
-  } else {
-    process.stdout.write("gateway connected | idle\n");
+  if (mode === "delayed-input") {
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   const first = await ask();
@@ -269,6 +261,24 @@ it("keeps a partial structured turn pending (#9160)", () => {
   expect(qualification.status).toBe(1);
 });
 
+it("qualifies PTY input from the structured user record before the assistant reply (#9160)", () => {
+  const accepted = runEvidenceFixture({
+    after: { "session-a": [message("user")] },
+    expectedTurns: 1,
+    mode: "qualify-input",
+  });
+  const pending = runEvidenceFixture({
+    after: { "session-a": [message("user"), message("assistant")] },
+    expectedTurns: 2,
+    mode: "qualify-input",
+  });
+
+  expect(accepted.baseline.status).toBe(0);
+  expect(accepted.qualification.status).toBe(0);
+  expect(pending.baseline.status).toBe(0);
+  expect(pending.qualification.status).toBe(1);
+});
+
 it("does not qualify structured turns recorded before the baseline (#9160)", () => {
   const { baseline, qualification } = runEvidenceFixture({
     before: { "session-a": [message("user"), message("assistant")] },
@@ -342,10 +352,10 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "waits for OpenClaw readiness before sending PTY input (#9160)",
+  "retries PTY input until structured user evidence is recorded (#9160)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "delayed-ready",
+      "delayed-input",
       "plain",
     );
 
