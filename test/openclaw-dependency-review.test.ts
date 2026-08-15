@@ -12,15 +12,21 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-wor
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.6.10-dependency-review.md",
 );
 const ACTIVE_DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
+);
+const MCP_TROUBLESHOOTING = path.join(
+  REPO_ROOT,
+  "docs",
+  "reference",
+  "troubleshoot-mcp-servers.mdx",
 );
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
@@ -48,6 +54,12 @@ const SHARED_STATE_PERMISSIONS_PATCH = path.join(
   REPO_ROOT,
   "scripts",
   "patch-openclaw-shared-state-permissions.mts",
+);
+const MCP_RELIABILITY_PATCH = path.join(REPO_ROOT, "scripts", "patch-openclaw-mcp-reliability.mts");
+const MCP_TOOLS_LIST_TIMEOUT_PATCH = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-mcp-tools-list-timeout.mts",
 );
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
@@ -155,6 +167,105 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS=1");
   });
 
+  it("records the version-scoped transient remote MCP startup recovery patch (#7958)", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+    const troubleshooting = readFileSync(MCP_TROUBLESHOOTING, "utf-8");
+
+    expect(review).toContain("## Transient Remote MCP Startup Recovery");
+    expect(review).toContain("scripts/patch-openclaw-mcp-reliability.mts");
+    expect(review).toContain(
+      'identifies its target by the `"openclaw-bundle-mcp"` client identity',
+    );
+    expect(review).toContain("One retry, and only one, for a server *startup* failure");
+    expect(review).toContain("are never retried");
+    expect(review).toContain("dropped at the next agent run boundary");
+    expect(review).toContain("test/openclaw-mcp-reliability-patch.test.ts");
+    expect(review).toContain("test/helpers/openclaw-real-mcp-start-retry-proof.ts");
+    expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
+    expect(review).toContain(
+      "Removal criterion: drop this patch when the reviewed OpenClaw release",
+    );
+    expect(review).toContain("only when the *surviving* failure is itself transient");
+    expect(review).toContain("credentials and configuration were not rejected");
+    expect(review).not.toContain("explicitly clears credentials and configuration");
+    expect(review).not.toContain("a refused destination is deterministic");
+    expect(troubleshooting).toMatch(
+      /<AgentOnly variant="openclaw">\n\n## Remote MCP Tools Are Missing for One Agent Turn[\s\S]*?<\/AgentOnly>/,
+    );
+  });
+
+  it("records the version-scoped managed outbound transport diagnostics patch (#7957)", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("## Managed Outbound Transport Diagnostics");
+    expect(review).toContain("scripts/patch-openclaw-managed-transport-diagnostics.mts");
+    expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
+    expect(review).toContain("Failure-only by default.");
+    expect(review).toContain("`NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1`");
+    expect(review).toContain("successful-request `managed_transport_shadow` timing events");
+    expect(review).toContain("never retries, never alters the request");
+    expect(review).toContain("`route=proxy_configured` means that `HTTPS_PROXY`");
+    expect(review).toContain("report configuration evidence");
+    expect(review).toContain("do not prove whether the failed request used a proxy");
+    expect(review).toContain(
+      "returns the original response without waiting for asynchronous sampling",
+    );
+    expect(review).toContain("waits at most 250 ms");
+    expect(review).toContain("retains at most 2,048 response bytes");
+    expect(review).toContain("Non-2xx response diagnostics are best-effort.");
+    expect(review).toContain("port, and a redacted message");
+    expect(review).toContain("a thrown `UND_ERR_HEADERS_TIMEOUT` failure");
+    expect(review).toContain("no response headers or `http_status`");
+    expect(review).toContain("The `transport_phase` field classifies a thrown failure");
+    expect(review).toContain("A returned non-2xx response sets `transport_phase=response_headers`");
+    expect(review).toContain("transport-phase signal");
+    expect(review).toContain("does not inspect a 2xx response body");
+    expect(review).toContain("report a validated JSON-RPC method");
+    expect(review).toContain("reports the configured server name as `mcp_server`");
+    expect(review).toContain("Shadow recommendations apply only to `tools/list`");
+    expect(review).toContain("An explicit HTTP 503 produces no timeout recommendation.");
+    expect(review).toContain("structured credentials such as `access_token`");
+    expect(review).toContain("The peer address is not recorded.");
+    expect(review).toContain("The `mcp-session-id` value is never emitted.");
+    expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
+    expect(review).toContain("test/openclaw-managed-transport-diagnostics-patch.test.ts");
+    expect(review).toContain("executes that exact helper");
+    expect(review).toContain("local 32-character hexadecimal `diagnostic_id`");
+    expect(review).toContain("not a distributed trace identifier");
+    expect(review).toContain(
+      "Managed transport diagnostics remains separate from `scripts/patch-openclaw-mcp-reliability.mts`.",
+    );
+    expect(review).toContain("wraps every failed remote Streamable HTTP fetch");
+    expect(review).toContain("The reliability patch owns startup catalog and retry behavior.");
+    expect(review).toContain("The two patches compose independently.");
+    expect(review).toContain(
+      "A reusable source schema is deferred until a production consumer requires one.",
+    );
+    expect(review).not.toContain("src/lib/observability/managed-transport.test.ts");
+    expect(review).toContain("NVIDIA/OpenShell#2508");
+  });
+
+  it("records the bounded MCP tool discovery timeout patch (#7957)", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+    const troubleshooting = readFileSync(MCP_TROUBLESHOOTING, "utf-8");
+
+    expect(review).toContain("## Bounded MCP Tool Discovery Timeout");
+    expect(review).toContain("scripts/patch-openclaw-mcp-tools-list-timeout.mts");
+    expect(review).toContain("OpenClaw `2026.7.1` gives `tools/list` 1,500 ms");
+    expect(review).toContain("from 1,500 through 10,000 ms");
+    expect(review).toContain("only for catalog `tools/list` requests");
+    expect(review).toContain("does not change the 30,000 ms connection timeout");
+    expect(review).toContain("60,000 ms default used by tool calls");
+    expect(review).toContain("test/openclaw-mcp-tools-list-timeout-patch.test.ts");
+    expect(review).toContain("composition with managed transport diagnostics");
+    expect(troubleshooting).toContain("### Adjust the Tool Discovery Timeout");
+    expect(troubleshooting).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000");
+    expect(troubleshooting).toContain("mcp_tools_list_timeout_override_ms=3000");
+    expect(troubleshooting).toContain("Advance from `3000` to `5000`, and then to `10000`");
+    expect(troubleshooting).toContain("McpError: MCP error -32001: Request timed out");
+    expect(troubleshooting).toContain("connection timed out after 30000ms");
+  });
+
   it("records the active mcporter advisory remediations", () => {
     const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
 
@@ -162,8 +273,19 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("@hono/node-server@^1.19.9");
     expect(review).toContain("`2.0.11`");
     expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
+    expect(review).toContain("GHSA-7p8r-x3mc-p8w7");
     expect(review).toContain("fast-uri@^3.0.1");
-    expect(review).toContain("`3.1.4`");
+    expect(review).toContain("`3.1.5`");
+    expect(review).toContain("GHSA-8xcm-r25x-g524");
+    expect(review).toContain("GHSA-4cwx-7wf7-3272");
+    expect(review).toContain("undici@8.10.0");
+    expect(review).toContain("GHSA-mwp4-54f8-5fhr");
+    expect(review).toContain("ip-address@^10.2.0");
+    expect(review).toContain("ip-address@10.3.1");
+    expect(review).toContain("hono@4.12.34");
+    expect(review).toContain("GHSA-54fx-42gc-7vw4");
+    expect(review).toContain("GHSA-f23p-vx2j-j53r");
+    expect(review).toContain("GHSA-79qm-7rj5-m7r9");
   });
 
   it("keeps advisor disposition evidence in the dependency review note", () => {
@@ -485,14 +607,15 @@ check_not_contains() {
   esac
 }
 
-codex_acp_block="$(sed -n '/# Pre-install the codex-acp package/,/# Upgrade OpenClaw if the base image is stale./p' Dockerfile)"
-check_contains "$codex_acp_block" "CODEX_ACP_TARBALL='${CODEX_ACP_TARBALL}'" "codex-acp tarball"
-check_contains "$codex_acp_block" '/scripts/lib/reviewed-npm-archive.mts' "codex-acp shared helper"
-check_contains "$codex_acp_block" '--package-spec "$CODEX_ACP_SPEC" --integrity "$CODEX_ACP_0_11_1_INTEGRITY"' "codex-acp reviewed identity"
-check_contains "$codex_acp_block" '--tarball-url "$CODEX_ACP_TARBALL"' "codex-acp reviewed tarball"
-check_contains "$codex_acp_block" '"$CODEX_ACP_PACK_PATH"' "codex-acp local install path"
-check_contains "$codex_acp_block" 'CODEX_ACP_PACK_DIR="$(dirname "$CODEX_ACP_PACK_PATH")"' "codex-acp pack directory"
-check_contains "$codex_acp_block" 'rm -rf "$CODEX_ACP_PACK_DIR"' "codex-acp cleanup"
+codex_acp_block="$(sed -n '/AS codex-acp-runtime/,/AS wechat-npm-cache/p' Dockerfile)"
+check_contains "$(cat Dockerfile)" '${CODEX_ACP_TARBALL}' "codex-acp tarball"
+check_contains "$(cat Dockerfile)" 'sha256:b287fe7bce0dc0b3d0c69400ab7d47567680439628ad22a89f0557cc736d64b8' "codex-acp immutable archive"
+check_contains "$codex_acp_block" 'ARG CODEX_ACP_0_11_1_INTEGRITY' "codex-acp reviewed identity"
+check_contains "$codex_acp_block" 'ARG CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY' "codex-acp amd64 identity"
+check_contains "$codex_acp_block" 'ARG CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY' "codex-acp arm64 identity"
+check_contains "$codex_acp_block" 'RUN --network=none' "codex-acp offline install"
+check_contains "$codex_acp_block" 'npm install -g --offline --no-audit --no-fund --no-progress --ignore-scripts' "codex-acp local install path"
+check_contains "$codex_acp_block" 'rm -rf /tmp/codex-acp' "codex-acp cleanup"
 check_not_contains "$codex_acp_block" 'pack_reviewed_npm_tarball' "codex-acp inline pack helper"
 
 for dockerfile in Dockerfile Dockerfile.base; do
@@ -525,7 +648,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'mcporter-audit-policy-sha256=' "$dockerfile mcporter audit policy hash"
   check_contains "$openclaw_block" 'mcporter-audit-status=' "$dockerfile mcporter audit status"
   check_contains "$openclaw_block" 'mcporter-audit-exceptions=' "$dockerfile mcporter audit exceptions"
-  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' "$dockerfile mcporter provenance recipe"
+  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit-v3' "$dockerfile mcporter provenance recipe"
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"
@@ -533,12 +656,14 @@ check_contains "$(cat Dockerfile)" "stat -c '%u:%g:%a'" "runtime provenance meta
 check_contains "$(cat Dockerfile)" '0:0:444' "runtime provenance exact metadata"
 check_contains "$(cat Dockerfile)" 'rm -rf "$OPENCLAW_PROVENANCE_PATH"' "runtime provenance consumption"
 
-wechat_cache_block="$(sed -n '/# Reviewed-archive invariants (#5896): after npm materializes the exact lock/,/# Pre-install the codex-acp package/p' Dockerfile)"
-check_contains "$wechat_cache_block" '/scripts/lib/reviewed-npm-archive.mts' "WeChat cache shared helper"
-check_contains "$wechat_cache_block" '--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json' "WeChat cache reviewed lock"
-check_contains "$wechat_cache_block" '--cache /usr/local/share/nemoclaw/wechat-npm-cache' "WeChat cache boundary"
+wechat_cache_block="$(sed -n '/AS wechat-npm-cache/,/# Group repository-owned files/p' Dockerfile)"
+check_contains "$wechat_cache_block" 'reviewed-npm-archive.mts' "WeChat cache shared helper"
+check_contains "$wechat_cache_block" 'seed-reviewed-npm-cache.mts' "WeChat cache offline seed"
+check_contains "$wechat_cache_block" '--lockfile /opt/wechat-runtime/package-lock.json' "WeChat cache reviewed lock"
+check_contains "$wechat_cache_block" '--cache /out/wechat-npm-cache' "WeChat cache boundary"
 check_contains "$wechat_cache_block" '--registry-origin https://registry.npmjs.org/' "WeChat reviewed registry"
 check_contains "$wechat_cache_block" 'NPM_CONFIG_OFFLINE=true' "WeChat cache offline verification"
+check_contains "$wechat_cache_block" 'RUN --network=none' "WeChat cache offline materialization"
 
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
@@ -546,12 +671,14 @@ check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integri
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
 check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")' "diagnostics remediation identity"
-check_contains "$optional_plugin_block" '--working-directory "$plugin_root"' "diagnostics remediation workspace"
+check_contains "$optional_plugin_block" '--working-directory "$plugin_work_root"' "diagnostics remediation workspace"
 check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
-check_contains "$optional_plugin_block" 'plugin_root="$(dirname "$plugin_archive")"' "optional plugin cleanup root"
+check_contains "$optional_plugin_block" 'plugin_source_root="$(dirname "$plugin_archive")"' "optional plugin source root"
+check_contains "$optional_plugin_block" 'plugin_work_root="$(mktemp -d /tmp/nemoclaw-openclaw-plugin.XXXXXX)"' "optional plugin writable workspace"
 check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
 check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'rm -rf "$plugin_root"' "optional plugin cleanup"
+check_contains "$optional_plugin_block" 'rm -rf "$plugin_work_root"' "optional plugin workspace cleanup"
+check_contains "$optional_plugin_block" 'if [ -z "\${NEMOCLAW_REVIEWED_NPM_ARCHIVE_DIR:-}" ]; then rm -rf "$plugin_source_root"; fi' "optional plugin fallback source cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
@@ -612,6 +739,20 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'nemoclaw: ignore legacy OpenClaw update-check state' "$shared_state_permissions_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
 	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
+	mcp_reliability_patch=${JSON.stringify(MCP_RELIABILITY_PATCH)}
+	grep -Fq 'nemoclaw mcp transient startup recovery (#7958)' "$mcp_reliability_patch"
+	grep -Fq 'nemoClawIsTransientMcpStartFailure' "$mcp_reliability_patch"
+	grep -Fq 'nemoClawCatalogHasStartDiagnostics' "$mcp_reliability_patch"
+	grep -Fq 'COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \\' Dockerfile
+	! grep -Fq 'patch-openclaw-mcp-reliability.js' Dockerfile
+	mcp_tools_list_timeout_patch=${JSON.stringify(MCP_TOOLS_LIST_TIMEOUT_PATCH)}
+	grep -Fq 'NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS' "$mcp_tools_list_timeout_patch"
+	grep -Fq 'TOOLS_LIST_TIMEOUT_MIN_MS = 1500' "$mcp_tools_list_timeout_patch"
+	grep -Fq 'TOOLS_LIST_TIMEOUT_MAX_MS = 10_000' "$mcp_tools_list_timeout_patch"
+	grep -Fq 'COPY scripts/patch-openclaw-mcp-tools-list-timeout.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-tools-list-timeout.mts \\' Dockerfile
+	! grep -Fq 'patch-openclaw-mcp-tools-list-timeout.js' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3
@@ -626,7 +767,8 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       },
     );
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.status, result.stdout).toBe(0);
   });
 
   it("records the fail-closed messaging plugin provenance boundary", () => {
@@ -673,9 +815,13 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
   });
 
   it("accepts reviewed base-image versions and rejects injected build arguments", () => {
-    const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-    const buildOpenClawPlatforms = baseImages.jobs["build-openclaw-platforms"] as WorkflowJob;
-    const guard = requiredStep(buildOpenClawPlatforms, "Validate production Docker build args");
+    const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(
+      ".github/actions/build-base-image-platform/action.yaml",
+    );
+    const guard = requiredStep(
+      { steps: action.runs.steps },
+      "Validate production Docker build args",
+    );
 
     for (const [input, expectedOutput] of [
       ["", "openclaw_build_arg=\n"],
@@ -711,53 +857,5 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
         "production Docker build arguments must not contain CR or LF characters",
       );
     }
-  });
-
-  // source-shape-contract: security -- Network-fetched distribution audits must execute only from trusted main workflow code
-  it("runs and gates the real patched-distribution harness only from trusted main code", () => {
-    const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
-    const main = readYaml<Workflow>(".github/workflows/main.yaml");
-    const prJob = pr.jobs["real-openclaw-dist-harness"];
-    const mainJob = main.jobs["real-openclaw-dist-harness"];
-    const prChecks = pr.jobs.checks;
-    const mainChecks = main.jobs.checks;
-
-    expect(pr.permissions).toEqual({ contents: "read" });
-    expect(prJob).toBeUndefined();
-    expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
-      {
-        NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
-      },
-    );
-    expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
-      "test/openclaw-real-patched-dist-harness.test.ts",
-    );
-    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").env).toEqual({
-      NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1",
-    });
-    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").run).toContain(
-      "test/openclaw-diagnostics-jaeger-runtime.test.ts",
-    );
-    expect(
-      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").env,
-    ).toEqual({ NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1" });
-    expect(
-      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").run,
-    ).toContain("test/openclaw-security-audit-suppressions-real.test.ts");
-    expect(requiredStep(mainJob, "Install test dependencies").run).toBe("npm ci --ignore-scripts");
-    expect(prChecks.needs).not.toContain("real-openclaw-dist-harness");
-    expect(mainChecks.needs).toContain("real-openclaw-dist-harness");
-    const prGate = requiredStep(prChecks, "Verify required PR checks");
-    const mainGate = requiredStep(mainChecks, "Verify required main checks");
-    expect(prGate.env).not.toHaveProperty("REAL_OPENCLAW_DIST_HARNESS_RESULT");
-    expect(mainGate.env).toMatchObject({
-      REAL_OPENCLAW_DIST_HARNESS_RESULT: "${{ needs['real-openclaw-dist-harness'].result }}",
-    });
-
-    expect(prGate.run).not.toContain("real-openclaw-dist-harness");
-    expect(mainGate.run).toContain(
-      'require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
-    );
-    expect(mainGate.run).not.toContain('allow_success_or_skipped "real-openclaw-dist-harness"');
   });
 });

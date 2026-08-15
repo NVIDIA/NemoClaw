@@ -11,15 +11,16 @@ import { describe, expect, it, vi } from "vitest";
 import { redact, runCapture } from "../src/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
+const platformPath = path.join(import.meta.dirname, "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "522c963f9515c7325b978e89022de76227ac245eefe1371292af1424434e2067",
-  cliLinuxArm64: "3cf353e7994d5835a233fe0641f9a860779190b054d0f90a04c897be782734b8",
-  cliLinuxX64: "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb",
-  gatewayDarwinArm64: "5de3e08ad1bdb0cdd01373999f537edca3d8aca22ae1c29bc9926969fe401e45",
-  gatewayLinuxArm64: "09f2823f6e9c5f70f4482b200206eac455d789618da4ebe4acff042d794e7162",
-  gatewayLinuxX64: "718cc9f942f88565cacb13c39717b128d6acc8d336212d42d26243f36ab19ece",
-  sandboxLinuxArm64: "2c52b2971aecf125e41ed160d8d2f2addf04031906ca88f120ae3d436dd6b8f7",
-  sandboxLinuxX64: "94306f057d862cd5c34a0daa7692491733bc5ca528a7b92f9f62f717fb70a9be",
+  cliDarwinArm64: "9daaccdb9e30e220d56dd6d6bf4bd00ccca8ae4ad2845f5f0d9b9da3eb8ee881",
+  cliLinuxArm64: "b553d3bfc08e9354b990a10fb8abd976e039afeec2d3947f8a112018be40d296",
+  cliLinuxX64: "7d49ab2a5ff0b826bd2bdca5e0244010f832dfc6901c808ea8c8467004c26913",
+  gatewayDarwinArm64: "0f9e195b7cde57f4c2080df95159c5e7e72b0248306abc242ae00a3bb6f07f14",
+  gatewayLinuxArm64: "ac842ccc2ab8b5682f7479d71532cc650839250a8a41dbfae2b871cbbdfd3279",
+  gatewayLinuxX64: "eaeb094ccf7dcb1fe00c7e926e6aa9aaaefb89ecbef8343720628b0fd2d84654",
+  sandboxLinuxArm64: "c39b7ba3cf212b88712a00d2a0e3d28e2c1e0e9f47a9a6ca818a8f06ed2140aa",
+  sandboxLinuxX64: "953b90eaa7d2fc1bb7bdf38eb0ada6fad7902b13f9f895ca20b89caeac483a9e",
 };
 
 type SpawnCallOptions = {
@@ -51,6 +52,16 @@ function requireCall(calls: SpawnCall[], index: number): SpawnCall {
     throw new Error(`Expected spawnSync call ${index}`);
   }
   return call;
+}
+
+function withoutDockerAuthorityProbe(calls: SpawnCall[]): SpawnCall[] {
+  return calls.filter(
+    ([command, args]) =>
+      command !== "docker" ||
+      args?.[0] !== "version" ||
+      args?.[1] !== "--format" ||
+      args?.[2] !== "{{json .}}",
+  );
 }
 
 describe("runner helpers", () => {
@@ -94,9 +105,10 @@ describe("runner helpers", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(2);
-    const firstCall = requireCall(calls, 0);
-    const secondCall = requireCall(calls, 1);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    const firstCall = requireCall(runnerCalls, 0);
+    const secondCall = requireCall(runnerCalls, 1);
     expect(firstCall[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
     expect(secondCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
   });
@@ -119,8 +131,9 @@ describe("runner helpers", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     expect(firstCall[0]).toBe("bash");
     expect(firstCall[1]).toEqual(["/tmp/setup.sh", "safe;name", "$(id)"]);
     expect(firstCall[2]?.shell).toBe(false);
@@ -162,6 +175,141 @@ describe("runner helpers", () => {
 });
 
 describe("runner env merging", () => {
+  it("clears a named context when initialization selects a socket fallback (#8816)", () => {
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///selected-fallback.sock",
+      source: "socket",
+      socketPath: "/selected-fallback.sock",
+    });
+    let initializedContext: string | undefined;
+    let initializedHost: string | undefined;
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "unreachable-context");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      initializedContext = process.env.DOCKER_CONTEXT;
+      initializedHost = process.env.DOCKER_HOST;
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(initializedHost).toBe("unix:///selected-fallback.sock");
+    expect(initializedContext).toBeUndefined();
+  });
+
+  it("keeps a named context when initialization uses an explicit Docker host (#8816)", () => {
+    const platform = require(platformPath);
+    const detectDockerHostSpy = vi.spyOn(platform, "detectDockerHost").mockReturnValue({
+      dockerHost: "unix:///explicit.sock",
+      source: "env",
+      socketPath: null,
+    });
+    let initializedContext: string | undefined;
+    let initializedHost: string | undefined;
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_HOST", "unix:///explicit.sock");
+      delete require.cache[require.resolve(runnerPath)];
+      require(runnerPath);
+      initializedContext = process.env.DOCKER_CONTEXT;
+      initializedHost = process.env.DOCKER_HOST;
+    } finally {
+      detectDockerHostSpy.mockRestore();
+      vi.unstubAllEnvs();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(initializedHost).toBe("unix:///explicit.sock");
+    expect(initializedContext).toBe("ambient-context");
+  });
+
+  it("preserves Docker context and config only for Docker subprocesses (#8816)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "healthy-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/docker-config");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "test-secret-must-not-cross-runner-boundary");
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"]);
+      run(["echo", "test"]);
+      vi.stubEnv("DOCKER_CONTEXT", undefined);
+      run(["docker", "info"]);
+    } finally {
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(3);
+    const dockerEnv = requireCall(runnerCalls, 0)[2]?.env;
+    const nonDockerEnv = requireCall(runnerCalls, 1)[2]?.env;
+    const configSelectedDockerEnv = requireCall(runnerCalls, 2)[2]?.env;
+    expect(dockerEnv?.DOCKER_CONTEXT).toBe("healthy-context");
+    expect(dockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+    expect(dockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(nonDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(nonDockerEnv?.DOCKER_CONFIG).toBeUndefined();
+    expect(nonDockerEnv?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(configSelectedDockerEnv?.DOCKER_CONTEXT).toBeUndefined();
+    expect(configSelectedDockerEnv?.DOCKER_CONFIG).toBe("/tmp/docker-config");
+  });
+
+  it("keeps Docker host precedence over an ambient Docker context (#8816)", () => {
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    try {
+      vi.stubEnv("DOCKER_CONTEXT", "ambient-context");
+      vi.stubEnv("DOCKER_CONFIG", "/tmp/ambient-docker-config");
+      vi.stubEnv("DOCKER_HOST", undefined);
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      run(["docker", "ps"], { env: { DOCKER_HOST: "unix:///explicit.sock" } });
+      vi.stubEnv("DOCKER_HOST", "unix:///selected-fallback.sock");
+      run(["docker", "ps"]);
+    } finally {
+      vi.unstubAllEnvs();
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(2);
+    expect(requireCall(runnerCalls, 0)[2]?.env).toMatchObject({
+      DOCKER_HOST: "unix:///explicit.sock",
+    });
+    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 0)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env).toMatchObject({
+      DOCKER_HOST: "unix:///selected-fallback.sock",
+    });
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONTEXT).toBeUndefined();
+    expect(requireCall(runnerCalls, 1)[2]?.env?.DOCKER_CONFIG).toBeUndefined();
+  });
+
   it("preserves process env when opts.env is provided to runCapture", () => {
     const originalGateway = process.env.OPENSHELL_GATEWAY;
     process.env.OPENSHELL_GATEWAY = "nemoclaw";
@@ -212,8 +360,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",
     );
@@ -250,8 +399,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     expect(firstCall[2]?.env?.OPENSHELL_CLUSTER_IMAGE).toBe(
       "ghcr.io/nvidia/openshell/cluster:0.0.12",
     );
@@ -294,8 +444,9 @@ describe("runner env merging", () => {
       delete require.cache[require.resolve(runnerPath)];
     }
 
-    expect(calls).toHaveLength(1);
-    const firstCall = requireCall(calls, 0);
+    const runnerCalls = withoutDockerAuthorityProbe(calls);
+    expect(runnerCalls).toHaveLength(1);
+    const firstCall = requireCall(runnerCalls, 0);
     const env = firstCall[2]?.env ?? {};
     expect(env.http_proxy).toBe("http://127.0.0.1:8118");
     // Both casings get the loopback hosts so curl, Node, Python all respect
@@ -352,7 +503,7 @@ describe("validateName", () => {
     const { validateName } = require(runnerPath);
     expect(() => validateName("test; whoami")).toThrow(/Invalid/);
     expect(() => validateName("test`id`")).toThrow(/Invalid/);
-    expect(() => validateName("test$(cat /etc/passwd)")).toThrow(/Invalid/);
+    expect(() => validateName("a$(id)")).toThrow(/Invalid/);
     expect(() => validateName("../etc/passwd")).toThrow(/Invalid/);
   });
 
@@ -365,10 +516,44 @@ describe("validateName", () => {
 
   it("rejects excessively long valid-looking names before spawning OpenShell", () => {
     const { validateName } = require(runnerPath);
-    expect(validateName("a".repeat(63))).toBe("a".repeat(63));
-    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
-      /sandbox name too long \(max 63 chars\)/,
+    expect(validateName("a".repeat(19))).toBe("a".repeat(19));
+    expect(() => validateName("a".repeat(20), "sandbox name")).toThrow(
+      /sandbox name too long \(max 19 chars\)/,
     );
+    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
+      /sandbox name too long \(max 19 chars\)/,
+    );
+  });
+
+  it("escapes control characters in a rejected name instead of echoing raw bytes (#7796)", () => {
+    const { validateName } = require(runnerPath);
+    const escapeByte = String.fromCharCode(27);
+
+    let message = "";
+    try {
+      validateName(`bad${escapeByte}[31mX`, "sandbox name");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain(String.raw`Invalid sandbox name: "bad\u001b[31mX".`);
+    expect(message).not.toContain(escapeByte);
+  });
+
+  it("escapes control characters in an over-length rejected name (#7796)", () => {
+    const { validateName } = require(runnerPath);
+    const escapeByte = String.fromCharCode(27);
+
+    let message = "";
+    try {
+      validateName(`bad${escapeByte}[31m${"x".repeat(200)}`, "sandbox name");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain("sandbox name too long (max 19 chars)");
+    expect(message).not.toContain(escapeByte);
+    expect(message).toContain('..."');
   });
 
   it("rejects uppercase and special characters", () => {
@@ -632,7 +817,7 @@ describe("regression guards", () => {
       delete require.cache[require.resolve(runnerPath)];
       const { runInteractive } = require(runnerPath);
       runInteractive(["echo", "interactive"]);
-      const firstCall = requireCall(calls, 0);
+      const firstCall = requireCall(withoutDockerAuthorityProbe(calls), 0);
       expect(firstCall[2]?.stdio).toEqual(["inherit", "pipe", "pipe"]);
       expect(stdoutSpy).toHaveBeenCalledWith("visit https://****:****@example.com/?token=****\n");
       expect(stderrSpy).not.toHaveBeenCalled();
@@ -765,7 +950,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.85"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.101"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;
@@ -867,7 +1052,7 @@ describe("regression guards", () => {
               shift || true
             done
             [ -n "$destination" ] || return 2
-            printf '%s\n' '#!/bin/sh' 'echo "0.0.85"' > "$destination/$expected"
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.101"' > "$destination/$expected"
             chmod +x "$destination/$expected"
             ;;
           *) return 2 ;;

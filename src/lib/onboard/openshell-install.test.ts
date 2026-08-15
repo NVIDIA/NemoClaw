@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createOnboardOpenShellInstallBindings,
   ensureOpenshellForOnboard,
   type OpenShellInstallDeps,
   type OpenShellInstallResult,
@@ -48,6 +49,68 @@ function makeDeps(overrides: Partial<OpenShellInstallDeps> = {}) {
 }
 
 describe("ensureOpenshellForOnboard", () => {
+  it("binds lazy install dependencies and forwards trusted-owner persistence", () => {
+    const installResult: OpenShellInstallResult = {
+      installed: true,
+      localBin: "/tmp/openshell",
+      futureShellPathHint: null,
+    };
+    const getInstallDeps = vi.fn((exit?: (code: number) => never) =>
+      makeDeps({
+        isOpenshellInstalled: () => false,
+        installOpenshell: () => installResult,
+        exit: exit ?? makeDeps().exit,
+      }),
+    );
+    const afterSuccessfulInstall = vi.fn();
+    const bindings = createOnboardOpenShellInstallBindings({
+      getInstallDeps,
+      afterSuccessfulInstall,
+    });
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    const persistTrustedGatewayOwner = vi.fn();
+
+    expect(
+      bindings.areRequiredDockerDriverBinariesPresent("linux", {
+        gatewayBin: "/tmp/gateway",
+        sandboxBin: "/tmp/sandbox",
+      }),
+    ).toBe(true);
+    expect(bindings.ensureOpenshellForOnboard(exitProcess, persistTrustedGatewayOwner)).toEqual(
+      installResult,
+    );
+
+    expect(getInstallDeps).toHaveBeenNthCalledWith(1);
+    expect(getInstallDeps).toHaveBeenNthCalledWith(2, exitProcess);
+    expect(afterSuccessfulInstall).toHaveBeenCalledWith(persistTrustedGatewayOwner);
+  });
+
+  it("runs trusted post-install reconciliation only after a successful install", () => {
+    const afterSuccessfulInstall = vi.fn();
+    const deps = makeDeps({
+      isOpenshellInstalled: () => false,
+      installOpenshell: () => ({
+        installed: true,
+        localBin: "/tmp/openshell",
+        futureShellPathHint: null,
+      }),
+    });
+
+    ensureOpenshellForOnboard(deps, { afterSuccessfulInstall });
+
+    expect(afterSuccessfulInstall).toHaveBeenCalledOnce();
+  });
+
+  it("does not run post-install reconciliation when no install was needed", () => {
+    const afterSuccessfulInstall = vi.fn();
+
+    ensureOpenshellForOnboard(makeDeps(), { afterSuccessfulInstall });
+
+    expect(afterSuccessfulInstall).not.toHaveBeenCalled();
+  });
+
   it("reinstalls when the installed OpenShell lacks messaging rewrite or MCP L7 support", () => {
     const hasFeatures = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
     const deps = makeDeps({
@@ -74,7 +137,7 @@ describe("ensureOpenshellForOnboard", () => {
     );
   });
 
-  it("applies the 0.0.85 floor during final validation when the blueprint omits a minimum", () => {
+  it("applies the 0.0.101 floor during final validation when the blueprint omits a minimum", () => {
     const deps = makeDeps({
       isOpenshellInstalled: () => false,
       getInstalledOpenshellVersion: () => "0.0.81",
@@ -88,6 +151,6 @@ describe("ensureOpenshellForOnboard", () => {
     expect(deps.error).toHaveBeenCalledWith(
       "  \u2717 openshell 0.0.81 is below the minimum required by this NemoClaw release.",
     );
-    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.85");
+    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.101");
   });
 });

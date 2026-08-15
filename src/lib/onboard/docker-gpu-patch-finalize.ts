@@ -44,6 +44,9 @@ export type DockerGpuPatchFinalizeOptions = {
 export type DockerGpuPatchFinalizeOutcome = {
   backupRemoved: boolean;
   rolledBack: boolean;
+  replacementStopConfirmed?: boolean;
+  replacementRemovalConfirmed?: boolean;
+  replacementPresence?: "absent" | "present" | "unknown";
 };
 
 export function finalizeDockerGpuPatchBackup(
@@ -68,7 +71,7 @@ export function finalizeDockerGpuPatchBackup(
     const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
     return { backupRemoved: hasZeroDockerExitStatus(rmResult), rolledBack: false };
   }
-  const rolledBack = rollbackToBackupContainer(
+  const rollback = rollbackToBackupContainer(
     {
       newContainerId: options.result.newContainerId,
       backupContainerName: options.result.backupContainerName,
@@ -76,12 +79,12 @@ export function finalizeDockerGpuPatchBackup(
     },
     resolved,
   );
-  return { backupRemoved: false, rolledBack };
+  return { backupRemoved: false, ...rollback };
 }
 
 export type SupervisorReconnectOutcome =
   | { execReady: true; backupRemoved: boolean }
-  | { execReady: false; rolledBack: boolean; error: Error };
+  | ({ execReady: false; error: Error } & Omit<DockerGpuPatchFinalizeOutcome, "backupRemoved">);
 
 export function reconcileSupervisorReconnect(
   execReady: boolean,
@@ -103,12 +106,12 @@ export function reconcileSupervisorReconnect(
     const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
     return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
   }
-  const rolledBack = rollbackToBackupContainer(refs, resolved);
+  const rollback = rollbackToBackupContainer(refs, resolved);
   return {
     execReady: false,
-    rolledBack,
+    ...rollback,
     error: new Error(
-      rolledBack
+      rollback.rolledBack
         ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
         : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
     ),

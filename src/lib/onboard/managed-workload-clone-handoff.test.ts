@@ -90,13 +90,13 @@ function source(
     compatibleEndpointReasoningEffort: null,
     toolDisclosure: profile.tools.disclosure,
     webSearchEnabled:
-      profile.agentConfig.agent === "langchain-deepagents-code"
-        ? false
-        : profile.agentConfig.webSearch.enabled,
+      profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+        ? profile.agentConfig.webSearch.enabled
+        : false,
     webSearchProvider:
-      profile.agentConfig.agent === "langchain-deepagents-code"
-        ? null
-        : profile.agentConfig.webSearch.provider,
+      profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+        ? profile.agentConfig.webSearch.provider
+        : null,
     ...(profile.messaging.plan === null
       ? {}
       : {
@@ -377,7 +377,7 @@ describe("prepareManagedWorkloadCloneHandoff", () => {
       tools: { disclosure: "direct", enabledGateways: ["nous-web"] },
     });
     const entry = source("hermes", "docker", profile);
-    const longestSandboxName = `a${"b".repeat(62)}`;
+    const longestSandboxName = `a${"b".repeat(18)}`;
 
     expect(() => prepare(entry, provider("docker"), undefined, longestSandboxName)).not.toThrow();
     expect(() => prepare(entry, provider("docker"), undefined, "1destination")).toThrow(

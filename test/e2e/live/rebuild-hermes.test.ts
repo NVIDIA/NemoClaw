@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileged-exec";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -45,6 +44,10 @@ import {
   requireRebuildHermesOpenshellBin,
   resolveRebuildHermesCurrentBase,
 } from "./rebuild-hermes-bootstrap.ts";
+import {
+  createRebuildHermesCronRestoreFixture,
+  hermesRuntimeExecArgs,
+} from "./rebuild-hermes-cron-restore.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
@@ -52,6 +55,7 @@ import {
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
   requireRebuildHermesInitialImageTag,
+  requireRebuildHermesReplacementLifecycleReceipt,
 } from "./rebuild-hermes-image-state.ts";
 import {
   REBUILD_HERMES_OLD_BASE_FIXTURE,
@@ -60,6 +64,7 @@ import {
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
+import { REBUILD_HERMES_STATE } from "./rebuild-hermes-state-fixture.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // Protected PR E2E checks out the PR commit while the trusted controller runs
@@ -78,25 +83,19 @@ const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
-const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-hermes-base" : "e2e-rebuild-hermes";
-const SANDBOX_NAME =
-  process.env.NEMOCLAW_SANDBOX_NAME ??
-  [TEST_SANDBOX_PREFIX, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT, process.pid]
-    .filter(Boolean)
-    .join("-");
+const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-base" : "e2e-rebuild-hermes";
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? TEST_SANDBOX_PREFIX;
 validateSandboxName(SANDBOX_NAME);
 SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   fail(
     `rebuild-hermes live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
   );
-const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
-const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
 const KANBAN_FILE = "/sandbox/.hermes/kanban.db";
 const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
-const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
+const EXCLUDED_HOOKS_FILE = "/sandbox/.hermes/hooks/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
-const PRE_REBUILD_API_SERVER_KEY = createHash("sha256").update(MARKER_CONTENT).digest("hex");
+const PRE_REBUILD_API_SERVER_KEY = REBUILD_HERMES_STATE.apiServerKey;
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
@@ -205,14 +204,6 @@ swapon "$swap_file"`,
   );
   expectExitZero(verified, "inspect active swap after Hermes rebuild provisioning");
   expect(parseActiveSwapBytes(verified.stdout)).toBeGreaterThanOrEqual(HERMES_REBUILD_SWAP_BYTES);
-}
-
-function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
-  // `openshell sandbox exec` intentionally runs inside Landlock, which cannot
-  // read the immutable `/opt/hermes` runtime. The rebuild contract needs to
-  // seed and inspect that runtime in the managed Docker container itself.
-  const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
-  return buildHermesRuntimeExecArgs(containerId, command);
 }
 
 function inspectKanbanTaskArgs(sandboxName: string): string[] {
@@ -639,15 +630,20 @@ function verifySeededOldBaseResolution(
 }
 
 test(STALE_BASE_REBUILD
-  ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
-  : "rebuild-hermes: historical base rebuild preserves messaging state and selects current base", {
+  ? "rebuild-hermes: stale base refresh restores Hermes state and resumes cron dispatch (#7806)"
+  : "rebuild-hermes: rebuild restores Hermes state and recovers a stranded cron drain (#7806)", {
   timeout: LIVE_TIMEOUT_MS,
   meta: { e2ePhases: REBUILD_HERMES_PHASES },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
   const expectedVersion = expectedHermesVersion();
-
+  const cronRestore = createRebuildHermesCronRestoreFixture({
+    host,
+    sandboxName: SANDBOX_NAME,
+    env: testEnv(apiKey),
+    redactionValues,
+  });
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
   const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
@@ -662,7 +658,7 @@ test(STALE_BASE_REBUILD
     oldHermesVersion: OLD_HERMES_VERSION,
     oldBaseFixture: REBUILD_HERMES_OLD_BASE_FIXTURE,
     expectedHermesVersion: expectedVersion,
-    markerFile: MARKER_FILE,
+    markerFile: REBUILD_HERMES_STATE.markerFile,
     preservedBoundaries: [
       "production current Hermes base resolution without a disposable sandbox",
       "product gateway startup plus exact compatible-endpoint provider/model route",
@@ -670,7 +666,7 @@ test(STALE_BASE_REBUILD
       "OpenShell provider create/update and sandbox create/exec/list",
       "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
       "real nemoclaw <sandbox> rebuild --yes --verbose without host inference credentials",
-      "Hermes .env/config.yaml messaging placeholder preservation",
+      "Hermes messaging placeholders plus script-backed cron restore and dispatch gating",
       "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
     ],
     outOfScope: [
@@ -1064,16 +1060,7 @@ test(STALE_BASE_REBUILD
   expect(resultText(seededKanban)).toContain(KANBAN_TASK_TITLE);
   const writeMarker = await host.command(
     activeOpenshellBin,
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      SANDBOX_NAME,
-      "--",
-      "sh",
-      "-c",
-      `mkdir -p /sandbox/.hermes/memories && printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(MARKER_FILE)}`,
-    ],
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "sh", "-c", REBUILD_HERMES_STATE.seedScript],
     {
       artifactName: "phase-4-write-hermes-marker",
       env: testEnv(apiKey),
@@ -1082,7 +1069,7 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(writeMarker, "write Hermes marker");
-  const writeExcludedKanbanMarker = await host.command(
+  const writeExcludedHooksMarker = await host.command(
     activeOpenshellBin,
     [
       "sandbox",
@@ -1093,19 +1080,19 @@ test(STALE_BASE_REBUILD
       "sh",
       "-c",
       [
-        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
-        `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
+        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_HOOKS_FILE))}`,
+        `printf '%s' ${shellQuote(REBUILD_HERMES_STATE.markerContent)} > ${shellQuote(EXCLUDED_HOOKS_FILE)}`,
       ].join(" && "),
     ],
     {
-      artifactName: "phase-4-write-excluded-kanban-marker",
+      artifactName: "phase-4-write-excluded-hermes-hooks-marker",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(writeExcludedKanbanMarker, "write excluded Hermes kanban marker");
-
+  expectExitZero(writeExcludedHooksMarker, "write backup:false Hermes hooks marker");
+  await cronRestore.seed();
   const seededKanbanDb = await host.command("docker", inspectKanbanTaskArgs(SANDBOX_NAME), {
     artifactName: "phase-4-inspect-seeded-kanban-db",
     env: testEnv(apiKey),
@@ -1230,6 +1217,13 @@ test(STALE_BASE_REBUILD
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   expect(rebuildOutput).not.toMatch(/provider credential not found/i);
+  // The gateway starts during recreation and reads its durable state before the
+  // restore replaces it, so rebuild must hand back a process that started after
+  // the restore. Either post-restore path reports one; a live gateway that was
+  // only checked reports neither.
+  expect(rebuildOutput, "rebuild must report a Hermes gateway bound to the restored state").toMatch(
+    /Hermes gateway (?:restarted and verified|recovered) after state restore/u,
+  );
   await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
@@ -1258,6 +1252,7 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(backedUpKanbanDatabase, "verify backed-up Hermes kanban database");
   expect(resultText(backedUpKanbanDatabase)).toContain(KANBAN_TASK_TITLE);
+  REBUILD_HERMES_STATE.assertBackup(rebuildBackupPath);
 
   const oldImageInspect = await host.command(
     "docker",
@@ -1274,11 +1269,15 @@ test(STALE_BASE_REBUILD
     resultText(oldImageInspect),
   ).toBe(true);
   expect(resultText(oldImageInspect)).toMatch(/No such (?:image|object)(?::|\s)/iu);
+  await artifacts.writeJson(
+    "phase-6-replacement-registry-lifecycle-receipt.json",
+    requireRebuildHermesReplacementLifecycleReceipt(rebuiltRegistry),
+  );
 
   progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(
     activeOpenshellBin,
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],
+    REBUILD_HERMES_STATE.restoredProbeArgs(SANDBOX_NAME),
     {
       artifactName: "phase-7-read-marker-after-rebuild",
       env: testEnv(apiKey),
@@ -1286,8 +1285,8 @@ test(STALE_BASE_REBUILD
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(restoredMarker, "read Hermes marker after rebuild");
-  expect(restoredMarker.stdout).toBe(MARKER_CONTENT);
+  expectExitZero(restoredMarker, "verify restored Hermes state and dashboard profile migration");
+  expect(restoredMarker.stdout).toBe(REBUILD_HERMES_STATE.expectedOutput);
 
   const hermesVersion = await host.command(
     "docker",
@@ -1307,7 +1306,8 @@ test(STALE_BASE_REBUILD
     expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
   );
-
+  await cronRestore.verify(rebuildOutput, rebuildBackupPath);
+  await cronRestore.verifyStrandedGateRecovery();
   const restoredKanbanDatabase = await host.command(
     activeOpenshellBin,
     [
@@ -1345,17 +1345,17 @@ test(STALE_BASE_REBUILD
   expectExitZero(restoredKanban, "list Hermes kanban tasks after rebuild");
   expect(resultText(restoredKanban)).toContain(KANBAN_TASK_TITLE);
 
-  const excludedKanbanState = await host.command(
+  const excludedHooksState = await host.command(
     activeOpenshellBin,
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_KANBAN_FILE],
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_HOOKS_FILE],
     {
-      artifactName: "phase-7-verify-excluded-kanban-state",
+      artifactName: "phase-7-verify-excluded-hermes-hooks-state",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(excludedKanbanState, "verify excluded Hermes kanban state was not restored");
+  expectExitZero(excludedHooksState, "verify backup:false Hermes hooks state was not restored");
 
   const restoredEnv = await host.command(
     activeOpenshellBin,

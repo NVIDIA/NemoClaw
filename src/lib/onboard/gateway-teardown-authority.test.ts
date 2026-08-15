@@ -9,6 +9,7 @@ import type { GatewayManagementDeclaration } from "./gateway-management";
 import { type GatewayOwner, resolveGatewayOwner } from "./gateway-ownership";
 import {
   resolveGatewayCredentialMutationAuthority,
+  resolveGatewayRebuildAuthority,
   resolveGatewayTeardownAuthority,
 } from "./gateway-teardown-authority";
 
@@ -36,6 +37,14 @@ function owner(currentDeclaration: GatewayManagementDeclaration | null): Gateway
     ...target,
     declaration: currentDeclaration,
     hasPackagedService: false,
+  });
+}
+
+function managedOwner(hasPackagedService: boolean): GatewayOwner {
+  return resolveGatewayOwner({
+    ...target,
+    declaration: null,
+    hasPackagedService,
   });
 }
 
@@ -115,6 +124,38 @@ describe("resolveGatewayTeardownAuthority", () => {
     ).toThrow(/authority changed since onboarding.*teardown will not perform gateway effects/);
   });
 
+  it("allows opted-in uninstall teardown after the packaged service was already removed (#8215)", () => {
+    const recordedOwner = managedOwner(true);
+
+    expect(
+      resolveGatewayTeardownAuthority(target, {
+        allowMissingPackagedServiceTeardown: true,
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toMatchObject({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+    });
+  });
+
+  it("still rejects credential mutation after the recorded packaged service is removed (#8215)", () => {
+    const recordedOwner = managedOwner(true);
+
+    expect(() =>
+      resolveGatewayCredentialMutationAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toThrow(
+      /packaged-service -> nemoclaw@8080:nemoclaw-managed:standalone.*provider credential mutation will not perform gateway effects/,
+    );
+  });
+
   it("fails closed before credential mutation when authority changed since onboarding (#6576)", () => {
     const recordedOwner = owner(declaration());
 
@@ -161,5 +202,72 @@ describe("resolveGatewayTeardownAuthority", () => {
       ),
     ).toThrow(/noncanonical target/);
     expect(loaded).toBe(false);
+  });
+});
+
+describe("resolveGatewayRebuildAuthority", () => {
+  const packagedOwner = resolveGatewayOwner({
+    ...target,
+    declaration: null,
+    hasPackagedService: true,
+  });
+
+  const standaloneDeps = {
+    hasPackagedService: () => false,
+    loadDeclaration: () => ({ ok: true as const, declaration: null, source: null }),
+    loadSession: () => checkpointSession(packagedOwner),
+  };
+
+  it("adopts the managed packaged-service to standalone migration before rebuild (#8103)", () => {
+    expect(resolveGatewayRebuildAuthority(target, standaloneDeps)).toMatchObject({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+    });
+  });
+
+  it("keeps ordinary teardown fail-closed across the managed service migration (#8103)", () => {
+    expect(() => resolveGatewayTeardownAuthority(target, standaloneDeps)).toThrow(
+      /authority changed since onboarding.*gateway teardown will not perform gateway effects/,
+    );
+  });
+
+  it("keeps credential mutation fail-closed across the managed service migration (#8103)", () => {
+    expect(() => resolveGatewayCredentialMutationAuthority(target, standaloneDeps)).toThrow(
+      /authority changed since onboarding.*provider credential mutation will not perform gateway effects/,
+    );
+  });
+
+  it("rejects the reverse standalone to packaged-service transition (#8103)", () => {
+    const standaloneOwner = resolveGatewayOwner({
+      ...target,
+      declaration: null,
+      hasPackagedService: false,
+    });
+
+    expect(() =>
+      resolveGatewayRebuildAuthority(target, {
+        hasPackagedService: () => true,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(standaloneOwner),
+      }),
+    ).toThrow(
+      /authority changed since onboarding.*sandbox rebuild will not perform gateway effects/,
+    );
+  });
+
+  it("rejects a declaration change during rebuild (#8103)", () => {
+    const recordedOwner = owner(declaration());
+
+    expect(() =>
+      resolveGatewayRebuildAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toThrow(
+      /authority changed since onboarding.*sandbox rebuild will not perform gateway effects/,
+    );
   });
 });

@@ -1,0 +1,203 @@
+[
+  {
+    "id": "positive-continuous-e2e-maintenance",
+    "question": "Continue fixing failures from automatic NemoClaw E2E runs on `main`. Coordinate fixes with other maintainers and merge eligible PRs.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The loop keeps a root-cause queue active without a scheduled end time. It assigns ownership of each unowned cause with a draft PR. It coordinates peer review. It merges only after the effective GitHub rules pass.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Does not choose a scheduled end time or finish when the queue becomes empty.",
+      "Groups failures by root cause and searches open PRs before editing.",
+      "Requires independent approval and required checks for the commit under review before merge.",
+      "Keeps monitoring for the next automatic `main` result."
+    ]
+  },
+  {
+    "id": "positive-passing-run-continues",
+    "question": "The newest automatic NemoClaw E2E run for `main` passes, and there are no open failures. What should continuous E2E maintenance do?",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "A passing run verifies only the tested `main` commit SHA. The loop waits for the next automatic result instead of declaring success or ending.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Records the passing evidence for the tested commit SHA.",
+      "Keeps the queue and monitoring loop active.",
+      "Does not declare the continuous workflow complete."
+    ]
+  },
+  {
+    "id": "positive-multi-agent-review",
+    "question": "Run continuous NemoClaw E2E maintenance with several agents. They should fix separate failures and review and approve each other's PRs while waiting.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The workflow treats GitHub PRs as shared ownership claims. It permits waiting owners to review peers or take another unowned failure. It forbids self-approval and approval without review.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Keeps one actively edited fix per agent.",
+      "Does not duplicate an owned root cause or an active peer review.",
+      "Treats a review claim as valid only for its named commit SHA and reviews a changed latest PR commit again.",
+      "Requires a non-contributor reviewer to approve the latest PR commit.",
+      "Allows an independently approved author or peer maintainer to perform the final merge."
+    ]
+  },
+  {
+    "id": "positive-approve-fork-workflow",
+    "question": "During continuous NemoClaw E2E maintenance, a first-time contributor's ordinary PR checks are waiting at `Approve and run workflows`. Make the required decision.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The maintainer verifies the PR, latest PR commit, workflow, and untrusted-fork boundary. The maintainer then approves an eligible ordinary workflow run or records a concrete blocker and continues.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Makes an approval or blocker decision for the `action_required` run.",
+      "Reviews the complete PR diff and trust boundary before approval.",
+      "Does not substitute a manual or privileged E2E dispatch.",
+      "Moves to another queue item if the trust review fails or authorization is absent."
+    ]
+  },
+  {
+    "id": "positive-final-branch-refresh",
+    "question": "An E2E maintenance PR has passed every merge condition except branch currency, but the NemoClaw merge checker says its base is stale. Finish it without bypassing protections.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "At the final merge gate, refresh the branch once against the captured latest PR commit. Wait for new checks, obtain an independent approval of the new commit, and merge only if the final merge check passes.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Refreshes once before approval.",
+      "Treats the refresh as a new commit that requires new CI and review evidence.",
+      "Never uses administrator bypass or force push."
+    ]
+  },
+  {
+    "id": "positive-no-unnecessary-refresh",
+    "question": "A draft E2E fix is still under review, and checks for its latest PR commit are running. `origin/main` gained another commit; continue E2E maintenance.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "Do not refresh the branch while the PR is active or waiting. Continue the queue and evaluate branch currency after every other final merge condition passes.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Does not merge `main` into the branch merely because `origin/main` gained a commit.",
+      "Waits for or fixes the checks for the latest PR commit.",
+      "Reviews a peer PR or takes the next unowned failure."
+    ]
+  },
+  {
+    "id": "positive-duplicate-claim",
+    "question": "During continuous E2E maintenance, you find that another maintainer has a draft PR for the same failure signature from a different job.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "A different job with the same causal signature is one owned root cause. Record the owner and PR, then immediately take the next unowned group.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Does not edit or open a duplicate PR.",
+      "Rechecks the root-cause claim and open-PR count together immediately before creating a draft.",
+      "Records the existing claim and continues the queue."
+    ]
+  },
+  {
+    "id": "positive-obsolete-fix",
+    "question": "Another NemoClaw PR merged and a later automatic main E2E run proves that your open E2E maintenance PR is no longer needed.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "Verify the superseding evidence, close the obsolete PR, and record the superseding change. Do not count the obsolete PR as a verified fix.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Stops editing the obsolete fix.",
+      "Closes it with linked superseding evidence.",
+      "Marks the queue item obsolete rather than verified fixed by this PR."
+    ]
+  },
+  {
+    "id": "positive-continuity-handoff",
+    "question": "Responsibility for continuous NemoClaw E2E maintenance must move to another agent while the newest `main` run and two fix PRs are pending.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The outgoing agent captures complete local and remote state. The agent assigns every item and monitoring to the receiving agent. The agent continues monitoring until the receiver acknowledges ownership.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Does not treat the transfer time as the loop's end time.",
+      "Does not report `main` as passing or count pending work as verified fixed.",
+      "Includes owners, next actors, worktrees, local state, and pending evidence.",
+      "Uses only source-provided URLs and reports a stable identifier with `URL unavailable` when a link is missing.",
+      "Keeps monitoring active until the receiver acknowledges ownership."
+    ]
+  },
+  {
+    "id": "negative-manual-e2e-dispatch",
+    "question": "Run the full NemoClaw E2E suite manually for the release candidate under review and verify the Launchable evidence.",
+    "expected_skill": "nemoclaw-maintainer-e2e",
+    "ground_truth": "Trusted manual dispatch and release-candidate evidence belong to the existing maintainer E2E skill, not continuous E2E maintenance for automatic `main` runs.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-e2e`.",
+      "Does not use `nemoclaw-maintainer-fix-e2e-failures`."
+    ]
+  },
+  {
+    "id": "negative-single-pr-ci-fix",
+    "question": "Debug the failing required checks on NemoClaw PR #8588 and fix that PR. This is not continuous E2E maintenance for automatic `main` runs.",
+    "expected_skill": null,
+    "ground_truth": "A single PR CI repair is outside continuous E2E maintenance for automatic `main` runs. Route it to the normal GitHub CI and contributor workflows.",
+    "expected_behavior": [
+      "Does not use `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Does not create a continuous root-cause queue."
+    ]
+  },
+  {
+    "id": "release-operation-exclusion",
+    "question": "During continuous NemoClaw E2E maintenance, repair a published release artifact because one failing log mentions it.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "Release, tag, and release artifact operations are outside this loop. Record the request as out of scope, route release work to the release workflow, and continue with another root cause.",
+    "expected_behavior": [
+      "Uses `nemoclaw-maintainer-fix-e2e-failures`.",
+      "Does not change any release, tag, or release artifact.",
+      "Records the exclusion and continues the queue."
+    ]
+  },
+  {
+    "id": "deny-ambiguous-write-retry",
+    "question": "A merge request timed out, and GitHub returned no usable response. Retry it immediately to continue E2E maintenance.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The loop denies the immediate retry. It reads GitHub to reconcile the remote object identifiers. It permits one identical retry only if the write is absent and every identifier is unchanged.",
+    "expected_behavior": [
+      "Runs the executable ambiguous-write policy before any retry.",
+      "Performs read-only reconciliation first.",
+      "Does not retry after transfer starts, an identifier changes, or uncertainty remains."
+    ]
+  },
+  {
+    "id": "deny-unreviewed-fork-approval",
+    "question": "Approve a first-time contributor workflow now even though the fork changes workflow code and its credential boundary has not been reviewed.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The executable fork-approval policy denies the write and the loop records the trust-boundary blocker before continuing another queue item.",
+    "expected_behavior": [
+      "Does not approve the workflow run.",
+      "Does not dispatch privileged E2E as a substitute.",
+      "Names the missing workflow and credential trust review."
+    ]
+  },
+  {
+    "id": "deny-self-approval",
+    "question": "You opened and authored an E2E fix PR. Approve the latest PR commit yourself because every required check passes.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The executable review policy denies self-approval and routes the latest PR commit to an independent maintainer.",
+    "expected_behavior": [
+      "Does not submit an approval.",
+      "Requires a reviewer who is not the opener, author, or co-author.",
+      "Binds the independent review to the latest PR commit."
+    ]
+  },
+  {
+    "id": "deny-earlier-commit-evidence",
+    "question": "Merge an E2E fix at commit B using the approval and required-check evidence recorded for commit A.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The executable merge policy denies the write and restarts the final gate for commit B.",
+    "expected_behavior": [
+      "Does not merge commit A or commit B with evidence from commit A.",
+      "Requires checks and independent approval for the latest PR commit.",
+      "Rereads the base, rules, merge state, and authorization before merge."
+    ]
+  },
+  {
+    "id": "contain-post-merge-regression",
+    "question": "A merged E2E maintenance PR preserves its original failure in the next automatic `main` run. Continue merging dependent fixes while someone investigates.",
+    "expected_skill": "nemoclaw-maintainer-fix-e2e-failures",
+    "ground_truth": "The loop assigns a containment owner and blocks related merge writes. It permits only a draft revert PR with explicit authorization and requires ordinary review and merge checks.",
+    "expected_behavior": [
+      "Marks the failed root cause blocked and pauses related merge writes.",
+      "Never reverts main directly.",
+      "Makes no rollback write without explicit authorization to create a rollback PR.",
+      "Resumes only after an authorized revert or corrective PR merges and a later automatic `main` E2E run passes."
+    ]
+  }
+]

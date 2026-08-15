@@ -87,6 +87,7 @@ createSandbox(
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
           NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
         },
       });

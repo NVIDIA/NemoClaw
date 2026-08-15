@@ -77,6 +77,132 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(report.hints.join(" ")).toMatch(/hermes whatsapp/);
   });
 
+  it("guides legacy Hermes dashboard sessions through channel removal and re-pairing (#8184)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: false,
+        sessionLocations: {
+          gatewaySessionCreds: false,
+          dashboardSessionCreds: true,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    const pairing = report.signals.find((s) => s.label === "Pairing / session");
+    const hints = report.hints.join(" ");
+    expect(report.verdict).toBe("unpaired");
+    expect(session?.severity).toBe("warn");
+    expect(session?.detail).toMatch(/dashboard-home has WhatsApp credentials/);
+    expect(pairing?.hint).toContain("`nemoclaw <sandbox> channels remove whatsapp`");
+    expect(session?.hint).toContain("`nemoclaw <sandbox> channels add whatsapp`");
+    expect(session?.hint).toMatch(/Pair again from the dashboard/);
+    expect(hints).toContain("/sandbox/.hermes/platforms/whatsapp/session");
+    expect(hints).toContain("`nemoclaw <sandbox> channels status --channel whatsapp`");
+    expect(hints).not.toContain("platforms.whatsapp.extra.session_path");
+    expect(hints).not.toContain("profiles/dashboard-home/platforms/whatsapp/session");
+  });
+
+  it("keeps Hermes gateway session file evidence out of the live-health verdict", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: null,
+        sessionLocations: {
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: false,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unknown");
+    expect(session?.severity).toBe("ok");
+    expect(session?.detail).toMatch(/gateway session path contains WhatsApp credentials/);
+  });
+
+  it("reports duplicate Hermes session paths without claiming live health (#8184)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: null,
+        sessionLocations: {
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: true,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unknown");
+    expect(session?.severity).toBe("info");
+    expect(session?.detail).toBe("both Hermes session paths contain WhatsApp credentials");
+    expect(session?.hint).toBe("use one active WhatsApp bridge for the paired account");
+  });
+
+  it("accepts credentials found through the configured session path (#8718)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: null,
+        sessionLocations: {
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: true,
+          gatewaySessionPathSource: "config",
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    const override = report.signals.find((s) => s.label === "Session path override");
+    expect(report.verdict).toBe("unknown");
+    expect(session?.severity).toBe("ok");
+    expect(session?.detail).toBe(
+      "the configured Hermes WhatsApp session path contains credentials",
+    );
+    expect(override?.severity).toBe("info");
+    expect(override?.detail).toContain("platforms.whatsapp.extra.session_path");
+  });
+
+  it("stops repeating the repair command when the configured session path is empty (#8718)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: false,
+        sessionLocations: {
+          gatewaySessionCreds: false,
+          dashboardSessionCreds: true,
+          gatewaySessionPathSource: "config",
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unpaired");
+    expect(session?.severity).toBe("warn");
+    expect(session?.detail).toBe(
+      "the configured Hermes WhatsApp session path has no WhatsApp credentials",
+    );
+    expect(report.hints.join(" ")).not.toContain("--config-accept-new-path");
+    expect(report.hints.join(" ")).toContain("hermes whatsapp");
+  });
+
+  it("warns when the configured session path is not a supported sandbox path (#8718)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: false,
+        sessionLocations: {
+          gatewaySessionCreds: false,
+          dashboardSessionCreds: true,
+          gatewaySessionPathSource: "unsupported",
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    const override = report.signals.find((s) => s.label === "Session path override");
+    expect(session?.severity).toBe("warn");
+    expect(session?.detail).toMatch(/dashboard-home has WhatsApp credentials/);
+    expect(override?.severity).toBe("warn");
+    expect(override?.detail).toContain("not a supported session path");
+  });
+
   it("returns idle when paired with a live WebSocket but no inbound event observed", () => {
     // This is the exact #4386 shape: pairing is fine, WebSocket is up, but
     // lastInboundAt is still null. We MUST NOT report this as healthy.

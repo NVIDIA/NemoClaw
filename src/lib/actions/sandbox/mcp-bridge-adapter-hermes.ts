@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshellProviderCommand } from "../../actions/global";
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { waitUntil } from "../../core/wait";
 import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";

@@ -20,9 +20,9 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 //
 // Why subprocess: the validation path drives `curl` via spawnSync with a
 // tight process timeout. Driving the entire scenario set through a fresh
-// source-hooked child mirrors the legacy script (and #5119's
-// onboard-gateway-docker-unreachable.test.ts) and keeps the behavior under
-// test identical to production runtime conditions — bypassing Vitest's
+// source-hooked child mirrors the legacy script and the caller-level
+// onboarding process tests. It keeps the behavior under test identical to
+// production runtime conditions — bypassing Vitest's
 // worker pool, fetch shim, and signal handling, all of which can interfere
 // with the in-process curl subprocess used by validateOpenAiLikeSelection.
 //
@@ -44,7 +44,8 @@ const EXPECTED_PASS_MARKERS = [
   "[PASS] strict validation succeeds with structured tool_calls",
   "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
   "[PASS] strict validation retries a transient 502 and keeps bounded payloads",
-  "[PASS] strict validation fails closed when no structured tool_call is returned",
+  "[PASS] strict validation escalates the reasoning-only budget ladder to 4096 tokens",
+  "[PASS] strict validation retries three times and stops after four responses omit structured tool calls",
 ];
 
 describe("strict Chat Completions tool-call probe (#4537)", () => {

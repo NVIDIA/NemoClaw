@@ -113,26 +113,10 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Detect guardrail tools on the base revision
-        id: tools
-        # The tools live in the base tree. On the PR that first adds them, the
-        # base revision predates them, so skip until the change lands on base.
-        run: |
-          set -euo pipefail
-          if [ -f tools/growth-guardrails/test-size-budget.mts ] \
-            && [ -f tools/growth-guardrails/test-conditionals.mts ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "Trusted base revision does not yet contain the growth-guardrail tools; the policy applies once this change lands on the base branch."
-          fi
-
       - name: Install trusted dependencies
-        if: steps.tools.outputs.present == 'true'
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Require changed test files to stay within size budget
-        if: steps.tools.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -145,7 +129,6 @@ jobs:
           node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts
 
       - name: Require changed test files not to add if statements
-        if: steps.tools.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

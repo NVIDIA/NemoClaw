@@ -22,9 +22,17 @@ describe("isCredentialField", () => {
 
   it("matches pattern-based names", () => {
     expect(isCredentialField("accessToken")).toBe(true);
+    expect(isCredentialField("access_token")).toBe(true);
+    expect(isCredentialField("personal_access_token")).toBe(true);
     expect(isCredentialField("refreshToken")).toBe(true);
+    expect(isCredentialField("refresh-token")).toBe(true);
     expect(isCredentialField("clientSecret")).toBe(true);
+    expect(isCredentialField("client_secret")).toBe(true);
     expect(isCredentialField("bearerToken")).toBe(true);
+    expect(isCredentialField("auth_token")).toBe(true);
+    expect(isCredentialField("oauth_token")).toBe(true);
+    expect(isCredentialField("apikey")).toBe(true);
+    expect(isCredentialField("Token")).toBe(true);
     expect(isCredentialField("privateKey")).toBe(true);
     expect(isCredentialField("signingKey")).toBe(true);
     expect(isCredentialField("sessionToken")).toBe(true);
@@ -32,7 +40,29 @@ describe("isCredentialField", () => {
     expect(isCredentialField("authKey")).toBe(true);
     // OpenClaw channel token fields (#5027).
     expect(isCredentialField("botToken")).toBe(true);
+    expect(isCredentialField("bot_token")).toBe(true);
     expect(isCredentialField("appToken")).toBe(true);
+    expect(isCredentialField("app_token")).toBe(true);
+  });
+
+  it("strips opaque values under common OAuth and channel field spellings", () => {
+    expect(
+      stripCredentials({
+        access_token: "opaque-access-value",
+        refresh_token: "opaque-refresh-value",
+        client_secret: "opaque-client-value",
+        auth_token: "opaque-auth-value",
+        bot_token: "opaque-bot-value",
+        apikey: "opaque-api-value",
+      }),
+    ).toEqual({
+      access_token: "[STRIPPED_BY_MIGRATION]",
+      refresh_token: "[STRIPPED_BY_MIGRATION]",
+      client_secret: "[STRIPPED_BY_MIGRATION]",
+      auth_token: "[STRIPPED_BY_MIGRATION]",
+      bot_token: "[STRIPPED_BY_MIGRATION]",
+      apikey: "[STRIPPED_BY_MIGRATION]",
+    });
   });
 
   it("matches terminal pass aliases without treating pass substrings as credentials", () => {
@@ -117,6 +147,7 @@ describe("isCredentialField", () => {
     expect(isCredentialField("publicKey")).toBe(false);
     expect(isCredentialField("PUBLIC_KEY")).toBe(false);
     expect(isCredentialField("public-key")).toBe(false);
+    expect(isCredentialField("public.key")).toBe(false);
     expect(isCredentialField("X-Public-Key")).toBe(false);
     expect(isCredentialField("GITHUB_PUBLIC_KEY")).toBe(false);
     // But private keys and other secret fields still match.

@@ -81,7 +81,15 @@ export function getSandboxReadyErrorDebouncePolls(
 export type CreatedSandboxReadinessResult =
   | { ready: true; reason: "ready"; failurePhase: null }
   | { ready: false; reason: "terminal_failure_phase"; failurePhase: string | null }
+  | { ready: false; reason: "identity_changed"; failurePhase: null }
+  | { ready: false; reason: "identity_probe_failed"; failurePhase: null }
   | { ready: false; reason: "timeout"; failurePhase: null };
+
+export type CreatedSandboxReadyIdentityCheck = () =>
+  | "ready"
+  | "not_ready"
+  | "identity_changed"
+  | "probe_failed";
 
 export interface SandboxReadyWaitDeps {
   runCaptureOpenshell: RunCaptureOpenshell;
@@ -205,6 +213,13 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    */
   stableReadyPolls?: number;
   /**
+   * Optional exact-identity and executability proof for a sandbox whose
+   * runtime was replaced after OpenShell first reported Ready. A transient
+   * not-ready result stays inside this bounded wait. Identity changes and
+   * all other probe failures remain terminal.
+   */
+  checkReadyIdentity?: CreatedSandboxReadyIdentityCheck;
+  /**
    * Consecutive Error-phase polls required before the wait treats the phase as
    * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls).
    *
@@ -267,6 +282,32 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       attempt += 1;
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) {
+        const identity = options.checkReadyIdentity?.() ?? "ready";
+        if (identity === "identity_changed") {
+          addTraceEvent("identity_changed", { attempt });
+          result = {
+            ready: false,
+            reason: "identity_changed",
+            failurePhase: null,
+          };
+          return true;
+        }
+        if (identity === "probe_failed") {
+          addTraceEvent("identity_probe_failed", { attempt });
+          result = {
+            ready: false,
+            reason: "identity_probe_failed",
+            failurePhase: null,
+          };
+          return true;
+        }
+        if (identity === "not_ready") {
+          consecutiveReadyPolls = 0;
+          consecutiveFailurePolls = 0;
+          lastFailurePhase = null;
+          addTraceEvent("ready_identity_pending", { attempt });
+          return false;
+        }
         consecutiveReadyPolls += 1;
         consecutiveFailurePolls = 0;
         lastFailurePhase = null;
@@ -361,6 +402,12 @@ export function formatCreatedSandboxReadinessFailureMessage(
   if (readiness.reason === "terminal_failure_phase") {
     const phase = readiness.failurePhase ?? "a terminal failure";
     return `  Sandbox '${sandboxName}' entered ${phase} phase before it became ready (waited up to ${timeoutSecs}s).`;
+  }
+  if (readiness.reason === "identity_changed") {
+    return `  Sandbox '${sandboxName}' changed identity before its recreated runtime became ready.`;
+  }
+  if (readiness.reason === "identity_probe_failed") {
+    return `  NemoClaw could not verify that sandbox '${sandboxName}' still had the expected ID and accepted commands.`;
   }
   return `  Sandbox '${sandboxName}' was created but did not become ready within ${timeoutSecs}s.`;
 }

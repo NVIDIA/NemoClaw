@@ -8,6 +8,8 @@ import {
   OBSERVABILITY_POLICY_BINDING,
 } from "../../onboard/observability-policy-presets";
 import * as policies from "../../policy";
+import { replayTrustedPrivatePolicyPinCapability } from "../../policy/trusted-private-endpoints";
+import * as sandboxConfig from "../../sandbox/config";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
@@ -208,6 +210,25 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
     );
     restoreSucceeded = restore.success;
+    if (
+      targetAgentType === "hermes" &&
+      restore.restoredDirs.some(
+        (directory) => directory === "dashboard-home" || directory === "profiles",
+      )
+    ) {
+      const dashboardTarget = sandboxConfig.resolveAgentConfig(sandboxName);
+      const dashboardSeed =
+        dashboardTarget.agentName === "hermes"
+          ? sandboxConfig.restoreHermesDashboardConfig(sandboxName, dashboardTarget)
+          : "failed";
+      log(`Hermes dashboard state after restore: ${dashboardSeed}`);
+      if (dashboardSeed === "failed") {
+        restoreSucceeded = false;
+        console.error(
+          `  ${YW}⚠${R} Could not migrate restored Hermes dashboard state into its profile.`,
+        );
+      }
+    }
     if (!restore.success) {
       if (restore.error) {
         console.error(`  Restore blocked: ${restore.error}`);
@@ -218,7 +239,7 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         console.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
       }
       console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
-    } else {
+    } else if (restoreSucceeded) {
       console.log(
         `  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
@@ -260,8 +281,14 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     for (const entry of replayableCustomPolicies) {
       try {
         log(`Applying custom preset: ${entry.name}`);
+        const trustedPrivatePinCapability = entry.trustedPrivatePins
+          ? replayTrustedPrivatePolicyPinCapability(entry.content, entry.trustedPrivatePins)
+          : undefined;
         const applied = policies.applyPresetContent(sandboxName, entry.name, entry.content, {
-          custom: { sourcePath: entry.sourcePath },
+          custom: {
+            sourcePath: entry.sourcePath,
+            ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
+          },
         });
         if (applied) {
           restoredCustomPresets.push(entry.name);

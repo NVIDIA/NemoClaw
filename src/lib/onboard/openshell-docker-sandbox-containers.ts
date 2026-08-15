@@ -10,6 +10,7 @@ export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
+const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 
 type DockerSandboxContainerQueryDeps = Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerRun">;
 
@@ -81,6 +82,93 @@ export function queryOpenShellDockerSandboxContainers(
   return { ok: true, ids };
 }
 
+type StaleDockerOrphanCleanupDeps = {
+  queryContainers?: typeof queryOpenShellDockerSandboxContainers;
+  forceRemove?: (containerId: string) => { status?: number | null };
+};
+
+/** Remove only the Docker container whose immutable ID passed the caller's authority check. */
+export function removeExactOpenShellDockerSandboxContainer(
+  sandboxName: string,
+  expectedContainerId: string,
+  log: (message: string) => void,
+  deps: StaleDockerOrphanCleanupDeps = {},
+): void {
+  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
+  const initial = queryContainers(sandboxName);
+  if (!initial.ok) {
+    throw new Error(`could not inspect the exact Docker cleanup target: ${initial.error}`);
+  }
+  if (initial.ids.length === 0) return;
+  if (initial.ids.length !== 1 || initial.ids[0] !== expectedContainerId) {
+    throw new Error(
+      `expected exactly labeled Docker container '${expectedContainerId}', found ` +
+        `${initial.ids.length === 0 ? "none" : initial.ids.join(", ")}; refusing replacement cleanup`,
+    );
+  }
+
+  const removal = deps.forceRemove
+    ? deps.forceRemove(expectedContainerId)
+    : dockerRun(["rm", "-f", expectedContainerId], {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: STALE_DOCKER_ORPHAN_TIMEOUT_MS,
+      });
+  if (Number(removal.status ?? 1) !== 0) {
+    throw new Error(`could not remove exact Docker container '${expectedContainerId}'`);
+  }
+  const confirmed = queryContainers(sandboxName);
+  if (!confirmed.ok || confirmed.ids.length !== 0) {
+    throw new Error("could not confirm exact Docker container removal");
+  }
+  log(`Removed exact Docker container '${expectedContainerId}' after OpenShell sandbox deletion`);
+}
+
+/**
+ * Remove one exact Docker-owned orphan when a registry row outlives its OpenShell sandbox.
+ * Docker labels are the remaining authority in this invalid state; see the focused #8720 tests.
+ * Remove this workaround once OpenShell upgrades clean up or expose these orphans natively.
+ */
+export function removeStaleRebuildDockerOrphan(
+  sandboxName: string,
+  openshellDriver: string | null | undefined,
+  log: (message: string) => void,
+  deps: StaleDockerOrphanCleanupDeps = {},
+): void {
+  if (openshellDriver && openshellDriver !== "docker") return;
+  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
+  const initial = queryContainers(sandboxName);
+  if (!initial.ok) {
+    if (openshellDriver === "docker") {
+      throw new Error(`could not inspect the owned Docker orphan: ${initial.error}`);
+    }
+    return;
+  }
+  if (initial.ids.length === 0) return;
+  if (initial.ids.length !== 1) {
+    throw new Error(
+      `found ${String(initial.ids.length)} exactly labeled Docker containers; refusing ambiguous orphan cleanup`,
+    );
+  }
+
+  const containerId = initial.ids[0];
+  const removal = deps.forceRemove
+    ? deps.forceRemove(containerId)
+    : dockerRun(["rm", "-f", containerId], {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: STALE_DOCKER_ORPHAN_TIMEOUT_MS,
+      });
+  if (Number(removal.status ?? 1) !== 0) {
+    throw new Error(`could not remove exactly labeled Docker orphan '${containerId}'`);
+  }
+  const confirmed = queryContainers(sandboxName);
+  if (!confirmed.ok || confirmed.ids.length !== 0) {
+    throw new Error("could not confirm exact Docker orphan removal");
+  }
+  log(`Removed exactly labeled Docker orphan '${containerId}' before stale rebuild`);
+}
+
 export type OpenShellDockerDeviceRequest = {
   Driver: string;
   Count: number;
@@ -118,6 +206,11 @@ export type OpenShellDockerSandboxRuntimeSnapshotQuery =
       containerId: string;
     }
   | { ok: false; error: string };
+
+export interface OpenShellDockerSandboxRuntimeSnapshotOptions {
+  /** Full transaction-owned container ID selected while a rollback backup is retained. */
+  readonly expectedContainerId?: string;
+}
 
 export function isImmutableDockerImageId(value: string): boolean {
   return /^sha256:[0-9a-f]{64}$/i.test(value);
@@ -278,7 +371,10 @@ function parseNvidiaVisibleDevices(result: {
 }
 
 /**
- * Inspect the one exactly labeled native container before deletion.
+ * Inspect a native container before deletion. Default callers must resolve one
+ * labeled container. Managed-bootstrap callers may instead provide the full
+ * transaction-owned container ID, which must be present among the labeled
+ * replacement and retained rollback backup.
  *
  * Docker owns the fields returned here: `.Image` is the immutable retry
  * identity, `.Config.Image` is bookkeeping-only, and HostConfig supplies the
@@ -289,17 +385,27 @@ function parseNvidiaVisibleDevices(result: {
 export function queryOpenShellDockerSandboxRuntimeSnapshot(
   sandboxName: string,
   deps: DockerSandboxContainerQueryDeps = {},
+  options: OpenShellDockerSandboxRuntimeSnapshotOptions = {},
 ): OpenShellDockerSandboxRuntimeSnapshotQuery {
   const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
   if (!containers.ok) return { ok: false, error: containers.error };
-  if (containers.ids.length !== 1) {
+  const expectedContainerId = options.expectedContainerId;
+  if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/u.test(expectedContainerId)) {
+    return { ok: false, error: "expected sandbox container ID is invalid" };
+  }
+  const selectedContainerIds = expectedContainerId
+    ? containers.ids.filter((containerId) => containerId === expectedContainerId)
+    : containers.ids;
+  if (selectedContainerIds.length !== 1) {
     return {
       ok: false,
-      error: `expected one labeled sandbox container, found ${containers.ids.length}`,
+      error: expectedContainerId
+        ? "expected activated sandbox container was not found among labeled containers"
+        : `expected one labeled sandbox container, found ${containers.ids.length}`,
     };
   }
   const run = deps.dockerRun ?? dockerRun;
-  const containerId = containers.ids[0];
+  const containerId = selectedContainerIds[0];
   const inspect = run(
     [
       "inspect",

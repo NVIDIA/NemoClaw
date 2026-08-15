@@ -5,7 +5,7 @@
 // entrypoints. Exercises the actual shell blocks extracted from
 // scripts/nemoclaw-start.sh and agents/hermes/start.sh, not a re-implementation.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,6 +38,85 @@ function mergeBlock(scriptPath: string, endMarker: string, corpCa: string, merge
     .replaceAll("/usr/local/share/nemoclaw/corporate-ca.pem", corpCa)
     .replaceAll("/tmp/nemoclaw-ca-bundle.pem", merged);
 }
+
+const OPENCLAW_END = "# Git TLS CA bundle fix (NemoClaw#2270).";
+const HERMES_END = "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.";
+
+/**
+ * Run a merge block whose stderr is captured to a file, and return that
+ * diagnostic. The block exits non-zero on a rejected trust anchor, so the
+ * caller asserts the throw and then reads the diagnostic this leaves behind.
+ */
+function mergeDiagnostic(dir: string, block: string, lines: string[] = []): string {
+  const errFile = join(dir, "merge-stderr.txt");
+  expect(() =>
+    runShellLines(dir, [`exec 2>${JSON.stringify(errFile)}`, ...lines, block]),
+  ).toThrow();
+  return readFileSync(errFile, "utf-8");
+}
+
+describe("corporate proxy CA trust-anchor rejection (#8650)", () => {
+  it.each([
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END },
+  ])("rejects a symlinked corporate CA before reading it for $agent (#8650)", ({ script, end }) => {
+    const dir = tmpDir("nemoclaw-corp-symlink-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "merged-ca.pem");
+    const planted = join(dir, "not-a-certificate");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    // The baked path is a root-owned 0444 regular file in the image, so a
+    // symlink here is tampering. Point it at content that is not a certificate.
+    writeFileSync(planted, "PLANTED-NOT-A-CERTIFICATE\n");
+    symlinkSync(planted, corp);
+
+    const diagnostic = mergeDiagnostic(dir, mergeBlock(script, end, corp, merged), [
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+    ]);
+
+    expect(diagnostic).toContain("corporate CA");
+    expect(diagnostic).not.toContain("PLANTED-NOT-A-CERTIFICATE");
+    expect(existsSync(merged)).toBe(false);
+  });
+
+  it.each([
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END },
+  ])("rejects a corporate CA swapped to a symlink after the path check for $agent (#8650)", ({
+    script,
+    end,
+  }) => {
+    const dir = tmpDir("nemoclaw-corp-swap-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "merged-ca.pem");
+    const planted = join(dir, "not-a-certificate");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(planted, "PLANTED-NOT-A-CERTIFICATE\n");
+    writeFileSync(corp, CORPORATE_PEM);
+
+    // Stand in for a process that replaces the path between the `-L` check and
+    // the read. Swapping the file for a symlink right after the check means
+    // only the O_NOFOLLOW read can still reject it.
+    const swap = [
+      `rm -f ${JSON.stringify(corp)}`,
+      `ln -s ${JSON.stringify(planted)} ${JSON.stringify(corp)}`,
+    ].join("\n");
+    const raced = mergeBlock(script, end, corp, merged).replace(
+      `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0`,
+      `[ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0\n${swap}`,
+    );
+
+    const diagnostic = mergeDiagnostic(dir, raced, [
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+    ]);
+
+    expect(diagnostic).toContain("corporate CA");
+    expect(diagnostic).not.toContain("PLANTED-NOT-A-CERTIFICATE");
+    expect(existsSync(merged)).toBe(false);
+  });
+});
 
 describe("corporate proxy CA runtime merge (#6210)", () => {
   it("appends the corporate CA to the OpenShell bundle for OpenClaw and repoints all CA env (#6210)", () => {

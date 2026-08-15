@@ -243,6 +243,11 @@ _validate_port() {
       return 1
       ;;
   esac
+  if [[ "$value" =~ ^0*8081$ ]]; then
+    printf 'Invalid %s=%s (conflicts with fixed llama.cpp inference port 8081)\n' \
+      "$name" "$value" >&2
+    return 1
+  fi
   if ! { [ "$value" -ge 1024 ] && [ "$value" -le 65535 ]; }; then
     printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
     return 1

@@ -98,6 +98,8 @@ export async function runSandboxCreateStep(
     context.agent,
     context.prebuild.dockerDriverGateway,
   );
+  const deferRestartSafeCutover =
+    startupCommandPatch.persistStartupCommand && !context.useDockerGpuPatch;
   const dockerGpuCreatePatch = deps.createDockerGpuPatch({
     route: context.useDockerGpuPatch ? "compatibility" : "native",
     persistStartupCommand: startupCommandPatch.persistStartupCommand,
@@ -123,13 +125,17 @@ export async function runSandboxCreateStep(
         const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
         return deps.isSandboxReady(list, context.sandboxName);
       },
-      onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
-      readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
-        deps.isTerminalAgent(context.agent),
-        sandboxEnv,
-      ),
+      onPoll: () => {
+        if (!deferRestartSafeCutover) dockerGpuCreatePatch.maybeApplyDuringCreate();
+      },
+      readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+        isTerminalAgent: deps.isTerminalAgent(context.agent),
+        startupRunsDuringCreate: true,
+        env: sandboxEnv,
+      }),
       failureCheck: dockerGpuCreatePatch.createFailureMessage,
       traceEvent: deps.addTraceEvent,
+      waitForReadyTermination: deferRestartSafeCutover,
     },
   );
   return { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch };

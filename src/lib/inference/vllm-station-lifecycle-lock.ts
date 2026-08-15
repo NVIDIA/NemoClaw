@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
-import { STATE_DIR_NAME } from "../state/state-root";
+import { managedVllmStateDir } from "./vllm-api-key";
 
-const DUAL_STATION_VLLM_LIFECYCLE_LOCK = "dual-station-vllm:host-global";
+const HOST_GLOBAL_VLLM_LIFECYCLE_LOCK = "dual-station-vllm:host-global";
 const DUAL_STATION_CONTROLLER_CONFIG_DIR = "/etc/nemoclaw";
 export const DUAL_STATION_CONTROLLER_UID_FILE = path.join(
   DUAL_STATION_CONTROLLER_CONFIG_DIR,
@@ -125,13 +124,25 @@ export function assertDualStationControllerAccount(
   return controllerUid;
 }
 
+/** Serialize every host-managed vLLM profile under the effective account home. */
+export function withHostGlobalVllmLifecycleLock<T>(
+  operation: () => Promise<T> | T,
+  options: McpLifecycleLockOptions = {},
+): Promise<T> {
+  const stateDir = options.stateDir ?? path.join(managedVllmStateDir(), "state");
+  return withMcpLifecycleLock(HOST_GLOBAL_VLLM_LIFECYCLE_LOCK, operation, {
+    ...options,
+    stateDir,
+  });
+}
+
 /**
  * Serialize the host-managed dual-Station service across gateway instances.
  *
  * Dual-Station lifecycle supports one effective controller account per host.
- * This anchors every supported caller at that account's passwd home instead of
- * mutable HOME or a gateway-specific root. Host preparation binds that account
- * in root-owned state before the lease can be acquired.
+ * This anchors every supported caller at the same host-global state root used
+ * by managed vLLM receipts and credentials. Host preparation binds the
+ * controller account in root-owned state before the lease can be acquired.
  */
 export function withDualStationVllmLifecycleLock<T>(
   operation: () => Promise<T> | T,
@@ -146,9 +157,5 @@ export function withDualStationVllmLifecycleLock<T>(
     identityDeps.readControllerUid,
     identityDeps.effectiveControllerUid,
   );
-  const stateDir = options.stateDir ?? path.join(os.userInfo().homedir, STATE_DIR_NAME, "state");
-  return withMcpLifecycleLock(DUAL_STATION_VLLM_LIFECYCLE_LOCK, operation, {
-    ...options,
-    stateDir,
-  });
+  return withHostGlobalVllmLifecycleLock(operation, options);
 }

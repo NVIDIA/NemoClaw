@@ -1,0 +1,6 @@
+{
+  "agents": ["openclaw", "hermes", "langchain-deepagents-code"],
+  "contractVersion": 1,
+  "jobId": "managed-image-multiarch-startup",
+  "platforms": ["linux/amd64", "linux/arm64"]
+}

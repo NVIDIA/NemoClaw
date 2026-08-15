@@ -24,6 +24,7 @@ import {
   recoverManagedBootstrapTransactions,
 } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
+import { createDockerManagedBootstrapAuthorityStore } from "./docker-authority-store";
 import type {
   ManagedBootstrapRuntimeCompatibilityLaunchInput,
   ManagedBootstrapRuntimeCreateLaunchResult,
@@ -31,6 +32,7 @@ import type {
   ManagedBootstrapRuntimeCreateLifecycleInput,
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "./runtime-create";
+import { createManagedBootstrapTerminalFinalizer } from "./runtime-create";
 
 type SupportedBootstrapSurface = Extract<
   RuntimeProviderBootstrapSurface,
@@ -118,7 +120,9 @@ function createDockerLifecycle(
         }
       : {}),
   });
-  const adapter = input.adapterOverride ?? createDockerManagedBootstrapAdapter(input.dependencies);
+  const adapter =
+    input.adapterOverride ??
+    createDockerManagedBootstrapAdapter({ ...input.dependencies, stateRoot: input.stateRoot });
   const createPlan = {
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandboxName: input.sandboxName,
@@ -134,10 +138,27 @@ function createDockerLifecycle(
     metadata: {},
   } as const;
   const replacementOptions = dockerReplacementOptions(mode, input);
+  let activatedRuntimeId: string | null = null;
 
   return {
     launchArgv: input.launchArgv,
     patch,
+    inspectNativeRuntime() {
+      if (activatedRuntimeId === null) return undefined;
+      const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(
+        input.sandboxName,
+        {},
+        { expectedContainerId: activatedRuntimeId },
+      );
+      return snapshot.ok
+        ? {
+            imageId: snapshot.imageId,
+            bookkeepingImageRef: snapshot.bookkeepingImageRef,
+            stateError: snapshot.stateError,
+            nativeGpuAttachmentState: snapshot.nativeGpuAttachmentState,
+          }
+        : null;
+    },
     async recoverUnfinished() {
       return recoverManagedBootstrapTransactions(adapter);
     },
@@ -150,7 +171,7 @@ function createDockerLifecycle(
         input.network.inferenceProvider,
         input.sandboxGpuConfig,
         {
-          dockerDriverGateway: input.network.dockerDriverGateway,
+          dockerDriverGateway: input.network.gatewayUsesContainerBridge,
           selectedRoute: input.route,
           gatewayPort: input.network.gatewayPort,
           log: console.log,
@@ -183,6 +204,7 @@ function createDockerLifecycle(
         authorityStore: input.authorityStore,
         timeoutSecs: input.timeoutSecs,
       });
+      activatedRuntimeId = activated.replacement.replacementRuntimeId;
       const launched = launchState.value;
       if (!launched) {
         await finalizeManagedBootstrapSequence(adapter, {
@@ -191,7 +213,12 @@ function createDockerLifecycle(
         });
         throw new Error("Managed bootstrap did not return its OpenShell create receipt.");
       }
-      let finalized = false;
+      const finalizer = createManagedBootstrapTerminalFinalizer((outcome) =>
+        finalizeManagedBootstrapSequence(adapter, {
+          outcome,
+          transaction: activated,
+        }).then(() => undefined),
+      );
       patch.attachManagedBootstrapCutover({
         selectedMode: mode,
         failureContext: {
@@ -201,22 +228,8 @@ function createDockerLifecycle(
           backupContainerName: null,
           selectedMode: mode,
         },
-        async rollback() {
-          if (finalized) return;
-          await finalizeManagedBootstrapSequence(adapter, {
-            outcome: "rollback",
-            transaction: activated,
-          });
-          finalized = true;
-        },
-        async commit() {
-          if (finalized) return;
-          await finalizeManagedBootstrapSequence(adapter, {
-            outcome: "commit",
-            transaction: activated,
-          });
-          finalized = true;
-        },
+        rollback: finalizer.rollback,
+        commit: finalizer.commit,
       });
       return launched.value;
     },
@@ -285,13 +298,14 @@ function createDockerOnboardRouting(input: ManagedBootstrapRuntimeOnboardRouting
   };
 }
 
-/** Candidate Docker surface. Production activation remains a later qualification slice. */
+/** Complete Docker bootstrap surface selected only through a runtime bundle. */
 export function createDockerManagedBootstrapSurface(
   providerId = "docker",
 ): SupportedBootstrapSurface {
   return {
     providerId,
     supported: true,
+    createAuthorityStore: ({ stateRoot }) => createDockerManagedBootstrapAuthorityStore(stateRoot),
     createLifecycle: (input) => createDockerLifecycle(providerId, input),
     createOnboardRouting: createDockerOnboardRouting,
   };

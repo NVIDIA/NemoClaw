@@ -55,7 +55,7 @@ test("TC-INF-06 invalid API key fails with credential classification and cleanup
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await requireLivePrerequisites(host, skip);
-  const sandboxName = inferenceSandboxName("e2e-invalid-key");
+  const sandboxName = inferenceSandboxName("e2e-badkey");
   cleanup.add(`remove inference-routing invalid-key residue for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
@@ -106,7 +106,7 @@ test("TC-INF-07 unreachable endpoint fails with transport classification and cle
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await requireLivePrerequisites(host, skip);
-  const sandboxName = inferenceSandboxName("e2e-unreachable");
+  const sandboxName = inferenceSandboxName("e2e-unreach");
   cleanup.add(`remove inference-routing unreachable residue for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
@@ -344,7 +344,7 @@ async function runRuntimeIdentityE2EScenario(
 
   const model = "nemoclaw-e2e-runtime-identity";
   const inferenceKey = "sk-runtime-identity-TEST-NOT-A-REAL-VALUE";
-  const sandboxName = inferenceSandboxName(`e2e-${scenario.testId.toLowerCase()}`);
+  const sandboxName = inferenceSandboxName(`e2e-i${scenario.testId.slice(-2)}`);
   const providerType = scenario.providerType;
   const providerName = `e2e-${scenario.providerType}-${String(process.pid)}`;
   const credentialKey = scenario.credentialKey;
@@ -1005,7 +1005,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
   const model = "nemoclaw-e2e-compatible";
   const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
   await requireLivePrerequisites(host, skip);
-  const sandboxName = inferenceSandboxName("e2e-compat-ep");
+  const sandboxName = inferenceSandboxName("e2e-compat");
   cleanup.add(`best-effort inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
@@ -1149,7 +1149,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
   await requireLivePrerequisites(host, skip);
   const model = "nemoclaw-e2e-https-pin";
   const apiKey = "sk-https-pin-TEST-NOT-A-REAL-VALUE";
-  const sandboxName = inferenceSandboxName("e2e-https-pin");
+  const sandboxName = inferenceSandboxName("e2e-https");
   cleanup.add(`best-effort inference-routing https-pin cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );

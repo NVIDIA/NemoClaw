@@ -23,6 +23,8 @@ export interface FakeOpenAiCompatibleRequest {
   readonly model?: string;
   readonly stream?: boolean;
   readonly forbiddenMarkerMatches?: number;
+  /** Presence only; the configured non-secret canary is never persisted. */
+  readonly requestCanaryPresent?: boolean;
 }
 
 export interface FakeOpenAiCompatibleServer {
@@ -38,6 +40,9 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly apiKey?: string;
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
+  readonly launchReplyFromPrompt?: boolean;
+  /** Non-secret marker expected in a request under test. */
+  readonly requestCanaryMarker?: string;
   readonly host?: string;
   readonly maxModelLen?: number;
   readonly model?: string;
@@ -180,11 +185,13 @@ export async function startFakeOpenAiCompatibleServer(
           NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
           NEMOCLAW_FAKE_OPENAI_HOST: host,
           NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
+          NEMOCLAW_FAKE_OPENAI_LAUNCH_REPLY_FROM_PROMPT: options.launchReplyFromPrompt ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
             options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
           NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
           NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
           NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,
+          NEMOCLAW_FAKE_OPENAI_REQUEST_CANARY_MARKER: options.requestCanaryMarker ?? "",
           NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE: requestsFile,
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH: options.requireAuth ? "1" : "0",
           NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS: options.requireAuthModels ? "1" : "0",

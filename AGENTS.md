@@ -20,6 +20,8 @@ Stop and request maintainer direction, or route an independent solution through 
 
 This repo ships agent skills under `.agents/skills/`.
 Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
+The contributor lifecycle has one owner for each stage: `nemoclaw-contributor-onboard` for checkout setup, `nemoclaw-contributor-plan-issue` for planning, `nemoclaw-contributor-implement-issue` for implementation and its tests, and `nemoclaw-contributor-create-pr` for publication and review follow-up.
+Component-specific guidance belongs in the `AGENTS.md` file of the package it describes, not in a skill.
 Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 Skills that write or review explanatory text must follow the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract.
 
@@ -72,7 +74,7 @@ Package-specific guides:
 | Run the broad repo-wide pre-commit and coverage baseline | `npm run check` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
-| Auto-format | `npm run format` |
+| Auto-format added JavaScript and TypeScript files that Oxfmt does not exclude | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 
@@ -151,13 +153,15 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
-- Biome config in `biome.json`
+- Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
+
+- Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
 - Keep function complexity low; existing complexity hotspots are tracked separately
 - Unused vars pattern: prefix with `_`
 
 ### TypeScript
 
-- Plugin code in `nemoclaw/src/` is linted and formatted by the root Biome config
+- Oxlint lints plugin code in `nemoclaw/src/`. Oxfmt formats added plugin files that it does not exclude.
 - CLI type-checking via `tsconfig.cli.json`
 - Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
   `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`
@@ -199,8 +203,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use existing repository vocabulary and name what a thing does.
 - Remove modifiers that do not distinguish a real current case.
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
-- Follow the [NemoClaw Writing Guide](WRITING.md) for changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
-  The guide defines the review scope and the conditions that make a language finding blocking.
+- Follow the [NemoClaw Writing Guide](WRITING.md) for every agent response, progress update, tool-call label or description, text published on GitHub, and changed explanatory text.
+  An agent must correct its text before it sends a message, publishes GitHub text, or starts a tool call with a visible label or description. The guide's review policy defines which findings can block changes to existing text.
 - Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
@@ -269,14 +273,17 @@ If the command trace contains no reviewer-request write, report the event as an 
 ### Gotchas
 
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`
-- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`, while sharing the root Biome config — it's a separate npm project
+- The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`.
+  It is a separate npm project that shares the root Oxlint and Oxfmt configuration files.
 - SPDX headers are auto-inserted by pre-commit hooks; don't worry about adding them manually
 - Coverage thresholds are ratcheted in `ci/coverage-threshold-*.json` — new code should not decrease CLI or plugin coverage
 - The `.claude/skills` symlink points to `.agents/skills` — both paths resolve to the same content
 
 ## Documentation
 
-- Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
+- Treat `docs/` as the source of truth for public-facing documentation.
+  Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow,
+  including DORI routing.
 - Before completing a code change, determine whether it changes a user-visible surface.
   This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
 - When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
@@ -291,34 +298,10 @@ If the command trace contains no reviewer-request write, report the event as an 
   For a documentation-only change, require review of the writing rules and documentation style.
 - If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
   If no capable host is available, record the review as `blocked` and do not complete final handoff.
-- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
-- If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
+- After the review, follow the
+  [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
+  procedure.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
-
-### NVIDIA DORI Routing
-
-Select the documentation path from current host capabilities.
-Do not ask the user to classify themselves or store repository-scoped identity
-state during a normal documentation task.
-
-1. Check whether the current agent exposes `dori_handle` or `dori_route` and
-   `dori_collections`.
-   If the user explicitly asks not to use DORI, use the
-   [Writing Style Guide](docs/AGENTS.md#writing-style-guide) instead.
-2. When those tools are available, list the installed collections.
-   - If a collection source contains `tech-docs/skill-library`, use DORI for
-     task routing.
-   - If the collection is missing, inaccessible, or cannot be verified,
-     continue with the
-     [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
-3. When the DORI tools are unavailable, continue with the Writing Style Guide.
-   Do not inspect a shell-visible CLI, install software, or configure the host
-   during a normal documentation task.
-4. Use [NVIDIA DORI Setup](docs/DORI_SETUP.md) only when the user explicitly
-   asks to install or configure DORI.
-
-Capability detection does not approve installation or host configuration.
-DORI unavailability must not block documentation work.
 
 ## PR Requirements
 

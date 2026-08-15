@@ -71,7 +71,7 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
   'test -f "$security_inventory"',
   'test ! -L "$security_inventory"',
   `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
-  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.2-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0782-1" "vim-tiny=2:9.2.0782-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" | cmp -s - "$security_inventory"`,
+  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.3-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0858-1" "vim-tiny=2:9.2.0858-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" | cmp -s - "$security_inventory"`,
   `printf '%s\\n' "nemoclaw-security-inventory-ok"`,
 ].join("; ");
 
@@ -153,13 +153,52 @@ function mockOnboardRunCapture(command, options = {}) {
   if (isOpenClawSecurityInventoryProbe(command)) {
     return "nemoclaw-security-inventory-ok";
   }
-  if (/^docker run --rm --entrypoint \/usr\/bin\/ldd \S+ --version$/.test(normalized)) {
+  if (
+    normalized.startsWith("docker run ") &&
+    normalized.includes(" --entrypoint /usr/bin/ldd ") &&
+    normalized.endsWith(" --version")
+  ) {
     return "ldd (GNU libc) 2.41";
   }
   return mockSandboxExecCurl(command, options);
 }
 
+function mockStructuredOpenShellCaptureFromRunner() {
+  const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  const client = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"),
+  );
+  client.captureOpenshellCommand = (binary, args, options = {}) => {
+    const stdout = String(
+      runner.runCapture([binary, ...args], {
+        ...options,
+        ignoreError: true,
+        includeStderr: false,
+      }) || "",
+    );
+    const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
+    if (isSandboxGet && stdout.trim().length === 0) {
+      const sandboxName = String(args.at(-1) || "unknown");
+      const stderr = `Error: sandbox ${sandboxName} not found\n`;
+      return {
+        status: 1,
+        output: options.includeStderr === true ? stderr.trim() : "",
+        ...(options.includeStreams === true ? { stdout: "", stderr } : {}),
+      };
+    }
+    return {
+      status: 0,
+      output: stdout.trim(),
+      ...(options.includeStreams === true ? { stdout, stderr: "" } : {}),
+    };
+  };
+}
+
 function mockStandaloneGatewayTeardownAuthority() {
+  // Recreate integration fixtures historically mock runner.runCapture. Keep
+  // the structured OpenShell probe on that same seam while preserving clean
+  // nonzero NotFound metadata after the fixture records deletion.
+  mockStructuredOpenShellCaptureFromRunner();
   const authority = require(
     path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),
   );
@@ -175,8 +214,40 @@ function mockStandaloneGatewayTeardownAuthority() {
   });
 }
 
+function mockManagedImageFallback() {
+  const catalog = require(
+    path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
+  );
+  catalog.resolveManagedImageCatalogFromGhcr = async () => {
+    throw new catalog.ManagedImageCatalogUnavailableError(
+      "integration fixture intentionally exercises the trusted Dockerfile fallback",
+    );
+  };
+
+  const dockerProvider = require(
+    path.resolve(__dirname, "../../src/lib/onboard/runtime-provider/docker.ts"),
+  );
+  const createDockerRuntimeProviderBundle = dockerProvider.createDockerRuntimeProviderBundle;
+  dockerProvider.createDockerRuntimeProviderBundle = (...args) => {
+    const bundle = createDockerRuntimeProviderBundle(...args);
+    return {
+      ...bundle,
+      workload: {
+        ...bundle.workload,
+        profile: {
+          ...bundle.workload.profile,
+          managedImageSelectionPolicy: "prefer-managed",
+        },
+      },
+    };
+  };
+}
+
+process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
+
 module.exports = {
   isOpenClawSecurityInventoryProbe,
+  mockManagedImageFallback,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
   mockStandaloneGatewayTeardownAuthority,

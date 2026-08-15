@@ -17,6 +17,8 @@ const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
+const APT_DRIVER_POLICY_OPTION =
+  "Dir::Etc::Preferences=/run/nemoclaw-apt-transaction.TEST/driver-policy";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -357,18 +359,19 @@ package_is_exact() { return 0; }
 assert_package_transaction_ready() { printf 'PACKAGE_TRANSACTION_READY %s\n' "$1"; }
 check_dpkg_database_health() { printf 'DPKG_AUDIT_CLEAN\n'; }
 create_apt_transaction_guard() {
-  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
-  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST; APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"; APT_TRANSACTION_DRIVER_POLICY="$APT_TRANSACTION_GUARD_DIR/driver-policy"
 }
-cleanup_apt_transaction_guard() { :; }
+cleanup_apt_transaction_guard() { APT_TRANSACTION_GUARD_DIR=""; APT_TRANSACTION_HOOK=""; APT_TRANSACTION_DRIVER_POLICY=""; }
 sudo() { printf 'SUDO %s\n' "$*"; }
-install_packages
+install_packages; printf 'POLICY_AFTER=%s\n' "\${APT_TRANSACTION_DRIVER_POLICY:-unset}"
 `,
     );
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("apt-get update");
-    expect(output).toContain("apt-get install -y --no-install-recommends");
+    expect(output.match(/^SUDO .*apt-get install .*$/gm)).toHaveLength(2);
+    expect(output.match(/^SUDO .*apt-get install .*driver-policy.*$/gm)).toHaveLength(2);
+    expect(output).toContain("POLICY_AFTER=");
     expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     for (const spec of [
       "libnvidia-container-tools=1.19.1-1",

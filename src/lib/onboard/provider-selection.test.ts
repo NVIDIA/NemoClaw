@@ -28,6 +28,7 @@ function resolve(overrides: Partial<Parameters<typeof resolveRequestedProviderSe
     isWindowsHostOllama: false,
     windowsHostOllamaSupported: false,
     hermesProviderAvailable: false,
+    ollamaRunning: false,
     readRecordedProvider: () => null,
     readRecordedNimContainer: () => null,
     readRecordedModel: () => null,
@@ -48,6 +49,47 @@ describe("resolveRequestedProviderSelection", () => {
       assert.equal(result.recoveredFromSandbox, false);
       assert.equal(result.recoveredModel, null);
     }
+  });
+
+  it("reuses a running Ollama daemon instead of reinstalling on the Windows host (#7472)", () => {
+    // WSL mirrored networking: the Windows daemon answers on loopback first, so
+    // the probe reads isWindowsHostOllama false and the menu keeps the install
+    // entry. Express still requests it; the running daemon must win anyway.
+    const result = resolve({
+      options: [option("build"), option("ollama"), option("install-windows-ollama")],
+      requestedProvider: "install-windows-ollama",
+      isWsl: true,
+      isWindowsHostOllama: false,
+      windowsHostOllamaSupported: true,
+      ollamaRunning: true,
+    });
+
+    assert.equal(selectedKey(result), "ollama");
+  });
+
+  it("still installs on the Windows host when no daemon responds (#7472)", () => {
+    const result = resolve({
+      options: [option("build"), option("install-windows-ollama")],
+      requestedProvider: "install-windows-ollama",
+      isWsl: true,
+      windowsHostOllamaSupported: true,
+      ollamaRunning: false,
+    });
+
+    assert.equal(selectedKey(result), "install-windows-ollama");
+  });
+
+  it("still installs WSL-local Ollama when a daemon is already running (#7472)", () => {
+    // Guards the narrow scope: widening the collapse to install-ollama would
+    // skip the upgrade entry resolveOllamaInstallMenuEntry keeps for a
+    // running-but-stale daemon.
+    const result = resolve({
+      options: [option("build"), option("ollama"), option("install-ollama")],
+      requestedProvider: "install-ollama",
+      ollamaRunning: true,
+    });
+
+    assert.equal(selectedKey(result), "install-ollama");
   });
 
   it("recovers the recorded provider and model when no provider was requested", () => {

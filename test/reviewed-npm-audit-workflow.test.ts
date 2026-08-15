@@ -1,12 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeOpenClawSignatureAlias } from "../scripts/audit-reviewed-npm-graph.mts";
+import {
+  assertReviewedAuditReportsPass,
+  auditMaterializedSourceGraph,
+  materializeSourceGraph,
+  normalizeOpenClawSignatureAlias,
+  parseAuditConfig,
+  selectReviewedLockSha256,
+  verifyMaterializedLockedGraph,
+} from "../scripts/audit-reviewed-npm-graph.mts";
+import { verifyInstalledNpmLock } from "../scripts/lib/reviewed-npm-archive.mts";
+import type { AuditPolicyResult } from "../scripts/lib/reviewed-npm-audit.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
@@ -29,13 +41,6 @@ type Workflow = {
 };
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const BOOTSTRAP_SHA = "0c7dd29394d2c4db660c4d09f3654c0789e200d0";
-// Removal condition: delete the PR-6830 fork bootstrap after this PR merges and
-// the base branch contains the schema-v2 reviewed npm audit action.
-const BOOTSTRAP_IF =
-  "${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && github.event.pull_request.number == 6830 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}";
-const REJECT_UNAVAILABLE_IF =
-  "${{ steps.trusted-reviewed-npm-audit.outputs.available != 'true' && (github.event.pull_request.number != 6830 || github.event.pull_request.head.repo.full_name != 'HOYALIM/NemoClaw') }}";
 const DOMEXCEPTION_INTEGRITY =
   "sha512-tlc/FcYIv5i8RYsl2iDil4A0gOihaas1R5jPcIC4Zw3GhjKsVilw90aHcVlhZPTBLGBzd379S+VcnsDjd9ChiA==";
 
@@ -45,107 +50,735 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
   return step as WorkflowStep;
 }
 
+function writeProductionSourceGraph(
+  root: string,
+  packageRecord: Readonly<Record<string, unknown>>,
+  additionalPackageRecords: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {},
+): Readonly<{ sourceLock: string; sourcePackage: string }> {
+  const source = path.join(root, "source");
+  const manifest = {
+    dependencies: { "fixture-package": "1.0.0" },
+    name: "source-graph-fixture",
+    private: true,
+    version: "1.0.0",
+  };
+  const lock = {
+    name: manifest.name,
+    version: manifest.version,
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": manifest,
+      "node_modules/fixture-package": packageRecord,
+      ...additionalPackageRecords,
+    },
+  };
+  fs.mkdirSync(source);
+  const sourcePackage = path.join(source, "package.json");
+  const sourceLock = path.join(source, "package-lock.json");
+  fs.writeFileSync(sourcePackage, `${JSON.stringify(manifest, null, 2)}\n`);
+  fs.writeFileSync(sourceLock, `${JSON.stringify(lock, null, 2)}\n`);
+  return { sourceLock, sourcePackage };
+}
+
 describe("trusted reviewed npm audit workflow (#5896)", () => {
-  // source-shape-contract: security -- PR dependency audit code must come from the base SHA or the one-time signed bootstrap
-  it("runs PR audits from trusted code and keeps the main audit on the checked-in action", () => {
-    const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
-    const main = readYaml<Workflow>(".github/workflows/main.yaml");
-    const prJob = pr.jobs["reviewed-npm-audit"];
-    const mainJob = main.jobs["reviewed-npm-audit"];
-
-    const trustedCheckout = requiredStep(prJob, "Checkout trusted reviewed npm audit");
-    expect(trustedCheckout.with).toMatchObject({
-      ref: "${{ github.event.pull_request.base.sha }}",
-      path: ".trusted-reviewed-npm-audit",
-      "persist-credentials": false,
-      "sparse-checkout-cone-mode": false,
-    });
-    const sparseCheckout = String(trustedCheckout.with?.["sparse-checkout"]);
-    expect(sparseCheckout).toContain(".github/actions/ci-reviewed-npm-audit");
-    expect(sparseCheckout).toContain("ci/npm-audit-exceptions.json");
-    expect(sparseCheckout).toContain("ci/reviewed-npm-audit.json");
-    expect(sparseCheckout).toContain("scripts/audit-reviewed-npm-graph.mts");
-    expect(sparseCheckout).toContain("scripts/lib/openclaw-npm-remediation.mts");
-    expect(sparseCheckout).toContain("scripts/lib/reviewed-npm-archive.mts");
-    expect(sparseCheckout).toContain("scripts/lib/reviewed-npm-audit.mts");
-
-    const detection = requiredStep(prJob, "Detect trusted reviewed npm audit schema");
-    expect(detection.id).toBe("trusted-reviewed-npm-audit");
-    expect(detection.run).toContain("resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT)");
-    expect(detection.run).toContain(".trusted-reviewed-npm-audit/ci/npm-audit-exceptions.json");
-    expect(detection.run).toContain(".trusted-reviewed-npm-audit/ci/reviewed-npm-audit.json");
-    expect(detection.run).toContain(
-      ".trusted-reviewed-npm-audit/scripts/lib/openclaw-npm-remediation.mts",
-    );
-    expect(detection.run).toContain(
-      ".trusted-reviewed-npm-audit/scripts/lib/reviewed-npm-audit.mts",
-    );
-
-    const bootstrap = requiredStep(prJob, "Checkout pinned bootstrap reviewed npm audit");
-    expect(bootstrap.if).toBe(BOOTSTRAP_IF);
-    expect(bootstrap.with).toMatchObject({
-      repository: "HOYALIM/NemoClaw",
-      ref: BOOTSTRAP_SHA,
-      path: ".trusted-reviewed-npm-audit-bootstrap",
-      "persist-credentials": false,
-    });
-    const bootstrapSparseCheckout = String(bootstrap.with?.["sparse-checkout"]);
-    expect(bootstrapSparseCheckout).toContain("ci/npm-audit-exceptions.json");
-    expect(bootstrapSparseCheckout).toContain("scripts/lib/openclaw-npm-remediation.mts");
-    expect(bootstrapSparseCheckout).toContain("scripts/lib/reviewed-npm-audit.mts");
-    const rejectUnavailable = requiredStep(prJob, "Reject unavailable trusted reviewed npm audit");
-    expect(rejectUnavailable.if).toBe(REJECT_UNAVAILABLE_IF);
-    expect(rejectUnavailable.run).toContain("exit 1");
-    expect(requiredStep(prJob, "Audit reviewed production npm graphs")).toMatchObject({
-      if: "${{ steps.trusted-reviewed-npm-audit.outputs.available == 'true' }}",
-      uses: "./.trusted-reviewed-npm-audit/.github/actions/ci-reviewed-npm-audit",
-      with: {
-        "target-root": "${{ github.workspace }}",
-        "report-dir": "artifacts/reviewed-npm-audit",
-      },
-    });
-    expect(
-      requiredStep(prJob, "Audit reviewed production npm graphs (pinned bootstrap)"),
-    ).toMatchObject({
-      if: BOOTSTRAP_IF,
-      uses: "./.trusted-reviewed-npm-audit-bootstrap/.github/actions/ci-reviewed-npm-audit",
-    });
-    expect(requiredStep(mainJob, "Audit reviewed production npm graphs")).toMatchObject({
-      uses: "./.github/actions/ci-reviewed-npm-audit",
-      with: {
-        "target-root": "${{ github.workspace }}",
-        "report-dir": "artifacts/reviewed-npm-audit",
-      },
-    });
+  it("accepts only an explicitly reviewed lock during a dependency transition", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
+    const lockfile = path.join(root, "package-lock.json");
+    fs.writeFileSync(lockfile, "reviewed lock\n");
+    const actualLock = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
+    const previousLock = "a".repeat(64);
+    const unreviewedLock = "b".repeat(64);
+    try {
+      expect(selectReviewedLockSha256(lockfile, actualLock, undefined, "test graph")).toBe(
+        actualLock,
+      );
+      expect(selectReviewedLockSha256(lockfile, previousLock, actualLock, "test graph")).toBe(
+        actualLock,
+      );
+      expect(() =>
+        selectReviewedLockSha256(lockfile, previousLock, unreviewedLock, "test graph"),
+      ).toThrow("lock SHA-256 mismatch");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  // source-shape-contract: security -- The trusted composite action must execute only its bundled driver while treating the PR checkout as explicit data
-  it("executes the trusted driver and helper against explicit target inputs", () => {
-    const action = fs.readFileSync(
-      path.join(REPO_ROOT, ".github", "actions", "ci-reviewed-npm-audit", "action.yaml"),
-      "utf8",
+  it("rejects a replacement lock digest that duplicates the current digest", () => {
+    const digest = "a".repeat(64);
+    const config = {
+      archiveGraphId: "reviewed-archive-graph",
+      archivePackages: [],
+      artifactDirectory: "artifacts/reviewed-npm-audit",
+      exceptionFile: "ci/npm-audit-exceptions.json",
+      lockedGraphs: [
+        {
+          directory: "agents/openclaw/openclaw-runtime",
+          id: "openclaw-runtime",
+          lockSha256: digest,
+          replacementLockSha256: digest,
+        },
+      ],
+      nodeVersion: "22.23.2",
+      registryOrigin: "https://registry.npmjs.org/",
+      schemaVersion: 2,
+      severityThreshold: "high",
+    };
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
     );
-    const driver = fs.readFileSync(
-      path.join(REPO_ROOT, "scripts", "audit-reviewed-npm-graph.mts"),
-      "utf8",
-    );
-    const helper = fs.readFileSync(
-      path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts"),
-      "utf8",
+  });
+
+  it("rejects a mismatched npm bootstrap archive before installation (#8253)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
+    const bin = path.join(root, "bin");
+    const npmLog = path.join(root, "npm.log");
+    const installMarker = path.join(root, "install-called");
+    const npmStub = path.join(bin, "npm");
+    const bootstrap = path.join(
+      REPO_ROOT,
+      ".github",
+      "actions",
+      "ci-reviewed-npm-audit",
+      "verify-and-install-npm.sh",
     );
 
-    expect(action).toContain('node-version: "22.23.1"');
-    expect(action).toContain("npm install --global npm@10.9.4");
-    expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT");
-    expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR");
-    expect(action).toContain(
-      'node --experimental-strip-types "$GITHUB_ACTION_PATH/../../../scripts/audit-reviewed-npm-graph.mts"',
+    try {
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        npmStub,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$1" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  pack)
+    shift
+    download_dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--pack-destination" ]; then
+        download_dir="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$download_dir" ]
+    printf 'tampered archive\\n' > "$download_dir/npm-10.9.4.tgz"
+    ;;
+  install)
+    : > "$NEMOCLAW_TEST_INSTALL_MARKER"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [bootstrap], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_INTEGRITY: "sha512-invalid",
+          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
+          NEMOCLAW_TEST_INSTALL_MARKER: installMarker,
+          NEMOCLAW_TEST_NPM_LOG: npmLog,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: root,
+        },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("npm@10.9.4 archive integrity mismatch");
+      expect(fs.readFileSync(npmLog, "utf8")).toBe("pack\n");
+      expect(fs.existsSync(installMarker)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs a matching npm bootstrap archive offline (#8253)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
+    const bin = path.join(root, "bin");
+    const npmLog = path.join(root, "npm.log");
+    const npmStub = path.join(bin, "npm");
+    const archiveContents = "verified archive\n";
+    const bootstrap = path.join(
+      REPO_ROOT,
+      ".github",
+      "actions",
+      "ci-reviewed-npm-audit",
+      "verify-and-install-npm.sh",
     );
-    expect(action).not.toContain("run: node --experimental-strip-types scripts/");
-    expect(driver).toContain("resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT)");
-    expect(helper).toContain("const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000");
-    expect(helper).toContain("timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS");
-    expect(driver).not.toContain('resolveTargetPath(\n  "ci/reviewed-npm-audit.json"');
+
+    try {
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        npmStub,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  pack)
+    shift
+    download_dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--pack-destination" ]; then
+        download_dir="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$download_dir" ]
+    printf 'verified archive\\n' > "$download_dir/npm-10.9.4.tgz"
+    ;;
+  install)
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+
+      const integrity = `sha512-${createHash("sha512").update(archiveContents).digest("base64")}`;
+      const result = spawnSync("bash", [bootstrap], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_INTEGRITY: integrity,
+          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
+          NEMOCLAW_TEST_NPM_LOG: npmLog,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: root,
+        },
+      });
+
+      const npmInvocations = fs.readFileSync(npmLog, "utf8").trim().split("\n");
+      expect(result.status).toBe(0);
+      expect(npmInvocations).toHaveLength(2);
+      expect(npmInvocations[0]).toContain("pack npm@10.9.4 --pack-destination");
+      expect(npmInvocations[1]).toMatch(
+        /^install --global .*\/npm-10\.9\.4\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes the NemoClaw production graph without changing its lock (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-"));
+    const source = path.join(root, "source");
+    const destination = path.join(root, "materialized");
+    const manifest = { name: "source-graph-fixture", private: true, version: "1.0.0" };
+    const lock = {
+      name: manifest.name,
+      version: manifest.version,
+      lockfileVersion: 3,
+      requires: true,
+      packages: { "": manifest },
+    };
+    const lockSource = `${JSON.stringify(lock, null, 2)}\n`;
+    try {
+      fs.mkdirSync(source);
+      fs.writeFileSync(path.join(source, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+      fs.writeFileSync(path.join(source, "package-lock.json"), lockSource);
+
+      expect(
+        materializeSourceGraph(
+          path.join(source, "package.json"),
+          path.join(source, "package-lock.json"),
+          destination,
+          "https://registry.npmjs.org",
+          () => {},
+        ),
+      ).toBe(destination);
+      expect(fs.readFileSync(path.join(destination, "package-lock.json"), "utf-8")).toBe(
+        lockSource,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an omitted development-only package in a locked production install (#8394)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-locked-production-"));
+    const lockfilePath = path.join(root, "package-lock.json");
+    const lockSource = `${JSON.stringify(
+      {
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            devDependencies: { "@types/node": "25.5.2" },
+            name: "locked-production-fixture",
+            version: "1.0.0",
+          },
+          "node_modules/@types/node": { dev: true, version: "25.5.2" },
+        },
+      },
+      null,
+      2,
+    )}\n`;
+    try {
+      fs.writeFileSync(lockfilePath, lockSource);
+      expect(
+        verifyMaterializedLockedGraph({
+          destination: root,
+          expectedLockSha256: createHash("sha256").update(lockSource).digest("hex"),
+          label: "locked production fixture",
+        }),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unreviewed registry package before npm ci installs the root production graph (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-registry-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      integrity: "sha512-fixture",
+      resolved: "https://example.com/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock package must use the reviewed registry: node_modules/fixture-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects dev: true when root production dependencies reach the package (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-dev-flag-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        dependencies: { "transitive-package": "1.0.0" },
+        integrity: "sha512-fixture",
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/transitive-package": {
+          dev: true,
+          integrity: "sha512-transitive",
+          resolved: "https://registry.npmjs.org/transitive-package/-/transitive-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock marks a production dependency as dev: true: node_modules/transitive-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects dev: true when a production peer dependency reaches the package (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-peer-dev-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity: "sha512-fixture",
+        peerDependencies: { "peer-package": "1.0.0" },
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/peer-package": {
+          dev: true,
+          integrity: "sha512-peer",
+          resolved: "https://registry.npmjs.org/peer-package/-/peer-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock marks a production dependency as dev: true: node_modules/peer-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("requires a dependency declared only in dependencies (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-required-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      dependencies: { "shared-package": "1.0.0" },
+      integrity: "sha512-fixture",
+      resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock is missing a production dependency: node_modules/fixture-package: shared-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets optionalDependencies override a duplicate dependencies entry (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-optional-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      dependencies: { "shared-package": "1.0.0" },
+      integrity: "sha512-fixture",
+      optionalDependencies: { "shared-package": "1.0.0" },
+      resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          (directory) => {
+            const packageDirectory = path.join(directory, "node_modules", "fixture-package");
+            fs.mkdirSync(packageDirectory, { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDirectory, "package.json"),
+              `${JSON.stringify({ name: "fixture-package", version: "1.0.0" }, null, 2)}\n`,
+            );
+          },
+        ),
+      ).toBe(destination);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows a missing optional production peer dependency (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-peer-optional-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      integrity: "sha512-fixture",
+      peerDependencies: { "peer-package": "1.0.0" },
+      peerDependenciesMeta: { "peer-package": { optional: true } },
+      resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          (directory) => {
+            const packageDirectory = path.join(directory, "node_modules", "fixture-package");
+            fs.mkdirSync(packageDirectory, { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDirectory, "package.json"),
+              `${JSON.stringify({ name: "fixture-package", version: "1.0.0" }, null, 2)}\n`,
+            );
+          },
+        ),
+      ).toBe(destination);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unreviewed non-dev package that root production dependencies do not reach (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-non-dev-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity: "sha512-fixture",
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/unreachable-package": {
+          integrity: "sha512-unreachable",
+          resolved: "https://example.com/unreachable-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock package must use the reviewed registry: node_modules/unreachable-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits dev: true when root production dependencies do not reach the package (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-dev-only-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity: "sha512-fixture",
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/unreachable-package": {
+          dev: true,
+          integrity: "sha512-unreachable",
+          resolved: "https://example.com/unreachable-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          (directory) => {
+            installCalled = true;
+            const packageDirectory = path.join(directory, "node_modules", "fixture-package");
+            fs.mkdirSync(packageDirectory, { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDirectory, "package.json"),
+              `${JSON.stringify({ name: "fixture-package", version: "1.0.0" }, null, 2)}\n`,
+            );
+          },
+        ),
+      ).toBe(destination);
+      expect(installCalled).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects nested shrinkwrap before npm ci installs the root production graph (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-shrinkwrap-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      hasShrinkwrap: true,
+      integrity: "sha512-fixture",
+      resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock package must not delegate to nested shrinkwrap: node_modules/fixture-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an installed package identity that differs from the reviewed lock (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-identity-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      integrity: "sha512-fixture",
+      resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          (directory) => {
+            const packageDirectory = path.join(directory, "node_modules", "fixture-package");
+            fs.mkdirSync(packageDirectory, { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDirectory, "package.json"),
+              `${JSON.stringify({ name: "fixture-package", version: "1.0.1" }, null, 2)}\n`,
+            );
+          },
+        ),
+      ).toThrow(
+        "NemoClaw CLI locked production graph installed package identity mismatch at node_modules/fixture-package: expected fixture-package@1.0.0, found fixture-package@1.0.1",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an invalid installed-lock package record with a stable error (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installed-lock-record-"));
+    const lockfilePath = path.join(root, "package-lock.json");
+    const lockSource = `${JSON.stringify(
+      {
+        lockfileVersion: 3,
+        packages: { "": { name: "fixture", version: "1.0.0" }, "node_modules/fixture": null },
+      },
+      null,
+      2,
+    )}\n`;
+    try {
+      fs.writeFileSync(lockfilePath, lockSource);
+      expect(() =>
+        verifyInstalledNpmLock({
+          expectedLockSha256: createHash("sha256").update(lockSource).digest("hex"),
+          installRoot: root,
+          label: "fixture lock",
+          lockfilePath,
+        }),
+      ).toThrow("fixture lock has an invalid locked package record: node_modules/fixture");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("audits the NemoClaw production graph, verifies signatures, and rejects blocking advisories (#8116)", () => {
+    const events: string[] = [];
+    const blockedResult = {
+      acceptedAdvisories: [],
+      blockingThreshold: "high",
+      exceptionPolicySha256: "fixture-policy",
+      graph: "nemoclaw-cli",
+      reported: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },
+      schemaVersion: 1,
+      status: "blocked",
+      unacceptedBlockingAdvisories: [
+        {
+          advisory: "GHSA-aaaa-bbbb-cccc",
+          installedVersion: "1.0.0",
+          package: "fixture-package",
+          severity: "high",
+        },
+      ],
+    } satisfies AuditPolicyResult;
+    const result = auditMaterializedSourceGraph(
+      {
+        artifactDirectory: "/artifacts",
+        directory: "/materialized",
+        exceptionFile: "/exceptions.json",
+        npmVersion: "10.9.4",
+        packageSpec: "nemoclaw@0.0.0",
+        threshold: "high",
+      },
+      {
+        runAudit: (options) => {
+          events.push("policy-audit");
+          expect(options).toMatchObject({
+            directory: "/materialized",
+            exceptionFile: "/exceptions.json",
+            graph: "nemoclaw-cli",
+            provenance: {
+              label: "NemoClaw CLI locked production graph",
+              npmVersion: "10.9.4",
+              packageSpecs: ["nemoclaw@0.0.0"],
+            },
+            reportFile: path.join("/artifacts", "source-graph.json"),
+            resultFile: path.join("/artifacts", "source-graph-policy.json"),
+            threshold: "high",
+            throwOnBlock: false,
+          });
+          return blockedResult;
+        },
+        verifySignatures: (directory) => {
+          events.push(`signatures:${directory}`);
+        },
+      },
+    );
+
+    expect(events).toEqual(["policy-audit", "signatures:/materialized"]);
+    expect(() =>
+      assertReviewedAuditReportsPass(
+        [{ label: "NemoClaw CLI locked production graph", result }],
+        "high",
+      ),
+    ).toThrow(
+      "reviewed npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
+    );
   });
 
   it("normalizes only the reviewed OpenClaw npm alias for registry signature verification", () => {

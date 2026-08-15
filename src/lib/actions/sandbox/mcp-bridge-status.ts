@@ -7,6 +7,8 @@ import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
+  DEFAULT_OPENCLAW_CONFIG_DIR,
+  openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
 import {
@@ -28,10 +30,15 @@ import {
 import {
   bridgeState,
   ensureSandboxGatewaySelected,
+  getAgentConfigDir,
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
 import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
+import {
+  inspectMcpRecordedTargetPins,
+  type McpBridgeRecordedPinStatus,
+} from "./mcp-bridge-url-validation";
 import {
   assertAuthenticatedBridgeEntry,
   normalizeMcpServerUrl,
@@ -53,12 +60,15 @@ export interface McpBridgeJsonSummary {
 // from another inspected route attributed to the same adapter runtime.
 // sourceBoundary: OpenShell owns provider attachment and HTTP rewrite binding;
 // NemoClaw owns the generated least-privilege route and operator diagnostics.
-// whyNotSourceFix: v0.0.85 has no endpoint-exclusive provider attachment or
-// enforceable Host, scheme, and query binding that NemoClaw can request.
+// whyNotSourceFix: v0.0.99 injects provider placeholders at sandbox scope. Its
+// network policy enforces the generated route's host, port, path, methods, and
+// allowed IPs, but placeholder resolution has no endpoint-exclusive attachment
+// or credential-specific scheme and query binding that NemoClaw can request.
 // regressionTest: mcp-bridge-status-boundaries.test.ts pins this warning and the
 // generated policy tests pin unique keys, explicit methods, and allowed IPs.
 // removalCondition: remove only when OpenShell exposes and NemoClaw requires
-// endpoint-exclusive credential binding plus Host, scheme, and query enforcement.
+// endpoint-exclusive credential binding with credential-specific host, scheme,
+// and query enforcement.
 const SANDBOX_SCOPED_PROVIDER_WARNING =
   "OpenShell currently attaches this credential provider at sandbox scope, not exclusively to this MCP endpoint. Keep other inspected routes for the same adapter binary at least as restrictive until OpenShell supports endpoint-exclusive credential binding plus Host, scheme, and query enforcement.";
 const UNSUPPORTED_STORED_URL_WARNING =
@@ -68,7 +78,9 @@ const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
 
 function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
   try {
-    return normalizeMcpServerUrl(entry.url) === entry.url
+    return normalizeMcpServerUrl(entry.url, {
+      trustedPrivateHosts: entry.trustedPrivateHost ? [entry.trustedPrivateHost] : undefined,
+    }) === entry.url
       ? undefined
       : UNSUPPORTED_STORED_URL_WARNING;
   } catch {
@@ -100,7 +112,11 @@ function getAdapterRegistration(
   }
   const command =
     adapter === "mcporter"
-      ? buildOpenClawMcporterInspectCommand(entry, false)
+      ? buildOpenClawMcporterInspectCommand(
+          entry,
+          false,
+          openClawMcporterRoot(getAgentConfigDir(entry.agent, DEFAULT_OPENCLAW_CONFIG_DIR)),
+        )
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry)
         : buildDeepAgentsMcpStatusCommand(entry);
@@ -201,6 +217,21 @@ export async function statusMcpBridge(
     );
   }
 
+  const privatePinStatusByServer = new Map<string, McpBridgeRecordedPinStatus>();
+  await Promise.all(
+    entries.map(async ([name, entry]) => {
+      if (!entry?.trustedPrivateHost || !entry.allowedIps) return;
+      privatePinStatusByServer.set(
+        name,
+        await inspectMcpRecordedTargetPins(
+          new URL(entry.url),
+          entry.trustedPrivateHost,
+          entry.allowedIps,
+        ),
+      );
+    }),
+  );
+
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
@@ -237,6 +268,16 @@ export async function statusMcpBridge(
       if (urlWarning) warnings.push(urlWarning);
       credentialWarning = storedCredentialWarning(entry);
       if (credentialWarning) warnings.push(credentialWarning);
+    }
+    const privatePinStatus = privatePinStatusByServer.get(name);
+    if (privatePinStatus?.state === "drift") {
+      warnings.push(
+        "Trusted-private DNS answers differ from the recorded pins. Remove and re-add this server to approve changed pins.",
+      );
+    } else if (privatePinStatus?.state === "unresolved") {
+      warnings.push(
+        "Trusted-private DNS resolution is unavailable. The recorded policy pins were not changed.",
+      );
     }
     const unsafeCredentialMayBeAttached =
       !!credentialWarning && !!entry?.providerName && attached !== false;
@@ -278,6 +319,19 @@ export async function statusMcpBridge(
       warnings,
       support,
       ...(entry ? { url: entry.url } : {}),
+      ...(entry?.trustedPrivateHost && entry.allowedIps && privatePinStatus
+        ? {
+            trustedPrivateTarget: {
+              host: entry.trustedPrivateHost,
+              recordedPins: [...entry.allowedIps],
+              ...(privatePinStatus.currentAddresses
+                ? { currentPins: privatePinStatus.currentAddresses }
+                : {}),
+              state: privatePinStatus.state,
+              ...(privatePinStatus.detail ? { detail: privatePinStatus.detail } : {}),
+            },
+          }
+        : {}),
       ...(entry?.addState ? { addState: entry.addState } : {}),
       env: {
         names: entry?.env ?? [],

@@ -40,14 +40,29 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
       configFile: "config.yaml",
       envFile: ".env",
       format: "yaml",
+      shieldsFiles: [".env"],
     },
     inferenceProviderOptions: [],
     mcpCapability: {
       support: "disabled",
       reason: "test fixture",
     },
+    stateDirectories: [],
     stateDirs: [],
-    runtimeAuthStateDirs: [],
+    stateDirPrefixes: [],
+    backupStateDirs: [],
+    backupStateDirPrefixes: [],
+    nonBackupStateDirs: [],
+    nonBackupStateDirPrefixes: [],
+    stateLockPlan: {
+      version: 1,
+      readOnlyRoots: [],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    },
+    stateLockPlanInImage: true,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "hermes --version",
@@ -71,6 +86,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
 export function withMockedDocker<T>(
   run: (deps: {
     ensureAgentBaseImage: AgentOnboardModule["ensureAgentBaseImage"];
+    createAgentSandbox: AgentOnboardModule["createAgentSandbox"];
     bindLocalAgentBaseImageToPinnedProvenance: AgentOnboardModule["bindLocalAgentBaseImageToPinnedProvenance"];
     pinTrustedAgentBaseImageOverrideForOperation: AgentOnboardModule["pinTrustedAgentBaseImageOverrideForOperation"];
     pinAgentSandboxBaseImageRef: AgentOnboardModule["pinAgentSandboxBaseImageRef"];
@@ -147,6 +163,7 @@ export function withMockedDocker<T>(
     const agentOnboardModule = requireSource("./onboard.js") as AgentOnboardModule;
     return run({
       ensureAgentBaseImage: agentOnboardModule.ensureAgentBaseImage,
+      createAgentSandbox: agentOnboardModule.createAgentSandbox,
       bindLocalAgentBaseImageToPinnedProvenance:
         agentOnboardModule.bindLocalAgentBaseImageToPinnedProvenance,
       pinTrustedAgentBaseImageOverrideForOperation:

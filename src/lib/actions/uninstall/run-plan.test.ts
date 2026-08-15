@@ -55,8 +55,8 @@ function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; o
   return (args: readonly string[]): RunResult | null => {
     if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
     const pid = Number(pidStr);
-    if (args[3] === "pid=") {
-      return opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`);
+    if (args[3] === "pid=" || args[3] === "stat=") {
+      return opts.exited.has(pid) ? notFound() : ok(args[3] === "stat=" ? "S\n" : `${pidStr}\n`);
     }
     if (args[3] === "user=") return ok(`${opts.owner ?? "testuser"}\n`);
     if (args[3] === "args=") return ok(opts.cmdline ?? PROXY_CMDLINE);
@@ -538,7 +538,7 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("No Ollama auth proxy processes found");
   });
 
-  it("scans the custom NEMOCLAW_OLLAMA_PROXY_PORT for orphan auth proxies", () => {
+  it("uses the persisted Ollama proxy port for orphan cleanup (#8704)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
@@ -551,9 +551,9 @@ describe("uninstall run plan", () => {
         env: {
           HOME: "/tmp/nemoclaw-uninstall-test-2759-custom-port",
           LOGNAME: "testuser",
-          NEMOCLAW_OLLAMA_PROXY_PORT: "12000",
+          NEMOCLAW_OLLAMA_PROXY_PORT: "13000",
         } as NodeJS.ProcessEnv,
-        existsSync: () => false,
+        existsSync: (target) => target.endsWith("/ollama-proxy-port"),
         isTty: false,
         kill: (pid, _signal) => {
           killed.push(pid);
@@ -561,6 +561,12 @@ describe("uninstall run plan", () => {
           return true;
         },
         log: (line) => logs.push(line),
+        openRegularFile: () => ({
+          close: () => {},
+          readBytes: () => Buffer.from("12000\n"),
+          readUtf8: () => "12000\n",
+          replaceUtf8: () => {},
+        }),
         rmSync: vi.fn(),
         run: (command, args) => {
           if (command === "lsof" && args[0] === "-ti") {
@@ -583,7 +589,7 @@ describe("uninstall run plan", () => {
 
     expect(result.exitCode).toBe(0);
     expect(lsofPorts).toContain(":12000");
-    expect(lsofPorts).not.toContain(":11435");
+    expect(lsofPorts).not.toContain(":13000");
     expect(killed).toContain(33333);
     expect(logs).toContain("Stopped Ollama auth proxy 33333");
   });
@@ -1367,7 +1373,7 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("removes ~/.nemoclaw wholesale when it is a symlink rather than a real directory", () => {
+    it("refuses to follow or remove ~/.nemoclaw when it is a symlink", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const realTarget = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-target-"),
@@ -1379,12 +1385,14 @@ describe("uninstall run plan", () => {
       fs.writeFileSync(path.join(realTarget, "rebuild-backups"), "should not be followed");
       try {
         const logs: string[] = [];
+        const errors: string[] = [];
         const result = runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: (command) => command === "openshell",
             env: { HOME: tmpHome } as NodeJS.ProcessEnv,
             existsSync: (target: string) => target.startsWith(tmpHome) && fs.existsSync(target),
+            error: (line) => errors.push(line),
             isTty: false,
             log: (line) => logs.push(line),
             run: vi.fn(okWithKnownGatewayList),
@@ -1392,10 +1400,13 @@ describe("uninstall run plan", () => {
           },
         );
 
-        expect(result.exitCode).toBe(0);
-        expect(fs.existsSync(stateDir)).toBe(false);
+        expect(result.exitCode).toBe(1);
+        expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(true);
         expect(fs.existsSync(realTarget)).toBe(true);
-        expect(logs).toContain(`Removed ${stateDir}`);
+        expect(errors.join("\n")).toContain(
+          "Managed distributed vLLM state root is not a real directory",
+        );
+        expect(logs).not.toContain(`Removed ${stateDir}`);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
         fs.rmSync(realTarget, { recursive: true, force: true });

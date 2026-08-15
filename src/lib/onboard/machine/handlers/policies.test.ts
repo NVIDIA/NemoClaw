@@ -3,128 +3,20 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
+import { createSession } from "../../../state/onboard-session";
 import { mergePolicyMessagingChannels } from "../../messaging-policy-presets";
-import { handlePoliciesState, type PoliciesStateOptions } from "./policies";
+import { handlePoliciesState } from "./policies";
+import {
+  basePolicyHandlerOptions as baseOptions,
+  createPolicyHandlerDeps,
+} from "./policies-test-fixture";
 
-type Agent = { name: string } | null;
-type WebSearchConfig = { fetchEnabled: true };
-type MessagingPlan = NonNullable<Session["messagingPlan"]>;
-type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
-
-function makeMessagingPlan(
-  sandboxName: string,
-  channels: readonly MessagingChannelId[],
-  disabledChannels: readonly MessagingChannelId[] = [],
-): MessagingPlan {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: channels.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: !disabled.has(channelId),
-      selected: true,
-      configured: true,
-      disabled: disabled.has(channelId),
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
-function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConfig>["deps"]> = {}) {
-  let session = createSession();
-  const calls = {
-    load: vi.fn(() => session),
-    activeSandbox: vi.fn(() => ({
-      messaging: { plan: makeMessagingPlan("my-assistant", ["telegram"]) },
-    })),
-    mergeChannels: vi.fn(mergePolicyMessagingChannels),
-    smoke: vi.fn(),
-    prepareResume: vi.fn(
-      (
-        _sandboxName: string,
-        options: Parameters<
-          PoliciesStateOptions<Agent, WebSearchConfig>["deps"]["preparePolicyPresetResumeSelection"]
-        >[1],
-      ) => ({
-        policyPresets: (options.recordedPolicyPresets ?? []).filter(
-          (name) => name !== "unsupported",
-        ),
-        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes(
-          "unsupported",
-        ),
-        disabledMessagingPolicyPresetApplied: false,
-        suppressedAgentRequiredPresetsLive: false,
-      }),
-    ),
-    appliedCheck: vi.fn(() => false),
-    skipped: vi.fn(),
-    recordSkip: vi.fn(async () => session),
-    startStep: vi.fn(async () => undefined),
-    setupPolicies: vi.fn(async () => ["npm"]),
-    updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-      session = mutator(session) ?? session;
-      return session;
-    }),
-    complete: vi.fn(async () => session),
-    persistPolicies: vi.fn((_sandboxName: string, _appliedPolicyPresets: string[]) => undefined),
-  };
-  return {
-    calls,
-    deps: {
-      loadSession: calls.load,
-      getActiveSandbox: calls.activeSandbox,
-      mergePolicyMessagingChannels: calls.mergeChannels,
-      verifyCompatibleEndpointSandboxSmoke: calls.smoke,
-      preparePolicyPresetResumeSelection: calls.prepareResume,
-      arePolicyPresetsApplied: calls.appliedCheck,
-      skippedStepMessage: calls.skipped,
-      recordStateSkipped: calls.recordSkip,
-      startRecordedStep: calls.startStep,
-      setupPoliciesWithSelection: calls.setupPolicies,
-      updateSession: calls.updateSession,
-      recordStepComplete: calls.complete,
-      toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: calls.persistPolicies,
-      ...overrides,
-    },
-    setSession(next: Session) {
-      session = next;
-    },
-    getSession: () => session,
-  };
-}
-
-function baseOptions(
-  deps: PoliciesStateOptions<Agent, WebSearchConfig>["deps"],
-): PoliciesStateOptions<Agent, WebSearchConfig> {
-  return {
-    resume: false,
-    sandboxName: "my-assistant",
-    provider: "provider",
-    model: "model",
-    endpointUrl: "https://example.com/v1",
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    selectedMessagingChannels: [],
-    webSearchConfig: null,
-    webSearchSupported: true,
-    hermesToolGateways: [],
-    agent: null,
-    deps,
-  };
+function createDeps(overrides: Parameters<typeof createPolicyHandlerDeps>[0] = {}) {
+  return createPolicyHandlerDeps({
+    mergePolicyMessagingChannels: vi.fn(mergePolicyMessagingChannels),
+    ...overrides,
+  });
 }
 
 describe("handlePoliciesState", () => {
@@ -171,7 +63,7 @@ describe("handlePoliciesState", () => {
   });
 
   it("uses recorded messaging channels when no active selection exists", async () => {
-    const session = createSession({ messagingPlan: makeMessagingPlan("my-assistant", ["slack"]) });
+    const session = createSession({ messagingPlan: makeMessagingPlan({ channels: ["slack"] }) });
     const { deps, calls, setSession } = createDeps({
       getActiveSandbox: vi.fn(() => ({ messaging: null })),
     });
@@ -182,6 +74,60 @@ describe("handlePoliciesState", () => {
     expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ enabledChannels: ["slack"] }),
+    );
+  });
+
+  it("drops a no-longer-configured channel from the enabled set so its preset is not re-applied", async () => {
+    const session = createSession({ messagingPlan: makeMessagingPlan({ channels: ["discord"] }) });
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["discord"]),
+    });
+    setSession(session);
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(deps.detectUnconfiguredMessagingChannels).toHaveBeenCalledWith(
+      ["discord", "discord"],
+      [],
+      null,
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: [], disabledChannels: ["discord"] }),
+    );
+  });
+
+  it("keeps a still-configured channel enabled", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: ["discord"] });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: ["discord"], disabledChannels: [] }),
+    );
+  });
+
+  it("reports a no-longer-configured channel to the resume check so resume reconciles instead of skipping", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["discord"]),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(calls.prepareResume).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ disabledChannels: ["discord"], enabledChannels: [] }),
     );
   });
 
@@ -285,6 +231,136 @@ describe("handlePoliciesState", () => {
       "my-assistant",
       expect.objectContaining({ agent: "openclaw" }),
     );
+  });
+
+  it.each([
+    [null, "openclaw"],
+    [{ name: "hermes" }, "hermes"],
+    [{ name: "langchain-deepagents-code" }, "langchain-deepagents-code"],
+  ] as const)("reconciles stale local-inference policy for %s while retaining the real provider attachment", async (agent, expectedAgent) => {
+    const session = createSession({ policyPresets: ["local-inference", "npm"] });
+    const { deps, calls, setSession } = createDeps({
+      arePolicyPresetsApplied: vi.fn(() => true),
+    });
+    setSession(session);
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      resume: true,
+      provider: "vllm-local",
+      model: "qwen3.5-9b",
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: null,
+      hostLocalInferenceRouteOnly: true,
+      hostLocalInferenceSandboxProofAuthority: {
+        service: "vllm",
+        directHostPort: 8000,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+      agent,
+    });
+
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "vllm-local",
+        endpointUrl: "https://inference.local/v1",
+        agent,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: {
+          service: "vllm",
+          directHostPort: 8000,
+          directHealthPath: "/health",
+          toolCallingRequired: true,
+        },
+      }),
+    );
+    expect(calls.prepareResume).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ recordedPolicyPresets: ["npm"], agent: expectedAgent }),
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        selectedPresets: ["npm"],
+        provider: null,
+        excludedPresets: ["local-inference"],
+        agent: expectedAgent,
+      }),
+    );
+    expect(calls.setupPolicies.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.smoke.mock.invocationCallOrder[0],
+    );
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
+  it("forces route-only reconciliation when only the live sandbox has stale local-inference", async () => {
+    const { deps, calls } = createDeps({
+      arePolicyPresetsApplied: vi.fn((_sandboxName: string, selectedPresets: string[]) =>
+        selectedPresets.includes("local-inference"),
+      ),
+    });
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      resume: true,
+      provider: "ollama-local",
+      model: "qwen3.5-9b",
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: null,
+      hostLocalInferenceRouteOnly: true,
+      hostLocalInferenceSandboxProofAuthority: {
+        service: "ollama",
+        directHostPort: 11434,
+        directHealthPath: "/api/tags",
+        toolCallingRequired: true,
+      },
+    });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        selectedPresets: null,
+        provider: null,
+        excludedPresets: ["local-inference"],
+      }),
+    );
+    expect(calls.skipped).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    { name: "hermes" },
+    { name: "langchain-deepagents-code" },
+  ] as const)("keeps the inference step recoverable when the post-policy route proof fails for %s", async (agent) => {
+    const smokeFailure = new Error("exact model route proof failed");
+    const { deps, calls } = createDeps({
+      verifyCompatibleEndpointSandboxSmoke: vi.fn(() => {
+        throw smokeFailure;
+      }),
+    });
+
+    await expect(
+      handlePoliciesState({
+        ...baseOptions(deps),
+        provider: "vllm-local",
+        model: "qwen3.5-9b",
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: null,
+        hostLocalInferenceRouteOnly: true,
+        hostLocalInferenceSandboxProofAuthority: {
+          service: "vllm",
+          directHostPort: 8000,
+          directHealthPath: "/health",
+          toolCallingRequired: true,
+        },
+        agent,
+      }),
+    ).rejects.toBe(smokeFailure);
+
+    expect(calls.setupPolicies).toHaveBeenCalledOnce();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
   });
 
   // Regression for #4621: the sandbox is registered with only create-time/boot

@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadAgent } from "../src/lib/agent/defs";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
@@ -29,6 +30,59 @@ guard = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = guard
 spec.loader.exec_module(guard)
 `;
+
+describe("Hermes sealed configuration contract", () => {
+  it("keeps the root guard in parity with the host manifest projection (#8006)", () => {
+    const result = runPythonHarness(String.raw`
+import importlib.util
+import json
+import sys
+import types
+
+# This contract check reads a constant only. Avoid requiring the optional host
+# PyYAML package while loading the image-owned module for that narrow purpose.
+sys.modules["yaml"] = types.ModuleType("yaml")
+spec = importlib.util.spec_from_file_location("runtime_config_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+print(json.dumps(guard.SEALED_FILE_NAMES))
+`);
+    expect(result.status, result.stderr).toBe(0);
+
+    const config = loadAgent("hermes").configPaths;
+    const manifestFiles = [config.configFile, ...config.shieldsFiles, ".config-hash"].sort();
+    expect((JSON.parse(result.stdout) as string[]).sort()).toEqual(manifestFiles);
+  });
+});
+
+describe("Hermes candidate schema validation (#8614)", () => {
+  it("rejects an incomplete home_channel before a sealed write transaction starts", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import types
+
+guard.seal_restart = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not seal"))
+guard.os.path.exists = lambda value: value.endswith("config.yaml")
+class GatewayConfig:
+    @classmethod
+    def from_dict(cls, value):
+        home_channel = value["platforms"]["teams"]["home_channel"]
+        if "platform" not in home_channel:
+            raise KeyError("platforms.teams.home_channel.platform")
+sys.modules["gateway.config"] = types.SimpleNamespace(GatewayConfig=GatewayConfig)
+try:
+    guard.write_config_transaction(
+        "/unused", "/unused-hash", "/unused-state", "a" * 64,
+        b"platforms:\\n  teams:\\n    home_channel:\\n      chat_id: 19:triage8614\\n",
+    )
+except guard.UnsafePathError as exc:
+    print(json.dumps(str(exc)))
+`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toContain("platforms.teams.home_channel.platform");
+  });
+});
 
 describe("Hermes runtime config hash refresh race protection", () => {
   it("creates an absent private runtime directory through its pinned parent", () => {
@@ -616,7 +670,18 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes shields outer namespace containment", () => {
-  it("keeps the exact state worker PID alive as the in-container timeout owner", () => {
+  it.each([
+    {
+      label: "the installed image plan during startup recovery",
+      planJson: "",
+      planArgs: ["--plan-file", "/usr/local/share/nemoclaw/state-lock-plan.json"],
+    },
+    {
+      label: "the explicit host plan during a live transition",
+      planJson: '{"version":1}',
+      planArgs: ["--plan-json", '{"version":1}'],
+    },
+  ])("keeps the exact state worker PID alive with $label", ({ planJson, planArgs }) => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
 
@@ -636,6 +701,7 @@ try:
         "/run/nemoclaw/hermes-restart-seal.json",
         "a" * 64,
         "lock",
+        ${JSON.stringify(planJson)},
     )
 except RuntimeError as exc:
     captured["error"] = str(exc)
@@ -661,6 +727,7 @@ print(json.dumps(captured))
       "lock",
       "--config-dir",
       "/sandbox/.hermes",
+      ...planArgs,
     ]);
   });
 

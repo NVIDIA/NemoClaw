@@ -388,7 +388,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     };
   }
 
-  it("commits only after the runtime inference route is proven", async () => {
+  it("commits only after local-inference reachability returns HTTP 2xx", async () => {
     const runtimePatch = {
       commitAfterReady: vi.fn(),
       rollbackManagedStartupAfterCreateFailure: vi.fn(),
@@ -424,6 +424,27 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     ).rejects.toThrow("GPU sandbox local inference reachability failed");
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
     expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
+  });
+
+  it("treats a failed commit as terminal without attempting rollback", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(async () => {
+        throw new Error("durable commit acknowledgement failed");
+      }),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    await expect(
+      verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        {
+          ...options(),
+          deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
+        },
+        runtimePatch,
+      ),
+    ).rejects.toThrow("durable commit acknowledgement failed");
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
   });
 });
 

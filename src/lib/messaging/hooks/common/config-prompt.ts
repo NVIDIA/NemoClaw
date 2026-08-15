@@ -61,6 +61,8 @@ export function createConfigPromptHook(
         continue;
       }
 
+      log(options, "");
+
       const existing = readExistingConfigValue(field, availableInputs, options);
       if (existing) {
         recordConfigValue(field, existing, outputs, availableInputs, options);

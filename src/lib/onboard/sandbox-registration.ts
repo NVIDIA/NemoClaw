@@ -16,10 +16,16 @@ import type {
   SandboxMessagingState,
 } from "../state/registry";
 import * as registry from "../state/registry";
-import { cloneSandboxHostLocalInferenceReceipt } from "../state/registry/host-local-inference";
+import {
+  cloneSandboxHostLocalInferenceProvenance,
+  cloneSandboxHostLocalInferenceReceipt,
+  requireSandboxHostLocalInferenceProvenance,
+} from "../state/registry/host-local-inference";
 import { cloneSandboxWorkloadReceipt } from "../state/registry/workload";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import { cloneSandboxHostMounts } from "../state/registry/host-mount";
+import { resolveOnboardHermesApiPort } from "./hermes-api-port";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -54,6 +60,7 @@ export interface CreatedSandboxRegistryEntryInput {
   imageTag: string | null;
   workload?: SandboxEntry["workload"];
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
+  hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
@@ -73,12 +80,15 @@ export interface CreatedSandboxRegistryEntryInput {
   preservedMcpState?: SandboxMcpState;
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
+  /** Host port this sandbox exposes its OpenAI-compatible API on. */
+  hermesApiPort?: number | null;
   dashboardPort: number;
   dashboardRemoteBindPrepared?: boolean;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
   gatewayName: string;
   gatewayPort: number;
+  hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
@@ -174,6 +184,11 @@ export function selection(
 export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
+  const session = onboardSession.loadSession();
+  const servingProfileProvenance =
+    session?.sandboxName === input.sandboxName
+      ? (session.servingProfileProvenance ?? undefined)
+      : undefined;
   const messagingState =
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
@@ -192,15 +207,34 @@ export function buildCreatedSandboxRegistryEntry(
       "Sandbox host-local inference receipt failed closed validation.",
     );
   }
+  const hostLocalInferenceProvenance = cloneSandboxHostLocalInferenceProvenance(
+    input.hostLocalInferenceProvenance,
+  );
+  if (
+    input.hostLocalInferenceProvenance !== undefined &&
+    (!hostLocalInferenceProvenance || typeof hostLocalInferenceReceipt !== "string")
+  ) {
+    throw new RuntimeProviderSelectionError(
+      "Sandbox host-local inference provenance failed closed validation.",
+    );
+  }
+  if (hostLocalInferenceProvenance && typeof hostLocalInferenceReceipt === "string") {
+    requireSandboxHostLocalInferenceProvenance(
+      hostLocalInferenceProvenance,
+      hostLocalInferenceReceipt,
+    );
+  }
 
   return {
     name: input.sandboxName,
+    servingProfileProvenance,
     ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     workload,
     ...(hostLocalInferenceReceipt !== undefined ? { hostLocalInferenceReceipt } : {}),
+    ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
     ...(input.openclawImagePluginInstalls !== undefined
       ? {
           openclawImagePluginInstalls: input.openclawImagePluginInstalls.map((install) => ({
@@ -227,17 +261,53 @@ export function buildCreatedSandboxRegistryEntry(
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
+    hermesApiPort:
+      input.agent?.name === "hermes"
+        ? (input.hermesApiPort ??
+          resolveOnboardHermesApiPort(input.sandboxName, {
+            // Registration follows a successful create/recreate that applied this environment.
+            allowRegisteredOverride: true,
+          }))
+        : undefined,
     dashboardPort: input.dashboardPort,
     dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     lifecycleGeneration: input.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
+    ...(input.hostMounts && input.hostMounts.length > 0
+      ? { hostMounts: cloneSandboxHostMounts(input.hostMounts) }
+      : {}),
   };
 }
 
+/** Load only the immutable profile identity needed by command-level resume validation. */
+export function loadServingProfileResumeSession(): {
+  servingProfileProvenance: onboardSession.Session["servingProfileProvenance"];
+} | null {
+  const session = onboardSession.loadSession();
+  return session ? { servingProfileProvenance: session.servingProfileProvenance } : null;
+}
+
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
-  const entry = buildCreatedSandboxRegistryEntry(input);
+  const pending = registry.getSandbox(input.sandboxName);
+  const pendingHostLocalInferenceReceipt =
+    input.hostLocalInferenceReceipt !== undefined
+      ? input.hostLocalInferenceReceipt
+      : pending?.hostLocalInferenceReceipt;
+  const pendingHostLocalInferenceProvenance =
+    input.hostLocalInferenceProvenance !== undefined
+      ? input.hostLocalInferenceProvenance
+      : pending?.hostLocalInferenceProvenance;
+  const entry = buildCreatedSandboxRegistryEntry({
+    ...input,
+    ...(pendingHostLocalInferenceReceipt === undefined
+      ? {}
+      : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
+    ...(pendingHostLocalInferenceProvenance === undefined
+      ? {}
+      : { hostLocalInferenceProvenance: pendingHostLocalInferenceProvenance }),
+  });
   const provider = requireRuntimeProviderBundleForSandbox(
     entry,
     input.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,

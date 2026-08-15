@@ -9,7 +9,10 @@ import {
   type RuntimeProviderLifecycleStopHooks,
   type RuntimeProviderWorkloadProfile,
 } from "../../src/lib/onboard/runtime-provider/contract";
-import type { HostLocalInferenceRuntime } from "../../src/lib/onboard/runtime-provider/host-local-inference";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceService,
+} from "../../src/lib/onboard/runtime-provider/host-local-inference";
 
 export interface InMemoryRuntimeProviderState {
   readonly events: string[];
@@ -31,7 +34,10 @@ type InMemoryRuntimeProviderOptions = {
   readonly workloadProfile: RuntimeProviderWorkloadProfile;
   readonly state?: InMemoryRuntimeProviderState;
   readonly gatewayLauncher?: "nemoclaw" | "openshell";
-  readonly hostLocalInferenceRuntime?: HostLocalInferenceRuntime;
+  readonly hostLocalInference?: {
+    readonly services: readonly HostLocalInferenceService[];
+    readonly createOperation: () => HostLocalInferenceOperation;
+  };
   readonly recordEvent?: (event: string) => void;
 };
 
@@ -49,7 +55,7 @@ export function createInMemoryRuntimeProviderBundle({
   workloadProfile,
   state = { events: [], running: new Set(), workloads: new Set() },
   gatewayLauncher = "nemoclaw",
-  hostLocalInferenceRuntime,
+  hostLocalInference,
   recordEvent = (value) => state.events.push(value),
 }: InMemoryRuntimeProviderOptions): InMemoryRuntimeProviderBundle {
   const futureReason = "Unsupported by this in-memory contract fixture.";
@@ -84,10 +90,14 @@ export function createInMemoryRuntimeProviderBundle({
     capabilities: {
       providerId,
       supported: true,
-      hostLocalInference: hostLocalInferenceRuntime !== undefined,
+      hostLocalInference: hostLocalInference !== undefined,
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: "The in-memory runtime does not implement host-directory sharing.",
+      },
     },
     preflightDoctor: {
       providerId,
@@ -115,12 +125,27 @@ export function createInMemoryRuntimeProviderBundle({
           ? true
           : receipt.kind === "legacy-dockerfile"
             ? workloadProfile.legacyDockerfileBuilds
-            : receipt.platform !== undefined &&
-              workloadProfile.support?.platforms.includes(receipt.platform) === true;
+            : receipt.kind === "native-artifact"
+              ? workloadProfile.nativeArtifactSupport?.platforms.includes(receipt.platform) ===
+                  true &&
+                workloadProfile.nativeArtifactSupport.agents.includes(receipt.agent) &&
+                workloadProfile.nativeArtifactSupport.contractVersions.includes(
+                  receipt.contractVersion,
+                ) &&
+                workloadProfile.nativeArtifactSupport.startupProfileContractVersions.includes(
+                  receipt.startupProfileContractVersion,
+                )
+              : receipt.platform !== undefined &&
+                workloadProfile.support?.platforms.includes(receipt.platform) === true;
       },
     },
-    hostLocalInference: hostLocalInferenceRuntime
-      ? { providerId, supported: true, runtime: hostLocalInferenceRuntime }
+    hostLocalInference: hostLocalInference
+      ? {
+          providerId,
+          supported: true,
+          services: hostLocalInference.services,
+          createOperation: hostLocalInference.createOperation,
+        }
       : unsupported(providerId, futureReason),
     lifecycle: {
       providerId,
@@ -162,6 +187,7 @@ export function createInMemoryRuntimeProviderBundle({
         "workload-cleanup",
       ],
     },
+    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),
@@ -192,7 +218,7 @@ export function createInMemoryRuntimeProviderBundle({
       supported: true,
       identities: [
         { operation: "host-doctor", engineId: "memory", displayName: "In-memory" },
-        ...(hostLocalInferenceRuntime
+        ...(hostLocalInference
           ? [
               {
                 operation: "host-local-inference" as const,

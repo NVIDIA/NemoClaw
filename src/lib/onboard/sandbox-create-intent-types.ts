@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { BaselineExclusionEntry } from "../state/registry";
+import type { SandboxHostMount } from "../state/registry/types";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingTokenDef } from "./messaging-prep";
@@ -26,6 +27,7 @@ export type SandboxCreatePolicyRequest = {
     readonly directGpu: boolean;
     readonly hostGpuAvailable?: boolean;
     readonly additionalPresets: readonly string[];
+    readonly hostLocalInferenceRouteOnly?: true;
     readonly agentName?: string | null;
     readonly policyTier: string | null;
     readonly baselineExclusions: readonly BaselineExclusionEntry[];
@@ -34,7 +36,7 @@ export type SandboxCreatePolicyRequest = {
 
 /**
  * Serializable intent for the create-time sandbox contributions. When built
- * through `prepareSandboxCreatePlan`, messaging credential values are
+ * through `materializeSandboxCreatePlan`, messaging credential values are
  * represented only by their logical environment-key bindings and presence.
  *
  * This is deliberately separate from the execution plan, which contains
@@ -54,6 +56,7 @@ export type SandboxCreateIntent = {
   readonly policy: SandboxCreatePolicyRequest;
   readonly gpuCreateArgs: readonly string[];
   readonly resourceCreateArgs: readonly string[];
+  readonly hostMounts?: readonly SandboxHostMount[];
   readonly gpuRoutePlan: DockerGpuRoutePlan;
   readonly sandboxGpuLogMessage: string | null;
   readonly disabledChannelNames: readonly string[];
@@ -64,6 +67,7 @@ export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
   inferenceProvider?: string | null;
+  hostLocalInferenceRouteOnly?: boolean;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;
@@ -77,6 +81,7 @@ export type ResolveSandboxCreateIntentInput = {
   sandboxGpuConfig: SandboxGpuCreateConfig;
   gpuCreateArgs: readonly string[];
   resourceCreateArgs?: readonly string[];
+  hostMounts?: readonly SandboxHostMount[];
   gpuRoutePlan: DockerGpuRoutePlan;
   sandboxGpuLogMessage: string | null;
   extraPlaceholderKeys?: readonly string[];
@@ -87,7 +92,7 @@ export type ResolveSandboxCreateIntentInput = {
 
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
-  buildCtx: string;
+  fromRef: string;
   messagingTokenDefs: MessagingTokenDef[];
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(

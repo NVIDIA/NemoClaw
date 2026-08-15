@@ -105,6 +105,54 @@ describe("shared gateway inference route compatibility", () => {
     });
   });
 
+  it("preserves llama.cpp endpoint and completions API as durable route identity (#8161)", () => {
+    const result = discover(
+      discoveryRoute("llama-cpp-local", {
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      }),
+      [
+        sandbox("llama-peer", {
+          provider: "llama-cpp-local",
+          model: "team/model-alias",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+          preferredInferenceApi: "openai-completions",
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        }),
+      ],
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      requiredModel: "team/model-alias",
+      requiredEndpointUrl: "http://127.0.0.1:8081/v1",
+      requiredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("blocks a conflicting llama.cpp endpoint on a shared gateway (#8161)", () => {
+    const result = check(
+      route("llama-cpp-local", "team/model-alias", {
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      }),
+      [
+        sandbox("llama-peer", {
+          provider: "llama-cpp-local",
+          model: "team/model-alias",
+          endpointUrl: "http://localhost:8082/v1",
+          preferredInferenceApi: "openai-completions",
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        }),
+      ],
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [{ sandboxName: "llama-peer", reason: "custom-endpoint" }],
+    });
+  });
+
   it("blocks conflicting or unprovable discovery before a provider probe (#6315)", () => {
     expect(discover(discoveryRoute("anthropic-prod"), [sandbox("stopped-peer")])).toMatchObject({
       ok: false,

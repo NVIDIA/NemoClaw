@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { formatEnvAssignment } from "../core/url-utils";
-import { withLocalNoProxy } from "../proxy/local-no-proxy";
+import { withLocalNoProxy } from "../subprocess-env";
 
 const HOST_PROXY_ENV_NAMES = [
   "HTTP_PROXY",

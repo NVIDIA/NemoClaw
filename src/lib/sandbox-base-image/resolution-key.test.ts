@@ -64,6 +64,21 @@ describe("sandbox base-image resolution key", () => {
     expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
   });
 
+  it("isolates build args without exposing their values (#8119)", () => {
+    const root = fixture();
+    const base = options(root);
+    const first = createSandboxBaseImageResolutionKey({
+      ...base,
+      buildArgs: { NEMOCLAW_CORPORATE_CA_B64: "first-public-ca" },
+    });
+    const second = createSandboxBaseImageResolutionKey({
+      ...base,
+      buildArgs: { NEMOCLAW_CORPORATE_CA_B64: "second-public-ca" },
+    });
+
+    expect(second).not.toBe(first);
+  });
+
   it("changes when a Dockerfile-copied runtime helper changes", () => {
     const root = fixture();
     const helper = path.join(root, "scripts", "lib", "sandbox-rlimits.sh");

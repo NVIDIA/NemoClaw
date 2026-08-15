@@ -13,6 +13,7 @@ vi.mock(".", () => ({
   getBaselineExclusionRuntimeStatus: vi.fn(() => "excluded"),
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
+  isAgentBasePreset: vi.fn(() => false),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPreset: vi.fn(),
@@ -103,6 +104,8 @@ function resetMocks() {
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
+  vi.mocked(policies.isAgentBasePreset).mockReset();
+  vi.mocked(policies.isAgentBasePreset).mockReturnValue(false);
   vi.mocked(registry.getBaselineExclusions).mockReset();
   vi.mocked(registry.getBaselineExclusions).mockReturnValue([]);
   vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReset();
@@ -168,6 +171,43 @@ describe("buildPolicyContext", () => {
     const github = ctx.activePresets.find((p) => p.name === "github");
     expect(github?.verification).toBe("gateway-only");
     expect(ctx.knownUnappliedPresets.some((p) => p.name === "github")).toBe(false);
+  });
+
+  it("classifies a gateway-enforced agent-base preset as `agent-base`, not gateway-only drift (#9079)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    // Neither preset applied by the user; both enforced by the gateway. Only
+    // `github` is an agent base-policy addition. The other must stay
+    // gateway-only so genuine drift is still reported.
+    stubRegistry({ policies: [], policyTier: "restricted" });
+    vi.mocked(policies.isAgentBasePreset).mockImplementation(
+      (_sandboxName: string, name: string) => name === "github",
+    );
+
+    const ctx = buildPolicyContext(SANDBOX, { gatewayPresets: ["slack", "github"] });
+
+    const github = ctx.activePresets.find((p) => p.name === "github");
+    const slack = ctx.activePresets.find((p) => p.name === "slack");
+    expect(github?.verification).toBe("agent-base");
+    expect(slack?.verification).toBe("gateway-only");
+    // Agent-base preset is active (enforced), never suggested for `policy add`.
+    expect(ctx.knownUnappliedPresets.some((p) => p.name === "github")).toBe(false);
+  });
+
+  it("does not reclassify an applied preset as agent-base even when the agent defines it (#9079)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    // `github` is both user-applied and an agent base addition; the user
+    // intent (applied + enforced) must remain `verified`, not `agent-base`.
+    stubRegistry({ policies: ["github"], policyTier: "restricted" });
+    vi.mocked(policies.isAgentBasePreset).mockReturnValue(true);
+
+    const ctx = buildPolicyContext(SANDBOX, { gatewayPresets: ["github"] });
+
+    const github = ctx.activePresets.find((p) => p.name === "github");
+    expect(github?.verification).toBe("verified");
   });
 
   it("redacts internal hostnames and IP ranges from allowedHostCategories and counts the drop", () => {
@@ -437,7 +477,57 @@ describe("renderPolicyContextMarkdown", () => {
     expect(md).not.toMatch(/network_policies:/);
   });
 
-  it("renders the verification status alongside each active preset", () => {
+  it.each([
+    {
+      status: "verified",
+      applied: ["slack"],
+      gatewayPresets: ["slack"],
+      agentBase: false,
+    },
+    {
+      status: "registry-only",
+      applied: ["slack"],
+      gatewayPresets: [],
+      agentBase: false,
+    },
+    {
+      status: "gateway-only",
+      applied: [],
+      gatewayPresets: ["slack"],
+      agentBase: false,
+    },
+    {
+      status: "agent-base",
+      applied: [],
+      gatewayPresets: ["slack"],
+      agentBase: true,
+    },
+    {
+      status: "gateway-unavailable",
+      applied: ["slack"],
+      gatewayPresets: null,
+      agentBase: false,
+    },
+  ])("renders the $status verification status (#9079)", ({
+    status,
+    applied,
+    gatewayPresets,
+    agentBase,
+  }) => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: applied, policyTier: "balanced" });
+    vi.mocked(policies.isAgentBasePreset).mockReturnValue(agentBase);
+
+    const md = renderPolicyContextMarkdown(
+      buildPolicyContext(SANDBOX, { gatewayPresets }),
+    );
+
+    expect(md).toContain(`status: ${status}`);
+  });
+
+  it("states which verification statuses confirm gateway enforcement (#9079)", () => {
     resetMocks();
     mockBuiltinPresets();
     stubTier();
@@ -446,7 +536,13 @@ describe("renderPolicyContextMarkdown", () => {
     const md = renderPolicyContextMarkdown(
       buildPolicyContext(SANDBOX, { gatewayPresets: ["slack"] }),
     );
-    expect(md).toContain("status: verified");
+
+    expect(md).toContain(
+      "`verified`, `gateway-only`, and `agent-base` mean the gateway confirms enforcement",
+    );
+    expect(md).toContain(
+      "Treat `registry-only` and `gateway-unavailable` as advisory because the gateway has not confirmed the listed hosts",
+    );
   });
 
   it("discloses excluded baseline entries and their support impact (#7194)", () => {

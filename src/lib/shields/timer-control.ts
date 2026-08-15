@@ -2,14 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { isObjectRecord } from "../core/json-types";
-import { resolveNemoclawStateDir } from "../state/paths";
+import {
+  readShieldsTimerMarker,
+  readShieldsTimerTakeoverToken,
+  type ShieldsTimerMarker,
+  shieldsTimerMarkerPath,
+} from "../state/mcp-lifecycle-lock/shields-timer-authority";
 
 const DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
+const MAX_TIMER_AUTHORIZATION_PROOF_BYTES = 16 * 1024;
+
+interface TimerAuthorizationProof {
+  schemaVersion: 1;
+  pid: number;
+  sandboxName: string;
+  processToken: string;
+  timerProcessStartIdentity: string;
+  authoritySha256: string;
+}
 
 function processInspectionDeadline(deadline?: number): number {
   return deadline ?? processInspectionDeadlineAfter(DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS);
@@ -28,68 +43,166 @@ function processInspectionDeadlineReached(deadline: number): boolean {
   return performance.now() >= deadline;
 }
 
-interface TimerMarker {
-  pid: number;
-  sandboxName: string;
-  snapshotPath: string;
-  restoreAt: string;
-  processToken?: string;
-  allowLegacyHermesProtocol?: boolean;
-  leaseOwnerPid?: number;
-  leaseOwnerStartIdentity?: string;
-}
-
-function isTimerMarker(value: unknown): value is TimerMarker {
-  if (!isObjectRecord(value)) return false;
-  const pid = value.pid;
-  return (
-    typeof pid === "number" &&
-    Number.isInteger(pid) &&
-    pid > 0 &&
-    typeof value.sandboxName === "string" &&
-    typeof value.snapshotPath === "string" &&
-    typeof value.restoreAt === "string" &&
-    (value.processToken === undefined || typeof value.processToken === "string") &&
-    (value.allowLegacyHermesProtocol === undefined ||
-      typeof value.allowLegacyHermesProtocol === "boolean") &&
-    (value.leaseOwnerPid === undefined ||
-      (typeof value.leaseOwnerPid === "number" &&
-        Number.isInteger(value.leaseOwnerPid) &&
-        value.leaseOwnerPid > 0)) &&
-    (value.leaseOwnerStartIdentity === undefined ||
-      typeof value.leaseOwnerStartIdentity === "string") &&
-    ((value.leaseOwnerPid === undefined && value.leaseOwnerStartIdentity === undefined) ||
-      (typeof value.leaseOwnerPid === "number" &&
-        typeof value.leaseOwnerStartIdentity === "string" &&
-        value.leaseOwnerStartIdentity.length > 0))
-  );
-}
-
 function timerMarkerPath(sandboxName: string): string {
-  return path.join(resolveNemoclawStateDir(), `shields-timer-${sandboxName}.json`);
+  return shieldsTimerMarkerPath(sandboxName);
 }
 
-function readTimerMarker(sandboxName: string): TimerMarker | null {
-  const p = timerMarkerPath(sandboxName);
-  if (!fs.existsSync(p)) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
-    return isTimerMarker(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+function readTimerMarker(sandboxName: string): ShieldsTimerMarker | null {
+  return readShieldsTimerMarker(sandboxName);
 }
 
 function readAutoRestoreTakeoverToken(sandboxName: string): string | undefined {
-  const marker = readTimerMarker(sandboxName);
-  if (
-    marker?.sandboxName !== sandboxName ||
-    typeof marker.processToken !== "string" ||
-    !/^[0-9a-f]{32}$/.test(marker.processToken)
-  ) {
-    return undefined;
+  return readShieldsTimerTakeoverToken(sandboxName);
+}
+
+function timerAuthoritySha256(marker: ShieldsTimerMarker): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: marker.pid,
+        sandboxName: marker.sandboxName,
+        snapshotPath: marker.snapshotPath,
+        restoreAt: marker.restoreAt,
+        processToken: marker.processToken ?? null,
+        timerProcessStartIdentity: marker.timerProcessStartIdentity ?? null,
+        allowLegacyHermesProtocol: marker.allowLegacyHermesProtocol === true,
+        agentName: marker.agentName ?? null,
+        configPath: marker.configPath ?? null,
+        configDir: marker.configDir ?? null,
+        leaseOwnerPid: marker.leaseOwnerPid ?? null,
+        leaseOwnerStartIdentity: marker.leaseOwnerStartIdentity ?? null,
+      }),
+    )
+    .digest("hex");
+}
+
+function timerAuthorizationProofPath(sandboxName: string, processToken: string): string {
+  if (!/^[0-9a-f]{32}$/.test(processToken)) {
+    throw new Error("Invalid timer authorization process token");
   }
-  return marker.processToken;
+  return path.join(
+    path.dirname(timerMarkerPath(sandboxName)),
+    `shields-timer-authorization-${sandboxName}-${processToken}.json`,
+  );
+}
+
+function isTimerAuthorizationProof(value: unknown): value is TimerAuthorizationProof {
+  if (typeof value !== "object" || value === null) return false;
+  const proof = value as Partial<TimerAuthorizationProof>;
+  return (
+    proof.schemaVersion === 1 &&
+    typeof proof.pid === "number" &&
+    Number.isInteger(proof.pid) &&
+    proof.pid > 0 &&
+    typeof proof.sandboxName === "string" &&
+    typeof proof.processToken === "string" &&
+    /^[0-9a-f]{32}$/.test(proof.processToken) &&
+    typeof proof.timerProcessStartIdentity === "string" &&
+    proof.timerProcessStartIdentity.length > 0 &&
+    typeof proof.authoritySha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(proof.authoritySha256)
+  );
+}
+
+function writeTimerAuthorizationProofForMarker(marker: ShieldsTimerMarker): void {
+  if (!marker.processToken || !marker.timerProcessStartIdentity) {
+    throw new Error("Timer marker is missing authorization proof identity");
+  }
+  const currentStartIdentity = readProcessStartIdentity(process.pid);
+  if (marker.pid !== process.pid || currentStartIdentity !== marker.timerProcessStartIdentity) {
+    throw new Error("Timer process cannot publish authorization for another process identity");
+  }
+  const proofPath = timerAuthorizationProofPath(marker.sandboxName, marker.processToken);
+  const tempPath = `${proofPath}.${String(process.pid)}.${Date.now().toString(16)}.tmp`;
+  const proof: TimerAuthorizationProof = {
+    schemaVersion: 1,
+    pid: marker.pid,
+    sandboxName: marker.sandboxName,
+    processToken: marker.processToken,
+    timerProcessStartIdentity: marker.timerProcessStartIdentity,
+    authoritySha256: timerAuthoritySha256(marker),
+  };
+  let fd: number | undefined;
+  try {
+    fs.mkdirSync(path.dirname(proofPath), { recursive: true, mode: 0o700 });
+    fd = fs.openSync(
+      tempPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(fd, JSON.stringify(proof));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tempPath, proofPath);
+    const directoryFd = fs.openSync(path.dirname(proofPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(tempPath, { force: true });
+  }
+}
+
+function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
+  if (!marker.processToken || !marker.timerProcessStartIdentity) return false;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      timerAuthorizationProofPath(marker.sandboxName, marker.processToken),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    const before = fs.fstatSync(fd);
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      (before.mode & 0o777) !== 0o600 ||
+      before.size <= 0 ||
+      before.size > MAX_TIMER_AUTHORIZATION_PROOF_BYTES ||
+      (typeof process.getuid === "function" && before.uid !== process.getuid())
+    ) {
+      return false;
+    }
+    const raw = fs.readFileSync(fd, "utf-8");
+    const after = fs.fstatSync(fd);
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs
+    ) {
+      return false;
+    }
+    const proof = JSON.parse(raw) as unknown;
+    return (
+      isTimerAuthorizationProof(proof) &&
+      proof.pid === marker.pid &&
+      proof.sandboxName === marker.sandboxName &&
+      proof.processToken === marker.processToken &&
+      proof.timerProcessStartIdentity === marker.timerProcessStartIdentity &&
+      proof.authoritySha256 === timerAuthoritySha256(marker)
+    );
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function removeTimerAuthorizationProof(
+  sandboxName: string,
+  processToken: string | undefined,
+): void {
+  if (!processToken || !/^[0-9a-f]{32}$/.test(processToken)) return;
+  try {
+    fs.rmSync(timerAuthorizationProofPath(sandboxName, processToken), { force: true });
+  } catch {
+    // Best effort. A proof cannot grant authority without its exact marker.
+  }
 }
 
 interface ClearTimerMarkerResult {
@@ -98,9 +211,17 @@ interface ClearTimerMarkerResult {
 }
 
 function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
+  const marker = readTimerMarker(sandboxName);
   const markerPath = timerMarkerPath(sandboxName);
   try {
     fs.unlinkSync(markerPath);
+    removeTimerAuthorizationProof(sandboxName, marker?.processToken);
+    const directoryFd = fs.openSync(path.dirname(markerPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
     return { cleared: true };
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
@@ -193,66 +314,6 @@ function readProcessStartIdentity(
   }
 }
 
-interface ProcessIdentity {
-  pid: number;
-  startIdentity: string;
-  depth: number;
-}
-
-function listDescendantProcessIdentities(
-  rootPid: number,
-  deadline = processInspectionDeadline(),
-): ProcessIdentity[] | null {
-  if (!Number.isInteger(rootPid) || rootPid <= 0) return null;
-  let rows: Array<{ pid: number; ppid: number }> = [];
-  try {
-    const timeout = remainingProcessInspectionTimeout(deadline);
-    if (timeout === null) return null;
-    rows = execFileSync("ps", ["-e", "-o", "pid=,ppid="], {
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout,
-    })
-      .toString()
-      .split("\n")
-      .map((line) => line.trim().split(/\s+/))
-      .filter((parts) => parts.length >= 2)
-      .map(([pid, ppid]) => ({ pid: Number(pid), ppid: Number(ppid) }))
-      .filter((row) => Number.isInteger(row.pid) && Number.isInteger(row.ppid));
-  } catch {
-    return null;
-  }
-
-  const descendants: Array<{ pid: number; depth: number }> = [];
-  let frontier = [{ pid: rootPid, depth: 0 }];
-  const seen = new Set<number>([rootPid]);
-  while (frontier.length > 0) {
-    const next: Array<{ pid: number; depth: number }> = [];
-    for (const parent of frontier) {
-      for (const row of rows) {
-        if (row.ppid !== parent.pid || seen.has(row.pid)) continue;
-        seen.add(row.pid);
-        const child = { pid: row.pid, depth: parent.depth + 1 };
-        descendants.push(child);
-        next.push(child);
-      }
-    }
-    frontier = next;
-  }
-
-  const identities: ProcessIdentity[] = [];
-  for (const { pid, depth } of descendants) {
-    const startIdentity = readProcessStartIdentity(pid, deadline);
-    if (startIdentity) {
-      identities.push({ pid, startIdentity, depth });
-    } else if (isProcessAlive(pid, deadline)) {
-      // A live descendant that cannot be identity-pinned must not be signaled;
-      // callers fail closed instead of risking PID-reuse collateral damage.
-      return null;
-    }
-  }
-  return identities.sort((a, b) => b.depth - a.depth);
-}
-
 function readProcessCommandLine(
   pid: number,
   deadline = processInspectionDeadline(),
@@ -284,7 +345,19 @@ function readProcessCommandLine(
   }
 }
 
-function verifyTimerMarkerIdentity(marker: TimerMarker): { verified: boolean; warning?: string } {
+function verifyTimerMarkerIdentity(marker: ShieldsTimerMarker): {
+  verified: boolean;
+  warning?: string;
+} {
+  if (
+    marker.timerProcessStartIdentity !== undefined &&
+    readProcessStartIdentity(marker.pid) !== marker.timerProcessStartIdentity
+  ) {
+    return {
+      verified: false,
+      warning: `PID ${String(marker.pid)} start identity does not match the shields timer for sandbox '${marker.sandboxName}'; clearing marker without signaling.`,
+    };
+  }
   const commandLine = readProcessCommandLine(marker.pid);
   if (!commandLine) {
     return {
@@ -315,6 +388,7 @@ function verifyTimerMarkerIdentity(marker: TimerMarker): { verified: boolean; wa
 }
 
 interface KillTimerResult {
+  authorityRevoked: boolean;
   markerFound: boolean;
   markerPid: number | null;
   wasAlive: boolean;
@@ -325,7 +399,6 @@ interface KillTimerResult {
 function killTimer(sandboxName: string): KillTimerResult {
   const marker = readTimerMarker(sandboxName);
   let wasAlive = false;
-  let terminated = false;
   const warnings: string[] = [];
 
   if (marker) {
@@ -336,48 +409,46 @@ function killTimer(sandboxName: string): KillTimerResult {
         if (verification.warning) {
           warnings.push(verification.warning);
         }
-      } else {
-        try {
-          process.kill(marker.pid, "SIGTERM");
-          terminated = true;
-        } catch (error) {
-          const errno = error as NodeJS.ErrnoException;
-          if (errno.code !== "ESRCH") {
-            warnings.push(
-              `Failed to terminate shields timer PID ${String(marker.pid)} for sandbox '${sandboxName}': ${errno.message}`,
-            );
-          }
-        }
       }
     }
   }
 
+  // Marker removal is cooperative cancellation and revokes the timer's exact
+  // recovery generation. Do not signal a verified live timer: it may own the
+  // lifecycle deadline fence, and an unhandled signal could bypass its finally
+  // cleanup and strand the fence. Recovery loops re-check marker authority and
+  // unwind their locks after this revocation.
   const markerClear = clearTimerMarker(sandboxName);
   if (markerClear.warning) {
     warnings.push(markerClear.warning);
   }
 
   return {
+    authorityRevoked: markerClear.warning === undefined,
     markerFound: marker !== null,
     markerPid: marker?.pid ?? null,
     wasAlive,
-    terminated,
+    terminated: false,
     warnings,
   };
 }
 
-export type { ClearTimerMarkerResult, KillTimerResult, ProcessIdentity, TimerMarker };
+export type { ClearTimerMarkerResult, KillTimerResult, ShieldsTimerMarker as TimerMarker };
 export {
   clearTimerMarker,
+  hasExactTimerAuthorizationProof,
   isProcessAlive,
   killTimer,
-  listDescendantProcessIdentities,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
   readAutoRestoreTakeoverToken,
   readProcessStartIdentity,
   readProcessState,
   readTimerMarker,
+  removeTimerAuthorizationProof,
+  timerAuthoritySha256,
+  timerAuthorizationProofPath,
   timerMarkerPath,
   verifyTimerMarkerIdentity,
+  writeTimerAuthorizationProofForMarker,
 };

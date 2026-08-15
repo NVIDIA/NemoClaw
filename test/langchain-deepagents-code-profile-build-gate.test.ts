@@ -113,6 +113,7 @@ describe("LangChain Deep Agents Code profile build gate", () => {
     "PERL_VERSION",
     "PERL_SHA256",
     "PERL_PACKAGE_REVISION",
+    "TARGETARCH",
   ])("accepts %s as a reviewed public build ARG", (reviewedArg) => {
     const result = runGateWithFakeDocker("expected-failure-with-marker", (fixtureRoot) =>
       fs.appendFileSync(path.join(fixtureRoot, reviewedDockerfiles[0]), `\nARG ${reviewedArg}\n`),

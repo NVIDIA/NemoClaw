@@ -11,7 +11,7 @@ import {
 import { createSession } from "../../state/onboard-session";
 import type { VerifyDeploymentResult } from "../../verify-deployment";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 
 function deploymentResult(healthy: boolean): VerifyDeploymentResult {
   return {
@@ -75,6 +75,11 @@ describe("final onboard flow runtime boundary", () => {
     expect(
       harness.events.filter((event) => event.type === "state.entered").map((event) => event.state),
     ).toEqual(["policies", "finalizing", "post_verify", "complete"]);
+    expect(
+      harness.events
+        .filter((event) => event.type === "state.skipped")
+        .map((event) => `${event.type}:${event.state}`),
+    ).toEqual(["state.skipped:agent_setup"]);
     expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
   });
 
@@ -186,7 +191,7 @@ describe("final onboard flow runtime boundary", () => {
         phases: createPhases(branchState, order),
         recordRepairEvent,
       }),
-    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+    ).rejects.toBeInstanceOf(UnexpectedOnboardFlowSliceStateError);
 
     expect(order).toEqual([]);
     expect(recordRepairEvent).not.toHaveBeenCalled();
@@ -234,6 +239,11 @@ describe("final onboard flow runtime boundary", () => {
       model: "nvidia/test",
       machine: { state: "complete" },
     });
+    expect(
+      harness.events
+        .filter((event) => event.type === "state.skipped")
+        .map((event) => `${event.type}:${event.state}`),
+    ).toEqual(["state.skipped:openclaw"]);
     expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
   });
 

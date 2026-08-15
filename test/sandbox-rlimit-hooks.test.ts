@@ -6,10 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
+const PI_DOCKERFILE_BASE = path.join(ROOT, "agents", "pi", "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const DCODE_DOCKERFILE_BASE = path.join(
   ROOT,
@@ -18,49 +20,6 @@ const DCODE_DOCKERFILE_BASE = path.join(
   "Dockerfile.base",
 );
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
-
-function dockerRunCommandBetween(
-  dockerfile: string,
-  startMarker: string,
-  endMarker: string,
-): string {
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  expect(start, `Expected Dockerfile block start marker ${startMarker}`).not.toBe(-1);
-  expect(end, `Expected Dockerfile block end marker ${endMarker}`).toBeGreaterThan(start);
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  expect(runIndex, `Expected RUN instruction after ${startMarker}`).not.toBe(-1);
-  expect(runIndex, `Expected RUN instruction before ${endMarker}`).toBeLessThanOrEqual(end);
-  const sourceLines = dockerfile.slice(runIndex, end).split("\n");
-  const finalLineIndex = sourceLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
-  expect(
-    finalLineIndex,
-    `Expected complete RUN instruction before ${endMarker}`,
-  ).toBeGreaterThanOrEqual(0);
-  const runLines = sourceLines.slice(0, finalLineIndex + 1);
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
-}
-
-function runLoggedDockerShell(command: string, tmp: string) {
-  const logPath = path.join(tmp, "calls.log");
-  fs.rmSync(logPath, { force: true });
-  const scriptPath = path.join(tmp, "run-docker-block.sh");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `call_log=${JSON.stringify(logPath)}`,
-      command,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  return spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-}
 
 function copyRlimitFixture(rlimitLib: string): void {
   // TEST-ONLY OVERRIDE: production remains 512 in scripts/lib/sandbox-rlimits.sh.
@@ -238,6 +197,35 @@ function expectDcodeRlimitHookWarnsWhenHelperIsMissing(hookPath: string, rlimitL
   expect(result.stderr).toContain(
     "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
   );
+}
+
+function expectPiRlimitHooksRejectFailedEnforcement(
+  hookPaths: Array<{ mode: "interactive" | "login"; path: string }>,
+  failure: string,
+): void {
+  for (const hook of hookPaths) {
+    const args =
+      hook.mode === "login"
+        ? [
+            "--noprofile",
+            "--norc",
+            "-lc",
+            'source "$1"; printf "UNREACHABLE\\n"',
+            "pi-login",
+            hook.path,
+          ]
+        : ["--noprofile", "--rcfile", hook.path, "-ic", 'printf "UNREACHABLE\\n"'];
+    const result = spawnSync("bash", args, {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status, `${hook.mode}: ${failure}\n${result.stderr}`).not.toBe(0);
+    expect(result.stdout).not.toContain("UNREACHABLE");
+    expect(result.stderr).toContain(
+      "[SECURITY] Sandbox resource limits were NOT hardened for this shell; refusing shell startup.",
+    );
+  }
 }
 
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
@@ -451,7 +439,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
@@ -459,6 +447,63 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
       expectSystemRlimitHookIsSilentWhenVerificationFails(rlimitHook, rlimitLib);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("Pi login and interactive hooks reject shells when exact limit enforcement fails", () => {
+    const dockerfile = fs.readFileSync(PI_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-rlimit-hooks-"));
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+
+    try {
+      fs.mkdirSync(path.dirname(rlimitHook), { recursive: true });
+      copyRlimitFixture(rlimitLib);
+      fs.writeFileSync(bashrc, "# existing Pi bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide RLIMIT hooks for Pi connect and login shells",
+        "COPY agents/pi/pi-runtime/package.json",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain("# existing Pi bashrc");
+      const hooks: Array<{ mode: "interactive" | "login"; path: string }> = [
+        { mode: "login", path: rlimitHook },
+        { mode: "interactive", path: bashrc },
+      ];
+
+      fs.rmSync(rlimitLib, { force: true });
+      expectPiRlimitHooksRejectFailedEnforcement(hooks, "missing helper");
+
+      fs.writeFileSync(
+        rlimitLib,
+        [
+          "harden_resource_limits() { return 1; }",
+          "verify_resource_limits() { :; }",
+          "verify_resource_limits_exact() { :; }",
+        ].join("\n"),
+        { mode: 0o644 },
+      );
+      expectPiRlimitHooksRejectFailedEnforcement(hooks, "failed hardening");
+
+      fs.writeFileSync(
+        rlimitLib,
+        [
+          "harden_resource_limits() { :; }",
+          "verify_resource_limits() { :; }",
+          "verify_resource_limits_exact() { return 1; }",
+        ].join("\n"),
+        { mode: 0o644 },
+      );
+      expectPiRlimitHooksRejectFailedEnforcement(hooks, "failed exact verification");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -485,7 +530,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
@@ -532,7 +577,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       const bashrcBody = fs.readFileSync(bashrc, "utf-8");
       expect(occurrenceCount(bashrcBody, expectedProxyShim)).toBe(1);
@@ -554,11 +599,13 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const initLib = path.join(localLib, "sandbox-init.sh");
     const validator = path.join(localLib, "validate-hermes-env-secret-boundary.py");
     const sessionListPreviewPatcher = path.join(localLib, "patch-hermes-session-list-preview.py");
+    const sqliteTempStorePatcher = path.join(localLib, "patch-hermes-sqlite-temp-store.py");
     const discordRecoveryPatcher = path.join(
       localLib,
       "patch-hermes-discord-recovery-permissions.py",
     );
     const profilePolicyPatcher = path.join(localLib, "patch-hermes-profile-policy-defaults.py");
+    const managedPolicyReader = path.join(localLib, "managed_policy.py");
     const langfuseCredentialPatcher = path.join(localLib, "patch-hermes-langfuse-credentials.mts");
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
@@ -567,14 +614,29 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
-      "openshell-child-visible-credentials.v0.0.85.json",
+      "openshell-child-visible-credentials.v0.0.101.json",
     );
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
     const stateDirGuard = path.join(localLib, "state-dir-guard.py");
+    const runtimeStateMutationControl = path.join(localLib, "runtime-state-mutation-control.py");
+    const runtimeStateMutationStartupGate = path.join(
+      localLib,
+      "runtime-state-mutation-startup-gate.py",
+    );
+    const runtimeStateMutationPublisher = path.join(
+      localLib,
+      "runtime_state_mutation_hermes_publisher.py",
+    );
+    const stateLockPlan = path.join(tmp, "state-lock-plan.json");
+    const runtimeStateMutationCapability = path.join(
+      tmp,
+      "runtime-state-mutation-publisher-v1.json",
+    );
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
+    const hermesCronRestoreControl = path.join(localLib, "hermes-cron-restore-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
     const managedStartupHold = path.join(tmp, "nemoclaw-managed-startup-hold");
     const managedBootstrap = path.join(tmp, "nemoclaw-managed-bootstrap");
@@ -590,8 +652,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(initLib, "# init fixture\n");
       fs.writeFileSync(validator, "# validator fixture\n");
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
+      fs.writeFileSync(sqliteTempStorePatcher, "# SQLite temp store patcher fixture\n");
       fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
       fs.writeFileSync(profilePolicyPatcher, "# profile policy patcher fixture\n");
+      fs.writeFileSync(managedPolicyReader, "# managed policy reader fixture\n");
       fs.writeFileSync(langfuseCredentialPatcher, "# Langfuse credential patcher fixture\n");
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
@@ -607,7 +671,13 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
       fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
+      fs.writeFileSync(runtimeStateMutationControl, "# runtime mutation control fixture\n");
+      fs.writeFileSync(runtimeStateMutationStartupGate, "# runtime mutation gate fixture\n");
+      fs.writeFileSync(runtimeStateMutationPublisher, "# runtime mutation publisher fixture\n");
+      fs.writeFileSync(stateLockPlan, "{}\n");
+      fs.writeFileSync(runtimeStateMutationCapability, "{}\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
+      fs.writeFileSync(hermesCronRestoreControl, "# Hermes cron restore control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
       fs.writeFileSync(managedStartupHold, "#!/usr/bin/env bash\n");
       fs.writeFileSync(managedBootstrap, "#!/usr/bin/env bash\n");
@@ -633,6 +703,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           sessionListPreviewPatcher,
         )
         .replaceAll(
+          "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
+          sqliteTempStorePatcher,
+        )
+        .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
           discordRecoveryPatcher,
         )
@@ -640,6 +714,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           profilePolicyPatcher,
         )
+        .replaceAll("/usr/local/lib/nemoclaw/managed_policy.py", managedPolicyReader)
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           langfuseCredentialPatcher,
@@ -650,14 +725,36 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
-          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
+          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json",
           mcpCredentialBoundary,
         )
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)
         .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
         .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
         .replaceAll("/usr/local/lib/nemoclaw/state-dir-guard.py", stateDirGuard)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+          runtimeStateMutationControl,
+        )
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py",
+          runtimeStateMutationStartupGate,
+        )
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py",
+          runtimeStateMutationPublisher,
+        )
+        .replaceAll("/usr/local/share/nemoclaw/state-lock-plan.json", stateLockPlan)
+        .replaceAll(
+          "/usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json",
+          runtimeStateMutationCapability,
+        )
+        .replaceAll("/opt/hermes/.venv/bin/python3", "python3")
         .replaceAll("/usr/local/lib/nemoclaw/managed-gateway-control.py", managedGatewayControl)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
+          hermesCronRestoreControl,
+        )
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", profileHook)
         .replaceAll("/etc/profile.d", path.dirname(profileHook))
@@ -666,7 +763,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       // "wheel", so stub chown while preserving every chmod and hook write.
       const command = ["chown() { :; }", replay].join("\n");
 
-      const result = runLoggedDockerShell(command, tmp);
+      const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(profileHook, "utf-8")).toContain(expectedRlimitShim);
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
@@ -684,6 +781,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(runtimeStateMutationControl).mode & 0o777).toBe(0o500);
+      expect(fs.statSync(runtimeStateMutationStartupGate).mode & 0o777).toBe(0o555);
+      expect(fs.statSync(runtimeStateMutationPublisher).mode & 0o777).toBe(0o500);
+      expect(fs.statSync(stateLockPlan).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(runtimeStateMutationCapability).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(hermesCronRestoreControl).mode & 0o777).toBe(0o700);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);

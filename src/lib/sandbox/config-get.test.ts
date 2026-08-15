@@ -220,7 +220,12 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
     // `format: toml`, so parseConfig takes the TOML branch.
     registry.getSandbox = () => ({ agent: "langchain-deepagents-code" });
     agentDefs.loadAgent = () => ({
-      configPaths: { dir: "/sandbox/.deepagents", configFile: "config.toml", format: "toml" },
+      configPaths: {
+        dir: "/sandbox/.deepagents",
+        configFile: "config.toml",
+        format: "toml",
+        shieldsFiles: [],
+      },
     });
     // The sandbox `cat` returns the raw TOML text.
     client.captureOpenshellCommand = () => ({
@@ -313,7 +318,12 @@ describe("configGet parsing for manifest-declared formats (#6548)", () => {
   it("does not echo credential-bearing source lines from malformed YAML", () => {
     registry.getSandbox = () => ({ agent: "hermes" });
     agentDefs.loadAgent = () => ({
-      configPaths: { dir: "/sandbox/.hermes", configFile: "config.yaml", format: "yaml" },
+      configPaths: {
+        dir: "/sandbox/.hermes",
+        configFile: "config.yaml",
+        format: "yaml",
+        shieldsFiles: [".env"],
+      },
     });
     const secret = "nvapi-yamlabcdefghijklmnopqrstuvwxyz0123456789";
     const sourceLine = `api_key: "${secret}" trailing-text`;

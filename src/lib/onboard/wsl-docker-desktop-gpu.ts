@@ -4,26 +4,32 @@
 import fs from "node:fs";
 import os from "node:os";
 import { dockerInfoFormat as defaultDockerInfoFormat } from "../adapters/docker";
-import type { Arm64WslDockerDesktopGpuProver, DockerGpuProofResult } from "../inference/gpu-trust";
+import {
+  escapeGpuNameForTerminal,
+  type Arm64WslDockerDesktopGpuProver,
+  type DockerGpuProofResult,
+} from "../inference/gpu-trust";
 
 const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 // This prover only ever runs on ARM64 (see `createArm64WslDockerDesktopGpuProver`),
 // so the proof image MUST ship a real aarch64 CUDA binary. The older
 // `cuda-sample:nbody` image is unusable here: its arm64 manifest entry actually
 // contains an x86-64 ELF, so on the N1X Windows-ARM target it fails with
-// `exec /cuda-samples/sample: exec format error` (#4565). `vectoradd-cuda12.5.0`
-// ships a genuine aarch64 binary and runs a real CUDA kernel (device alloc +
-// add + result verification), which is a strong usability proof that still
-// fails closed on the Snapdragon nvidia-smi shim (no usable CUDA device, #3988).
-// The image's entrypoint runs vectorAdd directly, so no trailing args are needed.
+// `exec /cuda-samples/sample: exec format error` (#4565). The immutable
+// vectorAdd manifest below contains both linux/amd64 and linux/arm64 images; its
+// ARM64 image ships a genuine aarch64 binary and runs a real CUDA kernel (device
+// alloc + add + result verification), which is a strong usability proof that
+// still fails closed on the Snapdragon nvidia-smi shim (no usable CUDA device,
+// #3988). The image's entrypoint runs vectorAdd directly, so no trailing args
+// are needed.
 export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND =
-  "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0";
+  "docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample@sha256:7c7540bdf1f942d4fb6db97069fd6c289471b54ac29e3c7fcdf914cf77af7d41";
 
 // The proof runs a real CUDA workload and may first pull the CUDA sample image,
 // so it is bounded generously (3 min) rather than with the 30s detection
 // timeout. Operators on slow links can override via
 // NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS. The timeout is the safety bound that keeps
-// onboarding from hanging if Docker Desktop GPU passthrough stalls.
+// onboarding from hanging if Docker GPU passthrough stalls.
 const WSL_DOCKER_DESKTOP_GPU_PROOF_DEFAULT_TIMEOUT_MS = 180_000;
 
 export function wslDockerDesktopGpuProofTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
@@ -184,10 +190,10 @@ function runWslDockerDesktopGpuProof(argv: string[], timeoutMs: number): DockerG
   }
 }
 
-// Build the ARM64 WSL Docker Desktop GPU prover consumed by `detectGpu()` for
-// denylisted `JMJWOA-Generic-*` names (#4565). Returns `null` for any host that
-// is not ARM64 Linux on Docker Desktop-backed WSL, so the #3988/#4424 fail-
-// closed default is preserved everywhere else. When the host IS a candidate it
+// Build the ARM64 GPU prover consumed by `detectGpu()` for denylisted
+// `JMJWOA-Generic-*` names (#4565). Returns `null` unless the host is ARM64
+// Linux that is either native or Docker Desktop-backed WSL (#8096), so the
+// #3988/#4424 fail-closed default is preserved everywhere else. When the host IS a candidate it
 // runs one bounded Docker `--gpus` CUDA workload (the aarch64 vectorAdd sample):
 // a real N1X GPU passes, while the Snapdragon nvidia-smi shim — which has no
 // usable CUDA device — cannot, so the placeholder name alone is never trusted.
@@ -201,20 +207,27 @@ export function createArm64WslDockerDesktopGpuProver(
     const platform = deps.platform ?? process.platform;
     const arch = deps.arch ?? process.arch;
     if (platform !== "linux" || arch !== "arm64") return null;
-    if (detectStatus(deps) !== "docker-desktop") return null;
-    const names = gpuNames.filter(Boolean).join(", ") || "generic ARM64 GPU";
-    log(
-      `  Running bounded Docker Desktop WSL GPU proof for ${names} (may pull a CUDA sample image)...`,
-    );
+    // Docker Desktop-backed WSL is not the only host that reports a denylisted
+    // `JMJWOA-Generic-*` name for a genuine GPU; native Linux ARM64 hosts do
+    // too (#8096), and previously had no way to prove one. Only that host class
+    // is added here: a WSL host that is not Docker Desktop-backed still returns
+    // `null`, so Windows-on-ARM passthrough scope is unchanged. The bounded CUDA
+    // proof remains the trust boundary, not the container runtime. The Snapdragon
+    // nvidia-smi shim exposes no usable CUDA device, so it still fails closed
+    // wherever the proof runs (#3988/#4565).
+    if (detectWsl(deps) && detectStatus(deps) !== "docker-desktop") return null;
+    const names =
+      gpuNames.filter(Boolean).map(escapeGpuNameForTerminal).join(", ") || "generic ARM64 GPU";
+    log(`  Running bounded Docker GPU proof for ${names} (may pull a CUDA sample image)...`);
     log(`    ${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}`);
     const result = runProof(
       wslDockerDesktopGpuProofArgv(),
       wslDockerDesktopGpuProofTimeoutMs(deps.env),
     );
     if (result.passed) {
-      log("  ✓ Docker Desktop WSL GPU proof passed; trusting the reported GPU.");
+      log("  ✓ Docker GPU proof passed; trusting the reported GPU.");
     } else if (result.timedOut) {
-      log("  ✗ Docker Desktop WSL GPU proof timed out; treating GPU as unproven (CPU fallback).");
+      log("  ✗ Docker GPU proof timed out; treating GPU as unproven (CPU fallback).");
       log(
         "    Rerun with --no-gpu to skip GPU passthrough, or raise NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS.",
       );
@@ -222,9 +235,7 @@ export function createArm64WslDockerDesktopGpuProver(
       // The proof binary's architecture did not match the host. This is an image
       // problem, not a GPU problem, so call it out explicitly rather than letting
       // the host fall back to CPU as if no GPU were present (#4565).
-      log(
-        "  ✗ Docker Desktop WSL GPU proof could not run: CUDA sample image architecture does not",
-      );
+      log("  ✗ Docker GPU proof could not run: CUDA sample image architecture does not");
       log(
         "    match this host (exec format error). This is a proof-image issue, not a missing GPU.",
       );
@@ -232,7 +243,7 @@ export function createArm64WslDockerDesktopGpuProver(
         "    Rerun with --no-gpu to skip GPU passthrough, or report this so the proof image can be fixed.",
       );
     } else {
-      log("  ✗ Docker Desktop WSL GPU proof failed; treating GPU as unproven (CPU fallback).");
+      log("  ✗ Docker GPU proof failed; treating GPU as unproven (CPU fallback).");
       log("    Rerun with --no-gpu to skip GPU passthrough.");
     }
     return result;

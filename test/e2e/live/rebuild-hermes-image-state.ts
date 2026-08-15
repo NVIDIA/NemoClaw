@@ -8,8 +8,20 @@ import {
 } from "../../../src/lib/domain/sandbox/image-tag";
 
 export interface RebuildHermesRegistryImageState {
+  openshellDriver: "docker";
   imageTag: string;
   fromDockerfile: null;
+  workload: {
+    schemaVersion: 1;
+    kind: "legacy-dockerfile";
+    reference: string;
+    shared: false;
+  };
+}
+
+export interface RebuildHermesReplacementLifecycleReceipt {
+  lifecycleGeneration: string;
+  lifecycleLiveIdentityFingerprint: string;
 }
 
 export async function cleanupTrackedRebuildHermesImage(
@@ -31,6 +43,28 @@ export function requireRebuildHermesInitialImageTag(value: unknown, sandboxName:
   return imageTag;
 }
 
+export function requireRebuildHermesReplacementLifecycleReceipt(
+  value: Record<string, unknown>,
+): RebuildHermesReplacementLifecycleReceipt {
+  const lifecycleGeneration = value.lifecycleGeneration;
+  const lifecycleLiveIdentityFingerprint = value.lifecycleLiveIdentityFingerprint;
+  if (
+    typeof lifecycleGeneration !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      lifecycleGeneration,
+    )
+  ) {
+    throw new Error("rebuilt Hermes registry is missing its journaled lifecycle generation");
+  }
+  if (
+    typeof lifecycleLiveIdentityFingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(lifecycleLiveIdentityFingerprint)
+  ) {
+    throw new Error("rebuilt Hermes registry is missing its live lifecycle identity fingerprint");
+  }
+  return { lifecycleGeneration, lifecycleLiveIdentityFingerprint };
+}
+
 export function rebuildHermesRegistryImageState(
   createOutput: string,
 ): RebuildHermesRegistryImageState {
@@ -42,5 +76,15 @@ export function rebuildHermesRegistryImageState(
       `old Hermes sandbox create must report an exact ${prefix}<build-id> image tag; got ${imageTag ?? "<missing>"}`,
     );
   }
-  return { imageTag, fromDockerfile: null };
+  return {
+    openshellDriver: "docker",
+    imageTag,
+    fromDockerfile: null,
+    workload: {
+      schemaVersion: 1,
+      kind: "legacy-dockerfile",
+      reference: imageTag,
+      shared: false,
+    },
+  };
 }

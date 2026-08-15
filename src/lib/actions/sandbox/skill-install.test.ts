@@ -45,6 +45,7 @@ const paths = {
   mirrorDir: "$HOME/.openclaw/skills/demo-skill",
   uploadDirSharedWithAgent: false,
   sessionFile: "/sandbox/.openclaw/agents/main/sessions/sessions.json",
+  reloadsSkillsOnSessionStart: false,
   isOpenClaw: true,
 };
 
@@ -59,6 +60,7 @@ const sharedPaths = {
   mirrorDir: null,
   uploadDirSharedWithAgent: true,
   sessionFile: null,
+  reloadsSkillsOnSessionStart: false,
   isOpenClaw: false,
 };
 
@@ -373,6 +375,9 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`Content digest (SHA-256): ${"a".repeat(64)}`),
+    );
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("Start a new Deep Agents session to load the skill."),
     );

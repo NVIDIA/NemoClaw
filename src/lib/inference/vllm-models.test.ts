@@ -17,6 +17,22 @@ import {
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
+  it("starts directly with setup when the serving environment is empty (#8246)", () => {
+    const command = buildVllmServeCommand({
+      id: "test/model",
+      label: "Test model",
+      envValue: "test-model",
+      downloadSizeBytes: 1,
+      maxModelLen: 4096,
+      modelArgs: [],
+      gated: false,
+      platforms: ["spark"],
+      serveEnv: {},
+    });
+
+    expect(command).toMatch(/^pip install vllm\[fastsafetensors\] && vllm serve/u);
+  });
+
   it("records a finite positive Hugging Face file size for every model", () => {
     for (const model of VLLM_MODELS) {
       expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
@@ -34,6 +50,7 @@ describe("vllm model registry", () => {
       "deepseek-v4-flash": 352_381_000_000,
       "nemotron-3-ultra-550b-a55b": 352_381_245_521,
       "qwen3.6-35b-a3b-nvfp4": 23_500_000_000,
+      "muse-glimmer-30b": 25_447_097_878,
     });
   });
 
@@ -279,6 +296,31 @@ describe("vllm model registry", () => {
     expect(cmd).toContain(`--served-model-name 'operator'"'"'s model'`);
   });
 
+  it("quotes registry arguments and serving environment values as shell literals (#8246)", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand({
+      ...qwen!,
+      id: "example/model; touch /tmp/model-injection",
+      modelArgs: ["--served-model-name", "$(touch /tmp/argument-injection)"],
+      serveEnv: { SAFE_VALUE: "literal; $(touch /tmp/environment-injection)" },
+    });
+
+    expect(cmd).toContain("export SAFE_VALUE='literal; $(touch /tmp/environment-injection)'");
+    expect(cmd).toContain("vllm serve 'example/model; touch /tmp/model-injection'");
+    expect(cmd).toContain("--served-model-name '$(touch /tmp/argument-injection)'");
+  });
+
+  it("rejects invalid serving environment variable names", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+
+    expect(() =>
+      buildVllmServeCommand({
+        ...qwen!,
+        serveEnv: { "UNSAFE; touch /tmp/environment-name-injection": "1" },
+      }),
+    ).toThrow("Invalid vLLM serving environment variable name");
+  });
+
   it("uses model-specific max-model-len when building the command", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     const cmd = buildVllmServeCommand(deepseek!);
@@ -360,7 +402,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command from the DGX Spark model-card recipe (#6457)", () => {
+  it("builds the MTP-free NVFP4 serve command for DGX Spark (#7127)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
@@ -390,9 +432,14 @@ describe("vllm model registry", () => {
     expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");
-    expect(cmd).toContain(
-      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
-    );
+    expect(cmd).toContain("--dtype auto");
+    expect(cmd).toContain("--max-num-seqs 4");
+    expect(cmd).toContain("--max-num-batched-tokens 8192");
+    expect(cmd).toContain("--enable-chunked-prefill");
+    expect(cmd).toContain("--async-scheduling");
+    expect(cmd).toContain("--enable-prefix-caching");
+    expect(cmd).not.toContain("--speculative-config");
+    expect(cmd).not.toContain('"method":"mtp"');
     // Single-node parallel flags stay shared; 0.4 utilization follows the
     // current DGX Spark model-card recipe.
     expect(cmd).toContain("--gpu-memory-utilization 0.4");
@@ -400,15 +447,63 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
+
+  it("pins the authenticated Muse Glimmer recipe for one DGX Spark", () => {
+    const muse = VLLM_MODELS.find((model) => model.envValue === "muse-glimmer-30b");
+
+    expect(muse).toMatchObject({
+      id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+      label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
+      revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
+      servedModelId: "muse-glimmer",
+      maxModelLen: 32768,
+      platforms: ["spark"],
+      minComputeCapability: 121,
+      gated: false,
+      installFastSafetensors: false,
+      trustRemoteCode: false,
+      managedBearerAuth: true,
+      runtime: {
+        image:
+          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+        imageDownloadSizeBytes: 9_699_710_136,
+        modelDownloadSizeBytes: 25_447_097_878,
+      },
+    });
+
+    const command = buildVllmServeCommand(muse!);
+    expect(command).toContain("vllm serve Inferact/Muse-Glimmer-30B-NVFP4-W4A4");
+    expect(command).toContain("--served-model-name muse-glimmer");
+    expect(command).toContain("--revision d35cb79050f419c457611b1cee5c5d15b176f285");
+    expect(command).toContain("--max-model-len 32768");
+    expect(command).toContain("--gpu-memory-utilization 0.75");
+    expect(command).toContain("--max-num-seqs 1");
+    expect(command).toContain("--max-num-batched-tokens 4096");
+    expect(command).toContain("--enable-auto-tool-choice");
+    expect(command).toContain("--tool-call-parser muse_glimmer");
+    expect(command).toContain("--reasoning-parser muse_glimmer");
+    expect(command).toContain("--generation-config auto");
+    expect(command).not.toContain("--trust-remote-code");
+    expect(command).not.toContain("--quantization");
+    expect(command).not.toContain("--speculative-config");
+    expect(command).not.toContain("pip install");
+  });
 });
 
 describe("modelsForPlatform", () => {
+  it("offers only the accepted Qwen3.6 profile on N1x (#8574)", () => {
+    expect(modelsForPlatform("n1x").map((model) => model.envValue)).toEqual([
+      "qwen3.6-35b-a3b-nvfp4",
+    ]);
+  });
+
   it("returns the Spark-runnable subset for DGX Spark", () => {
     const slugs = modelsForPlatform("spark").map((m) => m.envValue);
     expect(slugs).toContain("qwen3.6-35b-a3b-nvfp4");
     expect(slugs).toContain("qwen3.6-27b");
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).toContain("muse-glimmer-30b");
     expect(slugs).not.toContain("deepseek-v4-flash");
   });
 
@@ -420,6 +515,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("deepseek-v4-flash");
     expect(slugs).toContain("nemotron-3-ultra-550b-a55b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).not.toContain("muse-glimmer-30b");
   });
 
   it("omits arch-specific entries from the generic Linux profile", () => {
@@ -428,6 +524,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).not.toContain("muse-glimmer-30b");
     expect(slugs).not.toContain("deepseek-v4-flash");
   });
 

@@ -22,6 +22,9 @@
 # sends untrusted evidence through the image-installed route-probe helper and
 # must stop before session attach. Per-phase diagnostics retain failure
 # attribution without splitting that shared evidence boundary.
+# This check is the typed target's risk-plan activation marker. The same target's
+# ordered thread-auto-approval check verifies that two named rebuilds converge and
+# that `nemoclaw status --json` exits 0 after the capability returns to `disabled`.
 
 set -euo pipefail
 
@@ -75,7 +78,7 @@ sandbox_direct_dcode() {
 sandbox_dcode_wrapper_contract() {
   # Keep this assertion as one atomic shell expression for clear failure attribution.
   # shellcheck disable=SC2016
-  sandbox_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-managed-exec ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && cmp -s /usr/local/lib/nemoclaw/dcode-managed-exec /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
+  sandbox_direct_rlimit_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-managed-exec ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && cmp -s /usr/local/lib/nemoclaw/dcode-managed-exec /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
 }
 
 write_openshell_target_shim() {

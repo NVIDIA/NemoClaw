@@ -8,6 +8,44 @@ import * as f from "./snapshot-restore-test-fixture";
 beforeEach(f.resetSnapshotRestoreMocks);
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: observability policy reconciliation", () => {
+  it("does not promote a forged snapshot digest into trusted-private pin authority", async () => {
+    const content =
+      "network_policies:\n  private-api:\n    endpoints:\n      - host: api.corp.example\n        allowed_ips:\n          - 10.20.30.40\n";
+    const customPolicy = {
+      name: "private-api",
+      content,
+      sourcePath: "/policies/private-api.yaml",
+      trustedPrivatePins: {
+        version: 1 as const,
+        contentDigest: "a".repeat(64),
+      },
+    };
+    f.getSandboxMock.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      policyTier: "balanced",
+    } as never);
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
+      policyPresets: [customPolicy.name],
+      customPolicies: [customPolicy],
+    });
+    f.getCustomPoliciesMock.mockReturnValue([]);
+    f.applyPresetContentMock.mockReturnValue(false);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.applyPresetContentMock).toHaveBeenCalledWith(
+      "alpha",
+      customPolicy.name,
+      customPolicy.content,
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
+    );
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("private-api (apply failed)");
+  });
+
   it("does not resurrect an earlier removed preset while restoring unverified OTLP attribution", async () => {
     let registryEntry = {
       name: "alpha",
@@ -125,10 +163,12 @@ describe("runSandboxSnapshot restore: observability policy reconciliation", () =
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
     expect(f.removePresetMock).toHaveBeenCalledTimes(1);
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
     expect(f.updateSandboxMock).not.toHaveBeenCalled();
   });
@@ -165,7 +205,7 @@ describe("runSandboxSnapshot restore: observability policy reconciliation", () =
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
     expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(f.removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
@@ -205,7 +245,9 @@ describe("runSandboxSnapshot restore: observability policy reconciliation", () =
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain("corp-otel (apply failed)");
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(f.getPresetContentGatewayStateMock).toHaveBeenCalledTimes(2);
     expect(f.getPresetContentGatewayStateMock).toHaveBeenCalledWith(
       "alpha",
@@ -238,7 +280,9 @@ describe("runSandboxSnapshot restore: observability policy reconciliation", () =
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name);
+    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name, {
+      nonFatal: true,
+    });
     expect(f.applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "leaving live policy presets unchanged",

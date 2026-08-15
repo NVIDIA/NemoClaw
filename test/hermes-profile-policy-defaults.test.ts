@@ -4,17 +4,31 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import type { HermesBuildSettings } from "../agents/hermes/config/build-env.ts";
+import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy.ts";
 
 const root = path.join(import.meta.dirname, "..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
+const imageBuildProbes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
-const imageBuildProbes = fs.readFileSync(
-  path.join(root, "agents", "hermes", "image-build-probes.py"),
-  "utf8",
-);
+const POLICY_SETTINGS: HermesBuildSettings = {
+  model: "test-model",
+  baseUrl: "https://inference.local/v1",
+  providerKey: "custom",
+  upstreamProvider: "custom",
+  inferenceApi: "openai-completions",
+  contextWindow: null,
+  toolDisclosure: "progressive",
+  webSearchProvider: null,
+  messagingCredentialPlaceholders: [],
+  managedToolGateways: { brokerEnabled: false, presets: [] },
+  managedImageCapabilityUnion: false,
+};
+const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
 
 const configFixture = `\
 DEFAULT_CONFIG = {
@@ -117,21 +131,30 @@ import sys
 
 spec = importlib.util.spec_from_file_location("profile_policy_patcher", pathlib.Path(sys.argv[1]))
 assert spec and spec.loader
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 source = sys.stdin.read()
+values = module.profile_default_values(module.load_managed_policy(pathlib.Path(sys.argv[3])))
 try:
-    patched = getattr(module, "patch_" + sys.argv[2] + "_source")(source)
+    patched = getattr(module, "patch_" + sys.argv[2] + "_source")(source, values)
 except ValueError as exc:
     print(exc, file=sys.stderr)
     raise SystemExit(1)
 sys.stdout.write(patched)
 `;
-  return spawnSync("python3", ["-I", "-c", harness, patcher, kind], {
-    encoding: "utf8",
-    input: source,
-    timeout: 5000,
-  });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-policy-"));
+  const policyPath = path.join(tmp, "managed-policy.json");
+  fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
+  try {
+    return spawnSync("python3", ["-I", "-c", harness, patcher, kind, policyPath], {
+      encoding: "utf8",
+      input: source,
+      timeout: 5000,
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 describe("Hermes profile policy defaults", () => {
@@ -193,7 +216,7 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stdout).not.toContain('.get("show_commentary", True)');
     expect(result.stdout.match(/agent[.]show_commentary = False/gu)).toHaveLength(2);
     expect(result.stdout).toContain('.get("show_commentary", False)');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(3);
+    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(1);
   });
 
   it("keeps update backup and CUA refresh fallbacks off", () => {
@@ -204,7 +227,7 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stdout).toContain("refresh_cua_driver = False");
     expect(result.stdout).toContain('_update_cfg.get("refresh_cua_driver", False)');
     expect(result.stdout).not.toContain('updates_cfg.get("pre_update_backup", "quick")');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(3);
+    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(2);
   });
 
   it.each([
@@ -233,6 +256,57 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stderr).toContain(error);
   });
 
+  it("reports an invalid managed policy as a bounded build error", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-policy-error-"));
+    const policyPath = path.join(tmp, "managed-policy.json");
+    fs.writeFileSync(policyPath, "not-json\n");
+    const result = spawnSync("python3", [patcher, "--policy", policyPath], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`ERROR: ${policyPath}: managed policy is malformed`);
+    expect(result.stderr).not.toContain("Traceback");
+  });
+
+  it("checks session reset defaults at their gateway boundary for a config-less profile", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-probe-"));
+    const policyPath = path.join(tmp, "managed-policy.json");
+    fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
+    const harness = `\
+import copy
+import importlib.util
+import json
+import pathlib
+import sys
+from types import SimpleNamespace
+
+probe_path = pathlib.Path(sys.argv[1])
+policy_path = pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(probe_path.parent))
+from managed_policy import profile_default_values
+spec = importlib.util.spec_from_file_location("image_build_probes", probe_path)
+assert spec and spec.loader
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+policy = json.loads(policy_path.read_text(encoding="utf-8"))
+expected = profile_default_values(policy)
+config = copy.deepcopy(policy["config"])
+reset_policy = SimpleNamespace(**config.pop("session_reset"))
+module._verify_profile_config_policy(config, expected)
+module._verify_session_reset_policy(reset_policy, expected)
+`;
+    const result = spawnSync("python3", ["-I", "-c", harness, imageBuildProbes, policyPath], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("hash-binds the reviewed source patch and probes a real config-less profile", () => {
     const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
 
@@ -254,14 +328,7 @@ describe("Hermes profile policy defaults", () => {
     }
     expect(dockerfile).toContain("hermes profile create nemoclaw-policy-probe");
     expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
-    expect(imageBuildProbes).toContain('assert config["approvals"]["mode"] == "manual"');
-    expect(imageBuildProbes).toContain("assert _restrict_browser_evaluate() is True");
-    expect(imageBuildProbes).toContain('assert SessionResetPolicy.from_dict({}).mode == "both"');
-    expect(imageBuildProbes).toContain('assert CLI_CONFIG["display"]["show_reasoning"] is False');
-    expect(imageBuildProbes).toContain("assert _load_show_reasoning() is False");
-    expect(imageBuildProbes).toContain(
-      'assert agent_source.count("agent.show_commentary = True") == 0',
-    );
-    expect(imageBuildProbes).toContain('assert _resolve_pre_update_backup_mode(args) == "off"');
+    expect(dockerfile).toContain("/usr/local/share/nemoclaw/hermes-managed-policy.json");
+    expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
   });
 });

@@ -19,6 +19,7 @@ import {
   probeLocalAdapterHealth,
   readLocalAdapterJsonFile,
   readLocalAdapterTextFile,
+  spawnDetachedNodeAdapter,
   waitForLocalAdapterHealth,
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
@@ -61,7 +62,36 @@ function listen(server: http.Server): Promise<number> {
   });
 }
 
+async function waitForFileText(filePath: string, expected: string, attempts = 50): Promise<string> {
+  const actual = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  return actual === expected
+    ? actual
+    : attempts > 0
+      ? new Promise<void>((resolve) => setTimeout(resolve, 50)).then(() =>
+          waitForFileText(filePath, expected, attempts - 1),
+        )
+      : Promise.reject(new Error(`adapter did not write expected output: ${actual}`));
+}
+
 describe("local adapter lifecycle", () => {
+  it("executes detached TypeScript adapters", async () => {
+    const dir = tempDir();
+    const scriptPath = path.join(dir, "adapter.mts");
+    const outputPath = path.join(dir, "adapter-output.txt");
+    fs.writeFileSync(
+      scriptPath,
+      `import { writeFileSync } from "node:fs";\nconst answer: number = 42;\nwriteFileSync(process.env.NEMOCLAW_TEST_ADAPTER_OUTPUT ?? "", String(answer));\n`,
+    );
+
+    spawnDetachedNodeAdapter({
+      scriptPath,
+      env: { NEMOCLAW_TEST_ADAPTER_OUTPUT: outputPath },
+      buildEnv: (extraEnv) => ({ ...process.env, ...extraEnv }),
+    });
+
+    await waitForFileText(outputPath, "42");
+  });
+
   it("persists local adapter secrets, JSON state, and PIDs as private files", () => {
     const dir = tempDir();
     const tokenPath = path.join(dir, "adapter-token");

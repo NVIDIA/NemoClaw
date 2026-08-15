@@ -428,7 +428,7 @@ describe("inference setup navigation", () => {
     expect(getSandboxRuntimeInferenceEndpoint("nvidia-nim")).toBeNull();
     expect(getSandboxRuntimeInferenceEndpoint("compatible-endpoint")).toBeNull();
     expect(section).toContain(
-      "For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route",
+      "For local Ollama, local vLLM, and local NVIDIA NIM on Docker GPU sandboxes using the compatibility route",
     );
     expect(section).toContain("NVIDIA NIM and other compatible endpoints");
   });
@@ -530,7 +530,7 @@ describe("inference setup navigation", () => {
     expect(endpoint).toContain("Port `8000` is one of NemoClaw's bundled host-gateway ports.");
     expect(vllm).toContain("Docker's `--restart unless-stopped` policy");
     expect(verification).toContain(
-      "The `Inference` row checks the sandbox's `inference.local` path",
+      "The `Inference` row first checks the sandbox's `inference.local` path",
     );
   });
 });

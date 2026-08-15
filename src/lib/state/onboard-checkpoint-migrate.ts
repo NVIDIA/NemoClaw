@@ -20,11 +20,15 @@ import {
   type CheckpointDecision,
   type CheckpointLoadResult,
   type CheckpointMessagingSelection,
+  type CheckpointOnboardProfile,
+  type CheckpointPortableRuntimeAuthority,
   type CheckpointResourceProfile,
   type CheckpointSandboxIdentity,
   type OnboardCheckpoint,
 } from "./onboard-checkpoint-types";
 import { normalizeSession, SESSION_FILE, type Session } from "./onboard-session";
+
+export { SESSION_FILE as ONBOARD_CHECKPOINT_SESSION_FILE };
 
 function identityDecision(session: Session): CheckpointDecision<CheckpointSandboxIdentity> {
   const { sandboxName, agent } = session;
@@ -67,12 +71,27 @@ function resourceDecision(session: Session): CheckpointDecision<CheckpointResour
   );
 }
 
-export function deriveCheckpointFromSession(session: Session): OnboardCheckpoint {
+export function deriveCheckpointFromSession(
+  session: Session,
+  options: {
+    profile?: CheckpointOnboardProfile;
+    runtimeAuthority?: CheckpointPortableRuntimeAuthority | null;
+  } = {},
+): OnboardCheckpoint {
+  const profile = options.profile ?? "default";
+  const runtimeAuthority = options.runtimeAuthority ?? null;
+  if ((profile === "portable") !== (runtimeAuthority !== null)) {
+    throw new Error("Portable onboarding checkpoints require one selected runtime authority.");
+  }
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
     sessionId: session.sessionId,
     machineState: session.machine.state,
     updatedAt: session.updatedAt,
+    profile: { kind: "selected", value: profile },
+    runtimeAuthority: runtimeAuthority
+      ? { kind: "selected", value: runtimeAuthority }
+      : { kind: "unset" },
     sandboxIdentity: identityDecision(session),
     webSearch: webSearchDecision(session),
     messaging: messagingDecision(session),
@@ -94,25 +113,40 @@ export function resolveCheckpointForResume(rawSession: unknown): CheckpointLoadR
   if (!isObjectRecord(rawSession)) return { status: "none" };
 
   const inspected = inspectCheckpoint(rawSession.checkpoint);
-  if (inspected.status === "unsupported_future" || inspected.status === "corrupt") {
+  if (
+    inspected.status === "unsupported_future" ||
+    inspected.status === "corrupt" ||
+    inspected.status === "legacy"
+  ) {
     return inspected;
+  }
+
+  if (inspected.status === "loaded") {
+    const rawMachine = isObjectRecord(rawSession.machine) ? rawSession.machine : null;
+    if (
+      rawSession.sessionId !== inspected.checkpoint.sessionId ||
+      rawMachine?.state !== inspected.checkpoint.machineState
+    ) {
+      return { status: "corrupt" };
+    }
   }
 
   const session = normalizeSession(rawSession as JsonValue);
   if (!session) return { status: "none" };
 
-  if (inspected.status === "loaded" || inspected.status === "migrated") {
+  if (inspected.status === "loaded") {
     // A checkpoint copied from another session's file would otherwise supply
     // identity, bindings, and effect receipts for the wrong onboarding run.
-    if (inspected.checkpoint.sessionId !== session.sessionId) return { status: "corrupt" };
+    if (
+      inspected.checkpoint.sessionId !== session.sessionId ||
+      inspected.checkpoint.machineState !== session.machine.state
+    ) {
+      return { status: "corrupt" };
+    }
     return inspected;
   }
 
-  return {
-    status: "migrated",
-    checkpoint: deriveCheckpointFromSession(session),
-    fromVersion: 0,
-  };
+  return { status: "legacy" };
 }
 
 export function loadResumeCheckpoint(): CheckpointLoadResult {

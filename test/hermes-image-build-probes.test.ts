@@ -24,9 +24,9 @@ const commands = [
   "gateway-process-identity",
   "gateway-runtime-metadata",
   "langfuse-credentials",
+  "neutral-platform-inertness",
   "profile-policy",
   "session-preview",
-  "wrapper-session-boundaries",
 ] as const;
 
 describe("Hermes image build probes", () => {

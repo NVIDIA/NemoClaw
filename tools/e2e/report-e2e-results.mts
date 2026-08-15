@@ -74,6 +74,13 @@ type ReportEntry = { result?: string; jobUrl?: string; wallClockRange?: WallCloc
 
 const TERMINAL_CONCLUSIONS = ["success", "failure", "cancelled", "skipped"];
 const PASSING_JOB_CONCLUSIONS = ["success", "skipped", "neutral"];
+const CATALOGUE_CREDENTIAL_BOUNDARIES = {
+  "catalogue-standard": "no provider credential",
+  "catalogue-nvidia-api": "NVIDIA API key",
+  "catalogue-nvidia-inference": "NVIDIA inference API key",
+  "catalogue-github-read": "GitHub read token",
+  "catalogue-brave-nvidia-inference": "Brave and NVIDIA inference API keys",
+} as const;
 
 export async function resolveReportPr(input: {
   github: ReportGithub;
@@ -181,41 +188,6 @@ export function renderE2eReport(input: {
   const requestedTestIdsCsv = selectorValidationPassed
     ? normalizeE2eSelectorCsv(rawRequestedTestIds)
     : "";
-  const explicitOnlyReasons: Record<string, { job: string; target: string; reason: string }> = {
-    "openshell-gateway-auth-contract": {
-      job: "openshell-gateway-auth-contract",
-      target: "openshell-gateway-auth-contract",
-      reason:
-        "default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected",
-    },
-    "mcp-bridge-dev": {
-      job: "mcp-bridge-dev",
-      target: "mcp-bridge-dev",
-      reason: "default dispatch excludes moving OpenShell dev artifacts unless explicitly selected",
-    },
-    "jetson-nvmap-gpu": {
-      job: "jetson-nvmap-gpu",
-      target: "jetson-nvmap-gpu",
-      reason:
-        "default dispatch excludes Jetson; explicit dispatch requires allow_jetson_runner_queue=true after confirming an online Jetson runner because queued jobs do not honor timeout-minutes before assignment",
-    },
-    "sandbox-rlimits-connect": {
-      job: "sandbox-rlimits-connect",
-      target: "sandbox-rlimits-connect",
-      reason: "default dispatch excludes the destructive rlimit fork/connect probe unless selected",
-    },
-  };
-  const explicitOnlySkippedJobs = (env.EXPLICIT_ONLY_JOBS || "")
-    .split(",")
-    .filter(Boolean)
-    .map(
-      (job) =>
-        explicitOnlyReasons[job] ?? {
-          job,
-          target: job,
-          reason: "default dispatch excludes this explicit-only job unless selected",
-        },
-    );
   const targetsRejected = Boolean(rawRequestedTargets) && !selectorValidationPassed;
   const testIdsRejected = Boolean(rawRequestedTestIds) && !selectorValidationPassed;
 
@@ -295,10 +267,10 @@ export function renderE2eReport(input: {
     const jobName = job.name || "";
     const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
     const aggregateJobName = aggregateJobNames.find((name) => jobName.startsWith(`${name} (`));
-    const reportEntryName =
-      match?.[1] ??
-      aggregateJobName ??
-      (/^OpenShell gateway upgrade \(.+\)$/.test(jobName) ? "openshell-gateway-upgrade" : jobName);
+    const catalogueJobName = Object.entries(CATALOGUE_CREDENTIAL_BOUNDARIES).find(
+      ([name, boundary]) => needs[name] && jobName.endsWith(` / ${boundary}`),
+    )?.[0];
+    const reportEntryName = match?.[1] ?? aggregateJobName ?? catalogueJobName ?? jobName;
     recordWallClockRange(reportEntryName, job);
     recordJobLink(reportEntryName, job);
     if (!match || !selectedTestIds.has(match[1])) continue;
@@ -400,7 +372,7 @@ export function renderE2eReport(input: {
       ? "✅ All requested tests passed"
       : selectiveDispatch
         ? "✅ All selected tests passed"
-        : "✅ All default tests passed";
+        : "✅ All tests selected by empty selectors passed";
   const status =
     failed.length > 0 || missingRequestedTestIds.length > 0 || sharedJobAggregateFailed
       ? "❌ Some tests failed"
@@ -423,27 +395,18 @@ export function renderE2eReport(input: {
       ? "**Requested targets:** _(selector rejected by workflow validation)_"
       : requestedTargets
         ? `**Requested targets:** \`${requestedTargets}\``
-        : "**Requested targets:** _(default — all supported)_",
+        : "**Requested targets:** _(no target selector)_",
     testIdsRejected
       ? "**Requested test IDs:** _(selector rejected by workflow validation)_"
       : requestedTestIdsCsv
         ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
-        : "**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_",
+        : "**Requested test IDs:** _(no test ID selector)_",
     `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
     "",
     "| Test | Result | Total wall clock time |",
     "|-----|--------|-----------------------|",
     ...rows,
   ];
-  if (!selectiveDispatch) {
-    const skippedJobHints = explicitOnlySkippedJobs
-      .map(
-        ({ job, target, reason }) =>
-          `\`${job}\` (${reason}; validate with \`jobs=${job}\` or \`targets=${target}\`)`,
-      )
-      .join(", ");
-    lines.push("", `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
-  }
   if (failed.length > 0) {
     const failedLinks = failed
       .map(([name, { jobUrl }]) => `[${name}](${jobUrl ?? runUrl})`)

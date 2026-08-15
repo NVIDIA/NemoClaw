@@ -11,9 +11,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
-import { createOpenshellCliHelpers } from "./openshell-cli";
+import { MANAGED_BOOTSTRAP_IDENTITY_ENV } from "./managed-bootstrap/adapter";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
+import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
   prepareSandboxCreateLaunch,
@@ -85,11 +86,28 @@ describe("buildSandboxRuntimeEnvArgs", () => {
       const envArgs = buildSandboxRuntimeEnvArgs({
         ...base,
         agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+        hermesApiPort: agentName === "hermes" ? 8642 : null,
       }).envArgs;
       expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
         "NEMOCLAW_SANDBOX_NAME=my-assistant",
       );
     }
+  });
+
+  it("injects the sandbox-owned Hermes API port", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      hermesApiPort: 8647,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+      sandboxName: "my-assistant",
+    }).envArgs;
+
+    expect(envArgs).toContain("NEMOCLAW_HERMES_API_PORT=8647");
   });
 
   it("omits NEMOCLAW_SANDBOX_NAME when no sandbox name is known", () => {
@@ -99,10 +117,119 @@ describe("buildSandboxRuntimeEnvArgs", () => {
       manageDashboard: true,
       getDashboardForwardPort: () => "19000",
       hermesDashboardState: disabledHermesDashboardState,
+      hermesApiPort: 8642,
       extraPlaceholderKeys: [],
       env: {} as NodeJS.ProcessEnv,
     }).envArgs;
     expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
+
+  it("forwards only the literal OpenClaw MCP shadow diagnostic opt-in", () => {
+    const base = {
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+    };
+    const openclaw = { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any;
+
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: openclaw,
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: " 1 " },
+      }).envArgs,
+    ).toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: openclaw,
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "true" },
+      }).envArgs.some((entry) => entry.startsWith("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=")),
+    ).toBe(false);
+    expect(
+      buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: loadAgent("hermes"),
+        env: { NEMOCLAW_MCP_SHADOW_DIAGNOSTICS: "1" },
+      }).envArgs,
+    ).not.toContain("NEMOCLAW_MCP_SHADOW_DIAGNOSTICS=1");
+  });
+
+  it.each([
+    ["1500", "1500"],
+    [" 3000 ", "3000"],
+    ["10000", "10000"],
+  ])("forwards the bounded OpenClaw tools/list timeout %s as %s", (input, expected) => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: input },
+    }).envArgs;
+
+    expect(envArgs).toContain(`NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=${expected}`);
+  });
+
+  it("forwards the tools/list timeout to the legacy null-agent OpenClaw path", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: null,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "3000" },
+    }).envArgs;
+
+    expect(envArgs).toContain("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS=3000");
+  });
+
+  it.each([
+    "1499",
+    "10001",
+    "3000.5",
+    "3s",
+    "+3000",
+    "03000",
+    "1e4",
+  ])("rejects the invalid OpenClaw tools/list timeout %s before sandbox creation", (value) => {
+    expect(() =>
+      buildSandboxRuntimeEnvArgs({
+        agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+        chatUiUrl: "",
+        manageDashboard: false,
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        extraPlaceholderKeys: [],
+        env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: value },
+      }),
+    ).toThrow(
+      "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS must be an integer from 1500 to 10000 milliseconds.",
+    );
+  });
+
+  it.each([
+    "hermes",
+    "langchain-deepagents-code",
+  ])("does not forward the OpenClaw tools/list timeout to %s", (agentName) => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "",
+      manageDashboard: false,
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: { NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS: "3000" },
+    }).envArgs;
+
+    expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS="))).toBe(
+      false,
+    );
   });
 });
 
@@ -123,6 +250,7 @@ describe("prepareSandboxCreateLaunch", () => {
       env: {},
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
+      hermesApiPort: 8642,
       hermesDashboardState: disabledHermesDashboardState,
       manageDashboard: false,
       openshellShellCommand: (args) => args.join(" "),
@@ -134,7 +262,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.intendedSandboxStartupCommand).toEqual([
       "env",
       ...result.envArgs,
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-start",
     ]);
     expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.sandboxStartupCommand).toEqual([
@@ -146,8 +274,37 @@ describe("prepareSandboxCreateLaunch", () => {
       request.profileFingerprint,
       "--bootstrap-identity",
       result.managedBootstrapIdentity,
+      "--",
     ]);
+    expect(result.createArgv).toEqual(
+      expect.arrayContaining([
+        "--env",
+        `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${result.managedBootstrapIdentity}`,
+      ]),
+    );
     expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+  });
+
+  it("rejects a caller-supplied managed bootstrap identity environment", () => {
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+    });
+
+    expect(() =>
+      prepareSandboxCreateLaunch({
+        agent: loadAgent("openclaw"),
+        chatUiUrl: "",
+        createArgs: ["--env", `${MANAGED_BOOTSTRAP_IDENTITY_ENV}=${"a".repeat(64)}`],
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        manageDashboard: false,
+        openshellShellCommand: (args) => args.join(" "),
+        managedStartupRootApplyRequest: request,
+      }),
+    ).toThrow(`must not override reserved ${MANAGED_BOOTSTRAP_IDENTITY_ENV}`);
   });
 
   it("builds the sandbox create command and runtime env envelope", () => {
@@ -190,7 +347,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=TELEGRAM_BOT_TOKEN_AGENT_A",
     ]);
     expect(result.sandboxEnv).toEqual({ HOME: "/home/user" });
-    expect(result.sandboxStartupCommand).toEqual(["env", ...result.envArgs, "nemoclaw-start"]);
+    expect(result.sandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "/usr/local/bin/nemoclaw-start",
+    ]);
     expect(openshellShellCommand).toHaveBeenCalledWith([
       "sandbox",
       "create",
@@ -296,7 +457,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.sandboxStartupCommand).toEqual([
       "env",
       "NEMOCLAW_OBSERVABILITY=0",
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-start",
     ]);
   });
 
@@ -398,7 +559,7 @@ describe("prepareSandboxCreateLaunch", () => {
         "--",
         "env",
         ...result.envArgs,
-        "nemoclaw-start",
+        "/usr/local/bin/nemoclaw-start",
       ]);
       expect(fs.existsSync(injectedFromPath)).toBe(false);
       expect(fs.existsSync(injectedUrlPath)).toBe(false);
@@ -458,6 +619,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "0",
       hermesDashboardState: disabledHermesDashboardState,
+      hermesApiPort: 8642,
       manageDashboard: false,
       openshellShellCommand: (args) => args.join(" "),
       sandboxName: "demo",
@@ -485,11 +647,44 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(buildImage).toHaveBeenCalledOnce();
   });
 
-  it("renders the original Dockerfile for Hermes after a local build failure", async () => {
+  it.each([
+    ["OpenClaw", null],
+    ["Hermes", { name: "hermes" }],
+  ])("fails closed for a generated %s image after a local BuildKit failure", async (_agentName, agent) => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+
+    await expect(
+      prepareSandboxCreateLaunchWithPrebuild({
+        agent: agent as any,
+        chatUiUrl: "",
+        createArgs: ["--from", dockerfile, "--name", "demo"],
+        env: {},
+        extraPlaceholderKeys: [],
+        getDashboardForwardPort: () => "0",
+        hermesDashboardState: disabledHermesDashboardState,
+        manageDashboard: false,
+        openshellShellCommand: (args) => args.join(" "),
+        sandboxName: "demo",
+        buildEnv: () => ({}),
+        prebuild: {
+          buildCtx,
+          buildId: "build-123",
+          dockerDriverGateway: true,
+          env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+          buildImage: async () => 1,
+          log: vi.fn(),
+          origin: "generated",
+        },
+      }),
+    ).rejects.toThrow("Local BuildKit build failed (exit 1)");
+  });
+
+  it("preserves the gateway builder for generated Deep Agents Code images", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const result = await prepareSandboxCreateLaunchWithPrebuild({
-      agent: { name: "hermes" } as any,
+      agent: { name: "langchain-deepagents-code" } as any,
       chatUiUrl: "",
       createArgs: ["--from", dockerfile, "--name", "demo"],
       env: {},
@@ -518,5 +713,42 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     });
     expect(result.createCommand).toContain(`sandbox create --from ${dockerfile} --name demo`);
     expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
+  });
+
+  it("preserves the rootless gateway path for a generated portable Hermes image", async () => {
+    const buildCtx = createTrustedBuildContext();
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: { name: "hermes" } as any,
+      chatUiUrl: "",
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesApiPort: 8642,
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx,
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: {
+          NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
+        },
+        buildImage: async () => 1,
+        log: vi.fn(),
+        origin: "generated",
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", dockerfile, "--name", "demo"],
+      imageRef: null,
+      imageId: null,
+    });
   });
 });

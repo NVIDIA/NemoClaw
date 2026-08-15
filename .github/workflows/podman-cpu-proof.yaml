@@ -1,0 +1,346 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Runtime / Podman CPU Proof
+
+run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} commit ${{ github.event.pull_request.head.sha }}"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/podman-cpu-proof.yaml"
+      - "src/lib/adapters/container-engine.ts"
+      - "src/lib/adapters/podman/**"
+      - "src/lib/onboard/docker-driver-gateway-*.ts"
+      - "src/lib/onboard/managed-bootstrap/podman-*.ts"
+      - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
+      - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
+      - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
+      - "src/lib/onboard/runtime-provider/podman*.ts"
+      - "scripts/install-openshell.sh"
+      - "test/e2e/live/podman-cpu-lifecycle-artifacts.ts"
+      - "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
+      - "test/e2e/live/podman-cpu-lifecycle-policy.yaml"
+      - "test/e2e/live/podman-cpu-lifecycle.test.ts"
+      - "test/e2e/registry/native-runtime-qualification.ts"
+      - "test/e2e/support/native-runtime-qualification.test.ts"
+      - "src/lib/onboard/experimental/portable-demo-lifecycle.test.ts"
+      - "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  podman-cpu-lifecycle:
+    name: Rootless Podman CPU lifecycle with Docker disabled
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/podman-cpu-proof
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_JOB: "1"
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+      E2E_TARGET_ID: podman-cpu-lifecycle
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.101"
+      PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install locked test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build shared sandbox-name contract
+        run: npm run build:policy-boundary
+
+      - name: Install pinned OpenShell runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -u GH_TOKEN -u GITHUB_TOKEN \
+            NEMOCLAW_NON_INTERACTIVE=1 \
+            bash scripts/install-openshell.sh
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+
+      - name: Install Podman 5 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes \
+            apparmor \
+            fuse-overlayfs \
+            passt \
+            slirp4netns \
+            uidmap \
+            "podman=$PODMAN_APT_VERSION"
+          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+          version="$(podman --version)"
+          test "$package_version" = "$PODMAN_APT_VERSION"
+          test "$version" = "podman version 5.7.0"
+          printf '### Podman runtime\n\n`%s` (`%s`)\n' "$version" "$package_version" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Apply Ubuntu pasta signal policy correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          pasta_profile="/etc/apparmor.d/usr.bin.pasta"
+          signal_rule='^[[:space:]]*signal[[:space:]]+\(receive\)[[:space:]]+peer=podman,[[:space:]]*$'
+          test -f "$pasta_profile"
+          test "$(grep -Fc 'include <abstractions/pasta>' "$pasta_profile")" -eq 1
+          if ! grep -Eq "$signal_rule" "$pasta_profile"; then
+            sudo sed -i \
+              '/^[[:space:]]*include <abstractions\/pasta>[[:space:]]*$/a\  signal (receive) peer=podman,' \
+              "$pasta_profile"
+          fi
+          test "$(grep -Ec "$signal_rule" "$pasta_profile")" -eq 1
+          sudo apparmor_parser -r "$pasta_profile"
+
+      - name: Install Docker invocation guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          guard_dir="$RUNNER_TEMP/nemoclaw-podman-cpu-guard"
+          guard_log="$guard_dir/docker-invocations.log"
+          install -d -m 0700 "$guard_dir/bin"
+          : >"$guard_log"
+          cat >"$guard_dir/bin/docker" <<'DOCKER_GUARD'
+          #!/usr/bin/env bash
+          printf '%s\n' "$*" >>"${E2E_DOCKER_GUARD_LOG:?}"
+          printf 'Docker CLI use is forbidden in the native Podman CPU proof.\n' >&2
+          exit 97
+          DOCKER_GUARD
+          chmod 0700 "$guard_dir/bin/docker"
+          {
+            printf 'DOCKER_API_VERSION=\n'
+            printf 'DOCKER_CERT_PATH=\n'
+            printf 'DOCKER_CONFIG=\n'
+            printf 'DOCKER_CONTEXT=\n'
+            printf 'DOCKER_HOST=\n'
+            printf 'DOCKER_TLS_VERIFY=\n'
+            printf 'E2E_DOCKER_GUARD_BIN=%s\n' "$guard_dir/bin/docker"
+            printf 'E2E_DOCKER_GUARD_LOG=%s\n' "$guard_log"
+            printf 'PATH=%s:%s\n' "$guard_dir/bin" "$PATH"
+          } >>"$GITHUB_ENV"
+
+      - name: Disable Docker daemon and socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          sudo systemctl stop docker.service docker.socket || true
+          sudo systemctl mask --runtime docker.service docker.socket || true
+          sudo pkill -TERM -x dockerd 2>/dev/null || true
+          for attempt in $(seq 1 20); do
+            if ! pgrep -x dockerd >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if pgrep -x dockerd >/dev/null; then
+            echo "::error::dockerd remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          sudo rm -f /var/run/docker.sock
+          if systemctl is-active --quiet docker.service; then
+            echo "::error::docker.service remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if systemctl is-active --quiet docker.socket; then
+            echo "::error::docker.socket remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket remained available after Docker shutdown" >&2
+            exit 1
+          fi
+          docker_candidate="$(command -v docker || true)"
+          if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            '{
+              schemaVersion: 1,
+              dockerServiceActive: false,
+              dockerSocketActive: false,
+              dockerDaemonActive: false,
+              dockerSocketPresent: false,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-boundary.json"
+          source_revision="$(git rev-parse HEAD)"
+          test "$source_revision" = "$E2E_SOURCE_REVISION"
+          jq -n \
+            --arg sourceRevision "$source_revision" \
+            '{
+              schemaVersion: 1,
+              claim: "candidate-execution-prerequisites",
+              candidateId: "podman-cpu-lifecycle",
+              providerId: "podman",
+              sourceRevision: $sourceRevision,
+              executionPath: "runtime-provider-bundle",
+              architecture: "amd64",
+              acceleration: "cpu",
+              agents: ["openclaw", "hermes", "langchain-deepagents-code"],
+              socketFree: true,
+              dockerUnavailable: {
+                service: true,
+                socket: true,
+                daemon: true,
+                invocationGuard: true
+              }
+            }' >"$E2E_ARTIFACT_DIR/candidate-execution-prerequisites.json"
+
+      - name: Start exact rootless Podman API socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          uid="$(id -u)"
+          runtime_dir="/run/user/$uid"
+          socket_path="$runtime_dir/podman/podman.sock"
+          if [ ! -d "$runtime_dir" ]; then
+            sudo install -d -o "$uid" -g "$(id -g)" -m 0700 "$runtime_dir"
+          fi
+          install -d -m 0700 "$runtime_dir" "$runtime_dir/podman" "$E2E_ARTIFACT_DIR"
+          containers_conf="$RUNNER_TEMP/nemoclaw-podman-cpu-containers.conf"
+          cat >"$containers_conf" <<'CONTAINERS_CONF'
+          [network]
+          default_rootless_network_cmd = "pasta"
+          firewall_driver = "iptables"
+
+          [engine]
+          env = ["NETAVARK_FW=iptables"]
+          CONTAINERS_CONF
+          chmod 0600 "$containers_conf"
+          export CONTAINERS_CONF="$containers_conf"
+          export NETAVARK_FW=iptables
+          service_log="$E2E_ARTIFACT_DIR/podman-system-service.log"
+          podman system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
+          service_pid="$!"
+          for attempt in $(seq 1 30); do
+            if podman --url "unix://$socket_path" info --format json \
+              >"$E2E_ARTIFACT_DIR/podman-info.json" 2>>"$service_log"; then
+              break
+            fi
+            test "$attempt" -lt 30
+            sleep 1
+          done
+          test -S "$socket_path"
+          jq -e '
+            (.host.security.rootless // .Host.Security.Rootless) == true
+            and ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2"
+            and ((.host.rootlessNetworkCmd // .Host.RootlessNetworkCmd) | ascii_downcase) == "pasta"
+          ' "$E2E_ARTIFACT_DIR/podman-info.json" >/dev/null
+          {
+            printf 'CONTAINERS_CONF=%s\n' "$containers_conf"
+            printf 'E2E_PODMAN_SERVICE_PID=%s\n' "$service_pid"
+            printf 'E2E_PODMAN_SOCKET=%s\n' "$socket_path"
+            printf 'NETAVARK_FW=iptables\n'
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+          } >>"$GITHUB_ENV"
+
+      - name: Prove pinned OpenShell activation and registered-agent Podman CPU lifecycle
+        run: npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts
+
+      - name: Verify Docker stayed unavailable
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$E2E_DOCKER_GUARD_LOG"
+          test ! -s "$E2E_DOCKER_GUARD_LOG"
+          test "$(command -v docker)" = "$E2E_DOCKER_GUARD_BIN"
+          ! systemctl is-active --quiet docker.service
+          ! systemctl is-active --quiet docker.socket
+          test ! -S /var/run/docker.sock
+
+      - name: Capture failed Podman lifecycle diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          endpoint="unix://${E2E_PODMAN_SOCKET:-/run/user/$(id -u)/podman/podman.sock}"
+          diagnostic_dir="$E2E_ARTIFACT_DIR/failure-diagnostics"
+          install -d -m 0700 "$diagnostic_dir"
+          summary_rows="$(mktemp "$RUNNER_TEMP/podman-managed-summary.XXXXXX")"
+          trap 'rm -f "$summary_rows"' EXIT
+          mapfile -t managed_ids < <(
+            podman --url "$endpoint" ps --all --quiet --no-trunc \
+              --filter label=openshell.managed=true 2>/dev/null || true
+          )
+          for container_id in "${managed_ids[@]}"; do
+            podman --url "$endpoint" inspect "$container_id" 2>/dev/null \
+              | npx --no-install tsx test/e2e/live/podman-cpu-lifecycle-artifacts.ts \
+                2>/dev/null >>"$summary_rows" || true
+          done
+          jq -s '{schemaVersion: 1, containers: .}' "$summary_rows" \
+            >"$diagnostic_dir/managed-container-summary.json"
+          rm -f "$summary_rows"
+          trap - EXIT
+          podman --url "$endpoint" network inspect openshell-docker \
+            >"$diagnostic_dir/openshell-docker-network.json" 2>&1 || true
+          podman --url "$endpoint" volume ls --format '{{.Name}}' \
+            >"$diagnostic_dir/podman-volumes.txt" 2>&1 || true
+          podman --url "$endpoint" secret ls --format '{{.Name}}' \
+            >"$diagnostic_dir/podman-secrets.txt" 2>&1 || true
+
+      - name: Clean up rootless Podman runtime
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint="unix://${E2E_PODMAN_SOCKET:-/run/user/$(id -u)/podman/podman.sock}"
+          mapfile -t managed_ids < <(
+            podman --url "$endpoint" ps --all --quiet --no-trunc \
+              --filter label=openshell.managed=true 2>/dev/null || true
+          )
+          if [ "${#managed_ids[@]}" -gt 0 ]; then
+            podman --url "$endpoint" rm --force "${managed_ids[@]}" || true
+          fi
+          while IFS= read -r volume_name; do
+            case "$volume_name" in
+              openshell-*-workspace)
+                podman --url "$endpoint" volume rm --force "$volume_name" || true
+                ;;
+            esac
+          done < <(podman --url "$endpoint" volume ls --format '{{.Name}}' 2>/dev/null || true)
+          while IFS= read -r secret_name; do
+            case "$secret_name" in
+              openshell-*-token | openshell-*-proxy)
+                podman --url "$endpoint" secret rm "$secret_name" || true
+                ;;
+            esac
+          done < <(podman --url "$endpoint" secret ls --format '{{.Name}}' 2>/dev/null || true)
+          podman --url "$endpoint" network rm openshell-docker 2>/dev/null || true
+          service_pid="${E2E_PODMAN_SERVICE_PID:-}"
+          if [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]; then
+            kill "$service_pid" 2>/dev/null || true
+            wait "$service_pid" 2>/dev/null || true
+          fi
+
+      - name: Upload Podman CPU proof artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: podman-cpu-proof-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: e2e-artifacts/podman-cpu-proof
+          if-no-files-found: error
+          retention-days: 7

@@ -247,7 +247,7 @@ lock_config_after_write() {
 # Kept (each load-bearing — do not drop without an entrypoint refactor):
 #   cap_chown, cap_fowner — needed to chown/chmod files we did not create
 #     after dropping cap_dac_override (see #2659).
-#   cap_setuid, cap_setgid — required by gosu to step down from root into
+#   cap_setuid, cap_setgid — required by setpriv to step down from root into
 #     the sandbox/gateway UIDs during entrypoint privilege separation.
 #   cap_kill — sandbox user signals gateway-user processes via the UID
 #     separation enforced by the entrypoint (see test 13 in
@@ -424,81 +424,85 @@ report_residual_capabilities() {
 }
 
 # ── Privilege step-down (issue #3280 follow-up) ──────────────────
-# Replaces direct `gosu <user>` invocations with `setpriv` so the load-
-# bearing caps (cap_setuid, cap_setgid, cap_fowner, cap_chown, cap_kill)
-# are stripped from the bounding set *atomically with* the setuid
-# transition. gosu cannot do this: dropping those caps before gosu
-# breaks its setuid() syscall, and after gosu we are non-root and have
-# already lost CAP_SETPCAP. setpriv performs reuid + bounding-set drop
-# in a single process, in the correct order, before exec.
+# Uses `setpriv` for every root-to-user transition. When CAP_SETPCAP is
+# available, setpriv also strips the load-bearing caps (cap_setuid,
+# cap_setgid, cap_fowner, cap_chown, cap_kill) from the bounding set atomically
+# with the setuid transition. setpriv performs both operations in the correct
+# order before exec.
 #
 # Two prefix arrays are populated at source time:
 #   STEP_DOWN_PREFIX_SANDBOX  — step down to the 'sandbox' user
 #   STEP_DOWN_PREFIX_GATEWAY  — step down to the 'gateway' user
 #
-# Callers use them like the old `gosu <user>` prefix:
+# Callers use them as a command prefix:
 #   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 #   "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "..."
 #   nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" gateway run --port "$port" &
 #
-# Fallback: if setpriv is missing or CAP_SETPCAP isn't available, the
-# arrays fall back to plain `gosu <user>` and a warning is logged so the
-# residual bounding-set caps surface in the entrypoint log (matches the
-# residual-surface design of report_residual_capabilities).
+# If CAP_SETPCAP is unavailable, setpriv still changes identity and initializes
+# supplementary groups, but cannot remove the remaining load-bearing caps from
+# the bounding set. That case is logged consistently with
+# report_residual_capabilities. If setpriv itself is unavailable, the prefix
+# invokes a fail-closed helper instead of risking execution as root.
 # File-scope array declarations: bash 3.2 (macOS) does not accept `declare -g`,
 # but plain assignment at file scope is global by default. Inside
 # init_step_down_prefixes() we re-assign these without `local`, which targets
 # the globals in both bash 3.2 and 4+.
 #
-# Initialize to the gosu fallback (NOT empty) so callers cannot accidentally
+# Initialize to the fail-closed helper (NOT empty) so callers cannot accidentally
 # `exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"` with an unset
 # array — which would expand to nothing and run NEMOCLAW_CMD as root (privesc
-# regression). init_step_down_prefixes() below upgrades to setpriv when
-# CAP_SETPCAP is available; otherwise these stay at the gosu defaults.
+# regression).
 # shellcheck disable=SC2034  # consumed by scripts/nemoclaw-start.sh and agents/hermes/start.sh
-STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)
+STEP_DOWN_PREFIX_SANDBOX=(
+  /bin/sh -c 'echo "[SECURITY] setpriv unavailable: refusing to execute a root privilege transition" >&2; exit 1' --
+)
 # shellcheck disable=SC2034  # consumed by scripts/nemoclaw-start.sh and agents/hermes/start.sh
-STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)
+STEP_DOWN_PREFIX_GATEWAY=(
+  /bin/sh -c 'echo "[SECURITY] setpriv unavailable: refusing to execute a root privilege transition" >&2; exit 1' --
+)
 
 init_step_down_prefixes() {
-  if command -v setpriv >/dev/null 2>&1 \
-    && command -v capsh >/dev/null 2>&1 \
-    && capsh --has-p=cap_setpcap 2>/dev/null; then
-    # setpriv cap names are unprefixed (per `setpriv --list`); capsh uses
-    # cap_* names. Keep them in sync but format-distinct.
-    #
-    # --init-groups (NOT --clear-groups): gateway is a member of the sandbox
-    # group via `usermod -aG sandbox gateway` in Dockerfile.base so it can
-    # write the chmod 660 /sandbox/.openclaw/openclaw.json (setgid'd
-    # config dir, see #2681). --clear-groups would strip that membership
-    # and break mutateConfigFile / control-UI config edits with EACCES.
-    # --init-groups matches gosu's setgroups+initgroups behavior and
-    # restores exactly the groups defined in /etc/group for the target user.
-    #
-    # NOTE (#4538): to verify the group-write contract as the gateway UID, use
-    # the image's installed step-down mechanism — `setpriv --reuid=gateway
-    # --regid=gateway --init-groups` (or `gosu gateway`). Do NOT probe with
-    # `su -s /bin/sh gateway ...`: su does not run init_groups the same way and
-    # will not reflect the gateway's sandbox-group membership, so a group-write
-    # probe can spuriously EACCES even though the mutable contract is intact.
-    local drop="-setuid,-setgid,-fowner,-chown,-kill"
+  local setpriv_path
+  if ! setpriv_path="$(command -v setpriv 2>/dev/null)" || [ -z "$setpriv_path" ]; then
+    echo "[SECURITY WARNING] setpriv unavailable: root privilege transitions will fail closed" >&2
     # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
     STEP_DOWN_PREFIX_SANDBOX=(
-      setpriv "--reuid=sandbox" "--regid=sandbox" --init-groups
-      "--bounding-set=$drop" --
+      /bin/sh -c 'echo "[SECURITY] setpriv unavailable: refusing to execute a root privilege transition" >&2; exit 1' --
     )
     # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
     STEP_DOWN_PREFIX_GATEWAY=(
-      setpriv "--reuid=gateway" "--regid=gateway" --init-groups
-      "--bounding-set=$drop" --
+      /bin/sh -c 'echo "[SECURITY] setpriv unavailable: refusing to execute a root privilege transition" >&2; exit 1' --
     )
-  else
-    echo "[SECURITY WARNING] setpriv or CAP_SETPCAP unavailable — falling back to gosu (bounding set will retain cap_setuid/setgid/fowner/chown/kill — issue #3280)" >&2
-    # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
-    STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)
-    # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
-    STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)
+    return 0
   fi
+
+  # --init-groups (NOT --clear-groups): gateway is a member of the sandbox
+  # group via `usermod -aG sandbox gateway` in Dockerfile.base so it can write
+  # the chmod 660 /sandbox/.openclaw/openclaw.json. --clear-groups would strip
+  # that membership and break config edits with EACCES.
+  local -a sandbox_prefix=(
+    "$setpriv_path" "--reuid=sandbox" "--regid=sandbox" --init-groups
+  )
+  local -a gateway_prefix=(
+    "$setpriv_path" "--reuid=gateway" "--regid=gateway" --init-groups
+  )
+
+  if command -v capsh >/dev/null 2>&1 && capsh --has-p=cap_setpcap 2>/dev/null; then
+    # setpriv cap names are unprefixed (per `setpriv --list`); capsh uses cap_*.
+    local drop="-setuid,-setgid,-fowner,-chown,-kill"
+    sandbox_prefix+=("--bounding-set=$drop")
+    gateway_prefix+=("--bounding-set=$drop")
+  else
+    echo "[SECURITY WARNING] CAP_SETPCAP unavailable: setpriv will change identity without dropping the remaining privilege-separation capabilities from the bounding set" >&2
+  fi
+
+  sandbox_prefix+=(--)
+  gateway_prefix+=(--)
+  # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
+  STEP_DOWN_PREFIX_SANDBOX=("${sandbox_prefix[@]}")
+  # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
+  STEP_DOWN_PREFIX_GATEWAY=("${gateway_prefix[@]}")
 }
 init_step_down_prefixes
 

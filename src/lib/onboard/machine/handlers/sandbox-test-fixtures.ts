@@ -1,12 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
+import type { CheckpointSandboxRecreateTransaction } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
+import {
+  advanceSandboxRecreateTransaction,
+  fingerprintSandboxRecreateValue,
+  recordSandboxRecreateTargetCreated,
+  type SandboxRecreateObservation,
+} from "../../sandbox-recreate-transaction";
 import type { SandboxStateOptions } from "./sandbox";
 
 export function makeMinimalPlan(
@@ -77,6 +86,64 @@ export async function withEnv<T>(key: string, value: string, run: () => Promise<
   }
 }
 
+type UpdateSession = (mutator: (value: Session) => Session | void) => Session;
+
+export function bindJournaledRecreate(
+  session: Session,
+  sandboxName = "saved",
+  agent = "openclaw",
+  updateSession: UpdateSession = (mutator) => mutator(session) ?? session,
+) {
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: sandboxName, agent }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  let observation: SandboxRecreateObservation = {
+    state: "ready",
+    liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
+  };
+  return {
+    observe: () => observation,
+    completeCreate: vi.fn(async (...args: unknown[]) => {
+      const transaction = updateSession((current) => current).checkpoint?.sandboxRecreate;
+      expect(transaction).toBeDefined();
+      const ownedTransaction = transaction as CheckpointSandboxRecreateTransaction;
+      const createIntent = args.at(-1) as
+        | { recreate?: boolean; recreateTransaction?: { id?: string } }
+        | undefined;
+      expect(createIntent?.recreate).toBe(true);
+      expect(createIntent?.recreateTransaction?.id).toBe(ownedTransaction.id);
+      for (const phase of ["deleting", "deleted", "creating"] as const) {
+        updateSession((current) => {
+          advanceSandboxRecreateTransaction(current, ownedTransaction.id, phase);
+          return current;
+        });
+      }
+      observation = {
+        state: "ready",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-target-id"),
+      };
+      updateSession((current) => {
+        recordSandboxRecreateTargetCreated(current, ownedTransaction.id, observation);
+        return current;
+      });
+      return sandboxName;
+    }),
+  };
+}
+
 type Gpu = { type: string } | null;
 type Agent = { displayName?: string; name?: string } | null;
 type WebSearchConfig = { fetchEnabled: true; provider?: "brave" | "tavily" };
@@ -109,7 +176,6 @@ export function createDeps(
     clearPlanEnv: vi.fn(),
     removeSandbox: vi.fn((): SandboxRemovalReceipt | null => null),
     restoreSandboxRegistryEntryIfMissing: vi.fn(() => false),
-    repairSandbox: vi.fn(),
     validateBrave: vi.fn(async () => "brave-key"),
     isBackToSelection: vi.fn(() => false),
     configureWebSearch: vi.fn(async () => null as WebSearchConfig | null),
@@ -230,7 +296,6 @@ export function createDeps(
         left.length === right.length && left.every((value) => right.includes(value)),
       removeSandboxFromRegistry: calls.removeSandbox,
       restoreSandboxRegistryEntryIfMissing: calls.restoreSandboxRegistryEntryIfMissing,
-      repairRecordedSandbox: calls.repairSandbox,
       ensureValidatedWebSearchCredential: calls.validateBrave,
       isBackToSelection: calls.isBackToSelection,
       configureWebSearch: calls.configureWebSearch,
@@ -241,8 +306,8 @@ export function createDeps(
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
       clearPlanEnv: calls.clearPlanEnv,
-      getRegistrySandboxMessagingPlan: () => null,
-      providerMatchesGatewayCredential: () => false,
+      getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
+      providerMatchesGatewayCredential: () => true,
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
@@ -300,6 +365,7 @@ export function baseOptions(
     model: "model",
     provider: "provider",
     endpointUrl: null,
+    compatibleEndpointReasoning: null,
     credentialEnv: null,
     nimContainer: null,
     webSearchConfig: null,

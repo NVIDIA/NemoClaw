@@ -11,22 +11,24 @@ import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImagePlatform,
-  type ShippedManagedImageAgent,
 } from "./managed-image/contract";
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { ManagedWorkloadAuthorityError, readManagedWorkloadAuthority } from "./workload/authority";
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+type ManagedWorkloadReceipt = Extract<SandboxWorkloadReceipt, { readonly kind: "managed-image" }>;
 
 function managedReceipt(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform,
-  profileAgent: ShippedManagedImageAgent = agent,
-): Extract<SandboxWorkloadReceipt, { kind: "managed-image" }> {
+  profileAgent: ManagedImageAgent = agent,
+): ManagedWorkloadReceipt {
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile(profileAgent));
-  const digest = agent === "openclaw" ? "a" : agent === "hermes" ? "b" : "c";
+  const digest =
+    agent === "openclaw" ? "a" : agent === "hermes" ? "b" : agent === "pi" ? "e" : "c";
   return {
     schemaVersion: 1,
     kind: "managed-image",
@@ -45,9 +47,9 @@ function managedReceipt(
 }
 
 function managedEntry(
-  agent: ShippedManagedImageAgent,
+  agent: ManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
-  receipt: SandboxWorkloadReceipt = managedReceipt(agent, platform),
+  receipt: ManagedWorkloadReceipt = managedReceipt(agent, platform),
 ): SandboxEntry {
   return {
     name: `authority-${agent}`,
@@ -107,7 +109,7 @@ describe("managed workload authority", () => {
     const { platform: _platform, ...withoutPlatform } = managedReceipt("openclaw", "linux/amd64");
     expect(() =>
       readManagedWorkloadAuthority(
-        managedEntry("openclaw", "linux/amd64", withoutPlatform as SandboxWorkloadReceipt),
+        managedEntry("openclaw", "linux/amd64", withoutPlatform as ManagedWorkloadReceipt),
       ),
     ).toThrow(/does not record an explicit OCI platform/u);
   });
@@ -134,7 +136,7 @@ describe("managed workload authority", () => {
         managedEntry("openclaw", "linux/amd64", {
           ...managedReceipt("openclaw", "linux/amd64"),
           platform: "linux/s390x",
-        } as unknown as SandboxWorkloadReceipt),
+        } as unknown as ManagedWorkloadReceipt),
       ),
     ).toThrow(ManagedWorkloadAuthorityError);
   });
@@ -155,5 +157,36 @@ describe("managed workload authority", () => {
         fromDockerfile: "/tmp/Dockerfile",
       }),
     ).toThrow(/cannot be combined with a custom Dockerfile/u);
+  });
+
+  it.each(PLATFORMS)(
+    "restores an accepted candidate image identity from its durable receipt on %s (#7927)",
+    (platform) => {
+      const authority = readManagedWorkloadAuthority(managedEntry("pi", platform));
+
+      expect(authority).toMatchObject({
+        agent: "pi",
+        contract: { agent: "pi", platform, image: MANAGED_IMAGE_REPOSITORIES.pi },
+        profile: { agent: "pi" },
+      });
+    },
+  );
+
+  it("reads a candidate authority without consulting the candidate selection gate (#7927)", () => {
+    expect(readManagedWorkloadAuthority(managedEntry("pi"))?.agent).toBe("pi");
+  });
+
+  it("rejects a candidate receipt whose profile targets another agent (#7927)", () => {
+    expect(() =>
+      readManagedWorkloadAuthority(
+        managedEntry("pi", "linux/amd64", managedReceipt("pi", "linux/amd64", "hermes")),
+      ),
+    ).toThrow(ManagedWorkloadAuthorityError);
+  });
+
+  it("still rejects an agent outside the managed image set (#7927)", () => {
+    expect(() =>
+      readManagedWorkloadAuthority({ ...managedEntry("pi"), agent: "not-an-agent" }),
+    ).toThrow(/is not a managed-image agent/u);
   });
 });

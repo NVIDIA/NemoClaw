@@ -26,6 +26,9 @@ _MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.nemoclaw-mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
+_UPSTREAM_PROVIDER_FILE = Path(
+    "/usr/local/share/nemoclaw/dcode-upstream-provider"
+)
 _MANAGED_PROXY_HOST_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-proxy-host"
 )
@@ -155,28 +158,13 @@ _MCP_BLOCKED_ALIASES = {
     "host.docker.internal",
     "host.containers.internal",
 }
-_MCP_RESERVED_NAMES = {"localhost", "local", "internal", "metadata"}
-_MCP_BLOCKED_IPV4_NETWORKS = tuple(
-    ipaddress.ip_network(network)
-    for network in (
-        "0.0.0.0/8",
+_MCP_ROUTED_PRIVATE_IPV4_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
         "10.0.0.0/8",
         "100.64.0.0/10",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
         "172.16.0.0/12",
-        "192.0.0.0/24",
-        "192.0.2.0/24",
-        "192.31.196.0/24",
-        "192.52.193.0/24",
-        "192.88.99.0/24",
         "192.168.0.0/16",
-        "192.175.48.0/24",
-        "198.18.0.0/15",
-        "198.51.100.0/24",
-        "203.0.113.0/24",
-        "224.0.0.0/4",
-        "240.0.0.0/4",
     )
 )
 _MANAGED_MCP_FD: int | None = None
@@ -366,13 +354,11 @@ def _validate_managed_mcp_hostname(hostname: str) -> None:
         hostname != hostname.lower()
         or hostname.endswith(".")
         or hostname in _MCP_BLOCKED_ALIASES
-        or hostname in _MCP_RESERVED_NAMES
-        or any(
-            hostname.endswith(f".{reserved}")
-            for reserved in _MCP_RESERVED_NAMES
-        )
     ):
         raise RuntimeError("managed MCP server URL hostname is invalid")
+    # Host preflight owns destination trust and binds every accepted endpoint to
+    # exact OpenShell address pins. This runtime revalidates canonical syntax and
+    # rejects IPv4 literals outside public or routed-private ranges.
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
@@ -383,12 +369,13 @@ def _validate_managed_mcp_hostname(hostname: str) -> None:
         ):
             raise RuntimeError("managed MCP server URL hostname is invalid")
         return
-    if (
-        address.version != 4
-        or not address.is_global
-        or any(address in network for network in _MCP_BLOCKED_IPV4_NETWORKS)
+    if address.version != 4:
+        raise RuntimeError("managed MCP server URL does not support IPv6 literals")
+    if not (
+        (address.is_global and not address.is_multicast)
+        or any(address in network for network in _MCP_ROUTED_PRIVATE_IPV4_NETWORKS)
     ):
-        raise RuntimeError("managed MCP server URL address is not public IPv4")
+        raise RuntimeError("managed MCP server URL address is not an admitted destination")
 
 
 def _validate_managed_mcp_url(value: object) -> str:
@@ -1131,21 +1118,21 @@ def managed_fetch_proxy_url() -> str | None:
     return value
 
 
-def _read_managed_proxy_value(path: Path, label: str) -> str:
-    """Read one immutable proxy component from the managed image."""
+def _read_managed_file_value(path: Path, label: str) -> str:
+    """Read one root-owned, read-only value from the managed image."""
     if not path.is_file() or path.is_symlink():
-        raise RuntimeError(f"managed proxy {label} file is missing or unsafe")
+        raise RuntimeError(f"managed {label} file is missing or unsafe")
     try:
         metadata = path.stat()
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RuntimeError(f"managed proxy {label} file is unreadable") from exc
+        raise RuntimeError(f"managed {label} file is unreadable") from exc
     if (
         metadata.st_uid != _MANAGED_FILE_OWNER_UID
         or stat.S_IMODE(metadata.st_mode) != 0o444
     ):
         raise RuntimeError(
-            f"managed proxy {label} file has unsafe ownership or mode"
+            f"managed {label} file has unsafe ownership or mode"
         )
     value = raw.rstrip("\n")
     if (
@@ -1155,14 +1142,14 @@ def _read_managed_proxy_value(path: Path, label: str) -> str:
         or value != value.strip()
         or any(ord(character) < 32 for character in value)
     ):
-        raise RuntimeError(f"managed proxy {label} file has invalid contents")
+        raise RuntimeError(f"managed {label} file has invalid contents")
     return value
 
 
 def _managed_fetch_proxy_url_from_files() -> str:
     """Derive the trusted proxy URL independently from root-owned files."""
-    host = _read_managed_proxy_value(_MANAGED_PROXY_HOST_FILE, "host")
-    port = _read_managed_proxy_value(_MANAGED_PROXY_PORT_FILE, "port")
+    host = _read_managed_file_value(_MANAGED_PROXY_HOST_FILE, "proxy host")
+    port = _read_managed_file_value(_MANAGED_PROXY_PORT_FILE, "proxy port")
     if _MANAGED_PROXY_HOST.fullmatch(host) is None:
         raise RuntimeError("managed proxy host file has invalid contents")
     if (
@@ -1171,6 +1158,16 @@ def _managed_fetch_proxy_url_from_files() -> str:
     ):
         raise RuntimeError("managed proxy port file has invalid contents")
     return f"http://{host}:{port}"
+
+
+def _managed_upstream_provider() -> str:
+    """Return the root-owned upstream provider."""
+    value = _read_managed_file_value(
+        _UPSTREAM_PROVIDER_FILE, "upstream provider"
+    )
+    if _DISPLAY_PROVIDER_NAME.fullmatch(value) is None:
+        raise RuntimeError("managed upstream provider file has invalid contents")
+    return value
 
 
 def _managed_fetch_ca_bundle() -> tuple[int, str]:
@@ -1488,6 +1485,7 @@ def assert_safe_runtime() -> None:
     """Reject unmanaged runtime credentials before dcode bootstraps settings."""
     _assert_safe_environment()
     _assert_safe_auth_state()
+    os.environ[_UPSTREAM_PROVIDER_ENV] = _managed_upstream_provider()
     managed_fetch_proxy_url()
     base_url = managed_inference_base_url()
     os.environ["OPENAI_BASE_URL"] = base_url

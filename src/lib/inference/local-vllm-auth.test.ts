@@ -14,9 +14,33 @@ interface ManagedBaseUrlOverrides {
 const lifecycle = vi.hoisted(() => ({
   baseUrl: vi.fn<(overrides?: ManagedBaseUrlOverrides) => string | null>(),
 }));
+const managedClusterRecovery = vi.hoisted(() => ({
+  endpoint: vi.fn(),
+}));
+const hostLocalRecovery = vi.hoisted(() => ({
+  endpoint: vi.fn(),
+}));
+const managedBridge = vi.hoisted(() => ({
+  host: vi.fn(() => "172.18.0.1"),
+}));
+const managedKey = vi.hoisted(() => ({
+  load: vi.fn(),
+}));
 
 vi.mock("./vllm-station-cluster-lifecycle", () => ({
   getDualStationManagedVllmBaseUrl: lifecycle.baseUrl,
+}));
+vi.mock("./serving/managed-cluster-runtime-receipt", () => ({
+  recoverInstalledManagedClusterVllmEndpoint: managedClusterRecovery.endpoint,
+}));
+vi.mock("./serving/vllm-host-local-lifecycle", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./serving/vllm-host-local-lifecycle")>()),
+  recoverHostLocalManagedVllmEndpoint: hostLocalRecovery.endpoint,
+  resolveManagedVllmBridgeHost: managedBridge.host,
+}));
+vi.mock("./vllm-api-key", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vllm-api-key")>()),
+  loadManagedVllmApiKey: managedKey.load,
 }));
 
 import {
@@ -25,8 +49,8 @@ import {
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getLocalProviderHealthEndpoint,
-  getManagedDualStationVllmProviderBinding,
-  getManagedDualStationVllmProviderState,
+  getManagedVllmProviderBinding,
+  getManagedVllmProviderState,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   probeLocalProviderHealth,
   probeVllmModels,
@@ -78,8 +102,26 @@ function productionManagedBaseUrlResolver(
     });
 }
 
+function hostLocalDiagnosticCapture(argv: readonly string[]): string {
+  return argv[0] === "curl"
+    ? "200"
+    : argv.at(-1) === "/etc/hosts"
+      ? "172.18.0.1\thost.openshell.internal"
+      : argv.includes("-o")
+        ? "503"
+        : "";
+}
+
 beforeEach(() => {
   vi.stubEnv(LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV, undefined);
+  managedClusterRecovery.endpoint.mockReset();
+  managedClusterRecovery.endpoint.mockReturnValue(null);
+  hostLocalRecovery.endpoint.mockReset();
+  hostLocalRecovery.endpoint.mockReturnValue(null);
+  managedBridge.host.mockReset();
+  managedBridge.host.mockReturnValue("172.18.0.1");
+  managedKey.load.mockReset();
+  managedKey.load.mockReturnValue(API_KEY);
   lifecycle.baseUrl.mockReset();
   lifecycle.baseUrl.mockImplementation(
     (overrides) => MANAGED_BASE_URL_BY_API_KEY.get(overrides?.loadApiKey?.()) ?? null,
@@ -88,19 +130,87 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("managed dual-Station vLLM authentication", () => {
+describe("managed vLLM authentication", () => {
   it("keeps an explicit sandbox host override ahead of managed endpoint recovery", () => {
     const loadApiKeyImpl = vi.fn(() => API_KEY);
     expect(getLocalProviderBaseUrl("vllm-local", { hostUrl: "http://explicit-host" })).toBe(
       "http://explicit-host:8000/v1",
     );
     expect(
-      getManagedDualStationVllmProviderBinding({
+      getManagedVllmProviderBinding({
         hostUrl: "http://explicit-host",
         loadApiKeyImpl,
       }),
     ).toBeNull();
     expect(loadApiKeyImpl).not.toHaveBeenCalled();
+    expect(managedClusterRecovery.endpoint).not.toHaveBeenCalled();
+  });
+
+  it("recovers a receipt-owned managed cluster endpoint before checking Station state", () => {
+    const events: string[] = [];
+    const recoverManagedClusterVllmEndpointImpl = vi.fn(() => {
+      events.push("managed-cluster");
+      return { baseUrl: BASE_URL, apiKey: API_KEY };
+    });
+    const getManagedBaseUrlImpl = vi.fn(() => {
+      events.push("station");
+      return null;
+    });
+
+    expect(
+      getManagedVllmProviderBinding({
+        getManagedBaseUrlImpl,
+        recoverManagedClusterVllmEndpointImpl,
+      }),
+    ).toEqual({ baseUrl: `${BASE_URL}/v1`, apiKey: API_KEY });
+    expect(events).toEqual(["managed-cluster", "station"]);
+  });
+
+  it("does not fall through to Station when managed cluster recovery is unsafe", () => {
+    const getManagedBaseUrlImpl = vi.fn(() => BASE_URL);
+
+    expect(() =>
+      getManagedVllmProviderBinding({
+        getManagedBaseUrlImpl,
+        recoverManagedClusterVllmEndpointImpl: () => {
+          throw new Error("managed cluster receipt identity changed");
+        },
+      }),
+    ).toThrow("managed cluster receipt identity changed");
+    expect(getManagedBaseUrlImpl).not.toHaveBeenCalled();
+  });
+
+  it("fails URL and validation boundaries closed when managed recovery is unsafe", () => {
+    managedClusterRecovery.endpoint.mockImplementation(() => {
+      throw new Error("managed cluster receipt identity changed");
+    });
+    const capture = vi.fn(() => "200");
+
+    expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderHealthEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderHealthCheck("vllm-local")).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
+    expect(validateLocalProvider("vllm-local", capture)).toEqual({
+      ok: false,
+      message:
+        "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
+    });
+    expect(capture).not.toHaveBeenCalled();
+    expect(lifecycle.baseUrl).not.toHaveBeenCalled();
+  });
+
+  it("stops when managed cluster and Station state are both present", () => {
+    expect(() =>
+      getManagedVllmProviderBinding({
+        loadApiKeyImpl: () => API_KEY,
+        recoverManagedClusterVllmEndpointImpl: () => ({ baseUrl: BASE_URL, apiKey: API_KEY }),
+        getManagedBaseUrlImpl: (overrides) => {
+          overrides?.onManagedHeadObserved?.();
+          overrides?.loadApiKey?.();
+          return BASE_URL;
+        },
+      }),
+    ).toThrow("Both managed cluster and Station vLLM state are present");
   });
 
   it("does not load a stale or unsafe key without a recovered managed endpoint", () => {
@@ -109,7 +219,7 @@ describe("managed dual-Station vLLM authentication", () => {
     });
     lifecycle.baseUrl.mockReturnValue(null);
 
-    expect(getManagedDualStationVllmProviderBinding({ loadApiKeyImpl })).toBeNull();
+    expect(getManagedVllmProviderBinding({ loadApiKeyImpl })).toBeNull();
     expect(loadApiKeyImpl).not.toHaveBeenCalled();
   });
 
@@ -146,15 +256,75 @@ describe("managed dual-Station vLLM authentication", () => {
   });
 
   it("returns one atomic provider endpoint and credential binding", () => {
-    expect(getManagedDualStationVllmProviderBinding({ loadApiKeyImpl: () => API_KEY })).toEqual({
+    expect(getManagedVllmProviderBinding({ loadApiKeyImpl: () => API_KEY })).toEqual({
       baseUrl: `${BASE_URL}/v1`,
       apiKey: API_KEY,
     });
-    expect(getManagedDualStationVllmProviderState({ loadApiKeyImpl: () => API_KEY })).toEqual({
+    expect(getManagedVllmProviderState({ loadApiKeyImpl: () => API_KEY })).toEqual({
       kind: "ready",
       baseUrl: `${BASE_URL}/v1`,
       apiKey: API_KEY,
     });
+  });
+
+  it("separates the host-local validation URL from the sandbox route (#8379)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    const recoverHostLocalManagedVllmEndpointImpl = vi.fn(() => ({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+    }));
+
+    expect(
+      getManagedVllmProviderBinding({
+        loadApiKeyImpl: () => API_KEY,
+        recoverHostLocalManagedVllmEndpointImpl,
+      }),
+    ).toEqual({
+      baseUrl: "http://host.openshell.internal:8000/v1",
+      validationBaseUrl: "http://127.0.0.1:8000/v1",
+      apiKey: API_KEY,
+    });
+  });
+
+  it("pins host-local reachability to the exact OpenShell bridge (#8379)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.endpoint.mockReturnValue({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+    });
+
+    const command = getLocalProviderContainerReachabilityCheck("vllm-local");
+
+    expect(command).toContain("host.openshell.internal:172.18.0.1");
+    expect(command).not.toContain("host.openshell.internal:host-gateway");
+    expect(command?.at(-1)).toBe("http://host.openshell.internal:8000/health");
+    expect(managedBridge.host).toHaveBeenCalledOnce();
+  });
+
+  it("pins host-local diagnostics to the exact OpenShell bridge (#8379)", () => {
+    lifecycle.baseUrl.mockReturnValue(null);
+    hostLocalRecovery.endpoint.mockReturnValue({
+      baseUrl: "http://127.0.0.1:8000",
+      apiKey: API_KEY,
+    });
+    const capture = vi.fn(hostLocalDiagnosticCapture);
+
+    const result = validateLocalProvider("vllm-local", capture, () => undefined);
+    const dockerCommands = capture.mock.calls
+      .map(([argv]) => argv)
+      .filter((argv) => argv[0] === "docker");
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostic).toContain("Container curl returned HTTP 503");
+    expect(result.diagnostic).toContain("host.openshell.internal resolved to: 172.18.0.1");
+    expect(dockerCommands).toHaveLength(5);
+    expect(
+      dockerCommands.every((argv) => argv.includes("host.openshell.internal:172.18.0.1")),
+    ).toBe(true);
+    expect(
+      dockerCommands.every((argv) => !argv.includes("host.openshell.internal:host-gateway")),
+    ).toBe(true);
+    expect(managedBridge.host).toHaveBeenCalledOnce();
   });
 
   it("uses /health only for unauthenticated availability checks", () => {
@@ -294,7 +464,7 @@ describe("managed dual-Station vLLM authentication", () => {
 
   it("returns invalid-auth when the private key does not match the managed lifecycle", () => {
     expect(
-      getManagedDualStationVllmProviderState({
+      getManagedVllmProviderState({
         getManagedBaseUrlImpl: productionManagedBaseUrlResolver(OTHER_API_KEY),
         loadApiKeyImpl: () => API_KEY,
       }),
@@ -312,7 +482,7 @@ describe("managed dual-Station vLLM authentication", () => {
     expect(runCurlProbeImpl).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: false,
-      endpoint: "managed dual-Station vLLM",
+      endpoint: "managed vLLM",
       failureLabel: "unhealthy",
     });
   });

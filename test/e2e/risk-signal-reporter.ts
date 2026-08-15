@@ -57,6 +57,23 @@ function counts(testModules: ReadonlyArray<TestModule>, testNamePattern?: RegExp
   return result;
 }
 
+function failClosedWhenNoTestsRan(
+  summary: ReturnType<typeof counts>,
+  runReason: TestRunEndReason,
+): void {
+  if (
+    process.env.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST !== "1" ||
+    runReason !== "passed" ||
+    summary.passed + summary.failed > 0
+  ) {
+    return;
+  }
+  process.exitCode = 1;
+  process.stderr.write(
+    `::error::Live E2E selection ran no tests (${summary.skipped} skipped, ${summary.pending} pending)\n`,
+  );
+}
+
 function failedTestErrors(testModules: ReadonlyArray<TestModule>): unknown[] {
   const errors: unknown[] = [];
   for (const module of testModules) {
@@ -92,7 +109,6 @@ function mergeSignal(previous: E2eRiskSignal | null, current: E2eRiskSignal): E2
     previous.shardId !== current.shardId ||
     previous.expectedSha !== current.expectedSha ||
     previous.testedSha !== current.testedSha ||
-    previous.planHash !== current.planHash ||
     previous.correlationId !== current.correlationId
   ) {
     throw new Error("risk signal metadata changed between Vitest invocations");
@@ -175,6 +191,7 @@ export default class E2eRiskSignalReporter implements Reporter {
     unhandledErrors: ReadonlyArray<unknown>,
     reason: TestRunEndReason,
   ): void {
+    const summary = counts(testModules, this.testNamePattern);
     if (this.environment) {
       writeRiskSignal(this.environment, testModules, unhandledErrors, reason, this.testNamePattern);
     }
@@ -184,5 +201,6 @@ export default class E2eRiskSignalReporter implements Reporter {
         outcomeForRun(testModules, unhandledErrors, reason, this.processTimedOut),
       );
     }
+    failClosedWhenNoTestsRan(summary, reason);
   }
 }

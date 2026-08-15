@@ -37,18 +37,25 @@
     },
     "endpoint": {
       "type": "object",
-      "required": [
-        "host",
-        "port"
-      ],
       "properties": {
         "host": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "port": {
           "type": "integer",
           "minimum": 1,
           "maximum": 65535
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "minItems": 1,
+          "uniqueItems": true
         },
         "path": {
           "type": "string",
@@ -125,25 +132,52 @@
       },
       "allOf": [
         {
-          "if": {
-            "anyOf": [
-              {
-                "not": {
-                  "required": [
-                    "protocol"
-                  ]
-                }
-              },
-              {
-                "properties": {
-                  "protocol": {
-                    "const": "rest"
-                  }
-                },
+          "oneOf": [
+            {
+              "required": [
+                "port"
+              ],
+              "not": {
                 "required": [
-                  "protocol"
+                  "ports"
                 ]
               }
+            },
+            {
+              "required": [
+                "ports"
+              ],
+              "not": {
+                "required": [
+                  "port"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "host"
+              ]
+            },
+            {
+              "required": [
+                "allowed_ips"
+              ]
+            }
+          ]
+        },
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "const": "rest"
+              }
+            },
+            "required": [
+              "protocol"
             ]
           },
           "then": {

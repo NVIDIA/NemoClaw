@@ -13,7 +13,9 @@
  */
 
 import { failLine, warnLine } from "../cli/terminal-style";
+import { formatNvidiaGpuPreflightLines, type GpuDetection } from "../inference/nim";
 import { cliDisplayName } from "./branding";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 /** Docker cannot be reached, so onboarding cannot continue. */
 export function printDockerNotReachableError(): void {
@@ -25,6 +27,15 @@ export function printUnsupportedRuntimeError(): void {
   console.error(failLine(`${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`));
   console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
   console.error("    Switch to Docker Engine, Docker Desktop, or Colima, then rerun onboarding.");
+}
+
+/** NVIDIA CDI state cannot support GPU passthrough for this onboarding run. */
+export function printCdiSpecUnavailableError(): void {
+  console.error(
+    failLine(
+      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    ),
+  );
 }
 
 export interface UnderProvisionedRuntimeWarning {
@@ -85,4 +96,50 @@ export function printMessagingProviderMissing(providerName: string): void {
   console.warn(
     `    To fix: openshell provider create --name ${providerName} --type generic --credential <KEY>`,
   );
+}
+
+/**
+ * Print the preflight GPU and sandbox-GPU lines for one detection result.
+ * Same entrypoint-extraction rationale as the messages above.
+ */
+export function printGpuPreflightLines(options: {
+  gpu: GpuDetection | null;
+  sandboxGpuConfig: SandboxGpuConfig;
+  // Which trust-gate check rejected the newest GPU detection (#9000); printed
+  // under the "no GPU detected" line so the user sees the failed check.
+  gpuTrustGateRejection?: string;
+  log?: (message: string) => void;
+}): void {
+  const { gpu, sandboxGpuConfig, gpuTrustGateRejection } = options;
+  const log = options.log ?? ((message: string) => console.log(message));
+  if (gpu && gpu.type === "nvidia") {
+    const lines = formatNvidiaGpuPreflightLines(gpu);
+    log(`  ✓ ${lines[0]}`);
+    for (const extra of lines.slice(1)) {
+      log(`  ${extra}`);
+    }
+    if (!gpu.nimCapable) {
+      log("  ⓘ Local NIM unavailable — GPU VRAM too small");
+    }
+  } else if (gpu && gpu.type === "apple") {
+    log(
+      `  ✓ Apple GPU detected: ${gpu.name}${gpu.cores ? ` (${gpu.cores} cores)` : ""}, ${gpu.totalMemoryMB} MB unified memory`,
+    );
+    log("  ⓘ Local NIM unavailable — requires NVIDIA GPU");
+  } else {
+    log("  ⓘ Local NIM unavailable — no GPU detected");
+    if (gpuTrustGateRejection) {
+      log(`    GPU detection rejected the nvidia-smi report: ${gpuTrustGateRejection}`);
+    }
+  }
+
+  if (sandboxGpuConfig.sandboxGpuEnabled) {
+    log(
+      `  ✓ Sandbox GPU: enabled (${sandboxGpuConfig.mode}${sandboxGpuConfig.sandboxGpuDevice ? `, device ${sandboxGpuConfig.sandboxGpuDevice}` : ""})`,
+    );
+  } else if (sandboxGpuConfig.mode === "0") {
+    log("  ✓ Sandbox GPU: disabled by configuration");
+  } else {
+    log("  ⓘ Sandbox GPU: disabled (no NVIDIA GPU detected)");
+  }
 }

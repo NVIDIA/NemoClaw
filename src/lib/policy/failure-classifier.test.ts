@@ -13,6 +13,7 @@ vi.mock(".", () => ({
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
   getSandboxBaselineEntryDigest: vi.fn(() => null),
+  isAgentBasePreset: vi.fn(() => false),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPreset: vi.fn(),
@@ -103,6 +104,8 @@ function resetMocks() {
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
+  vi.mocked(policies.isAgentBasePreset).mockReset();
+  vi.mocked(policies.isAgentBasePreset).mockReturnValue(false);
   vi.mocked(getTier).mockReset();
 }
 
@@ -297,6 +300,28 @@ describe("classifyAccessFailure", () => {
     expect(result.confidence).toBe("high");
     expect(result.reason).toContain("EHOSTUNREACH");
     expect(result.reason).toContain("upstream");
+  });
+
+  it("treats an agent-base preset host hitting a network-block code as high-confidence upstream-unknown (#9079)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    // `slack` is enforced by the gateway via the agent base policy, not
+    // user-applied. Verification resolves to `agent-base`, which is enforced,
+    // so a block code is upstream (like `verified`), not a policy denial.
+    stubRegistry({ policies: [], policyTier: "restricted" });
+    vi.mocked(policies.isAgentBasePreset).mockReturnValue(true);
+
+    const result = classifyAccessFailure({
+      sandboxName: SANDBOX,
+      host: "api.slack.com",
+      error: { code: "EHOSTUNREACH" },
+      gatewayPresets: ["slack"],
+    });
+
+    expect(result.kind).toBe("unknown");
+    expect(result.matchedPreset).toBe("slack");
+    expect(result.confidence).toBe("high");
   });
 
   it.each([

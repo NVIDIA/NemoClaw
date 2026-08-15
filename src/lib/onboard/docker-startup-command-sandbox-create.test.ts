@@ -233,7 +233,7 @@ describe("Docker startup-command sandbox creation", () => {
       rollback,
     });
 
-    await patch.commitAfterReady();
+    await expect(patch.commitAfterReady()).rejects.toThrow("receipt validation failed");
 
     expect(events).toEqual(["commit", "rollback", "exit"]);
     expect(onPatchFailureExit).toHaveBeenCalledWith(

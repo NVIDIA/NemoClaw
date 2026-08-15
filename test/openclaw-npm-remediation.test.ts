@@ -22,6 +22,7 @@ import {
   patchCurrentOpenClawCorePackageGraph,
   patchLegacyOpenClawCorePackageGraph,
   patchOpenClawDiagnosticsOtelPackageGraph,
+  patchOpenClawDiscordPackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../scripts/lib/openclaw-npm-remediation.mts";
 
@@ -144,6 +145,8 @@ function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
 function writeCurrentCoreFixture(
   braceExpansionVersion = "5.0.7",
   fastUriVersion = "3.1.2",
+  undiciVersion = "8.5.0",
+  ipAddressVersion = "10.2.0",
 ): string {
   const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-current-openclaw-core-remediation-"));
   temporaryDirectories.push(directory);
@@ -156,6 +159,7 @@ function writeCurrentCoreFixture(
         dependencies: {
           "@modelcontextprotocol/sdk": "1.29.0",
           minimatch: "10.2.5",
+          undici: undiciVersion,
         },
       },
       null,
@@ -176,6 +180,7 @@ function writeCurrentCoreFixture(
             dependencies: {
               "@modelcontextprotocol/sdk": "1.29.0",
               minimatch: "10.2.5",
+              undici: undiciVersion,
             },
           },
           "node_modules/ajv": {
@@ -199,6 +204,76 @@ function writeCurrentCoreFixture(
             version: "10.2.5",
             dependencies: { "brace-expansion": "^5.0.5" },
           },
+          "node_modules/express-rate-limit": {
+            version: "8.5.2",
+            dependencies: { "ip-address": "^10.2.0" },
+          },
+          "node_modules/ip-address": {
+            version: ipAddressVersion,
+            resolved: `https://registry.npmjs.org/ip-address/-/ip-address-${ipAddressVersion}.tgz`,
+            integrity:
+              "sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==",
+            engines: { node: ">= 12" },
+          },
+          "node_modules/undici": {
+            version: undiciVersion,
+            resolved: `https://registry.npmjs.org/undici/-/undici-${undiciVersion}.tgz`,
+            integrity:
+              "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==",
+            engines: { node: ">=22.19.0" },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directory;
+}
+
+function writeDiscordFixture(undiciVersion = "8.5.0"): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-discord-remediation-"));
+  temporaryDirectories.push(directory);
+  const dependencies = { undici: undiciVersion, ws: "8.21.0" };
+  const bundledUndiciDirectory = path.join(directory, "node_modules", "undici");
+  mkdirSync(bundledUndiciDirectory, { recursive: true });
+  writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@openclaw/discord",
+        version: "2026.7.1",
+        dependencies,
+        bundledDependencies: ["undici"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    path.join(bundledUndiciDirectory, "package.json"),
+    `${JSON.stringify(
+      { name: "undici", version: undiciVersion, engines: { node: ">=22.19.0" } },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    path.join(directory, "npm-shrinkwrap.json"),
+    `${JSON.stringify(
+      {
+        name: "@openclaw/discord",
+        version: "2026.7.1",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "@openclaw/discord", version: "2026.7.1", dependencies },
+          "node_modules/undici": {
+            version: undiciVersion,
+            resolved: `https://registry.npmjs.org/undici/-/undici-${undiciVersion}.tgz`,
+            integrity:
+              "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==",
+            engines: { node: ">=22.19.0" },
+          },
         },
       },
       null,
@@ -210,6 +285,10 @@ function writeCurrentCoreFixture(
 
 function readJson<T>(file: string): T {
   return JSON.parse(readFileSync(file, "utf-8")) as T;
+}
+
+function writeJson(file: string, value: unknown): void {
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function packFixture(packageDirectory: string, archivePath: string): void {
@@ -419,7 +498,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
-  it("replaces the reviewed current OpenClaw transitive resolutions", () => {
+  it("replaces the reviewed OpenClaw 2026.7.1 dependency resolutions", () => {
     const directory = writeCurrentCoreFixture();
 
     patchCurrentOpenClawCorePackageGraph(directory);
@@ -428,29 +507,144 @@ describe("OpenClaw npm remediation", () => {
       packages: Record<string, { integrity?: string; resolved?: string; version?: string }>;
     }>(path.join(directory, "npm-shrinkwrap.json"));
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
-      version: "5.0.8",
-      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
+      version: "5.0.9",
+      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
       integrity:
-        "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==",
+        "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
     });
     expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
-      version: "3.1.4",
-      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz",
+      version: "3.1.5",
+      resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
       integrity:
-        "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==",
+        "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
     });
+    expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
+      version: "8.10.0",
+      resolved: "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
+      integrity:
+        "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==",
+    });
+    expect(shrinkwrap.packages["node_modules/ip-address"]).toMatchObject({
+      version: "10.3.1",
+      resolved: "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz",
+      integrity:
+        "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==",
+    });
+    expect(
+      readJson<{ dependencies: Record<string, string> }>(path.join(directory, "package.json")),
+    ).toMatchObject({ dependencies: { undici: "8.10.0" } });
   });
 
   it.each([
     ["brace-expansion", "5.0.6", "brace-expansion layout changed after review"],
     ["fast-uri", "3.1.1", "fast-uri layout changed after review"],
+    ["undici", "8.4.0", "dependency boundary changed after review"],
+    ["ip-address", "10.1.1", "ip-address layout changed after review"],
   ])("rejects a current OpenClaw %s graph that changed after review", (dependency, version, error) => {
     const directory =
       dependency === "brace-expansion"
         ? writeCurrentCoreFixture(version)
-        : writeCurrentCoreFixture("5.0.7", version);
+        : dependency === "fast-uri"
+          ? writeCurrentCoreFixture("5.0.7", version)
+          : dependency === "undici"
+            ? writeCurrentCoreFixture("5.0.7", "3.1.2", version)
+            : writeCurrentCoreFixture("5.0.7", "3.1.2", "8.5.0", version);
 
     expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(error);
+  });
+
+  it.each([
+    ["resolved", "https://registry.npmjs.org/undici/-/undici-8.4.0.tgz"],
+    ["integrity", "sha512-deliberate-mismatch"],
+    ["engines", { node: ">=22.20.0" }],
+  ])("rejects a current OpenClaw undici shrinkwrap with changed %s", (field, value) => {
+    const directory = writeCurrentCoreFixture();
+    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
+    const shrinkwrap = readJson<{
+      packages: Record<string, Record<string, unknown>>;
+    }>(shrinkwrapPath);
+    shrinkwrap.packages["node_modules/undici"][field] = value;
+    writeJson(shrinkwrapPath, shrinkwrap);
+
+    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
+      "undici layout changed after review",
+    );
+  });
+
+  it("replaces the reviewed OpenClaw Discord undici dependency", () => {
+    const directory = writeDiscordFixture();
+
+    patchOpenClawDiscordPackageGraph(directory);
+
+    expect(readPackageField<string>(directory, "dependencies.undici")).toBe("8.10.0");
+    const shrinkwrap = readJson<{
+      packages: Record<
+        string,
+        {
+          dependencies?: Record<string, string>;
+          integrity?: string;
+          resolved?: string;
+          version?: string;
+        }
+      >;
+    }>(path.join(directory, "npm-shrinkwrap.json"));
+    expect(shrinkwrap.packages[""].dependencies).toMatchObject({ undici: "8.10.0" });
+    expect(shrinkwrap.packages["node_modules/undici"]).toMatchObject({
+      version: "8.10.0",
+      resolved: "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
+      integrity:
+        "sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==",
+    });
+  });
+
+  it("rejects an OpenClaw Discord undici graph that changed after review", () => {
+    const directory = writeDiscordFixture("8.4.0");
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow(
+      "undici dependency changed after review",
+    );
+  });
+
+  it.each([
+    ["resolved", "https://registry.npmjs.org/undici/-/undici-8.4.0.tgz"],
+    ["integrity", "sha512-deliberate-mismatch"],
+    ["engines", { node: ">=22.20.0" }],
+  ])("rejects an OpenClaw Discord undici shrinkwrap with changed %s", (field, value) => {
+    const directory = writeDiscordFixture();
+    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
+    const shrinkwrap = readJson<{
+      packages: Record<string, Record<string, unknown>>;
+    }>(shrinkwrapPath);
+    shrinkwrap.packages["node_modules/undici"][field] = value;
+    writeJson(shrinkwrapPath, shrinkwrap);
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow(
+      "undici layout changed after review",
+    );
+  });
+
+  it("rejects a changed OpenClaw Discord bundled undici identity", () => {
+    const directory = writeDiscordFixture();
+    writeJson(path.join(directory, "node_modules", "undici", "package.json"), {
+      name: "undici",
+      version: "8.4.0",
+      engines: { node: ">=22.19.0" },
+    });
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow("must be undici@8.5.0");
+  });
+
+  it("rejects a changed OpenClaw Discord bundled undici layout", () => {
+    const directory = writeDiscordFixture();
+    writeJson(path.join(directory, "node_modules", "undici", "package.json"), {
+      name: "undici",
+      version: "8.5.0",
+      engines: { node: ">=22.20.0" },
+    });
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow(
+      "bundled undici layout changed after review",
+    );
   });
 
   it("rebuilds the legacy fixture archive with the reviewed tar package bundled", () => {
@@ -487,5 +681,5 @@ describe("OpenClaw npm remediation", () => {
         path.join(extracted, "package", "node_modules", "tar", "package.json"),
       ),
     ).toMatchObject({ name: "tar", version: "7.5.19" });
-  });
+  }, 60_000);
 });

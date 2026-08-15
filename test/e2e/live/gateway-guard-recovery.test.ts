@@ -50,6 +50,8 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { pollUntil } from "../fixtures/polling.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
@@ -111,6 +113,16 @@ uid_line=next(line for line in rows[0][1].splitlines() if line.startswith("Uid:"
 assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
 print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
 
+const OPENCLAW_STATE_LOCK_PLAN_PROBE = String.raw`import json, os
+path="/usr/local/share/nemoclaw/state-lock-plan.json"
+metadata=os.stat(path, follow_symlinks=False)
+assert metadata.st_uid == 0 and metadata.st_gid == 0, metadata
+assert metadata.st_mode & 0o022 == 0, oct(metadata.st_mode)
+plan=json.load(open(path, encoding="utf-8"))
+assert "workspace" in plan["readOnlyRoots"], plan
+assert "workspace-" in plan["readOnlyPrefixes"], plan
+print("OPENCLAW_STATE_LOCK_PLAN=installed")`;
+
 async function findSandboxContainer(host: HostCliClient, artifactName: string): Promise<string> {
   const result = await host.command(
     "docker",
@@ -143,6 +155,36 @@ async function inspectStartupCommand(
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   return result.stdout.trim();
+}
+
+async function waitForSandboxExecReady(
+  host: HostCliClient,
+  sandboxName: string,
+  progress: TestProgress,
+  artifactPrefix: string,
+): Promise<void> {
+  await pollUntil({
+    artifactPrefix,
+    attempts: 12,
+    delayMs: 3_000,
+    probe: async (_attempt, artifactName) =>
+      await host.command(
+        host.openshellCommandPath,
+        ["sandbox", "exec", "-n", sandboxName, "--", "true"],
+        {
+          artifactName,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      ),
+    accept: (result, attempt) =>
+      result.exitCode === 0 ? true : reportReadinessRetry(progress, attempt),
+  });
+}
+
+function reportReadinessRetry(progress: TestProgress, attempt: number): false {
+  progress.event(`OpenShell sandbox readiness retry ${attempt}`);
+  return false;
 }
 
 test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)", {
@@ -302,7 +344,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     originalContainerId,
     "restart-command-before",
   );
-  expect(originalStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
+  expect(originalStartupCommand).toMatch(/(?:^| )\/usr\/local\/bin\/nemoclaw-start$/);
   await host.cleanupForward(18789, {
     artifactName: "restart-stop-dashboard-forward",
     env: buildAvailabilityProbeEnv(),
@@ -328,9 +370,13 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
-  expect(resultText(trustedRecovery)).toMatch(
-    /Probe complete: (?:recovered OpenClaw gateway|OpenClaw gateway is running)/,
+  const restartStateLockPlan = await sandbox.exec(
+    instance.sandboxName,
+    ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
+    { artifactName: "restart-installed-state-lock-plan", env: buildAvailabilityProbeEnv() },
   );
+  expect(restartStateLockPlan.exitCode, resultText(restartStateLockPlan)).toBe(0);
+  expect(restartStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
 
   const recoveredContainerId = await findSandboxContainer(host, "restart-container-after");
   expect(recoveredContainerId).toBe(originalContainerId);
@@ -339,7 +385,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     recoveredContainerId,
     "restart-command-after",
   );
-  expect(recoveredStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
+  expect(recoveredStartupCommand).toMatch(/(?:^| )\/usr\/local\/bin\/nemoclaw-start$/);
   expect(recoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
   expect(recoveredStartupCommand).not.toContain(credentialCanary);
 
@@ -406,6 +452,15 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     },
   );
   expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
+  // Do not overlap the fixture's recreation with the restart below. The
+  // fixture runs in its own process, so the host must observe the replacement
+  // through OpenShell before starting the next container lifecycle transition.
+  await waitForSandboxExecReady(
+    host,
+    instance.sandboxName,
+    progress,
+    "legacy-recreate-openshell-ready",
+  );
 
   const legacyContainerId = await findSandboxContainer(host, "legacy-restart-container-before");
   expect(legacyContainerId).not.toBe(recoveredContainerId);
@@ -418,6 +473,15 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     timeoutMs: 120_000,
   });
   expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
+  await waitForSandboxExecReady(
+    host,
+    instance.sandboxName,
+    progress,
+    "legacy-restart-openshell-ready",
+  );
+  await gateway.waitForMissingManagedSupervisor(legacyContainerId, {
+    onRetry: (attempt) => progress.event(`managed supervisor absence proof retry ${attempt}`),
+  });
 
   progress.phase("recover legacy managed supervisor and inference");
   const legacyCredentialCanary = "nemoclaw-e2e-recovery-secret-6635";
@@ -425,6 +489,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     artifactName: "legacy-restart-trusted-recover",
     env: {
       ...buildAvailabilityProbeEnv(),
+      NEMOCLAW_REBUILD_VERBOSE: "1",
       NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "CUSTOM_PROVIDER_CREDENTIAL",
       CUSTOM_PROVIDER_CREDENTIAL: legacyCredentialCanary,
     },
@@ -433,7 +498,13 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   expect(legacyRecovery.timedOut, resultText(legacyRecovery)).toBe(false);
   expect(legacyRecovery.exitCode, resultText(legacyRecovery)).toBe(0);
-  expect(resultText(legacyRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
+  const legacyStateLockPlan = await sandbox.exec(
+    instance.sandboxName,
+    ["python3", "-c", OPENCLAW_STATE_LOCK_PLAN_PROBE],
+    { artifactName: "legacy-restart-installed-state-lock-plan", env: buildAvailabilityProbeEnv() },
+  );
+  expect(legacyStateLockPlan.exitCode, resultText(legacyStateLockPlan)).toBe(0);
+  expect(legacyStateLockPlan.stdout).toContain("OPENCLAW_STATE_LOCK_PLAN=installed");
 
   const legacyRecoveredContainerId = await findSandboxContainer(
     host,
@@ -445,7 +516,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     legacyRecoveredContainerId,
     "legacy-restart-command-after",
   );
-  expect(legacyRecoveredStartupCommand).toMatch(/(?:^| )nemoclaw-start$/);
+  expect(legacyRecoveredStartupCommand).toMatch(/(?:^| )(?:\/usr\/local\/bin\/)?nemoclaw-start$/);
   expect(legacyRecoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
   expect(legacyRecoveredStartupCommand).not.toContain(legacyCredentialCanary);
 

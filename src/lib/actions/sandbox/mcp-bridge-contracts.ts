@@ -4,10 +4,12 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 
 export const MCP_BRIDGE_POLICY_SOURCE = "generated:nemoclaw-mcp-bridge";
+export type McpBridgeErrorReasonCode = "rejected" | "unresolved";
 export class McpBridgeError extends Error {
   constructor(
     message: string,
     readonly exitCode = 1,
+    readonly reasonCode?: McpBridgeErrorReasonCode,
   ) {
     super(message);
     this.name = "McpBridgeError";
@@ -23,6 +25,7 @@ export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
+  trustedPrivateHosts?: string[];
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
@@ -38,6 +41,13 @@ export interface McpBridgeStatus {
     reason?: string;
   };
   url?: string;
+  trustedPrivateTarget?: {
+    host: string;
+    recordedPins: string[];
+    currentPins?: string[];
+    state: "match" | "drift" | "unresolved";
+    detail?: string;
+  };
   env: {
     names: string[];
     missing: string[];

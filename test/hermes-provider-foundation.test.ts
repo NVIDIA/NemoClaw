@@ -9,6 +9,12 @@ import { describe, expect, it } from "vitest";
 
 const CHILD_TIMEOUT_MS = 30_000;
 
+function writeSuccessfulOpenshell(tmpDir: string): string {
+  const openshellPath = path.join(tmpDir, "openshell");
+  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  return openshellPath;
+}
+
 function buildHermeticEnv(tmpDir: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: tmpDir };
   for (const key of Object.keys(env)) {
@@ -106,6 +112,7 @@ const { selectOnboardAgent } = require(${onboardPath});
   it("rejects Hermes Provider when Hermes Agent was not selected", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-hidden-"));
+    const openshellPath = writeSuccessfulOpenshell(tmpDir);
     const scriptPath = path.join(tmpDir, "hermes-provider-hidden-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -129,6 +136,7 @@ const { setupNim } = require(${onboardPath});
       encoding: "utf-8",
       env: buildHermeticEnv(tmpDir, {
         NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_OPENSHELL_BIN: openshellPath,
         NEMOCLAW_PROVIDER: "hermes-provider",
       }),
       timeout: CHILD_TIMEOUT_MS,
@@ -146,6 +154,7 @@ const { setupNim } = require(${onboardPath});
   it("selects the API-key Hermes Provider path for Hermes Agent", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-api-"));
+    const openshellPath = writeSuccessfulOpenshell(tmpDir);
     const scriptPath = path.join(tmpDir, "hermes-provider-api-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -171,6 +180,7 @@ const { setupNim } = require(${onboardPath});
       env: buildHermeticEnv(tmpDir, {
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "hermes-provider",
+        NEMOCLAW_OPENSHELL_BIN: openshellPath,
         NEMOCLAW_HERMES_AUTH_METHOD: "nous-api-key",
         NOUS_API_KEY: "nous-key-1",
       }),

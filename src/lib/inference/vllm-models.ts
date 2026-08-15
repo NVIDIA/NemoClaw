@@ -29,7 +29,7 @@
 
 import net from "node:net";
 
-export type VllmPlatform = "spark" | "station" | "linux";
+export type VllmPlatform = "spark" | "station" | "n1x" | "linux";
 
 export interface VllmRuntimeOverride {
   /** Model-specific runtime image, pinned by digest. */
@@ -42,6 +42,10 @@ export interface VllmRuntimeOverride {
   loadTimeoutSec?: number;
   /** Additional `docker run` arguments required by this recipe. */
   dockerRunArgs?: readonly string[];
+  /** Replace, rather than extend, the platform Docker arguments. */
+  dockerRunArgsMode?: "append" | "replace";
+  /** Maximum time allowed for the immutable image pull. */
+  pullTimeoutSec?: number;
 }
 
 export const NEMOTRON_ULTRA_STATION_IMAGE = {
@@ -89,6 +93,7 @@ export interface VllmModelDef {
    * override outside this list before the image pull and model download.
    */
   platforms: readonly VllmPlatform[];
+  minComputeCapability?: number;
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
    * FlashInfer / MoE-backend selection, target SM arch). Joined as
@@ -100,6 +105,12 @@ export interface VllmModelDef {
   runtime?: VllmRuntimeOverride;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
+  /** Disable remote model code for a runtime image that contains native model support. */
+  trustRemoteCode?: false;
+  /** Require the host-global managed bearer credential and a loopback-only listener. */
+  managedBearerAuth?: true;
+  /** Reject environment-provided model and serving-argument overrides. */
+  fixedServeCommand?: true;
 }
 
 export const VLLM_MODELS: readonly VllmModelDef[] = [
@@ -125,6 +136,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark", "station", "linux"],
+    minComputeCapability: 89,
   },
   {
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
@@ -188,6 +200,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark", "station", "linux"],
+    minComputeCapability: 89,
   },
   {
     id: "deepseek-ai/DeepSeek-V4-Flash",
@@ -204,7 +217,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--gpu-memory-utilization",
       "0.92",
       "--compilation-config",
-      `'{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+      `{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}`,
       "--attention_config.use_fp4_indexer_cache",
       "True",
       "--tokenizer-mode",
@@ -219,7 +232,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--max-cudagraph-capture-size",
       "128",
       "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3}'`,
+      `{"method":"mtp","num_speculative_tokens":3}`,
       "--max-num-batched-tokens",
       "8192",
       "--max-num-seqs",
@@ -229,6 +242,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["station"],
+    minComputeCapability: 100,
   },
   {
     id: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
@@ -248,9 +262,9 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--cpu-offload-params",
       "experts",
       "--kernel_config",
-      `'{"enable_flashinfer_autotune": false}'`,
+      `{"enable_flashinfer_autotune": false}`,
       "--speculative-config",
-      `'{"method":"nemotron_h_mtp","num_speculative_tokens":3}'`,
+      `{"method":"nemotron_h_mtp","num_speculative_tokens":3}`,
       "--max-num-seqs",
       "256",
       "--gpu-memory-utilization",
@@ -261,10 +275,11 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--tool-call-parser",
       "qwen3_coder",
       "--default-chat-template-kwargs",
-      `'{"enable_thinking":true,"force_nonempty_content":true}'`,
+      `{"enable_thinking":true,"force_nonempty_content":true}`,
     ],
     gated: false,
     platforms: ["station"],
+    minComputeCapability: 100,
     serveEnv: {
       VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: "1",
       VLLM_NVFP4_GEMM_BACKEND: "flashinfer-trtllm",
@@ -292,7 +307,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     maxModelLen: 262144,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
-    // --data-parallel-size (all 1 — harmless on a single Spark node),
+    // --data-parallel-size (all 1 — harmless on one Spark or N1x host),
     // --port 8000, and --trust-remote-code; --max-model-len comes from
     // maxModelLen above.
     modelArgs: [
@@ -331,13 +346,51 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "qwen3_coder",
       "--reasoning-parser",
       "qwen3",
-      "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
+      // Keep MTP speculative decoding opt-in on DGX Spark. It increases the
+      // managed profile's cold-start memory pressure and long-context risk
+      // without being required for correct model or tool-call behavior (#7127).
       "--load-format",
       "fastsafetensors",
     ],
     gated: false,
+    platforms: ["spark", "n1x"],
+    minComputeCapability: 121,
+  },
+  {
+    id: "Inferact/Muse-Glimmer-30B-NVFP4-W4A4",
+    label: "Muse Glimmer 30B NVFP4 W4A4 [Experimental]",
+    envValue: "muse-glimmer-30b",
+    downloadSizeBytes: 25_447_097_878,
+    maxModelLen: 32768,
+    revision: "d35cb79050f419c457611b1cee5c5d15b176f285",
+    servedModelId: "muse-glimmer",
+    modelArgs: [
+      "--gpu-memory-utilization",
+      "0.75",
+      "--max-num-seqs",
+      "1",
+      "--max-num-batched-tokens",
+      "4096",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "muse_glimmer",
+      "--reasoning-parser",
+      "muse_glimmer",
+      "--generation-config",
+      "auto",
+    ],
+    gated: false,
     platforms: ["spark"],
+    minComputeCapability: 121,
+    runtime: {
+      image:
+        "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+      imageDownloadSizeBytes: 9_699_710_136,
+      modelDownloadSizeBytes: 25_447_097_878,
+    },
+    installFastSafetensors: false,
+    trustRemoteCode: false,
+    managedBearerAuth: true,
   },
 ] as const;
 
@@ -485,6 +538,17 @@ const SHARED_VLLM_ARGS: readonly string[] = [
   "--port",
   "8000",
   "--trust-remote-code",
+] as const;
+
+const FIXED_HOST_LOCAL_VLLM_ARGS: readonly string[] = [
+  "--tensor-parallel-size",
+  "1",
+  "--pipeline-parallel-size",
+  "1",
+  "--data-parallel-size",
+  "1",
+  "--port",
+  "8000",
 ] as const;
 
 function shellQuote(value: string): string {
@@ -668,21 +732,31 @@ export function buildVllmServeCommand(
   model: VllmModelDef,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const envPrefix = model.serveEnv
-    ? `${Object.entries(model.serveEnv)
-        .map(([key, value]) => `export ${key}=${value}`)
-        .join(" && ")} && `
-    : "";
+  const envPrefix =
+    model.serveEnv && Object.keys(model.serveEnv).length > 0
+      ? `${Object.entries(model.serveEnv)
+          .map(([key, value]) => {
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+              throw new Error(`Invalid vLLM serving environment variable name: ${key}`);
+            }
+            return `export ${key}=${shellQuote(value)}`;
+          })
+          .join(" && ")} && `
+      : "";
   const args = [
-    ...SHARED_VLLM_ARGS,
+    ...(model.fixedServeCommand || model.trustRemoteCode === false
+      ? FIXED_HOST_LOCAL_VLLM_ARGS
+      : SHARED_VLLM_ARGS),
     "--max-model-len",
     String(model.maxModelLen),
     ...(model.revision ? ["--revision", model.revision] : []),
     ...(model.servedModelId ? ["--served-model-name", model.servedModelId] : []),
     ...model.modelArgs,
   ];
-  const extraArgs = parseVllmExtraServeArgs(env).map(shellQuote);
+  const extraArgs = model.fixedServeCommand ? [] : parseVllmExtraServeArgs(env);
   const setup =
     model.installFastSafetensors === false ? "" : "pip install vllm[fastsafetensors] && ";
-  return `${envPrefix}${setup}vllm serve ${model.id} ${[...args, ...extraArgs].join(" ")}`;
+  return `${envPrefix}${setup}vllm serve ${[model.id, ...args, ...extraArgs]
+    .map(shellQuote)
+    .join(" ")}`;
 }

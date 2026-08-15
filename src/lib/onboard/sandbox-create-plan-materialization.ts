@@ -22,10 +22,21 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   size_bytes: 1_048_576,
   mode: 0o1777,
 } as const;
-const DCODE_MCP_SNAPSHOT_TMPFS_CONFIG = JSON.stringify({
-  docker: { mounts: [DCODE_MCP_SNAPSHOT_TMPFS_MOUNT] },
-  podman: { mounts: [DCODE_MCP_SNAPSHOT_TMPFS_MOUNT] },
-});
+function buildSandboxDriverConfig(intent: SandboxCreateIntent): string | null {
+  const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
+    ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
+  );
+  const podmanMounts: Array<Record<string, unknown>> = [];
+  if (intent.policy.options.agentName === "langchain-deepagents-code") {
+    dockerMounts.unshift(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
+    podmanMounts.push(DCODE_MCP_SNAPSHOT_TMPFS_MOUNT);
+  }
+  if (dockerMounts.length === 0) return null;
+  return JSON.stringify({
+    docker: { mounts: dockerMounts },
+    ...(podmanMounts.length > 0 ? { podman: { mounts: podmanMounts } } : {}),
+  });
+}
 
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
@@ -130,7 +141,7 @@ function filterDisabledMessagingProviders(
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
 export function materializeSandboxCreatePlan({
   intent,
-  buildCtx,
+  fromRef,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
@@ -145,7 +156,9 @@ export function materializeSandboxCreatePlan({
     {
       directGpu: intent.policy.options.directGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,
-      additionalPresets: [...intent.policy.options.additionalPresets],
+      additionalPresets: intent.policy.options.hostLocalInferenceRouteOnly
+        ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
+        : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
       policyTier: intent.policy.options.policyTier,
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
@@ -161,16 +174,15 @@ export function materializeSandboxCreatePlan({
     initialSandboxPolicy.cleanup?.();
     throw error;
   }
+  const driverConfig = buildSandboxDriverConfig(intent);
   const createArgs = [
     "--from",
-    `${buildCtx}/Dockerfile`,
+    fromRef,
     "--name",
     intent.sandboxName,
     "--policy",
     initialSandboxPolicy.policyPath,
-    ...(intent.policy.options.agentName === "langchain-deepagents-code"
-      ? ["--driver-config-json", DCODE_MCP_SNAPSHOT_TMPFS_CONFIG]
-      : []),
+    ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
     ...intent.gpuCreateArgs,
     ...intent.resourceCreateArgs,
   ];

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   SUBPROCESS_ENV_ALLOWED_NAMES,
@@ -14,7 +14,7 @@ import {
   parseMcpAddArgs,
   resolveCredentialEnv,
 } from "./mcp-bridge";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.85.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.101.json";
 
 describe("MCP CLI input validation", () => {
   it("parses server, URL, and env references", () => {
@@ -31,6 +31,64 @@ describe("MCP CLI input validation", () => {
       url: "https://api.githubcopilot.com/mcp/",
       env: [{ name: "GITHUB_TOKEN" }],
     });
+  });
+
+  it("normalizes one exact trusted-private host from a repeated add option (#8267)", () => {
+    expect(
+      parseMcpAddArgs([
+        "local",
+        "--url",
+        "https://10.20.30.40/mcp",
+        "--env",
+        "LOCAL_MCP_TOKEN",
+        "--trusted-private-host",
+        "10.20.30.40",
+      ]),
+    ).toEqual({
+      server: "local",
+      url: "https://10.20.30.40/mcp",
+      env: [{ name: "LOCAL_MCP_TOKEN" }],
+      trustedPrivateHosts: ["10.20.30.40"],
+    });
+
+    expect(() =>
+      parseMcpAddArgs([
+        "local",
+        "--url",
+        "https://mcp.corp.example/mcp",
+        "--env",
+        "LOCAL_MCP_TOKEN",
+        "--trusted-private-host",
+        "MCP.CORP.EXAMPLE.",
+        "--trusted-private-host=mcp.corp.example",
+      ]),
+    ).toThrow(/Duplicate --trusted-private-host/);
+  });
+
+  it("uses generic trusted-private hosts without persisting unrelated entries (#8176)", () => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_HOSTS", "unrelated.corp.example,10.20.30.40");
+
+    expect(
+      parseMcpAddArgs(["local", "--url", "https://10.20.30.40/mcp", "--env", "LOCAL_MCP_TOKEN"]),
+    ).toEqual({
+      server: "local",
+      url: "https://10.20.30.40/mcp",
+      env: [{ name: "LOCAL_MCP_TOKEN" }],
+    });
+  });
+
+  it("rejects a trusted-private add option for a different URL host (#8267)", () => {
+    expect(() =>
+      parseMcpAddArgs([
+        "local",
+        "--url",
+        "https://mcp.corp.example/mcp",
+        "--env",
+        "LOCAL_MCP_TOKEN",
+        "--trusted-private-host",
+        "other.corp.example",
+      ]),
+    ).toThrow(/does not match MCP server URL host/);
   });
 
   it("rejects inline env values that would leak through process arguments", () => {
@@ -244,6 +302,32 @@ describe("MCP CLI input validation", () => {
       expect(() => normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toThrow(
         /literal and canonical/,
       );
+    }
+  });
+
+  it("rejects a malformed credential-bearing URL without echoing it (#8698)", () => {
+    const user = "qa-user";
+    const password = "qa-pass-123";
+    const captureMessage = (rawUrl: string): string => {
+      try {
+        normalizeMcpServerUrl(rawUrl);
+        return "";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    };
+    for (const rawUrl of [
+      `https://${user}:${password}@/mcp`,
+      `//${user}:${password}@/mcp`,
+      `https:/${user}:${password}@/mcp`,
+      `https://${user}:${password} extra@/mcp`,
+      `https://${user}:${password}@/mcp/${password}`,
+    ]) {
+      const message = captureMessage(rawUrl);
+      expect(message).toMatch(/must be an absolute https:\/\/ URL/);
+      expect(message).not.toContain(user);
+      expect(message).not.toContain(password);
+      expect(message).not.toContain("/mcp");
     }
   });
 

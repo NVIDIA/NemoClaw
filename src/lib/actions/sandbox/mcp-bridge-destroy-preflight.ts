@@ -33,7 +33,11 @@ export interface McpDestroyPreparation {
 }
 
 export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {
-  return { ...entry, env: [...entry.env] };
+  return {
+    ...entry,
+    env: [...entry.env],
+    ...(entry.allowedIps ? { allowedIps: [...entry.allowedIps] } : {}),
+  };
 }
 
 function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boolean {
@@ -42,6 +46,9 @@ function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boo
     left.agent === right.agent &&
     left.adapter === right.adapter &&
     left.url === right.url &&
+    left.trustedPrivateHost === right.trustedPrivateHost &&
+    (left.allowedIps?.length ?? 0) === (right.allowedIps?.length ?? 0) &&
+    (left.allowedIps ?? []).every((address, index) => address === right.allowedIps?.[index]) &&
     left.providerName === right.providerName &&
     left.providerId === right.providerId &&
     left.policyName === right.policyName &&

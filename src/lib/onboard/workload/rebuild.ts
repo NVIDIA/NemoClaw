@@ -2,17 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { readCandidateQualificationReceipt } from "../../agent/candidate";
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { getVersion } from "../../core/version";
 import type { SandboxEntry } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import type { ResolvedCorporateCa } from "../corporate-ca-types";
 import {
+  isCandidateManagedImageAgent,
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
+  type ManagedImageAgent,
   type ManagedImageContractV1,
   parseManagedImageContractV1,
-  type ShippedManagedImageAgent,
 } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
@@ -57,7 +59,7 @@ const HOST_PROXY_ENV_NAMES = [
 export interface ManagedWorkloadRebuildCatalogHandoff {
   readonly schemaVersion: 1;
   readonly providerId: string;
-  readonly agent: ShippedManagedImageAgent;
+  readonly agent: ManagedImageAgent;
   /** Exact authority retained until a replacement has become Ready. */
   readonly previousReceipt: ManagedWorkloadReceipt;
   readonly previousContract: ManagedImageContractV1;
@@ -137,19 +139,53 @@ export async function prepareManagedWorkloadRebuildHandoff(
   requireProviderBoundAuthority(authority, options.runtime, options.provider);
 
   let replacement: PreparedSandboxWorkloadSource;
-  try {
-    replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
-      agentName: authority.agent,
-      legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
-      runtime: options.runtime,
-      version: options.version ?? getVersion(),
-      policy: "require-managed",
-    });
-  } catch (error) {
-    throw new ManagedWorkloadRebuildError(
-      "the current release's complete managed-image catalog is unavailable or invalid",
-      { cause: error },
-    );
+  if (isCandidateManagedImageAgent(authority.agent)) {
+    // A candidate publishes outside the all-agent release cohort, so its
+    // replacement comes from the protected qualification receipt rather than
+    // the current release catalog.
+    let contract;
+    try {
+      contract = readCandidateQualificationReceipt(authority.agent);
+    } catch (error) {
+      throw new ManagedWorkloadRebuildError(
+        "the protected candidate qualification receipt is unavailable or invalid",
+        { cause: error },
+      );
+    }
+    try {
+      replacement = {
+        source: resolveSandboxWorkloadSource({
+          agentName: authority.agent,
+          legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+          runtime: options.runtime,
+          catalog: { [authority.agent]: contract },
+          policy: "require-managed",
+          candidateAgentsEnabled: true,
+        }),
+        release: contract.source.release,
+        fallbackDiagnostic: null,
+      };
+    } catch (error) {
+      throw new ManagedWorkloadRebuildError(
+        "the accepted candidate image is not supported by the selected runtime",
+        { cause: error },
+      );
+    }
+  } else {
+    try {
+      replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
+        agentName: authority.agent,
+        legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
+        runtime: options.runtime,
+        version: options.version ?? getVersion(),
+        policy: "require-managed",
+      });
+    } catch (error) {
+      throw new ManagedWorkloadRebuildError(
+        "the current release's complete managed-image catalog is unavailable or invalid",
+        { cause: error },
+      );
+    }
   }
   if (replacement.source.kind !== "managed-image") {
     throw new ManagedWorkloadRebuildError(
@@ -332,6 +368,7 @@ export function prepareSandboxWorkloadSourceFromRebuildHandoff(
       runtime,
       catalog: { [handoff.agent]: handoff.replacement.source.contract },
       policy: "require-managed",
+      candidateAgentsEnabled: isCandidateManagedImageAgent(handoff.agent),
     });
   } catch (error) {
     throw new SandboxWorkloadPreparationError(

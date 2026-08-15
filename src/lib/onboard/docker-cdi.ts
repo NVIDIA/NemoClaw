@@ -64,6 +64,7 @@ const NVIDIA_CDI_KIND_YAML_RE =
   /^[ \t]*kind[ \t]*:[ \t]*(?:"nvidia\.com\/gpu"|'nvidia\.com\/gpu'|nvidia\.com\/gpu)[ \t]*(?:#.*)?$/im;
 const NVIDIA_CDI_KIND_JSON_RE = /"kind"\s*:\s*"nvidia\.com\/gpu"/;
 const NVIDIA_CDI_REFRESH_SPEC_PATH = "/var/run/cdi/nvidia.yaml";
+export const DEFAULT_DOCKER_CDI_SPEC_DIRS = ["/etc/cdi", "/var/run/cdi"] as const;
 
 export function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
   const raw = String(value || "").trim();
@@ -308,9 +309,13 @@ function parseSystemctlFailedState(value = ""): boolean | null {
 }
 
 export function assessNvidiaCdiHost(opts: NvidiaCdiHostAssessmentOpts): NvidiaCdiHostAssessment {
-  const dockerCdiSpecDirs = opts.dockerReachable
+  const reportedDockerCdiSpecDirs = opts.dockerReachable
     ? parseDockerCdiSpecDirs(opts.dockerInfoOutput)
     : [];
+  const dockerCdiSpecDirs =
+    opts.dockerReachable && reportedDockerCdiSpecDirs.length === 0
+      ? [...DEFAULT_DOCKER_CDI_SPEC_DIRS]
+      : reportedDockerCdiSpecDirs;
   const cdiSpecPresenceApplies =
     opts.platform === "linux" && opts.hasNvidiaGpu && dockerCdiSpecDirs.length > 0;
   const cdiSpecRepairApplies =
@@ -461,7 +466,7 @@ export function explainStaleCdiReason(mismatch: string | undefined): string {
   const isLeftover = flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH;
   return (
     `An NVIDIA CDI device node no longer matches the live device (${detail}). ` +
-    "OpenShell's `gateway start --gpu` injects devices from the CDI spec, so a stale " +
+    "A GPU-enabled gateway injects devices from the CDI spec, so a stale " +
     "device number points the container at the wrong device and CUDA init fails " +
     "(`CUDA unknown error`). The nvidia-cdi-refresh service keeps " +
     `${NVIDIA_CDI_REFRESH_SPEC_PATH} current on driver/toolkit changes` +
@@ -498,7 +503,7 @@ export function explainNvidiaCdiRepairReason(assessment: NvidiaCdiRepairAssessme
     );
   }
   reasons.push(
-    "OpenShell's `gateway start --gpu` can fail until the CDI spec is refreshed and verified.",
+    "A GPU-enabled gateway start can fail until the CDI spec is refreshed and verified.",
   );
   return reasons.join(" ");
 }

@@ -6,9 +6,19 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import {
+  diagnosticPreview,
+  NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN,
+} from "../name-validation";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
+
+/** Shared state-root authority for callers already serialized by this facade. */
+export function resolveShieldsStateDir(homeDir?: string): string {
+  return resolveNemoclawStateDir(homeDir);
+}
 
 const LOCK_VERSION = 1;
 const MAX_OWNER_BYTES = 16 * 1024;
@@ -35,6 +45,8 @@ export interface ShieldsTransitionLockOptions {
   pollIntervalMs?: number;
   malformedStaleMs?: number;
   takeoverToken?: string;
+  /** Preserve stale owners for a caller that applies a stronger containment protocol. */
+  recoverStaleOwner?: boolean;
 }
 
 export interface ShieldsTransitionLockDependencies {
@@ -171,7 +183,9 @@ function validateSandboxName(name: string): string {
     );
   }
   if (!NAME_VALID_PATTERN.test(name)) {
-    throw new Error(`Invalid sandbox name: '${name}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
+    throw new Error(
+      `Invalid sandbox name: ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
   }
   return name;
 }
@@ -230,22 +244,9 @@ function unsafeLockPathError(lockPath: string, reason: string): Error {
 }
 
 function readExistingLock(lockPath: string, sandboxName: string): ExistingLockSnapshot | null {
-  let pathStat: fs.BigIntStats;
-  try {
-    pathStat = fs.lstatSync(lockPath, { bigint: true });
-  } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
-  if (pathStat.isSymbolicLink()) {
-    throw unsafeLockPathError(lockPath, "symbolic links are not allowed");
-  }
-  if (!pathStat.isFile()) {
-    throw unsafeLockPathError(lockPath, "path is not a regular file");
-  }
-
   let fd: number;
   try {
+    // Open first so every subsequent decision is anchored to one no-follow descriptor.
     fd = fs.openSync(
       lockPath,
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -261,6 +262,23 @@ function readExistingLock(lockPath: string, sandboxName: string): ExistingLockSn
   try {
     const fdStat = fs.fstatSync(fd, { bigint: true });
     if (!fdStat.isFile()) {
+      throw unsafeLockPathError(lockPath, "path is not a regular file");
+    }
+
+    let pathStat: fs.BigIntStats;
+    try {
+      pathStat = fs.lstatSync(lockPath, { bigint: true });
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        fs.closeSync(fd);
+        return null;
+      }
+      throw error;
+    }
+    if (pathStat.isSymbolicLink()) {
+      throw unsafeLockPathError(lockPath, "symbolic links are not allowed");
+    }
+    if (!pathStat.isFile()) {
       throw unsafeLockPathError(lockPath, "path is not a regular file");
     }
     if (!sameInode(inodeIdentity(pathStat), inodeIdentity(fdStat))) {
@@ -318,33 +336,87 @@ function staleOwnerRecovery(lockPath: string): string {
   return `NemoClaw could not safely recover the stale lock automatically. ${manualRecovery(lockPath)}`;
 }
 
-function formatWaitReason(reason: WaitReason | null, lockPath: string): string {
-  if (!reason) return "the lock changed during inspection; retry the command";
+interface WaitReasonDescription {
+  reason: string;
+  recovery: string;
+}
+
+function describeWaitReason(reason: WaitReason | null, lockPath: string): WaitReasonDescription {
+  if (!reason) {
+    return { reason: "the lock changed during inspection; retry the command", recovery: "" };
+  }
   if (reason.kind === "recent-malformed") {
-    return `the owner record is incomplete and only ${Math.max(0, Math.floor(reason.ageMs))}ms old. Retry after the writer finishes`;
+    return {
+      reason: `the owner record is incomplete and only ${Math.max(0, Math.floor(reason.ageMs))}ms old.`,
+      recovery: "Retry after the writer finishes",
+    };
   }
   if (reason.kind === "stale-malformed") {
-    return `the owner record is incomplete and ${Math.max(0, Math.floor(reason.ageMs))}ms old. ${malformedStaleRecovery(lockPath)}`;
+    return {
+      reason: `the owner record is incomplete and ${Math.max(0, Math.floor(reason.ageMs))}ms old.`,
+      recovery: malformedStaleRecovery(lockPath),
+    };
   }
   const owner = reason.owner;
   if (reason.kind === "dead") {
-    return `recorded owner PID ${String(owner.pid)} is not running (${owner.command}). ${staleOwnerRecovery(lockPath)}`;
+    return {
+      reason: `recorded owner PID ${String(owner.pid)} is not running (${owner.command}).`,
+      recovery: staleOwnerRecovery(lockPath),
+    };
   }
   if (reason.kind === "pid-reused") {
-    return `recorded owner PID ${String(owner.pid)} now has process-start identity '${reason.currentProcessStartIdentity}' instead of '${owner.processStartIdentity}' (${owner.command}). ${staleOwnerRecovery(lockPath)}`;
+    return {
+      reason: `recorded owner PID ${String(owner.pid)} now has process-start identity '${reason.currentProcessStartIdentity}' instead of '${owner.processStartIdentity}' (${owner.command}).`,
+      recovery: staleOwnerRecovery(lockPath),
+    };
   }
   if (reason.kind === "identity-unavailable") {
-    return `PID ${String(owner.pid)} is alive but its process-start identity cannot be verified (${owner.command}). Verify the active process and retry`;
+    return {
+      reason: `PID ${String(owner.pid)} is alive but its process-start identity cannot be verified (${owner.command}).`,
+      recovery: "Verify the active process and retry",
+    };
   }
   if (reason.kind === "same-process") {
-    return `another async chain in this process still owns the lock (${owner.command}). Wait for that operation to finish and retry`;
+    return {
+      reason: `another async chain in this process still owns the lock (${owner.command}).`,
+      recovery: "Wait for that operation to finish and retry",
+    };
   }
-  return `PID ${String(owner.pid)} is still running (${owner.command}). Wait for that operation to finish and retry`;
+  return {
+    reason: `PID ${String(owner.pid)} is still running (${owner.command}).`,
+    recovery: "Wait for that operation to finish and retry",
+  };
+}
+
+export class ShieldsTransitionLockUnavailableError extends Error {
+  readonly lockPath: string;
+  readonly summary: string;
+  readonly recovery: string;
+
+  constructor(summary: string, recovery: string, lockPath: string) {
+    super(recovery ? `${summary} ${recovery}` : summary);
+    this.name = "ShieldsTransitionLockUnavailableError";
+    this.lockPath = lockPath;
+    this.summary = summary;
+    this.recovery = recovery;
+  }
+}
+
+export function isShieldsTransitionLockUnavailable(
+  error: unknown,
+): error is ShieldsTransitionLockUnavailableError {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; summary?: unknown; recovery?: unknown };
+  return (
+    candidate.name === "ShieldsTransitionLockUnavailableError" &&
+    typeof candidate.summary === "string" &&
+    typeof candidate.recovery === "string"
+  );
 }
 
 export function shieldsTransitionLockPath(
   sandboxName: string,
-  stateDir: string = resolveNemoclawStateDir(),
+  stateDir: string = resolveShieldsStateDir(),
 ): string {
   const validName = validateSandboxName(sandboxName);
   return path.join(stateDir, `shields-transition-lock-${validName}.json`);
@@ -363,7 +435,7 @@ export class ShieldsTransitionLockManager {
   private readonly ownership = new AsyncLocalStorage<ReadonlyMap<string, symbol>>();
 
   constructor(deps: ShieldsTransitionLockDependencies = {}) {
-    this.stateDir = deps.stateDir ?? resolveNemoclawStateDir();
+    this.stateDir = deps.stateDir ?? resolveShieldsStateDir();
     this.pid = deps.pid ?? process.pid;
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? defaultSleep;
@@ -478,6 +550,26 @@ export class ShieldsTransitionLockManager {
     try {
       const owner = snapshot.owner;
       if (!owner || owner.takeoverToken !== validToken) return null;
+      return {
+        pid: owner.pid,
+        processStartIdentity: owner.processStartIdentity,
+        command: owner.command,
+      };
+    } finally {
+      closeSnapshot(snapshot);
+    }
+  }
+
+  inspectAnyShieldsTransitionLockOwner(
+    sandboxName: string,
+  ): InspectedShieldsTransitionOwner | null {
+    const validName = validateSandboxName(sandboxName);
+    const lockPath = shieldsTransitionLockPath(validName, this.stateDir);
+    const snapshot = readExistingLock(lockPath, validName);
+    if (!snapshot) return null;
+    try {
+      const owner = snapshot.owner;
+      if (!owner) return null;
       return {
         pid: owner.pid,
         processStartIdentity: owner.processStartIdentity,
@@ -816,7 +908,13 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
-        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
+        if (
+          options.recoverStaleOwner !== false &&
+          this.recoveredObservedStaleOwner(sandboxName, observed)
+        ) {
+          continue;
+        }
+        this.failFastOnUnrecoverableOwner(state, observed);
       }
       this.sleep(this.waitDuration(state, lastWaitReason));
     }
@@ -847,7 +945,13 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
-        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
+        if (
+          options.recoverStaleOwner !== false &&
+          this.recoveredObservedStaleOwner(sandboxName, observed)
+        ) {
+          continue;
+        }
+        this.failFastOnUnrecoverableOwner(state, observed);
       }
       await this.sleepAsync(this.waitDuration(state, lastWaitReason));
     }
@@ -954,10 +1058,23 @@ export class ShieldsTransitionLockManager {
   private enforceWaitTimeout(state: AcquisitionState, reason: WaitReason | null): void {
     const elapsedMs = Math.max(0, this.now() - state.startedAtMs);
     if (elapsedMs >= state.waitTimeoutMs) {
-      throw new Error(
-        `Timed out after ${String(state.waitTimeoutMs)}ms waiting for shields transition lock '${state.lockPath}': ${formatWaitReason(reason, state.lockPath)}`,
+      const described = describeWaitReason(reason, state.lockPath);
+      throw new ShieldsTransitionLockUnavailableError(
+        `Timed out after ${String(state.waitTimeoutMs)}ms waiting for shields transition lock '${state.lockPath}': ${described.reason}`,
+        described.recovery,
+        state.lockPath,
       );
     }
+  }
+
+  private failFastOnUnrecoverableOwner(state: AcquisitionState, reason: WaitReason): void {
+    if (reason.kind !== "stale-malformed") return;
+    const described = describeWaitReason(reason, state.lockPath);
+    throw new ShieldsTransitionLockUnavailableError(
+      `Cannot acquire shields transition lock '${state.lockPath}': ${described.reason}`,
+      described.recovery,
+      state.lockPath,
+    );
   }
 
   private enforceWaitTimeoutBeforeRetry(
@@ -1138,6 +1255,12 @@ export function inspectShieldsTransitionLockOwner(
   takeoverToken: string,
 ): InspectedShieldsTransitionOwner | null {
   return defaultManager.inspectShieldsTransitionLockOwner(sandboxName, takeoverToken);
+}
+
+export function inspectAnyShieldsTransitionLockOwner(
+  sandboxName: string,
+): InspectedShieldsTransitionOwner | null {
+  return defaultManager.inspectAnyShieldsTransitionLockOwner(sandboxName);
 }
 
 export function takeoverShieldsTransitionLock(

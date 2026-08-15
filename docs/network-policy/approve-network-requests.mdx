@@ -44,11 +44,9 @@ Use a host that resolves from your terminal, such as an SSH alias from your clie
 ssh <your-sandbox-host>
 ```
 
-Then run the TUI from the NemoClaw directory on that host.
+Then start the TUI on that host.
 
 ```bash
-cd ~/nemoclaw
-. .env
 openshell term
 ```
 
@@ -90,6 +88,8 @@ Rejected rules stay blocked unless you later approve the same rule or add a matc
 
 The walkthrough script is available in the NemoClaw repository at [`scripts/walkthrough.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/walkthrough.sh).
 It requires a cloned NemoClaw source checkout on the host where the sandbox is running.
+The walkthrough requires `tmux`, the `NVIDIA_INFERENCE_API_KEY` environment variable, and at least one onboarded sandbox attached to the active gateway.
+It attaches to an existing sandbox.
 
 <Steps>
   <Step>
@@ -117,8 +117,6 @@ It requires a cloned NemoClaw source checkout on the host where the sandbox is r
 </Steps>
 
 The script opens a split tmux session with the TUI on the left and the agent on the right.
-The walkthrough requires `tmux`, the `NVIDIA_INFERENCE_API_KEY` environment variable, and at least one onboarded sandbox attached to the active gateway.
-It attaches to an existing sandbox.
 
 </AgentOnly>
 

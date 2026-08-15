@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -17,16 +17,30 @@ const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
 const PAGE_SIZE = 100;
 const MAX_API_PAGES = 10;
+const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
+  [".github/actions/ci-reviewed-npm-audit/**", /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u],
+  [
+    ".github/actions/build-base-image-platform/**",
+    /^[.]github\/actions\/build-base-image-platform\/.+$/u,
+  ],
+  [
+    ".github/actions/publish-base-image-manifest/**",
+    /^[.]github\/actions\/publish-base-image-manifest\/.+$/u,
+  ],
   ["agents/**", /^agents\/.+$/u],
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
   ["scripts/**", /^scripts\/.+$/u],
+  [
+    "test/e2e/live/managed-image-activation-e2e*.ts",
+    /^test\/e2e\/live\/managed-image-activation-e2e[^/]*[.]ts$/u,
+  ],
   [
     "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
     /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
@@ -90,6 +104,17 @@ export interface PublicationWaitOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   notice?: (message: string) => void;
+}
+
+export function writePublicationRunOutputs(path: string, run: PublicationRun): void {
+  if (!path || path.includes("\r") || path.includes("\n")) {
+    throw new Error("GITHUB_OUTPUT must be a non-empty single-line path");
+  }
+  appendFileSync(
+    path,
+    [`run_id=${run.id}`, `run_attempt=${run.attempt}`, `head_sha=${run.headSha}`, ""].join("\n"),
+    "utf8",
+  );
 }
 
 export interface GithubRequestOptions {
@@ -244,55 +269,11 @@ function defaultGit(args: string[]): string {
   }).trim();
 }
 
-export function expandBaseImagePushPaths(
-  expectedSha: string,
-  paths: readonly string[],
-  runGit: (args: string[]) => string = defaultGit,
-): string[] {
+export function expandBaseImagePushPaths(expectedSha: string, paths: readonly string[]): string[] {
   sha(expectedSha, "expected SHA");
-  const expanded = new Set<string>();
-
-  for (const path of paths) {
-    const matcher = REVIEWED_PATH_GLOBS.get(path);
-    if (!matcher) {
-      expanded.add(path);
-      continue;
-    }
-
-    const matches = runGit([
-      "log",
-      "--first-parent",
-      "--diff-merges=first-parent",
-      "--format=",
-      "--name-only",
-      expectedSha,
-      "--",
-      `:(glob)${path}`,
-    ])
-      .split(/\r?\n/u)
-      .filter((candidate) => candidate.length > 0);
-    if (matches.length === 0) {
-      throw new Error(`reviewed base-image push glob did not match Git history: ${path}`);
-    }
-    for (const candidate of matches) {
-      if (
-        !SAFE_PATH_PATTERN.test(candidate) ||
-        candidate.startsWith("/") ||
-        candidate.includes("//") ||
-        candidate
-          .split("/")
-          .some((segment) => segment === "" || segment === "." || segment === "..")
-      ) {
-        throw new Error(`reviewed base-image push glob expanded to an unsafe path: ${candidate}`);
-      }
-      if (!matcher.test(candidate)) {
-        throw new Error(`Git returned a path outside reviewed base-image push glob ${path}`);
-      }
-      expanded.add(candidate);
-    }
-  }
-
-  return [...expanded].sort();
+  return [
+    ...new Set(paths.map((path) => (REVIEWED_PATH_GLOBS.has(path) ? `:(glob)${path}` : path))),
+  ].sort();
 }
 
 export function resolveFirstParentHistory(
@@ -312,7 +293,7 @@ export function resolveFirstParentHistory(
   if (runGit(["rev-parse", "--is-shallow-repository"]) !== "false") {
     throw new Error("base-image publication gate requires a complete Git history");
   }
-  const expandedPaths = expandBaseImagePushPaths(expectedSha, paths, runGit);
+  const expandedPaths = expandBaseImagePushPaths(expectedSha, paths);
   if (expandedPaths.length === 0) {
     throw new Error("base-image push paths did not resolve to any Git paths");
   }
@@ -536,16 +517,13 @@ export function validateBoundRun(payload: unknown, expected: PublicationRun): vo
   }
 }
 
-export async function collectPaginated(
+async function collectPaginationAttempt(
   request: (path: string) => Promise<unknown>,
   basePath: string,
   collectionKey: "workflow_runs" | "jobs",
-  maxPages = MAX_API_PAGES,
-): Promise<JsonRecord> {
-  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
-    throw new Error("pagination page cap must be a positive integer");
-  }
-  const label = collectionKey === "workflow_runs" ? "workflow run" : "publisher job";
+  maxPages: number,
+  label: string,
+): Promise<JsonRecord | undefined> {
   const values: unknown[] = [];
   const ids = new Set<number>();
   let totalCount: number | undefined;
@@ -559,7 +537,7 @@ export async function collectPaginated(
     }
     if (totalCount === undefined) totalCount = pageTotal;
     if (pageTotal !== totalCount) {
-      throw new Error(`${label} total_count changed during pagination`);
+      return undefined;
     }
     const pageValues = response[collectionKey];
     if (!Array.isArray(pageValues) || pageValues.length > PAGE_SIZE) {
@@ -581,6 +559,29 @@ export async function collectPaginated(
   }
 
   throw new Error(`${label} pagination exceeded the ${maxPages}-page safety cap`);
+}
+
+export async function collectPaginated(
+  request: (path: string) => Promise<unknown>,
+  basePath: string,
+  collectionKey: "workflow_runs" | "jobs",
+  maxPages = MAX_API_PAGES,
+): Promise<JsonRecord> {
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+    throw new Error("pagination page cap must be a positive integer");
+  }
+  const label = collectionKey === "workflow_runs" ? "workflow run" : "publisher job";
+  for (let attempt = 1; attempt <= PAGINATION_ATTEMPTS; attempt += 1) {
+    const result = await collectPaginationAttempt(
+      request,
+      basePath,
+      collectionKey,
+      maxPages,
+      label,
+    );
+    if (result) return result;
+  }
+  throw new Error(`${label} total_count changed during ${PAGINATION_ATTEMPTS} pagination attempts`);
 }
 
 function annotationValue(value: string): string {
@@ -751,6 +752,10 @@ function parseDurationArgument(argv: string[], name: string, defaultSeconds: num
   return seconds;
 }
 
+export function isBaseImagePublicationEvent(eventName: string | undefined): boolean {
+  return eventName === "push" || eventName === "workflow_dispatch";
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const known = new Set(["--wait-seconds", "--poll-seconds"]);
   for (let index = 0; index < argv.length; index += 2) {
@@ -767,6 +772,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
 
   const token = env.GITHUB_TOKEN ?? "";
   const expectedSha = env.EXPECTED_SHA ?? "";
+  const outputPath = env.GITHUB_OUTPUT ?? "";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -778,8 +784,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_REF !== "refs/heads/main") {
     throw new Error("GITHUB_REF must be refs/heads/main");
   }
-  if (env.GITHUB_EVENT_NAME !== "schedule" && env.GITHUB_EVENT_NAME !== "workflow_dispatch") {
-    throw new Error("GITHUB_EVENT_NAME must be schedule or workflow_dispatch");
+  if (!isBaseImagePublicationEvent(env.GITHUB_EVENT_NAME)) {
+    throw new Error("GITHUB_EVENT_NAME must be push or workflow_dispatch");
   }
   if (env.GITHUB_SHA !== expectedSha) {
     throw new Error("EXPECTED_SHA must match GITHUB_SHA");
@@ -794,6 +800,7 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });
+  writePublicationRunOutputs(outputPath, run);
   console.log(
     `::notice title=Base-image publication verified::${annotationValue(
       `All required publishers succeeded for ${run.headSha}; ${run.url}`,

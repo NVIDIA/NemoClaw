@@ -8,7 +8,7 @@ description-agent: "Configures corporate proxy CA trust for runtime TLS and supp
 keywords: ["nemoclaw corporate ca", "corporate proxy tls", "certificate verification"]
 content:
   type: "how_to"
-agent-variants: ["openclaw", "hermes"]
+agent-variants: ["openclaw", "hermes", "deepagents"]
 ---
 
 Configure a corporate Certificate Authority (CA) before onboarding when an enterprise proxy re-signs external TLS with a root that OpenShell does not provide.
@@ -30,20 +30,44 @@ Use `$$nemoclaw <name> rebuild` after adding or changing the CA for an existing 
 
 NemoClaw validates the selected bundle and bakes it into the sandbox image as `NEMOCLAW_CORPORATE_CA_B64`.
 The managed Dockerfile decodes it to the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`.
+It also installs each validated certificate as a separate operating-system trust anchor and refreshes the OS trust bundle.
+This lets the in-sandbox OpenShell proxy validate TLS when it opens the upstream connection to an HTTPS inference, MCP, or custom-policy endpoint signed by that CA.
 
 <AgentOnly variant="openclaw">
 
-It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification, including `npm audit signatures` requests that cross a TLS-inspecting proxy.
+When onboarding supplies a corporate CA, the Dockerfile sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` in each final-stage build step that accesses the npm registry.
+This includes registry-backed npm remediation and runtime dependency installation that cross a TLS-inspecting proxy.
+The build does not retain either variable in the image configuration.
+
+When NemoClaw selects a corporate CA, it sets `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root` for the image build.
+The OpenClaw managed startup runtime creates `/run/nemoclaw/managed-startup-ca-bundle.pem` as `root:root` with mode `0444` before it starts agent commands as the `sandbox` user.
+The `sandbox` user can read the merged bundle but cannot modify or replace it.
+Sandboxes still using the staged legacy direct-start path create `/tmp/nemoclaw-ca-bundle.pem` with mode `0444` as the same `sandbox` identity that runs the entrypoint and agent, so that compatibility path is read-only by mode but is not a privilege boundary.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
-The Hermes Dockerfile decodes the bundle after its managed build-time dependency steps, so the corporate CA does not apply to those earlier operations.
+The Hermes discovery-runtime installer applies the corporate CA before its npm operations.
+The final Hermes image stage decodes the CA immediately after `FROM ${BASE_IMAGE}`.
+When the decoded CA file exists, the Dockerfile sets `NODE_EXTRA_CA_CERTS` and `CURL_CA_BUNDLE` in each later build step that accesses the npm registry.
+These operations include registry-backed npm remediation and the fallback Hermes dashboard build.
+The build does not retain either variable in the image configuration.
+When the decoded CA file does not exist, these operations use their default trust configuration.
+The Hermes package installer clears inherited `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` values before its build-time `uv pip install` commands.
+When the decoded CA exists, it sets both variables to that file for those commands.
+If the file does not exist, uv and Python use their default trust configuration.
 
 </AgentOnly>
 
-At runtime, NemoClaw appends the corporate CA to the OpenShell trust bundle instead of replacing it.
+<AgentOnly variant="deepagents">
+
+Deep Agents Code applies the corporate CA to its local base-image build before HTTPS dependency fetches and decodes it again in the final sandbox image.
+This supports cold builds on hosts where the base image is not cached.
+
+</AgentOnly>
+
+For sandbox child processes, NemoClaw also appends the corporate CA to the OpenShell client trust bundle instead of replacing it.
 It points `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node.js trust both roots.
 
 ## Understand Automatic Source Selection
@@ -75,11 +99,28 @@ If no selection message appears, no source passed validation.
 ## Use a Custom Dockerfile
 
 Managed NemoClaw Dockerfiles implement the corporate CA build contract automatically.
-A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64` and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem` for runtime trust.
+A custom Dockerfile must declare `ARG NEMOCLAW_CORPORATE_CA_B64`, validate and decode it into `/usr/local/share/nemoclaw/corporate-ca.pem`, install each certificate as an individual OS trust anchor, and refresh the OS trust bundle.
+Decoding only the application bundle is insufficient for OpenShell-inspected HTTPS because the proxy verifies the upstream TLS connection itself.
 If its build needs network access behind the corporate proxy, establish build-time trust before the dependency operations that require TLS.
 
-Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits that argument.
-The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when the argument is absent so the requested trust change cannot silently disappear.
+<AgentOnly variant="openclaw">
+
+In the final image stage, an OpenClaw custom Dockerfile must declare exactly one build argument named `NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER` with default `sandbox`.
+Dockerfile instruction keywords are case-insensitive, but the argument name must match exactly.
+Before the final entrypoint, the stage must set `USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}`.
+The final entrypoint must use the trusted exec form `ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]`.
+NemoClaw selects `root` when it bakes the corporate CA so the entrypoint can create the root-owned merged bundle before it starts agent commands.
+Automatic fallback and host-store sources are a no-op unless the Dockerfile declares `NEMOCLAW_CORPORATE_CA_B64` and meets this startup contract.
+The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding if either condition is not met.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes,deepagents">
+
+Automatic fallback and host-store sources are a no-op when a custom Dockerfile omits `NEMOCLAW_CORPORATE_CA_B64`.
+The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` path fails onboarding when that argument is absent so the requested trust change cannot silently disappear.
+
+</AgentOnly>
 
 ## Review the Trust Boundary
 
@@ -91,6 +132,10 @@ Set `NEMOCLAW_CORPORATE_CA_IMPORT=0` to disable corporate CA import entirely.
 
 ## Related Topics
 
+<AgentOnly variant="openclaw,hermes">
+
 - [Troubleshooting](../reference/troubleshooting#external-channel-tls-fails-behind-a-corporate-mitm-proxy-netfail) for `NET:FAIL` symptoms and certificate diagnostics.
+
+</AgentOnly>
 - [Security Best Practices](best-practices) for the broader sandbox trust model.
 - [Credential Storage](credential-storage) for the OpenShell provider credential boundary.

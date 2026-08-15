@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NvidiaPlatform } from "../inference/nim";
 import { resolveRunningOllamaMenuEntry } from "./ollama-install-menu";
 
 export interface ProviderMenuChoice {
   key: string;
   label: string;
+  managedLlamaCppRecipeId?: string;
 }
 
 interface RemoteProviderMenuConfig {
@@ -19,6 +21,7 @@ export interface BuildInferenceProviderMenuInput {
   agentProviderOptions: readonly string[];
   experimental: boolean;
   gpuNimCapable: boolean;
+  nvidiaPlatform?: NvidiaPlatform;
   hasOllama: boolean;
   ollamaRunning: boolean;
   ollamaHost: string | null;
@@ -34,6 +37,7 @@ export interface BuildInferenceProviderMenuInput {
   ollamaInstallEntry: ProviderMenuChoice | null;
   vllmEntries: readonly ProviderMenuChoice[];
   routedEnabled: boolean;
+  managedLlamaCppOptions?: readonly ProviderMenuChoice[];
 }
 
 export interface InferenceProviderMenu {
@@ -88,7 +92,7 @@ export function buildInferenceProviderMenu(
   });
   if (runningOllamaMenu) options.push(runningOllamaMenu);
 
-  if (input.experimental && input.gpuNimCapable) {
+  if (input.experimental && input.gpuNimCapable && input.nvidiaPlatform !== "n1x") {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
 
@@ -117,8 +121,15 @@ export function buildInferenceProviderMenu(
     options.push({ key: "routed", label: "Model Router (experimental)" });
   }
 
+  options.push(...(input.managedLlamaCppOptions ?? []));
+
   for (const providerKey of input.agentProviderOptions) {
     pushUniqueRemoteProviderOption(options, input.remoteProviderConfig, providerKey);
+  }
+
+  // Existing-server attachment stays visible without probing or claiming lifecycle ownership.
+  if (!options.some((option) => option.key === "llama-cpp")) {
+    options.push({ key: "llama-cpp", label: "Local llama.cpp" });
   }
 
   return {

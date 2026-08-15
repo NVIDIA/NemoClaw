@@ -49,12 +49,13 @@ fi
 
 # Helper: run a command inside the container as the sandbox user
 run_as_sandbox() {
-  docker run --rm --entrypoint "" "$IMAGE" gosu sandbox bash -c "$1" 2>&1
+  docker run --rm --user root --entrypoint "" "$IMAGE" /usr/bin/setpriv \
+    --reuid=sandbox --regid=sandbox --init-groups -- bash -c "$1" 2>&1
 }
 
 # Helper: run a command inside the container as root
 run_as_root() {
-  docker run --rm --entrypoint "" "$IMAGE" bash -c "$1" 2>&1
+  docker run --rm --user root --entrypoint "" "$IMAGE" bash -c "$1" 2>&1
 }
 
 # ── Test 1: Gateway user exists and is different from sandbox ────
@@ -120,14 +121,14 @@ else
   fail "sandbox cannot write to config hash — should be writable: $OUT"
 fi
 
-# ── Test 7: gosu is installed ────────────────────────────────────
+# ── Test 7: setpriv is installed and gosu is absent ──────────────
 
-info "7. gosu binary is available"
-OUT=$(run_as_root "command -v gosu && gosu --version")
-if echo "$OUT" | grep -q "gosu"; then
-  pass "gosu installed"
+info "7. setpriv is available and gosu is absent"
+OUT=$(run_as_root "test -x /usr/bin/setpriv && /usr/bin/setpriv --version && ! command -v gosu")
+if echo "$OUT" | grep -q "setpriv"; then
+  pass "setpriv installed; gosu absent"
 else
-  fail "gosu not found: $OUT"
+  fail "setpriv/gosu runtime contract failed: $OUT"
 fi
 
 # ── Test 8: Entrypoint PATH is locked to system dirs ─────────────
@@ -144,7 +145,7 @@ fi
 # ── Test 9: openclaw resolves to expected absolute path ──────────
 
 info "9. Gateway runs the expected openclaw binary"
-OUT=$(run_as_root "gosu gateway which openclaw")
+OUT=$(run_as_root "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- which openclaw")
 if [ "$OUT" = "/usr/local/bin/openclaw" ]; then
   pass "openclaw resolves to /usr/local/bin/openclaw"
 else
@@ -191,11 +192,11 @@ fi
 
 info "13. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
-  gosu gateway sleep 60 &
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
+  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &
   GW_PID=$!
   sleep 0.5
-  RESULT=$(gosu sandbox kill $GW_PID 2>&1 || echo "EPERM")
+  RESULT=$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- kill $GW_PID 2>&1 || echo "EPERM")
   echo "$RESULT"
   kill $GW_PID 2>/dev/null || true
 ')
@@ -252,8 +253,8 @@ info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from san
 # step-down: (1) the entrypoint-wide capsh drop in drop_capabilities()
 # and (2) the per-user setpriv drop in STEP_DOWN_PREFIX_SANDBOX. The
 # previous test (#3328) only exercised stage 1 and classified
-# CAP_FOWNER/SETUID/SETGID as load-bearing because gosu needed them;
-# the follow-up replaces gosu with setpriv so those three drop
+# CAP_FOWNER/SETUID/SETGID as load-bearing for the user transition;
+# setpriv removes those capabilities atomically during the transition
 # atomically with reuid, and ALL eight issue-named caps must be absent.
 #
 # IMPORTANT: docker's default bounding set already excludes CAP_SYS_ADMIN
@@ -267,7 +268,7 @@ info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from san
 # STEP_DOWN_PREFIX_SANDBOX array directly. This avoids depending on the
 # entrypoint's volume mounts / config files while still exercising the
 # exact production code paths.
-OUT=$(docker run --rm --entrypoint "" \
+OUT=$(docker run --rm --user root --entrypoint "" \
   --cap-add=CAP_SYS_ADMIN --cap-add=CAP_SYS_PTRACE \
   "$IMAGE" \
   bash -c '
@@ -448,11 +449,11 @@ fi
 # cannot modify it.
 
 info "25. proxy-env.sh is not writable by sandbox user"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
-  gosu sandbox bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
 ' 2>&1)
 if echo "$OUT" | grep -q "EXIT=1\|Permission denied"; then
   pass "sandbox user cannot write to /tmp/nemoclaw-proxy-env.sh"
@@ -463,7 +464,7 @@ fi
 # ── Test 26: proxy-env.sh has correct permissions (#2181) ─────────
 
 info "26. proxy-env.sh is read-only (mode 444, root-owned)"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
@@ -511,14 +512,14 @@ fi
 # QA test T5893674.
 
 info "26c. bash -ic and bash -lc export proxy env from /tmp/nemoclaw-proxy-env.sh"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   printf "export NEMOCLAW_PROXY_PROBE=https://probe.invalid:9999\n" \
     > /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
   echo "ROOT_BASH_IC=$(bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
   echo "ROOT_BASH_LC=$(bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
-  echo "SANDBOX_BASH_IC=$(gosu sandbox bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
-  echo "SANDBOX_BASH_LC=$(gosu sandbox bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_IC=$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_LC=$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
 ' 2>&1)
 EXPECTED="https://probe.invalid:9999"
 if echo "$OUT" | grep -qE "ROOT_BASH_IC=$EXPECTED" \
@@ -530,16 +531,16 @@ else
   fail "proxy env not set in all bash modes (#2704): $OUT"
 fi
 
-# ── Test 27: Non-root mode executes without gosu ──────────────────
-# The entrypoint detects uid != 0, skips gosu, and execs the command directly.
+# ── Test 27: Non-root mode executes without privilege step-down ───
+# The entrypoint detects uid != 0, skips setpriv, and executes directly.
 # Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
 # is not guaranteed to be 1000 on every runner, and the non-root fallback is
 # designed to run as that sandbox user.
 
-info "27. Non-root mode executes command without gosu"
+info "27. Non-root mode executes command without setpriv"
 OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
-  pass "non-root mode executed command directly (no gosu)"
+  pass "non-root mode executed command directly (no setpriv)"
 else
   fail "non-root command execution failed: $OUT"
 fi
@@ -550,7 +551,7 @@ fi
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
 info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
-OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
+OUT=$(docker run --rm --user root -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
   # Source the entrypoint function without running the full startup. Keep the
   # extraction whitespace-tolerant and fail closed if the function cannot be
@@ -589,7 +590,7 @@ fi
 # ── Test 29: Model override is a no-op when env var is unset ─────
 
 info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
-OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+OUT=$(docker run --rm --user root --entrypoint "" "$IMAGE" bash -c '
   APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
   if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
     echo "EXTRACT_FAIL apply_model_override"
@@ -614,7 +615,7 @@ fi
 # directory descriptor to the root-only baseline lock.
 
 info "30. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
-OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -624,15 +625,15 @@ OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   source /tmp/normalize.sh
   capsh --has-p=cap_setgid
   capsh --has-p=cap_setuid
-  gosu sandbox sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
-  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-  gosu sandbox chmod 700 /sandbox/.openclaw
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 700 /sandbox/.openclaw
   normalize_mutable_config_perms
-  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw)\" = 2770"
-  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/openclaw.json)\" = 660"
-  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/.config-hash)\" = 660"
-  gosu sandbox sh -c "test \"\$(stat -c \"%a %U:%G\" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)\" = \"440 root:sandbox\""
-  gosu gateway sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c %a /sandbox/.openclaw)\" = 2770"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c %a /sandbox/.openclaw/openclaw.json)\" = 660"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c %a /sandbox/.openclaw/.config-hash)\" = 660"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c \"%a %U:%G\" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)\" = \"440 root:sandbox\""
+  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json"
   printf "ONESHOT_DAC_REPAIR_OK\n"
 ' 2>&1 || true)
 if echo "$OUT" | grep -q "ONESHOT_DAC_REPAIR_OK"; then
@@ -644,7 +645,7 @@ fi
 # ── Test 30a: Mutable repair rejects a non-sandbox tree owner ─────
 
 info "30a. One-shot cleanup rejects a mutable tree owned by another UID"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -707,7 +708,7 @@ done
 # ── Test 30c: Post-override capture severs hardlink aliases ─────
 
 info "30c. Post-override capture freshens a hardlinked recovery baseline"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -718,7 +719,7 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   source /tmp/normalize.sh
   rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline
   normalize_mutable_config_perms
-  gosu sandbox sh -c "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; printf \"{\\\"safe\\\":true}\\n\" > /sandbox/baseline-hardlink-target; chmod 640 /sandbox/baseline-hardlink-target; ln /sandbox/baseline-hardlink-target /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; printf \"{\\\"safe\\\":true}\\n\" > /sandbox/baseline-hardlink-target; chmod 640 /sandbox/baseline-hardlink-target; ln /sandbox/baseline-hardlink-target /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
   before=$(stat -c "%u %g %a" /sandbox/baseline-hardlink-target)
   [ "$(stat -c "%h" /sandbox/baseline-hardlink-target)" -eq 2 ]
   write_openclaw_config_baseline
@@ -739,7 +740,7 @@ fi
 # ── Test 30d: Pinned owner descriptor rejects path replacement ──
 
 info "30d. One-shot cleanup rejects replacement after owner normalization"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   python3 - <<"PY_INJECT_HANDOFF_RACE"
 from pathlib import Path
@@ -768,9 +769,9 @@ PY_INJECT_HANDOFF_RACE
   } >/tmp/normalize.sh
   source /tmp/normalize.sh
   find /sandbox/.openclaw -mindepth 1 -delete
-  gosu sandbox sh -c "printf \"{}\\n\" > /sandbox/.openclaw/openclaw.json; printf \"hash\\n\" > /sandbox/.openclaw/.config-hash"
-  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-  gosu sandbox chmod 700 /sandbox/.openclaw
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf \"{}\\n\" > /sandbox/.openclaw/openclaw.json; printf \"hash\\n\" > /sandbox/.openclaw/.config-hash"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 700 /sandbox/.openclaw
   rc=0
   normalize_mutable_config_perms || rc=$?
   [ "$rc" -eq 1 ]
@@ -788,7 +789,7 @@ fi
 # ── Test 30e: Empty-config recovery never follows sandbox links ─
 
 info "30e. Empty-config recovery refuses a protected-target symlink"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {
     sed -n "/^resolve_mutable_config_normalizer() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
@@ -799,8 +800,8 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   printf "protected\n" >/sandbox/recovery-protected
   chmod 600 /sandbox/recovery-protected
   chown root:root /sandbox/recovery-protected
-  gosu sandbox rm -f /sandbox/.openclaw/openclaw.json
-  gosu sandbox ln -s /sandbox/recovery-protected /sandbox/.openclaw/openclaw.json
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f /sandbox/.openclaw/openclaw.json
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- ln -s /sandbox/recovery-protected /sandbox/.openclaw/openclaw.json
   before=$(stat -c "%U:%G:%a" /sandbox/recovery-protected):$(cat /sandbox/recovery-protected)
   rc=0
   recover_openclaw_config_if_empty || rc=$?
@@ -820,7 +821,7 @@ fi
 # ── Test 30f: Root never falls back to an environment helper ────
 
 info "30f. Root repair rejects an environment-selected helper"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   cat >/tmp/untrusted-normalizer.py <<"PY_UNTRUSTED_NORMALIZER"
 from pathlib import Path
@@ -850,7 +851,7 @@ fi
 # ── Test 30g: Exact root-owned boot recovery is fail-closed ──────
 
 info "30g. Boot recovery reclaims only the exact root-owned mutable signature"
-OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+OUT=$(docker run --rm --user root --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   trap '\''printf "ROOT_BOOT_RECLAIM_FAIL line=%s status=%s\n" "$LINENO" "$?" >&2'\'' ERR
   {
@@ -884,7 +885,7 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   [ "$(stat -c "%a %U:%G" /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]
   [ "$(stat -c "%a %U:%G" /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]
   [ "$(stat -c "%a %U:%G" /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]
-  gosu sandbox sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json; touch /sandbox/.openclaw/reclaim-write-check"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json; touch /sandbox/.openclaw/reclaim-write-check"
 
   chown root:root /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
   chmod 755 /sandbox/.openclaw
@@ -893,7 +894,7 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   sealed_before=$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
   normalize_mutable_config_perms
   [ "$sealed_before" = "$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)" ]
-  ! gosu sandbox sh -c "printf x >>/sandbox/.openclaw/openclaw.json"
+  ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf x >>/sandbox/.openclaw/openclaw.json"
 
   chmod 644 /sandbox/.openclaw/openclaw.json
   ambiguous_before=$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
@@ -977,7 +978,7 @@ fi
 # ── Test 30h: Root recovery refuses mounted config trees ─────────
 
 info "30h. Boot recovery refuses a mounted .openclaw tree"
-OUT=$(docker run --rm --tmpfs /sandbox/.openclaw:rw,mode=700,uid=0,gid=0 \
+OUT=$(docker run --rm --user root --tmpfs /sandbox/.openclaw:rw,mode=700,uid=0,gid=0 \
   --entrypoint bash "$IMAGE" -lc '
   set -euo pipefail
   {

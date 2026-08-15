@@ -15,7 +15,12 @@ import os from "node:os";
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { failLine, warnLine } from "../cli/terminal-style";
 import { GATEWAY_PORT } from "../core/ports";
+import { parseDockerDaemonObservation } from "../domain/docker-host";
 import { cliDisplayName, cliName } from "./branding";
+import {
+  isPortableExperimentalProfile,
+  PORTABLE_HOST_GATEWAY_IP,
+} from "./experimental/portable-profile";
 import {
   DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
   ensureProbeImageCached,
@@ -44,7 +49,7 @@ export type SandboxBridgeReachabilityReason =
   | "probe_timeout"
   | "veth_unsupported"
   | "docker_daemon_unreachable";
-export type SandboxBridgeRouteKind = "bridge_gateway" | "host_gateway";
+export type SandboxBridgeRouteKind = "bridge_gateway" | "host_gateway" | "portable_host_gateway";
 
 export interface DockerBridgeNetworkInfo {
   subnet?: string;
@@ -89,6 +94,8 @@ export interface SandboxBridgeReachabilityOptions {
   runImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   inspectNetworkImpl?: (networkName: string) => DockerBridgeNetworkInfo | undefined;
   usesHostGatewayRouteImpl?: () => boolean;
+
+  runtimeProbeImpl?: (args: readonly string[], timeoutMs: number) => SandboxBridgeProbeRunResult;
   /** Inject a precomputed image-cache result; bypasses real pre-pull. */
   ensureImageCachedOverride?: import("./preflight").EnsureProbeImageCachedResult;
 }
@@ -165,8 +172,18 @@ function buildOpenShellDockerRoute(
   networkName: string,
   network: DockerBridgeNetworkInfo | undefined,
   usesHostGatewayRoute: boolean,
+  portableHostGatewayIp?: string,
 ): OpenShellDockerRoute | undefined {
   if (!network) return undefined;
+  if (portableHostGatewayIp) {
+    return {
+      networkName,
+      subnet: network.subnet,
+      gatewayIp: portableHostGatewayIp,
+      routeKind: "portable_host_gateway",
+      addHosts: [`${HOST_INTERNAL_NAME}:${portableHostGatewayIp}`],
+    };
+  }
   if (usesHostGatewayRoute) {
     return {
       networkName,
@@ -189,11 +206,27 @@ function buildOpenShellDockerRoute(
   };
 }
 
-function outputTail(value: unknown): string | undefined {
+function outputText(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   const raw = Buffer.isBuffer(value) ? value.toString("utf8") : String(value);
   const text = raw.trim();
-  return text ? text.slice(-400) : undefined;
+  return text || undefined;
+}
+
+function outputTail(value: unknown): string | undefined {
+  return outputText(value)?.slice(-400);
+}
+
+function isReachableRuntimeInfo(result: SandboxBridgeProbeRunResult): boolean {
+  if (result.status !== 0) return false;
+  const stdout = outputText(result.stdout);
+  if (!stdout) return false;
+  try {
+    JSON.parse(stdout);
+  } catch {
+    return false;
+  }
+  return parseDockerDaemonObservation(stdout).reachable;
 }
 
 function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
@@ -205,6 +238,22 @@ function summarizeProbeResult(result: SandboxBridgeProbeRunResult): string {
     result.status !== null ? `exit ${result.status}` : undefined,
   ].filter((item): item is string => Boolean(item));
   return details.length > 0 ? details.join(" | ") : "docker run did not complete the probe";
+}
+
+function summarizeRuntimeInfoProbeResult(result: SandboxBridgeProbeRunResult): string {
+  if (isProbeTimeout(result)) {
+    return "Docker-compatible runtime info probe timed out";
+  }
+  if (result.status === 0) {
+    return "Docker-compatible runtime info did not contain a recognized daemon version";
+  }
+  if (result.signal) {
+    return `Docker-compatible runtime info probe ended with signal ${result.signal}`;
+  }
+  if (result.status !== null) {
+    return `Docker-compatible runtime info probe exited with status ${result.status}`;
+  }
+  return "Docker-compatible runtime info probe did not complete";
 }
 
 function isNameResolutionFailure(detail: string): boolean {
@@ -269,9 +318,31 @@ export async function isSandboxBridgeGatewayReachable(
   const usesHostGatewayRoute = opts.usesHostGatewayRouteImpl ?? defaultUsesHostGatewayRoute;
   const runImpl = opts.runImpl ?? defaultRunImpl;
 
+  const portableProfile = isPortableExperimentalProfile();
+  const runtimeProbe = opts.runtimeProbeImpl ?? defaultRunImpl;
+
   const network = inspectNetwork(networkName);
-  const route = buildOpenShellDockerRoute(networkName, network, usesHostGatewayRoute());
+  const route = buildOpenShellDockerRoute(
+    networkName,
+    network,
+    usesHostGatewayRoute(),
+    portableProfile ? PORTABLE_HOST_GATEWAY_IP : undefined,
+  );
   if (!route) {
+    if (portableProfile) {
+      const runtimeResult = runtimeProbe(
+        ["info", "--format", "{{json .}}"],
+        timeoutSec * 1000 + PROBE_RUN_OVERHEAD_MS,
+      );
+      if (!isReachableRuntimeInfo(runtimeResult)) {
+        return {
+          ok: false,
+          reason: "docker_daemon_unreachable",
+          networkName,
+          detail: summarizeRuntimeInfoProbeResult(runtimeResult),
+        };
+      }
+    }
     return {
       ok: false,
       reason: "probe_unavailable",
@@ -436,6 +507,20 @@ export function formatSandboxBridgeUnreachableMessage(
       .join("\n");
   }
 
+  if (result.reason === "docker_daemon_unreachable" && isPortableExperimentalProfile()) {
+    return [
+      failLine("Podman service is not reachable for the portable gateway probe."),
+      result.detail ? `    ${result.detail}` : undefined,
+      "    If the user-scoped Podman service is active, restart it:",
+      "      systemctl --user try-restart podman.service",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
+      "      systemctl --user start podman.socket",
+      `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+  }
+
   if (result.reason === "docker_daemon_unreachable") {
     return [
       failLine("Docker daemon is not reachable for the sandbox bridge probe."),
@@ -446,6 +531,18 @@ export function formatSandboxBridgeUnreachableMessage(
     ]
       .filter((line): line is string => Boolean(line))
       .join("\n");
+  }
+
+  if (result.routeKind === "portable_host_gateway") {
+    return [
+      failLine(`Sandbox containers cannot reach the gateway at ${HOST_INTERNAL_NAME}:${port}.`),
+      `    The probe mapped ${HOST_INTERNAL_NAME} to the OpenShell Podman host gateway.`,
+      "    If the user-scoped Podman service is active, restart it:",
+      "      systemctl --user try-restart podman.service",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
+      "      systemctl --user start podman.socket",
+      `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
+    ].join("\n");
   }
 
   if (result.routeKind === "host_gateway") {
@@ -499,7 +596,10 @@ const SILENT_UFW_AUTO_APPLY_REASONS = new Set<UfwAutoApplyResult["reason"]>([
 ]);
 
 function isRetriableHostGatewayFailure(reach: SandboxBridgeReachabilityResult): boolean {
-  return reach.routeKind === "host_gateway" && reach.reason === "tcp_failed";
+  return (
+    (reach.routeKind === "host_gateway" || reach.routeKind === "portable_host_gateway") &&
+    reach.reason === "tcp_failed"
+  );
 }
 
 function sleepMs(ms: number): Promise<void> {
@@ -535,14 +635,12 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
     attempt += 1
   ) {
     console.log(
-      `  Docker-driver sandbox bridge probe attempt ${attempt - 1}/${retryAttempts} failed (${reach.reason}); retrying in ${retryDelayMs} ms...`,
+      `  OpenShell gateway reachability probe attempt ${attempt - 1}/${retryAttempts} failed (${reach.reason}); retrying in ${retryDelayMs} ms...`,
     );
     await sleep(retryDelayMs);
     reach = await reachability({ port });
     if (reach.ok) {
-      console.log(
-        `  ✓ Docker-driver sandbox bridge reachable on attempt ${attempt}/${retryAttempts}`,
-      );
+      console.log(`  ✓ OpenShell gateway reachable on attempt ${attempt}/${retryAttempts}`);
       return;
     }
   }
@@ -580,7 +678,7 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
   if (exitOnFailure) {
     process.exit(1);
   }
-  throw new Error(`Docker-driver sandbox-bridge unreachable (${reach.reason})`);
+  throw new Error(`Sandbox containers cannot reach the OpenShell gateway (${reach.reason})`);
 }
 
 export const __test = {

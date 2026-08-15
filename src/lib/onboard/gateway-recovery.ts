@@ -20,6 +20,7 @@ import {
   validateGatewayPort,
 } from "../core/ports";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
+import { gatewayStartGuidance } from "../gateway-start-guidance";
 import { shouldPatchCoredns } from "../platform";
 import { run, SCRIPTS } from "../runner";
 import { isGatewayHealthy } from "../state/gateway";
@@ -64,7 +65,6 @@ export type GatewayRecoveryDeps = {
     target: { gatewayName: string; gatewayPort: number },
   ): void;
   getGatewayClusterContainerState?(gatewayName: string): string;
-  getGatewayStartEnv(): Record<string, string>;
   runCaptureOpenshell(args: string[], opts?: RunCaptureOpenshellOptions): string;
   runOpenshell(args: string[], opts?: RunOpenshellOptions): GatewayStartResult;
   startGatewayWithOptions(gpu: never, options: { exitOnFailure: false }): Promise<void>;
@@ -124,17 +124,6 @@ function resolveGatewayRecoveryTarget(options: StartGatewayForRecoveryOptions = 
   return { gatewayName, gatewayPort };
 }
 
-function getGatewayStartEnvForPort(
-  gatewayPort: number,
-  getGatewayStartEnv: GatewayRecoveryDeps["getGatewayStartEnv"],
-): Record<string, string> {
-  return {
-    ...getGatewayStartEnv(),
-    OPENSHELL_SERVER_PORT: String(gatewayPort),
-    OPENSHELL_SSH_GATEWAY_PORT: String(gatewayPort),
-  };
-}
-
 function getDefaultGatewayClusterContainerState(gatewayName: string): string {
   const state = dockerContainerInspectFormat(
     "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
@@ -174,19 +163,10 @@ async function startTargetGatewayForRecovery(
   { gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number },
   deps: GatewayRecoveryDeps,
 ): Promise<void> {
-  const gatewayPortArg = String(gatewayPort);
-  const startResult = deps.runOpenshell(
-    ["gateway", "start", "--name", gatewayName, "--port", gatewayPortArg],
-    {
-      ignoreError: true,
-      env: getGatewayStartEnvForPort(gatewayPort, deps.getGatewayStartEnv),
-      suppressOutput: true,
-    },
-  );
   deps.runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
 
   const recoveryWait = getGatewayHealthWaitConfig(
-    startResult.status ?? 0,
+    0,
     (deps.getGatewayClusterContainerState ?? getDefaultGatewayClusterContainerState)(gatewayName),
   );
   const recoveryPollCount = recoveryWait.extended
@@ -243,7 +223,7 @@ async function startTargetGatewayForRecovery(
       ? formatGatewayHealthWaitLimit(recoveryPollCount, recoveryPollInterval)
       : `${formatReadinessDeadline(waitBudgetMs)} recovery deadline (${recoveryPollInterval}s poll interval)`;
   throw new Error(
-    `Gateway '${gatewayName}' did not become ready within the configured ${waitLimit}`,
+    `Gateway '${gatewayName}' did not become ready within the configured ${waitLimit}. ${gatewayStartGuidance(gatewayName)}`,
   );
 }
 
@@ -252,18 +232,19 @@ export async function startGatewayForRecovery(
   deps: GatewayRecoveryDeps,
 ): Promise<void> {
   const target = resolveGatewayRecoveryTarget(options);
-  // Guard every recovery branch, including the cross-port / non-default-name
-  // path below that reaches `openshell gateway start` without going through
-  // startGatewayWithOptions. Resolve and bind the requested target first: the
-  // process-global gateway can name a different port during sandbox recovery.
+  // Guard every recovery branch. The cross-port / non-default-name path below
+  // bypasses startGatewayWithOptions. It reselects an already-running gateway
+  // and waits for health instead of starting a gateway process. Resolve and
+  // bind the requested target first, because the process-global gateway can
+  // name a different port during sandbox recovery.
   deps.assertGatewayStartAllowed(false, target);
   const linuxDockerDriverEnabled = (
     deps.isLinuxDockerDriverGatewayEnabled ?? isLinuxDockerDriverGatewayEnabled
   )();
   // The Docker-driver Linux startup path (startGatewayWithOptions →
   // startDockerDriverGateway) restores the runtime-marker, package-managed
-  // registration, and sandbox-bridge reachability — none of which a plain
-  // `openshell gateway start` produces. Route through it whenever the
+  // registration, and sandbox-bridge reachability, and it is the only path
+  // that starts a gateway process at all. Route through it whenever the
   // recovery target matches the current process's GATEWAY_PORT (the common
   // case where the user re-runs with the same NEMOCLAW_GATEWAY_PORT).
   if (target.gatewayPort === GATEWAY_PORT) {
@@ -273,11 +254,11 @@ export async function startGatewayForRecovery(
   }
   // Cross-port recovery on a Linux Docker-driver gateway cannot share this
   // process's module-globals: startDockerDriverGateway captures the port at
-  // load time, so a plain `openshell gateway start` would skip the
-  // runtime-marker / package registration / sandbox-bridge setup and leave
-  // the host in a half-recovered state. Fail closed instead and direct the
-  // operator to re-run with the matching NEMOCLAW_GATEWAY_PORT so the
-  // docker-driver path re-stamps the per-port artefacts.
+  // load time, so the reselect path below would skip the runtime-marker /
+  // package registration / sandbox-bridge setup and leave the host in a
+  // half-recovered state. Fail closed instead and direct the operator to
+  // re-run with the matching NEMOCLAW_GATEWAY_PORT so the docker-driver path
+  // re-stamps the per-port artefacts.
   if (linuxDockerDriverEnabled && target.gatewayPort !== GATEWAY_PORT) {
     throw new Error(
       `Cross-port recovery for Linux Docker-driver gateway '${target.gatewayName}' is not safe from a process bound to port ${GATEWAY_PORT}. ` +

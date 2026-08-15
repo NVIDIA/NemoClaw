@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WebSearchConfig } from "../../inference/web-search";
+import type { WebSearchConfig, WebSearchProvider } from "../../inference/web-search";
 import { assertSandboxCreatedContext, type OnboardFlowContext } from "./flow-context";
 import {
   createAgentSetupPhase,
@@ -10,6 +10,7 @@ import {
   createPoliciesPhase,
   createPostVerifyPhase,
 } from "./flow-phases/agent-policy-finalization";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runFinalOnboardFlowSequence } from "./flow-slices";
 import { type AgentSetupStateOptions, handleAgentSetupState } from "./handlers/agent-setup";
 import {
@@ -18,7 +19,6 @@ import {
   handlePostVerifyState,
 } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
 import { createPhaseProgressReporter } from "./phase-progress";
 import type { OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
@@ -38,12 +38,12 @@ export interface FinalOnboardFlowPhaseOptions<
     stagedLegacyKeys: readonly string[];
     migratedLegacyKeys: ReadonlySet<string>;
     webSearchEnabled(webSearchConfig: WebSearchConfig | null): boolean;
+    webSearchProvider(webSearchConfig: WebSearchConfig): WebSearchProvider;
   };
-  finalizationDeps: FinalizationStateOptions<
-    Context["agent"],
-    VerifyChain,
-    VerificationResult
-  >["deps"];
+  finalizationDeps: Omit<
+    FinalizationStateOptions<Context["agent"], VerifyChain, VerificationResult>["deps"],
+    "persistDashboardPort"
+  >;
 }
 
 export function createFinalOnboardFlowPhases<
@@ -58,6 +58,10 @@ export function createFinalOnboardFlowPhases<
   OnboardSequencePhase<Context>,
   OnboardSequencePhase<Context>,
 ] {
+  const finalizationDeps = {
+    ...options.finalizationDeps,
+    persistDashboardPort: options.agentSetupDeps.persistDashboardPort,
+  };
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
@@ -86,6 +90,9 @@ export function createFinalOnboardFlowPhases<
       authoritativePolicyTier: options.authoritativePolicyTier,
       sandboxName: context.sandboxName,
       provider: context.provider,
+      hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,
+      hostLocalInferenceSandboxProofAuthority:
+        context.hostLocalInferenceSandboxProofAuthority ?? null,
       model: context.model,
       endpointUrl: context.endpointUrl,
       credentialEnv: context.credentialEnv,
@@ -108,6 +115,7 @@ export function createFinalOnboardFlowPhases<
 
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "finalization");
+    const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -118,14 +126,19 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       stagedLegacyKeys: options.finalization.stagedLegacyKeys,
       migratedLegacyKeys: options.finalization.migratedLegacyKeys,
-      webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
-      deps: options.finalizationDeps,
+      webSearchEnabled,
+      webSearchProvider:
+        webSearchEnabled && context.webSearchConfig
+          ? options.finalization.webSearchProvider(context.webSearchConfig)
+          : null,
+      deps: finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
   });
 
   const postVerifyPhase = createPostVerifyPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "post verification");
+    const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
     const postVerifyResult = await handlePostVerifyState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -136,8 +149,12 @@ export function createFinalOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       stagedLegacyKeys: options.finalization.stagedLegacyKeys,
       migratedLegacyKeys: options.finalization.migratedLegacyKeys,
-      webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
-      deps: options.finalizationDeps,
+      webSearchEnabled,
+      webSearchProvider:
+        webSearchEnabled && context.webSearchConfig
+          ? options.finalization.webSearchProvider(context.webSearchConfig)
+          : null,
+      deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };
   });
@@ -336,7 +353,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   const durableEntry = await options.runtime.session();
   const allowedStates = [branchState, ...FINAL_FLOW_DOWNSTREAM_STATES] as const;
   if (!allowedStates.includes(durableEntry.machine.state as (typeof allowedStates)[number])) {
-    throw new UnexpectedLiveOnboardFlowSliceStateError(
+    throw new UnexpectedOnboardFlowSliceStateError(
       durableEntry.machine.state,
       [branchState],
       FINAL_FLOW_DOWNSTREAM_STATES,

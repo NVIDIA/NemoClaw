@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { makeDeps, makeHostState, unexpected } from "./__test-helpers__/setup-nim-flow";
 import { buildInferenceProviderMenu } from "./provider-menu";
+import { resolveRequestedProviderSelection } from "./provider-selection";
+import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints" },
@@ -22,6 +25,7 @@ function buildMenu(overrides: Partial<Parameters<typeof buildInferenceProviderMe
     agentProviderOptions: [],
     experimental: false,
     gpuNimCapable: false,
+    nvidiaPlatform: undefined,
     hasOllama: false,
     ollamaRunning: false,
     ollamaHost: null,
@@ -54,6 +58,7 @@ describe("buildInferenceProviderMenu", () => {
       "anthropic",
       "anthropicCompatible",
       "gemini",
+      "llama-cpp",
     ]);
   });
 
@@ -86,11 +91,92 @@ describe("buildInferenceProviderMenu", () => {
       "install-ollama",
       "routed",
       "hermesProvider",
+      "llama-cpp",
     ]);
     expect(result.options.find((option) => option.key === "build")?.label).toBe("NVIDIA Endpoints");
     expect(result.options.find((option) => option.key === "hermesProvider")?.label).toBe(
       "Hermes Provider",
     );
+  });
+
+  it("preserves the priority order and identity of managed llama.cpp profiles", () => {
+    const managedLlamaCppOptions = [
+      {
+        key: "install-llama-cpp",
+        label: "Managed llama.cpp: Recommended model (recommended)",
+        managedLlamaCppRecipeId: "llama-cpp.recommended.v1",
+      },
+      {
+        key: "install-llama-cpp",
+        label: "Managed llama.cpp: Alternate model",
+        managedLlamaCppRecipeId: "llama-cpp.alternate.v1",
+      },
+    ];
+
+    const result = buildMenu({ managedLlamaCppOptions });
+
+    expect(result.options.filter(({ key }) => key === "install-llama-cpp")).toEqual(
+      managedLlamaCppOptions,
+    );
+  });
+
+  it("keeps Local NVIDIA NIM unavailable on N1x while retaining managed vLLM (#8574)", () => {
+    const menu = buildMenu({
+      experimental: true,
+      gpuNimCapable: true,
+      nvidiaPlatform: "n1x",
+      vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x) [Deferred preview]" }],
+    });
+    const providerKeys = menu.options.map(({ key }) => key);
+
+    expect(providerKeys).not.toContain("nim-local");
+    expect(providerKeys).toContain("install-vllm");
+    expect(
+      resolveRequestedProviderSelection({
+        options: menu.options,
+        requestedProvider: "nim-local",
+        sandboxName: null,
+        remoteProviderConfig: {},
+        isWsl: false,
+        isWindowsHostOllama: false,
+        windowsHostOllamaSupported: false,
+        hermesProviderAvailable: false,
+        readRecordedProvider: () => null,
+        readRecordedNimContainer: () => null,
+        readRecordedModel: () => null,
+      }),
+    ).toEqual({
+      kind: "failure",
+      reason: { kind: "requested-provider-unavailable", providerKey: "nim-local" },
+    });
+  });
+
+  it("rejects explicit Local NVIDIA NIM on N1x before NIM setup (#8574)", async () => {
+    const error = vi.fn();
+    const handleNimLocalSelection = vi.fn<SetupNimFlowDeps["handleNimLocalSelection"]>();
+    const setupNim = createSetupNim(
+      makeDeps({
+        experimental: true,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "nim-local",
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            gpuNimCapable: true,
+            vllmEntries: [{ key: "install-vllm", label: "Install vLLM (N1x) [Deferred preview]" }],
+          }),
+        error,
+        exitProcess: (code) => unexpected(`exitProcess(${code})`),
+        handleNimLocalSelection,
+      }),
+    );
+
+    await expect(
+      setupNim({ type: "nvidia", platform: "n1x", nimCapable: true } as never),
+    ).rejects.toThrow("Unexpected exitProcess(1) call");
+    expect(error).toHaveBeenCalledWith(
+      "  Requested provider 'nim-local' is not available in this environment.",
+    );
+    expect(handleNimLocalSelection).not.toHaveBeenCalled();
   });
 
   it("offers Windows-host Ollama install when WSL has no Windows Ollama", () => {
@@ -100,7 +186,7 @@ describe("buildInferenceProviderMenu", () => {
       windowsHostInstallLabel: "Install Ollama on Windows host (requires Docker Desktop)",
     });
 
-    expect(result.options.at(-1)).toEqual({
+    expect(result.options.at(-2)).toEqual({
       key: "install-windows-ollama",
       label: "Install Ollama on Windows host (requires Docker Desktop)",
     });
@@ -116,7 +202,7 @@ describe("buildInferenceProviderMenu", () => {
         reachable ? "Use Ollama on Windows host - running" : "Start Ollama on Windows host",
     });
 
-    expect(result.options.at(-1)).toEqual({
+    expect(result.options.at(-2)).toEqual({
       key: "start-windows-ollama",
       label: "Use Ollama on Windows host - running",
     });

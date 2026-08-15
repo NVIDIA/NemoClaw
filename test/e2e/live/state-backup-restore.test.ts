@@ -125,7 +125,7 @@ async function destroySandboxUntilAbsent(
   );
 }
 
-test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory", {
+test("state-backup-restore: backup-workspace.sh restores workspace files and memory directory (#8006)", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -179,6 +179,7 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
       "real scripts/backup-workspace.sh backup host process",
       "real nemoclaw <sandbox> destroy --yes",
       "real scripts/backup-workspace.sh restore host process",
+      "legacy workspace backup and restore remains compatible with AgentDefinition state migration",
     ],
   });
 

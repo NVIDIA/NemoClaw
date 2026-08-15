@@ -36,6 +36,11 @@ function installMockPrivilegedExec(
       // config validation and write behavior without requiring real Docker.
       privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
       resolveDirectSandboxContainer: () => "container-id",
+      withPrivilegedSandboxExecutionLease: <T>(
+        _sandboxName: string,
+        _operation: string,
+        fn: () => T,
+      ): T => fn(),
     },
   } as any;
   requireCache[timerBoundLockPath] = {
@@ -45,6 +50,8 @@ function installMockPrivilegedExec(
     exports: {
       // Transition-lock behavior has dedicated coverage. Keep this SSRF suite
       // independent from host process-identity discovery while it mocks ps.
+      // configSet holds the lifecycle lock before entering this boundary.
+      isMcpLifecycleLockHeld: () => true,
       withTimerBoundShieldsMutationLock: (
         _sandboxName: string,
         _command: string,

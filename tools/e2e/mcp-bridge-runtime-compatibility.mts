@@ -164,7 +164,7 @@ export function mcpBridgeCompatibilityRiskSignal(
   if (!MCP_BRIDGE_DEV_SHARDS.has(environment.shardId)) {
     throw new Error("MCP dev compatibility risk signal requires a reviewed agent shard");
   }
-  // This explicit-only lane tests the moving runtime's compatibility boundary.
+  // This E2E tests the moving runtime's compatibility boundary.
   // Rejecting an unreviewed version is its passing assertion; credential-bearing
   // lifecycle evidence remains exclusive to the aligned Vitest branch.
   return buildRiskSignal(environment, {

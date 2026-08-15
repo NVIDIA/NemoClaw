@@ -53,40 +53,41 @@ gate_state_open=$([ "$state" = "OPEN" ] && echo true || echo false)
 
 # Gate 2: CI passes on the PR SHA. statusCheckRollup contains the run for that SHA.
 # Fail closed when required checks are missing, including an empty rollup.
-required_checks='["checks","check-hash","changes","commit-lint","dco-check","E2E / PR Gate"]'
+required_checks='["checks","check-hash","changes","commit-lint","dco-check"]'
 observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
 missing_checks=$(jq -cn --argjson required "$required_checks" --argjson observed "$observed_checks" '$required - $observed')
 missing_check_count=$(printf '%s' "$missing_checks" | jq 'length')
-# Keep this allowlist aligned with check-gates.ts checkCi(): every other completed
-# CheckRun conclusion or terminal StatusContext state fails closed.
-ci_failing_checks=$(printf '%s' "$raw" | jq -c '[
+# Former PR E2E contexts are advisory. Every other completed CheckRun
+# conclusion or terminal StatusContext state fails closed.
+advisory_e2e_names='["E2E / PR Gate","E2E / PR Gate / Rollup","E2E / PR Gate Coordination"]'
+ci_failing_checks=$(printf '%s' "$raw" | jq -c --argjson advisory "$advisory_e2e_names" '[
   (.statusCheckRollup // [])[]
+  | (.name // .context // "(unknown)") as $name
+  | select(($advisory | index($name)) == null)
   | if .state != null then
       (.state | ascii_upcase) as $state
       | select($state != "SUCCESS" and $state != "PENDING" and $state != "EXPECTED")
-      | "\(.context // .name // "(unknown)"): \($state)"
+      | "\($name): \($state)"
     else
       (.status // "" | ascii_upcase) as $status
       | (.conclusion // "" | ascii_upcase) as $conclusion
-      | (.name // .context // "(unknown)") as $name
       | select($status == "COMPLETED")
-      | select(
-          ($name == "E2E / PR Gate" and $conclusion != "SUCCESS") or
-          ($name != "E2E / PR Gate" and $conclusion != "SUCCESS" and $conclusion != "NEUTRAL" and $conclusion != "SKIPPED")
-        )
+      | select($conclusion != "SUCCESS" and $conclusion != "NEUTRAL" and $conclusion != "SKIPPED")
       | "\($name): \($conclusion)"
     end
 ]')
-ci_pending_checks=$(printf '%s' "$raw" | jq -c '[
+ci_pending_checks=$(printf '%s' "$raw" | jq -c --argjson advisory "$advisory_e2e_names" '[
   (.statusCheckRollup // [])[]
+  | (.name // .context // "(unknown)") as $name
+  | select(($advisory | index($name)) == null)
   | if .state != null then
       (.state | ascii_upcase) as $state
       | select($state == "PENDING" or $state == "EXPECTED" or $state == "")
-      | (.context // .name // "(unknown)")
+      | $name
     else
       (.status // "" | ascii_upcase) as $status
       | select($status != "COMPLETED")
-      | (.name // .context // "(unknown)")
+      | $name
     end
 ]')
 ci_failure_count=$(printf '%s' "$ci_failing_checks" | jq 'length')
