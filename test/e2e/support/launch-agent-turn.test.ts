@@ -23,6 +23,8 @@ import {
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
+const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
@@ -35,6 +37,7 @@ type FixtureMode =
   | "nonzero"
   | "nonzero-cleanup-failure"
   | "recording-timeout"
+  | "transient-tui-stdin"
   | "valid";
 
 function message(role: "assistant" | "user", content = "nonempty"): string {
@@ -140,6 +143,8 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const sessionRoot = join(fixtureRoot, "sessions");
   const tuiInputMarkerRoot = join(fixtureRoot, "tui-input");
   const tuiPidsPath = join(fixtureRoot, "tui-pids");
+  const tuiStdinRetryMarker = join(fixtureRoot, "tui-stdin-retry");
+  const tuiStdinUnavailableMarker = join(fixtureRoot, "tui-stdin-unavailable");
   const ttyMarker = join(fixtureRoot, "tty-observed");
   const runId = basename(fixtureRoot).replaceAll(/[^a-zA-Z0-9]/gu, "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
@@ -156,34 +161,65 @@ const childProcess = require("node:child_process");
 
 const mode = process.env.NEMOCLAW_FIXTURE_MODE;
 if (process.argv[2] !== "tui") {
-  if (mode !== "multiple-tui-processes") {
+  if (mode === "transient-tui-stdin") {
+    const transient = childProcess.spawn(
+      process.execPath,
+      [__filename, "tui", "stdin-unavailable"],
+      { stdio: "inherit" },
+    );
+    fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TUI_PIDS, transient.pid + "\n");
+    const stopTransient = () => {
+      try { transient.kill("SIGTERM"); } catch {}
+      setTimeout(() => process.exit(0), 100);
+    };
+    for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+      process.once(signal, stopTransient);
+    }
+    transient.once("exit", async (status) => {
+      for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+        process.removeListener(signal, stopTransient);
+      }
+      if (status !== 0) process.exit(status ?? 66);
+      const processExitDeadline = Date.now() + 1_000;
+      while (fs.existsSync("/proc/" + transient.pid) && Date.now() < processExitDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (fs.existsSync("/proc/" + transient.pid)) process.exit(69);
+      const child = childProcess.spawnSync(process.execPath, [__filename, "tui"], {
+        stdio: "inherit",
+      });
+      fs.appendFileSync(process.env.NEMOCLAW_FIXTURE_TUI_PIDS, child.pid + "\n");
+      process.exit(child.status ?? 66);
+    });
+  } else if (mode !== "multiple-tui-processes") {
     const child = childProcess.spawnSync(process.execPath, [__filename, "tui"], { stdio: "inherit" });
     process.exit(child.status ?? 66);
-  }
-  const children = Array.from({ length: 2 }, () =>
-    childProcess.spawn(process.execPath, [__filename, "tui"], { stdio: "inherit" }),
-  );
-  fs.writeFileSync(
-    process.env.NEMOCLAW_FIXTURE_TUI_PIDS,
-    children.map((child) => child.pid).join("\n") + "\n",
-  );
-  const stopChildren = () => {
-    for (const child of children) {
-      try { child.kill("SIGTERM"); } catch {}
+  } else {
+    const children = Array.from({ length: 2 }, () =>
+      childProcess.spawn(process.execPath, [__filename, "tui"], { stdio: "inherit" }),
+    );
+    fs.writeFileSync(
+      process.env.NEMOCLAW_FIXTURE_TUI_PIDS,
+      children.map((child) => child.pid).join("\n") + "\n",
+    );
+    const stopChildren = () => {
+      for (const child of children) {
+        try { child.kill("SIGTERM"); } catch {}
+      }
+    };
+    for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+      process.once(signal, () => {
+        stopChildren();
+        setTimeout(() => process.exit(0), 100);
+      });
     }
-  };
-  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
-    process.once(signal, () => {
-      stopChildren();
-      setTimeout(() => process.exit(0), 100);
-    });
-  }
-  let activeChildren = children.length;
-  for (const child of children) {
-    child.once("exit", () => {
-      activeChildren -= 1;
-      if (activeChildren === 0) process.exit(0);
-    });
+    let activeChildren = children.length;
+    for (const child of children) {
+      child.once("exit", () => {
+        activeChildren -= 1;
+        if (activeChildren === 0) process.exit(0);
+      });
+    }
   }
 }
 
@@ -196,7 +232,10 @@ if (process.argv[2] === "tui") (async () => {
     sessionFile,
     JSON.stringify({ message: { content: [{ text: content, type: "text" }], role }, type: "message" }) + "\n",
   );
-  if (mode === "multiple-tui-processes") {
+  if (
+    mode === "multiple-tui-processes" ||
+    (mode === "transient-tui-stdin" && process.argv[3] !== "stdin-unavailable")
+  ) {
     let observedPtyInput = "";
     process.stdin.on("data", (chunk) => {
       observedPtyInput += chunk.toString();
@@ -204,6 +243,18 @@ if (process.argv[2] === "tui") (async () => {
         fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT + "/" + process.pid, "");
       }
     });
+  }
+  if (mode === "transient-tui-stdin" && process.argv[3] === "stdin-unavailable") {
+    fs.closeSync(0);
+    fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TUI_STDIN_UNAVAILABLE, "");
+    const deadline = Date.now() + 5_000;
+    while (
+      !fs.existsSync(process.env.NEMOCLAW_FIXTURE_TUI_STDIN_RETRY) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    process.exit(fs.existsSync(process.env.NEMOCLAW_FIXTURE_TUI_STDIN_RETRY) ? 0 : 68);
   }
   if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
     let inputBeforeAttachment = false;
@@ -263,6 +314,16 @@ fi
 while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
 [[ "$#" -gt 0 ]]
 shift
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "transient-tui-stdin" && "$4" == "input-mode" ]]; then
+  set +e
+  "$@"
+  status=$?
+  set -e
+  if [[ "$status" == 1 && -f "$NEMOCLAW_FIXTURE_TUI_STDIN_UNAVAILABLE" ]]; then
+    : >"$NEMOCLAW_FIXTURE_TUI_STDIN_RETRY"
+  fi
+  exit "$status"
+fi
 exec "$@"
 `,
     );
@@ -279,6 +340,8 @@ exec "$@"
         NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
         NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT: tuiInputMarkerRoot,
         NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
+        NEMOCLAW_FIXTURE_TUI_STDIN_RETRY: tuiStdinRetryMarker,
+        NEMOCLAW_FIXTURE_TUI_STDIN_UNAVAILABLE: tuiStdinUnavailableMarker,
         NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
         NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
         NEMOCLAW_LAUNCH_ENTRYPOINT: "",
@@ -304,7 +367,7 @@ exec "$@"
       tuiProcessIds.some((pid) => existsSync(`/proc/${pid}`)) &&
       Date.now() < processExitDeadline
     ) {
-      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 25)"], { timeout: 100 });
+      Atomics.wait(PROCESS_EXIT_WAIT, 0, 0, 25);
     }
     return {
       baselineRemoved: !existsSync(baselinePath),
@@ -313,6 +376,7 @@ exec "$@"
         existsSync(join(tuiInputMarkerRoot, pid)),
       ),
       result,
+      tuiStdinUnavailableObserved: existsSync(tuiStdinUnavailableMarker),
       tuiProcessIds,
       ttyObserved: existsSync(ttyMarker),
     };
@@ -434,6 +498,30 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "retries when a matching OpenClaw TUI process closes standard input (#9160)",
+  () => {
+    const {
+      baselineRemoved,
+      orphanedTuiProcessIds,
+      recordedTuiInputProcessIds,
+      result,
+      tuiProcessIds,
+      tuiStdinUnavailableObserved,
+      ttyObserved,
+    } = runLaunchSessionFixture("transient-tui-stdin", "absent");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(ttyObserved).toBe(true);
+    expect(tuiProcessIds).toHaveLength(2);
+    expect(tuiStdinUnavailableObserved).toBe(true);
+    expect(recordedTuiInputProcessIds).toEqual([tuiProcessIds[1]]);
+    expect(orphanedTuiProcessIds).toEqual([]);
+    expect(baselineRemoved).toBe(true);
+    expect(result.signal).toBeNull();
   },
 );
 
