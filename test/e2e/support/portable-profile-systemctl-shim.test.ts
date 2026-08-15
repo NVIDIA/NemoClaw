@@ -154,10 +154,10 @@ function runInstallerOverride(scope: FixtureScope): ReturnType<typeof spawnSync>
   });
 }
 
-function portableLaunchProvisionStep(): WorkflowStep {
+function portableLaunchStep(name: string): WorkflowStep {
   const workflow = readYaml<Workflow>(".github/workflows/portable-profile-e2e.yaml");
   const step = workflow.jobs["portable-launch"]?.steps?.find(
-    (candidate) => candidate.name === "Provision restricted rootless Linux runtime",
+    (candidate) => candidate.name === name,
   );
   expect(step).toBeDefined();
   return step!;
@@ -346,11 +346,24 @@ describe("portable profile systemctl fixture", () => {
     }
   });
 
-  it("binds the portable-launch workflow to the shared systemctl fixture (#9006)", () => {
-    const provision = portableLaunchProvisionStep().run ?? "";
+  it("binds portable-launch setup and always-run cleanup to the shared systemctl fixture (#9006)", () => {
+    const provision = portableLaunchStep("Provision restricted rootless Linux runtime").run ?? "";
     expect(provision).toContain(
       'install -m 700 test/e2e/fixtures/portable-profile-systemctl-shim.sh "$shim_dir/systemctl"',
     );
     expect(provision).toContain("systemctl --user start podman.socket");
+    const runtimeExportIndex = provision.indexOf("XDG_RUNTIME_DIR=%s");
+    expect(runtimeExportIndex).toBeGreaterThanOrEqual(0);
+    expect(runtimeExportIndex).toBeLessThan(
+      provision.indexOf("systemctl --user start podman.socket"),
+    );
+
+    const cleanup = portableLaunchStep("Clean up portable runtime");
+    expect(cleanup.if).toBe("always()");
+    expect(cleanup.run).toContain('runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"');
+    expect(cleanup.run).toContain(
+      'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);',
+    );
+    expect(cleanup.run).toContain('"$runtime_dir"');
   });
 });

@@ -145,10 +145,10 @@ jobs:
 
           export PATH="$shim_dir:$PATH"
           export XDG_RUNTIME_DIR="$runtime_dir"
-          systemctl --user start podman.socket
           printf '%s\n' "$shim_dir" >>"$GITHUB_PATH"
           printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$GITHUB_ENV"
           printf 'DOCKER_HOST=unix://%s/podman/podman.sock\n' "$runtime_dir" >>"$GITHUB_ENV"
+          systemctl --user start podman.socket
           podman --version
           docker --version
           docker --host "unix://$runtime_dir/podman/podman.sock" info
@@ -175,7 +175,7 @@ jobs:
         shell: bash
         run: |
           podman system reset --force || true
-          pid_file="${XDG_RUNTIME_DIR}/nemoclaw-podman-service.pid"
-          if [[ -f "$pid_file" ]]; then
-            kill "$(<"$pid_file")" 2>/dev/null || true
-          fi
+          runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          node --experimental-strip-types --no-warnings --input-type=module \
+            --eval 'import { cleanupPortableProfileSystemctlFixture } from "./test/e2e/fixtures/portable-profile-systemctl.ts"; await cleanupPortableProfileSystemctlFixture(process.argv[1]);' \
+            "$runtime_dir"
