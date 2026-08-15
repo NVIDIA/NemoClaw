@@ -3415,15 +3415,15 @@ for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
   fi
 done
 
-sudo install -d -o root -g root -m 0755 -- "$(dirname "$delegation_drop_in")" &&
-  sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")"
+sudo install -d -o root -g root -m 0755 -- "$(dirname "$delegation_drop_in")" || exit 1
+sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")" || exit 1
 
 create_drop_in() {
   drop_in="$1"
   shift
 
   if ! printf '%s\n' "$@" | sudo dd of="$drop_in" oflag=excl status=none; then
-    printf 'Refusing to replace existing file: %s\n' "$drop_in" >&2
+    printf 'CPU controller drop-in creation failed: %s\n' "$drop_in" >&2
     return 1
   fi
 
