@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+
 import { SUPPORTED_GATEWAY_CAPABILITIES } from "../core/gateway-capabilities";
 import { isObjectRecord } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
@@ -20,7 +21,6 @@ import {
   type CheckpointLoadResult,
   type CheckpointMessagingSelection,
   type CheckpointOnboardProfile,
-  type CheckpointPortableRuntimeAuthority,
   type CheckpointProfileDecision,
   type CheckpointProviderBinding,
   type CheckpointResourceProfile,
@@ -31,6 +31,7 @@ import {
   type CheckpointSandboxRecreateTransaction,
   type OnboardCheckpoint,
 } from "./onboard-checkpoint-types";
+import { parsePortableRuntimeAuthority } from "./onboard/portable-runtime-authority";
 
 const EFFECT_GROUP_NAMES: readonly CheckpointEffectGroupName[] = [
   "web_search_provider",
@@ -72,73 +73,12 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
   return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
 }
 
-function readCanonicalAbsolutePath(value: unknown): string | null {
-  if (typeof value !== "string" || value === "" || /[\0\r\n]/u.test(value)) return null;
-  if (!path.isAbsolute(value) || path.normalize(value) !== value) return null;
-  return value;
-}
-
-function isStrictDescendant(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative !== "" &&
-    !path.isAbsolute(relative) &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`)
-  );
-}
-
 function parseProfile(value: unknown): CheckpointProfileDecision | null {
   if (!isObjectRecord(value) || !hasExactKeys(value, ["kind", "value"])) return null;
   if (value.kind !== "selected" || (value.value !== "default" && value.value !== "portable")) {
     return null;
   }
   return { kind: "selected", value: value.value as CheckpointOnboardProfile };
-}
-
-function parsePortableRuntimeAuthority(value: unknown): CheckpointPortableRuntimeAuthority | null {
-  if (
-    !isObjectRecord(value) ||
-    !hasExactKeys(value, [
-      "schemaVersion",
-      "kind",
-      "ownership",
-      "uid",
-      "homeDir",
-      "configHome",
-      "runtimeDir",
-      "socketPath",
-    ])
-  ) {
-    return null;
-  }
-  if (
-    value.schemaVersion !== 1 ||
-    value.kind !== "podman" ||
-    value.ownership !== "current-user" ||
-    !Number.isSafeInteger(value.uid) ||
-    Number(value.uid) < 0
-  ) {
-    return null;
-  }
-  const homeDir = readCanonicalAbsolutePath(value.homeDir);
-  const configHome = readCanonicalAbsolutePath(value.configHome);
-  const runtimeDir = readCanonicalAbsolutePath(value.runtimeDir);
-  const socketPath = readCanonicalAbsolutePath(value.socketPath);
-  if (!homeDir || !configHome || !runtimeDir || !socketPath) return null;
-  if (configHome !== path.join(homeDir, ".config")) return null;
-  if (runtimeDir !== path.join("/run/user", String(value.uid))) return null;
-  if (!isStrictDescendant(runtimeDir, socketPath)) return null;
-  return {
-    schemaVersion: 1,
-    kind: "podman",
-    ownership: "current-user",
-    uid: Number(value.uid),
-    homeDir,
-    configHome,
-    runtimeDir,
-    socketPath,
-  };
 }
 
 function parseRuntimeAuthority(value: unknown): CheckpointRuntimeAuthorityDecision | null {

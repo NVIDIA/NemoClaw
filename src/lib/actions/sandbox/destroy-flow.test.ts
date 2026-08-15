@@ -64,6 +64,44 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("runs routed teardown under the gateway and host router-port locks (#9098)", async () => {
+    const harness = createDestroyHarness({ provider: "nvidia-router" });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
+    expect(harness.withModelRouterPortLifecycleLockSpy).toHaveBeenCalledWith(
+      4000,
+      expect.any(Function),
+    );
+  });
+
+  it("leaves an active same-name replacement onboarding session unchanged", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      replaceSessionAfterRegistryRemoval: true,
+      sessionRouterPid: 4242,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.compareAndSwapSessionSpy).not.toHaveBeenCalled();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+    expect(harness.sessionState).toMatchObject({
+      sessionId: "replacement-session",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      routerPid: 6262,
+      routerCredentialHash: "replacement-hash",
+    });
+    expect(harness.warnSpy).toHaveBeenCalledWith(expect.stringContaining("owns the session lock"));
+  });
+
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
     const routeId = "a".repeat(64);
     const harness = createDestroyHarness({
@@ -476,7 +514,8 @@ describe("destroySandbox flow", () => {
       timeout: 30_000,
     });
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Sandbox 'alpha' destroyed",
     );
@@ -725,7 +764,8 @@ describe("destroySandbox flow", () => {
     });
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledTimes(2);
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
       "nemoclaw-19080",
       harness.runOpenshellSpy,

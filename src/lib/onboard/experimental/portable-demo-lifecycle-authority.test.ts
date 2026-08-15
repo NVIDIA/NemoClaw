@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
+import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   installPortableDemoSandboxLifecycle,
   portableDemoLifecycleInternals,
@@ -15,6 +16,16 @@ import {
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
 const SOCKET_PATH = "/run/user/1001/podman/podman.sock";
+const RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
+  schemaVersion: 1,
+  kind: "podman",
+  ownership: "current-user",
+  uid: 1001,
+  homeDir: "/home/tester",
+  configHome: "/home/tester/.config",
+  runtimeDir: "/run/user/1001",
+  socketPath: SOCKET_PATH,
+};
 const STARTUP_ARGV = [
   "env",
   "CHAT_UI_URL=http://127.0.0.1:18789",
@@ -37,8 +48,8 @@ function createPodman() {
   const podman = vi.fn((args: readonly string[], _env?: NodeJS.ProcessEnv) => {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
-      case "info":
-        return { status: 0, stdout: `${SOCKET_PATH}\n` };
+      case "version":
+        return { status: 0, stdout: JSON.stringify({ Server: { Version: "5.6.1" } }) };
       case "ps":
         return { status: 0, stdout: `${CONTAINER_ID}\n` };
       case "inspect":
@@ -90,6 +101,21 @@ function socketAuthorityDeps(socketInode: () => bigint = () => 9001n): PodmanSoc
   };
 }
 
+function lifecycleDeps(authorityDeps: PodmanSocketAuthorityDeps) {
+  return {
+    platform: "linux" as const,
+    runtimeAuthority: RUNTIME_AUTHORITY,
+    podmanSocketAuthorityDeps: authorityDeps,
+    hardenSocketDirectory: vi.fn(),
+    runtimeReadiness: {
+      uid: RUNTIME_AUTHORITY.uid,
+      home: RUNTIME_AUTHORITY.homeDir,
+      systemctl: () => ({ status: 0 }),
+    },
+    log: vi.fn(),
+  };
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -106,16 +132,14 @@ describe("portable demo lifecycle authority", () => {
       STARTUP_ARGV,
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
       {
-        platform: "linux",
         podman,
         stateDir,
-        podmanSocketAuthorityDeps: socketAuthorityDeps(),
-        hardenSocketDirectory: vi.fn(),
+        ...lifecycleDeps(socketAuthorityDeps()),
       },
     );
 
     expect(podman.mock.calls.map(([args]) => args)).toEqual([
-      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
+      ["--url", `unix://${SOCKET_PATH}`, "version", "--format", "json"],
       [
         "--url",
         `unix://${SOCKET_PATH}`,
@@ -137,12 +161,13 @@ describe("portable demo lifecycle authority", () => {
     const filePath = portableDemoLifecycleInternals.receiptPath("alpha", stateDir);
     const receipt = JSON.parse(fs.readFileSync(filePath, "utf-8"));
     expect(receipt).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       sandboxName: "alpha",
       sandboxId: SANDBOX_ID,
       containerId: CONTAINER_ID,
       dashboardPort: 18789,
       registryGeneration: CONTAINER_ID,
+      runtimeAuthority: RUNTIME_AUTHORITY,
     });
     expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
   });
@@ -161,16 +186,21 @@ describe("portable demo lifecycle authority", () => {
         CONTAINER_SSHKEY: "/tmp/attacker-key",
       },
       {
-        platform: "linux",
         podman: runtime.podman,
         stateDir,
-        podmanSocketAuthorityDeps: socketAuthorityDeps(),
-        hardenSocketDirectory: vi.fn(),
+        ...lifecycleDeps(socketAuthorityDeps()),
       },
     );
 
     for (const [, env] of runtime.podman.mock.calls) {
-      expect(env).toEqual({ NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" });
+      expect(env).toMatchObject({
+        HOME: RUNTIME_AUTHORITY.homeDir,
+        XDG_CONFIG_HOME: RUNTIME_AUTHORITY.configHome,
+        XDG_RUNTIME_DIR: RUNTIME_AUTHORITY.runtimeDir,
+      });
+      expect(env).not.toHaveProperty("CONTAINER_CONNECTION");
+      expect(env).not.toHaveProperty("CONTAINER_HOST");
+      expect(env).not.toHaveProperty("CONTAINER_SSHKEY");
     }
   });
 
@@ -191,11 +221,9 @@ describe("portable demo lifecycle authority", () => {
         STARTUP_ARGV,
         { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
         {
-          platform: "linux",
           podman,
           stateDir,
-          podmanSocketAuthorityDeps: socketAuthorityDeps(() => inode),
-          hardenSocketDirectory: vi.fn(),
+          ...lifecycleDeps(socketAuthorityDeps(() => inode)),
         },
       ),
     ).toThrow("changed after it was qualified");
