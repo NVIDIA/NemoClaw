@@ -5,10 +5,7 @@ import os from "node:os";
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
-import {
-  DEFAULT_MODEL_ROUTER_PORT,
-  isRoutedInferenceProvider,
-} from "../../onboard/model-router";
+import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
 import {
   doesModelRouterProcessOwnPort,
   inspectModelRouterProcessForPort,
@@ -115,7 +112,7 @@ export function resolveDestroyedSandboxRouterPort(endpointUrl: string | null | u
  * The recorded PID is preferred only when the session sandbox and router port
  * match the destroyed sandbox. Otherwise, the /proc scan recovers the orphan
  * by verified command line, exactly like reconcileModelRouter's recovery path.
- * The host-global port lock and non-blocking onboarding session lock cover the
+ * The current-user port lock and non-blocking onboarding session lock cover the
  * peer scan, stop, and session update. Destroy skips teardown when onboarding
  * owns the session lock or the pre-delete session snapshot changed. A stop
  * failure or inconclusive process inventory is a warning, not an error: the

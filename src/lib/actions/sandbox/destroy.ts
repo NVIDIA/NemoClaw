@@ -691,7 +691,7 @@ async function destroySandboxUnlocked(
   let routedSessionCleanupHandled = false;
   if (deleteSucceededOrAlreadyGone && removed) {
     try {
-      // The gateway route lock nests the host-global router-port lock inside
+      // The gateway route lock nests the current-user router-port lock inside
       // stopModelRouterForDestroyedSandbox. Routed onboarding takes the same
       // lock order and holds both through registry publication, including
       // when the competing sandbox belongs to another gateway.
