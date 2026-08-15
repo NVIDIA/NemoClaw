@@ -248,7 +248,7 @@ describe("sandbox workload source resolution", () => {
 
   it.each(
     CANDIDATE_MANAGED_IMAGE_AGENTS,
-  )("refuses candidate %s while candidate selection is disabled (#7927)", (agent) => {
+  )("refuses every workload for candidate %s while the gate is off (#7927)", (agent) => {
     expect(() =>
       resolveSandboxWorkloadSource({
         agentName: agent,
@@ -256,7 +256,9 @@ describe("sandbox workload source resolution", () => {
         runtime: managedRuntime("docker"),
         catalog: { ...CATALOG, [agent]: contractFor(agent) },
       }),
-    ).toThrow("candidate selection is disabled");
+    ).toThrow(
+      `Managed image workload is required for '${agent}', but the selected agent is a release candidate and candidate selection is disabled.`,
+    );
   });
 
   it.each(
