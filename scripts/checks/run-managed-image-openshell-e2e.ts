@@ -46,7 +46,7 @@ import {
   type SandboxGpuCreateFlowInput,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
-import { redactFull } from "../../src/lib/security/redact.ts";
+import { createManagedImageDiagnosticTextRedactor } from "./export-managed-image-failure-diagnostics.ts";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -552,7 +552,9 @@ async function waitForCommittedSandboxProbe(
     if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
   }
   const diagnostics = runProbe(diagnosticsProbe, 15_000);
-  const redactedDiagnostics = redactFull(commandDetail(diagnostics));
+  const redactedDiagnostics = createManagedImageDiagnosticTextRedactor(env)(
+    commandDetail(diagnostics),
+  );
   throw new Error(
     `OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: ${lastHealthDetail}\nRedacted startup diagnostics:\n${redactedDiagnostics}`,
   );

@@ -11,13 +11,14 @@ import {
 } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../../core/ports";
-import { waitUntil } from "../../core/wait";
 import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { waitForStoppedForwardPortRelease } from "../../onboard/forward-cleanup";
+import { waitForReadiness } from "../../onboard/readiness-wait";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -56,9 +57,6 @@ type DashboardForwardStopRunner = (
   options: { ignoreError: true; stdio: "ignore"; timeout: number },
 ) => { status?: number | null };
 
-const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
-const FORWARD_RELEASE_POLL_MS = 250;
-
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -81,20 +79,6 @@ function runDashboardForwardStopBestEffort(
     // replace that result when OpenShell cannot be launched.
     return { status: 1 };
   }
-}
-
-function confirmDashboardForwardReleased(
-  port: number,
-  isForwardReachable: (port: number) => boolean,
-): boolean {
-  const now = Date.now;
-  return waitUntil(() => !isForwardReachable(port), {
-    deadlineMs: now() + FORWARD_RELEASE_TIMEOUT_MS,
-    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
-    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
-    backoffFactor: 1,
-    now,
-  });
 }
 
 export function resolveSandboxDashboardPort(
@@ -170,7 +154,10 @@ export function teardownSandboxDashboardForward(
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (result.status !== 0) return;
-    confirmDashboardForwardReleased(port, deps.isLocalForwardReachable ?? isLocalForwardReachable);
+    waitForStoppedForwardPortRelease(
+      port,
+      deps.isLocalForwardReachable ?? isLocalForwardReachable,
+    );
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
   }
@@ -328,7 +315,7 @@ export function ensureSandboxPortForwardForPort(
       health: forwardHealth,
       portReleased: false,
     };
-    waitUntil(
+    waitForReadiness(
       () => {
         stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
         stopState.portReleased = !isLocalForwardReachable(port);
@@ -382,7 +369,7 @@ export function ensureSandboxPortForwardForPort(
   if (waitMs === 0) return false;
 
   let occupied = false;
-  const settled = waitUntil(
+  const settled = waitForReadiness(
     () => {
       health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
       if (health === "occupied") {

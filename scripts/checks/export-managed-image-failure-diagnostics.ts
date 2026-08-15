@@ -93,6 +93,13 @@ function knownSecretValues(env: NodeJS.ProcessEnv): string[] {
   ].sort((left, right) => right.length - left.length);
 }
 
+/** Build the canonical redactor for every managed-image diagnostic sink. */
+export function createManagedImageDiagnosticTextRedactor(
+  env: NodeJS.ProcessEnv = process.env,
+): (text: string) => string {
+  return createDockerGpuDiagnosticRedactor(knownSecretValues(env)).redactText;
+}
+
 function truncateRedactedText(text: string, maxBytes: number): string {
   const encoded = Buffer.from(text, "utf8");
   if (encoded.byteLength <= maxBytes) return text;
@@ -152,7 +159,7 @@ function prepareFiles(
     .map((entry) => entry.name)
     .sort((left, right) => right.localeCompare(left))
     .slice(0, MANAGED_IMAGE_DIAGNOSTIC_EXPORT_LIMITS.maxBundles);
-  const redactText = createDockerGpuDiagnosticRedactor(knownSecretValues(env)).redactText;
+  const redactText = createManagedImageDiagnosticTextRedactor(env);
   const prepared: PreparedFile[] = [];
   let totalBytes = 0;
 

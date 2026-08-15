@@ -4,6 +4,10 @@
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 
 import { getOccupiedPorts } from "./dashboard-port";
+import { waitForReadiness } from "./readiness-wait";
+
+const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
+const FORWARD_RELEASE_POLL_MS = 250;
 
 export type ForwardStopRunner = (
   args: string[],
@@ -19,6 +23,26 @@ export type ForwardListRunner = (
   args: string[],
   opts: { ignoreError?: boolean; timeout?: number },
 ) => string | null;
+
+/**
+ * Wait for a stopped forward's host listener to retire before its fixed port
+ * is reused. OpenShell can remove forward metadata before the underlying SSH
+ * process releases the listener, so both onboarding and runtime teardown use
+ * this single bounded release policy.
+ */
+export function waitForStoppedForwardPortRelease(
+  port: number,
+  isPortBound: (port: number) => boolean,
+  options: { sleep?: (milliseconds: number) => void } = {},
+): boolean {
+  return waitForReadiness(() => !isPortBound(port), {
+    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
+    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
+    backoffFactor: 1,
+    maxAttempts: Math.ceil(FORWARD_RELEASE_TIMEOUT_MS / FORWARD_RELEASE_POLL_MS) + 1,
+    sleep: options.sleep,
+  });
+}
 
 /**
  * `openshell forward stop <port>` — port-scoped, kills whatever forward is

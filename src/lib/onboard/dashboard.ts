@@ -8,7 +8,6 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
-import { waitUntil } from "../core/wait";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
@@ -33,7 +32,7 @@ import {
   isLiveForwardStatus,
   type ListSandboxesFn,
 } from "./dashboard-port";
-import { bestEffortForwardStop } from "./forward-cleanup";
+import { bestEffortForwardStop, waitForStoppedForwardPortRelease } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
@@ -48,8 +47,6 @@ import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
-const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
-const FORWARD_RELEASE_POLL_MS = 250;
 
 type CommandResult = { status: number | null };
 
@@ -186,20 +183,6 @@ function dashboardUrlForDisplay(url: string, deps: OnboardDashboardDeps): string
   return dashboardAccess.dashboardUrlForDisplay(url, deps.redact);
 }
 
-function waitForStoppedForwardPortRelease(
-  port: number,
-  isPortBound: (port: number) => boolean,
-  sleepSeconds: (seconds: number) => void,
-): boolean {
-  return waitUntil(() => !isPortBound(port), {
-    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
-    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
-    backoffFactor: 1,
-    maxAttempts: Math.ceil(FORWARD_RELEASE_TIMEOUT_MS / FORWARD_RELEASE_POLL_MS) + 1,
-    sleep: (milliseconds) => sleepSeconds(milliseconds / 1_000),
-  });
-}
-
 function printWslFallback(fallbackDashboardUrls: string[], indent: string): void {
   if (fallbackDashboardUrls.length === 0) return;
   console.log("");
@@ -317,7 +300,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         waitForStoppedForwardPortRelease(
           preferredPort,
           deps.isPortBoundOnHost ?? isPortBoundOnHost,
-          deps.sleep,
+          { sleep: (milliseconds) => deps.sleep(milliseconds / 1_000) },
         );
       }
       existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
