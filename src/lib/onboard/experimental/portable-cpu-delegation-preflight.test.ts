@@ -146,6 +146,7 @@ describe("inspectPortableCpuDelegation", () => {
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("app-slice-cpu-unavailable");
     expect(preflight.detail).toContain("app.slice");
+    expect(preflight.detail).toContain("CPU controller setting");
   });
 
   it("reports when the app.slice controllers file is missing", () => {
@@ -159,6 +160,7 @@ describe("inspectPortableCpuDelegation", () => {
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("app-slice-cpu-unavailable");
+    expect(preflight.detail).toContain("CPU controller setting");
   });
 
   it("reports access recovery when the app.slice controllers file is unreadable", () => {

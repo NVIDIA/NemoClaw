@@ -195,8 +195,9 @@ export function inspectPortableCpuDelegation(
       detail:
         `The current user's app.slice has no cgroup controllers file (${appSlice} is ` +
         "missing), so the cpu controller is not available to it for this boot. " +
-        "Stop and start the user manager as documented (or reboot the host) after " +
-        "the delegation change and rerun the portable preflight.",
+        "Have an administrator apply the documented app.slice CPU controller setting " +
+        "and delegation change. Then stop and start the user manager as documented " +
+        "(or reboot the host) and rerun the portable preflight.",
     };
   }
   const appSliceContent = appSliceRead.content;
@@ -207,9 +208,10 @@ export function inspectPortableCpuDelegation(
       failure: "app-slice-cpu-unavailable",
       detail:
         `The cpu controller is not available to the current user's app.slice for ` +
-        `this boot: ${appSlice} is "${appSliceContent.trim()}" (no "cpu"). Stop and ` +
-        "start the user manager as documented (or reboot the host) after the " +
-        "delegation change and rerun the portable preflight.",
+        `this boot: ${appSlice} is "${appSliceContent.trim()}" (no "cpu"). Have an ` +
+        "administrator apply the documented app.slice CPU controller setting and " +
+        "delegation change. Then stop and start the user manager as documented (or " +
+        "reboot the host) and rerun the portable preflight.",
     };
   }
 

@@ -3371,19 +3371,20 @@ The error and file state identify the required recovery:
 | cgroups v2 is unavailable; the root file is missing | The host does not expose the cgroups v2 controller file at the expected mount. | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount. |
 | Any controller file exists but is unreadable, or its read fails | The current user cannot read the existing hierarchy boundary. | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
 | The kernel hierarchy does not expose `cpu`; the root file is readable | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
-| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply the named `user@.service` drop-in below. |
-| `cpu` is unavailable to `app.slice`; its file is missing | The current user's `app.slice` hierarchy does not exist for this boot. | Start `app.slice`. If the file remains missing after you apply the delegation change, use the stop, reload, and start sequence below or reboot the host. |
-| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu` | The running user manager has not made the delegated controller available to `app.slice`. | Use the stop, reload, and start sequence below or reboot the host after the delegation change. Then start `app.slice` and verify all three boundaries. |
+| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply both named systemd drop-ins below. |
+| `cpu` is unavailable to `app.slice`; its file is missing | The current user's `app.slice` hierarchy does not exist for this boot. | Apply both named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host. |
+| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu` | The user manager does not have a CPU resource setting that activates the delegated controller for `app.slice`. | Apply both named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host. |
 
 Do not use a boot, delegation, or service lifecycle action to correct an unreadable file.
 Those actions do not restore access that filesystem permissions or an LSM policy denies.
 
-The systemd delegation change requires administrator access.
-NemoClaw does not edit `/etc/systemd/system`, invoke `sudo`, remove the sandbox CPU limit, or continue with weaker resource isolation.
+The systemd changes require administrator access.
+NemoClaw does not edit `/etc/systemd`, invoke `sudo`, remove the sandbox CPU limit, or continue with weaker resource isolation.
 
 <Warning>
 The `user@.service` template applies to every user manager on the host.
-Applying or removing this drop-in requires the administrator to stop the affected user's manager, reload systemd, and start the manager.
+The `app.slice` drop-in applies to every user manager on the host.
+Applying or removing either drop-in requires the administrator to stop the affected user's manager, reload systemd, and start the manager.
 The administrator can reboot the host instead of running that sequence.
 Stopping the manager stops that user's systemd services, including rootless Podman and other user services.
 Plan each interruption with the affected user and host administrator.
@@ -3396,38 +3397,52 @@ uid="$(id -u)"
 printf 'Current user ID: %s\n' "$uid"
 ```
 
-Use the dedicated NemoClaw drop-in path below.
-If the file already exists, stop and ask the administrator to inspect its ownership and content.
-Do not replace an existing file.
+Use the two dedicated NemoClaw drop-in paths below.
+The service drop-in delegates `cpu` to user managers.
+The `app.slice` drop-in requests the kernel default CPU weight of `100`.
+This neutral weight makes the user manager activate the delegated controller for `app.slice`.
+If either file exists, stop and ask the administrator to inspect its ownership and content.
+Do not replace either file.
 
 ```bash
-drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
 
-if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
-  printf 'Refusing to replace existing file: %s\n' "$drop_in" >&2
-  exit 1
-fi
+for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
+  if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
+    printf 'Refusing to replace existing file: %s\n' "$drop_in" >&2
+    exit 1
+  fi
+done
 
-sudo install -d -o root -g root -m 0755 -- "$(dirname "$drop_in")" &&
-  printf '%s\n' '[Service]' 'Delegate=cpu memory pids' | sudo tee "$drop_in" >/dev/null &&
-  sudo chown root:root "$drop_in" &&
-  sudo chmod 0644 "$drop_in"
+sudo install -d -o root -g root -m 0755 -- "$(dirname "$delegation_drop_in")" &&
+  sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")" &&
+  printf '%s\n' '[Service]' 'Delegate=cpu memory pids' \
+    | sudo tee "$delegation_drop_in" >/dev/null &&
+  sudo chown root:root "$delegation_drop_in" &&
+  sudo chmod 0644 "$delegation_drop_in" &&
+  printf '%s\n' '[Slice]' 'CPUWeight=100' | sudo tee "$app_slice_drop_in" >/dev/null &&
+  sudo chown root:root "$app_slice_drop_in" &&
+  sudo chmod 0644 "$app_slice_drop_in"
 ```
 
 If a creation command fails, do not reload systemd.
 Ask the administrator to inspect the named path and remove it only if this procedure created the partial file.
 
-Verify that the persistent path is a root-owned regular file with mode `0644` and the required content:
+Verify that both persistent paths are root-owned regular files with mode `0644`:
 
 ```bash
-if sudo test -L "$drop_in" \
-  || ! sudo test -f "$drop_in" \
-  || [ "$(sudo stat -Lc '%U:%G %a' -- "$drop_in")" != "root:root 644" ]; then
-  printf 'Unexpected CPU delegation drop-in type, owner, or mode: %s\n' "$drop_in" >&2
-  exit 1
-fi
+for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
+  if sudo test -L "$drop_in" \
+    || ! sudo test -f "$drop_in" \
+    || [ "$(sudo stat -Lc '%U:%G %a' -- "$drop_in")" != "root:root 644" ]; then
+    printf 'Unexpected CPU controller drop-in type, owner, or mode: %s\n' "$drop_in" >&2
+    exit 1
+  fi
+done
 
-sudo cat -- "$drop_in"
+sudo cat -- "$delegation_drop_in"
+sudo cat -- "$app_slice_drop_in"
 ```
 
 Continue only when the command exits with status `0` and prints this output:
@@ -3435,6 +3450,9 @@ Continue only when the command exits with status `0` and prints this output:
 ```ini
 [Service]
 Delegate=cpu memory pids
+
+[Slice]
+CPUWeight=100
 ```
 
 The administrator's `sudo` policy can request authentication.
@@ -3457,7 +3475,7 @@ systemctl --user start app.slice
 
 The stop must complete before `daemon-reload` runs.
 Reloading while the instantiated unit is inactive lets systemd recalculate ancestor controller masks for the new delegation.
-The final start creates the user manager with those updated masks.
+The final start makes the user manager read the `app.slice` CPU weight and enable the delegated controller.
 Do not replace this sequence with `systemctl restart`, which can fail with `219/CGROUP` before systemd recalculates the masks.
 The sequence stops at the first failed command.
 If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.
@@ -3490,27 +3508,31 @@ Then rerun portable onboarding:
 $$nemoclaw onboard --experimental-profile portable
 ```
 
-#### Remove the CPU Delegation Drop-In
+#### Remove the CPU Controller Drop-Ins
 
-Remove only the named file that this procedure created.
-Do not use `systemctl revert`, and do not remove another `user@.service` drop-in.
+Remove only the two named files that this procedure created.
+Do not use `systemctl revert`.
+Do not remove another `user@.service` or `app.slice` drop-in.
 
-Confirm the exact file before removal:
+Confirm both files before removal:
 
 ```bash
-drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
-sudo cat -- "$drop_in"
+delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+sudo cat -- "$delegation_drop_in"
+sudo cat -- "$app_slice_drop_in"
 ```
 
-Continue only when the path and content match this procedure.
+Continue only when both paths and their content match this procedure.
 From an administrator session that does not depend on the affected user's manager, stop the manager first.
-Remove the file while the manager is inactive, then reload systemd and start the manager:
+Remove both files while the manager is inactive, then reload systemd and start the manager:
 
 ```bash
 uid="<affected-user-id>"
-drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
 sudo systemctl stop "user@${uid}.service" &&
-  sudo rm -- "$drop_in" &&
+  sudo rm -- "$delegation_drop_in" "$app_slice_drop_in" &&
   sudo systemctl daemon-reload &&
   sudo systemctl start "user@${uid}.service"
 ```
@@ -3520,22 +3542,26 @@ Do not replace this sequence with `systemctl restart`.
 The sequence stops at the first failed command.
 If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.
 
-After the affected user signs in again, verify that systemd no longer loads this drop-in:
+After the affected user signs in again, verify that systemd no longer loads either drop-in:
 
 ```bash
-drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
 
-if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
-  printf 'CPU delegation drop-in remains after removal: %s\n' "$drop_in" >&2
-  exit 1
-fi
+for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
+  if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
+    printf 'CPU controller drop-in remains after removal: %s\n' "$drop_in" >&2
+    exit 1
+  fi
+done
 
 systemctl cat user@.service
+systemctl --user cat app.slice
 ```
 
-The output must not list `/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf`.
-Another administrator-owned drop-in can still delegate `cpu`; do not remove it as part of this rollback.
-Removing the NemoClaw drop-in can make the portable CPU delegation preflight fail again.
+The output must not list either NemoClaw drop-in.
+Another administrator-owned drop-in can still configure `cpu`; do not remove it as part of this rollback.
+Removing the NemoClaw drop-ins can make the portable CPU delegation preflight fail again.
 
 ### Portable Podman Readiness Fails
 

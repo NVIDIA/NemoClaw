@@ -75,6 +75,9 @@ jobs:
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           drop_in_dir="$(dirname "$drop_in")"
           drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-created"
+          app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+          app_slice_drop_in_dir="$(dirname "$app_slice_drop_in")"
+          app_slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-app-slice-drop-in-created"
           slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-slice-drop-in-created"
           source_cache_marker="$RUNNER_TEMP/nemoclaw-source-require-cache-created"
           workspace_traverse_marker="$RUNNER_TEMP/nemoclaw-workspace-traverse-modes"
@@ -82,6 +85,9 @@ jobs:
           created_user=0
           drop_in_temp=""
           drop_in_id=""
+          app_slice_drop_in_temp=""
+          app_slice_drop_in_id=""
+          created_app_slice_drop_in_dir=0
           slice_drop_in_dir=""
           slice_drop_in=""
           slice_drop_in_temp=""
@@ -93,6 +99,7 @@ jobs:
           cleanup_failed_prepare() {
             local status=$?
             local current_drop_in_id=""
+            local current_app_slice_drop_in_id=""
             local current_slice_drop_in_id=""
             local current_source_cache_id=""
             trap - EXIT
@@ -107,6 +114,9 @@ jobs:
             fi
             if [ -n "$drop_in_temp" ]; then
               sudo rm -f -- "$drop_in_temp"
+            fi
+            if [ -n "$app_slice_drop_in_temp" ]; then
+              sudo rm -f -- "$app_slice_drop_in_temp"
             fi
             if [ -n "$source_cache_id" ]; then
               current_source_cache_id="$(sudo stat -Lc '%d:%i' -- "$source_cache_dir" 2>/dev/null)"
@@ -124,6 +134,17 @@ jobs:
                 echo "::error::Refusing to remove a CPU delegation drop-in whose identity changed" >&2
               fi
             fi
+            if [ -n "$app_slice_drop_in_id" ]; then
+              current_app_slice_drop_in_id="$(
+                sudo stat -Lc '%d:%i' -- "$app_slice_drop_in" 2>/dev/null
+              )"
+              if [ "$current_app_slice_drop_in_id" = "$app_slice_drop_in_id" ]; then
+                sudo rm -f -- "$app_slice_drop_in"
+              elif sudo test -e "$app_slice_drop_in" \
+                || sudo test -L "$app_slice_drop_in"; then
+                echo "::error::Refusing to remove an app.slice proof drop-in whose identity changed" >&2
+              fi
+            fi
             if [ -n "$slice_drop_in_id" ]; then
               current_slice_drop_in_id="$(sudo stat -Lc '%d:%i' -- "$slice_drop_in" 2>/dev/null)"
               if [ "$current_slice_drop_in_id" = "$slice_drop_in_id" ]; then
@@ -134,6 +155,9 @@ jobs:
             fi
             if [ -n "$drop_in_id" ] || [ -n "$slice_drop_in_id" ]; then
               sudo systemctl daemon-reload
+            fi
+            if [ "$created_app_slice_drop_in_dir" = 1 ]; then
+              sudo rmdir -- "$app_slice_drop_in_dir"
             fi
             if [ "$created_slice_drop_in_dir" = 1 ] && [ -n "$slice_drop_in_dir" ]; then
               sudo rmdir -- "$slice_drop_in_dir"
@@ -156,6 +180,10 @@ jobs:
           {
             printf 'E2E_CPU_DELEGATION_USER_CREATED=0\n'
             printf 'E2E_CPU_DELEGATION_DROP_IN_MARKER=%s\n' "$drop_in_marker"
+            printf 'E2E_APP_SLICE_DROP_IN=%s\n' "$app_slice_drop_in"
+            printf 'E2E_APP_SLICE_DROP_IN_DIR=%s\n' "$app_slice_drop_in_dir"
+            printf 'E2E_APP_SLICE_DROP_IN_DIR_CREATED=0\n'
+            printf 'E2E_APP_SLICE_DROP_IN_MARKER=%s\n' "$app_slice_drop_in_marker"
             printf 'E2E_CPU_SLICE_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
             printf 'E2E_CPU_SLICE_DROP_IN_DIR_CREATED=0\n'
             printf 'E2E_SOURCE_CACHE_MARKER=%s\n' "$source_cache_marker"
@@ -171,6 +199,14 @@ jobs:
           fi
           if [ -e "$drop_in_marker" ] || [ -L "$drop_in_marker" ]; then
             echo "::error::CPU delegation proof ownership marker already exists" >&2
+            exit 1
+          fi
+          if sudo test -e "$app_slice_drop_in" || sudo test -L "$app_slice_drop_in"; then
+            echo "::error::app.slice proof drop-in already exists" >&2
+            exit 1
+          fi
+          if [ -e "$app_slice_drop_in_marker" ] || [ -L "$app_slice_drop_in_marker" ]; then
+            echo "::error::app.slice proof ownership marker already exists" >&2
             exit 1
           fi
           if [ -e "$slice_drop_in_marker" ] || [ -L "$slice_drop_in_marker" ]; then
@@ -275,6 +311,35 @@ jobs:
           slice_drop_in_temp=""
           printf '%s\n' "$slice_drop_in_id" >"$slice_drop_in_marker"
 
+          if sudo test -L "$app_slice_drop_in_dir" \
+            || { sudo test -e "$app_slice_drop_in_dir" \
+              && ! sudo test -d "$app_slice_drop_in_dir"; }; then
+            echo "::error::app.slice proof drop-in directory has an unexpected type" >&2
+            exit 1
+          fi
+          if ! sudo test -d "$app_slice_drop_in_dir"; then
+            created_app_slice_drop_in_dir=1
+            sudo install -d -o root -g root -m 0755 "$app_slice_drop_in_dir"
+            printf 'E2E_APP_SLICE_DROP_IN_DIR_CREATED=1\n' >>"$GITHUB_ENV"
+          fi
+          if [ "$(sudo stat -Lc '%U:%G' -- "$app_slice_drop_in_dir")" != "root:root" ]; then
+            echo "::error::app.slice proof drop-in directory is not root-owned" >&2
+            exit 1
+          fi
+          app_slice_drop_in_temp="$(
+            sudo mktemp "$app_slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"
+          )"
+          # The user manager enables delegated controllers for user units that request them.
+          # The kernel default CPU weight requests the controller without changing allocation.
+          printf '[Slice]\nCPUWeight=100\n' | sudo tee "$app_slice_drop_in_temp" >/dev/null
+          sudo chown root:root "$app_slice_drop_in_temp"
+          sudo chmod 0644 "$app_slice_drop_in_temp"
+          app_slice_drop_in_id="$(sudo stat -Lc '%d:%i' -- "$app_slice_drop_in_temp")"
+          sudo ln -- "$app_slice_drop_in_temp" "$app_slice_drop_in"
+          sudo rm -f -- "$app_slice_drop_in_temp"
+          app_slice_drop_in_temp=""
+          printf '%s\n' "$app_slice_drop_in_id" >"$app_slice_drop_in_marker"
+
           if sudo test -L "$drop_in_dir" \
             || { sudo test -e "$drop_in_dir" && ! sudo test -d "$drop_in_dir"; }; then
             echo "::error::CPU delegation proof drop-in directory has an unexpected type" >&2
@@ -336,13 +401,25 @@ jobs:
           set -euo pipefail
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           expected_drop_in_id="$(cat "$E2E_CPU_DELEGATION_DROP_IN_MARKER")"
+          expected_app_slice_drop_in_id="$(cat "$E2E_APP_SLICE_DROP_IN_MARKER")"
           if [[ ! "$expected_drop_in_id" =~ ^[0-9]+:[0-9]+$ ]]; then
             echo "::error::CPU delegation proof ownership marker is invalid" >&2
+            exit 1
+          fi
+          if [[ ! "$expected_app_slice_drop_in_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+            echo "::error::app.slice proof ownership marker is invalid" >&2
             exit 1
           fi
           if sudo test -L "$drop_in" || ! sudo test -f "$drop_in" \
             || [ "$(sudo stat -Lc '%d:%i' -- "$drop_in")" != "$expected_drop_in_id" ]; then
             echo "::error::CPU delegation proof drop-in identity changed before admission" >&2
+            exit 1
+          fi
+          if sudo test -L "$E2E_APP_SLICE_DROP_IN" \
+            || ! sudo test -f "$E2E_APP_SLICE_DROP_IN" \
+            || [ "$(sudo stat -Lc '%d:%i' -- "$E2E_APP_SLICE_DROP_IN")" \
+              != "$expected_app_slice_drop_in_id" ]; then
+            echo "::error::app.slice proof drop-in identity changed before admission" >&2
             exit 1
           fi
           sudo systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"
@@ -452,6 +529,10 @@ jobs:
             "${E2E_CPU_DELEGATION_DROP_IN_MARKER:-}" \
             "CPU delegation proof drop-in"
           remove_owned_drop_in \
+            "${E2E_APP_SLICE_DROP_IN:-}" \
+            "${E2E_APP_SLICE_DROP_IN_MARKER:-}" \
+            "app.slice proof drop-in"
+          remove_owned_drop_in \
             "${E2E_CPU_SLICE_DROP_IN:-}" \
             "${E2E_CPU_SLICE_DROP_IN_MARKER:-}" \
             "CPU slice proof drop-in"
@@ -485,6 +566,28 @@ jobs:
             rm -f -- "$source_cache_marker" || cleanup_failed=1
           fi
           sudo systemctl daemon-reload || cleanup_failed=1
+          if [ "${E2E_APP_SLICE_DROP_IN_DIR_CREATED:-0}" = "1" ]; then
+            app_slice_drop_in_dir="${E2E_APP_SLICE_DROP_IN_DIR:-}"
+            if [ -z "$app_slice_drop_in_dir" ]; then
+              echo "::error::app.slice proof drop-in directory path is unavailable" >&2
+              cleanup_failed=1
+            elif ! sudo test -e "$app_slice_drop_in_dir" \
+              && ! sudo test -L "$app_slice_drop_in_dir"; then
+              :
+            elif sudo test -L "$app_slice_drop_in_dir" \
+              || ! sudo test -d "$app_slice_drop_in_dir"; then
+              echo "::error::Refusing to remove an app.slice proof drop-in directory with an unexpected type" >&2
+              cleanup_failed=1
+            else
+              sudo rmdir -- "$app_slice_drop_in_dir" || cleanup_failed=1
+            fi
+            if [ -n "$app_slice_drop_in_dir" ] \
+              && { sudo test -e "$app_slice_drop_in_dir" \
+                || sudo test -L "$app_slice_drop_in_dir"; }; then
+              echo "::error::app.slice proof drop-in directory remained after cleanup" >&2
+              cleanup_failed=1
+            fi
+          fi
           if [ "${E2E_CPU_SLICE_DROP_IN_DIR_CREATED:-0}" = "1" ]; then
             slice_drop_in_dir="${E2E_CPU_SLICE_DROP_IN_DIR:-}"
             if [ -z "$slice_drop_in_dir" ]; then

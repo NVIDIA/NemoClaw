@@ -135,6 +135,7 @@ describe("native Podman CPU proof workflow", () => {
       'useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"',
     );
     expect(prepare).toContain("CPUWeight=100");
+    expect(prepare.match(/CPUWeight=100/gu)).toHaveLength(2);
     expect(prepare).not.toContain("CPUAccounting=yes");
     expect(prepare).toContain('grep -qw cpu "$user_slice_controllers"');
     expect(prepare).toContain("trap cleanup_failed_prepare EXIT");
@@ -154,6 +155,12 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain('sudo install -d -o "$uid" -g "$uid" -m 0700');
     expect(prepare).toContain("Source-loader cache already exists");
     expect(prepare).toContain("E2E_CPU_SLICE_DROP_IN_DIR_CREATED=1");
+    expect(prepare).toContain(
+      'app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"',
+    );
+    expect(prepare).toContain("E2E_APP_SLICE_DROP_IN_DIR_CREATED=1");
+    expect(prepare).toContain("E2E_APP_SLICE_DROP_IN_MARKER");
+    expect(prepare).toContain("app.slice proof drop-in already exists");
     expect(prepare).toContain('mktemp "$slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"');
     expect(prepare).toContain('ln -- "$slice_drop_in_temp" "$slice_drop_in"');
     expect(prepare).toContain('printf \'%s\\n\' "$slice_drop_in_id"');
@@ -177,7 +184,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(reject).not.toContain("systemctl --user start app.slice");
     expect(admit).toContain("Delegate=cpu memory pids");
     expect(admit).toContain("CPU delegation proof drop-in identity changed before admission");
+    expect(admit).toContain("app.slice proof drop-in identity changed before admission");
     expect(admit).toContain("expected_drop_in_id");
+    expect(admit).toContain("expected_app_slice_drop_in_id");
     const stopUserManager = admit.indexOf(
       'systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"',
     );
@@ -217,6 +226,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain('sudo rm -f -- "$target"');
     expect(cleanup.run).toContain('"${E2E_CPU_SLICE_DROP_IN:-}"');
     expect(cleanup.run).toContain('sudo rmdir -- "$slice_drop_in_dir"');
+    expect(cleanup.run).toContain('"app.slice proof drop-in"');
+    expect(cleanup.run).toContain('sudo rmdir -- "$app_slice_drop_in_dir"');
+    expect(cleanup.run).toContain("app.slice proof drop-in directory remained after cleanup");
     expect(cleanup.run).toContain('loginctl disable-linger "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('loginctl terminate-user "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('userdel --remove "$E2E_CPU_DELEGATION_USER"');
