@@ -414,12 +414,12 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       (step) => step.name === "Authenticate manual PR dispatch",
     )!;
     authentication.run = authentication.run!.replace(
-      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag",
       "Manual PR E2E accepts arbitrary selectors",
     );
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag",
+      "Manual PR authentication must retain Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag",
     );
   });
 
@@ -431,7 +431,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     authentication.run = authentication.run!.replace("inference-routing::false:false | ", "");
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
-      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;",
+      "Manual PR authentication must retain ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | native-runtime-qualification-producer::false:false | :jetson-nvmap-gpu:false:true) ;;",
     );
   });
 
@@ -439,6 +439,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     ["maintain", "", "", "false", 0, ""],
     ["maintain", "inference-routing", "", "false", 0, ""],
     ["maintain", "managed-image-protected-runtime", "", "false", 0, ""],
+    ["maintain", "native-runtime-qualification-producer", "", "false", 0, ""],
     ["maintain", "", "jetson-nvmap-gpu", "true", 0, ""],
     ["maintain", "", "jetson-nvmap-gpu", "false", 1, "accepts only empty selectors"],
     ["maintain", "network-policy", "", "false", 1, "accepts only empty selectors"],
