@@ -3400,7 +3400,7 @@ printf 'Current user ID: %s\n' "$uid"
 Use the two dedicated NemoClaw drop-in paths below.
 The service drop-in delegates `cpu` to user managers.
 The `app.slice` drop-in requests the kernel default CPU weight of `100`.
-This neutral weight makes the user manager activate the delegated controller for `app.slice`.
+The explicit setting makes the user manager activate the delegated controller for `app.slice`.
 If either file exists, stop and ask the administrator to inspect its ownership and content.
 Do not replace either file.
 
@@ -3450,7 +3450,6 @@ Continue only when the command exits with status `0` and prints this output:
 ```ini
 [Service]
 Delegate=cpu memory pids
-
 [Slice]
 CPUWeight=100
 ```

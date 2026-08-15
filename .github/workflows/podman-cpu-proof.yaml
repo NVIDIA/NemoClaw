@@ -330,7 +330,7 @@ jobs:
             sudo mktemp "$app_slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"
           )"
           # The user manager enables delegated controllers for user units that request them.
-          # The kernel default CPU weight requests the controller without changing allocation.
+          # CPUWeight=100 matches the kernel default while making this request explicit.
           printf '[Slice]\nCPUWeight=100\n' | sudo tee "$app_slice_drop_in_temp" >/dev/null
           sudo chown root:root "$app_slice_drop_in_temp"
           sudo chmod 0644 "$app_slice_drop_in_temp"
