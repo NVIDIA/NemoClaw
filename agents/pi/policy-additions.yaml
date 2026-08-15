@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sandbox policy additions for Pi. Principle: deny by default, allow only the
+# managed inference route. Direct provider endpoints, package registries, and
+# code-hosting endpoints are denied here and require explicit preset selection.
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /etc
+    - /var/log
+    - /var/lib/dpkg # Allow package-version inspection without package mutation.
+  read_write:
+    - /sandbox
+    - /sandbox/.pi
+    - /tmp
+    - /dev/null
+landlock:
+  # Pi is a terminal agent, so filesystem policy must fail closed when Landlock
+  # cannot be applied. If the kernel or the workspace mount cannot enforce these
+  # read-only system paths, `strict` fails the OpenShell sandbox startup instead
+  # of starting with the paths unenforced.
+  compatibility: strict
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+network_policies:
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
+    # OpenShell observes Pi traffic as the Node.js interpreter that runs the
+    # installed package, so every image-owned path on that execution path is
+    # listed. Each one is root-owned and read-only to the agent; agent-writable
+    # paths under /sandbox are intentionally absent so a binary the agent
+    # controls cannot inherit network capability.
+    binaries:
+      - { path: /usr/local/bin/pi }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/local/lib/nemoclaw/pi-runtime/** }

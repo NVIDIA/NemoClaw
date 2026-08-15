@@ -1518,11 +1518,9 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
-
-// ── Step 5: Sandbox ──────────────────────────────────────────────
-
 async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
+  portableRuntimeAuthority: import("./state/onboard-checkpoint-types").CheckpointPortableRuntimeAuthority | null,
   computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
   managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   tempManagedRuntime: boolean,
@@ -1618,6 +1616,7 @@ async function createSandboxWithBaseImageResolution(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({ computePlan, managedWorkloadRebuild, tempManagedRuntime, tempManagedRuntimeCatalog, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null), rootDir: ROOT, model, provider, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null, startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env }, note, fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost()) }, { resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig });
+  const ensurePreparedSandboxWorkload = () => managedWorkloadOnboard.prepareSandboxWorkloadForPortableLifecycle(managedWorkloadRuntime, sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent));
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -1856,6 +1855,9 @@ async function createSandboxWithBaseImageResolution(
       for (const hint of recreateJournal.managedMcpRecreateRefusalHints({ sandboxName, cliName: cliName(), toolDisclosure: effectiveToolDisclosure, rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag, observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true) })) console.error(hint);
       process.exit(1);
     }
+    // Resolve and validate immutable workload authority before opening a recreate journal or
+    // mutating a live sandbox.
+    await ensurePreparedSandboxWorkload();
     await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
     if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
     if (recreateRuntime.acceptedTarget) {
@@ -1866,10 +1868,6 @@ async function createSandboxWithBaseImageResolution(
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     baseImageResolutionFlow.captureBaseResolution(baseImageResolutionContext, previousEntry?.imageTag);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
-
-    // Resolve and validate immutable workload authority before deleting a live sandbox.
-    const replacementWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
-    managedWorkloadRuntime.ensurePreparedProfile(replacementWorkload);
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
     if (noRestorePending && !notReadyRecreateInProgress && !shouldSkipPreRecreateBackup(process.env)) {
@@ -1895,8 +1893,7 @@ async function createSandboxWithBaseImageResolution(
   }
   if (!liveExists)
     await hermesApiPortReservationScope.selectAndReserve(hermesApiPortReservationInput);
-  const preparedSandboxWorkload = await managedWorkloadRuntime.ensurePreparedWorkload();
-  managedWorkloadRuntime.ensurePreparedProfile(preparedSandboxWorkload);
+  const preparedSandboxWorkload = await ensurePreparedSandboxWorkload();
   applyExtraProviderReconciliation({
     extraProviders: resolvedCreateIntent.extraProviders,
     staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
@@ -1946,11 +1943,12 @@ async function createSandboxWithBaseImageResolution(
       sandboxEnv,
       sandboxStartupCommand,
       lifecycleGeneration: createdSandboxLifecycle.generation,
+      portableRuntimeAuthority,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
       managedBootstrap,
-      ...sandboxGpuCreateFlow.resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
+      ...sandboxGpuCreateFlow.resolveAgentCreateInput(agent, dockerDriverGateway),
     },
     {
       runOpenshell,
@@ -2103,25 +2101,16 @@ async function createSandboxWithBaseImageResolution(
   return sandboxName;
 }
 
-type CreateSandboxArgs =
-  Parameters<typeof createSandboxWithBaseImageResolution> extends [
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    ...infer Args,
-  ]
-    ? Args
-    : never;
-
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
       baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
     createSandboxWithBaseImageResolution,
+    resolvePortableRuntimeAuthority: () =>
+      sandboxGpuCreateFlow.resolveExportedPortableRuntimeAuthority(
+        process.env,
+        onboardSession.loadSession,
+      ),
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
 
@@ -2854,10 +2843,8 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
-  resolveGpuPlan: (config) =>
-    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(config, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-    }),
+  resolveGpuPlan: (config, agent) =>
+    dockerGpuSandboxCreate.resolveAgentPlan(config, agent, isLinuxDockerDriverGatewayEnabled()),
   appendResourceCreateArgs: (args, resourceProfile) =>
     appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
       isNonInteractive,
@@ -3559,6 +3546,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             withSandboxPortReservationScope((dashboardPortReservationScope) =>
               createSandboxWithBaseImageResolution(
                 baseImageResolutionContext,
+                lockedRuntime.preparedPortableAuthority,
                 onboardingComputePlan,
                 opts.managedWorkloadRebuild ?? null,
                 opts.tempManagedRuntime === true,

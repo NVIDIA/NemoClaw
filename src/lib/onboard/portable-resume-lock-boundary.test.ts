@@ -9,6 +9,8 @@ import path from "node:path";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
+
 const originalEnv = { ...process.env };
 const STOP_AFTER_PREPARATION = "stop after observed portable preparation";
 let tempHome: string;
@@ -16,15 +18,27 @@ let configWriteMarker: string;
 let socketActivationMarker: string;
 let preparationObservedLock = false;
 let activeLockFile = "";
+let boundaryModules: Awaited<ReturnType<typeof loadBoundaryModules>>;
 const preparePortableHost = vi.fn((): never => {
   fs.writeFileSync(configWriteMarker, "prepared", { mode: 0o600 });
   fs.writeFileSync(socketActivationMarker, "activated", { mode: 0o600 });
   throw new Error(STOP_AFTER_PREPARATION);
 });
 
-beforeAll(() => {
+beforeAll(async () => {
   tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-lock-boundary-"));
-});
+  process.env = {
+    ...originalEnv,
+    HOME: tempHome,
+    NEMOCLAW_GATEWAY_PORT: "19093",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+  };
+  try {
+    boundaryModules = await loadBoundaryModules();
+  } finally {
+    process.env = { ...originalEnv };
+  }
+}, 30_000);
 
 beforeEach(() => {
   configWriteMarker = path.join(tempHome, "portable-config-written");
@@ -77,58 +91,61 @@ function runWithObservedPreparation(
 }
 
 describe("portable resume command lock boundary", () => {
-  it("rejects a losing CLI before portable config writes or socket activation (#9035)", async () => {
-    const { command, onboardModule, session } = await loadBoundaryModules();
-    const childScript = `
-      const fs = require("node:fs");
-      const path = require("node:path");
-      const lockFile = process.argv[1];
-      fs.mkdirSync(path.dirname(lockFile), { recursive: true });
-      const fd = fs.openSync(lockFile, "wx", 0o600);
-      fs.writeSync(fd, JSON.stringify({
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        command: "separate nemoclaw onboard process",
-      }));
-      process.stdout.write("locked\\n");
-      setInterval(() => {}, 1000);
-    `;
-    const child = spawn(process.execPath, ["-e", childScript, session.LOCK_FILE], {
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    await once(child.stdout, "data");
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`exit:${String(code ?? 0)}`);
-    }) as typeof process.exit);
+  it(
+    "rejects a losing CLI before portable config writes or socket activation (#9035)",
+    testTimeoutOptions(30_000),
+    async () => {
+      const { command, onboardModule, session } = boundaryModules;
+      const childScript = `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const lockFile = process.argv[1];
+        fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+        const fd = fs.openSync(lockFile, "wx", 0o600);
+        fs.writeSync(fd, JSON.stringify({
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+          command: "separate nemoclaw onboard process",
+        }));
+        process.stdout.write("locked\\n");
+        setInterval(() => {}, 1000);
+      `;
+      const child = spawn(process.execPath, ["-e", childScript, session.LOCK_FILE], {
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      await once(child.stdout, "data");
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`exit:${String(code ?? 0)}`);
+      }) as typeof process.exit);
 
-    try {
-      await expect(
-        command.runOnboardCommand({
-          flags: {
-            fresh: true,
-            "experimental-profile": "portable",
-            "yes-i-accept-third-party-software": true,
-          },
-          env: process.env,
-          resolveResumeIntent: () => ({ effectiveResume: false, snapshot: null }),
-          runOnboard: (options) => runWithObservedPreparation(onboardModule, options),
-        }),
-      ).rejects.toThrow("exit:1");
-      expect(preparePortableHost).not.toHaveBeenCalled();
-      expect(fs.existsSync(configWriteMarker)).toBe(false);
-      expect(fs.existsSync(socketActivationMarker)).toBe(false);
-    } finally {
-      const exited = once(child, "exit");
-      child.kill();
-      await exited;
-      fs.rmSync(session.LOCK_FILE, { force: true });
-    }
-  }, 15_000);
+      try {
+        await expect(
+          command.runOnboardCommand({
+            flags: {
+              fresh: true,
+              "experimental-profile": "portable",
+              "yes-i-accept-third-party-software": true,
+            },
+            env: process.env,
+            resolveResumeIntent: () => ({ effectiveResume: false, snapshot: null }),
+            runOnboard: (options) => runWithObservedPreparation(onboardModule, options),
+          }),
+        ).rejects.toThrow("exit:1");
+        expect(preparePortableHost).not.toHaveBeenCalled();
+        expect(fs.existsSync(configWriteMarker)).toBe(false);
+        expect(fs.existsSync(socketActivationMarker)).toBe(false);
+      } finally {
+        const exited = once(child, "exit");
+        child.kill();
+        await exited;
+        fs.rmSync(session.LOCK_FILE, { force: true });
+      }
+    },
+  );
 
   it("releases the first lock before one bounded pre-read retry and preparation (#9035)", async () => {
-    const { command, onboardModule, session, checkpointMigration, resumeIntent } =
-      await loadBoundaryModules();
+    const { command, onboardModule, session, checkpointMigration, resumeIntent } = boundaryModules;
     expect(onboardModule.onboardSession.SESSION_FILE).toBe(session.SESSION_FILE);
     expect(onboardModule.onboardSession.LOCK_FILE).toBe(session.LOCK_FILE);
     const currentUser = os.userInfo();

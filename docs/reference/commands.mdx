@@ -874,6 +874,22 @@ After all portable TCP probe attempts fail, onboarding prints commands for the u
 
 Onboarding prints the same commands when the portable probe cannot reach the user-scoped Podman service.
 The printed rerun command keeps the portable experimental profile selected.
+Portable commands reconstruct the current user's rootless Podman socket authority from NemoClaw state before they use the Docker-compatible API.
+They do not select an endpoint from ambient Docker or Podman runtime variables or named connections.
+When `podman.service` reports inactive and the recorded socket exists, NemoClaw first makes one 10-second API request through the guarded recorded authority.
+A valid server version classifies the endpoint as warm and avoids starting another socket service.
+A missing socket or a response without a valid server version enters bounded cold activation.
+Any socket authority change during this precheck fails at the socket authority stage.
+When the user-scoped socket-backed service needs activation, NemoClaw activates it and waits through a bounded startup period for a real Podman API response.
+During cold activation, the first API probe can cause systemd to replace the socket inode.
+NemoClaw requalifies one such replacement and repeats the probe only when the socket path, device, mode, owner, and complete directory authority remain unchanged.
+Any other authority change or a second inode replacement fails the readiness check.
+After cold activation succeeds, later API health checks use the fixed 10-second steady-state deadline.
+Onboarding and portable sandbox lifecycle commands use this same readiness contract.
+Failures identify socket authority, service activation, startup API health, or steady-state API health without reporting credentials.
+NemoClaw does not fall back to Docker or report an absent or unreachable endpoint as healthy.
+A successful cold path uses the `cold` timing label and reports activation, API, and total time in milliseconds.
+A successful warm path uses the `warm` timing label and reports steady-state API and total time in milliseconds.
 To tune the existing-gateway HTTP health poll, use `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
 The poll count is clamped to a minimum of `1` so the health probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
@@ -1009,6 +1025,14 @@ Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not det
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu --sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`; device selectors require explicit sandbox GPU enablement.
 On ordinary native Linux Docker-driver hosts, NemoClaw uses native OpenShell GPU injection by default and never broadens confinement automatically.
+
+<AgentOnly variant="openclaw">
+
+Portable OpenClaw onboarding also requires native OpenShell GPU injection.
+It does not use `NEMOCLAW_DOCKER_GPU_PATCH` compatibility routing, so do not set `fallback`, `1`, or another legacy nonzero value for that profile.
+
+</AgentOnly>
+
 Set `NEMOCLAW_DOCKER_GPU_PATCH=fallback` to explicitly authorize one native attempt followed by one compatibility retry.
 NemoClaw permits the retry only after it confirms either a trusted host-side GPU routing failure or an explicit driver proof plus exact-container host configuration showing that no GPU was attached.
 It then saves redacted diagnostics and removes the incomplete sandbox before retrying.
@@ -2293,7 +2317,17 @@ Model traffic uses the OpenShell-managed `inference.local` route configured by N
 Stop managed local inference resources, remove the host-side Docker image built during onboard, and delete the sandbox.
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
-When `destroy` removes the last registered Model Router sandbox that uses a host port, it also stops the host Model Router process on a best-effort basis and frees that port.
+For Model Router sandboxes, `destroy` keeps the process and recovery identity when another sandbox uses the port or when session, process, or absence checks are inconclusive.
+It also preserves a replacement onboarding session when the captured session identity changed.
+If the captured session uses the destroyed sandbox name with another router port, `destroy` clears only the sandbox association and preserves that router's recovery identity.
+For lock order, same-port peer handling, and cleanup checks, refer to [Set Up Model Router](../inference/hosted-inference/set-up-model-router#router-and-sandbox-lifecycle-locks).
+
+If `destroy` warns that it could not identify or stop a listener for the deleted sandbox:
+
+1. Inspect the current listener process immediately before you stop anything.
+2. Stop it only if its command line identifies the Model Router on the named port.
+3. Do not stop the router recorded by a preserved session for another port.
+4. Do not stop a previously reported process ID if its command line no longer matches.
 
 <Warning>
 This command attempts to wipe the manifest-defined agent state while its persistent volume is mounted, then removes the sandbox.
@@ -2319,6 +2353,9 @@ If the initial inspection cannot complete, more than one container matches, a ma
 The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity.
 NemoClaw rechecks the exact identity after read-only preflight, before provider cleanup, and synchronously at the sandbox-deletion boundary.
 If a later recheck detects drift or fails, `destroy` refuses sandbox deletion, restores managed MCP preparation when possible, preserves local ownership state, and reports any earlier cleanup already performed.
+If OpenShell reports the sandbox absent after preflight captured one matching Docker container, `destroy` rechecks and removes only that exact container ID.
+If Docker reports another OpenShell-managed container, removal fails, or NemoClaw cannot confirm removal, `destroy` exits nonzero and preserves the registry entry.
+Correct the reported Docker state, then rerun `destroy`.
 If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
 For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
 
@@ -4291,7 +4328,7 @@ If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the m
 If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup.
 OpenShell resource and Linux unit cleanup can partially complete before either failure.
 After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup.
-If a later step fails, the retry skips gateway selection and resumes the remaining cleanup.
+If a later step fails, the retry skips the completed sandbox deletions and resumes the remaining cleanup.
 Resolve the reported error.
 Inspect the remaining gateways with `openshell gateway list`.
 Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port from the failed uninstall.
@@ -4302,19 +4339,45 @@ Uninstall does not stop an `openshell-gateway` process that another non-root use
 It names the owner and process ID, leaves that process running, and continues with the remaining cleanup.
 If no other cleanup fails, uninstall exits with status `0` even though that process can keep its port in use.
 Uninstall still tries to stop a `root`-owned process and the gateway process that this installation recorded.
-If either of those stops fails, uninstall prints `sudo kill -9 <pid>` for the process.
+If either stop fails, uninstall reports the process without printing a reusable privileged kill command.
+Do not signal a PID from saved output.
+Immediately before a privileged stop, verify that the live process owner and `openshell-gateway` command line match the exact gateway name and port.
+Also prove that the PID file, runtime marker, and loaded sandbox namespace still match the selected state directory.
+Rerun uninstall after the process stops.
 A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero after that failure.
 A single full uninstall reports the process and continues.
-Before scoped cleanup stops a Docker gateway process, including a managed default gateway service, NemoClaw requires two Docker namespace proofs.
-The selected Docker gateway configuration and any running gateway process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
+Before each sandbox deletion during scoped Docker cleanup, NemoClaw proves the selected configuration and running gateway identity again and passes the selected gateway name to OpenShell.
+The configuration and running process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
+For a NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the exact gateway name and port.
+For an externally supervised gateway, NemoClaw proves the configured state.
+It binds the supervisor's current main process to its owner, loaded sandbox namespace, declared executable, selected gateway name, and selected port.
+When NemoClaw can prove an owner-private, generated configuration and complete JWT bundle that predate state-root scoping, restart keeps the legacy gateway ID, JWT bundle, and Docker driver's `default` namespace.
+That compatibility keeps the gateway able to find existing containers and keeps their non-expiring sandbox JWT issuer valid.
+NemoClaw regenerates the other gateway settings from the current runtime configuration.
+For a proven legacy Podman gateway, NemoClaw preserves the gateway ID that existing sandbox JWTs use; the supported Podman schema has no `sandbox_namespace` setting to preserve.
+If the existing identity is ambiguous or unsafe, or durable gateway state remains without its configuration, restart fails closed without rewriting the configuration or JWT bundle.
+Fresh state roots and already scoped configurations continue to use the state-root-specific identity.
+The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
+Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
 Full single-gateway Podman uninstall continues to use normal graceful teardown.
-For Docker, if either proof is absent, uninstall exits nonzero before it signals the host gateway.
+For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.
-Restore the selected Docker gateway through the supported install or onboarding recovery flow so it restarts with the generated configuration.
+For an already scoped gateway with stale runtime evidence, restore it through the supported install or onboarding recovery flow, verify the generated identity, and retry.
+A proven legacy gateway is not silently converted by onboarding.
+To retire one, first remove sibling gateways through their own proven scoped cleanup, verify that only the legacy gateway remains, and then use the full single-gateway uninstall path.
+For an ambiguous or incomplete identity, stop the gateway and restore the exact generated `openshell-gateway.toml` and complete `jwt/` directory from a dedicated host-level backup path, represented here as `<gateway-identity-backup>`.
+The backup must have been captured from that gateway's exact state directory before the failure and kept under the owning user's exclusive access.
+Keep the `<gateway-identity-backup>` directory and its nested `jwt/` directory at mode `0700`, and keep the configuration and JWT files at mode `0600`.
+The default gateway stores them under `~/.local/state/nemoclaw/openshell-docker-gateway/`; a non-default gateway uses `~/.local/state/nemoclaw/openshell-docker-gateway-<port>/`.
+Restore them as the owning user.
+Keep the gateway state root and its `jwt/` directory at mode `0700`, and do not grant group or other access to the configuration or JWT files.
+NemoClaw does not reconstruct gateway identity from sandbox snapshots or `backup-all`; if no matching gateway-state backup exists, keep the state intact rather than attempting a scoped cleanup.
 Verify every gateway with `openshell gateway list`.
-Retry the scoped uninstall.
+Retain `<gateway-identity-backup>` only until that command reports the restored gateway and the affected existing sandboxes authenticate successfully.
+Then remove that dedicated backup directory as the owning user and verify its absence by replacing the placeholder in `test ! -e '<gateway-identity-backup>'` with the full backup path.
+If verification fails, keep the backup under the same access restrictions and stop.
 Do not add `sandbox_namespace` manually to a live gateway configuration because the running process can still be using its previous namespace.
 
 ##### Uninstalling Every Gateway Port
@@ -4825,7 +4888,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
 | `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded sandbox base-image resolution metadata during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible image from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state. |
 | `NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to enable; `0`, `false`, `no`, or `off` to disable | Controls whether base-image resolution may build a compatible image locally. The default allows builds during normal CLI runs and disables them when `NODE_ENV=test` or `VITEST=true`. When source inputs or a missing/incompatible release-version base require a fresh build, disabling local builds makes resolution fail instead of using an unproven image. |
-| `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary native Linux. `fallback` explicitly opts into one native attempt followed by one bounded compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts `0` only as a troubleshooting override that bypasses device-group propagation. |
+| `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary native Linux. `fallback` explicitly opts into one native attempt followed by one bounded compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts `0` only as a troubleshooting override that bypasses device-group propagation. Portable OpenClaw onboarding requires native OpenShell GPU injection and does not use this setting. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.101's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout. Defaults to the binary next to `openshell`, then common install paths. |
@@ -4950,6 +5013,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
+| `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` | `60000` | Maximum cold-start time for portable rootless Podman socket activation and the first real API response. Set an integer from `15000` through `300000` milliseconds. This setting does not change the fixed 10,000 ms steady-state API deadline. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `$$nemoclaw <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
 | `NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS` | `180000` | Maximum time for the bounded Docker CUDA workload on an eligible ARM64 Linux host. A positive finite number of milliseconds overrides the default. Invalid, infinite, zero, and negative values use the default. |
@@ -4963,7 +5027,7 @@ Set the onboarding variables before running `$$nemoclaw onboard` if a slow conne
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
 
@@ -4996,7 +5060,15 @@ $$nemoclaw <sandbox-name> recover
 
 If the Ollama pull or post-create readiness timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
-The post-create readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts clean.
+The ordinary post-create readiness wait deletes the orphaned sandbox first so the next `$$nemoclaw onboard` starts without that partially created sandbox.
+
+<AgentOnly variant="openclaw">
+
+For portable OpenClaw onboarding, NemoClaw instead leaves the sandbox in place when it cannot verify the exact runtime identity.
+Inspect it with `openshell sandbox list` and `$$nemoclaw <name> status`, then follow the recovery guidance from `status`.
+
+</AgentOnly>
+
 A post-policy re-registration failure leaves the sandbox in place and reports that OpenShell did not re-register it.
 
 ### Lifecycle Behavior Flags

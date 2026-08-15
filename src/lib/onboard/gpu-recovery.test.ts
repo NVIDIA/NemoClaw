@@ -36,7 +36,9 @@ describe("gpuPassthroughRecoveryLines", () => {
     expect(joined).toContain("Existing gateway was started without GPU passthrough");
     expect(joined).toContain("attempted safe gateway replacement automatically");
     expect(joined).toContain("openshell gateway remove nemoclaw");
-    expect(joined).toContain("sudo pkill -f openshell-gateway");
+    expect(joined).toContain("do not use a host-wide process match");
+    expect(joined).toContain("PID file, runtime marker, and loaded sandbox namespace");
+    expect(joined).not.toContain("pkill");
     expect(joined).toContain("nemoclaw onboard --gpu");
     expect(joined).not.toContain("nemoclaw uninstall");
     // Must NOT suggest the per-sandbox `nemoclaw <name> destroy` form — there

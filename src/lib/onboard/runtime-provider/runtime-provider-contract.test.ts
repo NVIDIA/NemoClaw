@@ -41,6 +41,7 @@ import {
   RuntimeProviderRegistrationError,
   RuntimeProviderSelectionError,
   requireRuntimeProviderHostLocalInferenceOperation,
+  requireRuntimeProviderReadOnlyHostMounts,
   requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
 } from "./registry";
@@ -171,6 +172,29 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() =>
       requireRuntimeProviderStateMutationSurface(CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!),
     ).toThrow(/no state-mutation implementation/u);
+  });
+
+  it("declares and enforces read-only host-mount support per runtime provider", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const kubernetes = CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!;
+
+    expect(docker.capabilities.readOnlyHostMounts).toEqual({
+      supported: true,
+      hostPlatforms: ["linux"],
+    });
+    expect(kubernetes.capabilities.readOnlyHostMounts).toMatchObject({
+      supported: false,
+      reason: expect.stringMatching(/Kubernetes hostPath semantics/u),
+    });
+    expect(requireRuntimeProviderReadOnlyHostMounts(docker, "linux")).toBe(
+      docker.capabilities.readOnlyHostMounts,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(docker, "darwin")).toThrow(
+      /provider 'docker'.*not qualified.*'darwin'/u,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(kubernetes, "linux")).toThrow(
+      /provider 'kubernetes'.*Kubernetes hostPath semantics/u,
+    );
   });
 
   it("registers the production Docker bootstrap surface through the same bundle registry", () => {
@@ -498,6 +522,27 @@ describe("RuntimeProviderBundle registry contract", () => {
         ["mxc", replaceSurface(bundle, "stateMutation", incomplete)],
       ]),
     ).toThrow(new RegExp(`stateMutation\\.${operation} must be a function`, "u"));
+  });
+
+  it.each([
+    [undefined, /missing readOnlyHostMounts surface/u],
+    [{ supported: false, reason: "" }, /reason must be a non-empty string/u],
+    [{ supported: true, hostPlatforms: [] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["linux", "linux"] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["plan9"] }, /hostPlatforms must list unique/u],
+  ])("rejects an invalid read-only host-mount capability %#", (readOnlyHostMounts, message) => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "capabilities", {
+            ...bundle.capabilities,
+            readOnlyHostMounts,
+          }),
+        ],
+      ]),
+    ).toThrow(message);
   });
 
   it("rejects a lifecycle surface without provider-owned post-start verification", () => {

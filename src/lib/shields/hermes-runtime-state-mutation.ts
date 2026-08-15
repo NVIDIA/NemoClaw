@@ -312,7 +312,7 @@ export function supportsHermesRuntimeProviderStateMutation(
   return provider.identity.id === "docker" && provider.stateMutation.supported === true;
 }
 
-/** Execute one complete Hermes protection transition under the Docker provider fence. */
+/** Execute one complete Hermes protection transition under its provider fence. */
 export function runHermesRuntimeProviderStateMutation(
   input: HermesRuntimeStateMutationInput,
 ): HermesRuntimeStateMutationResult | null {
@@ -322,7 +322,7 @@ export function runHermesRuntimeProviderStateMutation(
     input.providers ?? currentRuntimeProviderBundles(),
   );
   const surface = provider.stateMutation;
-  if (provider.identity.id !== "docker" || surface.supported !== true) {
+  if (surface.supported !== true || surface.providerId !== provider.identity.id) {
     throw new Error(
       `Runtime provider '${provider.identity.id}' does not support Hermes state mutation.`,
     );

@@ -36,7 +36,7 @@ function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
       lifecycleGeneration: runtime.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
       runtimeId: RUNTIME_ID,
-      authority: runtime.authority,
+      authority: runtime.authority as ReturnType<typeof createDockerOperationAuthority>,
       engineAuthorityStore: runtime.engineAuthorityStore,
       lifecycleStore: {
         ...runtime.lifecycleStore,

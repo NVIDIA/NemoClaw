@@ -567,10 +567,14 @@ function gatewayPortConflictRemediation(
   }
   const subject =
     stopPids.length === 1 ? `PID ${stopPids[0]} is` : `PIDs ${stopPids.join(", ")} are`;
-  const object = stopPids.length === 1 ? "it" : "them";
+  const stopInstruction =
+    stopPids.length === 1
+      ? "Stop that process through its service manager, or signal only the matching PID from that fresh result before retrying."
+      : "Stop each matching process through its service manager, or signal only the matching PIDs from that fresh result before retrying.";
   return (
-    `Confirm ${subject} not another NemoClaw gateway, then stop only ${object} before retrying: ` +
-    `sudo kill ${stopPids.join(" ")}`
+    `Confirm ${subject} not another NemoClaw gateway. ` +
+    `Recheck the listener set immediately before stopping a process: sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n. ` +
+    stopInstruction
   );
 }
 

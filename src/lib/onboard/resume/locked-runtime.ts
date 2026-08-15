@@ -6,6 +6,7 @@ import type {
   CheckpointPortableRuntimeAuthority,
   OnboardCheckpoint,
 } from "../../state/onboard-checkpoint-types";
+import { requireReadOnlyHostMountRuntimeSupport } from "../host-mount";
 import {
   assertLockedResumeIntentSnapshot,
   createDefaultResumeProfileEnvironmentScope,
@@ -121,12 +122,20 @@ export async function prepare(
   options: OnboardOptions,
   resume: boolean,
   nonInteractive: boolean,
-  loadSession: () => { readonly checkpoint?: OnboardCheckpoint | null } | null,
+  loadSession: () => {
+    readonly checkpoint?: OnboardCheckpoint | null;
+    readonly metadata?: { readonly hostMounts?: OnboardOptions["hostMounts"] };
+  } | null,
 ): Promise<LockedOnboardRuntimePreparation> {
+  const storedSession = resume ? loadSession() : null;
   const { checkpointProfile, expectedPortableAuthority } = resolveCheckpointProfile(
     options,
     resume,
-    loadSession,
+    () => storedSession,
+  );
+  requireReadOnlyHostMountRuntimeSupport(
+    options.hostMounts?.length ? options.hostMounts : storedSession?.metadata?.hostMounts,
+    { experimentalProfile: checkpointProfile === "portable" ? "portable" : null },
   );
   let environmentScope: PortableOnboardEnvironmentScope | null = null;
   try {

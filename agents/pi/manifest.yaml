@@ -12,6 +12,11 @@ binary_path: /usr/local/bin/pi
 version_command: "pi --version"
 expected_version: "0.84.1"
 version_scheme: semver
+managed_image:
+  architectures:
+    - linux/amd64
+    - linux/arm64
+  startup_profile_contract_version: 1
 runtime:
   kind: terminal
   interactive_command: "pi"

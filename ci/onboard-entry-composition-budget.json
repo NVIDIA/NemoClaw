@@ -1,20 +1,35 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Policy decisions remain until #9172. The budget permits no gateway decisions.",
-  "gateway": {},
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\nProvider decisions remain until #9169. Messaging decisions remain until #9170. Gateway and policy decisions remain until #9172.",
+  "gateway": {
+    "preflight": 2,
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 2
+  },
   "messaging": {
     "createSandboxWithBaseImageResolution": 9,
-    "runOnboard": 1
+    "createSandboxWithBaseImageResolution.plan.rebindMessagingTokenDefs": 1,
+    "getOpenShellInstallDeps.hasRequiredOpenshellMessagingFeatures": 4,
+    "runOnboard": 1,
+    "runOnboard.finalizationDeps.verifyDeployment.getMessagingChannels": 1
   },
   "policy": {
-    "createSandboxWithBaseImageResolution": 6,
-    "runOnboard": 5
+    "createOnboardPolicyApplication.getRecordedPolicyTier": 1,
+    "createSandboxWithBaseImageResolution": 7,
+    "preflightAuthoritativeRebuildTarget": 1,
+    "runOnboard": 6,
+    "sandboxCreateIntentResolver.getAgentPolicyPath": 1
   },
   "provider": {
-    "createSandboxWithBaseImageResolution": 15,
-    "handleNimLocalSelection": 32,
-    "handleRemoteProviderSelection": 76,
-    "handleRoutedSelection": 15,
+    "createSandboxWithBaseImageResolution": 20,
+    "handleNimLocalSelection": 36,
+    "handleRemoteProviderSelection": 84,
+    "handleRemoteProviderSelection.providerExistsInGateway": 1,
+    "handleRemoteProviderSelection.readGatewayProviderMetadata": 1,
+    "handleRoutedSelection": 16,
+    "handleVllmSelection.queryVllmModels": 1,
+    "preflightAuthoritativeRebuildTarget": 1,
     "runOnboard": 8,
-    "selectAndValidateOllamaModel": 18
+    "runOnboard.providerInference.deps.needsBedrockRuntimeAdapter": 1,
+    "selectAndValidateOllamaModel": 19
   }
 }

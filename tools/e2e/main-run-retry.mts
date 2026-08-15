@@ -13,17 +13,19 @@ const WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const DISPLAY_TITLE = "E2E main";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u;
-export const E2E_MAX_RETRIES = 2;
-export const E2E_MAX_ATTEMPTS = E2E_MAX_RETRIES + 1;
+// Broad failed-job reruns are not retry evidence: they can replay deterministic
+// product, auth, policy, malformed-input, and cleanup failures. Keep observing
+// manual attempts for history, but authorize no automatic workflow reruns.
+export const E2E_MAX_RETRIES = 0;
+export const E2E_MAX_ATTEMPTS = 3;
 
 export type MainRunRetryAction =
-  | "failed-after-retries"
+  | "failed-no-retry"
   | "ignored"
   | "passed-after-retry"
-  | "passed-first-attempt"
-  | "retry-requested";
+  | "passed-first-attempt";
 
-type ApiRequest = (path: string, options?: { method?: "GET" | "POST" }) => Promise<unknown>;
+type ApiRequest = (path: string, options?: { method?: "GET" }) => Promise<unknown>;
 
 type SourceRun = {
   id: number;
@@ -120,7 +122,8 @@ function validateSourceRun(value: unknown): SourceRun {
 
 function validateLatestRun(value: unknown, source: SourceRun): boolean {
   const response = record(value);
-  if (!Array.isArray(response.workflow_runs)) throw new Error("GitHub returned no workflow run list");
+  if (!Array.isArray(response.workflow_runs))
+    throw new Error("GitHub returned no workflow run list");
   const eligible = response.workflow_runs
     .map((item) => record(item))
     .find(
@@ -200,7 +203,8 @@ function validateAttemptEvidence(value: unknown, attempt: number): AttemptEviden
   const active = jobs.filter((job) => job.conclusion !== "skipped");
   const runnerMilliseconds = active.reduce((total, job) => {
     const duration = Date.parse(job.completedAt!) - Date.parse(job.startedAt!);
-    if (!Number.isFinite(duration) || duration < 0) throw new Error("GitHub returned invalid job timing");
+    if (!Number.isFinite(duration) || duration < 0)
+      throw new Error("GitHub returned invalid job timing");
     return total + duration;
   }, 0);
   return {
@@ -214,7 +218,10 @@ function validateAttemptEvidence(value: unknown, attempt: number): AttemptEviden
   };
 }
 
-export function decideMainRunRetry(source: SourceRun): { action: MainRunRetryAction; reason: string } {
+export function decideMainRunRetry(source: SourceRun): {
+  action: MainRunRetryAction;
+  reason: string;
+} {
   if (source.conclusion === "success") {
     return source.attempt === 1
       ? { action: "passed-first-attempt", reason: "E2E passed on its first attempt" }
@@ -223,9 +230,10 @@ export function decideMainRunRetry(source: SourceRun): { action: MainRunRetryAct
   if (source.conclusion !== "failure") {
     return { action: "ignored", reason: `E2E concluded with ${source.conclusion}` };
   }
-  return source.attempt < E2E_MAX_ATTEMPTS
-    ? { action: "retry-requested", reason: `E2E failed on attempt ${source.attempt}` }
-    : { action: "failed-after-retries", reason: "E2E failed on its third attempt" };
+  return {
+    action: "failed-no-retry",
+    reason: "E2E failed; retry requires operation-level transient evidence",
+  };
 }
 
 export async function evaluateMainRunRetry(options: {
@@ -268,16 +276,6 @@ export async function evaluateMainRunRetry(options: {
   const decision = isLatest
     ? decideMainRunRetry(source)
     : { action: "ignored" as const, reason: "a newer E2E main push exists" };
-  if (decision.action === "retry-requested") {
-    const confirmed = validateSourceRun(await request(runPath));
-    if (JSON.stringify(confirmed) !== JSON.stringify(source)) {
-      throw new Error("source run changed before retry request");
-    }
-    if (!validateLatestRun(await request(latestPath), source)) {
-      throw new Error("a newer E2E main push appeared before retry request");
-    }
-    await request(`${runPath}/rerun-failed-jobs`, { method: "POST" });
-  }
   return {
     schemaVersion: 1,
     sourceRunId: source.id,
@@ -330,7 +328,6 @@ function writeRetryEvidence(file: string, evidence: MainRunRetryEvidence): void 
     fs.rmSync(temporaryFile, { force: true });
   }
 }
-
 
 async function main(): Promise<void> {
   const evidence = await evaluateMainRunRetry({

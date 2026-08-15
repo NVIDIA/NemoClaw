@@ -192,6 +192,10 @@ function bundle(providerId: string): RuntimeProviderBundle {
       directLifecycle: false,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: "not used by the rebuild transaction contract test",
+      },
     },
     preflightDoctor: {
       providerId,
