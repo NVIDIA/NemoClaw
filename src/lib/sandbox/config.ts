@@ -462,15 +462,25 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
       },
     );
     if (result.error || result.signal || result.status !== 0) {
-      const detail = result.error?.message || result.stderr?.trim() || result.output;
-      configFail(
-        `  Cannot read ${target.agentName} config (${target.configPath})${detail ? `: ${detail}` : "."}`,
-      );
+      // Diagnostic channels only. `result.output` is stdout-first, and stdout
+      // here is the agent config `cat` printed, so echoing it would put config
+      // contents — credentials included — into a CLI error.
+      const detail = result.error?.message || result.stderr?.trim();
+      // Preserve a failed exec's detail. `configFail` throws, so it must not be
+      // caught and replaced with the generic stopped-sandbox message below.
+      if (detail) {
+        configFail(`  Cannot read ${target.agentName} config (${target.configPath}): ${detail}`);
+      }
+      raw = "";
+    } else {
+      // `output` is display-normalized with trim(); the transaction digest must
+      // bind the exact bytes returned by `cat`, including its final newline.
+      raw = result.stdout ?? result.output ?? "";
     }
-    // `output` is display-normalized with trim(); the transaction digest must
-    // bind the exact bytes returned by `cat`, including its final newline.
-    raw = result.stdout ?? result.output ?? "";
-  } catch {
+  } catch (error) {
+    // Only unexpected capture failures become empty reads. A diagnostic raised
+    // above already names the reason and must reach the caller (#9104).
+    if (error instanceof SandboxConfigError) throw error;
     raw = "";
   }
 
