@@ -107,15 +107,11 @@ describe("portable uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(
-      run.mock.calls.some(
-        ([command, args]) => command === "podman" && args[0] === "ps",
-      ),
-    ).toBe(true);
-    expect(
-      run.mock.calls.some(
-        ([command, args]) => command === "podman" && args[0] === "rm",
-      ),
-    ).toBe(false);
+    // No portable receipts exist in this state, so the teardown is a strict
+    // no-op: without recorded socket authority there is no safe transport to
+    // pin, and no ambient podman or container mutation may run.
+    expect(run.mock.calls.some(([command, args]) => command === "podman")).toBe(
+      false,
+    );
   });
 });
