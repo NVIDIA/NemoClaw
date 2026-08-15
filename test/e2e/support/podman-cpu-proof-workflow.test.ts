@@ -115,7 +115,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("${{ secrets.");
     const delegation = delegationJob();
     const prepare =
-      namedDelegationStep("Prepare app.slice CPU setting without service delegation").run ?? "";
+      namedDelegationStep("Prepare CPU controller settings without service delegation").run ?? "";
     const reject =
       namedDelegationStep(
         "Verify missing delegation blocks portable configuration and service activation",
@@ -139,9 +139,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(namedDelegationStep("Build shared sandbox-name contract").run).toBe(
       "npm run build:policy-boundary",
     );
-    expect(prepare).toContain(
-      'useradd --create-home --shell /bin/bash --comment "$user_comment"',
-    );
+    expect(prepare).toContain('useradd --create-home --shell /bin/bash --comment "$user_comment"');
     expect(prepare).toContain("CPUWeight=100");
     expect(prepare.match(/CPUWeight=100/gu)).toHaveLength(2);
     expect(prepare).not.toContain("CPUAccounting=yes");
@@ -158,9 +156,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain("E2E_SOURCE_CACHE_MARKER");
     expect(prepare).toContain("E2E_WORKSPACE_TRAVERSE_MARKER");
     expect(prepare).toContain('sudo chmod o+x -- "$workspace_path"');
-    expect(prepare).toContain(
-      'test -x "$GITHUB_WORKSPACE/node_modules/.bin/vitest"',
-    );
+    expect(prepare).toContain('test -x "$GITHUB_WORKSPACE/node_modules/.bin/vitest"');
     expect(prepare).toContain('source_cache_parent="$GITHUB_WORKSPACE/node_modules/.cache"');
     expect(prepare).toContain("cannot traverse the source-loader cache parent");
     expect(prepare).toContain('sudo mkdir -m 0700 -- "$source_cache_dir"');
@@ -168,6 +164,8 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain("Source-loader cache already exists");
     expect(prepare).toContain("E2E_CPU_SLICE_DROP_IN_DIR_CREATED=1");
     expect(prepare).toContain("E2E_CPU_SLICE_DROP_IN_DIR_MARKER");
+    expect(prepare).toContain('slice_drop_in_dir="/etc/systemd/system/user-${uid}.slice.d"');
+    expect(prepare).not.toContain('slice_drop_in_dir="/run/systemd/system/user-${uid}.slice.d"');
     expect(prepare).toContain(
       'app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"',
     );
@@ -186,11 +184,11 @@ describe("native Podman CPU proof workflow", () => {
     expect(cacheCreate).toBeGreaterThan(cachePathReceipt);
     expect(prepare).toContain('mktemp "$slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX"');
     expect(prepare).toContain('ln -- "$slice_drop_in_temp" "$slice_drop_in"');
-    expect(prepare).toContain('printf \'%s\\n\' "$slice_drop_in_id"');
+    expect(prepare).toContain("printf '%s\\n' \"$slice_drop_in_id\"");
     expect(prepare).toContain("Delegate=memory pids");
     expect(prepare).toContain('mktemp "$drop_in_dir/.nemoclaw-cpu-delegation.XXXXXX"');
     expect(prepare).toContain('ln -- "$drop_in_temp" "$drop_in"');
-    expect(prepare).toContain('printf \'%s\\n\' "$drop_in_id"');
+    expect(prepare).toContain("printf '%s\\n' \"$drop_in_id\"");
     expect(prepare).toContain("prepare-user-manager-diagnostics.txt");
     expect(prepare).toContain("trap - EXIT");
     expect(prepare).toContain('loginctl enable-linger "$E2E_CPU_DELEGATION_USER"');
@@ -201,9 +199,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(reject).toContain("env -i");
     expect(reject).toContain("E2E_CPU_DELEGATION_STATE=missing");
     expect(reject).toContain('"E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID"');
-    expect(reject).toContain(
-      "./node_modules/.bin/vitest run --no-cache --project e2e-live",
-    );
+    expect(reject).toContain("./node_modules/.bin/vitest run --no-cache --project e2e-live");
     expect(reject).toContain("portable-cpu-delegation-proof.test.ts");
     expect(reject).not.toContain("systemctl --user start app.slice");
     expect(admit).toContain("Delegate=cpu memory pids");
@@ -221,9 +217,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(stopUserManager).toBeGreaterThan(-1);
     expect(reloadSystemManager).toBeGreaterThan(stopUserManager);
     expect(startUserManager).toBeGreaterThan(reloadSystemManager);
-    expect(admit).not.toContain(
-      'systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"',
-    );
+    expect(admit).not.toContain('systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"');
     expect(admit).toContain("systemctl --no-pager --full status");
     expect(admit).toContain("journalctl --no-pager --unit");
     expect(admit).toContain("python3 test/e2e/lib/redact-text.py");
@@ -231,9 +225,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(admit).toContain("env -i");
     expect(admit).toContain("E2E_CPU_DELEGATION_STATE=delegated");
     expect(admit).toContain('"E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID"');
-    expect(admit).toContain(
-      "./node_modules/.bin/vitest run --no-cache --project e2e-live",
-    );
+    expect(admit).toContain("./node_modules/.bin/vitest run --no-cache --project e2e-live");
     expect(admit).toContain("portable-cpu-delegation-proof.test.ts");
     expect(admit).not.toContain("systemctl --user start app.slice");
     expect(diagnostics.if).toBe("failure()");
@@ -263,20 +255,20 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain("source-loader cache whose identity changed");
     expect(cleanup.run).toContain('sudo rm -rf --one-file-system -- "$source_cache_dir"');
     expect(cleanup.run).toContain("Source-loader cache remained after cleanup");
+    expect(cleanup.run).toContain("source_cache_cleanup_failed=1");
+    expect(cleanup.run).toContain("Preserving the source-loader cache receipt for cleanup retry");
     expect(cleanup.run).toContain('"CPU delegation proof drop-in"');
     expect(cleanup.run).toContain('"CPU slice proof drop-in"');
     expect(cleanup.run).toContain('"CPU slice proof drop-in directory"');
     expect(cleanup.run).toContain("E2E_CPU_SLICE_DROP_IN_DIR_MARKER");
     expect(cleanup.run).toContain('"CPU delegation proof drop-in directory"');
     expect(cleanup.run).toContain("CPU delegation proof user remained after cleanup");
-    expect(cleanup.run).toContain(
-      'sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR"',
-    );
+    expect(cleanup.run).toContain('sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR"');
     expect(cleanup.run).toContain("E2E_WORKSPACE_TRAVERSE_MARKER");
     expect(cleanup.run).toContain('sudo chmod "$original_mode" -- "$workspace_path"');
-    const delegationProof = readRepoText(
-      "test/e2e/live/portable-cpu-delegation-proof.test.ts",
-    );
+    expect(cleanup.run).toContain("workspace_restore_failed=1");
+    expect(cleanup.run).toContain("Preserving the workspace mode receipt for manual cleanup retry");
+    const delegationProof = readRepoText("test/e2e/live/portable-cpu-delegation-proof.test.ts");
     expect(delegationProof).toContain('from "../fixtures/e2e-test.ts"');
     expect(delegationProof).not.toContain('from "vitest"');
     expect(delegationProof).toContain('"rev-parse", "HEAD"');
@@ -289,7 +281,7 @@ describe("native Podman CPU proof workflow", () => {
 
   it("preserves the workspace mode receipt when preparation rollback cannot restore a mode", () => {
     const prepare =
-      namedDelegationStep("Prepare app.slice CPU setting without service delegation").run ?? "";
+      namedDelegationStep("Prepare CPU controller settings without service delegation").run ?? "";
     const functionStart = prepare.indexOf("cleanup_failed_prepare() {");
     const functionEnd = prepare.indexOf("\ntrap cleanup_failed_prepare EXIT", functionStart);
     expect(functionStart).toBeGreaterThanOrEqual(0);
@@ -338,6 +330,120 @@ describe("native Podman CPU proof workflow", () => {
       fs.rmSync(fixture, { force: true, recursive: true });
     }
   });
+
+  it("preserves the workspace mode receipt when final cleanup cannot restore a mode", () => {
+    const cleanup = namedDelegationStep("Restore the user manager boundary").run ?? "";
+    const blockStart = cleanup.indexOf(
+      'workspace_traverse_marker="${E2E_WORKSPACE_TRAVERSE_MARKER:-}"',
+    );
+    const blockEnd = cleanup.indexOf('\nexit "$cleanup_failed"', blockStart);
+    expect(blockStart).toBeGreaterThanOrEqual(0);
+    expect(blockEnd).toBeGreaterThan(blockStart);
+    const cleanupBlock = cleanup.slice(blockStart, blockEnd);
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-mode-retry-"));
+    const marker = path.join(fixture, "workspace-modes");
+    fs.writeFileSync(marker, "755\t/checkout-parent\n", { mode: 0o600 });
+
+    const script = [
+      "set -u",
+      "cleanup_failed=0",
+      'E2E_WORKSPACE_TRAVERSE_MARKER="$1"',
+      "sudo() {",
+      '  if [ "$1" = chmod ]; then',
+      "    return 75",
+      "  fi",
+      '  command "$@"',
+      "}",
+      cleanupBlock,
+      'exit "$cleanup_failed"',
+    ].join("\n");
+
+    try {
+      const result = spawnSync("bash", ["-c", script, "bash", marker], {
+        encoding: "utf8",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "Preserving the workspace mode receipt for manual cleanup retry",
+      );
+      expect(fs.readFileSync(marker, "utf8")).toBe("755\t/checkout-parent\n");
+    } finally {
+      fs.rmSync(fixture, { force: true, recursive: true });
+    }
+  });
+
+  it.each(["invalid-marker", "identity-changed", "remove-failed"] as const)(
+    "preserves the source-cache receipt when final cleanup reports %s",
+    (scenario) => {
+      const cleanup = namedDelegationStep("Restore the user manager boundary").run ?? "";
+      const blockStart = cleanup.indexOf('source_cache_dir="${E2E_SOURCE_CACHE_DIR:-}"');
+      const blockEnd = cleanup.indexOf("\nsudo systemctl daemon-reload", blockStart);
+      expect(blockStart).toBeGreaterThanOrEqual(0);
+      expect(blockEnd).toBeGreaterThan(blockStart);
+      const cleanupBlock = cleanup.slice(blockStart, blockEnd);
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cache-retry-"));
+      const cache = path.join(fixture, "source-cache");
+      const marker = path.join(fixture, "source-cache-id");
+      fs.mkdirSync(cache);
+      const metadata = fs.statSync(cache);
+      const actualIdentity = `${String(metadata.dev)}:${String(metadata.ino)}`;
+      const markerContents = {
+        "identity-changed": "999999:999999\n",
+        "invalid-marker": "invalid\n",
+        "remove-failed": `${actualIdentity}\n`,
+      }[scenario];
+      const expectedError = {
+        "identity-changed": "whose identity changed",
+        "invalid-marker": "ownership marker is invalid",
+        "remove-failed": "Source-loader cache remained after cleanup",
+      }[scenario];
+      const failRemove = scenario === "remove-failed" ? "1" : "0";
+      fs.writeFileSync(marker, markerContents, { mode: 0o600 });
+
+      const script = [
+        "set -u",
+        "cleanup_failed=0",
+        'E2E_SOURCE_CACHE_DIR="$1"',
+        'E2E_SOURCE_CACHE_MARKER="$2"',
+        'ACTUAL_CACHE_ID="$3"',
+        'FAIL_CACHE_RM="$4"',
+        "sudo() {",
+        '  if [ "$1" = test ]; then',
+        "    shift",
+        '    command test "$@"',
+        "    return",
+        "  fi",
+        '  if [ "$1" = stat ]; then',
+        "    printf '%s\\n' \"$ACTUAL_CACHE_ID\"",
+        "    return 0",
+        "  fi",
+        '  if [ "$1" = rm ] && [ "$FAIL_CACHE_RM" = 1 ]; then',
+        "    return 75",
+        "  fi",
+        '  command "$@"',
+        "}",
+        cleanupBlock,
+        'exit "$cleanup_failed"',
+      ].join("\n");
+
+      try {
+        const result = spawnSync(
+          "bash",
+          ["-c", script, "bash", cache, marker, actualIdentity, failRemove],
+          { encoding: "utf8" },
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(expectedError);
+        expect(result.stderr).toContain(
+          "Preserving the source-loader cache receipt for cleanup retry",
+        );
+        expect(fs.readFileSync(marker, "utf8")).toBe(markerContents);
+        expect(fs.statSync(cache).isDirectory()).toBe(true);
+      } finally {
+        fs.rmSync(fixture, { force: true, recursive: true });
+      }
+    },
+  );
 
   it("pins one rootless socket and fails closed on Docker use", () => {
     const installGuard = namedStep("Install Docker invocation guard").run ?? "";

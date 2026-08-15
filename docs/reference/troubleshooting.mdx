@@ -3340,15 +3340,17 @@ The portable experimental profile requires the current user's systemd hierarchy 
 NemoClaw checks this requirement before it writes portable configuration, activates services, starts the registry, builds an image, or creates a sandbox.
 The credential-free preflight reads only `cgroup.controllers` files under `/sys/fs/cgroup`.
 
-The preflight distinguishes a missing controller file from a read failure.
+The preflight distinguishes missing, unreadable, malformed, and readable controller evidence.
 Classify the file state before you select a recovery action:
 
 ```bash
 uid="$(id -u)"
-user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"
+user_slice="/sys/fs/cgroup/user.slice/user-${uid}.slice"
+user_manager="${user_slice}/user@${uid}.service"
 
 for controllers in \
   /sys/fs/cgroup/cgroup.controllers \
+  "${user_slice}/cgroup.controllers" \
   "${user_manager}/cgroup.controllers" \
   "${user_manager}/app.slice/cgroup.controllers"
 do
@@ -3356,10 +3358,34 @@ do
     printf '%s: missing\n' "$controllers"
   elif [ ! -r "$controllers" ]; then
     printf '%s: unreadable\n' "$controllers"
-  elif contents="$(cat -- "$controllers")"; then
-    printf '%s: readable (%s)\n' "$controllers" "$contents"
+  elif evidence="$(node - "$controllers" <<'NODE'
+const fs = require("node:fs");
+
+const controllers = process.argv[2];
+try {
+  const content = fs.readFileSync(controllers, "utf8");
+  const tokens = content.split(/\s+/u).filter((token) => token.length > 0);
+  const names = new Set(tokens);
+  if (
+    names.size !== tokens.length ||
+    tokens.some((token) => !/^[a-z][a-z0-9_-]*$/u.test(token))
+  ) {
+    process.exit(2);
+  }
+  process.stdout.write(tokens.join(" "));
+} catch {
+  process.exit(3);
+}
+NODE
+  )"; then
+    printf '%s: readable (%s)\n' "$controllers" "$evidence"
   else
-    printf '%s: read failed\n' "$controllers"
+    read_status="$?"
+    if [ "$read_status" = "2" ]; then
+      printf '%s: malformed\n' "$controllers"
+    else
+      printf '%s: read failed\n' "$controllers"
+    fi
   fi
 done
 ```
@@ -3368,6 +3394,40 @@ An access policy can prevent the current user from testing whether a path exists
 For each `missing` or `read failed` result, ask an administrator to run `sudo stat -- <reported-path>`.
 If `stat` finds the file but the current-user read failed, classify the file as unreadable.
 If `stat` reports that the path does not exist, classify the file as missing.
+An empty readable file is valid evidence that exposes no controllers.
+A `malformed` result means the successful read contained a duplicate controller name or a token outside the lowercase controller-name grammar.
+
+Do not print malformed bytes directly to a terminal.
+Ask an administrator to inspect only the reported path and its cgroups v2 mount:
+
+```bash
+reported_path="<reported-cgroup.controllers-path>"
+uid="$(id -u)"
+user_slice="/sys/fs/cgroup/user.slice/user-${uid}.slice"
+user_manager="${user_slice}/user@${uid}.service"
+reported_path_is_expected=0
+for expected_path in \
+  /sys/fs/cgroup/cgroup.controllers \
+  "${user_slice}/cgroup.controllers" \
+  "${user_manager}/cgroup.controllers" \
+  "${user_manager}/app.slice/cgroup.controllers"
+do
+  if [ "$reported_path" = "$expected_path" ]; then
+    reported_path_is_expected=1
+  fi
+done
+if [ "$reported_path_is_expected" != "1" ]; then
+  printf 'Refusing unexpected cgroup evidence path: %s\n' "$reported_path" >&2
+  exit 1
+fi
+
+sudo stat -- "$reported_path"
+sudo od -An -tx1 -v -- "$reported_path"
+findmnt --target "$reported_path" --output TARGET,FSTYPE,OPTIONS
+```
+
+The administrator must correct the cgroups v2 mount or kernel-provided evidence before you rerun the classification command.
+Do not change systemd delegation, stop or start the user manager, or reboot the host to repair malformed evidence.
 
 The error and file state identify the required recovery:
 
@@ -3375,10 +3435,12 @@ The error and file state identify the required recovery:
 | --- | --- | --- |
 | cgroups v2 is unavailable; the root file is missing | The host does not expose the cgroups v2 controller file at the expected mount. | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount. |
 | Any controller file exists but is unreadable, or its read fails | The current user cannot read the existing hierarchy boundary. | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
+| Any controller file is malformed | The file was readable, but it did not contain unique, whitespace-separated lowercase controller names. | Stop before changing delegation or user-manager state. Ask an administrator to inspect the exact file and cgroups v2 mount integrity with the commands above. |
 | The kernel hierarchy does not expose `cpu`; the root file is readable | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
-| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply both named systemd drop-ins below. |
-| `cpu` is unavailable to `app.slice`; its file is missing | The current user's `app.slice` hierarchy does not exist for this boot. | Apply both named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host. |
-| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu` | The user manager does not have a CPU resource setting that activates the delegated controller for `app.slice`. | Apply both named systemd drop-ins below. Then use the stop, reload, and start sequence or reboot the host. |
+| `cpu` is unavailable to `user-UID.slice`; its file is missing or does not contain `cpu` | The system manager has not activated the controller at the affected user's ancestor slice. | Apply all three named systemd drop-ins below, then follow the interruption-aware activation procedure. |
+| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply all three named systemd drop-ins below, then follow the interruption-aware activation procedure. |
+| `cpu` is unavailable to `app.slice`; its file is missing | The current user's `app.slice` hierarchy does not exist for this boot. | Apply all three named systemd drop-ins below, then follow the interruption-aware activation procedure. |
+| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu` | The user manager has not activated the delegated controller for `app.slice`. | Apply all three named systemd drop-ins below, then follow the interruption-aware activation procedure. |
 
 Do not use a boot, delegation, or service lifecycle action to correct an unreadable file.
 Those actions do not restore access that filesystem permissions or an LSM policy denies.
@@ -3388,11 +3450,10 @@ NemoClaw does not edit `/etc/systemd`, invoke `sudo`, remove the sandbox CPU lim
 
 <Warning>
 The `user@.service` template applies to every user manager on the host.
+The `user-UID.slice` drop-in applies only to the affected numeric user ID.
 The `app.slice` drop-in applies to every user manager on the host.
-Applying or removing either drop-in requires the administrator to stop the affected user's manager, reload systemd, and start the manager.
-The administrator can reboot the host instead of running that sequence.
-Stopping the manager stops that user's systemd services, including rootless Podman and other user services.
-Plan each interruption with the affected user and host administrator.
+Applying or removing these drop-ins requires an interruption-aware lifecycle procedure later in this section.
+Read its warning before you stop or start a user manager or reboot the host.
 </Warning>
 
 Record the affected user's numeric ID:
@@ -3402,20 +3463,34 @@ uid="$(id -u)"
 printf 'Current user ID: %s\n' "$uid"
 ```
 
-Use the two dedicated NemoClaw drop-in paths below.
+Use the three dedicated NemoClaw drop-in paths below.
 The service drop-in delegates `cpu` to user managers.
+The `user-UID.slice` drop-in requests the kernel default CPU weight of `100` at the affected user's system-manager ancestor.
 The `app.slice` drop-in requests the kernel default CPU weight of `100`.
-The explicit setting makes the user manager activate the delegated controller for `app.slice`.
-If either file exists, stop and ask the administrator to inspect its ownership and content.
-Do not replace either file.
+The two explicit weight settings activate the controller above and inside the user manager without changing its relative default weight.
+If any file exists, stop and ask the administrator to inspect its ownership and content.
+Do not replace any file.
 
 ```bash
+uid="$(id -u)"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
 delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
 app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
 delegation_drop_in_dir="$(dirname "$delegation_drop_in")"
+user_slice_drop_in_dir="$(dirname "$user_slice_drop_in")"
 app_slice_drop_in_dir="$(dirname "$app_slice_drop_in")"
 
-for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
+for drop_in_name in delegation user_slice app_slice; do
+  printf 'Record for rollback: %s_drop_in_created=0\n' "$drop_in_name"
+  printf 'Record for rollback: %s_drop_in_dir_created=0\n' "$drop_in_name"
+done
+
+for drop_in in "$delegation_drop_in" "$user_slice_drop_in" "$app_slice_drop_in"; do
   if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
     printf 'Refusing to replace existing file: %s\n' "$drop_in" >&2
     exit 1
@@ -3463,6 +3538,7 @@ ensure_drop_in_dir() {
 }
 
 ensure_drop_in_dir delegation "$delegation_drop_in_dir" || exit 1
+ensure_drop_in_dir user_slice "$user_slice_drop_in_dir" || exit 1
 ensure_drop_in_dir app_slice "$app_slice_drop_in_dir" || exit 1
 
 create_drop_in() {
@@ -3495,6 +3571,7 @@ create_drop_in() {
     return 1
   fi
 
+  printf 'Record for rollback: %s_drop_in_created=1\n' "$drop_in_name"
   printf 'Record for rollback: %s_drop_in_id=%s\n' "$drop_in_name" "$drop_in_id"
 
   if ! sudo rm -f -- "$drop_in_tmp"; then
@@ -3507,6 +3584,8 @@ creation_failed=0
 if ! create_drop_in \
   delegation "$delegation_drop_in" '[Service]' 'Delegate=cpu memory pids'; then
   creation_failed=1
+elif ! create_drop_in user_slice "$user_slice_drop_in" '[Slice]' 'CPUWeight=100'; then
+  creation_failed=1
 elif ! create_drop_in app_slice "$app_slice_drop_in" '[Slice]' 'CPUWeight=100'; then
   creation_failed=1
 fi
@@ -3516,13 +3595,128 @@ fi
 ```
 
 If a creation command fails, do not reload systemd.
-Ask the administrator to inspect both drop-in paths and their directories.
-Remove either drop-in path or a `.nemoclaw-cpu-controller.*` temporary file only if this procedure created it.
+Use the final value printed for every `*_created` record and its matching `device:inode` record.
+The initial `0` records make cleanup executable even when only the first file was published.
+Ask the administrator to inspect all three drop-in paths and their directories.
+Remove a `.nemoclaw-cpu-controller.*` temporary path only when the failed command reported that exact path and the administrator verifies its identity.
 
-Verify that both persistent paths are root-owned regular files with mode `0644`:
+#### Clean Up a Partial Drop-In Creation
+
+Run this command only when creation failed before any `systemctl daemon-reload`.
+Copy the final creation records into every placeholder.
+The command removes only objects recorded as created by this procedure and bound to their creation-time identity.
+It preserves pre-existing objects, accepts recorded objects that are already absent, refuses identity or type drift, and attempts every cleanup action before it exits.
 
 ```bash
-for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
+uid="<affected-user-id>"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
+delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
+app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+delegation_drop_in_created="<final-recorded-0-or-1>"
+delegation_drop_in_id="<recorded-device:inode-if-created>"
+user_slice_drop_in_created="<final-recorded-0-or-1>"
+user_slice_drop_in_id="<recorded-device:inode-if-created>"
+app_slice_drop_in_created="<final-recorded-0-or-1>"
+app_slice_drop_in_id="<recorded-device:inode-if-created>"
+delegation_drop_in_dir_created="<final-recorded-0-or-1>"
+delegation_drop_in_dir_id="<recorded-device:inode-if-created>"
+user_slice_drop_in_dir_created="<final-recorded-0-or-1>"
+user_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
+app_slice_drop_in_dir_created="<final-recorded-0-or-1>"
+app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
+
+remove_created_drop_in() {
+  drop_in="$1"
+  created="$2"
+  expected_id="$3"
+
+  if [ "$created" = "0" ]; then
+    return 0
+  fi
+  if [ "$created" != "1" ] || [[ ! "$expected_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+    printf 'Invalid creation-time file record for: %s\n' "$drop_in" >&2
+    return 1
+  fi
+  if ! sudo test -e "$drop_in" && ! sudo test -L "$drop_in"; then
+    return 0
+  fi
+  if sudo test -L "$drop_in" || ! sudo test -f "$drop_in"; then
+    printf 'Refusing unexpected CPU controller drop-in type: %s\n' "$drop_in" >&2
+    return 1
+  fi
+  if [ "$(sudo stat -Lc '%d:%i' -- "$drop_in")" != "$expected_id" ]; then
+    printf 'Refusing CPU controller drop-in whose identity changed: %s\n' "$drop_in" >&2
+    return 1
+  fi
+  sudo rm -- "$drop_in"
+}
+
+remove_created_directory() {
+  drop_in_dir="$1"
+  created="$2"
+  expected_id="$3"
+
+  if [ "$created" = "0" ]; then
+    return 0
+  fi
+  if [ "$created" != "1" ] || [[ ! "$expected_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+    printf 'Invalid creation-time directory record for: %s\n' "$drop_in_dir" >&2
+    return 1
+  fi
+  if ! sudo test -e "$drop_in_dir" && ! sudo test -L "$drop_in_dir"; then
+    return 0
+  fi
+  if sudo test -L "$drop_in_dir" || ! sudo test -d "$drop_in_dir"; then
+    printf 'Refusing unexpected CPU controller drop-in directory type: %s\n' \
+      "$drop_in_dir" >&2
+    return 1
+  fi
+  if [ "$(sudo stat -Lc '%d:%i' -- "$drop_in_dir")" != "$expected_id" ]; then
+    printf 'Refusing CPU controller drop-in directory whose identity changed: %s\n' \
+      "$drop_in_dir" >&2
+    return 1
+  fi
+  sudo rmdir -- "$drop_in_dir"
+}
+
+cleanup_failed=0
+remove_created_drop_in \
+  "$app_slice_drop_in" "$app_slice_drop_in_created" "$app_slice_drop_in_id" ||
+  cleanup_failed=1
+remove_created_drop_in \
+  "$user_slice_drop_in" "$user_slice_drop_in_created" "$user_slice_drop_in_id" ||
+  cleanup_failed=1
+remove_created_drop_in \
+  "$delegation_drop_in" "$delegation_drop_in_created" "$delegation_drop_in_id" ||
+  cleanup_failed=1
+remove_created_directory \
+  "$(dirname "$app_slice_drop_in")" \
+  "$app_slice_drop_in_dir_created" \
+  "$app_slice_drop_in_dir_id" || cleanup_failed=1
+remove_created_directory \
+  "$(dirname "$user_slice_drop_in")" \
+  "$user_slice_drop_in_dir_created" \
+  "$user_slice_drop_in_dir_id" || cleanup_failed=1
+remove_created_directory \
+  "$(dirname "$delegation_drop_in")" \
+  "$delegation_drop_in_dir_created" \
+  "$delegation_drop_in_dir_id" || cleanup_failed=1
+exit "$cleanup_failed"
+```
+
+If the command exits nonzero, inspect every refusal and preserve the affected path.
+After correcting a transient cleanup failure, rerun the complete command with the same final creation records.
+Do not reload systemd after partial-creation cleanup.
+
+Verify that all three persistent paths are root-owned regular files with mode `0644`:
+
+```bash
+for drop_in in "$delegation_drop_in" "$user_slice_drop_in" "$app_slice_drop_in"; do
   if sudo test -L "$drop_in" \
     || ! sudo test -f "$drop_in" \
     || [ "$(sudo stat -Lc '%U:%G %a' -- "$drop_in")" != "root:root 644" ]; then
@@ -3531,21 +3725,29 @@ for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
   fi
 done
 
-sudo stat -Lc '%n %d:%i' -- "$delegation_drop_in" "$app_slice_drop_in"
+sudo stat -Lc '%n %d:%i' -- \
+  "$delegation_drop_in" "$user_slice_drop_in" "$app_slice_drop_in"
 sudo cat -- "$delegation_drop_in"
+sudo cat -- "$user_slice_drop_in"
 sudo cat -- "$app_slice_drop_in"
 ```
 
-Continue only when the command exits with status `0`, both `device:inode` values match the creation command's rollback records, and the file content is:
+Continue only when the command exits with status `0` and all three `device:inode` values match the creation command's rollback records.
+The service file content must be:
 
 ```ini
 [Service]
 Delegate=cpu memory pids
+```
+
+Both slice files must contain:
+
+```ini
 [Slice]
 CPUWeight=100
 ```
 
-Record all rollback lines from the creation command in the administrator's change record, including both file `device:inode` values and both directory creation records.
+Record all rollback lines from the creation command in the administrator's change record, including all three file creation records and all three directory creation records.
 They identify the exact files and any directories created by this procedure and contain no credentials.
 Rollback must use those recorded values.
 If a required value is lost, do not use the removal command below; ask the administrator to inspect and remove the configuration through the host's normal change-management process.
@@ -3553,36 +3755,90 @@ If a required value is lost, do not use the removal command below; ask the admin
 The administrator's `sudo` policy can request authentication.
 NemoClaw never receives that credential.
 
-Run the following commands from an administrator session that does not depend on the affected user's manager:
+<Warning>
+Before the next command, the affected user must save their work.
+The administrator must identify and account for that user's host workloads, including rootless Podman containers and other user services.
+Stopping the manager interrupts all services owned by that user.
+Run the command from an independent administrator session that does not depend on the affected user's manager.
+</Warning>
 
 ```bash
 uid="<affected-user-id>"
-sudo systemctl stop "user@${uid}.service" &&
-  sudo systemctl daemon-reload &&
-  sudo systemctl start "user@${uid}.service"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
+sudo systemctl stop "user@${uid}.service" || exit 1
+sudo systemctl daemon-reload || exit 1
+if ! sudo systemctl start "user@${uid}.service"; then
+  sudo systemctl --no-pager --full status "user@${uid}.service" || true
+  sudo journalctl --no-pager --unit "user@${uid}.service" --lines 200 || true
+  exit 1
+fi
 ```
 
-After the affected user signs in again, start `app.slice` in that user's session:
+The stop must complete before `daemon-reload` runs.
+Reloading while the instantiated unit is inactive lets systemd recalculate ancestor controller masks for the new delegation.
+The final start makes the system manager apply the per-user slice weight and makes the user manager read the `app.slice` weight.
+Do not replace this sequence with `systemctl restart`.
+
+The immediate `systemctl start` can fail with `status=219/CGROUP` even after the inactive reload.
+When the status or journal output reports that result, leave the three verified drop-ins in place and do not repeatedly start or restart the manager.
+Have the affected user create a fresh login session later so logind can create a new user manager.
+From the independent administrator session, verify that the later login recovered it:
+
+```bash
+uid="<affected-user-id>"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
+sudo systemctl is-active "user@${uid}.service"
+```
+
+Continue only when the command prints `active`.
+After the affected user signs in through the recovered manager, start `app.slice` in that user's session:
 
 ```bash
 systemctl --user start app.slice
 ```
 
-The stop must complete before `daemon-reload` runs.
-Reloading while the instantiated unit is inactive lets systemd recalculate ancestor controller masks for the new delegation.
-The final start makes the user manager read the `app.slice` CPU weight and enable the delegated controller.
-Do not replace this sequence with `systemctl restart`, which can fail with `219/CGROUP` before systemd recalculates the masks.
-The sequence stops at the first failed command.
-If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.
+If a later fresh login does not recover the manager, an administrator can use a reboot as the final recovery step.
 
-Verify the root hierarchy, current user manager, and `app.slice`:
+<Warning>
+Before rebooting, every host user must save their work, and the administrator must safely stop or account for all host workloads.
+A reboot interrupts every service, container, and interactive session on the host.
+</Warning>
+
+```bash
+sudo systemctl reboot
+```
+
+After the host returns, have the affected user sign in and confirm that `user@UID.service` is active before starting `app.slice`.
+
+Verify that systemd loaded all three NemoClaw drop-ins:
 
 ```bash
 uid="$(id -u)"
-user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"
+systemctl cat user@.service
+sudo systemctl cat "user-${uid}.slice"
+systemctl --user cat app.slice
+```
+
+Continue only when the effective unit views list the NemoClaw service, per-user slice, and `app.slice` drop-in paths created above.
+
+Verify the root hierarchy, affected user's ancestor slice, current user manager, and `app.slice`:
+
+```bash
+uid="$(id -u)"
+user_slice="/sys/fs/cgroup/user.slice/user-${uid}.slice"
+user_manager="${user_slice}/user@${uid}.service"
 
 for controllers in \
   /sys/fs/cgroup/cgroup.controllers \
+  "${user_slice}/cgroup.controllers" \
   "${user_manager}/cgroup.controllers" \
   "${user_manager}/app.slice/cgroup.controllers"
 do
@@ -3595,7 +3851,7 @@ do
 done
 ```
 
-Continue only when all three lines end in `: cpu`.
+Continue only when all four lines end in `: cpu`.
 This verification reads no credentials.
 Then rerun portable onboarding:
 
@@ -3605,38 +3861,65 @@ $$nemoclaw onboard --experimental-profile portable
 
 #### Remove the CPU Controller Drop-Ins
 
-Remove only the two named files and any drop-in directory that the creation record marks as created by this procedure.
+Remove only the three named files and any drop-in directory that the creation record marks as created by this procedure.
 Do not use `systemctl revert`.
-Do not remove another `user@.service` or `app.slice` drop-in or a pre-existing drop-in directory.
+Do not remove another `user@.service`, `user-UID.slice`, or `app.slice` drop-in or a pre-existing drop-in directory.
 
-Confirm both files and retrieve the `device:inode` values from the administrator's creation-time change record:
-
-```bash
-delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
-app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
-expected_delegation_drop_in_id="<recorded-delegation-device:inode>"
-expected_app_slice_drop_in_id="<recorded-app-slice-device:inode>"
-delegation_drop_in_dir_created="<recorded-0-or-1>"
-delegation_drop_in_dir_id="<recorded-device:inode-if-created>"
-app_slice_drop_in_dir_created="<recorded-0-or-1>"
-app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
-sudo cat -- "$delegation_drop_in"
-sudo cat -- "$app_slice_drop_in"
-sudo stat -Lc '%n %d:%i' -- "$delegation_drop_in" "$app_slice_drop_in"
-```
-
-Continue only when both paths, their content, and their current `device:inode` values match the creation-time record.
-From an administrator session that does not depend on the affected user's manager, stop the manager first.
-The removal command is retry-safe: an already absent recorded path is accepted, an identity mismatch is refused, and reload/start are attempted after every removal attempt so a partial failure does not leave the manager stopped.
+Confirm all three files and retrieve the `device:inode` values from the administrator's creation-time change record:
 
 ```bash
 uid="<affected-user-id>"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
 delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
 app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
 expected_delegation_drop_in_id="<recorded-delegation-device:inode>"
+expected_user_slice_drop_in_id="<recorded-user-slice-device:inode>"
 expected_app_slice_drop_in_id="<recorded-app-slice-device:inode>"
 delegation_drop_in_dir_created="<recorded-0-or-1>"
 delegation_drop_in_dir_id="<recorded-device:inode-if-created>"
+user_slice_drop_in_dir_created="<recorded-0-or-1>"
+user_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
+app_slice_drop_in_dir_created="<recorded-0-or-1>"
+app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
+sudo cat -- "$delegation_drop_in"
+sudo cat -- "$user_slice_drop_in"
+sudo cat -- "$app_slice_drop_in"
+sudo stat -Lc '%n %d:%i' -- \
+  "$delegation_drop_in" "$user_slice_drop_in" "$app_slice_drop_in"
+```
+
+Continue only when all three paths, their content, and their current `device:inode` values match the creation-time record.
+The removal command is retry-safe: an already absent recorded path is accepted, an identity mismatch is refused, and reload/start are attempted after every removal attempt so a partial failure does not leave the manager stopped.
+
+<Warning>
+Before the next command, the affected user must save their work.
+The administrator must identify and account for that user's host workloads, including rootless Podman containers and other user services.
+Stopping the manager interrupts all services owned by that user.
+Run the command from an independent administrator session that does not depend on the affected user's manager.
+</Warning>
+
+```bash
+uid="<affected-user-id>"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
+delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
+app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+expected_delegation_drop_in_id="<recorded-delegation-device:inode>"
+expected_user_slice_drop_in_id="<recorded-user-slice-device:inode>"
+expected_app_slice_drop_in_id="<recorded-app-slice-device:inode>"
+delegation_drop_in_dir_created="<recorded-0-or-1>"
+delegation_drop_in_dir_id="<recorded-device:inode-if-created>"
+user_slice_drop_in_dir_created="<recorded-0-or-1>"
+user_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
 app_slice_drop_in_dir_created="<recorded-0-or-1>"
 app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
 
@@ -3696,6 +3979,8 @@ if ! sudo systemctl stop "user@${uid}.service"; then
 fi
 remove_recorded_drop_in "$delegation_drop_in" "$expected_delegation_drop_in_id" ||
   cleanup_failed=1
+remove_recorded_drop_in "$user_slice_drop_in" "$expected_user_slice_drop_in_id" ||
+  cleanup_failed=1
 remove_recorded_drop_in "$app_slice_drop_in" "$expected_app_slice_drop_in_id" ||
   cleanup_failed=1
 remove_recorded_directory_if_created \
@@ -3703,26 +3988,57 @@ remove_recorded_directory_if_created \
   "$delegation_drop_in_dir_created" \
   "$delegation_drop_in_dir_id" || cleanup_failed=1
 remove_recorded_directory_if_created \
+  "$(dirname "$user_slice_drop_in")" \
+  "$user_slice_drop_in_dir_created" \
+  "$user_slice_drop_in_dir_id" || cleanup_failed=1
+remove_recorded_directory_if_created \
   "$(dirname "$app_slice_drop_in")" \
   "$app_slice_drop_in_dir_created" \
   "$app_slice_drop_in_dir_id" || cleanup_failed=1
 sudo systemctl daemon-reload || cleanup_failed=1
-sudo systemctl start "user@${uid}.service" || cleanup_failed=1
+if ! sudo systemctl start "user@${uid}.service"; then
+  sudo systemctl --no-pager --full status "user@${uid}.service" || true
+  sudo journalctl --no-pager --unit "user@${uid}.service" --lines 200 || true
+  cleanup_failed=1
+fi
 exit "$cleanup_failed"
 ```
 
-The inactive reload removes both NemoClaw drop-ins from the instantiated units and recalculates ancestor controller masks before the manager starts.
+The inactive reload removes all three NemoClaw drop-ins from the instantiated units and recalculates ancestor controller masks before the manager starts.
 Do not replace this sequence with `systemctl restart`.
 If the command exits nonzero, inspect every reported failure.
 After correcting it, rerun the complete removal command with the same creation-time identities; paths already removed by the earlier attempt are accepted.
 
-After the affected user signs in again, verify that systemd no longer loads either drop-in:
+The immediate rollback `systemctl start` can also fail with `status=219/CGROUP`.
+The rollback command still attempts `daemon-reload` and `start` after every file-removal attempt.
+When the status or journal output reports `219/CGROUP`, do not restore the removed files and do not repeatedly start or restart the manager.
+Have the affected user create a fresh login session later, then verify from the independent administrator session that `user@UID.service` is active.
+
+If a later fresh login does not recover the manager, an administrator can reboot as the final rollback recovery step.
+
+<Warning>
+Before rebooting, every host user must save their work, and the administrator must safely stop or account for all host workloads.
+A reboot interrupts every service, container, and interactive session on the host.
+</Warning>
 
 ```bash
+sudo systemctl reboot
+```
+
+After the affected user signs in through the recovered manager, verify that systemd no longer loads any NemoClaw drop-in:
+
+```bash
+uid="<affected-user-id>"
+if [[ ! "$uid" =~ ^[0-9]+$ ]]; then
+  printf 'Refusing invalid numeric user ID: %s\n' "$uid" >&2
+  exit 1
+fi
+
 delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"
 app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
 
-for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
+for drop_in in "$delegation_drop_in" "$user_slice_drop_in" "$app_slice_drop_in"; do
   if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
     printf 'CPU controller drop-in remains after removal: %s\n' "$drop_in" >&2
     exit 1
@@ -3730,10 +4046,11 @@ for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
 done
 
 systemctl cat user@.service
+sudo systemctl cat "user-${uid}.slice"
 systemctl --user cat app.slice
 ```
 
-The output must not list either NemoClaw drop-in.
+The output must not list any of the three NemoClaw drop-ins.
 Another administrator-owned drop-in can still configure `cpu`; do not remove it as part of this rollback.
 Removing the NemoClaw drop-ins can make the portable CPU delegation preflight fail again.
 

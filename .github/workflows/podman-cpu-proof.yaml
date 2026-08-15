@@ -68,7 +68,7 @@ jobs:
       - name: Build shared sandbox-name contract
         run: npm run build:policy-boundary
 
-      - name: Prepare app.slice CPU setting without service delegation
+      - name: Prepare CPU controller settings without service delegation
         shell: bash
         run: |
           set -euo pipefail
@@ -288,7 +288,7 @@ jobs:
           printf 'E2E_CPU_DELEGATION_USER_CREATED=1\n' >>"$GITHUB_ENV"
           uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
           home="$(getent passwd "$E2E_CPU_DELEGATION_USER" | cut -d: -f6)"
-          slice_drop_in_dir="/run/systemd/system/user-${uid}.slice.d"
+          slice_drop_in_dir="/etc/systemd/system/user-${uid}.slice.d"
           slice_drop_in="$slice_drop_in_dir/90-nemoclaw-cpu-controller.conf"
           {
             printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
@@ -662,31 +662,44 @@ jobs:
           source_cache_dir="${E2E_SOURCE_CACHE_DIR:-}"
           source_cache_marker="${E2E_SOURCE_CACHE_MARKER:-}"
           if [ -n "$source_cache_marker" ] && [ -e "$source_cache_marker" ]; then
+            source_cache_cleanup_failed=0
             expected_source_cache_id="$(cat "$source_cache_marker")"
             if [[ ! "$expected_source_cache_id" =~ ^[0-9]+:[0-9]+$ ]]; then
               echo "::error::Source-loader cache ownership marker is invalid" >&2
               cleanup_failed=1
+              source_cache_cleanup_failed=1
             elif [ -z "$source_cache_dir" ]; then
               echo "::error::Source-loader cache path is unavailable during cleanup" >&2
               cleanup_failed=1
+              source_cache_cleanup_failed=1
             elif ! sudo test -e "$source_cache_dir" && ! sudo test -L "$source_cache_dir"; then
               :
             elif sudo test -L "$source_cache_dir" || ! sudo test -d "$source_cache_dir"; then
               echo "::error::Refusing to remove a source-loader cache with an unexpected type" >&2
               cleanup_failed=1
+              source_cache_cleanup_failed=1
             elif [ "$(sudo stat -Lc '%d:%i' -- "$source_cache_dir" 2>/dev/null)" \
               = "$expected_source_cache_id" ]; then
-              sudo rm -rf --one-file-system -- "$source_cache_dir" || cleanup_failed=1
+              if ! sudo rm -rf --one-file-system -- "$source_cache_dir"; then
+                cleanup_failed=1
+                source_cache_cleanup_failed=1
+              fi
             else
               echo "::error::Refusing to remove a source-loader cache whose identity changed" >&2
               cleanup_failed=1
+              source_cache_cleanup_failed=1
             fi
             if [ -n "$source_cache_dir" ] \
               && { sudo test -e "$source_cache_dir" || sudo test -L "$source_cache_dir"; }; then
               echo "::error::Source-loader cache remained after cleanup" >&2
               cleanup_failed=1
+              source_cache_cleanup_failed=1
             fi
-            rm -f -- "$source_cache_marker" || cleanup_failed=1
+            if [ "$source_cache_cleanup_failed" = 0 ]; then
+              rm -f -- "$source_cache_marker" || cleanup_failed=1
+            else
+              echo "::error::Preserving the source-loader cache receipt for cleanup retry" >&2
+            fi
           fi
           sudo systemctl daemon-reload || cleanup_failed=1
           remove_owned_directory \
@@ -717,15 +730,24 @@ jobs:
           fi
           workspace_traverse_marker="${E2E_WORKSPACE_TRAVERSE_MARKER:-}"
           if [ -n "$workspace_traverse_marker" ] && [ -e "$workspace_traverse_marker" ]; then
+            workspace_restore_failed=0
             while IFS=$'\t' read -r original_mode workspace_path; do
               if [[ ! "$original_mode" =~ ^[0-7]{3,4}$ ]] || [ -z "$workspace_path" ]; then
                 echo "::error::Workspace traversal ownership marker is invalid" >&2
                 cleanup_failed=1
+                workspace_restore_failed=1
                 continue
               fi
-              sudo chmod "$original_mode" -- "$workspace_path" || cleanup_failed=1
+              if ! sudo chmod "$original_mode" -- "$workspace_path"; then
+                cleanup_failed=1
+                workspace_restore_failed=1
+              fi
             done <"$workspace_traverse_marker"
-            rm -f -- "$workspace_traverse_marker" || cleanup_failed=1
+            if [ "$workspace_restore_failed" = 0 ]; then
+              rm -f -- "$workspace_traverse_marker" || cleanup_failed=1
+            else
+              echo "::error::Preserving the workspace mode receipt for manual cleanup retry" >&2
+            fi
           fi
           exit "$cleanup_failed"
 
