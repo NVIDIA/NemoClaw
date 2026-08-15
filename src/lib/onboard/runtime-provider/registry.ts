@@ -63,6 +63,19 @@ const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-man
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
 const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
 const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
+const HOST_PLATFORMS = new Set<NodeJS.Platform>([
+  "aix",
+  "android",
+  "cygwin",
+  "darwin",
+  "freebsd",
+  "haiku",
+  "linux",
+  "netbsd",
+  "openbsd",
+  "sunos",
+  "win32",
+]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "registration",
   "start",
@@ -335,6 +348,26 @@ function validateCapabilitiesSurface(surface: Record<string, unknown>): void {
     "workloadImageCleanup",
   ] as const) {
     requireBoolean(surface, field, "capabilities");
+  }
+  const hostMounts = requireOwnRecord(surface, "readOnlyHostMounts");
+  if (typeof hostMounts.supported !== "boolean") {
+    throw new RuntimeProviderRegistrationError(
+      "capabilities.readOnlyHostMounts.supported must be a boolean",
+    );
+  }
+  if (hostMounts.supported === false) {
+    requireNonEmptyString(hostMounts, "reason", "capabilities.readOnlyHostMounts");
+    return;
+  }
+  if (
+    !Array.isArray(hostMounts.hostPlatforms) ||
+    hostMounts.hostPlatforms.length === 0 ||
+    hostMounts.hostPlatforms.some((platform) => !HOST_PLATFORMS.has(platform as NodeJS.Platform)) ||
+    new Set(hostMounts.hostPlatforms).size !== hostMounts.hostPlatforms.length
+  ) {
+    throw new RuntimeProviderRegistrationError(
+      "capabilities.readOnlyHostMounts.hostPlatforms must list unique Node.js host platforms",
+    );
   }
 }
 
@@ -629,6 +662,27 @@ export function requireRuntimeProviderBundleForSandbox(
   providers: RuntimeProviderBundleRegistry,
 ): RuntimeProviderBundle {
   return requireRuntimeProviderBundle(sandbox.openshellDriver, providers);
+}
+
+export function requireRuntimeProviderReadOnlyHostMounts(
+  bundle: RuntimeProviderBundle,
+  platform: NodeJS.Platform,
+): Extract<
+  RuntimeProviderBundle["capabilities"]["readOnlyHostMounts"],
+  { readonly supported: true }
+> {
+  const capability = bundle.capabilities.readOnlyHostMounts;
+  if (capability.supported !== true) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' does not support read-only host mounts: ${capability.reason}`,
+    );
+  }
+  if (!capability.hostPlatforms.includes(platform)) {
+    throw new RuntimeProviderSelectionError(
+      `Runtime provider '${bundle.identity.id}' has not qualified read-only host mounts on host platform '${platform}'.`,
+    );
+  }
+  return capability;
 }
 
 export function requireRuntimeProviderMutationAuthority(

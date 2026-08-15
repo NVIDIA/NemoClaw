@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      actions: write
+      actions: read
       contents: read
     steps:
       - name: Checkout trusted retry controller

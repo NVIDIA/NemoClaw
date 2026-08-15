@@ -320,20 +320,21 @@ The sweep only targets processes owned by the current user whose command line ma
 
 If onboarding preflight resolves the complete listener set for a gateway port conflict, the diagnostic lists every listener.
 Each entry contains the process name and PID, or only the PID when NemoClaw cannot read the process name.
-The stop command targets only listeners that fail ownership verification.
-It does not target a verified managed listener.
+The diagnostic identifies listeners that fail ownership verification, but it does not print a reusable process-stop command.
 If NemoClaw resolves no listener, the diagnostic provides an `lsof` inspection command.
-Before you run a stop command, confirm that each targeted listener is not part of a second NemoClaw gateway environment.
+Before you stop a listener, confirm that it is not part of a second NemoClaw gateway environment.
 Release that environment with `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` instead of stopping its process.
 
-If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process, verify it is safe to stop, and terminate it:
+If a non-NemoClaw process is already bound to the dashboard port or the gateway port, identify the conflicting process.
+Stop it only when its command line names the application you intend to stop, you own the process or administer its service, and the application has no active work:
 
 ```bash
-sudo lsof -i :18789
-kill <PID>
+sudo lsof -i :18789 -sTCP:LISTEN -P -n
 ```
 
-If the process does not exit, use `kill -9 <PID>` to force-terminate it.
+Stop it through its service manager when one owns it.
+Otherwise, repeat the listener check immediately before you signal only the PID from that fresh result.
+Repeat the check again before any `SIGKILL`.
 Then retry onboarding.
 
 Alternatively, override the conflicting port instead of stopping the other process.
@@ -1077,13 +1078,16 @@ Re-running onboard then fails preflight with `Port 18789 is not available.
 Blocked by: ssh`.
 
 Current NemoClaw detects this case and kills the orphaned SSH process automatically before retrying the port check.
-If you see the error on an older release, identify the SSH process and terminate it manually:
+If you see the error on an older release, identify the SSH process.
+Use fresh listener output to confirm that your user owns the process and that it still listens on local port `18789`:
 
 ```bash
-sudo lsof -i :18789
-kill <PID>
+sudo lsof -i :18789 -sTCP:LISTEN -P -n
 ```
 
+Inspect the process separately with `ps -p <PID> -o user=,args=`.
+Stop it only when the owner is your user, the command line is the stale SSH port forward for local port `18789`, and no active terminal or file-transfer session uses that process.
+Repeat the listener check immediately before you signal only the PID from that fresh result.
 Then re-run `$$nemoclaw onboard`.
 
 </AgentOnly>
@@ -2976,11 +2980,12 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
+Remove the gateway registration, then resume onboarding.
+If a privileged host gateway remains, do not use a host-wide process match.
+Verify its live owner, exact gateway name and port, command line, PID file, runtime marker, and loaded sandbox namespace immediately before you stop it.
 
 ```bash
 openshell gateway remove nemoclaw
-sudo pkill -f openshell-gateway
 $$nemoclaw onboard --resume
 ```
 

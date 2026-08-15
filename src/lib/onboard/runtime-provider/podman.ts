@@ -53,6 +53,9 @@ const DORMANT_WORKLOAD_PROFILE = {
   legacyDockerfileBuilds: false,
 } as const satisfies RuntimeProviderWorkloadProfile;
 
+export const PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON =
+  "Read-only host mounts are not qualified for the Podman runtime provider.";
+
 function unsupported(providerId: string, reason: string) {
   return { providerId, supported: false as const, reason };
 }
@@ -143,6 +146,10 @@ export function createPodmanRuntimeProviderBundle(
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: false,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: PODMAN_READ_ONLY_HOST_MOUNT_UNSUPPORTED_REASON,
+      },
     },
     preflightDoctor: {
       providerId,

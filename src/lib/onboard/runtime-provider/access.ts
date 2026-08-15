@@ -38,6 +38,7 @@ export {
   requireRuntimeProviderDestructiveCleanupAuthority,
   requireRuntimeProviderHostLocalInferenceOperation,
   requireRuntimeProviderMutationAuthority,
+  requireRuntimeProviderReadOnlyHostMounts,
   requireRuntimeProviderStateMutationSurface,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
