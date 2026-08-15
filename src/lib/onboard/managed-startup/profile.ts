@@ -4,7 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
-import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider";
+import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
