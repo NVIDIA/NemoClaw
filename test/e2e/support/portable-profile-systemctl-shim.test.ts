@@ -717,6 +717,58 @@ describe("portable profile systemctl fixture", () => {
   );
 
   it(
+    "does not leave a gateway launch process when launch-record publication and cleanup fail (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      try {
+        const restart = systemctl(
+          {
+            ...scope,
+            env: {
+              ...scope.env,
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_LAUNCH_RECORD_FAILURE: "1",
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_UNRECORDED_CLEANUP_FAILURE: "1",
+            },
+          },
+          ["--user", "restart", "nemoclaw-openshell-gateway"],
+        );
+        expect(restart.status).toBe(2);
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not create the gateway launch identity record.",
+        );
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not complete gateway launch cleanup.",
+        );
+        const gatewayLaunchPidFile = path.join(
+          scope.runtimeDir,
+          "nemoclaw-openshell-gateway-launch.pid",
+        );
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+        expect(fs.existsSync(gatewayLaunchPidFile)).toBe(false);
+        const gatewayLog = fs.readFileSync(
+          path.join(scope.runtimeDir, "nemoclaw-openshell-gateway.log"),
+          "utf8",
+        );
+        const launchedPid = /injected gateway launch-record failure for process ([0-9]+)/.exec(
+          gatewayLog,
+        );
+        expect(launchedPid).not.toBeNull();
+        const gatewayPid = Number(launchedPid![1]);
+        await vi.waitFor(() => expect(pidIsActive(gatewayPid)).toBe(false));
+        const commands = fs
+          .readFileSync(scope.gatewayCommandLog, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+        expect(commands.map((command) => command.kind)).toEqual(["generate-certs"]);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
     "isolates the managed gateway user service from ambient XDG homes (#9208)",
     { timeout: 30_000 },
     async () => {

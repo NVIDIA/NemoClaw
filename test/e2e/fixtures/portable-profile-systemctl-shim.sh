@@ -552,32 +552,35 @@ stop_gateway_launch() {
   stop_recorded_process "$gateway_launch_pid_file" gateway
 }
 
-record_gateway_launch() {
+wait_for_gateway_launch_record() {
   local pid="$1"
   local identity="$2"
-  local launch_pid_file_tmp="${gateway_launch_pid_file}.$$.tmp"
-  local start_time
+  local status
   for ((attempt = 0; attempt < 100; attempt += 1)); do
-    if start_time="$(process_start_time "$pid")"; then
-      printf '%s\t%s\t%s\n' "$pid" "$start_time" "$identity" >"$launch_pid_file_tmp" || {
-        rm -f "$launch_pid_file_tmp"
+    if read_pid_record "$gateway_launch_pid_file" gateway; then
+      if [[ "$recorded_pid" != "$pid" || "$recorded_identity" != "$identity" ]]; then
+        echo "Portable profile fixture gateway launch record does not match the launched process." >&2
         return 2
-      }
-      chmod 600 "$launch_pid_file_tmp" || {
-        rm -f "$launch_pid_file_tmp"
-        return 2
-      }
-      mv "$launch_pid_file_tmp" "$gateway_launch_pid_file" || {
-        rm -f "$launch_pid_file_tmp"
-        return 2
-      }
-      gateway_launch_start_time="$start_time"
+      fi
+      gateway_launch_start_time="$recorded_start_time"
       return 0
+    else
+      status=$?
+      [[ "$status" -eq 1 ]] || return "$status"
     fi
     kill -0 "$pid" 2>/dev/null || return 1
     sleep 0.05
   done
   return 2
+}
+
+stop_gateway_without_launch_record() {
+  local pid="$1"
+  local identity="$2"
+  if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_UNRECORDED_CLEANUP_FAILURE:-}" == "1" ]]; then
+    return 2
+  fi
+  stop_unrecorded_process "$pid" "$identity" ""
 }
 
 fail_recorded_gateway_start() {
@@ -613,22 +616,56 @@ start_gateway_service() {
 
   local cleanup_status failure_status gateway_drift_identity gateway_identity gateway_pid
   gateway_identity="gateway:$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
+  # shellcheck disable=SC2016 # Positional parameters and variables expand inside the launch wrapper.
   env -i "${gateway_process_environment[@]}" \
-    "NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID=${gateway_identity}" nohup "$gateway_binary_path" \
+    "NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID=${gateway_identity}" nohup "$BASH" -c '
+      set -euo pipefail
+      gateway_binary_path="$1"
+      gateway_launch_pid_file="$2"
+      gateway_identity="$3"
+      inject_record_failure="$4"
+      local_start_time=""
+      if [[ -r "/proc/$$/stat" ]]; then
+        stat="$(<"/proc/$$/stat")"
+        stat="${stat##*) }"
+        read -r -a fields <<<"$stat"
+        [[ "${#fields[@]}" -gt 19 && "${fields[19]}" =~ ^[0-9]+$ ]]
+        local_start_time="proc:${fields[19]}"
+      else
+        [[ ! -e /proc/self/stat ]]
+        local_start_time="$(ps -o lstart= -p "$$")"
+        read -r -a fields <<<"$local_start_time"
+        [[ "${#fields[@]}" -gt 0 ]]
+        local_start_time="ps:${fields[*]}"
+      fi
+      if [[ "$inject_record_failure" == "1" ]]; then
+        printf "Portable profile fixture injected gateway launch-record failure for process %s.\n" "$$"
+        exit 73
+      fi
+      launch_pid_file_tmp="${gateway_launch_pid_file}.$$.tmp"
+      trap '\''rm -f "$launch_pid_file_tmp"'\'' EXIT
+      printf "%s\t%s\t%s\n" "$$" "$local_start_time" "$gateway_identity" \
+        >"$launch_pid_file_tmp"
+      chmod 600 "$launch_pid_file_tmp"
+      mv "$launch_pid_file_tmp" "$gateway_launch_pid_file"
+      trap - EXIT
+      exec "$gateway_binary_path"
+    ' portable-profile-gateway-launch "$gateway_binary_path" "$gateway_launch_pid_file" \
+    "$gateway_identity" "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_LAUNCH_RECORD_FAILURE:-0}" \
     >>"$gateway_log_file" 2>&1 </dev/null &
   gateway_pid=$!
-  if record_gateway_launch "$gateway_pid" "$gateway_identity"; then
+  if wait_for_gateway_launch_record "$gateway_pid" "$gateway_identity"; then
     :
   else
     failure_status=$?
-    if stop_unrecorded_process "$gateway_pid" "$gateway_identity" ""; then
+    if stop_gateway_without_launch_record "$gateway_pid" "$gateway_identity"; then
       cleanup_status=0
     else
       cleanup_status=$?
     fi
     echo "Portable profile fixture could not create the gateway launch identity record." >&2
     if [[ "$cleanup_status" -ne 0 ]]; then
-      echo "Portable profile fixture could not stop the unrecorded gateway process." >&2
+      echo "Portable profile fixture could not complete gateway launch cleanup." >&2
       return "$cleanup_status"
     fi
     return "$failure_status"
