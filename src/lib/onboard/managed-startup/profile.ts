@@ -1687,7 +1687,9 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
       agent === "langchain-deepagents-code" &&
       !DCODE_UPSTREAM_PROVIDER_RE.test(upstreamProvider)
     ) {
-      invalid("inference.upstreamProvider must be a DCode provider identifier");
+      invalid(
+        "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
+      );
     }
   }
 

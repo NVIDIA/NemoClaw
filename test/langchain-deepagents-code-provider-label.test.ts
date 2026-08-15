@@ -197,4 +197,32 @@ print("provider-label-ok")
       ),
     ).toThrow(message);
   });
+
+  it("accepts the longest managed provider identifier before DCode starts (#7112)", () => {
+    const tempDir = createPackageFixture();
+    const upstreamProvider = "a".repeat(64);
+    patchFixture(tempDir);
+    const providerPath = managedUpstreamProviderPath(tempDir);
+    fs.chmodSync(providerPath, 0o644);
+    fs.writeFileSync(providerPath, `${upstreamProvider}\n`);
+    fs.chmodSync(providerPath, 0o444);
+
+    const output = execFileSync(
+      "python3",
+      [
+        "-c",
+        'import os; from deepagents_code import _nemoclaw_managed; _nemoclaw_managed.assert_safe_runtime(); print(os.environ["NEMOCLAW_UPSTREAM_PROVIDER"])',
+      ],
+      {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          NEMOCLAW_UPSTREAM_PROVIDER: "ambient-provider",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    expect(output.trim()).toBe(upstreamProvider);
+  });
 });

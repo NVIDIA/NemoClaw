@@ -690,6 +690,19 @@ describe("managed startup agent environment", () => {
     });
   });
 
+  it("materializes the longest DCode upstream provider accepted by its runtime (#7112)", () => {
+    const profile = dcodeProfile();
+    const upstreamProvider = "a".repeat(64);
+    const result = mapManagedStartupProfileToAgentEnvironment({
+      ...profile,
+      inference: { ...profile.inference, upstreamProvider },
+    });
+
+    expect(
+      result.materials.find((material) => material.legacyInput === "NEMOCLAW_UPSTREAM_PROVIDER"),
+    ).toMatchObject({ contents: `${upstreamProvider}\n` });
+  });
+
   it.each(MANAGED_STARTUP_AGENTS)(
     "represents the complete $0 Docker/start affordance inventory",
     (agent) => {
@@ -884,7 +897,7 @@ describe("managed startup agent environment", () => {
     );
   });
 
-  it.each(["provider-π", `p${"x".repeat(64)}`])(
+  it.each(["provider-π", `p${"x".repeat(64)}`, "-ollama-local"])(
     "rejects unsupported DCode provider identifier %s before materialization (#7112)",
     (upstreamProvider) => {
       const base = dcodeProfile();
@@ -894,7 +907,7 @@ describe("managed startup agent environment", () => {
       };
 
       expect(() => mapManagedStartupProfileToAgentEnvironment(profile)).toThrow(
-        /inference\.upstreamProvider must be a DCode provider identifier/u,
+        /must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode/u,
       );
     },
   );
