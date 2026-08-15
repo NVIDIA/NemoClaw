@@ -26,6 +26,13 @@ interface FixtureScope {
   readonly socketPath: string;
 }
 
+interface FixtureProcessRecord {
+  readonly identity: string;
+  readonly pid: number;
+  readonly startTime: string;
+  readonly value: string;
+}
+
 function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { encoding: "utf8", mode: 0o700 });
 }
@@ -102,6 +109,7 @@ function systemctl(scope: FixtureScope, args: string[]): ReturnType<typeof spawn
   return spawnSync(scope.shim, args, {
     encoding: "utf8",
     env: scope.env,
+    killSignal: "SIGKILL",
     timeout: 15_000,
   });
 }
@@ -196,6 +204,13 @@ async function waitForPath(filePath: string): Promise<void> {
   });
 }
 
+async function waitForFileText(filePath: string, text: string): Promise<void> {
+  await vi.waitFor(() => expect(fs.readFileSync(filePath, "utf8")).toContain(text), {
+    interval: 50,
+    timeout: 5_000,
+  });
+}
+
 function pidIsActive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -204,6 +219,40 @@ function pidIsActive(pid: number): boolean {
     expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
     return false;
   }
+}
+
+function expectProcessActive(pid: number): void {
+  expect(pidIsActive(pid)).toBe(true);
+}
+
+function readFixtureProcessRecord(pidFile: string): FixtureProcessRecord {
+  const value = fs.readFileSync(pidFile, "utf8").trim();
+  const [pidText, startTime, identity] = value.split("\t");
+  return { identity, pid: Number(pidText), startTime, value };
+}
+
+function replaceRecordedPid(record: FixtureProcessRecord, pid: number): string {
+  return `${String(pid)}\t${record.startTime}\t${record.identity}\n`;
+}
+
+function spawnUnrelatedProcess(): ReturnType<typeof spawn> {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], {
+    stdio: "ignore",
+  });
+  expect(child.pid).toBeDefined();
+  return child;
+}
+
+async function stopUnrelatedProcess(child: ReturnType<typeof spawn> | undefined): Promise<void> {
+  if (!child?.pid || child.exitCode !== null) return;
+  if (pidIsActive(child.pid)) child.kill("SIGKILL");
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(resolve, 5_000);
+    child.once("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
 }
 
 async function cleanFixture(scope: FixtureScope): Promise<void> {
@@ -221,6 +270,7 @@ function runInstallerOverride(scope: FixtureScope): ReturnType<typeof spawnSync>
   return spawnSync("bash", ["-c", script], {
     encoding: "utf8",
     env: scope.env,
+    killSignal: "SIGKILL",
     timeout: 15_000,
   });
 }
@@ -269,12 +319,12 @@ describe("portable profile systemctl fixture", () => {
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
 
         const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
-        const firstPid = fs.readFileSync(servicePidFile, "utf8").trim();
+        const firstProcess = readFixtureProcessRecord(servicePidFile);
         const refresh = systemctl(scope, ["--user", "try-restart", "podman.service"]);
         expect(refresh.status, String(refresh.stderr)).toBe(0);
         expect(serviceStatus(scope)).toBe(0);
-        expect(fs.readFileSync(servicePidFile, "utf8").trim()).not.toBe(firstPid);
-        expect(pidIsActive(Number(firstPid))).toBe(false);
+        expect(readFixtureProcessRecord(servicePidFile).value).not.toBe(firstProcess.value);
+        expect(pidIsActive(firstProcess.pid)).toBe(false);
         expect(fs.statSync(scope.socketPath)).toMatchObject({
           dev: socketAuthority.dev,
           ino: socketAuthority.ino,
@@ -346,7 +396,7 @@ describe("portable profile systemctl fixture", () => {
         const socketAuthority = fs.statSync(scope.socketPath);
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
         await waitForServiceStatus(scope, 0);
-        const previousPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+        const previousPid = readFixtureProcessRecord(servicePidFile).pid;
 
         const refresh = systemctlAsync(scope, ["--user", "try-restart", "podman.service"]);
         await waitForPath(`${refreshGate}.waiting`);
@@ -358,7 +408,7 @@ describe("portable profile systemctl fixture", () => {
         expect(refreshResult.status, refreshResult.stderr).toBe(0);
         expect(responseOutput).toBe("ready");
         await waitForServiceStatus(scope, 0);
-        const recordedPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+        const recordedPid = readFixtureProcessRecord(servicePidFile).pid;
         backendPids = fs.readFileSync(pidLog, "utf8").trim().split("\n").map(Number);
         expect(recordedPid).not.toBe(previousPid);
         expect(pidIsActive(previousPid)).toBe(false);
@@ -396,7 +446,7 @@ describe("portable profile systemctl fixture", () => {
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
         await waitForServiceStatus(scope, 0);
         const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
-        const previousPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+        const previousPid = readFixtureProcessRecord(servicePidFile).pid;
 
         heldClient = await openHeldSocket(scope.socketPath);
         expect(heldClient.destroyed).toBe(false);
@@ -404,7 +454,7 @@ describe("portable profile systemctl fixture", () => {
 
         expect(refresh.status, refresh.stderr).toBe(0);
         await waitForServiceStatus(scope, 0);
-        const recordedPid = Number(fs.readFileSync(servicePidFile, "utf8").trim());
+        const recordedPid = readFixtureProcessRecord(servicePidFile).pid;
         expect(recordedPid).not.toBe(previousPid);
         expect(pidIsActive(previousPid)).toBe(false);
         expect(pidIsActive(recordedPid)).toBe(true);
@@ -432,8 +482,8 @@ describe("portable profile systemctl fixture", () => {
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
         await waitForServiceStatus(scope, 0);
 
-        const pids = [activatorPidFile, servicePidFile].map((pidFile) =>
-          Number(fs.readFileSync(pidFile, "utf8").trim()),
+        const pids = [activatorPidFile, servicePidFile].map(
+          (pidFile) => readFixtureProcessRecord(pidFile).pid,
         );
         expect(pids.every(pidIsActive)).toBe(true);
         expect(fs.statSync(scope.socketPath).isSocket()).toBe(true);
@@ -451,6 +501,230 @@ describe("portable profile systemctl fixture", () => {
           expect(fs.existsSync(artifact), artifact).toBe(false);
         }
       } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "stops the owned activator when it cannot create the process identity record (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      const failureRecord = path.join(scope.runtimeDir, "activator-identity-failure.record");
+      scope.env.NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE = "activator";
+      scope.env.NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD = failureRecord;
+      try {
+        const start = systemctl(scope, ["--user", "start", "podman.socket"]);
+        expect(start.status).not.toBe(0);
+        expect(start.stderr).toContain(
+          "Portable profile fixture could not create the process identity record for activator",
+        );
+        const processRecord = readFixtureProcessRecord(failureRecord);
+        expect(pidIsActive(processRecord.pid)).toBe(false);
+        expect(fs.existsSync(activatorPidFile)).toBe(false);
+        expect(fs.existsSync(scope.socketPath)).toBe(false);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "stops the owned backend when it cannot create the process identity record (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+      const backendSocketPath = path.join(
+        scope.runtimeDir,
+        "podman",
+        "nemoclaw-podman-service.sock",
+      );
+      const failureRecord = path.join(scope.runtimeDir, "service-identity-failure.record");
+      scope.env.NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE = "service";
+      scope.env.NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD = failureRecord;
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        expect(await activateThroughSocket(scope.socketPath)).toBe("");
+        await waitForPath(failureRecord);
+        const processRecord = readFixtureProcessRecord(failureRecord);
+        expect(pidIsActive(processRecord.pid)).toBe(false);
+        expect(fs.existsSync(servicePidFile)).toBe(false);
+        expect(fs.existsSync(backendSocketPath)).toBe(false);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "rejects a reused activator PID during shared fixture cleanup without signaling the unrelated process (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      let originalRecord: FixtureProcessRecord | undefined;
+      let unrelated: ReturnType<typeof spawn> | undefined;
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        originalRecord = readFixtureProcessRecord(activatorPidFile);
+        unrelated = spawnUnrelatedProcess();
+        await vi.waitFor(() => expect(pidIsActive(unrelated!.pid!)).toBe(true));
+        fs.writeFileSync(activatorPidFile, replaceRecordedPid(originalRecord, unrelated.pid!), {
+          mode: 0o600,
+        });
+
+        await expect(cleanupPortableProfileSystemctlFixture(scope.runtimeDir)).rejects.toThrow(
+          `Portable profile fixture PID file ${activatorPidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expect(fs.existsSync(activatorPidFile)).toBe(true);
+        expect(fs.existsSync(scope.socketPath)).toBe(true);
+        expect(fs.existsSync(scope.directory)).toBe(true);
+      } finally {
+        if (originalRecord) fs.writeFileSync(activatorPidFile, `${originalRecord.value}\n`);
+        await stopUnrelatedProcess(unrelated);
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "rejects a reused activator PID during socket start without signaling the unrelated process (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      const unrelated = spawnUnrelatedProcess();
+      try {
+        await vi.waitFor(() => expect(pidIsActive(unrelated.pid!)).toBe(true));
+        const staleRecord = `${String(unrelated.pid)}\tproc:1\tactivator:${"0".repeat(32)}\n`;
+        fs.writeFileSync(activatorPidFile, staleRecord, { mode: 0o600 });
+
+        const start = systemctl(scope, ["--user", "start", "podman.socket"]);
+        expect(start.status).not.toBe(0);
+        expect(start.stderr).toContain(
+          `Portable profile fixture PID file ${activatorPidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expect(fs.readFileSync(activatorPidFile, "utf8")).toBe(staleRecord);
+        expect(fs.existsSync(scope.socketPath)).toBe(false);
+      } finally {
+        fs.rmSync(activatorPidFile, { force: true });
+        await stopUnrelatedProcess(unrelated);
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "rejects a reused activator PID during try-restart without signaling the unrelated process (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+      let originalRecord: FixtureProcessRecord | undefined;
+      let unrelated: ReturnType<typeof spawn> | undefined;
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+        await waitForServiceStatus(scope, 0);
+        const servicePid = readFixtureProcessRecord(servicePidFile).pid;
+        originalRecord = readFixtureProcessRecord(activatorPidFile);
+        unrelated = spawnUnrelatedProcess();
+        await vi.waitFor(() => expect(pidIsActive(unrelated!.pid!)).toBe(true));
+        fs.writeFileSync(activatorPidFile, replaceRecordedPid(originalRecord, unrelated.pid!), {
+          mode: 0o600,
+        });
+
+        const refresh = systemctl(scope, ["--user", "try-restart", "podman.service"]);
+        expect(refresh.status).not.toBe(0);
+        expect(refresh.stderr).toContain(
+          `Portable profile fixture PID file ${activatorPidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expect(pidIsActive(servicePid)).toBe(true);
+        expect(readFixtureProcessRecord(servicePidFile).pid).toBe(servicePid);
+      } finally {
+        if (originalRecord) fs.writeFileSync(activatorPidFile, `${originalRecord.value}\n`);
+        await stopUnrelatedProcess(unrelated);
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "rejects a reused backend PID during socket reset without signaling the unrelated process (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+      const unrelated = spawnUnrelatedProcess();
+      try {
+        await vi.waitFor(() => expect(pidIsActive(unrelated.pid!)).toBe(true));
+        const staleRecord = `${String(unrelated.pid)}\tproc:1\tservice:${"0".repeat(32)}\n`;
+        fs.writeFileSync(servicePidFile, staleRecord, { mode: 0o600 });
+
+        const start = systemctl(scope, ["--user", "start", "podman.socket"]);
+        expect(start.status).not.toBe(0);
+        expect(start.stderr).toContain(
+          `Portable profile fixture PID file ${servicePidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expect(fs.readFileSync(servicePidFile, "utf8")).toBe(staleRecord);
+        expect(fs.existsSync(scope.socketPath)).toBe(false);
+      } finally {
+        fs.rmSync(servicePidFile, { force: true });
+        await stopUnrelatedProcess(unrelated);
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "rejects a reused backend PID during status and activator refresh without signaling the unrelated process (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+      const logFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.log");
+      let originalRecord: FixtureProcessRecord | undefined;
+      let unrelated: ReturnType<typeof spawn> | undefined;
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+        await waitForServiceStatus(scope, 0);
+        originalRecord = readFixtureProcessRecord(servicePidFile);
+        const activatorPid = readFixtureProcessRecord(activatorPidFile).pid;
+        unrelated = spawnUnrelatedProcess();
+        await vi.waitFor(() => expect(pidIsActive(unrelated!.pid!)).toBe(true));
+        fs.writeFileSync(servicePidFile, replaceRecordedPid(originalRecord, unrelated.pid!), {
+          mode: 0o600,
+        });
+
+        expect(serviceStatus(scope)).not.toBe(0);
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        const refresh = systemctl(scope, ["--user", "try-restart", "podman.service"]);
+        expect(refresh.status).not.toBe(0);
+        expect(refresh.stderr).toContain(
+          `Portable profile fixture PID file ${servicePidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        process.kill(activatorPid, "SIGHUP");
+        await waitForFileText(
+          logFile,
+          `Portable profile fixture PID file ${servicePidFile} does not match process ${String(unrelated.pid)}.`,
+        );
+        expect(pidIsActive(unrelated.pid!)).toBe(true);
+        expectProcessActive(originalRecord.pid);
+        expect(fs.existsSync(servicePidFile)).toBe(true);
+      } finally {
+        if (originalRecord) fs.writeFileSync(servicePidFile, `${originalRecord.value}\n`);
+        await stopUnrelatedProcess(unrelated);
         await cleanFixture(scope);
       }
     },
