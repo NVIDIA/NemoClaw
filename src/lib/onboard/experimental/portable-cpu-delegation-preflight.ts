@@ -13,13 +13,15 @@
 // `cgroup.controllers` files under /sys/fs/cgroup and never edits systemd
 // units, never uses sudo, and never weakens resource isolation. When the
 // hierarchy cannot enforce the CPU limit, the caller must fail early with a
-// diagnostic that distinguishes the four failure modes and states the exact
-// administrator remediation, then require the user to rerun the preflight.
+// diagnostic that distinguishes hierarchy and read failure modes and states
+// the exact administrator remediation, then require the user to rerun the
+// preflight.
 
 import fs from "node:fs";
 
 export type CpuDelegationFailureReason =
   | "cgroups-v2-unavailable"
+  | "cgroup-controllers-unreadable"
   | "cpu-controller-unavailable"
   | "systemd-user-delegation-missing"
   | "app-slice-cpu-unavailable";
@@ -54,15 +56,41 @@ function controllerNames(content: string): Set<string> {
   return new Set(content.split(/\s+/u).filter((token) => token.length > 0));
 }
 
+type ControllerRead =
+  | { readonly ok: true; readonly content: string }
+  | {
+      readonly ok: false;
+      readonly condition: "missing" | "unreadable";
+      readonly errorCode?: string;
+    };
+
 function readControllers(
   file: string,
   readFileSync: (file: string, encoding: "utf8") => string,
-): string | null {
+): ControllerRead {
   try {
-    return readFileSync(file, "utf8");
-  } catch {
-    return null;
+    return { ok: true, content: readFileSync(file, "utf8") };
+  } catch (error) {
+    const errorCode =
+      typeof error === "object" && error !== null && "code" in error
+        ? String(error.code)
+        : undefined;
+    return {
+      ok: false,
+      condition: errorCode === "ENOENT" || errorCode === "ENOTDIR" ? "missing" : "unreadable",
+      ...(errorCode ? { errorCode } : {}),
+    };
   }
+}
+
+function unreadableControllersDetail(file: string, errorCode?: string): string {
+  const code = errorCode ? ` (${errorCode})` : "";
+  return (
+    `NemoClaw could not read the cgroup controllers file ${file}${code}. ` +
+    "Have an administrator inspect the cgroup mount permissions and active Linux " +
+    "security policy, then make this exact file readable to the current user. Do not " +
+    "change systemd delegation until the preflight can inspect the file."
+  );
 }
 
 export function inspectPortableCpuDelegation(
@@ -84,17 +112,25 @@ export function inspectPortableCpuDelegation(
   const readFileSync = deps.readFileSync ?? fs.readFileSync;
   const { root, userManager, appSlice } = cpuDelegationControllerPaths(Number(uid));
 
-  const rootContent = readControllers(root, readFileSync);
-  if (rootContent === null) {
+  const rootRead = readControllers(root, readFileSync);
+  if (!rootRead.ok) {
+    if (rootRead.condition === "unreadable") {
+      return {
+        ok: false,
+        failure: "cgroup-controllers-unreadable",
+        detail: unreadableControllersDetail(root, rootRead.errorCode),
+      };
+    }
     return {
       ok: false,
       failure: "cgroups-v2-unavailable",
       detail:
-        `cgroups v2 is not available: ${root} is missing or unreadable. ` +
+        `cgroups v2 is not available: ${root} is missing. ` +
         "Rootless Podman cannot enforce the sandbox CPU limit without a cgroups v2 " +
         "kernel and mount. Boot a cgroups v2 host and rerun the portable preflight.",
     };
   }
+  const rootContent = rootRead.content;
   const rootControllers = controllerNames(rootContent);
   if (!rootControllers.has("cpu")) {
     return {
@@ -108,19 +144,27 @@ export function inspectPortableCpuDelegation(
     };
   }
 
-  const userManagerContent = readControllers(userManager, readFileSync);
-  if (userManagerContent === null) {
+  const userManagerRead = readControllers(userManager, readFileSync);
+  if (!userManagerRead.ok) {
+    if (userManagerRead.condition === "unreadable") {
+      return {
+        ok: false,
+        failure: "cgroup-controllers-unreadable",
+        detail: unreadableControllersDetail(userManager, userManagerRead.errorCode),
+      };
+    }
     return {
       ok: false,
       failure: "systemd-user-delegation-missing",
       detail:
         `The current user's systemd manager has no cgroup controllers file ` +
-        `(${userManager} missing or unreadable), so systemd has not delegated any ` +
-        "controllers to it. Have an administrator add `Delegate=cpu memory pids` to " +
-        "user@.service (for example via `systemctl edit user@.service`), restart the " +
-        "user manager, and rerun the portable preflight.",
+        `(${userManager} is missing), so systemd has not exposed controllers to it. ` +
+        "Have an administrator create the NemoClaw delegation drop-in described in " +
+        "the troubleshooting guide, stop and start the user manager as documented, " +
+        "and rerun the portable preflight.",
     };
   }
+  const userManagerContent = userManagerRead.content;
   const userManagerControllers = controllerNames(userManagerContent);
   if (!userManagerControllers.has("cpu")) {
     return {
@@ -130,23 +174,32 @@ export function inspectPortableCpuDelegation(
         `systemd did not delegate the cpu controller to the current user's manager: ` +
         `${userManager} is "${userManagerContent.trim()}" (no "cpu"). The stock ` +
         "user@.service delegates only `pids memory`. Have an administrator add " +
-        "`Delegate=cpu memory pids` to user@.service (for example via `systemctl edit " +
-        "user@.service`), restart the user manager, and rerun the portable preflight.",
+        "`Delegate=cpu memory pids` through the NemoClaw drop-in described in the " +
+        "troubleshooting guide, stop and start the user manager as documented, and " +
+        "rerun the portable preflight.",
     };
   }
 
-  const appSliceContent = readControllers(appSlice, readFileSync);
-  if (appSliceContent === null) {
+  const appSliceRead = readControllers(appSlice, readFileSync);
+  if (!appSliceRead.ok) {
+    if (appSliceRead.condition === "unreadable") {
+      return {
+        ok: false,
+        failure: "cgroup-controllers-unreadable",
+        detail: unreadableControllersDetail(appSlice, appSliceRead.errorCode),
+      };
+    }
     return {
       ok: false,
       failure: "app-slice-cpu-unavailable",
       detail:
-        `The current user's app.slice has no cgroup controllers file (${appSlice} ` +
-        "missing or unreadable), so the cpu controller is not available to it for " +
-        "this boot. Restart the user manager (or the host) after the delegation " +
-        "change and rerun the portable preflight.",
+        `The current user's app.slice has no cgroup controllers file (${appSlice} is ` +
+        "missing), so the cpu controller is not available to it for this boot. " +
+        "Stop and start the user manager as documented (or reboot the host) after " +
+        "the delegation change and rerun the portable preflight.",
     };
   }
+  const appSliceContent = appSliceRead.content;
   const appSliceControllers = controllerNames(appSliceContent);
   if (!appSliceControllers.has("cpu")) {
     return {
@@ -154,9 +207,9 @@ export function inspectPortableCpuDelegation(
       failure: "app-slice-cpu-unavailable",
       detail:
         `The cpu controller is not available to the current user's app.slice for ` +
-        `this boot: ${appSlice} is "${appSliceContent.trim()}" (no "cpu"). Restart ` +
-        "the user manager (or the host) after the delegation change and rerun the " +
-        "portable preflight.",
+        `this boot: ${appSlice} is "${appSliceContent.trim()}" (no "cpu"). Stop and ` +
+        "start the user manager as documented (or reboot the host) after the " +
+        "delegation change and rerun the portable preflight.",
     };
   }
 

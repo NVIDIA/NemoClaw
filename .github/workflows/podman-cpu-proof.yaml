@@ -73,42 +73,175 @@ jobs:
         run: |
           set -euo pipefail
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          drop_in_dir="$(dirname "$drop_in")"
           drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-delegation-drop-in-created"
+          slice_drop_in_marker="$RUNNER_TEMP/nemoclaw-cpu-slice-drop-in-created"
+          uid=""
+          created_user=0
+          drop_in_temp=""
+          drop_in_id=""
+          slice_drop_in_dir=""
+          slice_drop_in=""
+          slice_drop_in_temp=""
+          slice_drop_in_id=""
+          created_slice_drop_in_dir=0
+
+          cleanup_failed_prepare() {
+            local status=$?
+            local current_drop_in_id=""
+            local current_slice_drop_in_id=""
+            trap - EXIT
+            set +e
+            if [ "$created_user" = 1 ] && id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
+              if [ -n "$uid" ]; then
+                sudo systemctl stop "user@${uid}.service"
+              fi
+            fi
+            if [ -n "$slice_drop_in_temp" ]; then
+              sudo rm -f -- "$slice_drop_in_temp"
+            fi
+            if [ -n "$drop_in_temp" ]; then
+              sudo rm -f -- "$drop_in_temp"
+            fi
+            if [ -n "$drop_in_id" ]; then
+              current_drop_in_id="$(sudo stat -Lc '%d:%i' -- "$drop_in" 2>/dev/null)"
+              if [ "$current_drop_in_id" = "$drop_in_id" ]; then
+                sudo rm -f -- "$drop_in"
+              elif sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
+                echo "::error::Refusing to remove a CPU delegation drop-in whose identity changed" >&2
+              fi
+            fi
+            if [ -n "$slice_drop_in_id" ]; then
+              current_slice_drop_in_id="$(sudo stat -Lc '%d:%i' -- "$slice_drop_in" 2>/dev/null)"
+              if [ "$current_slice_drop_in_id" = "$slice_drop_in_id" ]; then
+                sudo rm -f -- "$slice_drop_in"
+              elif sudo test -e "$slice_drop_in" || sudo test -L "$slice_drop_in"; then
+                echo "::error::Refusing to remove a CPU slice drop-in whose identity changed" >&2
+              fi
+            fi
+            if [ -n "$drop_in_id" ] || [ -n "$slice_drop_in_id" ]; then
+              sudo systemctl daemon-reload
+            fi
+            if [ "$created_slice_drop_in_dir" = 1 ] && [ -n "$slice_drop_in_dir" ]; then
+              sudo rmdir -- "$slice_drop_in_dir"
+            fi
+            if [ "$created_user" = 1 ] && id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
+              sudo loginctl disable-linger "$E2E_CPU_DELEGATION_USER"
+              sudo loginctl terminate-user "$E2E_CPU_DELEGATION_USER"
+              sudo userdel --remove "$E2E_CPU_DELEGATION_USER"
+            fi
+            exit "$status"
+          }
+          trap cleanup_failed_prepare EXIT
+
           {
             printf 'E2E_CPU_DELEGATION_USER_CREATED=0\n'
             printf 'E2E_CPU_DELEGATION_DROP_IN_MARKER=%s\n' "$drop_in_marker"
+            printf 'E2E_CPU_SLICE_DROP_IN_MARKER=%s\n' "$slice_drop_in_marker"
+            printf 'E2E_CPU_SLICE_DROP_IN_DIR_CREATED=0\n'
           } >>"$GITHUB_ENV"
           if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
             echo "::error::CPU delegation proof user already exists" >&2
             exit 1
           fi
-          if sudo test -e "$drop_in"; then
+          if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
             echo "::error::CPU delegation proof drop-in already exists" >&2
             exit 1
           fi
+          if [ -e "$drop_in_marker" ] || [ -L "$drop_in_marker" ]; then
+            echo "::error::CPU delegation proof ownership marker already exists" >&2
+            exit 1
+          fi
+          if [ -e "$slice_drop_in_marker" ] || [ -L "$slice_drop_in_marker" ]; then
+            echo "::error::CPU slice proof ownership marker already exists" >&2
+            exit 1
+          fi
           sudo useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"
-          printf 'E2E_CPU_DELEGATION_USER_CREATED=1\n' >>"$GITHUB_ENV"
+          created_user=1
           uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
           home="$(getent passwd "$E2E_CPU_DELEGATION_USER" | cut -d: -f6)"
+          slice_drop_in_dir="/run/systemd/system/user-${uid}.slice.d"
+          slice_drop_in="$slice_drop_in_dir/90-nemoclaw-cpu-controller.conf"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$E2E_ARTIFACT_DIR"
           {
+            printf 'E2E_CPU_DELEGATION_USER_CREATED=1\n'
             printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
             printf 'E2E_CPU_DELEGATION_RUNTIME_DIR=/run/user/%s\n' "$uid"
+            printf 'E2E_CPU_SLICE_DROP_IN=%s\n' "$slice_drop_in"
+            printf 'E2E_CPU_SLICE_DROP_IN_DIR=%s\n' "$slice_drop_in_dir"
           } >>"$GITHUB_ENV"
+          if sudo test -e "$slice_drop_in" || sudo test -L "$slice_drop_in"; then
+            echo "::error::CPU slice proof drop-in already exists" >&2
+            exit 1
+          fi
+          if sudo test -L "$slice_drop_in_dir" \
+            || { sudo test -e "$slice_drop_in_dir" && ! sudo test -d "$slice_drop_in_dir"; }; then
+            echo "::error::CPU slice proof drop-in directory has an unexpected type" >&2
+            exit 1
+          fi
+          if ! sudo test -d "$slice_drop_in_dir"; then
+            created_slice_drop_in_dir=1
+            sudo install -d -o root -g root -m 0755 "$slice_drop_in_dir"
+            printf 'E2E_CPU_SLICE_DROP_IN_DIR_CREATED=1\n' >>"$GITHUB_ENV"
+          fi
+          if [ "$(sudo stat -Lc '%U:%G' -- "$slice_drop_in_dir")" != "root:root" ]; then
+            echo "::error::CPU slice proof drop-in directory is not root-owned" >&2
+            exit 1
+          fi
+          slice_drop_in_temp="$(sudo mktemp "$slice_drop_in_dir/.nemoclaw-cpu-controller.XXXXXX")"
+          # CPU accounting alone does not activate the CPU controller on cgroup v2.
+          # An explicit default CPU weight does, without changing relative weight.
+          printf '[Slice]\nCPUWeight=100\n' | sudo tee "$slice_drop_in_temp" >/dev/null
+          sudo chown root:root "$slice_drop_in_temp"
+          sudo chmod 0644 "$slice_drop_in_temp"
+          slice_drop_in_id="$(sudo stat -Lc '%d:%i' -- "$slice_drop_in_temp")"
+          sudo ln -- "$slice_drop_in_temp" "$slice_drop_in"
+          sudo rm -f -- "$slice_drop_in_temp"
+          slice_drop_in_temp=""
+          printf '%s\n' "$slice_drop_in_id" >"$slice_drop_in_marker"
+
+          if sudo test -L "$drop_in_dir" \
+            || { sudo test -e "$drop_in_dir" && ! sudo test -d "$drop_in_dir"; }; then
+            echo "::error::CPU delegation proof drop-in directory has an unexpected type" >&2
+            exit 1
+          fi
+          sudo install -d -o root -g root -m 0755 "$drop_in_dir"
+          if [ "$(sudo stat -Lc '%U:%G' -- "$drop_in_dir")" != "root:root" ]; then
+            echo "::error::CPU delegation proof drop-in directory is not root-owned" >&2
+            exit 1
+          fi
+          drop_in_temp="$(sudo mktemp "$drop_in_dir/.nemoclaw-cpu-delegation.XXXXXX")"
+          printf '[Service]\nDelegate=memory pids\n' | sudo tee "$drop_in_temp" >/dev/null
+          sudo chown root:root "$drop_in_temp"
+          sudo chmod 0644 "$drop_in_temp"
+          drop_in_id="$(sudo stat -Lc '%d:%i' -- "$drop_in_temp")"
+          sudo ln -- "$drop_in_temp" "$drop_in"
+          sudo rm -f -- "$drop_in_temp"
+          drop_in_temp=""
+          printf '%s\n' "$drop_in_id" >"$drop_in_marker"
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
+          if ! sudo systemctl start "user@${uid}.service"; then
+            {
+              sudo systemctl --no-pager --full status "user@${uid}.service" || true
+              sudo journalctl --no-pager --unit "user@${uid}.service" --lines 200 || true
+            } 2>&1 | python3 test/e2e/lib/redact-text.py | sudo tee \
+              "$E2E_ARTIFACT_DIR/prepare-user-manager-diagnostics.txt" >/dev/null
+            exit 1
+          fi
+          user_slice_controllers="/sys/fs/cgroup/user.slice/user-${uid}.slice/cgroup.controllers"
+          if ! grep -qw cpu "$user_slice_controllers"; then
+            echo "::error::dedicated proof user slice does not expose the CPU controller" >&2
+            cat "$user_slice_controllers" >&2 || true
+            exit 1
+          fi
+          trap - EXIT
 
       - name: Prove missing delegation fails before effects
         shell: bash
         run: |
           set -euo pipefail
-          drop_in_dir="/etc/systemd/system/user@.service.d"
-          sudo install -d -m 0755 "$drop_in_dir"
-          touch "$E2E_CPU_DELEGATION_DROP_IN_MARKER"
-          printf '[Service]\nDelegate=memory pids\n' \
-            | sudo tee "$drop_in_dir/90-nemoclaw-cpu-delegation.conf" >/dev/null
-          sudo systemctl daemon-reload
-          sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
-          sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"
           sudo --user "$E2E_CPU_DELEGATION_USER" \
             env \
               "E2E_ARTIFACT_DIR=$E2E_ARTIFACT_DIR" \
@@ -128,10 +261,28 @@ jobs:
         run: |
           set -euo pipefail
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          expected_drop_in_id="$(cat "$E2E_CPU_DELEGATION_DROP_IN_MARKER")"
+          if [[ ! "$expected_drop_in_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+            echo "::error::CPU delegation proof ownership marker is invalid" >&2
+            exit 1
+          fi
+          if sudo test -L "$drop_in" || ! sudo test -f "$drop_in" \
+            || [ "$(sudo stat -Lc '%d:%i' -- "$drop_in")" != "$expected_drop_in_id" ]; then
+            echo "::error::CPU delegation proof drop-in identity changed before admission" >&2
+            exit 1
+          fi
           sudo systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"
           printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "$drop_in" >/dev/null
           sudo systemctl daemon-reload
-          sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"
+          if ! sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"; then
+            {
+              sudo systemctl --no-pager --full status \
+                "user@${E2E_CPU_DELEGATION_UID}.service" || true
+              sudo journalctl --no-pager --unit \
+                "user@${E2E_CPU_DELEGATION_UID}.service" --lines 200 || true
+            } | python3 test/e2e/lib/redact-text.py >&2
+            exit 1
+          fi
           sudo --user "$E2E_CPU_DELEGATION_USER" \
             env \
               "E2E_ARTIFACT_DIR=$E2E_ARTIFACT_DIR" \
@@ -177,22 +328,85 @@ jobs:
           set -u
           cleanup_failed=0
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
-          if [ -n "${E2E_CPU_DELEGATION_DROP_IN_MARKER:-}" ] \
-            && [ -e "$E2E_CPU_DELEGATION_DROP_IN_MARKER" ]; then
-            sudo rm -f "$drop_in" || cleanup_failed=1
-            sudo systemctl daemon-reload || cleanup_failed=1
-            if sudo test -e "$drop_in"; then
-              echo "::error::CPU delegation proof drop-in remained after cleanup" >&2
+
+          remove_owned_drop_in() {
+            local target="$1"
+            local marker="$2"
+            local label="$3"
+            local expected_id=""
+            local current_id=""
+
+            if [ -z "$marker" ] || [ ! -e "$marker" ]; then
+              return
+            fi
+            if [ -z "$target" ]; then
+              echo "::error::$label path is unavailable during cleanup" >&2
+              cleanup_failed=1
+              return
+            fi
+            expected_id="$(cat "$marker")"
+            if [[ ! "$expected_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+              echo "::error::$label ownership marker is invalid" >&2
+              cleanup_failed=1
+            elif ! sudo test -e "$target" && ! sudo test -L "$target"; then
+              :
+            elif sudo test -L "$target" || ! sudo test -f "$target"; then
+              echo "::error::Refusing to remove a $label with an unexpected type" >&2
+              cleanup_failed=1
+            else
+              current_id="$(sudo stat -Lc '%d:%i' -- "$target" 2>/dev/null)"
+              if [ "$current_id" = "$expected_id" ]; then
+                sudo rm -f -- "$target" || cleanup_failed=1
+              else
+                echo "::error::Refusing to remove a $label whose identity changed" >&2
+                cleanup_failed=1
+              fi
+            fi
+            if sudo test -e "$target" || sudo test -L "$target"; then
+              echo "::error::$label remained after cleanup" >&2
+              cleanup_failed=1
+            fi
+          }
+
+          if [ "${E2E_CPU_DELEGATION_USER_CREATED:-0}" = "1" ] \
+            && id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
+            uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
+            sudo systemctl stop "user@${uid}.service" || cleanup_failed=1
+          fi
+          remove_owned_drop_in \
+            "$drop_in" \
+            "${E2E_CPU_DELEGATION_DROP_IN_MARKER:-}" \
+            "CPU delegation proof drop-in"
+          remove_owned_drop_in \
+            "${E2E_CPU_SLICE_DROP_IN:-}" \
+            "${E2E_CPU_SLICE_DROP_IN_MARKER:-}" \
+            "CPU slice proof drop-in"
+          sudo systemctl daemon-reload || cleanup_failed=1
+          if [ "${E2E_CPU_SLICE_DROP_IN_DIR_CREATED:-0}" = "1" ]; then
+            slice_drop_in_dir="${E2E_CPU_SLICE_DROP_IN_DIR:-}"
+            if [ -z "$slice_drop_in_dir" ]; then
+              echo "::error::CPU slice proof drop-in directory path is unavailable" >&2
+              cleanup_failed=1
+            elif ! sudo test -e "$slice_drop_in_dir" && ! sudo test -L "$slice_drop_in_dir"; then
+              :
+            elif sudo test -L "$slice_drop_in_dir" || ! sudo test -d "$slice_drop_in_dir"; then
+              echo "::error::Refusing to remove a CPU slice drop-in directory with an unexpected type" >&2
+              cleanup_failed=1
+            else
+              sudo rmdir -- "$slice_drop_in_dir" || cleanup_failed=1
+            fi
+            if [ -n "$slice_drop_in_dir" ] \
+              && { sudo test -e "$slice_drop_in_dir" || sudo test -L "$slice_drop_in_dir"; }; then
+              echo "::error::CPU slice proof drop-in directory remained after cleanup" >&2
               cleanup_failed=1
             fi
           fi
           if [ "${E2E_CPU_DELEGATION_USER_CREATED:-0}" = "1" ]; then
-            uid="$(id -u "$E2E_CPU_DELEGATION_USER" 2>/dev/null || true)"
-            if [ -n "$uid" ]; then
-              sudo systemctl stop "user@${uid}.service" || cleanup_failed=1
+            if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
+              sudo loginctl disable-linger "$E2E_CPU_DELEGATION_USER" || cleanup_failed=1
+              sudo loginctl terminate-user "$E2E_CPU_DELEGATION_USER" || true
+              sudo userdel --remove "$E2E_CPU_DELEGATION_USER" || cleanup_failed=1
             fi
-            sudo loginctl disable-linger "$E2E_CPU_DELEGATION_USER" || cleanup_failed=1
-            sudo userdel --remove "$E2E_CPU_DELEGATION_USER" || cleanup_failed=1
             if id "$E2E_CPU_DELEGATION_USER" >/dev/null 2>&1; then
               echo "::error::CPU delegation proof user remained after cleanup" >&2
               cleanup_failed=1

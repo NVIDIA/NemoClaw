@@ -3335,22 +3335,58 @@ The portable experimental profile requires the current user's systemd hierarchy 
 NemoClaw checks this requirement before it writes portable configuration, activates services, starts the registry, builds an image, or creates a sandbox.
 The credential-free preflight reads only `cgroup.controllers` files under `/sys/fs/cgroup`.
 
-The error identifies the hierarchy boundary that failed:
+The preflight distinguishes a missing controller file from a read failure.
+Classify the file state before you select a recovery action:
 
-| Reported condition | Meaning | Recovery |
+```bash
+uid="$(id -u)"
+user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"
+
+for controllers in \
+  /sys/fs/cgroup/cgroup.controllers \
+  "${user_manager}/cgroup.controllers" \
+  "${user_manager}/app.slice/cgroup.controllers"
+do
+  if [ ! -e "$controllers" ]; then
+    printf '%s: missing\n' "$controllers"
+  elif [ ! -r "$controllers" ]; then
+    printf '%s: unreadable\n' "$controllers"
+  elif contents="$(cat -- "$controllers")"; then
+    printf '%s: readable (%s)\n' "$controllers" "$contents"
+  else
+    printf '%s: read failed\n' "$controllers"
+  fi
+done
+```
+
+An access policy can prevent the current user from testing whether a path exists.
+For each `missing` or `read failed` result, ask an administrator to run `sudo stat -- <reported-path>`.
+If `stat` finds the file but the current-user read failed, classify the file as unreadable.
+If `stat` reports that the path does not exist, classify the file as missing.
+
+The error and file state identify the required recovery:
+
+| Reported condition and file state | Meaning | Recovery |
 | --- | --- | --- |
-| cgroups v2 is unavailable | `/sys/fs/cgroup/cgroup.controllers` is missing or unreadable. | Ask an administrator to boot a Linux host with a readable cgroups v2 mount. |
-| The kernel hierarchy does not expose `cpu` | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
-| systemd did not delegate `cpu` to the current user's manager | The user manager's `cgroup.controllers` file is missing, unreadable, or does not contain `cpu`. | Apply the `user@.service` delegation procedure below. |
-| `cpu` is unavailable to the current user's `app.slice` | The `app.slice` `cgroup.controllers` file is missing, unreadable, or does not contain `cpu` for this boot. | Restart the current user's manager or reboot the host, then verify all three boundaries below. |
+| cgroups v2 is unavailable; the root file is missing | The host does not expose the cgroups v2 controller file at the expected mount. | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount. |
+| Any controller file exists but is unreadable, or its read fails | The current user cannot read the existing hierarchy boundary. | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
+| The kernel hierarchy does not expose `cpu`; the root file is readable | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
+| systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply the named `user@.service` drop-in below. |
+| `cpu` is unavailable to `app.slice`; its file is missing | The current user's `app.slice` hierarchy does not exist for this boot. | Start `app.slice`. If the file remains missing after you apply the delegation change, use the stop, reload, and start sequence below or reboot the host. |
+| `cpu` is unavailable to `app.slice`; its file is readable but does not contain `cpu` | The running user manager has not made the delegated controller available to `app.slice`. | Use the stop, reload, and start sequence below or reboot the host after the delegation change. Then start `app.slice` and verify all three boundaries. |
+
+Do not use a boot, delegation, or service lifecycle action to correct an unreadable file.
+Those actions do not restore access that filesystem permissions or an LSM policy denies.
 
 The systemd delegation change requires administrator access.
 NemoClaw does not edit `/etc/systemd/system`, invoke `sudo`, remove the sandbox CPU limit, or continue with weaker resource isolation.
 
 <Warning>
 The `user@.service` template applies to every user manager on the host.
-Restarting `user@<uid>.service` stops and starts the current user's systemd services, including rootless Podman and other user services.
-Plan this interruption with the host administrator before applying the change.
+Applying or removing this drop-in requires the administrator to stop the affected user's manager, reload systemd, and start the manager.
+The administrator can reboot the host instead of running that sequence.
+Stopping the manager stops that user's systemd services, including rootless Podman and other user services.
+Plan each interruption with the affected user and host administrator.
 </Warning>
 
 Record the affected user's numeric ID:
@@ -3360,30 +3396,59 @@ uid="$(id -u)"
 printf 'Current user ID: %s\n' "$uid"
 ```
 
-Ask an administrator to open a systemd drop-in for the user-manager template:
+Use the dedicated NemoClaw drop-in path below.
+If the file already exists, stop and ask the administrator to inspect its ownership and content.
+Do not replace an existing file.
 
 ```bash
-sudo systemctl edit user@.service
+drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+
+if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
+  printf 'Refusing to replace existing file: %s\n' "$drop_in" >&2
+  exit 1
+fi
+
+sudo install -d -o root -g root -m 0755 -- "$(dirname "$drop_in")"
+printf '%s\n' '[Service]' 'Delegate=cpu memory pids' | sudo tee "$drop_in" >/dev/null
+sudo chown root:root "$drop_in"
+sudo chmod 0644 "$drop_in"
 ```
 
-Add this exact content, then save and close the editor:
+Verify the persistent file:
+
+```bash
+sudo cat -- "$drop_in"
+```
+
+Expected output:
 
 ```ini
 [Service]
 Delegate=cpu memory pids
 ```
 
-Reload systemd and restart the affected user's manager:
+The administrator's `sudo` policy can request authentication.
+NemoClaw never receives that credential.
+
+Run the following commands from an administrator session that does not depend on the affected user's manager:
 
 ```bash
+uid="<affected-user-id>"
+sudo systemctl stop "user@${uid}.service"
 sudo systemctl daemon-reload
-sudo systemctl restart "user@${uid}.service"
+sudo systemctl start "user@${uid}.service"
+```
+
+After the affected user signs in again, start `app.slice` in that user's session:
+
+```bash
 systemctl --user start app.slice
 ```
 
-`daemon-reload` makes the drop-in visible, but it does not update an existing user manager.
-The `user@<uid>.service` restart or a host reboot is required before `app.slice` can receive the new controller delegation.
-The administrator's `sudo` policy can request authentication, but NemoClaw never receives that credential.
+The stop must complete before `daemon-reload` runs.
+Reloading while the instantiated unit is inactive lets systemd recalculate ancestor controller masks for the new delegation.
+The final start creates the user manager with those updated masks.
+Do not replace this sequence with `systemctl restart`, which can fail with `219/CGROUP` before systemd recalculates the masks.
 
 Verify the root hierarchy, current user manager, and `app.slice`:
 
@@ -3412,6 +3477,44 @@ Then rerun portable onboarding:
 ```bash
 $$nemoclaw onboard --experimental-profile portable
 ```
+
+#### Remove the CPU Delegation Drop-In
+
+Remove only the named file that this procedure created.
+Do not use `systemctl revert`, and do not remove another `user@.service` drop-in.
+
+Confirm the exact file before removal:
+
+```bash
+drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+sudo cat -- "$drop_in"
+```
+
+Continue only when the path and content match this procedure.
+From an administrator session that does not depend on the affected user's manager, stop the manager first.
+Remove the file while the manager is inactive, then reload systemd and start the manager:
+
+```bash
+uid="<affected-user-id>"
+drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+sudo systemctl stop "user@${uid}.service"
+sudo rm -- "$drop_in"
+sudo systemctl daemon-reload
+sudo systemctl start "user@${uid}.service"
+```
+
+The inactive reload removes the NemoClaw drop-in from the instantiated unit and recalculates ancestor controller masks before the manager starts.
+Do not replace this sequence with `systemctl restart`.
+
+After the affected user signs in again, verify that systemd no longer loads this drop-in:
+
+```bash
+systemctl cat user@.service
+```
+
+The output must not list `/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf`.
+Another administrator-owned drop-in can still delegate `cpu`; do not remove it as part of this rollback.
+Removing the NemoClaw drop-in can make the portable CPU delegation preflight fail again.
 
 ### Portable Podman Readiness Fails
 

@@ -14,9 +14,25 @@ function files(contents: Record<string, string>): (file: string) => string {
     return (
       value ??
       (() => {
-        throw new Error(`ENOENT: no such file or directory, open '${file}'`);
+        throw Object.assign(new Error(`ENOENT: no such file or directory, open '${file}'`), {
+          code: "ENOENT",
+        });
       })()
     );
+  };
+}
+
+function unreadableAt(
+  unreadableFile: string,
+  contents: Record<string, string>,
+): (file: string) => string {
+  return (file: string) => {
+    if (file === unreadableFile) {
+      throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), {
+        code: "EACCES",
+      });
+    }
+    return files(contents)(file);
   };
 }
 
@@ -46,16 +62,18 @@ describe("inspectPortableCpuDelegation", () => {
     expect(preflight.detail).toContain("cgroups v2");
   });
 
-  it("reports cgroups v2 unavailable when the root controllers file is unreadable", () => {
+  it("reports access recovery when the root controllers file is unreadable", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: () => {
-        throw new Error("EACCES: permission denied");
-      },
+      readFileSync: unreadableAt(PATHS.root, {}),
     });
     expect(preflight.ok).toBe(false);
-    expect(preflight.failure).toBe("cgroups-v2-unavailable");
+    expect(preflight.failure).toBe("cgroup-controllers-unreadable");
+    expect(preflight.detail).toContain("EACCES");
+    expect(preflight.detail).toContain("mount permissions");
+    expect(preflight.detail).toContain("security policy");
+    expect(preflight.detail).not.toContain("Boot a cgroups v2 host");
   });
 
   it("reports when the kernel hierarchy does not expose the cpu controller", () => {
@@ -83,7 +101,22 @@ describe("inspectPortableCpuDelegation", () => {
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("Delegate=cpu memory pids");
+    expect(preflight.detail).toContain("NemoClaw delegation drop-in");
+  });
+
+  it("reports access recovery when the user manager controllers file is unreadable", () => {
+    const preflight = inspectPortableCpuDelegation({
+      platform: "linux",
+      uid: UID,
+      readFileSync: unreadableAt(PATHS.userManager, {
+        [PATHS.root]: CPU_FULL,
+      }),
+    });
+    expect(preflight.ok).toBe(false);
+    expect(preflight.failure).toBe("cgroup-controllers-unreadable");
+    expect(preflight.detail).toContain("EACCES");
+    expect(preflight.detail).toContain("Do not change systemd delegation");
+    expect(preflight.detail).not.toContain("restart the user manager");
   });
 
   it("reports when systemd did not delegate cpu to the user manager (no cpu token)", () => {
@@ -127,6 +160,22 @@ describe("inspectPortableCpuDelegation", () => {
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("app-slice-cpu-unavailable");
+  });
+
+  it("reports access recovery when the app.slice controllers file is unreadable", () => {
+    const preflight = inspectPortableCpuDelegation({
+      platform: "linux",
+      uid: UID,
+      readFileSync: unreadableAt(PATHS.appSlice, {
+        [PATHS.root]: CPU_FULL,
+        [PATHS.userManager]: CPU_FULL,
+      }),
+    });
+    expect(preflight.ok).toBe(false);
+    expect(preflight.failure).toBe("cgroup-controllers-unreadable");
+    expect(preflight.detail).toContain("EACCES");
+    expect(preflight.detail).toContain("Do not change systemd delegation");
+    expect(preflight.detail).not.toContain("Restart the user manager");
   });
 
   it("passes when cpu is delegated through the whole current-user hierarchy", () => {
