@@ -14,6 +14,7 @@ import {
   isManagedImageAgent,
   isShippedManagedImageAgent,
   type ManagedImageContractCatalog,
+  type ManagedImageContractV1,
   type ManagedImagePlatform,
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
