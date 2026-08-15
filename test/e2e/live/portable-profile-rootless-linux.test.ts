@@ -98,49 +98,11 @@ async function waitForRegistry(attempt = 0): Promise<void> {
 
 function writeSystemctlShim(binDir: string): void {
   const shim = path.join(binDir, "systemctl");
-  fs.writeFileSync(
+  fs.copyFileSync(
+    path.join(process.cwd(), "test/e2e/fixtures/portable-profile-systemctl-shim.sh"),
     shim,
-    `#!/usr/bin/env bash
-set -euo pipefail
-runtime_dir="\${XDG_RUNTIME_DIR:?}"
-service_dir="\${runtime_dir}/podman"
-socket_path="\${service_dir}/podman.sock"
-pid_file="\${runtime_dir}/nemoclaw-podman-service.pid"
-log_file="\${runtime_dir}/nemoclaw-podman-service.log"
-
-case "$*" in
-  "--user set-environment NETAVARK_FW=iptables CONTAINERS_CONF="*)
-    exit 0
-    ;;
-  "--user try-restart podman.service")
-    if [[ -f "\${pid_file}" ]]; then
-      kill "$(<"\${pid_file}")" 2>/dev/null || true
-      rm -f "\${pid_file}" "\${socket_path}"
-    fi
-    exit 0
-    ;;
-  "--user enable --now podman.socket")
-    install -d -m 755 "\${service_dir}"
-    nohup podman system service --time=0 "unix://\${socket_path}" >"\${log_file}" 2>&1 &
-    echo $! >"\${pid_file}"
-    for _ in $(seq 1 100); do
-      if [[ -S "\${socket_path}" ]]; then
-        chmod 660 "\${socket_path}"
-        exit 0
-      fi
-      sleep 0.1
-    done
-    cat "\${log_file}" >&2 || true
-    exit 1
-    ;;
-  *)
-    echo "unexpected user-service command: $*" >&2
-    exit 64
-    ;;
-esac
-`,
-    { encoding: "utf-8", mode: 0o700 },
   );
+  fs.chmodSync(shim, 0o700);
 }
 
 function selectInstallerPodmanRuntime(repoRoot: string): string {
@@ -321,9 +283,13 @@ async function main(progress: TestProgress): Promise<void> {
   }
 }
 
-test("portable profile rootless environment completes the local image and fixed-host route contracts", {
-  meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
-  timeout: 120_000,
-}, async ({ progress }) => {
-  await main(progress);
-});
+test(
+  "portable profile rootless environment completes the local image and fixed-host route contracts",
+  {
+    meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
+    timeout: 120_000,
+  },
+  async ({ progress }) => {
+    await main(progress);
+  },
+);

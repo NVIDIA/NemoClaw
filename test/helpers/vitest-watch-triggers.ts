@@ -153,6 +153,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
+      /(?:^|\/)(?:\.github\/workflows\/portable-profile-e2e\.yaml|test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh)$/,
+    testsToRun: runTests("test/e2e/support/portable-profile-systemctl-shim.test.ts"),
+  },
+  {
+    pattern:
       /(?:^|\/)\.github\/(?:actions\/docker-auth-(?:cleanup|setup)\/action\.yaml|scripts\/docker-auth-(?:cleanup|setup)\.sh)$/,
     testsToRun: runTests("test/e2e/support/dockerhub-auth-workflow-boundary.test.ts"),
   },
@@ -184,8 +189,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e-main-retry-workflow.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
+    pattern: /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),
   },
   {
