@@ -93,51 +93,37 @@ jobs:
           sudo useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"
           printf 'E2E_CPU_DELEGATION_USER_CREATED=1\n' >>"$GITHUB_ENV"
           uid="$(id -u "$E2E_CPU_DELEGATION_USER")"
+          home="$(getent passwd "$E2E_CPU_DELEGATION_USER" | cut -d: -f6)"
+          sudo install -d -o "$uid" -g "$uid" -m 0700 "$E2E_ARTIFACT_DIR"
           slice_drop_in_dir="/run/systemd/system.control/user-${uid}.slice.d"
           slice_drop_in="$slice_drop_in_dir/50-CPUWeight.conf"
           {
+            printf 'E2E_CPU_DELEGATION_HOME=%s\n' "$home"
             printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
             printf 'E2E_CPU_DELEGATION_RUNTIME_DIR=/run/user/%s\n' "$uid"
             printf 'E2E_CPU_WEIGHT_DROP_IN=%s\n' "$slice_drop_in"
             printf 'E2E_CPU_WEIGHT_DROP_IN_DIR=%s\n' "$slice_drop_in_dir"
           } >>"$GITHUB_ENV"
-          sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
-          sudo systemctl start "user@${uid}.service"
-          if sudo test -e "$slice_drop_in"; then
-            echo "::error::CPU delegation proof slice property already exists" >&2
-            exit 1
-          fi
-          if ! sudo test -d "$slice_drop_in_dir"; then
-            touch "$slice_drop_in_dir_marker"
-          fi
-          touch "$slice_drop_in_marker"
-          # GitHub's Ubuntu runner does not activate the CPU controller for fresh
-          # user slices. Apply systemd's default CPU weight to the active dedicated
-          # slice so the negative phase isolates the stock user@.service boundary.
-          sudo systemctl set-property --runtime "user-${uid}.slice" CPUWeight=100
-          if ! sudo test -f "$slice_drop_in" \
-            || ! sudo grep -q '^CPUWeight=100$' "$slice_drop_in"; then
-            echo "::error::CPU weight runtime property was not recorded as expected" >&2
-            exit 1
-          fi
-          user_slice_controllers="/sys/fs/cgroup/user.slice/user-${uid}.slice/cgroup.controllers"
-          if ! grep -qw cpu "$user_slice_controllers"; then
-            echo "::error::dedicated proof user slice does not expose the CPU controller" >&2
-            cat "$user_slice_controllers" >&2 || true
-            exit 1
-          fi
-          install -d -m 0700 "$E2E_ARTIFACT_DIR"
 
       - name: Prove missing delegation fails before effects
         shell: bash
         run: |
           set -euo pipefail
-          sudo --user "$E2E_CPU_DELEGATION_USER" env \
-            XDG_RUNTIME_DIR="$E2E_CPU_DELEGATION_RUNTIME_DIR" \
-            systemctl --user start app.slice
-          E2E_CPU_DELEGATION_STATE=missing \
-            npx vitest run --project e2e-live \
-              test/e2e/live/portable-cpu-delegation-proof.test.ts
+          sudo loginctl enable-linger "$E2E_CPU_DELEGATION_USER"
+          sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"
+          sudo --user "$E2E_CPU_DELEGATION_USER" \
+            env \
+              "E2E_ARTIFACT_DIR=$E2E_ARTIFACT_DIR" \
+              "E2E_CPU_DELEGATION_STATE=missing" \
+              "E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID" \
+              "E2E_SOURCE_REVISION=$E2E_SOURCE_REVISION" \
+              "E2E_TARGET_ID=$E2E_TARGET_ID" \
+              "HOME=$E2E_CPU_DELEGATION_HOME" \
+              "NEMOCLAW_RUN_LIVE_E2E=$NEMOCLAW_RUN_LIVE_E2E" \
+              "PATH=$PATH" \
+              "XDG_RUNTIME_DIR=$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+              ./node_modules/.bin/vitest run --no-cache --project e2e-live \
+                test/e2e/live/portable-cpu-delegation-proof.test.ts
 
       - name: Apply administrator delegation and prove admission
         shell: bash
@@ -146,9 +132,34 @@ jobs:
           drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
           sudo install -d -m 0755 "$(dirname "$drop_in")"
           touch "$E2E_CPU_DELEGATION_DROP_IN_MARKER"
+          if sudo test -e "$E2E_CPU_WEIGHT_DROP_IN"; then
+            echo "::error::CPU delegation proof slice property already exists" >&2
+            exit 1
+          fi
+          if ! sudo test -d "$E2E_CPU_WEIGHT_DROP_IN_DIR"; then
+            touch "$E2E_CPU_WEIGHT_DROP_IN_DIR_MARKER"
+          fi
+          touch "$E2E_CPU_WEIGHT_DROP_IN_MARKER"
+          # GitHub's Ubuntu runner does not activate the CPU controller for fresh
+          # user slices. Apply systemd's default CPU weight to the active dedicated
+          # slice before exercising the administrator delegation under test.
+          sudo systemctl set-property --runtime \
+            "user-${E2E_CPU_DELEGATION_UID}.slice" CPUWeight=100
+          if ! sudo test -f "$E2E_CPU_WEIGHT_DROP_IN" \
+            || ! sudo grep -q '^CPUWeight=100$' "$E2E_CPU_WEIGHT_DROP_IN"; then
+            echo "::error::CPU weight runtime property was not recorded as expected" >&2
+            exit 1
+          fi
+          user_slice_controllers="/sys/fs/cgroup/user.slice/user-${E2E_CPU_DELEGATION_UID}.slice/cgroup.controllers"
+          if ! grep -qw cpu "$user_slice_controllers"; then
+            echo "::error::dedicated proof user slice does not expose the CPU controller" >&2
+            cat "$user_slice_controllers" >&2 || true
+            exit 1
+          fi
+          sudo systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"
           printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "$drop_in" >/dev/null
           sudo systemctl daemon-reload
-          if ! sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"; then
+          if ! sudo systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"; then
             {
               sudo systemctl --no-pager --full status \
                 "user@${E2E_CPU_DELEGATION_UID}.service" || true
@@ -157,19 +168,26 @@ jobs:
             } | python3 test/e2e/lib/redact-text.py >&2
             exit 1
           fi
-          sudo --user "$E2E_CPU_DELEGATION_USER" env \
-            XDG_RUNTIME_DIR="$E2E_CPU_DELEGATION_RUNTIME_DIR" \
-            systemctl --user start app.slice
-          E2E_CPU_DELEGATION_STATE=delegated \
-            npx vitest run --project e2e-live \
-              test/e2e/live/portable-cpu-delegation-proof.test.ts
+          sudo --user "$E2E_CPU_DELEGATION_USER" \
+            env \
+              "E2E_ARTIFACT_DIR=$E2E_ARTIFACT_DIR" \
+              "E2E_CPU_DELEGATION_STATE=delegated" \
+              "E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID" \
+              "E2E_SOURCE_REVISION=$E2E_SOURCE_REVISION" \
+              "E2E_TARGET_ID=$E2E_TARGET_ID" \
+              "HOME=$E2E_CPU_DELEGATION_HOME" \
+              "NEMOCLAW_RUN_LIVE_E2E=$NEMOCLAW_RUN_LIVE_E2E" \
+              "PATH=$PATH" \
+              "XDG_RUNTIME_DIR=$E2E_CPU_DELEGATION_RUNTIME_DIR" \
+              ./node_modules/.bin/vitest run --no-cache --project e2e-live \
+                test/e2e/live/portable-cpu-delegation-proof.test.ts
 
       - name: Capture CPU delegation failure diagnostics
         if: failure()
         shell: bash
         run: |
           set -u
-          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          sudo install -d -m 0700 "$E2E_ARTIFACT_DIR"
           diagnostics="$E2E_ARTIFACT_DIR/user-manager-diagnostics.txt"
           {
             printf 'source_revision=%s\n' "$E2E_SOURCE_REVISION"
@@ -185,8 +203,8 @@ jobs:
                 -print \
                 -exec cat {} \; || true
             fi
-          } 2>&1 | python3 test/e2e/lib/redact-text.py >"$diagnostics"
-          chmod 0600 "$diagnostics"
+          } 2>&1 | python3 test/e2e/lib/redact-text.py | sudo tee "$diagnostics" >/dev/null
+          sudo chmod 0600 "$diagnostics"
 
       - name: Restore the user manager boundary
         if: always()
@@ -234,6 +252,9 @@ jobs:
               echo "::error::CPU delegation proof user remained after cleanup" >&2
               cleanup_failed=1
             fi
+          fi
+          if [ -d "$E2E_ARTIFACT_DIR" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR" || cleanup_failed=1
           fi
           exit "$cleanup_failed"
 

@@ -199,6 +199,11 @@ proof(
     assert.equal(process.platform, "linux", "CPU delegation proof requires Linux");
     const uid = expectedUid();
     assert.notEqual(uid, 0, "CPU delegation proof requires a non-root user");
+    assert.equal(
+      process.getuid?.(),
+      uid,
+      "CPU delegation proof must run as the dedicated non-root user",
+    );
     const state = expectedState(process.env.E2E_CPU_DELEGATION_STATE);
     const revision = sourceRevision();
     progress.phase("inspect the configured CPU delegation hierarchy");

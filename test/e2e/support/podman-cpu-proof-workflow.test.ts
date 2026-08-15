@@ -134,28 +134,41 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain(
       'useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"',
     );
-    expect(prepare).toContain("CPUWeight=100");
-    expect(prepare).toContain(
-      'systemctl set-property --runtime "user-${uid}.slice" CPUWeight=100',
-    );
     expect(prepare).toContain("/run/systemd/system.control/user-${uid}.slice.d");
-    expect(prepare).toContain('grep -qw cpu "$user_slice_controllers"');
-    expect(prepare).toContain('loginctl enable-linger "$E2E_CPU_DELEGATION_USER"');
-    expect(prepare).toContain('systemctl start "user@${uid}.service"');
+    expect(prepare).not.toContain("loginctl enable-linger");
+    expect(prepare).not.toContain("systemctl start");
     expect(reject).not.toContain("Delegate=memory pids");
+    expect(reject).toContain('loginctl enable-linger "$E2E_CPU_DELEGATION_USER"');
+    expect(reject).toContain('systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"');
     expect(reject).not.toContain('systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"');
     expect(reject).toContain('sudo --user "$E2E_CPU_DELEGATION_USER"');
     expect(reject).toContain("E2E_CPU_DELEGATION_STATE=missing");
-    expect(reject).toContain("npx vitest run --project e2e-live");
+    expect(reject).toContain('"E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID"');
+    expect(reject).toContain(
+      "./node_modules/.bin/vitest run --no-cache --project e2e-live",
+    );
     expect(reject).toContain("portable-cpu-delegation-proof.test.ts");
+    expect(reject).not.toContain("systemctl --user start app.slice");
     expect(admit).toContain("Delegate=cpu memory pids");
-    expect(admit).toContain('systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"');
+    expect(admit).toContain('systemctl stop "user@${E2E_CPU_DELEGATION_UID}.service"');
+    expect(admit).toContain("CPUWeight=100");
+    expect(admit).toContain(
+      '"user-${E2E_CPU_DELEGATION_UID}.slice" CPUWeight=100',
+    );
+    expect(admit).toContain('grep -qw cpu "$user_slice_controllers"');
+    expect(admit).toContain('systemctl start "user@${E2E_CPU_DELEGATION_UID}.service"');
+    expect(admit).not.toContain('systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"');
     expect(admit).toContain("systemctl --no-pager --full status");
     expect(admit).toContain("journalctl --no-pager --unit");
     expect(admit).toContain("python3 test/e2e/lib/redact-text.py");
+    expect(admit).toContain('sudo --user "$E2E_CPU_DELEGATION_USER"');
     expect(admit).toContain("E2E_CPU_DELEGATION_STATE=delegated");
-    expect(admit).toContain("npx vitest run --project e2e-live");
+    expect(admit).toContain('"E2E_CPU_DELEGATION_UID=$E2E_CPU_DELEGATION_UID"');
+    expect(admit).toContain(
+      "./node_modules/.bin/vitest run --no-cache --project e2e-live",
+    );
     expect(admit).toContain("portable-cpu-delegation-proof.test.ts");
+    expect(admit).not.toContain("systemctl --user start app.slice");
     expect(diagnostics.if).toBe("failure()");
     expect(diagnostics.run).toContain("systemctl --no-pager --full status");
     expect(diagnostics.run).toContain("journalctl --no-pager --unit");
@@ -176,6 +189,9 @@ describe("native Podman CPU proof workflow", () => {
       "CPU weight proof drop-in directory remained after cleanup",
     );
     expect(cleanup.run).toContain("CPU delegation proof user remained after cleanup");
+    expect(cleanup.run).toContain(
+      'sudo chown -R "$(id -u):$(id -g)" "$E2E_ARTIFACT_DIR"',
+    );
     const delegationProof = readRepoText(
       "test/e2e/live/portable-cpu-delegation-proof.test.ts",
     );
