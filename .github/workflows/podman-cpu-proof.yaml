@@ -14,9 +14,11 @@ on:
       - "src/lib/adapters/podman/**"
       - "src/lib/onboard/docker-driver-gateway-*.ts"
       - "src/lib/onboard/managed-bootstrap/podman-*.ts"
+      - "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
+      - "src/lib/onboard/experimental/portable-host-preparation*.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
       - "test/e2e/live/podman-cpu-lifecycle-artifacts.ts"
@@ -25,6 +27,7 @@ on:
       - "test/e2e/live/podman-cpu-lifecycle.test.ts"
       - "test/e2e/registry/native-runtime-qualification.ts"
       - "test/e2e/support/native-runtime-qualification.test.ts"
+      - "test/e2e/live/portable-cpu-delegation-proof.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.test.ts"
       - "test/e2e/support/podman-cpu-proof-workflow.test.ts"
 
@@ -36,6 +39,97 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  portable-cpu-delegation:
+    name: Portable CPU delegation admission on clean Ubuntu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-cpu-delegation
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install locked test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Prepare the clean user manager boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          linger="$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)"
+          if [ "$linger" = "yes" ]; then
+            had_linger=1
+          else
+            had_linger=0
+            sudo loginctl enable-linger "$USER"
+          fi
+          sudo systemctl start "user@${uid}.service"
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+          {
+            printf 'E2E_CPU_DELEGATION_HAD_LINGER=%s\n' "$had_linger"
+            printf 'E2E_CPU_DELEGATION_UID=%s\n' "$uid"
+            printf 'XDG_RUNTIME_DIR=/run/user/%s\n' "$uid"
+          } >>"$GITHUB_ENV"
+
+      - name: Prove missing delegation fails before effects
+        shell: bash
+        run: |
+          set -euo pipefail
+          drop_in_dir="/etc/systemd/system/user@.service.d"
+          sudo install -d -m 0755 "$drop_in_dir"
+          printf '[Service]\nDelegate=memory pids\n' \
+            | sudo tee "$drop_in_dir/90-nemoclaw-cpu-delegation.conf" >/dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"
+          systemctl --user start app.slice
+          npx --no-install tsx test/e2e/live/portable-cpu-delegation-proof.ts missing
+
+      - name: Apply administrator delegation and prove admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
+          printf '[Service]\nDelegate=cpu memory pids\n' | sudo tee "$drop_in" >/dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service"
+          systemctl --user start app.slice
+          npx --no-install tsx test/e2e/live/portable-cpu-delegation-proof.ts delegated
+
+      - name: Restore the user manager boundary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf
+          sudo systemctl daemon-reload
+          if [ -n "${E2E_CPU_DELEGATION_UID:-}" ]; then
+            sudo systemctl restart "user@${E2E_CPU_DELEGATION_UID}.service" || true
+          fi
+          if [ "${E2E_CPU_DELEGATION_HAD_LINGER:-0}" = "0" ]; then
+            sudo loginctl disable-linger "$USER"
+          fi
+
+      - name: Upload CPU delegation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-cpu-delegation-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: e2e-artifacts/portable-cpu-delegation/
+          include-hidden-files: false
+          if-no-files-found: error
+          retention-days: 14
+
   podman-cpu-lifecycle:
     name: Rootless Podman CPU lifecycle with Docker disabled
     runs-on: ubuntu-26.04

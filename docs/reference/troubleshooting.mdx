@@ -3329,6 +3329,90 @@ Then rerun portable onboarding:
 $$nemoclaw onboard --experimental-profile portable
 ```
 
+### Portable CPU Delegation Preflight Fails
+
+The portable experimental profile requires the current user's systemd hierarchy to expose the `cpu` cgroup controller to `app.slice`.
+NemoClaw checks this requirement before it writes portable configuration, activates services, starts the registry, builds an image, or creates a sandbox.
+The credential-free preflight reads only `cgroup.controllers` files under `/sys/fs/cgroup`.
+
+The error identifies the hierarchy boundary that failed:
+
+| Reported condition | Meaning | Recovery |
+| --- | --- | --- |
+| cgroups v2 is unavailable | `/sys/fs/cgroup/cgroup.controllers` is missing or unreadable. | Ask an administrator to boot a Linux host with a readable cgroups v2 mount. |
+| The kernel hierarchy does not expose `cpu` | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
+| systemd did not delegate `cpu` to the current user's manager | The user manager's `cgroup.controllers` file is missing, unreadable, or does not contain `cpu`. | Apply the `user@.service` delegation procedure below. |
+| `cpu` is unavailable to the current user's `app.slice` | The `app.slice` `cgroup.controllers` file is missing, unreadable, or does not contain `cpu` for this boot. | Restart the current user's manager or reboot the host, then verify all three boundaries below. |
+
+The systemd delegation change requires administrator access.
+NemoClaw does not edit `/etc/systemd/system`, invoke `sudo`, remove the sandbox CPU limit, or continue with weaker resource isolation.
+
+<Warning>
+The `user@.service` template applies to every user manager on the host.
+Restarting `user@<uid>.service` stops and starts the current user's systemd services, including rootless Podman and other user services.
+Plan this interruption with the host administrator before applying the change.
+</Warning>
+
+Record the affected user's numeric ID:
+
+```bash
+uid="$(id -u)"
+printf 'Current user ID: %s\n' "$uid"
+```
+
+Ask an administrator to open a systemd drop-in for the user-manager template:
+
+```bash
+sudo systemctl edit user@.service
+```
+
+Add this exact content, then save and close the editor:
+
+```ini
+[Service]
+Delegate=cpu memory pids
+```
+
+Reload systemd and restart the affected user's manager:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart "user@${uid}.service"
+systemctl --user start app.slice
+```
+
+`daemon-reload` makes the drop-in visible, but it does not update an existing user manager.
+The `user@<uid>.service` restart or a host reboot is required before `app.slice` can receive the new controller delegation.
+The administrator's `sudo` policy can request authentication, but NemoClaw never receives that credential.
+
+Verify the root hierarchy, current user manager, and `app.slice`:
+
+```bash
+uid="$(id -u)"
+user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"
+
+for controllers in \
+  /sys/fs/cgroup/cgroup.controllers \
+  "${user_manager}/cgroup.controllers" \
+  "${user_manager}/app.slice/cgroup.controllers"
+do
+  printf '%s: ' "$controllers"
+  if grep -qw cpu "$controllers"; then
+    echo cpu
+  else
+    echo missing
+  fi
+done
+```
+
+Continue only when all three lines end in `: cpu`.
+This verification reads no credentials.
+Then rerun portable onboarding:
+
+```bash
+$$nemoclaw onboard --experimental-profile portable
+```
+
 ### Portable Podman Readiness Fails
 
 Portable commands use the current user's rootless Podman socket authority recorded in NemoClaw state.

@@ -26,9 +26,21 @@ function proofJob(): WorkflowJob {
   return job!;
 }
 
+function delegationJob(): WorkflowJob {
+  const job = workflow().jobs["portable-cpu-delegation"];
+  expect(job).toBeDefined();
+  return job!;
+}
+
 function namedStep(name: string): WorkflowStep {
   const step = proofJob().steps?.find((candidate) => candidate.name === name);
   expect(step, `missing Podman CPU proof step '${name}'`).toBeDefined();
+  return step!;
+}
+
+function namedDelegationStep(name: string): WorkflowStep {
+  const step = delegationJob().steps?.find((candidate) => candidate.name === name);
+  expect(step, `missing CPU delegation proof step '${name}'`).toBeDefined();
   return step!;
 }
 
@@ -51,6 +63,12 @@ describe("native Podman CPU proof workflow", () => {
     );
     expect(parsed.on.pull_request.paths).toContain(
       "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts",
+    );
+    expect(parsed.on.pull_request.paths).toContain(
+      "src/lib/onboard/experimental/portable-host-preparation*.ts",
     );
     expect(parsed.on.pull_request.paths).toContain("scripts/install-openshell.sh");
     expect(parsed.on.pull_request.paths).toContain(
@@ -88,6 +106,30 @@ describe("native Podman CPU proof workflow", () => {
     expect(installOpenShell).toContain("bash scripts/install-openshell.sh");
     expect(installOpenShell).toContain("$HOME/.local/bin");
     expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("${{ secrets.");
+    const delegation = delegationJob();
+    const prepare = namedDelegationStep("Prepare the clean user manager boundary").run ?? "";
+    const reject = namedDelegationStep("Prove missing delegation fails before effects").run ?? "";
+    const admit =
+      namedDelegationStep("Apply administrator delegation and prove admission").run ?? "";
+    const cleanup = namedDelegationStep("Restore the user manager boundary");
+
+    expect(delegation.name).toBe("Portable CPU delegation admission on clean Ubuntu");
+    expect(delegation["runs-on"]).toBe("ubuntu-22.04");
+    expect(delegation["timeout-minutes"]).toBe(15);
+    expect(delegation.env?.E2E_SOURCE_REVISION).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(namedDelegationStep("Checkout").with).toMatchObject({
+      "persist-credentials": false,
+      ref: "${{ github.event.pull_request.head.sha }}",
+    });
+    expect(prepare).toContain('loginctl enable-linger "$USER"');
+    expect(prepare).toContain('systemctl start "user@${uid}.service"');
+    expect(reject).toContain("Delegate=memory pids");
+    expect(reject).toContain("portable-cpu-delegation-proof.ts missing");
+    expect(admit).toContain("Delegate=cpu memory pids");
+    expect(admit).toContain("portable-cpu-delegation-proof.ts delegated");
+    expect(cleanup.if).toBe("always()");
+    expect(cleanup.run).toContain("rm -f /etc/systemd/system/user@.service.d/");
+    expect(cleanup.run).toContain('loginctl disable-linger "$USER"');
   });
 
   it("pins one rootless socket and fails closed on Docker use", () => {
