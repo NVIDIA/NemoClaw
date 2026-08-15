@@ -198,10 +198,18 @@ jobs:
               fi
             fi
             if [ -e "$workspace_traverse_marker" ]; then
+              workspace_restore_failed=0
               while IFS=$'\t' read -r original_mode workspace_path; do
-                sudo chmod "$original_mode" -- "$workspace_path" || cleanup_failed=1
+                if ! sudo chmod "$original_mode" -- "$workspace_path"; then
+                  workspace_restore_failed=1
+                  cleanup_failed=1
+                fi
               done <"$workspace_traverse_marker"
-              rm -f -- "$workspace_traverse_marker" || cleanup_failed=1
+              if [ "$workspace_restore_failed" = 0 ]; then
+                rm -f -- "$workspace_traverse_marker" || cleanup_failed=1
+              else
+                echo "::error::Preserving the workspace mode receipt for final cleanup retry" >&2
+              fi
             fi
             if [ "$cleanup_failed" != 0 ]; then
               echo "::error::Preparation rollback was incomplete; final cleanup will retry recorded resources" >&2
