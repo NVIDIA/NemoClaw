@@ -34,7 +34,7 @@ const SOURCE: NativeRuntimeQualificationPlanSource = {
   },
 };
 
-function evidence(row: NativeRuntimeQualificationPlanRow): unknown {
+function evidence(row: NativeRuntimeQualificationPlanRow): Record<string, unknown> {
   return {
     schemaVersion: 1,
     kind: "nemoclaw-native-runtime-qualification-case-evidence-v1",

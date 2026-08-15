@@ -84,8 +84,11 @@ describe("native runtime qualification trusted plan", () => {
     ["producer run attempt", { producerRunAttempt: 2 }],
     ["dispatch artifact", { dispatchArtifact: { ...SOURCE.dispatchArtifact, name: "unexpected" } }],
   ])("rejects invalid %s", (_label, override) => {
-    expect(() => buildNativeRuntimeQualificationPlan({ ...SOURCE, ...override })).toThrow(
-      "Native runtime qualification",
-    );
+    expect(() =>
+      buildNativeRuntimeQualificationPlan({
+        ...SOURCE,
+        ...override,
+      } as NativeRuntimeQualificationPlanSource),
+    ).toThrow("Native runtime qualification");
   });
 });
