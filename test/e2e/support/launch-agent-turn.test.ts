@@ -23,6 +23,8 @@ import {
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
+const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
@@ -365,7 +367,7 @@ exec "$@"
       tuiProcessIds.some((pid) => existsSync(`/proc/${pid}`)) &&
       Date.now() < processExitDeadline
     ) {
-      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 25)"], { timeout: 100 });
+      Atomics.wait(PROCESS_EXIT_WAIT, 0, 0, 25);
     }
     return {
       baselineRemoved: !existsSync(baselinePath),
