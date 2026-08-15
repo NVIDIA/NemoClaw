@@ -88,6 +88,8 @@ function createDeps() {
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
     getSandboxRecoveryAuthority: (): "missing" => "missing",
     withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
+    withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
+    getModelRouterPort: () => 4000,
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
@@ -411,6 +413,71 @@ describe("provider route containment", () => {
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("waits for a cross-gateway teardown port lock before publishing routed resume repair (#9098)", async () => {
+    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    let insideGatewayLock = false;
+    let insidePortLock = false;
+    let reportPortLockRequested!: () => void;
+    const portLockRequested = new Promise<void>((resolve) => {
+      reportPortLockRequested = resolve;
+    });
+    let releaseTeardownPortLock!: () => void;
+    const teardownPortLockReleased = new Promise<void>((resolve) => {
+      releaseTeardownPortLock = resolve;
+    });
+    deps.withGatewayRouteMutationLock = async (gatewayName, operation) => {
+      expect(gatewayName).toBe("nemoclaw-9090");
+      insideGatewayLock = true;
+      try {
+        return await operation();
+      } finally {
+        insideGatewayLock = false;
+      }
+    };
+    deps.withModelRouterPortLifecycleLock = async (port, operation) => {
+      expect(insideGatewayLock).toBe(true);
+      expect(port).toBe(4000);
+      reportPortLockRequested();
+      await teardownPortLockReleased;
+      insidePortLock = true;
+      try {
+        return await operation();
+      } finally {
+        insidePortLock = false;
+      }
+    };
+    calls.reconcileRouter.mockImplementation(async () => {
+      expect(insideGatewayLock).toBe(true);
+      expect(insidePortLock).toBe(true);
+    });
+    calls.reupsertRoutedProvider.mockImplementation(() => {
+      expect(insideGatewayLock).toBe(true);
+      expect(insidePortLock).toBe(true);
+      return { ok: true, endpointUrl: "http://host.openshell.internal:4000/v1" };
+    });
+    calls.reserveRoute.mockImplementation(() => {
+      expect(insideGatewayLock).toBe(true);
+      expect(insidePortLock).toBe(true);
+      return true;
+    });
+
+    const repair = handleProviderInferenceState(resumeOptions(deps, session));
+    await portLockRequested;
+
+    expect(calls.reconcileRouter).not.toHaveBeenCalled();
+    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+
+    releaseTeardownPortLock();
+    await expect(repair).resolves.toMatchObject({ provider: "nvidia-router" });
+
+    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(calls.reserveRoute).toHaveBeenCalledOnce();
   });
 
   it("allows compatible-endpoint refresh to reach the final setup boundary (#6315)", async () => {
