@@ -12,7 +12,7 @@ shields transaction already shipped in the image.
 
 The publisher keeps a root-only journal beside the controller marker.  The
 journal binds the provider nonce and complete canonical plan before the Hermes
-guard begins, so a lost Docker exec response can resume only the same
+guard begins, so a lost provider exec response can resume only the same
 transaction.  A successful retry independently verifies the top-level
 config/hash projection and every selector in the installed state-lock plan.
 """
@@ -283,7 +283,12 @@ def _normalize_marker(marker: object, posture: str) -> dict[str, object]:
     nonce = _hex(marker.get("nonce"), "publisher-marker-invalid")
     plan_sha256 = _hex(marker.get("planSha256"), "publisher-marker-invalid")
     projection_sha256 = _hex(marker.get("projectionSha256"), "publisher-marker-invalid")
-    if marker.get("providerId") != "docker" or marker.get("stateRoot") != HERMES_DIR:
+    provider_id = marker.get("providerId")
+    if (
+        not isinstance(provider_id, str)
+        or re.fullmatch(r"[a-z][a-z0-9-]{0,62}", provider_id) is None
+        or marker.get("stateRoot") != HERMES_DIR
+    ):
         _fail("publisher-marker-invalid")
     target = marker.get("target")
     rollback = marker.get("rollback")
@@ -385,6 +390,7 @@ def _normalize_marker(marker: object, posture: str) -> dict[str, object]:
     return {
         "binding": binding,
         "bindingSha256": hashlib.sha256(_canonical(binding)).hexdigest(),
+        "providerId": provider_id,
         "transactionId": transaction_id,
         "nonce": nonce,
         "planSha256": plan_sha256,
