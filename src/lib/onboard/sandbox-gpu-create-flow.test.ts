@@ -53,6 +53,7 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
 }));
 
 import type { AgentDefinition } from "../agent/defs";
+import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   createGpuFlowDeps as createDeps,
@@ -80,6 +81,7 @@ import type {
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 import {
+  resolveExportedPortableRuntimeAuthority,
   resolveAgentCreateInput,
   resolvePortableLifecycleMode,
   runSandboxGpuCreateFlow,
@@ -112,6 +114,17 @@ const DEFAULT_RUNTIME_SNAPSHOT = {
   nvidiaVisibleDevices: null,
   nativeGpuAttachmentState: "absent" as const,
   containerId: "container-a",
+};
+
+const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
+  schemaVersion: 1,
+  kind: "podman",
+  ownership: "current-user",
+  uid: 1001,
+  homeDir: "/home/tester",
+  configHome: "/home/tester/.config",
+  runtimeDir: "/run/user/1001",
+  socketPath: "/run/user/1001/podman/podman.sock",
 };
 
 type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
@@ -206,6 +219,36 @@ describe("resolveAgentCreateInput", () => {
     });
     expect(resolvePortableLifecycleMode(null, env)).toBe(true);
     expect(resolvePortableLifecycleMode({ name: "hermes" } as AgentDefinition, env)).toBe(false);
+  });
+});
+
+describe("resolveExportedPortableRuntimeAuthority", () => {
+  it("passes checkpoint-owned authority to exported portable creation (#9070)", () => {
+    expect(
+      resolveExportedPortableRuntimeAuthority(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        () => ({
+          checkpoint: {
+            profile: { kind: "selected", value: "portable" },
+            runtimeAuthority: { kind: "selected", value: PORTABLE_RUNTIME_AUTHORITY },
+          },
+        }),
+      ),
+    ).toEqual(PORTABLE_RUNTIME_AUTHORITY);
+  });
+
+  it("rejects exported portable creation before effects when authority is absent (#9070)", () => {
+    expect(() =>
+      resolveExportedPortableRuntimeAuthority(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        () => ({
+          checkpoint: {
+            profile: { kind: "selected", value: "portable" },
+            runtimeAuthority: { kind: "unset" },
+          },
+        }),
+      ),
+    ).toThrow("requires checkpoint-owned Podman runtime authority before creation begins");
   });
 });
 
@@ -435,7 +478,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(errorOutput()).not.toContain(recoverySecret);
   });
 });
-
 describe("runSandboxGpuCreateFlow proof authorization", () => {
   it("does not retry compatibility when the native proof throws an exec/policy error (#6110)", async () => {
     const deps = createDeps();
@@ -938,6 +980,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
   it("uses the provided lifecycle generation for portable setup and registration (#8942)", async () => {
     const input = createInput();
     input.lifecycleGeneration = "current-generation";
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(
       (_sandboxName, _startupCommand, _env, options) => options.registryGeneration ?? null,
@@ -954,13 +997,17 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxName,
       input.sandboxStartupCommand,
       process.env,
-      { registryGeneration: "current-generation" },
+      {
+        registryGeneration: "current-generation",
+        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
+      },
     );
   });
 
   it("preserves the provided lifecycle generation when portable setup is unavailable (#8942)", async () => {
     const input = createInput();
     input.lifecycleGeneration = "fresh-generation";
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(() => null);
 
@@ -973,7 +1020,10 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxName,
       input.sandboxStartupCommand,
       process.env,
-      { registryGeneration: "fresh-generation" },
+      {
+        registryGeneration: "fresh-generation",
+        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
+      },
     );
   });
 
@@ -998,6 +1048,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "native-only";
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     input.portableLifecycle = true;
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     input.lifecycleGeneration = "checkpoint-generation";
     input.persistStartupCommand = true;
     const deps = createDeps();
@@ -1014,7 +1065,10 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       input.sandboxName,
       input.sandboxStartupCommand,
       input.hostEnv,
-      { registryGeneration: "checkpoint-generation" },
+      {
+        registryGeneration: "checkpoint-generation",
+        runtimeAuthority: PORTABLE_RUNTIME_AUTHORITY,
+      },
     );
     expect(mocks.waitForCreatedSandboxReadyWithTrace.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(deps.installPortableDemoLifecycle).mock.invocationCallOrder[0]!,
@@ -1035,6 +1089,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "native-only";
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     input.portableLifecycle = true;
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(() => {
       throw new Error("portable authority changed");
@@ -1056,6 +1111,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.gpuRoutePlan = "native-only";
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     input.portableLifecycle = true;
+    input.portableRuntimeAuthority = PORTABLE_RUNTIME_AUTHORITY;
     const deps = createDeps();
     deps.installPortableDemoLifecycle = vi.fn(() => "current-generation");
     vi.mocked(deps.verifyDirectSandboxGpu).mockImplementation(() => {
