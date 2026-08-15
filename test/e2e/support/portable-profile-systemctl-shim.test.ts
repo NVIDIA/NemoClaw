@@ -114,6 +114,25 @@ function systemctl(scope: FixtureScope, args: string[]): ReturnType<typeof spawn
   });
 }
 
+function formatPsStartTime(scope: FixtureScope, startTime: string): ReturnType<typeof spawnSync> {
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      'source "$1"\nformat_ps_start_time "$2"',
+      "portable-profile-ps-start-time",
+      scope.shim,
+      startTime,
+    ],
+    {
+      encoding: "utf8",
+      env: scope.env,
+      killSignal: "SIGKILL",
+      timeout: 15_000,
+    },
+  );
+}
+
 function systemctlAsync(
   scope: FixtureScope,
   args: string[],
@@ -303,6 +322,46 @@ function portableLaunchStep(name: string): WorkflowStep {
 }
 
 describe("portable profile systemctl fixture", () => {
+  it("normalizes irregular ps fallback spacing to one process-start-time identity (#9006)", () => {
+    const scope = createFixture();
+    try {
+      const result = formatPsStartTime(scope, "  Fri  Aug   8  12:34:56  2026  ");
+      expect(result.status, String(result.stderr)).toBe(0);
+      expect(result.stdout).toBe("ps:Fri Aug 8 12:34:56 2026\n");
+    } finally {
+      fs.rmSync(scope.directory, { force: true, recursive: true });
+    }
+  });
+
+  it("treats a process that exits during shared cleanup identity revalidation as inactive (#9006)", async () => {
+    const scope = createFixture();
+    const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+    const exitedPid = Number.MAX_SAFE_INTEGER;
+    const kill = vi.spyOn(process, "kill");
+    kill.mockImplementationOnce((_pid, signal) => {
+      expect(signal).toBe(0);
+      return true;
+    });
+    kill.mockImplementation((_pid, signal) => {
+      expect(signal).toBe(0);
+      throw Object.assign(new Error("process exited"), { code: "ESRCH" });
+    });
+    fs.writeFileSync(servicePidFile, `${String(exitedPid)}\tproc:1\tservice:${"0".repeat(32)}\n`, {
+      mode: 0o600,
+    });
+
+    try {
+      await expect(
+        cleanupPortableProfileSystemctlFixture(scope.runtimeDir),
+      ).resolves.toBeUndefined();
+      expect(kill).toHaveBeenCalledTimes(3);
+      expect(fs.existsSync(servicePidFile)).toBe(false);
+    } finally {
+      kill.mockRestore();
+      fs.rmSync(scope.directory, { force: true, recursive: true });
+    }
+  });
+
   it(
     "installs a mode-0700 shim that preserves socket identity from cold activation through try-restart (#9006)",
     { timeout: 30_000 },

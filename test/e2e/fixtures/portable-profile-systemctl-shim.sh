@@ -15,6 +15,14 @@ process_identity_env="NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID"
 process_identity_failure_role="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE:-}"
 process_identity_failure_record="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD:-}"
 
+format_ps_start_time() {
+  local start_time="$1"
+  local -a start_time_fields
+  read -r -a start_time_fields <<<"$start_time"
+  [[ "${#start_time_fields[@]}" -gt 0 ]] || return 1
+  printf 'ps:%s\n' "${start_time_fields[*]}"
+}
+
 process_start_time() {
   local pid="$1"
   if [[ -r "/proc/${pid}/stat" ]]; then
@@ -30,10 +38,7 @@ process_start_time() {
 
   local start_time
   start_time="$(ps -o lstart= -p "$pid" 2>/dev/null)" || return 1
-  start_time="${start_time#"${start_time%%[![:space:]]*}"}"
-  start_time="${start_time%"${start_time##*[![:space:]]}"}"
-  [[ -n "$start_time" ]] || return 1
-  printf 'ps:%s\n' "$start_time"
+  format_ps_start_time "$start_time"
 }
 
 process_has_identity() {
@@ -888,6 +893,10 @@ NODE
   cat "$log_file" >&2 || true
   return 1
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 if [[ "$#" -eq 4 &&
   "$1" == "--user" &&

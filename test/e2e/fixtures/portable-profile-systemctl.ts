@@ -134,6 +134,7 @@ function fixtureProcessIsActive(processIdentity: FixtureProcessIdentity): boolea
     readProcessStartTime(processIdentity.pid) !== processIdentity.startTime ||
     !processHasIdentity(processIdentity.pid, processIdentity.identity)
   ) {
+    if (!processIsActive(processIdentity.pid)) return false;
     throw new Error(
       `Portable profile fixture PID file ${processIdentity.pidFile} does not match process ${String(processIdentity.pid)}.`,
     );
