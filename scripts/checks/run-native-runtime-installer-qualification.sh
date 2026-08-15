@@ -404,7 +404,8 @@ run_native_runtime_installer_qualification() {
     bounded_file "$receipt_path" "$MAX_JSON_BYTES"
   done
   chmod 600 "${receipt_stage}"/*
-  mv "$receipt_stage" "$artifact_dir"
+  mv -T -- "$receipt_stage" "$artifact_dir" \
+    || fail "Could not publish the qualification receipts to ${artifact_dir}."
   receipt_stage=""
 
   printf 'Native runtime installer qualification receipts: %s\n' "$artifact_dir"

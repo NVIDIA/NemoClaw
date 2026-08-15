@@ -141,12 +141,17 @@ function runQualification(
     candidateSha?: string;
     environment?: NodeJS.ProcessEnv;
     installerSha256?: string;
+    publishRace?: boolean;
   } = {},
 ) {
   const toolDirectory = temporaryDirectory("nemoclaw-native-tools-");
   const socketProbe = path.join(toolDirectory, "docker.sock");
   writeExecutable(path.join(toolDirectory, "systemctl"), "#!/usr/bin/env bash\nexit 1\n");
   writeExecutable(path.join(toolDirectory, "pgrep"), "#!/usr/bin/env bash\nexit 1\n");
+  const moveScript = options.publishRace
+    ? '#!/usr/bin/env bash\nmkdir -p -- "${!#}"\ntouch -- "${!#}/.concurrent-writer"\nexec /usr/bin/mv "$@"\n'
+    : '#!/usr/bin/env bash\nexec /usr/bin/mv "$@"\n';
+  writeExecutable(path.join(toolDirectory, "mv"), moveScript);
   const qualificationArguments = [
     "--candidate-checkout",
     candidate.root,
@@ -457,5 +462,17 @@ main --non-interactive --yes-i-accept-third-party-software
         defaultSocketPathsAbsent: true,
       },
     });
+  });
+
+  it("fails closed when a populated receipt target appears during publication", () => {
+    const candidate = candidateFixture();
+    const artifactParent = temporaryDirectory("nemoclaw-native-artifacts-");
+    const artifactDirectory = path.join(artifactParent, "qualification");
+
+    const result = runQualification(candidate, artifactDirectory, { publishRace: true });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Could not publish the qualification receipts");
+    expect(fs.readdirSync(artifactDirectory)).toEqual([".concurrent-writer"]);
   });
 });
