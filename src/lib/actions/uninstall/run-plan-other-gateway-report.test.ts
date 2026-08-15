@@ -6,6 +6,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
+
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 
 import { type RunResult, runUninstallPlan, type UninstallRunDeps } from "./run-plan";
 
@@ -21,8 +32,36 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function managedAuthority(): Pick<UninstallRunDeps, "resolveGatewayTeardownAuthority"> {
-  return {
+function writeScopedGatewayState(home: string, port = 8080): void {
+  const stateDir = path.join(
+    home,
+    ".local",
+    "state",
+    "nemoclaw",
+    resolveGatewayStateDirName(port),
+  );
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  fs.writeFileSync(
+    path.join(stateDir, "openshell-gateway.toml"),
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${String(port)}`,
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
+  );
+  writeManagedGatewayRuntimeProof(stateDir, port);
+}
+
+function withManagedAuthority(deps: UninstallRunDeps): UninstallRunDeps {
+  return withProvenManagedGatewayProcess({
+    isPortFree: () => true,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -33,7 +72,8 @@ function managedAuthority(): Pick<UninstallRunDeps, "resolveGatewayTeardownAutho
       supervisor: null,
       requiredCapabilities: [],
     }),
-  };
+    ...deps,
+  });
 }
 
 function uninstallOutputFor(
@@ -49,6 +89,7 @@ function uninstallOutputFor(
   const warnings: string[] = [];
   try {
     const stateDir = path.join(tmpHome, ".nemoclaw");
+    writeScopedGatewayState(tmpHome);
     fs.mkdirSync(stateDir, { recursive: true });
     const writeRegistry = {
       absent: () => undefined,
@@ -60,8 +101,7 @@ function uninstallOutputFor(
 
     runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
-      {
-        ...managedAuthority(),
+      withManagedAuthority({
         commandExists: () => true,
         env: { HOME: tmpHome, LOGNAME: "tester", ...env } as NodeJS.ProcessEnv,
         error: (message: string) => warnings.push(message),
@@ -78,7 +118,7 @@ function uninstallOutputFor(
             ? ok(gatewayList)
             : ok(),
         runDocker: () => ok(),
-      },
+      }),
     );
     return { logs, warnings };
   } finally {

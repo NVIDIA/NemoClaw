@@ -164,9 +164,9 @@ function rebind(
 ) {
   const profile = built.profile;
   const webSearch =
-    profile.agentConfig.agent === "langchain-deepagents-code"
-      ? null
-      : profile.agentConfig.webSearch;
+    profile.agentConfig.agent === "openclaw" || profile.agentConfig.agent === "hermes"
+      ? profile.agentConfig.webSearch
+      : null;
   const hermesDashboard = profile.dashboard.agent === "hermes" ? profile.dashboard : null;
   const dcodeConfig =
     profile.agentConfig.agent === "langchain-deepagents-code" ? profile.agentConfig : null;

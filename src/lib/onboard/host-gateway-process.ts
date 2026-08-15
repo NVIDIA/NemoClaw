@@ -38,6 +38,7 @@ export interface HostGatewayProcessDeps {
   commandExists?: (command: string) => boolean;
   isPortFree?: (port: number) => boolean;
   log?: (message: string) => void;
+  readProcessExecutable?: (pid: number) => string | null;
   readProcessEnvironment?: (pid: number) => Record<string, string> | null;
   warn?: (message: string) => void;
 }
@@ -145,6 +146,7 @@ function defaultDeps(overrides: Partial<HostGatewayProcessDeps> = {}): HostGatew
     commandExists: overrides.commandExists ?? ((cmd) => defaultCommandExists(cmd, env)),
     isPortFree: overrides.isPortFree ?? ((port) => isHostPortFree(port)),
     log: overrides.log,
+    readProcessExecutable: overrides.readProcessExecutable,
     readProcessEnvironment: overrides.readProcessEnvironment,
     warn: overrides.warn,
   };
@@ -281,6 +283,60 @@ export function processUsesStateScopedSandboxNamespace(
   return environment?.[NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV] === gatewayIdForStateDir(stateDir);
 }
 
+function readProcessExecutable(pid: number, deps: HostGatewayProcessDeps): string | null {
+  if (deps.readProcessExecutable) return deps.readProcessExecutable(pid);
+  try {
+    return fs.realpathSync.native(`/proc/${String(pid)}/exe`);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProcessExecutable(value: string): string {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+export function externallySupervisedHostGatewayProcessOwnershipFailure(
+  depsOverrides: Partial<HostGatewayProcessDeps>,
+  options: {
+    gatewayBin: string;
+    gatewayName: string;
+    gatewayPort: number;
+    pid: number;
+    stateDir: string;
+  },
+): string | null {
+  const deps = defaultDeps(depsOverrides);
+  if (!canonicalGatewayTargetMatches(options.gatewayName, options.gatewayPort)) {
+    return "selected gateway name and port are not canonical";
+  }
+  if (!processUsesStateScopedSandboxNamespace(options.pid, options.stateDir, deps)) {
+    return "gateway process owner and loaded sandbox namespace cannot be proven";
+  }
+  const executable = readProcessExecutable(options.pid, deps);
+  if (
+    !executable ||
+    normalizeProcessExecutable(executable) !== normalizeProcessExecutable(options.gatewayBin)
+  ) {
+    return "process executable does not match the declared supervisor executable";
+  }
+  if (
+    !hostGatewayCmdlineMatches(
+      processArgs(options.pid, deps),
+      options.gatewayBin,
+      { name: options.gatewayName, port: options.gatewayPort },
+      { requireExpectedFlags: true },
+    )
+  ) {
+    return "process command line does not identify the selected gateway name and port";
+  }
+  return null;
+}
+
 export function hostGatewayCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
@@ -332,6 +388,34 @@ function scopedGatewayOwnershipFailure(
     return "process command line does not identify the selected gateway name and port";
   }
   return null;
+}
+
+export function scopedHostGatewayProcessOwnershipFailure(
+  depsOverrides: Partial<HostGatewayProcessDeps>,
+  options: Pick<
+    StopHostGatewayOptions,
+    "gatewayBin" | "openShellGatewayName" | "openShellGatewayPort" | "pidFile" | "stateDir"
+  >,
+): string | null {
+  const deps = defaultDeps(depsOverrides);
+  const stateDir = options.stateDir ?? resolveDockerDriverGatewayStateDir(deps.env);
+  const pidFile = options.pidFile ?? path.join(stateDir, "openshell-gateway.pid");
+  const port = Number(options.openShellGatewayPort);
+  const name = options.openShellGatewayName?.trim() ?? "";
+  if (
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65_535 ||
+    !canonicalGatewayTargetMatches(name, port)
+  ) {
+    return "selected gateway name and port are not canonical";
+  }
+  const pid = readPidFile(pidFile);
+  if (pid === null) return "selected gateway PID file is missing or invalid";
+  if (hostGatewayProcessStatus(pid, deps) !== "running") {
+    return "selected gateway process is not running with a proven status";
+  }
+  return scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, { name, port });
 }
 
 function waitForExit(
@@ -399,13 +483,26 @@ function pgrepHostGatewayPids(deps: HostGatewayProcessDeps): {
   return { pids: parsePidLines(result.stdout), scanned: true };
 }
 
-function warnSudoRemediation(pid: number, deps: HostGatewayProcessDeps): void {
+function warnSudoRemediation(
+  pid: number,
+  deps: HostGatewayProcessDeps,
+  expected: {
+    name?: string;
+    port?: number;
+  },
+): void {
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   const owner = pidOwner(pid, deps);
   const ownerLabel = owner ? `${owner}-owned` : "privileged";
+  const target =
+    expected.name && expected.port
+      ? `gateway '${expected.name}' on port ${String(expected.port)}`
+      : "the intended gateway name and port";
   warn(
     `Cannot stop ${ownerLabel} host openshell-gateway process ${pid}. ` +
-      `Run: sudo kill -9 ${pid}`,
+      `Do not signal this saved PID without a fresh identity check. Before any privileged stop, ` +
+      `verify that the live process owner and command line identify ${target}, and that the PID ` +
+      "file, runtime marker, and loaded sandbox namespace still match the selected state directory.",
   );
 }
 
@@ -414,6 +511,7 @@ function tryStopPid(
   deps: HostGatewayProcessDeps,
   options: Required<Pick<StopHostGatewayOptions, "killWaitMs" | "pollIntervalMs" | "termWaitMs">>,
   canSignal?: () => boolean,
+  remediationTarget: { name?: string; port?: number } = {},
 ): "stopped" | "failed" | "identity-changed" {
   const log = deps.log ?? ((message: string) => console.log(message));
   if (canSignal && !canSignal()) return "identity-changed";
@@ -428,7 +526,7 @@ function tryStopPid(
     log(`Stopped host openshell-gateway process ${pid} (after SIGKILL)`);
     return "stopped";
   }
-  warnSudoRemediation(pid, deps);
+  warnSudoRemediation(pid, deps, remediationTarget);
   return "failed";
 }
 
@@ -598,6 +696,10 @@ export function stopHostGatewayProcesses(
             );
           }
         : undefined,
+      {
+        name: expectedOpenShellGateway?.name,
+        port: Number(expectedOpenShellGateway?.port) || undefined,
+      },
     );
     if (stopResult === "identity-changed") {
       return rejectScoped("process ownership changed immediately before signaling", pid);

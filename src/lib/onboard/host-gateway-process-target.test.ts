@@ -5,9 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
   gatewayIdForStateDir,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "./docker-driver-gateway-config";
@@ -20,6 +22,18 @@ import {
 } from "./host-gateway-process";
 
 const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
+const tempRoots = new Set<string>();
+
+afterEach(() => {
+  for (const root of tempRoots) fs.rmSync(root, { recursive: true, force: true });
+  tempRoots.clear();
+});
+
+function makeTempRoot(prefix: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempRoots.add(root);
+  return root;
+}
 
 type RunResponse = (args: string[]) => RunResult;
 
@@ -81,12 +95,24 @@ function stopScopedTarget(
 ) {
   const selectedPid = 9_999_601;
   const pid = overrides.pidFilePid ?? selectedPid;
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-scoped-target-"));
+  const stateDir = makeTempRoot("nemoclaw-scoped-target-");
   const pidFile = path.join(stateDir, "openshell-gateway.pid");
   fs.writeFileSync(pidFile, `${String(pid)}\n`);
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
   fs.writeFileSync(
     path.join(stateDir, "openshell-gateway.toml"),
-    `[openshell.drivers.docker]\nsandbox_namespace = "${gatewayIdForStateDir(stateDir)}"\n`,
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:18080",
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
   );
   writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
     desiredEnv: {},
@@ -149,7 +175,7 @@ function stopScopedTarget(
 }
 
 function stopTargetedPid(pid: number, cmdline: string, targeted = true) {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-target-"));
+  const stateDir = makeTempRoot("nemoclaw-host-gateway-target-");
   const pidFile = path.join(stateDir, "openshell-gateway.pid");
   fs.writeFileSync(pidFile, `${pid}\n`);
   const exited = new Set<number>();

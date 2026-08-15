@@ -19,7 +19,8 @@ before those targets run; local runners must provide it themselves.
   failures from approved `main` workflows and requests one full rerun only when
   every non-passing job has authenticated GitHub-hosted runner-loss evidence.
 - `.github/workflows/e2e-main-retry.yaml` evaluates eligible `E2E main` push
-  attempts, requests at most two failed-job reruns, and uploads attempt evidence.
+  attempts and uploads attempt evidence. It never authorizes a broad failed-job
+  rerun; retry decisions belong to bounded operation-level policies.
 - The `staging-brev-launchable` job in `.github/workflows/e2e.yaml` validates
   the baked candidate without installing or copying NemoClaw source.
 - `.github/workflows/platform-vitest-main.yaml` publishes `CI / Platform Evidence` for Ubuntu 26.04, macOS, and WSL.
@@ -668,18 +669,13 @@ It does not handle `E2E main`.
 The complete non-passing job listing must contain only authenticated hosted-runner-loss evidence for the workflow's approved runner labels.
 An ordinary assertion failure, mixed failure set, incomplete listing, custom or self-hosted label, changed evidence, or ambiguous pagination prevents recovery.
 
-For eligible `E2E main` push runs, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
-A successful CLI artifact producer is not rerun.
-The workflow retains its CLI artifact for 3 days.
-During that period, consumers can reuse the immutable, content-addressed artifact from an earlier producer attempt in the same workflow run.
-If the artifact is unavailable when a consumer downloads it, restoration fails because the failed-job rerun does not rerun the successful producer.
-Restore validation binds the producer provenance to the workflow run, workflow SHA, and candidate checkout.
-It downloads by immutable artifact ID and verifies the manifest and the payload digest.
-It rejects a producer attempt newer than the consumer attempt.
-The controller can request two reruns.
-It does not verify that GitHub schedules a different runner, so do not treat a rerun as evidence of a fresh host.
-It ignores manual runs and source runs superseded by a newer `main` push.
-The controller checks out only trusted default-branch code and receives no repository secrets.
+For eligible `E2E main` push runs, `E2E / Main Retry` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
+A failed job can represent a deterministic product assertion, authentication or authorization failure, policy denial, malformed input, ambiguous mutation, cleanup failure, or an external transient.
+GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
+External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
+Operation-level retry artifacts retain each attempt.
+Hosted runner loss remains owned by Hosted Runner Recovery.
+The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
 
 The runner-allocation and internal-error failures handled by Hosted Runner
 Recovery originate in GitHub Actions, outside repository-controlled workflow
@@ -973,7 +969,8 @@ flowchart LR
 
 Selected jobs retain their runner, credential, evidence, and cleanup boundaries.
 A main push can queue repository-owned GPU runners or create external resources when a selected target requires them.
-The retry workflow reruns failed jobs at most twice.
+The main-run observer records attempt evidence but does not request broad failed-job reruns.
+Each E2E test owns any bounded operation-level retry policy.
 
 `Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`.
 The job reads these credentials from repository Actions secrets:
@@ -991,13 +988,14 @@ These credentials remain valid until they expire or an administrator revokes
 them in their issuing services. If cleanup fails, remove the recorded Brev
 workspace. Rotate or revoke each credential to remove later access.
 
-When an eligible `E2E main` push workflow concludes with `failure`, `E2E / Main Retry` asks GitHub Actions to rerun failed jobs and their dependent jobs.
-The controller permits two reruns but does not verify that GitHub schedules a different runner.
-After evaluation succeeds, it uploads an artifact named for the current attempt.
+When an eligible `E2E main` push workflow completes, `E2E / Main Retry` records its conclusion and the available source-attempt evidence.
+It does not request a broad failed-job or workflow rerun.
+An owning E2E test can retry an external operation only through its checked-in bounded policy.
+After evaluation succeeds, the observer uploads an artifact named for the current attempt.
 The artifact contains one `attempts` summary for each source attempt through the current attempt.
 The `totalRunnerMinutes` field contains the cumulative runner time for those summaries.
 A later successful attempt sets `action` to `passed-after-retry` and `flaky` to `true`.
-The controller does not retry manual PR runs or a run superseded by a newer `main` push.
+The observer ignores manual PR runs and a run superseded by a newer `main` push.
 
 For a PR revision run, a repository maintainer or administrator leaves `jobs` and `targets` empty. The run selects:
 
