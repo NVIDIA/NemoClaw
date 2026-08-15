@@ -134,6 +134,8 @@ describe("native Podman CPU proof workflow", () => {
     expect(prepare).toContain(
       'useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"',
     );
+    expect(prepare).toContain("CPUAccounting=yes");
+    expect(prepare).toContain('grep -qw cpu "$user_slice_controllers"');
     expect(prepare).toContain('loginctl enable-linger "$E2E_CPU_DELEGATION_USER"');
     expect(prepare).toContain('systemctl start "user@${uid}.service"');
     expect(reject).not.toContain("Delegate=memory pids");
@@ -159,9 +161,15 @@ describe("native Podman CPU proof workflow", () => {
       'drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"',
     );
     expect(cleanup.run).toContain('sudo rm -f "$drop_in"');
+    expect(cleanup.run).toContain('sudo rm -f "$E2E_CPU_ACCOUNTING_DROP_IN"');
+    expect(cleanup.run).toContain('sudo rmdir "$E2E_CPU_ACCOUNTING_DROP_IN_DIR"');
     expect(cleanup.run).toContain('loginctl disable-linger "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain('userdel --remove "$E2E_CPU_DELEGATION_USER"');
     expect(cleanup.run).toContain("CPU delegation proof drop-in remained after cleanup");
+    expect(cleanup.run).toContain("CPU accounting proof drop-in remained after cleanup");
+    expect(cleanup.run).toContain(
+      "CPU accounting proof drop-in directory remained after cleanup",
+    );
     expect(cleanup.run).toContain("CPU delegation proof user remained after cleanup");
     const delegationProof = readRepoText(
       "test/e2e/live/portable-cpu-delegation-proof.test.ts",
