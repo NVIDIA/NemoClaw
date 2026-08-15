@@ -57,22 +57,17 @@ function createFixture(): FixtureScope {
   const directory = fs.mkdtempSync("/tmp/portable-systemctl-shim-");
   const binDir = path.join(directory, "bin");
   const homeDir = path.join(directory, "home");
+  const binHome = path.join(homeDir, ".local", "bin");
+  const configHome = path.join(homeDir, ".config");
+  const stateHome = path.join(homeDir, ".local", "state");
   const runtimeDir = path.join(directory, "runtime");
   const socketPath = path.join(runtimeDir, "podman", "podman.sock");
-  const gatewayBin = path.join(homeDir, ".local", "bin", "openshell-gateway");
+  const gatewayBin = path.join(binHome, "openshell-gateway");
   const gatewayCommandLog = path.join(directory, "gateway-commands.jsonl");
   const gatewayPidFile = path.join(runtimeDir, "nemoclaw-openshell-gateway.pid");
-  const gatewayTlsDir = path.join(
-    homeDir,
-    ".local",
-    "state",
-    "nemoclaw",
-    "openshell-docker-gateway",
-    "tls",
-  );
+  const gatewayTlsDir = path.join(stateHome, "nemoclaw", "openshell-docker-gateway", "tls");
   const gatewayUnitPath = path.join(
-    homeDir,
-    ".config",
+    configHome,
     "systemd",
     "user",
     "nemoclaw-openshell-gateway.service",
@@ -188,7 +183,10 @@ setInterval(() => undefined, 1000);
       OPENSHELL_DISABLE_GATEWAY_AUTH: "1",
       OPENSHELL_DISABLE_TLS: "1",
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      XDG_BIN_HOME: binHome,
+      XDG_CONFIG_HOME: configHome,
       XDG_RUNTIME_DIR: runtimeDir,
+      XDG_STATE_HOME: stateHome,
     },
     gatewayBin,
     gatewayCommandLog,
@@ -626,6 +624,27 @@ describe("portable profile systemctl fixture", () => {
         expect(pidIsActive(gatewayProcess.pid)).toBe(false);
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
       } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "isolates the managed gateway user service from ambient XDG homes (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      vi.stubEnv("XDG_BIN_HOME", "/home/runner/.local/bin");
+      vi.stubEnv("XDG_CONFIG_HOME", "/home/runner/.config");
+      vi.stubEnv("XDG_STATE_HOME", "/home/runner/.local/state");
+      const scope = createFixture();
+      try {
+        const reload = systemctl(scope, ["--user", "daemon-reload"]);
+        expect(reload.status, String(reload.stderr)).toBe(0);
+        const restart = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+        expect(restart.status, String(restart.stderr)).toBe(0);
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
         await cleanFixture(scope);
       }
     },
