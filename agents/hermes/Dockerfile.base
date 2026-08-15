@@ -555,6 +555,41 @@ RUN printf '%s\n' \
         "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
     && rm -rf /root/.cache/uv
 
+# Keep official-package compatibility separate from the final image's offline
+# lazy-installer contract. BuildKit verifies both reviewed PyPI artifacts before
+# any build command can consume them. Install only those hash-locked wheels into
+# a temporary durable target without network or dependency resolution, import
+# them against the exact base environment, and remove the probe before
+# publishing the base image.
+COPY --chmod=0444 agents/hermes/hindsight-client-probe-requirements.txt /tmp/nemoclaw-hindsight-client-probe-requirements.txt
+ADD --chmod=0444 --checksum=sha256:9fdda176ab50f7cec8d7339c6608c148f0cd9ad7e65d9d76192f2db730bc330a https://files.pythonhosted.org/packages/24/4f/a1d0bc33ef933ecc52e76dc1514163594d25836a5d303c256a61bb61445d/hindsight_client-0.6.1-py3-none-any.whl /tmp/nemoclaw-hindsight-client-artifacts/hindsight_client-0.6.1-py3-none-any.whl
+ADD --chmod=0444 --checksum=sha256:66d2759d1921838256a05a3f80ad7e724936f083e35be5abb5e16eed6be6dc54 https://files.pythonhosted.org/packages/1a/99/84ba7273339d0f3dfa57901b846489d2e5c2cd731470167757f1935fffbd/aiohttp_retry-2.9.1-py3-none-any.whl /tmp/nemoclaw-hindsight-client-artifacts/aiohttp_retry-2.9.1-py3-none-any.whl
+RUN --network=none install -d -o sandbox -g sandbox -m 0750 \
+        /tmp/nemoclaw-hindsight-client-probe \
+        /tmp/nemoclaw-hindsight-client-cache \
+    && chmod 0555 /tmp/nemoclaw-hindsight-client-artifacts \
+    && HOME=/sandbox \
+        UV_CACHE_DIR=/tmp/nemoclaw-hindsight-client-cache \
+        UV_NO_CACHE=1 \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /usr/local/bin/uv pip install \
+        --python /opt/hermes/.venv/bin/python \
+        --target /tmp/nemoclaw-hindsight-client-probe \
+        --no-deps --no-cache --offline --no-index \
+        --find-links /tmp/nemoclaw-hindsight-client-artifacts \
+        --require-hashes -r /tmp/nemoclaw-hindsight-client-probe-requirements.txt \
+    && HERMES_LAZY_INSTALL_TARGET=/tmp/nemoclaw-hindsight-client-probe \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -I -c \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/tmp/nemoclaw-hindsight-client-probe').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert m.version('aiohttp-retry') == '2.9.1'; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
+    && rm -rf \
+        /tmp/nemoclaw-hindsight-client-artifacts \
+        /tmp/nemoclaw-hindsight-client-probe \
+        /tmp/nemoclaw-hindsight-client-cache \
+        /tmp/nemoclaw-hindsight-client-probe-requirements.txt \
+        /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages
+
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
