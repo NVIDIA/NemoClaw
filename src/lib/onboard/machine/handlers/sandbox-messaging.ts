@@ -19,7 +19,10 @@ import {
 import { hashCredential } from "../../../security/credential-hash";
 import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
 import type { Session } from "../../../state/onboard-session";
-import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
+import {
+  detectMessagingChannelsFromEnv,
+  detectUnconfiguredMessagingChannels,
+} from "../../messaging-channel-setup";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
 
 export {
@@ -219,6 +222,30 @@ function selectionFromReusablePlan<Agent>(
   };
 }
 
+function filterUnconfiguredHostChannelsFromSelection<Agent>(
+  selection: SandboxMessagingSelection,
+  agent: Agent,
+): SandboxMessagingSelection {
+  // A registry plan records the previous selection, not the current host
+  // input. Rebuild the host-backed selection so policy reconciliation can
+  // disable a removed channel. The detector keeps in-sandbox QR-paired
+  // channels.
+  const unconfiguredChannels = new Set(
+    detectUnconfiguredMessagingChannels(
+      selection.selectedChannels,
+      [],
+      agent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
+    ),
+  );
+  if (unconfiguredChannels.size === 0) return selection;
+  return {
+    ...selection,
+    selectedChannels: selection.selectedChannels.filter(
+      (channelId) => !unconfiguredChannels.has(channelId),
+    ),
+  };
+}
+
 function requireValidatedActiveChannels<Agent>(
   selection: SandboxMessagingSelection,
   requiredChannels: readonly string[],
@@ -382,7 +409,10 @@ async function selectionFromRegistryPlan<Agent>(
   }
   const detectedChannels = channelsForRegistryPlanRefresh(registryPlan, options.agent);
   if (!detectedChannels) {
-    return selectionFromReusablePlan(registryPlan, options.agent, true, options.deps);
+    return filterUnconfiguredHostChannelsFromSelection(
+      selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
+      options.agent,
+    );
   }
   options.deps.note(
     `  [non-interactive] Detected messaging channel inputs for ${detectedChannels.join(", ")}; refreshing reused sandbox messaging plan.`,
@@ -571,7 +601,13 @@ async function selectionFromRegistryAuthority<Agent>(
   if (authority.source !== "registry") return null;
   const agentName = (options.agent as MessagingAgentLike | null)?.name;
   if ((!agentName || agentName === "openclaw") && options.resume && messagingDecisionCompleted) {
-    return selectionFromCompletedMessagingCheckpoint(envPlan, options, authority.plan, false);
+    const selection = await selectionFromCompletedMessagingCheckpoint(
+      envPlan,
+      options,
+      authority.plan,
+      false,
+    );
+    return filterUnconfiguredHostChannelsFromSelection(selection, options.agent);
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);
   options.deps.clearPlanEnv();

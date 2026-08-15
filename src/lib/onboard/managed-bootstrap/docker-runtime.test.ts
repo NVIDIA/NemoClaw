@@ -20,12 +20,20 @@ const adapterMocks = vi.hoisted(() => ({
   finalize: vi.fn<typeof import("./adapter").finalizeManagedBootstrapSequence>(),
   prepare: vi.fn<typeof import("./adapter").prepareManagedBootstrapSequence>(),
 }));
+const runtimeSnapshotMocks = vi.hoisted(() => ({
+  query: vi.fn(),
+}));
 
 vi.mock("./adapter", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./adapter")>()),
   activateManagedBootstrapSequence: adapterMocks.activate,
   finalizeManagedBootstrapSequence: adapterMocks.finalize,
   prepareManagedBootstrapSequence: adapterMocks.prepare,
+}));
+
+vi.mock("../openshell-docker-sandbox-containers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../openshell-docker-sandbox-containers")>()),
+  queryOpenShellDockerSandboxRuntimeSnapshot: runtimeSnapshotMocks.query,
 }));
 
 import type {
@@ -37,6 +45,18 @@ import { authority, IDENTITY, NEW_ID, OLD_ID } from "./docker-test-fixture";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  runtimeSnapshotMocks.query.mockReturnValue({
+    ok: true,
+    imageId: `sha256:${"a".repeat(64)}`,
+    bookkeepingImageRef: "openshell/sandbox-from:alpha",
+    stateError: "",
+    deviceRequests: null,
+    devices: [],
+    runtime: "runc",
+    nvidiaVisibleDevices: null,
+    nativeGpuAttachmentState: "absent",
+    containerId: NEW_ID,
+  });
 });
 
 afterEach(() => {
@@ -129,6 +149,17 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       expect(order).toEqual(["prepare", "stream-start", "create-returned", "activate"]);
       expect(child.kill).toHaveBeenCalledWith("SIGTERM");
       expect(adapterMocks.activate).toHaveBeenCalledOnce();
+      expect(lifecycle.inspectNativeRuntime?.()).toEqual({
+        imageId: `sha256:${"a".repeat(64)}`,
+        bookkeepingImageRef: "openshell/sandbox-from:alpha",
+        stateError: "",
+        nativeGpuAttachmentState: "absent",
+      });
+      expect(runtimeSnapshotMocks.query).toHaveBeenCalledWith(
+        "alpha",
+        {},
+        { expectedContainerId: NEW_ID },
+      );
     } finally {
       fs.rmSync(stateRoot, { recursive: true, force: true });
     }

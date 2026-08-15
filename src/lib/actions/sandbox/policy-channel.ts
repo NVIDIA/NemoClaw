@@ -19,6 +19,7 @@ import {
   parsePolicyAddOptions,
 } from "../../domain/policy-channel";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
@@ -886,8 +887,8 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(
       `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
     );
-    console.error("  in env for this run only — re-run after starting the gateway, or run");
-    console.error(`  'openshell gateway start --name ${gatewayName}' manually.`);
+    console.error("  in env for this run only. Rerun after starting the gateway.");
+    console.error(`  ${gatewayStartGuidance(gatewayName)}`);
     process.exit(1);
   }
   try {
@@ -946,9 +947,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
       );
-      console.error(
-        `  Re-run after starting the gateway, or run 'openshell gateway start --name ${gatewayName}'.`,
-      );
+      console.error(`  ${gatewayStartGuidance(gatewayName)} Then rerun this command.`);
       if (!bestEffort) process.exit(1);
       gatewayReachable = false;
       residual.push("gateway-providers");

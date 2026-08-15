@@ -42,7 +42,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
-import { runLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
+import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
@@ -141,15 +141,13 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
   );
   expect(recovery.exitCode, resultText(recovery)).toBe(0);
 
-  await runLaunchReadinessLeaseTurns({
+  await runOpenClawLaunchReadinessLeaseTurns({
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
     env: env(PORTABLE_PROFILE ? { DOCKER_HOST: "" } : {}),
     exitCommand: "/exit",
     host: input.host,
-    postReplyReadyText: "gateway connected | idle",
-    readyText: "gateway connected | idle",
     redactionValues: input.redactionValues,
     sandboxName: SANDBOX_NAME,
   });
@@ -391,7 +389,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "direct hosted inference and sandbox inference.local both respond",
       ...(process.platform === "linux"
         ? [
-            "a recovered OpenClaw sandbox completes a /exit launch turn through inference.local and restores the mutable config permission contract",
+            "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
           ]
         : []),
       "nemoclaw logs produces output and cleanup removes registry state",

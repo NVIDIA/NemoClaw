@@ -907,13 +907,19 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     const providerBound = Boolean(
       intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
+    const incompleteProviderStateValid =
+      (normalized.provider === null && normalized.model === null) ||
+      (intent.kind === "spark" &&
+        normalized.provider === "vllm-local" &&
+        normalized.model !== null &&
+        normalized.model.trim().length > 0);
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
         (intent.kind === "spark" ||
           normalized.provider !== "vllm-local" ||
           normalized.model !== intent.servedModel)) ||
-      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+      (!providerComplete && !incompleteProviderStateValid)
     ) {
       return null;
     }

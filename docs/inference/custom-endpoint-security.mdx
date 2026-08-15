@@ -32,6 +32,8 @@ Blocked special-purpose targets include documentation, translation, benchmarking
 It also rejects public hostnames that resolve to a blocked address.
 
 A direct blueprint run rejects endpoint URLs that contain userinfo, such as an embedded username or password, before DNS resolution.
+Custom endpoint onboarding rejects endpoint URLs that contain userinfo, query, or fragment components instead of stripping those components.
+NemoClaw does not forward those components to the endpoint.
 Configure the provider credential separately instead of putting it in the endpoint URL.
 
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
