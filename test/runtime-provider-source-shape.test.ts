@@ -186,6 +186,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/host-local-inference-routing.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
+      "src/lib/onboard/runtime-provider/native-qualification-authority.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-gpu.ts",
