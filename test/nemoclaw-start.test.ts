@@ -3525,7 +3525,7 @@ describe("Telegram diagnostics (#2766)", () => {
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
         '_nemoclaw_safe_create_tmp_file() { : > "$1"; chmod "$2" "$1"; }',
-        preGatewaySetupBlock(kind, gatewayLog, autoPairLog),
+        `${extractShellFunctionFromSource(src, "prepare_auto_pair_log")}\n${preGatewaySetupBlock(kind, gatewayLog, autoPairLog)}`,
       ].join("\n"),
       { mode: 0o700 },
     );

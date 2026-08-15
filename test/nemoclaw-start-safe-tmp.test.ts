@@ -22,15 +22,28 @@ function safeTmpHelpers(src: string): string {
 describe("nemoclaw-start safe tmp file creation", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("keeps the root-mode auto-pair log openable after CAP_DAC_OVERRIDE is dropped", () => {
-    const rootModeStart = src.indexOf("# Verify locked config integrity before starting anything.");
-    const autoPairStart = src.indexOf("\nstart_auto_pair\n", rootModeStart);
-
-    expect(rootModeStart).toBeGreaterThanOrEqual(0);
-    expect(autoPairStart).toBeGreaterThan(rootModeStart);
-    expect(src.slice(rootModeStart, autoPairStart)).toContain(
-      "_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root",
+  it.each([
+    ["root parent after CAP_DAC_OVERRIDE drop", "0", "3|/tmp/auto-pair.log 600 root:root"],
+    ["non-root parent", "998", "2|/tmp/auto-pair.log 600"],
+  ])("creates an auto-pair log for the %s", (_label, uid, expected) => {
+    const prepareAutoPairLog = extractShellFunctionFromSource(src, "prepare_auto_pair_log");
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          `id() { test \"\${1:-}\" = -u && printf '%s' ${JSON.stringify(uid)}; }`,
+          `_nemoclaw_safe_create_tmp_file() { printf '%s|%s\\n' \"$#\" \"$*\"; }`,
+          prepareAutoPairLog,
+          "prepare_auto_pair_log",
+        ].join("\n"),
+      ],
+      { encoding: "utf-8", timeout: 5000 },
     );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(expected);
   });
 
   it("creates fixed runtime paths through the safe helper with the requested modes", () => {
