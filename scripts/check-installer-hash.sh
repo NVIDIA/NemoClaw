@@ -50,6 +50,9 @@ readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.103|openshell-checksums-sha256.txt|1a9016cfb9219ad6ea3dc623b3dfd517dbce062cba9484964a8ca9175c7d1c9d"
   "0.0.103|openshell-gateway-checksums-sha256.txt|800f8501329b27b79d260f21de088d8aea36de45021eaa3d29d189c433fc04b5"
   "0.0.103|openshell-sandbox-checksums-sha256.txt|ab7c77fe40e93b293e4d34e892824ed0cb131e8b973ba2660b155cdd0fa0f604"
+  "0.0.106|openshell-checksums-sha256.txt|7421aaf9d5550dc15aa33b523fa3dfe78571811e4ddf76f9f6c29576438bdb27"
+  "0.0.106|openshell-gateway-checksums-sha256.txt|26e4345449e02475e27a7c59cd0cf39199dd6c91b0aa635fbb8cb834835f4b39"
+  "0.0.106|openshell-sandbox-checksums-sha256.txt|88bc98ffdc915fb7598f39df84ab37a1a31e40e33e4125b37ed13adecd447dbb"
 )
 
 # OpenShell's Homebrew formula is a release asset but is not included in any
@@ -63,6 +66,7 @@ readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(
   "0.0.99|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.99/openshell.rb|8dd34fc17ee9a30327664a18c9509c8a765cb010de38cda8e22841bddbe92713"
   "0.0.101|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.101/openshell.rb|87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"
   "0.0.103|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.103/openshell.rb|95a290f0e0e2f57d7d46ba9171fca6e99e5226875cd12e12391b7338f6c219f9"
+  "0.0.106|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb|f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642"
 )
 
 case "${1:-}" in

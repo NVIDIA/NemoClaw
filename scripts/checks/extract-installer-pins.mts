@@ -144,6 +144,16 @@ const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [
     sha256: "fc1454705fad9cc0890297a84d2b7869670a364d01d5398685e3c987d2b6c123",
     version: "0.0.103",
   },
+  {
+    required: false,
+    sha256: "0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55",
+    version: "0.0.106",
+  },
+  {
+    required: false,
+    sha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
+    version: "0.0.106",
+  },
 ] as const;
 const OPENSHELL_SUPERVISOR_IMAGE = "ghcr.io/nvidia/openshell/supervisor";
 // These are the reviewed OCI index identities for the OpenShell supervisor
@@ -175,6 +185,12 @@ const TRUSTED_SUPERVISOR_MANIFEST_PINS: readonly TrustedSupervisorManifestPin[] 
     manifestDigest: "sha256:96228f110362ffd415bb12d3b7f584063c3c52c0c93f3ccf59faada1dc2dd5d3",
     required: false,
     version: "0.0.103",
+  },
+  {
+    image: OPENSHELL_SUPERVISOR_IMAGE,
+    manifestDigest: "sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
+    required: false,
+    version: "0.0.106",
   },
 ] as const;
 const TRUSTED_SUPERVISOR_RUNTIME_TEMPLATE_SHA256_ALLOWLIST: readonly string[] = [
