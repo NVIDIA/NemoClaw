@@ -385,14 +385,17 @@ describe("dormant Podman runtime provider", () => {
         providerId: "podman",
         supported: true,
       },
-    });
-    if (!bundle.containerEngine.supported) {
-      throw new Error("Podman candidate must expose its injected container-engine identities.");
-    }
-    expect(bundle.containerEngine.identities).toContainEqual({
-      operation: "state-mutation",
-      engineId: "podman",
-      displayName: "Podman",
+      containerEngine: {
+        providerId: "podman",
+        supported: true,
+        identities: expect.arrayContaining([
+          {
+            operation: "state-mutation",
+            engineId: "podman",
+            displayName: "Podman",
+          },
+        ]),
+      },
     });
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
   });
