@@ -57,11 +57,12 @@ Model validation can fail with these messages:
   Verify `GEMINI_API_KEY`, host access to `generativelanguage.googleapis.com`, and the reported response.
 - `Model '<model>' is not available from Google Gemini. Checked https://generativelanguage.googleapis.com/v1beta/models.`
   The catalog did not contain the model ID.
+  This message also appears when the catalog omits `models`, because NemoClaw treats the response as an empty catalog.
   Check the ID for typing errors.
   Custom IDs can include or omit the `models/` prefix.
   Embedding-only models do not appear because they do not support `generateContent`.
 - `Unexpected Gemini model catalog response: expected a top-level models array`
-  The Google model catalog returned JSON with the wrong shape.
+  The Google model catalog returned a `models` value that is not an array.
   Retry the request, then inspect the Google service or proxy response if the error continues.
 - `Gemini model catalog pagination repeated page token '<token>'`
   The catalog repeated a `nextPageToken`, so NemoClaw stopped reading pages.
