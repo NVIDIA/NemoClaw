@@ -11,10 +11,12 @@ import {
 function files(contents: Record<string, string>): (file: string) => string {
   return (file: string) => {
     const value = contents[file];
-    if (value === undefined) {
-      throw new Error(`ENOENT: no such file or directory, open '${file}'`);
-    }
-    return value;
+    return (
+      value ??
+      (() => {
+        throw new Error(`ENOENT: no such file or directory, open '${file}'`);
+      })()
+    );
   };
 }
 
@@ -26,7 +28,10 @@ const NO_CPU = "cpuset io memory pids";
 
 describe("inspectPortableCpuDelegation", () => {
   it("skips the check on non-Linux platforms", () => {
-    const preflight = inspectPortableCpuDelegation({ platform: "darwin", uid: UID });
+    const preflight = inspectPortableCpuDelegation({
+      platform: "darwin",
+      uid: UID,
+    });
     expect(preflight.ok).toBe(true);
   });
 
@@ -45,9 +50,8 @@ describe("inspectPortableCpuDelegation", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: (file: string) => {
-        if (file === PATHS.root) throw new Error("EACCES: permission denied");
-        throw new Error("ENOENT");
+      readFileSync: () => {
+        throw new Error("EACCES: permission denied");
       },
     });
     expect(preflight.ok).toBe(false);
