@@ -25,6 +25,35 @@ import {
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 
+const INVALID_MANAGED_GATEWAY_STATE_CASES = [
+  {
+    label: "invalid",
+    pid: process.pid,
+    writePid: (stateDirectory: string, _pid: number) =>
+      fs.writeFileSync(path.join(stateDirectory, "openshell-gateway.pid"), "not-a-pid\n", {
+        mode: 0o600,
+      }),
+  },
+  {
+    label: "symlinked",
+    pid: process.pid,
+    writePid: (stateDirectory: string, pid: number) => {
+      const target = path.join(stateDirectory, "pid-target");
+      fs.writeFileSync(target, `${pid}\n`, { mode: 0o600 });
+      fs.symlinkSync(target, path.join(stateDirectory, "openshell-gateway.pid"));
+    },
+  },
+  {
+    label: "stale",
+    pid: 2_147_483_647,
+    writePid: (stateDirectory: string, pid: number) =>
+      writeDockerDriverGatewayPidFile(
+        path.join(stateDirectory, "openshell-gateway.pid"),
+        pid,
+      ),
+  },
+] as const;
+
 describe("compatible Anthropic inference switch setup", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -83,12 +112,11 @@ describe("compatible Anthropic inference switch setup", () => {
       pid,
     });
     const realpathSync = fs.realpathSync;
-    vi.spyOn(fs, "realpathSync").mockImplementation(((target) => {
-      if (String(target) === `/proc/${pid}/exe` || String(target) === gatewayBin) {
-        return gatewayBin;
-      }
-      return realpathSync(target);
-    }) as typeof fs.realpathSync);
+    const gatewayExecutablePaths = new Set([`/proc/${pid}/exe`, gatewayBin]);
+    vi.spyOn(fs, "realpathSync").mockImplementation(
+      ((target) =>
+        gatewayExecutablePaths.has(String(target)) ? gatewayBin : realpathSync(target)) as typeof fs.realpathSync,
+    );
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
     const add = vi.fn();
 
@@ -150,15 +178,12 @@ describe("compatible Anthropic inference switch setup", () => {
     }
   });
 
-  it.each(["invalid", "symlinked", "stale"])(
-    "rejects %s managed gateway PID state (#9166)",
-    async (stateKind) => {
+  it.each(INVALID_MANAGED_GATEWAY_STATE_CASES)(
+    "rejects $label managed gateway PID state (#9166)",
+    async ({ pid, writePid }) => {
       const stateDirectory = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-invalid-gateway-state-test-"),
       );
-      const pidPath = path.join(stateDirectory, "openshell-gateway.pid");
-      const stalePid = 2_147_483_647;
-      const pid = stateKind === "stale" ? stalePid : process.pid;
       vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDirectory);
       writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDirectory, {
         desiredEnv: {},
@@ -166,15 +191,7 @@ describe("compatible Anthropic inference switch setup", () => {
         gatewayBin: "/usr/bin/openshell-gateway",
         pid,
       });
-      if (stateKind === "invalid") {
-        fs.writeFileSync(pidPath, "not-a-pid\n", { mode: 0o600 });
-      } else if (stateKind === "symlinked") {
-        const target = path.join(stateDirectory, "pid-target");
-        fs.writeFileSync(target, `${pid}\n`, { mode: 0o600 });
-        fs.symlinkSync(target, pidPath);
-      } else {
-        writeDockerDriverGatewayPidFile(pidPath, pid);
-      }
+      writePid(stateDirectory, pid);
       const command = vi.fn();
 
       try {
