@@ -7,8 +7,8 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  findModelRouterPidForPort,
   getRouterHealthSnapshot,
+  inspectModelRouterProcessForPort,
   stopModelRouterProcess,
 } from "./model-router-process";
 
@@ -103,20 +103,20 @@ describe("getRouterHealthSnapshot (#8962)", () => {
 
 const ROUTER_ARGS = ["/opt/model-router", "proxy", "--port", "4000"];
 
-describe("findModelRouterPidForPort", () => {
+describe("inspectModelRouterProcessForPort", () => {
   it("returns the PID when a model-router proxy is found via direct proc scan (#5169)", () => {
-    const pid = findModelRouterPidForPort(4000, {
+    const result = inspectModelRouterProcessForPort(4000, {
       readProcCommandLine: (p) =>
         p === 12345
           ? ["/home/user/.nemoclaw/model-router-venv/bin/model-router", "proxy", "--port", "4000"]
           : null,
       listProcPids: () => [1, 100, 12345, 99999],
     });
-    expect(pid).toBe(12345);
+    expect(result).toEqual({ status: "found", pid: 12345 });
   });
 
   it("returns the PID when model-router is Python-interpreted through args[1] (#5169)", () => {
-    const pid = findModelRouterPidForPort(4000, {
+    const result = inspectModelRouterProcessForPort(4000, {
       readProcCommandLine: (p) =>
         p === 12345
           ? [
@@ -129,30 +129,40 @@ describe("findModelRouterPidForPort", () => {
           : null,
       listProcPids: () => [1, 100, 12345, 99999],
     });
-    expect(pid).toBe(12345);
+    expect(result).toEqual({ status: "found", pid: 12345 });
   });
 
-  it("returns null when no model-router is found on that port", () => {
-    const pid = findModelRouterPidForPort(4000, {
+  it("reports absence when no model-router is found on that port", () => {
+    const result = inspectModelRouterProcessForPort(4000, {
       readProcCommandLine: (p) =>
         p === 12345
           ? ["/home/user/.nemoclaw/model-router-venv/bin/model-router", "proxy", "--port", "9999"]
           : null,
       listProcPids: () => [12345],
     });
-    expect(pid).toBe(null);
+    expect(result).toEqual({ status: "absent" });
   });
 
-  it("returns null when listProcPids returns an empty list", () => {
-    const pid = findModelRouterPidForPort(4000, {
+  it("reports absence when the process inventory is empty", () => {
+    const result = inspectModelRouterProcessForPort(4000, {
       readProcCommandLine: () => null,
       listProcPids: () => [],
     });
-    expect(pid).toBe(null);
+    expect(result).toEqual({ status: "absent" });
+  });
+
+  it("reports an unavailable process inventory separately from absence", () => {
+    const result = inspectModelRouterProcessForPort(4000, {
+      listProcPids: () => {
+        throw new Error("process inventory unavailable");
+      },
+    });
+
+    expect(result).toEqual({ status: "unavailable" });
   });
 
   it("returns the first matching PID when multiple model-routers are present", () => {
-    const pid = findModelRouterPidForPort(4000, {
+    const result = inspectModelRouterProcessForPort(4000, {
       readProcCommandLine: (p) => {
         if (p === 100) return ["/opt/model-router", "proxy", "--port", "4000"];
         if (p === 200) return ["/opt/model-router", "proxy", "--port", "4000"];
@@ -160,7 +170,7 @@ describe("findModelRouterPidForPort", () => {
       },
       listProcPids: () => [50, 100, 200],
     });
-    expect(pid).toBe(100);
+    expect(result).toEqual({ status: "found", pid: 100 });
   });
 });
 

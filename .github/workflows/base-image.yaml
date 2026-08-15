@@ -58,6 +58,10 @@ on:
       - "agents/langchain-deepagents-code/Dockerfile.base"
       - "agents/langchain-deepagents-code/manifest.yaml"
       - "agents/langchain-deepagents-code/requirements.lock"
+      - "agents/pi/Dockerfile.base"
+      - "agents/pi/manifest.yaml"
+      - "agents/pi/pi-runtime/package.json"
+      - "agents/pi/pi-runtime/package-lock.json"
       - "agents/openclaw/mcporter-runtime/package.json"
       - "agents/openclaw/mcporter-runtime/package-lock.json"
       - "ci/npm-audit-exceptions.json"
@@ -254,6 +258,70 @@ jobs:
           registry-password: ${{ secrets.GITHUB_TOKEN }}
 
 
+  # Pi is a candidate agent runtime: this workflow publishes its base image so
+  # CI can validate exact digests, while Pi stays out of the shipped
+  # managed-image agent cohort.
+  build-pi-platforms:
+    name: Build Pi base image (${{ matrix.arch }})
+    if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: pi
+            arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+            dockerfile: agents/pi/Dockerfile.base
+            image: nvidia/nemoclaw/pi-sandbox-base
+          - agent: pi
+            arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            dockerfile: agents/pi/Dockerfile.base
+            image: nvidia/nemoclaw/pi-sandbox-base
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and publish platform digest
+        uses: ./.github/actions/build-base-image-platform
+        with:
+          agent: ${{ matrix.agent }}
+          arch: ${{ matrix.arch }}
+          platform: ${{ matrix.platform }}
+          dockerfile: ${{ matrix.dockerfile }}
+          image: ${{ matrix.image }}
+          registry: ${{ env.REGISTRY }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+  build-and-push-pi:
+    name: Build and push Pi base image
+    if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - build-pi-platforms
+      - reviewed-npm-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Publish validated multi-platform manifest
+        uses: ./.github/actions/publish-base-image-manifest
+        with:
+          agent: pi
+          display-name: Pi
+          image: nvidia/nemoclaw/pi-sandbox-base
+          registry: ${{ env.REGISTRY }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
   build-and-push-hermes:
     name: Build and push Hermes base image
     if: github.repository == 'NVIDIA/NemoClaw'
