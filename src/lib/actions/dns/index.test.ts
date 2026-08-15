@@ -162,6 +162,8 @@ describe("runSetupDnsProxy", () => {
   it("configures the DNS proxy through kubectl-in-docker argv calls", () => {
     const calls: string[][] = [];
     const log = vi.fn();
+    let dnsReadyCalls = 0;
+    let pidReads = 0;
     let getentCalls = 0;
     const sleep = vi.fn();
     const runDocker = vi.fn((args: string[]) => {
@@ -172,10 +174,16 @@ describe("runSetupDnsProxy", () => {
       if (cmd.includes("get endpoints kube-dns")) return ok("10.42.0.15");
       if (cmd.includes("get pods -n openshell -o name")) return ok("pod/box[1]-abc\n");
       if (cmd.includes("ip addr show")) return ok("10.200.0.1\n");
-      if (cmd.includes("cat /tmp/dns-proxy.pid")) return ok("12345\n");
+      if (cmd.includes("cat /tmp/dns-proxy.pid")) {
+        pidReads += 1;
+        return pidReads === 1 ? ok("") : ok("12345\n");
+      }
       if (cmd.includes("cat /tmp/dns-proxy.log"))
         return ok("dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345\n");
-      if (cmd.includes("python3 -c")) return ok("ok");
+      if (cmd.includes("python3 -c")) {
+        dnsReadyCalls += 1;
+        return dnsReadyCalls === 3 ? ok("ok") : ok("");
+      }
       if (cmd.includes("ls /run/netns/")) return ok("sandbox-ns\n");
       if (cmd.includes("test -x")) return ok();
       if (cmd.includes("cat /etc/resolv.conf")) return ok("nameserver 10.200.0.1\n");
@@ -211,6 +219,8 @@ describe("runSetupDnsProxy", () => {
     expect(log).toHaveBeenCalledWith("  DNS verification: 4 passed, 0 failed");
     expect(getentCalls).toBe(3);
     expect(sleep.mock.calls.filter(([milliseconds]) => milliseconds === 2_000)).toHaveLength(2);
+    expect(dnsReadyCalls).toBe(3);
+    expect(sleep.mock.calls).toEqual([[1_000], [1_000], [2_000], [2_000]]);
   });
 
   it("falls back to the CoreDNS pod endpoint when the kube-dns service IP is unavailable", () => {

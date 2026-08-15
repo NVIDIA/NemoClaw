@@ -3,13 +3,8 @@
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
-  captureOpenshell,
-  getOpenshellBinary,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
-import {
-  OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
@@ -67,10 +62,12 @@ import {
   buildGatewayInferenceSetArgs,
 } from "./connect-inference-gateway";
 import {
-  buildSandboxInferenceRouteProbeArgs,
   type InferenceRouteProbeAgent,
-  parseSandboxInferenceRouteProbeResult,
-} from "./connect-inference-route-probe";
+  type InferenceRouteProbeOptions,
+  probeSandboxInferenceRoute,
+  type SandboxInferenceRouteProbe,
+} from "./connect-inference-route-retry";
+export type { InferenceRouteProbeOptions, SandboxInferenceRouteProbe } from "./connect-inference-route-retry";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
@@ -128,21 +125,9 @@ type SandboxListProbe = {
   output: string;
 };
 
-export type SandboxInferenceRouteProbe = {
-  healthy: boolean;
-  broken: boolean;
-  httpStatus?: number;
-  detail: string;
-};
-
 type SandboxInferenceRouteEnsureResult = {
   sandbox: SandboxEntry | null;
   routeHealthy: boolean | null;
-};
-
-type InferenceRouteProbeOptions = {
-  attempts?: number;
-  delayMs?: number;
 };
 
 export type SandboxInferenceRouteRepairResult = {
@@ -352,15 +337,6 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   process.exit(1);
 }
 
-function sleepSync(ms: number): void {
-  if (ms <= 0) return;
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms})`], {
-    stdio: "ignore",
-    timeout: ms + 1_000,
-  });
-}
-
 const GATEWAY_UNAVAILABLE_RE =
   /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
 
@@ -412,42 +388,6 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-function probeSandboxInferenceRoute(
-  sandboxName: string,
-  agent: InferenceRouteProbeAgent,
-  { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
-): SandboxInferenceRouteProbe {
-  let lastProbe: SandboxInferenceRouteProbe | null = null;
-  const boundedAttempts = Math.max(1, attempts);
-
-  for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
-    // Keep the shell string inside the sandbox: curl write-out, body capture,
-    // and status classification must run as one bounded probe. sandboxName
-    // remains an argv value, so no user input is interpolated into the script.
-    const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
-      ignoreError: true,
-      includeStreams: true,
-      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-    });
-    const parsed = parseSandboxInferenceRouteProbeResult(probe);
-    lastProbe = {
-      healthy: parsed.healthy,
-      broken: parsed.broken,
-      httpStatus: parsed.httpStatus,
-      detail: parsed.detail,
-    };
-    if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
-    sleepSync(delayMs);
-  }
-
-  return (
-    lastProbe ?? {
-      healthy: false,
-      broken: false,
-      detail: "inference route probe did not run",
-    }
-  );
-}
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`

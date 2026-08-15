@@ -16,10 +16,15 @@ import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
-import { sleepSeconds } from "../core/wait";
 import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+
+import {
+  CONTAINER_CHECK_MAX_ATTEMPTS,
+  CONTAINER_CHECK_RETRY_DELAY_SECS,
+  probeLocalProviderContainerReachability,
+} from "./local-container-reachability";
 import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
 import { detectNvidiaPlatform } from "./nim";
 import {
@@ -1083,9 +1088,6 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
   }
 }
 
-const CONTAINER_CHECK_MAX_ATTEMPTS = 3;
-const CONTAINER_CHECK_RETRY_DELAY_SECS = 2;
-
 export function validateLocalProvider(
   provider: string,
   runCaptureImpl?: RunCaptureFn,
@@ -1099,7 +1101,6 @@ export function validateLocalProvider(
   }
 
   const capture = runCaptureImpl ?? runCapture;
-  const sleep = sleepFn ?? sleepSeconds;
   const command = getLocalProviderHealthCheck(provider);
   if (!command) {
     if (provider === "vllm-local") {
@@ -1142,15 +1143,14 @@ export function validateLocalProvider(
     return { ok: true };
   }
 
-  // Retry container reachability check with backoff
-  for (let attempt = 1; attempt <= CONTAINER_CHECK_MAX_ATTEMPTS; attempt++) {
-    const containerOutput = capture(containerCommand, { ignoreError: true });
-    if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
-      return { ok: true };
-    }
-    if (attempt < CONTAINER_CHECK_MAX_ATTEMPTS) {
-      sleep(CONTAINER_CHECK_RETRY_DELAY_SECS);
-    }
+  const containerOutput = probeLocalProviderContainerReachability({
+    command: containerCommand,
+    capture,
+    isHealthy: isLocalProviderProbeOutputHealthy,
+    sleepSeconds: sleepFn,
+  });
+  if (isLocalProviderProbeOutputHealthy(containerCommand.at(-1) ?? "", containerOutput)) {
+    return { ok: true };
   }
 
   // All retries exhausted — collect diagnostics

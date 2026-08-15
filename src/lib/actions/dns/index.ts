@@ -463,30 +463,33 @@ export function runSetupDnsProxy(
     dockerEnv,
   );
 
-  let dnsReady = false;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const probe = kctl(
-      runDocker,
-      cluster,
-      [
-        "exec",
-        "-n",
-        "openshell",
-        pod,
-        "--",
-        "python3",
-        "-c",
-        buildDnsReadyProbePython(vethGateway),
-      ],
-      dockerEnv,
+  const dnsReady = retryUntil(
+    () =>
+      kctl(
+        runDocker,
+        cluster,
+        [
+          "exec",
+          "-n",
+          "openshell",
+          pod,
+          "--",
+          "python3",
+          "-c",
+          buildDnsReadyProbePython(vethGateway),
+        ],
+        dockerEnv,
+      ).stdout.includes("ok"),
+    {
+      accept: Boolean,
+      retryDelaysMs: Array.from({ length: 9 }, () => 1_000),
+      sleep,
+    },
+  );
+  if (!dnsReady)
+    log(
+      "WARNING: DNS forwarder did not respond after 10 attempts. The following DNS checks might report failures.",
     );
-    if (probe.stdout.includes("ok")) {
-      dnsReady = true;
-      break;
-    }
-    sleep(1000);
-  }
-  if (!dnsReady) log("WARNING: DNS forwarder not responding after 10s — verification may fail");
 
   const sandboxNamespace = selectSandboxNamespace(
     commandOutput(
