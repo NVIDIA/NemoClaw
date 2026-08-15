@@ -25,6 +25,7 @@ gateway_env_file="${config_home}/openshell/gateway.env"
 gateway_tls_dir="${state_home}/openshell/tls"
 gateway_state_dir="${state_home}/openshell/gateway"
 gateway_pid_file="${runtime_dir}/nemoclaw-openshell-gateway.pid"
+gateway_launch_pid_file="${runtime_dir}/nemoclaw-openshell-gateway-launch.pid"
 gateway_log_file="${runtime_dir}/nemoclaw-openshell-gateway.log"
 gateway_environment_keys=(
   CONTAINERS_CONF
@@ -55,6 +56,7 @@ gateway_fixture_environment_keys=(
   FAKE_GATEWAY_COMMAND_LOG
 )
 gateway_process_environment=()
+gateway_launch_start_time=""
 process_identity_env="NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID"
 process_identity_failure_role="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE:-}"
 process_identity_failure_record="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD:-}"
@@ -524,7 +526,7 @@ load_gateway_environment() {
 build_gateway_process_environment() {
   gateway_process_environment=(
     "HOME=${home_dir}"
-    "PATH=${PATH:-/usr/local/bin:/usr/bin:/bin}"
+    "PATH=/usr/local/bin:/usr/bin:/bin"
     "XDG_BIN_HOME=${bin_home}"
     "XDG_CONFIG_HOME=${config_home}"
     "XDG_RUNTIME_DIR=${runtime_dir}"
@@ -546,30 +548,102 @@ stop_gateway_service() {
   stop_recorded_process "$gateway_pid_file" gateway
 }
 
+stop_gateway_launch() {
+  stop_recorded_process "$gateway_launch_pid_file" gateway
+}
+
+record_gateway_launch() {
+  local pid="$1"
+  local identity="$2"
+  local launch_pid_file_tmp="${gateway_launch_pid_file}.$$.tmp"
+  local start_time
+  for ((attempt = 0; attempt < 100; attempt += 1)); do
+    if start_time="$(process_start_time "$pid")"; then
+      printf '%s\t%s\t%s\n' "$pid" "$start_time" "$identity" >"$launch_pid_file_tmp" || {
+        rm -f "$launch_pid_file_tmp"
+        return 2
+      }
+      chmod 600 "$launch_pid_file_tmp" || {
+        rm -f "$launch_pid_file_tmp"
+        return 2
+      }
+      mv "$launch_pid_file_tmp" "$gateway_launch_pid_file" || {
+        rm -f "$launch_pid_file_tmp"
+        return 2
+      }
+      gateway_launch_start_time="$start_time"
+      return 0
+    fi
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.05
+  done
+  return 2
+}
+
+fail_recorded_gateway_start() {
+  local cleanup_status
+  if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_CLEANUP_FAILURE:-}" == "1" ]]; then
+    cleanup_status=2
+  elif stop_gateway_launch; then
+    cleanup_status=0
+  else
+    cleanup_status=$?
+  fi
+  echo "Portable profile fixture could not create the gateway process identity record." >&2
+  if [[ "$cleanup_status" -ne 0 ]]; then
+    echo "Portable profile fixture could not stop the gateway launch process." >&2
+    return "$cleanup_status"
+  fi
+  return 1
+}
+
 start_gateway_service() {
   validate_gateway_unit
+  stop_gateway_launch
   load_gateway_environment
   build_gateway_process_environment
   install -d -m 700 "$OPENSHELL_LOCAL_TLS_DIR" "$gateway_state_dir"
+  install -m 600 /dev/null "$gateway_log_file"
   if ! env -i "${gateway_process_environment[@]}" "$gateway_binary_path" generate-certs \
     --output-dir "$OPENSHELL_LOCAL_TLS_DIR" \
     --server-san host.openshell.internal >>"$gateway_log_file" 2>&1; then
-    cat "$gateway_log_file" >&2 || true
+    echo "Portable profile fixture could not generate gateway certificates." >&2
     return 1
   fi
 
-  local gateway_drift_identity gateway_identity gateway_pid gateway_pid_file_tmp
+  local cleanup_status failure_status gateway_drift_identity gateway_identity gateway_pid
   gateway_identity="gateway:$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
   env -i "${gateway_process_environment[@]}" \
     "NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID=${gateway_identity}" nohup "$gateway_binary_path" \
     >>"$gateway_log_file" 2>&1 </dev/null &
   gateway_pid=$!
-  if acquire_process_identity "$gateway_pid" "$gateway_identity"; then
-    gateway_pid_file_tmp="${gateway_pid_file}.$$.tmp"
-    printf '%s\t%s\t%s\n' "$gateway_pid" "$acquired_process_start_time" "$gateway_identity" \
-      >"$gateway_pid_file_tmp"
-    chmod 600 "$gateway_pid_file_tmp"
-    mv "$gateway_pid_file_tmp" "$gateway_pid_file"
+  if record_gateway_launch "$gateway_pid" "$gateway_identity"; then
+    :
+  else
+    failure_status=$?
+    if stop_unrecorded_process "$gateway_pid" "$gateway_identity" ""; then
+      cleanup_status=0
+    else
+      cleanup_status=$?
+    fi
+    echo "Portable profile fixture could not create the gateway launch identity record." >&2
+    if [[ "$cleanup_status" -ne 0 ]]; then
+      echo "Portable profile fixture could not stop the unrecorded gateway process." >&2
+      return "$cleanup_status"
+    fi
+    return "$failure_status"
+  fi
+  if acquire_process_identity "$gateway_pid" "$gateway_identity" \
+    && [[ "$acquired_process_start_time" == "$gateway_launch_start_time" ]]; then
+    if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_FAILURE:-}" == "1" ]]; then
+      if fail_recorded_gateway_start; then
+        failure_status=1
+      else
+        failure_status=$?
+      fi
+      return "$failure_status"
+    fi
+    mv "$gateway_launch_pid_file" "$gateway_pid_file"
     if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_DRIFT:-}" == "1" ]]; then
       cp "$gateway_pid_file" "${gateway_pid_file}.before-validation"
       gateway_drift_identity="gateway:00000000000000000000000000000000"
@@ -581,10 +655,12 @@ start_gateway_service() {
         >"$gateway_pid_file"
     fi
   else
-    stop_unrecorded_process "$gateway_pid" "$gateway_identity" "" || true
-    echo "Portable profile fixture could not create the gateway process identity record." >&2
-    cat "$gateway_log_file" >&2 || true
-    return 1
+    if fail_recorded_gateway_start; then
+      failure_status=1
+    else
+      failure_status=$?
+    fi
+    return "$failure_status"
   fi
 
   local gateway_status
@@ -596,12 +672,13 @@ start_gateway_service() {
   if [[ "$gateway_status" -eq 1 ]]; then
     rm -f "$gateway_pid_file"
   fi
-  cat "$gateway_log_file" >&2 || true
+  echo "Portable profile fixture gateway process did not remain active." >&2
   return 1
 }
 
 restart_gateway_service() {
   validate_gateway_unit
+  stop_gateway_launch
   stop_gateway_service
   start_gateway_service
 }

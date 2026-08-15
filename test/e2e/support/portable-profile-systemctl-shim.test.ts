@@ -137,12 +137,17 @@ if (
   args[3] === "--server-san" &&
   args[4] === "host.openshell.internal"
 ) {
+  if (fs.existsSync(process.env.FAKE_GATEWAY_CERT_MARKER + ".fail")) {
+    console.error("test-only gateway certificate diagnostic");
+    process.exit(70);
+  }
   fs.mkdirSync(args[2], { recursive: true, mode: 0o700 });
   fs.writeFileSync(process.env.FAKE_GATEWAY_CERT_MARKER, "generated\\n", { mode: 0o600 });
   record({
     args,
     kind: "generate-certs",
     nvidiaInferenceApiKey: process.env.NVIDIA_INFERENCE_API_KEY ?? null,
+    path: process.env.PATH,
     tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
   });
   process.exit(0);
@@ -157,6 +162,7 @@ record({
   drivers: process.env.OPENSHELL_DRIVERS,
   kind: "serve",
   nvidiaInferenceApiKey: process.env.NVIDIA_INFERENCE_API_KEY ?? null,
+  path: process.env.PATH,
   pid: process.pid,
   tls: process.env.OPENSHELL_LOCAL_TLS_DIR,
 });
@@ -615,6 +621,7 @@ describe("portable profile systemctl fixture", () => {
             "host.openshell.internal",
           ],
           nvidiaInferenceApiKey: null,
+          path: "/usr/local/bin:/usr/bin:/bin",
           tls: scope.gatewayTlsDir,
         });
         expect(commands[1]).toMatchObject({
@@ -625,6 +632,7 @@ describe("portable profile systemctl fixture", () => {
           dockerHost: `unix://${scope.socketPath}`,
           drivers: "podman",
           nvidiaInferenceApiKey: null,
+          path: "/usr/local/bin:/usr/bin:/bin",
           tls: scope.gatewayTlsDir,
         });
         expect(fs.readFileSync(scope.env.FAKE_GATEWAY_CERT_MARKER!, "utf8")).toBe("generated\n");
@@ -632,6 +640,76 @@ describe("portable profile systemctl fixture", () => {
         await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
         expect(pidIsActive(gatewayProcess.pid)).toBe(false);
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it("does not emit gateway child output when certificate generation fails (#9208)", async () => {
+    const scope = createFixture();
+    try {
+      fs.writeFileSync(`${scope.env.FAKE_GATEWAY_CERT_MARKER!}.fail`, "fail\n", {
+        mode: 0o600,
+      });
+      const restart = systemctl(scope, ["--user", "restart", "nemoclaw-openshell-gateway"]);
+      expect(restart.status).toBe(1);
+      expect(String(restart.stderr)).toContain(
+        "Portable profile fixture could not generate gateway certificates.",
+      );
+      expect(String(restart.stderr)).not.toContain("test-only gateway certificate diagnostic");
+      expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+      expect(
+        fs.statSync(path.join(scope.runtimeDir, "nemoclaw-openshell-gateway.log")).mode & 0o777,
+      ).toBe(0o600);
+    } finally {
+      fs.rmSync(`${scope.env.FAKE_GATEWAY_CERT_MARKER!}.fail`, { force: true });
+      await cleanFixture(scope);
+    }
+  });
+
+  it(
+    "preserves a launch record when initial gateway cleanup fails (#9208)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      try {
+        const restart = systemctl(
+          {
+            ...scope,
+            env: {
+              ...scope.env,
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_CLEANUP_FAILURE: "1",
+              NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_FAILURE: "1",
+            },
+          },
+          ["--user", "restart", "nemoclaw-openshell-gateway"],
+        );
+        expect(restart.status).toBe(2);
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not create the gateway process identity record.",
+        );
+        expect(String(restart.stderr)).toContain(
+          "Portable profile fixture could not stop the gateway launch process.",
+        );
+        const gatewayLaunchPidFile = path.join(
+          scope.runtimeDir,
+          "nemoclaw-openshell-gateway-launch.pid",
+        );
+        expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
+        expect(fs.existsSync(gatewayLaunchPidFile)).toBe(true);
+        const commands = fs
+          .readFileSync(scope.gatewayCommandLog, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as Record<string, unknown>);
+        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        const gatewayPid = commands[1]!.pid as number;
+        expect(readFixtureProcessRecord(gatewayLaunchPidFile).pid).toBe(gatewayPid);
+        expect(pidIsActive(gatewayPid)).toBe(true);
+        await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
+        expect(pidIsActive(gatewayPid)).toBe(false);
+        expect(fs.existsSync(gatewayLaunchPidFile)).toBe(false);
       } finally {
         await cleanFixture(scope);
       }
