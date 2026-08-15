@@ -9,6 +9,7 @@ import {
   type DockerRuntimeProviderDependencies,
 } from "../../onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
+import { exclusivelyHeldOllamaModel } from "../../inference/ollama/model-ownership";
 import type { SandboxEntry } from "../../state/registry";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { type SandboxStopDeps, stopSandbox } from "./stop";
@@ -72,6 +73,7 @@ function harness(overrides: StopHarnessOverrides = {}) {
     teardownSandboxDashboardForward,
     log,
     warn,
+    exclusivelyHeldOllamaModel,
     withOllamaModelOwnershipLock: (operation) => operation(),
     ...actionOverrides,
   };
