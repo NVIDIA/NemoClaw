@@ -313,7 +313,7 @@ function validatedQualificationAuthority(
     "required qualification source",
   );
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new RuntimeProviderActivationError("canonical qualification authority is required");
+    throw new RuntimeProviderActivationError("validated qualification authority is required");
   }
   const authority = record(value, "qualification authority");
   exactKeys(

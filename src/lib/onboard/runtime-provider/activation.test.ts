@@ -352,7 +352,7 @@ describe("runtime provider activation catalog", () => {
       createRuntimeProviderActivationCatalog([
         incomplete as unknown as RuntimeProviderActivationRegistration,
       ]),
-    ).toThrow("canonical qualification authority is required");
+    ).toThrow("validated qualification authority is required");
   });
 
   it("rejects qualification authority for a different provider", () => {

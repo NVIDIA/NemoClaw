@@ -94,6 +94,7 @@ function githubFixture(
   readonly api: GitHubQualificationReader;
   readonly archive: Buffer;
   readonly json: Map<string, unknown>;
+  readonly jsonSequences: Map<string, unknown[]>;
 } {
   const archive = archiveFor(value, archiveOptions);
   const digest = `sha256:${createHash("sha256").update(archive).digest("hex")}`;
@@ -163,16 +164,70 @@ function githubFixture(
     ],
     [`repos/${REPOSITORY}/actions/artifacts/9001`, artifact],
   ]);
+  const jsonSequences = new Map<string, unknown[]>();
   const getJson = vi.fn(async (apiPath: string) => {
-    expect(json.has(apiPath)).toBe(true);
-    return structuredClone(json.get(apiPath));
+    expect(json.has(apiPath) || jsonSequences.has(apiPath)).toBe(true);
+    const value = jsonSequences.get(apiPath)?.shift() ?? json.get(apiPath);
+    return structuredClone(value);
   });
   const getBytes = vi.fn(async (apiPath: string) => {
     expect(apiPath).toBe(`repos/${REPOSITORY}/actions/artifacts/9001/zip`);
     return Buffer.from(archive);
   });
-  return { api: { getJson, getBytes }, archive, json };
+  return { api: { getJson, getBytes }, archive, json, jsonSequences };
 }
+
+type QualificationFixture = ReturnType<typeof githubFixture>;
+
+function sequenceConfirmationJson(
+  fixture: QualificationFixture,
+  apiPath: string,
+  mutate: (confirmed: Record<string, unknown>) => void,
+): void {
+  const initial = structuredClone(fixture.json.get(apiPath)) as Record<string, unknown>;
+  const confirmed = structuredClone(initial);
+  mutate(confirmed);
+  fixture.jsonSequences.set(apiPath, [initial, confirmed]);
+}
+
+function changePullHeadOnConfirmation(fixture: QualificationFixture): void {
+  const apiPath = `repos/${REPOSITORY}/pulls/9143`;
+  sequenceConfirmationJson(fixture, apiPath, (confirmed) => {
+    (confirmed.head as { sha: string }).sha = "c".repeat(40);
+  });
+}
+
+function changeMainRevisionOnConfirmation(fixture: QualificationFixture): void {
+  const apiPath = `repos/${REPOSITORY}/commits/main`;
+  sequenceConfirmationJson(fixture, apiPath, (confirmed) => {
+    confirmed.sha = "c".repeat(40);
+  });
+}
+
+function changeRunAttemptOnConfirmation(fixture: QualificationFixture): void {
+  const apiPath = `repos/${REPOSITORY}/actions/runs/7001`;
+  sequenceConfirmationJson(fixture, apiPath, (confirmed) => {
+    confirmed.run_attempt = 3;
+  });
+}
+
+function changeArtifactDigestOnConfirmation(fixture: QualificationFixture): void {
+  const apiPath = `repos/${REPOSITORY}/actions/artifacts/9001`;
+  const confirmed = structuredClone(fixture.json.get(apiPath)) as Record<string, unknown>;
+  confirmed.digest = `sha256:${"e".repeat(64)}`;
+  fixture.json.set(apiPath, confirmed);
+}
+
+const CONFIRMATION_DRIFT_CASES = [
+  ["PR head", changePullHeadOnConfirmation, "pull request head, base"],
+  ["main revision", changeMainRevisionOnConfirmation, "current main SHA"],
+  ["workflow run attempt", changeRunAttemptOnConfirmation, "protected source changed"],
+  [
+    "artifact digest",
+    changeArtifactDigestOnConfirmation,
+    "protected artifact changed during collection",
+  ],
+] as const;
 
 describe("native runtime qualification protected evidence collector", () => {
   it("authenticates live GitHub identities and invokes the canonical evidence consumer", async () => {
@@ -202,6 +257,18 @@ describe("native runtime qualification protected evidence collector", () => {
     expect(fixture.api.getBytes).toHaveBeenCalledOnce();
     expect(fixture.api.getJson).toHaveBeenCalledWith(`repos/${REPOSITORY}/pulls/9143`);
   });
+
+  it.each(CONFIRMATION_DRIFT_CASES)(
+    "rejects %s drift on the confirmation read",
+    async (_identity, arrangeDrift, expectedError) => {
+      const fixture = githubFixture();
+      arrangeDrift(fixture);
+
+      await expect(
+        collectNativeRuntimeQualificationEvidence(fixture.api, collectorInput()),
+      ).rejects.toThrow(expectedError);
+    },
+  );
 
   it.each([
     ["head", { headSha: "e".repeat(40), baseSha: "f".repeat(40) }],
