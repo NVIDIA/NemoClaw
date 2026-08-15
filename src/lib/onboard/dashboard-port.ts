@@ -627,11 +627,13 @@ interface DashboardPortScopedSandboxEntryPointDeps<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
+  PortableRuntimeAuthority,
   ComputePlan,
 > {
   createBaseImageResolutionContext(): BaseImageResolutionContext;
   createSandboxWithBaseImageResolution(
     baseImageResolutionContext: BaseImageResolutionContext,
+    portableRuntimeAuthority: PortableRuntimeAuthority,
     computePlan: ComputePlan,
     managedWorkloadRebuild: null,
     temporaryManagedRuntime: boolean,
@@ -639,6 +641,7 @@ interface DashboardPortScopedSandboxEntryPointDeps<
     dashboardPortReservationScope: DashboardPortReservationScope,
     ...args: Args
   ): Promise<Result>;
+  resolvePortableRuntimeAuthority(): PortableRuntimeAuthority;
   resolveComputePlan(): ComputePlan;
 }
 
@@ -646,12 +649,14 @@ export function createDashboardPortScopedSandboxEntryPoints<
   Args extends unknown[],
   Result,
   BaseImageResolutionContext,
+  PortableRuntimeAuthority,
   ComputePlan,
 >(
   deps: DashboardPortScopedSandboxEntryPointDeps<
     Args,
     Result,
     BaseImageResolutionContext,
+    PortableRuntimeAuthority,
     ComputePlan
   >,
 ): {
@@ -663,6 +668,7 @@ export function createDashboardPortScopedSandboxEntryPoints<
     return withDashboardPortReservationScope((dashboardPortReservationScope) =>
       deps.createSandboxWithBaseImageResolution(
         deps.createBaseImageResolutionContext(),
+        deps.resolvePortableRuntimeAuthority(),
         computePlan,
         null,
         temporaryManagedRuntime,

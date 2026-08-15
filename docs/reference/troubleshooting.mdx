@@ -3329,6 +3329,71 @@ Then rerun portable onboarding:
 $$nemoclaw onboard --experimental-profile portable
 ```
 
+### Portable Podman Readiness Fails
+
+Portable commands use the current user's rootless Podman socket authority recorded in NemoClaw state.
+They ignore ambient Docker and Podman runtime selectors, including named connections.
+Do not export another `DOCKER_HOST`, `DOCKER_CONTEXT`, `CONTAINER_HOST`, or `CONTAINER_CONNECTION` to bypass a readiness failure.
+
+When `podman.service` reports inactive and the recorded socket exists, NemoClaw first makes one 10-second API request through the guarded recorded authority.
+A valid server version classifies the endpoint as warm and avoids starting another socket service.
+A missing socket or a response without a valid server version enters bounded cold activation.
+Any socket authority change during this precheck fails at the socket authority stage and is not eligible for inode requalification.
+
+During cold activation, the first API probe can cause systemd to replace the socket inode.
+NemoClaw requalifies one such replacement and repeats the probe only when the socket path, device, mode, owner, and complete directory authority remain unchanged.
+Any other authority change or a second inode replacement fails at the socket authority stage.
+
+A portable readiness failure identifies the stage that did not complete:
+
+| Stage | Meaning | Recovery |
+| --- | --- | --- |
+| Socket authority | The portable lifecycle receipt is unsafe or invalid, its schema is `1` through `3` and predates recorded portable Podman authority, the recorded authority does not match the current Linux user, the recorded socket is unsafe, another authority field changed, or its inode was replaced more than once during cold activation. | If the error says that the receipt is unsafe or invalid, or that it predates recorded authority, run `$$nemoclaw onboard --experimental-profile portable`. If the recorded authority does not match the current Linux user, run NemoClaw as the user who created the portable state or rerun portable onboarding as the current user. Otherwise, stop and inspect the reported path. Restore the recorded current-user runtime instead of selecting another endpoint. |
+| Service activation | The current user's systemd manager could not activate the Podman socket-backed service, or activation did not create the recorded socket within the startup period. | Inspect `podman.socket` and `podman.service` with the commands below. Correct the reported user-unit failure, then rerun the NemoClaw command. |
+| Startup API health | The service was activated, but the recorded endpoint did not return a real Podman API response within the startup period. | Inspect the user-unit logs and run the explicit API request below against the reported socket path. Raise `NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS` only when valid cold activation needs more than 60,000 ms. |
+| Steady-state API health | An endpoint that completed activation did not answer the later shorter health check. | Inspect host load and the user-unit logs, then rerun the NemoClaw command. |
+
+Inspect the current user's units without changing them:
+
+```bash
+systemctl --user status podman.socket podman.service --no-pager
+journalctl --user -u podman.socket -u podman.service --since -10m --no-pager
+```
+
+If the units need activation, restart the active service when present and start the socket for the current user session:
+
+```bash
+systemctl --user try-restart podman.service
+systemctl --user start podman.socket
+```
+
+These commands do not enable the socket for later user sessions.
+
+Use the exact socket path from the NemoClaw failure to require a real server response:
+
+```bash
+podman --remote \
+  --url unix://<recorded-socket-path> \
+  version \
+  --format 'Server Version: {{.Server.Version}}'
+```
+
+Continue only when the command exits with status `0` and prints a nonempty server version.
+The request and the readiness report contain no credentials.
+Rerun the original NemoClaw command without exporting a Docker or Podman runtime selector.
+
+If valid cold activation needs a larger budget, set an integer from `15000` through `300000` milliseconds:
+
+```bash
+export NEMOCLAW_PORTABLE_PODMAN_STARTUP_TIMEOUT_MS=120000
+$$nemoclaw <original-arguments>
+```
+
+The default cold-start budget is 60,000 ms.
+The later steady-state API deadline is fixed at 10,000 ms and does not use this setting.
+A successful cold path uses the `cold` timing label and reports activation, API, and total time in milliseconds.
+A successful warm path uses the `warm` timing label and reports steady-state API and total time in milliseconds.
+
 ### Portable Host Gateway Is Unreachable
 
 The portable experimental profile maps `host.openshell.internal` to the OpenShell Podman host gateway.
@@ -3344,15 +3409,15 @@ Portable onboarding reports output like this:
 ```
 
 If `podman.service` is active, restart it.
-Then enable and start the user-scoped Podman socket:
+Then start the user-scoped Podman socket for the current user session:
 
 ```bash
 systemctl --user try-restart podman.service
-systemctl --user enable --now podman.socket
+systemctl --user start podman.socket
 ```
 
 The first command does not start an inactive service.
-The second command enables and starts the current user's Podman API socket.
+The second command starts the current user's Podman API socket without enabling it for later user sessions.
 These commands affect only the current user's Podman units.
 They do not read or write credentials.
 
@@ -3367,6 +3432,9 @@ Expected output:
 ```text
 active
 ```
+
+An active socket alone does not establish API health.
+Run the explicit Podman API request from [Portable Podman Readiness Fails](#portable-podman-readiness-fails) before you rerun onboarding.
 
 Then rerun portable onboarding:
 
