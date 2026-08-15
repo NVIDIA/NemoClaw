@@ -383,6 +383,7 @@ jobs:
           done
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Set up Node.js
@@ -418,13 +419,34 @@ jobs:
           fi
           if [ "$diff_status" -eq 1 ]; then
             echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
+            local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
+            local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
+            local_base_oci="$RUNNER_TEMP/pr-base.oci"
             docker buildx build \
               --platform linux/amd64 \
-              --load \
+              --provenance=false \
+              --sbom=false \
               --file "$BASE_DOCKERFILE" \
               --tag "$LOCAL_BASE_REFERENCE" \
+              --output "type=docker,dest=${local_base_archive}" \
+              --output "type=oci,dest=${local_base_oci_archive}" \
               .
+            docker load --input "$local_base_archive"
+            mkdir -p "$local_base_oci"
+            tar -C "$local_base_oci" -xf "$local_base_oci_archive"
+            local_base_oci_digest="$(
+              jq -er '
+                .manifests
+                | if length == 1 then .[0].digest else error("not one image") end
+              ' "$local_base_oci/index.json"
+            )"
+            if [[ ! "$local_base_oci_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "ERROR: local PR base OCI layout returned an invalid digest." >&2
+              exit 1
+            fi
             printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
+            printf 'local=true\n' >> "$GITHUB_OUTPUT"
+            printf 'oci=%s@%s\n' "$local_base_oci" "$local_base_oci_digest" >> "$GITHUB_OUTPUT"
             printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
               "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
               >> "$GITHUB_STEP_SUMMARY"
@@ -467,6 +489,7 @@ jobs:
             exit 1
           fi
           printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+          printf 'local=false\n' >> "$GITHUB_OUTPUT"
           printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
             >> "$GITHUB_STEP_SUMMARY"
 
@@ -483,7 +506,38 @@ jobs:
             --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
             --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
 
-      - name: Build PR managed image locally
+      - name: Build PR managed image from local base
+        if: steps.base.outputs.local == 'true'
+        shell: bash
+        env:
+          BASE_IMAGE: ${{ steps.base.outputs.ref }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # The base resolver loads a changed base into Docker's local image
+          # store. Keep this consumer on that same store: a Buildx container
+          # builder otherwise treats the local-only reference as Docker Hub.
+          docker build \
+            --platform linux/amd64 \
+            --file "$DOCKERFILE" \
+            --tag "$IMAGE_REFERENCE" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${CANDIDATE_SHA}" \
+            --label "io.nvidia.nemoclaw.agent=${{ matrix.agent }}" \
+            --label "io.nvidia.nemoclaw.managed-image.contract=1" \
+            --label "io.nvidia.nemoclaw.managed-image.platform=linux/amd64" \
+            --label "io.nvidia.nemoclaw.managed-image.startup-profile=1" \
+            --label "io.nvidia.nemoclaw.managed-image.capabilities=1" \
+            --label "io.nvidia.nemoclaw.managed-image.cohort=ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
+            .
+
+      - name: Build PR managed image from registry base
+        if: steps.base.outputs.local != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -670,9 +724,11 @@ jobs:
         if: github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
+          builder: ${{ steps.buildx.outputs.name }}
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
+          build-contexts: ${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}
           outputs: type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -684,7 +740,7 @@ jobs:
             io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
-            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}
             NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
