@@ -21,6 +21,7 @@ export type {
   RuntimeProviderWorkloadProfile,
 } from "./contract";
 export {
+  composeActivatedRuntimeProviderBundles,
   createRuntimeProviderActivationCatalog,
   RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
   RuntimeProviderActivationError,
@@ -30,8 +31,16 @@ export type {
   RuntimeProviderActivationDeclaration,
   RuntimeProviderActivationRegistration,
 } from "./activation";
+export type {
+  NativeRuntimeQualificationArtifactIdentity,
+  NativeRuntimeQualificationAuthority,
+  NativeRuntimeQualificationAuthoritySource,
+  NativeRuntimeQualificationPlanSource,
+  NativeRuntimeQualificationProtectedJobIdentity,
+} from "./native-qualification-authority";
 export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  createCurrentRuntimeProviderBundles,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
 export {
