@@ -27,6 +27,10 @@ export function managedReasoningEffortPath(root: string): string {
   return path.join(root, "managed-reasoning-effort");
 }
 
+export function managedUpstreamProviderPath(root: string): string {
+  return path.join(root, "managed-upstream-provider");
+}
+
 export function writeManagedReasoningEffort(root: string, content: string, mode = 0o444): string {
   const capabilityPath = managedReasoningEffortPath(root);
   fs.writeFileSync(capabilityPath, content, { mode });
@@ -926,6 +930,9 @@ Version: ${version}
   const managedBaseUrlFile = path.join(tempDir, "managed-inference-base-url");
   fs.writeFileSync(managedBaseUrlFile, "https://inference.local/v1\n", "utf8");
   fs.chmodSync(managedBaseUrlFile, 0o444);
+  const managedUpstreamProviderFile = managedUpstreamProviderPath(tempDir);
+  fs.writeFileSync(managedUpstreamProviderFile, "nvidia-prod\n", "utf8");
+  fs.chmodSync(managedUpstreamProviderFile, 0o444);
   return tempDir;
 }
 
@@ -954,6 +961,10 @@ export function patchFixture(tempDir: string): void {
     .replace(
       '"/usr/local/share/nemoclaw/dcode-reasoning-effort"',
       JSON.stringify(managedReasoningEffortPath(tempDir)),
+    )
+    .replace(
+      '"/usr/local/share/nemoclaw/dcode-upstream-provider"',
+      JSON.stringify(managedUpstreamProviderPath(tempDir)),
     )
     .replace("_MANAGED_FILE_OWNER_UID = 0", `_MANAGED_FILE_OWNER_UID = ${process.getuid?.() ?? 0}`);
   fs.writeFileSync(helperPath, helper, "utf8");
