@@ -248,7 +248,7 @@ describe("sandbox workload source resolution", () => {
 
   it.each(
     CANDIDATE_MANAGED_IMAGE_AGENTS,
-  )("refuses every workload for candidate %s while the gate is off (#7927)", (agent) => {
+  )("refuses candidate %s while candidate selection is disabled (#7927)", (agent) => {
     expect(() =>
       resolveSandboxWorkloadSource({
         agentName: agent,
