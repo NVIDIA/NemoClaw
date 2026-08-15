@@ -128,6 +128,9 @@ describe("native Podman CPU proof workflow", () => {
       "persist-credentials": false,
       ref: "${{ github.event.pull_request.head.sha }}",
     });
+    expect(namedDelegationStep("Build shared sandbox-name contract").run).toBe(
+      "npm run build:policy-boundary",
+    );
     expect(prepare).toContain(
       'useradd --create-home --shell /bin/bash "$E2E_CPU_DELEGATION_USER"',
     );
