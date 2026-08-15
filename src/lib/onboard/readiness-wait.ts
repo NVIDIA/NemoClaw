@@ -1,19 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type WaitUntilOptions, waitUntil } from "../core/wait";
+import type { WaitUntilOptions } from "../core/wait";
 
 const DEFAULT_INITIAL_INTERVAL_MS = 250;
 const DEFAULT_MAX_INTERVAL_MS = 2_000;
 const DEFAULT_BACKOFF_FACTOR = 1.5;
-
-/** Execute a synchronous readiness condition with the repository's bounded wait primitive. */
-export function waitForReadiness(
-  condition: () => boolean,
-  options: WaitUntilOptions,
-): boolean {
-  return waitUntil(condition, options);
-}
 
 function nonNegativeFinite(value: number, fallback = 0): number {
   return Number.isFinite(value) ? Math.max(0, value) : fallback;

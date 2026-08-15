@@ -17,8 +17,10 @@ import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { waitForStoppedForwardPortRelease } from "../../onboard/forward-cleanup";
-import { waitForReadiness } from "../../onboard/readiness-wait";
+import {
+  waitForForwardRecoveryState,
+  waitForStoppedForwardPortRelease,
+} from "../../onboard/forward-cleanup";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -315,7 +317,7 @@ export function ensureSandboxPortForwardForPort(
       health: forwardHealth,
       portReleased: false,
     };
-    waitForReadiness(
+    waitForForwardRecoveryState(
       () => {
         stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
         stopState.portReleased = !isLocalForwardReachable(port);
@@ -325,12 +327,7 @@ export function ensureSandboxPortForwardForPort(
           stopState.portReleased
         );
       },
-      {
-        deadlineMs: Date.now() + waitMs,
-        initialIntervalMs: 100,
-        maxIntervalMs: 500,
-        backoffFactor: 1.5,
-      },
+      waitMs,
     );
     if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
     if (stopState.health === "occupied") return false;
@@ -369,7 +366,7 @@ export function ensureSandboxPortForwardForPort(
   if (waitMs === 0) return false;
 
   let occupied = false;
-  const settled = waitForReadiness(
+  const settled = waitForForwardRecoveryState(
     () => {
       health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
       if (health === "occupied") {
@@ -378,12 +375,7 @@ export function ensureSandboxPortForwardForPort(
       }
       return health === true;
     },
-    {
-      deadlineMs: Date.now() + waitMs,
-      initialIntervalMs: 100,
-      maxIntervalMs: 500,
-      backoffFactor: 1.5,
-    },
+    waitMs,
   );
   return settled && !occupied && acceptSuccessfulForward();
 }
