@@ -11,15 +11,18 @@ import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import {
   assertPodmanSocketAuthority,
   capturePodmanSocketAuthority,
-  createPodmanContainerEngine,
   hardenPodmanSocketDirectory,
-  localPodmanEnvironment,
   type PodmanSocketAuthority,
 } from "../../adapters/podman";
 import { ensureConfigDir } from "../../state/config-io";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { isPortableExperimentalProfile, PORTABLE_LOCAL_REGISTRY } from "../docker-driver-platform";
-import { qualifyPodmanHost } from "../runtime-provider/podman-preflight";
+import {
+  inspectPortablePodmanReadiness,
+  portablePodmanCommandEnvironment,
+  portablePodmanReadinessError,
+  type PortablePodmanReadinessDeps,
+} from "./portable-runtime-readiness";
 
 const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
 const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
@@ -50,13 +53,22 @@ export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
-  systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
-  podman?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
+  systemctl?: (
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+    timeoutMs?: number,
+  ) => SpawnResult;
+  podman?: (
+    args: readonly string[],
+    env: NodeJS.ProcessEnv,
+    timeoutMs?: number,
+  ) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
   assertSocketAuthority?: (authority: PodmanSocketAuthority) => void;
   qualifyPodman?: (authority: PodmanSocketAuthority) => void;
+  runtimeReadiness?: PortablePodmanReadinessDeps;
   validateConfigAuthority?: (input: {
     homeDir: string;
     configHome: string;
@@ -392,17 +404,13 @@ export function preparePortableExperimentalHost(
 
   const podman =
     deps.podman ??
-    ((args, childEnv) =>
+    ((args, childEnv, timeoutMs = HOST_COMMAND_TIMEOUT_MS) =>
       spawnSync("podman", [...args], {
         encoding: "utf-8",
         env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
       }));
-  const discoverSocket = (childEnv: NodeJS.ProcessEnv): string =>
-    resolvePodmanDockerHost(
-      podman(["info", "--format", "{{.Host.RemoteSocket.Path}}"], childEnv),
-    ).slice("unix://".length);
-  const admissionSocketPath = discoverSocket(localPodmanEnvironment(env));
+  const admissionSocketPath = expectedSocketPath ?? path.join(runtimeDir, "podman", "podman.sock");
   assertSocketInsideRuntime(runtimeDir, admissionSocketPath);
   if (expectedAuthority && admissionSocketPath !== expectedAuthority.socketPath) {
     throw new Error("Portable Podman socket path does not match the onboarding checkpoint.");
@@ -410,14 +418,25 @@ export function preparePortableExperimentalHost(
 
   env.NETAVARK_FW = "iptables";
   env.CONTAINERS_CONF = writePortableRuntimeConfig(configHome);
+  const runtimeAuthority: CheckpointPortableRuntimeAuthority = {
+    schemaVersion: 1,
+    kind: "podman",
+    ownership: "current-user",
+    uid: Number(uid),
+    homeDir: home,
+    configHome,
+    runtimeDir,
+    socketPath: admissionSocketPath,
+  };
+  const serviceEnv = portablePodmanCommandEnvironment(runtimeAuthority, env);
 
   const systemctl =
     deps.systemctl ??
-    ((args, childEnv) =>
+    ((args, childEnv, timeoutMs = HOST_COMMAND_TIMEOUT_MS) =>
       spawnSync("systemctl", [...args], {
         encoding: "utf-8",
         env: childEnv,
-        timeout: HOST_COMMAND_TIMEOUT_MS,
+        timeout: timeoutMs,
       }));
   requireCommand(
     systemctl(
@@ -427,42 +446,67 @@ export function preparePortableExperimentalHost(
         "NETAVARK_FW=iptables",
         `CONTAINERS_CONF=${env.CONTAINERS_CONF}`,
       ],
-      env,
+      serviceEnv,
     ),
     "Configuring the rootless container service environment",
   );
   requireCommand(
-    systemctl(["--user", "try-restart", "podman.service"], env),
+    systemctl(["--user", "try-restart", "podman.service"], serviceEnv),
     "Refreshing the rootless container service",
   );
-  requireCommand(
-    systemctl(["--user", "enable", "--now", "podman.socket"], env),
-    "Starting the rootless container socket",
+  const podmanEnv = portablePodmanCommandEnvironment(runtimeAuthority, env);
+  const readiness = inspectPortablePodmanReadiness(runtimeAuthority, {
+    ...deps.runtimeReadiness,
+    platform: deps.platform,
+    uid: Number(uid),
+    home,
+    env,
+    systemctl: (args, childEnv, timeoutMs) => systemctl(args, childEnv, timeoutMs),
+    hardenSocketDirectory:
+      deps.hardenSocketDirectory ??
+      deps.runtimeReadiness?.hardenSocketDirectory ??
+      hardenPodmanSocketDirectory,
+    captureSocketAuthority: deps.captureSocketAuthority
+      ? (socketPath) => deps.captureSocketAuthority!(socketPath, Number(uid))
+      : (deps.runtimeReadiness?.captureSocketAuthority ?? capturePodmanSocketAuthority),
+    assertSocketAuthority:
+      deps.assertSocketAuthority ??
+      deps.runtimeReadiness?.assertSocketAuthority ??
+      assertPodmanSocketAuthority,
+    podmanCapture: deps.runtimeReadiness?.podmanCapture
+      ? deps.runtimeReadiness.podmanCapture
+      : deps.podman
+        ? (_executable, args, timeoutMs) => {
+            const result = podman(args, podmanEnv, timeoutMs);
+            return {
+              status: result.status ?? 1,
+              stdout: String(result.stdout ?? ""),
+              stderr: String(result.stderr ?? ""),
+              ...(result.error ? { error: result.error } : {}),
+            };
+          }
+        : (_executable, args, timeoutMs) => {
+            const result = spawnSync("podman", [...args], {
+              encoding: "utf-8",
+              env: podmanEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: timeoutMs,
+            });
+            return {
+              status: result.status ?? 1,
+              stdout: String(result.stdout ?? ""),
+              stderr: String(result.stderr ?? ""),
+              ...(result.error ? { error: result.error } : {}),
+            };
+          },
+  });
+  if (!readiness.ok) throw portablePodmanReadinessError(readiness);
+  const socketAuthority = readiness.authority;
+  deps.qualifyPodman?.(socketAuthority);
+  const dockerHost = readiness.dockerHost;
+  console.log(
+    `  Portable Podman readiness: ${readiness.timing.mode}; activation ${String(readiness.timing.activationMs)} ms; API ${String(readiness.timing.apiMs)} ms; total ${String(readiness.timing.totalMs)} ms.`,
   );
-
-  const podmanEnv = localPodmanEnvironment(env);
-  const socketPath = discoverSocket(podmanEnv);
-  const dockerHost = `unix://${socketPath}`;
-  if (expectedAuthority && socketPath !== expectedAuthority.socketPath) {
-    throw new Error("Portable Podman socket path does not match the onboarding checkpoint.");
-  }
-  assertSocketInsideRuntime(runtimeDir, socketPath);
-  (deps.hardenSocketDirectory ?? hardenPodmanSocketDirectory)(socketPath, Number(uid));
-  const socketAuthority = deps.captureSocketAuthority
-    ? deps.captureSocketAuthority(socketPath, Number(uid))
-    : deps.hardenSocketDirectory
-      ? null
-      : capturePodmanSocketAuthority(socketPath, { uid: Number(uid) });
-  if (socketAuthority) {
-    (
-      deps.qualifyPodman ??
-      ((authority) => {
-        qualifyPodmanHost(
-          createPodmanContainerEngine({ operation: "host-doctor", socketAuthority: authority }),
-        );
-      })
-    )(socketAuthority);
-  }
   env.DOCKER_HOST = dockerHost;
   podmanEnv.DOCKER_HOST = dockerHost;
 
@@ -477,19 +521,14 @@ export function preparePortableExperimentalHost(
   requireDockerCompatibleCli(docker, podmanEnv);
   ensureRegistryContainer(podmanEnv, docker);
   if (socketAuthority) {
-    (deps.assertSocketAuthority ?? assertPodmanSocketAuthority)(socketAuthority);
+    (
+      deps.assertSocketAuthority ??
+      deps.runtimeReadiness?.assertSocketAuthority ??
+      assertPodmanSocketAuthority
+    )(socketAuthority);
   }
   return {
-    authority: {
-      schemaVersion: 1,
-      kind: "podman",
-      ownership: "current-user",
-      uid: Number(uid),
-      homeDir: home,
-      configHome,
-      runtimeDir,
-      socketPath,
-    },
+    authority: runtimeAuthority,
     socketAuthority,
     containersConf: env.CONTAINERS_CONF,
   };

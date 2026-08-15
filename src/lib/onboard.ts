@@ -1518,11 +1518,9 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
-
-// ── Step 5: Sandbox ──────────────────────────────────────────────
-
 async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
+  portableRuntimeAuthority: import("./state/onboard-checkpoint-types").CheckpointPortableRuntimeAuthority | null,
   computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
   managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
   tempManagedRuntime: boolean,
@@ -1945,6 +1943,7 @@ async function createSandboxWithBaseImageResolution(
       sandboxEnv,
       sandboxStartupCommand,
       lifecycleGeneration: createdSandboxLifecycle.generation,
+      portableRuntimeAuthority,
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
@@ -2102,25 +2101,16 @@ async function createSandboxWithBaseImageResolution(
   return sandboxName;
 }
 
-type CreateSandboxArgs =
-  Parameters<typeof createSandboxWithBaseImageResolution> extends [
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    ...infer Args,
-  ]
-    ? Args
-    : never;
-
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>
       baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
     createSandboxWithBaseImageResolution,
+    resolvePortableRuntimeAuthority: () =>
+      sandboxGpuCreateFlow.resolveExportedPortableRuntimeAuthority(
+        process.env,
+        onboardSession.loadSession,
+      ),
     resolveComputePlan: dockerDriverPlatform.resolveCurrentOpenShellComputePlan,
   });
 
@@ -3556,6 +3546,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             withSandboxPortReservationScope((dashboardPortReservationScope) =>
               createSandboxWithBaseImageResolution(
                 baseImageResolutionContext,
+                lockedRuntime.preparedPortableAuthority,
                 onboardingComputePlan,
                 opts.managedWorkloadRebuild ?? null,
                 opts.tempManagedRuntime === true,

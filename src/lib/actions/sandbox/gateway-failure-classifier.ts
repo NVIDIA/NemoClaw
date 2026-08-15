@@ -9,11 +9,20 @@ import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import { resolveGatewayPortFromName } from "../../onboard/gateway-binding";
+import type { PortablePodmanReadinessResult } from "../../onboard/experimental/portable-runtime-readiness";
+import {
+  inspectPortableRuntimeReceiptReadiness,
+  type PortableRuntimeReceiptReadinessDeps,
+} from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const DOCKER_TIMEOUT_MS = 3000;
 const PORT_PROBE_TIMEOUT_MS = 2000;
+const portableRuntimeFailures = new Map<
+  string,
+  Extract<PortablePodmanReadinessResult, { ok: false }>
+>();
 
 export type GatewayFailureLayer =
   | "docker_unreachable"
@@ -281,8 +290,22 @@ export function isDockerRuntimeDown(
   opts?: {
     runners?: Pick<GatewayFailureRunners, "dockerInfo">;
     getSandbox?: SandboxDriverLookup;
+    portableLifecycle?: PortableRuntimeReceiptReadinessDeps;
   },
 ): boolean {
+  const portable = inspectPortableRuntimeReceiptReadiness(sandboxName, opts?.portableLifecycle);
+  if (portable) {
+    if (portable.ok) {
+      portableRuntimeFailures.delete(sandboxName);
+      console.log(
+        `  Portable Podman readiness: ${portable.timing.mode}; activation ${String(portable.timing.activationMs)} ms; API ${String(portable.timing.apiMs)} ms; total ${String(portable.timing.totalMs)} ms.`,
+      );
+      return false;
+    }
+    portableRuntimeFailures.set(sandboxName, portable);
+    return true;
+  }
+  portableRuntimeFailures.delete(sandboxName);
   const getSandbox = opts?.getSandbox ?? registry.getSandbox;
   if (!isDockerBackedSandbox(sandboxName, getSandbox)) return false;
   const probe = opts?.runners?.dockerInfo ?? defaultRunners.dockerInfo;
@@ -302,6 +325,25 @@ export function printDockerRuntimeDownGuidance(
 ): void {
   const writer = opts.writer ?? console.error;
   const retryCommand = opts.retryCommand ?? "status";
+  const portable = portableRuntimeFailures.get(sandboxName);
+  portableRuntimeFailures.delete(sandboxName);
+  if (portable) {
+    writer(`  Failure stage: ${portable.stage} — ${portable.detail}`);
+    if (portable.socketPath) writer(`  Recorded socket: ${portable.socketPath}`);
+    writer(
+      `  Portable Podman readiness (${portable.timing.mode}): activation ${String(portable.timing.activationMs)} ms; API ${String(portable.timing.apiMs)} ms; total ${String(portable.timing.totalMs)} ms.`,
+    );
+    writer(
+      `  The receipt-owned Podman endpoint for sandbox '${sandboxName}' is not ready; no Docker or named-connection fallback was used.`,
+    );
+    writer("  Recovery:");
+    writer(
+      "    1. Check the reported readiness stage and the current user's Podman socket service.",
+    );
+    writer("    2. Confirm the recorded endpoint returns a real Podman server version.");
+    writer(`    3. Retry: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
+    return;
+  }
   writer(`  ${getLayerHeader("docker_unreachable")}`);
   writer(
     `  The Docker daemon is not reachable, so sandbox '${sandboxName}' cannot be verified or started.`,
