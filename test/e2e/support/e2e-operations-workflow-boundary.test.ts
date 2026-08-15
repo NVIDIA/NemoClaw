@@ -823,6 +823,22 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
+  it.each([
+    ["a lowercase short write method", "gh api -X post repos/NVIDIA/NemoClaw/issues"],
+    ["a lowercase long write method", "gh api --method patch repos/NVIDIA/NemoClaw/issues/1"],
+    [
+      "a GraphQL mutation",
+      "gh api graphql -f query='mutation { closeIssue(input: {}) { issue { id } } }'",
+    ],
+  ])("rejects %s in the qualification planning job", (_label, mutation) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["native-runtime-qualification-producer-plan"].steps!.push({ run: mutation });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "native-runtime-qualification-producer-plan must limit GitHub API access to the reviewed read-only contract",
+    );
+  });
+
   it("reserves pull-request write permission for the validated PR reporter", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.permissions = { "pull-requests": "write" };

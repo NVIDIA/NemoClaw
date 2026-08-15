@@ -203,12 +203,25 @@ describe("native runtime qualification producer evidence", () => {
     ).toThrow("Native runtime qualification");
   });
 
-  it("rejects a forged installer receipt and unexpected files", () => {
+  it("rejects a forged installer receipt", () => {
     const value = fixture();
     fs.writeFileSync(
       path.join(value.installerDirectory, "installer.sh"),
       `${INSTALLER}echo forged\n`,
     );
+
+    expect(() =>
+      writeNativeRuntimeQualificationProducerEvidence(
+        value.row,
+        value.installerDirectory,
+        value.executionPath,
+        value.evidenceDirectory,
+      ),
+    ).toThrow("installer receipt is invalid");
+  });
+
+  it("rejects unexpected files in the installer receipt directory", () => {
+    const value = fixture();
     fs.writeFileSync(path.join(value.installerDirectory, "log.txt"), "candidate output");
 
     expect(() =>

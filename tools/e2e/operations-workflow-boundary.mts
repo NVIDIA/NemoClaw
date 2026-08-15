@@ -54,7 +54,7 @@ const ISSUE_MUTATION_BEYOND_COMMENT =
 const GENERIC_GITHUB_WRITE_SURFACE =
   /github\s*(?:(?:\?\.|\.)\s*(?:graphql|request)\b|\[\s*["'](?:graphql|request)["']\s*\])|\b(?:const|let|var)\s+(?:[A-Za-z_$][\w$]*\s*=\s*github\b|\{[^}]*\b(?:graphql|request)\b[^}]*\}\s*=\s*github(?:\.rest)?\b)|\bfetch\b|\bgh\s+api\b/u;
 const GH_API_WRITE_METHOD =
-  /\bgh\s+api\b[\s\S]{0,160}?(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b/u;
+  /\bgh\s+api\b[\s\S]{0,160}?(?:(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b|graphql\b[\s\S]{0,160}?\bmutation\b)/iu;
 const NATIVE_RUNTIME_QUALIFICATION_READ_JOBS = new Set([
   "native-runtime-qualification-producer-plan",
 ]);
