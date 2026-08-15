@@ -165,6 +165,7 @@ describe("runtime provider central source boundary", () => {
   it("inventories every runtime-provider implementation", () => {
     expect(providerPaths).toEqual([
       "src/lib/onboard/runtime-provider/access.ts",
+      "src/lib/onboard/runtime-provider/activation.ts",
       "src/lib/onboard/runtime-provider/container-state-mutation.ts",
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",

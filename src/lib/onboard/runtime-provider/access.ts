@@ -21,6 +21,16 @@ export type {
   RuntimeProviderWorkloadProfile,
 } from "./contract";
 export {
+  createRuntimeProviderActivationCatalog,
+  RUNTIME_PROVIDER_ACTIVATION_CONTRACT_VERSION,
+  RuntimeProviderActivationError,
+} from "./activation";
+export type {
+  RuntimeProviderActivationCatalog,
+  RuntimeProviderActivationDeclaration,
+  RuntimeProviderActivationRegistration,
+} from "./activation";
+export {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   resolveCurrentRuntimeProviderBundle,
 } from "./current";
