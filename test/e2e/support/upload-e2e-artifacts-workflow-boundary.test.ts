@@ -185,26 +185,33 @@ describe("E2E artifact uploads", () => {
     );
   });
 
-  it.each(["missing", "duplicate"])(
-    "requires one aggregate native qualification upload when the upload is %s",
-    (variant) => {
-      const workflow = mutableWorkflow();
-      const job = workflow.jobs["native-runtime-qualification"];
-      const upload = job.steps?.find(
-        (step) => step.name === "Upload the complete qualification evidence",
-      );
-      expect(upload).toBeDefined();
-      if (variant === "missing") {
-        job.steps = job.steps!.filter((step) => step !== upload);
-      } else {
-        job.steps!.push({ ...upload!, with: { ...upload!.with } });
-      }
+  it("requires the aggregate native qualification upload", () => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["native-runtime-qualification"];
+    const upload = job.steps?.find(
+      (step) => step.name === "Upload the complete qualification evidence",
+    );
+    expect(upload).toBeDefined();
+    job.steps = job.steps!.filter((step) => step !== upload);
 
-      expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-        "native-runtime-qualification must define exactly one aggregate evidence upload",
-      );
-    },
-  );
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "native-runtime-qualification must define exactly one aggregate evidence upload",
+    );
+  });
+
+  it("rejects a duplicate aggregate native qualification upload", () => {
+    const workflow = mutableWorkflow();
+    const job = workflow.jobs["native-runtime-qualification"];
+    const upload = job.steps?.find(
+      (step) => step.name === "Upload the complete qualification evidence",
+    );
+    expect(upload).toBeDefined();
+    job.steps!.push({ ...upload!, with: { ...upload!.with } });
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "native-runtime-qualification must define exactly one aggregate evidence upload",
+    );
+  });
 
   it("rejects missing and duplicate shared upload invocations", () => {
     const workflow = mutableWorkflow();
