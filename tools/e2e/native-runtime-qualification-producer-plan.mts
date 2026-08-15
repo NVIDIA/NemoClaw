@@ -149,6 +149,9 @@ export function buildNativeRuntimeQualificationProducerPlan(
   }
   const include = PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION.cases.map((entry) => {
     const focused = entry.id === NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE;
+    const rootModes: readonly ("rootless" | "rootful")[] = focused
+      ? ["rootless", "rootful"]
+      : ["rootless"];
     return Object.freeze({
       id: entry.id,
       jobName: `Native runtime qualification / ${entry.id}`,
@@ -157,7 +160,7 @@ export function buildNativeRuntimeQualificationProducerPlan(
       installerSha256: input.installerSha256,
       source,
       case: immutableCase(entry),
-      rootModes: Object.freeze(focused ? ["rootless", "rootful"] : ["rootless"]),
+      rootModes: Object.freeze(rootModes),
       focusedOperations: Object.freeze(
         focused ? [...NATIVE_RUNTIME_QUALIFICATION_FOCUSED_OPERATIONS] : [],
       ),
