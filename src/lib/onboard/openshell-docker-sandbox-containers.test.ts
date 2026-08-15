@@ -2,13 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { queryOpenShellDockerSandboxRuntimeSnapshot } from "./openshell-docker-sandbox-containers";
+import {
+  queryOpenShellDockerSandboxRuntimeSnapshot,
+  removeExactOpenShellDockerSandboxContainer,
+} from "./openshell-docker-sandbox-containers";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const BOOKKEEPING_IMAGE_REF = "openshell/sandbox-from:alpha";
 const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "runc"];
 const ACTIVATED_CONTAINER_ID = "b".repeat(64);
 const ROLLBACK_CONTAINER_ID = "c".repeat(64);
+
+describe("removeExactOpenShellDockerSandboxContainer", () => {
+  it("fails when Docker cannot confirm the exact container is absent after removal (#9073)", () => {
+    const expectedContainerId = "a".repeat(64);
+    const queryContainers = vi
+      .fn()
+      .mockReturnValueOnce({ ok: true, ids: [expectedContainerId] })
+      .mockReturnValueOnce({ ok: true, ids: [expectedContainerId] });
+    const forceRemove = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      removeExactOpenShellDockerSandboxContainer("alpha", expectedContainerId, vi.fn(), {
+        queryContainers,
+        forceRemove,
+      }),
+    ).toThrow("could not confirm exact Docker container removal");
+
+    expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);
+  });
+});
 
 function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   const dockerRun = vi

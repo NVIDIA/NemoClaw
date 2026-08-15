@@ -16,7 +16,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText] = process.argv.slice(1);
+const [mode, sessionRoot, baselinePath, expectedTurnsText, expectedInput] = process.argv.slice(1);
 
 function finish(exitCode, reason, detail = {}) {
   if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
@@ -108,6 +108,13 @@ function hasStructuredContent(message) {
   return Array.isArray(message.content) && message.content.length > 0;
 }
 
+function containsExactInput(message, input) {
+  if (typeof message.content === "string") return message.content === input;
+  return Array.isArray(message.content) && message.content.some((part) =>
+    part && typeof part === "object" && typeof part.text === "string" && part.text === input
+  );
+}
+
 function appendedMessages(fileName, baseline) {
   const { offset, complete, raw } = readCompleteSession(fileName);
   const prior = baseline[fileName];
@@ -132,15 +139,22 @@ function appendedMessages(fileName, baseline) {
     if (!record || record.type !== "message" || !record.message) continue;
     const role = record.message.role;
     if (role !== "user" && role !== "assistant") continue;
-    messages.push({ role, hasStructuredContent: hasStructuredContent(record.message) });
+    messages.push({
+      role,
+      hasStructuredContent: hasStructuredContent(record.message),
+      containsExpectedInput: containsExactInput(record.message, expectedInput),
+    });
   }
   return messages;
 }
 
-function qualifyTurns() {
+function qualifyTurns(requireAssistant) {
   const expectedTurns = Number(expectedTurnsText);
   if (!Number.isSafeInteger(expectedTurns) || expectedTurns < 1) {
     finish(2, "expected_turn_count_invalid");
+  }
+  if (!requireAssistant && (!expectedInput || expectedInput.includes("\n") || expectedInput.includes("\r"))) {
+    finish(2, "expected_input_invalid");
   }
 
   const baseline = readBaseline();
@@ -169,13 +183,18 @@ function qualifyTurns() {
     }
     if (!message.hasStructuredContent) finish(2, "message_content_empty", { sessionId });
   }
-  if (messages.length < expectedRoles.length) finish(1);
+  const requiredMessages = expectedRoles.length - (requireAssistant ? 0 : 1);
+  if (messages.length < requiredMessages) finish(1);
+  if (!requireAssistant && !messages[requiredMessages - 1].containsExpectedInput) {
+    finish(2, "input_content_mismatch", { sessionId });
+  }
   finish(0);
 }
 
 try {
   if (mode === "baseline") recordBaseline();
-  if (mode === "qualify") qualifyTurns();
+  if (mode === "qualify") qualifyTurns(true);
+  if (mode === "qualify-input") qualifyTurns(false);
 } catch {
   finish(2, "verifier_failed");
 }
@@ -248,8 +267,12 @@ fail_launch_session() {
 session_evidence() {
   local mode="$1"
   local expected_turns=""
+  local expected_input=""
   if [[ "$#" -gt 1 ]]; then
     expected_turns="$2"
+  fi
+  if [[ "$#" -gt 2 ]]; then
+    expected_input="$3"
   fi
   "$NEMOCLAW_OPENSHELL_COMMAND" sandbox exec \
     --name "$NEMOCLAW_LAUNCH_SANDBOX" -- \
@@ -257,7 +280,8 @@ session_evidence() {
     "$mode" \
     "$NEMOCLAW_LAUNCH_SESSION_ROOT" \
     "$baseline_path" \
-    "$expected_turns"
+    "$expected_turns" \
+    "$expected_input"
 }
 
 wait_for_turn_count() {
@@ -278,6 +302,35 @@ wait_for_turn_count() {
     sleep 1
   done
   fail_launch_session "launch did not record the required structured session turns"
+}
+
+submit_turn() {
+  local expected_turns="$1"
+  local content="$2"
+  local evidence_status
+  for _ in {1..90}; do
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    if ! printf '%s\r' "$content" >&3; then
+      break
+    fi
+    for _ in {1..2}; do
+      if session_evidence qualify-input "$expected_turns" "$content" >/dev/null 2>"$evidence_error"; then
+        return 0
+      else
+        evidence_status=$?
+      fi
+      if [[ "$evidence_status" != 1 ]]; then
+        fail_launch_session "structured session input evidence was invalid or unavailable (status $evidence_status)"
+      fi
+      if ! kill -0 "$session_pid" 2>/dev/null; then
+        break 2
+      fi
+      sleep 1
+    done
+  done
+  fail_launch_session "launch did not record PTY input in the structured session"
 }
 
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
@@ -315,9 +368,9 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3
+submit_turn 1 "$NEMOCLAW_LAUNCH_FIRST_INPUT"
 wait_for_turn_count 1
-printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3
+submit_turn 2 "$NEMOCLAW_LAUNCH_SECOND_INPUT"
 wait_for_turn_count 2
 
 if [[ -n "$NEMOCLAW_LAUNCH_EXIT_COMMAND" ]]; then
