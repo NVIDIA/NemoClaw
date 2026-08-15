@@ -38,7 +38,7 @@ function input(): NativeRuntimeQualificationProducerPlanInput {
 }
 
 describe("native runtime qualification producer plan", () => {
-  it("routes every canonical case and preserves collector identities", () => {
+  it("routes every canonical case and preserves source and case identities", () => {
     const plan = buildNativeRuntimeQualificationProducerPlan(input());
 
     expect(plan.include).toHaveLength(24);

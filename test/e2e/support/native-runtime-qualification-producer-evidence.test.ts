@@ -129,7 +129,7 @@ afterEach(() => {
 });
 
 describe("native runtime qualification producer evidence", () => {
-  it("emits the bounded collector envelope after validating installer and execution receipts", () => {
+  it("emits the bounded case-evidence envelope after validating installer and execution receipts", () => {
     const value = fixture();
 
     writeNativeRuntimeQualificationProducerEvidence(

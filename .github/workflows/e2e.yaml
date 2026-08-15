@@ -885,7 +885,7 @@ jobs:
             exit 1
           }
           [[ "$BASE_SHA" == "$WORKFLOW_SHA" && "$CANDIDATE_SHA" != "$WORKFLOW_SHA" ]] || {
-            echo "::error::Native runtime qualification requires the current main workflow and a separate candidate commit" >&2
+            echo "::error::Native runtime qualification requires base_sha to equal workflow_sha and checkout_sha to name a different commit" >&2
             exit 1
           }
           [[ "$(git -C .candidate-source rev-parse --verify 'HEAD^{commit}')" == "$CANDIDATE_SHA" ]] || {
