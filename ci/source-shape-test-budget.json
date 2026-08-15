@@ -637,26 +637,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/native-runtime-qualification-workflow.test.ts",
-      "test": "keeps the selector dispatch-only and skips candidate execution",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/native-runtime-qualification-workflow.test.ts",
-      "test": "compiles trusted rows and invokes one reusable collector per case",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/native-runtime-qualification-workflow.test.ts",
-      "test": "authenticates each immutable artifact before producing a receipt",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/native-runtime-qualification-workflow.test.ts",
-      "test": "always aggregates complete receipts after re-reading mutable identities",
-      "category": "security"
-    },
-    {
       "file": "test/growth-guardrails-workflow-boundary.test.ts",
       "test": "flags %s",
       "category": "security"

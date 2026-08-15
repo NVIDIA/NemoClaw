@@ -185,34 +185,6 @@ describe("E2E artifact uploads", () => {
     );
   });
 
-  it("requires one aggregate native runtime qualification upload", () => {
-    const workflow = mutableWorkflow();
-    const job = workflow.jobs["native-runtime-qualification"];
-    const upload = job.steps?.find(
-      (step) => step.name === "Upload the complete qualification evidence",
-    );
-    expect(upload).toBeDefined();
-    job.steps = job.steps!.filter((step) => step !== upload);
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "native-runtime-qualification must define exactly one aggregate evidence upload",
-    );
-  });
-
-  it("rejects a duplicate aggregate native runtime qualification upload", () => {
-    const workflow = mutableWorkflow();
-    const job = workflow.jobs["native-runtime-qualification"];
-    const upload = job.steps?.find(
-      (step) => step.name === "Upload the complete qualification evidence",
-    );
-    expect(upload).toBeDefined();
-    job.steps!.push({ ...upload!, with: { ...upload!.with } });
-
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
-      "native-runtime-qualification must define exactly one aggregate evidence upload",
-    );
-  });
-
   it("rejects missing and duplicate shared upload invocations", () => {
     const workflow = mutableWorkflow();
     const missingJob = workflow.jobs["shared-e2e"];

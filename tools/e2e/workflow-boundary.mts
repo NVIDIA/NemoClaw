@@ -168,7 +168,6 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "llama-cpp-dgx-spark-qualification",
   "managed-image-multiarch-startup",
   "managed-image-protected-runtime",
-  "native-runtime-qualification",
   "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
@@ -177,11 +176,7 @@ const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
-const NO_IMAGE_E2E_JOBS = new Set([
-  "native-runtime-qualification",
-  "staging-brev-launchable",
-  SHARED_E2E_JOB_ID,
-]);
+const NO_IMAGE_E2E_JOBS = new Set(["staging-brev-launchable", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -2348,7 +2343,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     `matrix='[${defaultMappings}]'`,
     `test_matrix='[${defaultTestMappings}]'`,
     ";;",
-    "inference-routing: | managed-image-protected-runtime: | native-runtime-qualification: | :jetson-nvmap-gpu)",
+    "inference-routing: | managed-image-protected-runtime: | :jetson-nvmap-gpu)",
     "matrix='[]'",
     ";;",
     `:${deepAgentsTarget})`,

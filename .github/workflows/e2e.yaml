@@ -88,11 +88,6 @@ on:
         required: false
         default: ""
         type: string
-      native_runtime_qualification_run_id:
-        description: Completed trusted producer run ID for native-runtime-qualification. Required only for that selector.
-        required: false
-        default: ""
-        type: string
 
       correlation_id:
         description: Run correlation ID (UUIDv4).
@@ -226,7 +221,7 @@ jobs:
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
-            inference-routing: | managed-image-protected-runtime: | native-runtime-qualification: | :jetson-nvmap-gpu)
+            inference-routing: | managed-image-protected-runtime: | :jetson-nvmap-gpu)
               matrix='[]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code)
@@ -280,7 +275,6 @@ jobs:
 
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable }}
           JOBS: ${{ inputs.jobs }}
-          NATIVE_RUNTIME_QUALIFICATION_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
           PR_NUMBER: ${{ inputs.pr_number }}
           REVIEW_REASON: ${{ inputs.review_reason }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -319,17 +313,11 @@ jobs:
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
           case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${ALLOW_JETSON_DISPATCH}" in
             ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;
-            native-runtime-qualification::false:false) ;;
             *)
-              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification, or jetson-nvmap-gpu with its dispatch flag" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag" >&2
               exit 1
               ;;
           esac
-          if [[ "$JOBS" == "native-runtime-qualification" ]]; then
-            [[ "${NATIVE_RUNTIME_QUALIFICATION_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ ]] || { echo "::error::native_runtime_qualification_run_id must be a positive 1-20 digit run ID" >&2; exit 1; }
-          else
-            [[ -z "${NATIVE_RUNTIME_QUALIFICATION_RUN_ID:-}" ]] || { echo "::error::native_runtime_qualification_run_id requires the native-runtime-qualification selector" >&2; exit 1; }
-          fi
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
           [[ "$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::checkout_repository must be an owner/repository name" >&2; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA" >&2; exit 1; }
@@ -545,7 +533,6 @@ jobs:
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification' || inputs.targets != '' }}
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -553,7 +540,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate manual PR checkout
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -576,7 +563,7 @@ jobs:
 
       - id: e2e_credentials
         name: Authorize E2E credentials
-        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification' || inputs.targets != '') }}
+        if: ${{ inputs.checkout_sha != '' }}
         env:
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -602,12 +589,10 @@ jobs:
           printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
 
       - name: Prepare E2E workspace
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification' || inputs.targets != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - id: package_cli_artifact
         name: Package exact-commit CLI
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification' || inputs.targets != '' }}
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -720,7 +705,6 @@ jobs:
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification' || inputs.targets != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.package_cli_artifact.outputs.artifact_name }}
@@ -731,7 +715,6 @@ jobs:
 
       - id: record_cli_artifact
         name: Record CLI artifact provenance
-        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification' || inputs.targets != '' }}
         env:
           ARTIFACT_DIGEST: ${{ steps.upload_cli_artifact.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.upload_cli_artifact.outputs.artifact-id }}
@@ -796,24 +779,6 @@ jobs:
           RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
         run: |
           set -euo pipefail
-          if [[ "$JOBS" == "native-runtime-qualification" && -z "$TARGETS" ]]; then
-            {
-              echo 'matrix=[]'
-              echo 'test_matrix=[]'
-              echo 'catalogue_standard_matrix=[]'
-              echo 'catalogue_nvidia_api_matrix=[]'
-              echo 'catalogue_nvidia_inference_matrix=[]'
-              echo 'catalogue_github_read_matrix=[]'
-              echo 'catalogue_brave_nvidia_inference_matrix=[]'
-              echo 'selected_jobs=["native-runtime-qualification"]'
-              echo 'selected_workflow_jobs=["native-runtime-qualification"]'
-              echo 'hermes_selected=false'
-              echo 'explicit_only_jobs=native-runtime-qualification'
-              echo 'release_qualification_waived_jobs=[]'
-              echo 'release_required_jobs=[]'
-            } >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [ "${EVENT_NAME:-}" = "push" ]; then
             [[ "${BEFORE_SHA}" =~ ^[a-f0-9]{40}$ && "${CANDIDATE_SHA}" =~ ^[a-f0-9]{40}$ ]] || {
               echo "::error::Main push E2E requires exact before and candidate commit SHAs" >&2
@@ -837,305 +802,6 @@ jobs:
               exit 1
             fi
           fi
-
-  native-runtime-qualification-plan:
-    needs: generate-matrix
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification' && inputs.targets == '' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
-    outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-      producer_run_attempt: ${{ steps.source.outputs.producer_run_attempt }}
-      dispatch_artifact_id: ${{ steps.source.outputs.dispatch_artifact_id }}
-      dispatch_artifact_name: ${{ steps.source.outputs.dispatch_artifact_name }}
-      dispatch_artifact_digest: ${{ steps.source.outputs.dispatch_artifact_digest }}
-      dispatch_artifact_size: ${{ steps.source.outputs.dispatch_artifact_size }}
-    steps:
-      - name: Check out the trusted qualification planner
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            test/e2e/registry/native-runtime-qualification.ts
-            tools/e2e/native-runtime-qualification-plan.mts
-            tools/e2e/native-runtime-qualification-collector.mts
-          sparse-checkout-cone-mode: false
-
-      - name: Set up Node for qualification planning
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-
-      - id: source
-        name: Authenticate the producer run and current pull request
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$PRODUCER_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]] || { echo "::error::Producer run ID is invalid" >&2; exit 1; }
-          [[ "$CANDIDATE_SHA" != "$WORKFLOW_SHA" ]] || { echo "::error::The trusted workflow revision cannot qualify itself" >&2; exit 1; }
-          [[ "$BASE_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::Qualification requires the current trusted main revision as the pull request base" >&2; exit 1; }
-          producer="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg runId "$PRODUCER_RUN_ID" \
-            --arg workflowSha "$WORKFLOW_SHA" '
-              (.id | tostring) == $runId and
-              .repository.full_name == $repository and
-              .event == "workflow_dispatch" and
-              .status == "completed" and
-              .conclusion == "success" and
-              .head_branch == "main" and
-              .head_sha == $workflowSha and
-              .run_attempt == 1 and
-              .path == ".github/workflows/e2e.yaml"
-            ' <<<"$producer" >/dev/null || { echo "::error::Producer run does not match the trusted workflow revision" >&2; exit 1; }
-          producer_run_attempt="$(jq -r '.run_attempt' <<<"$producer")"
-          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg baseSha "$BASE_SHA" \
-            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
-            --arg candidateSha "$CANDIDATE_SHA" '
-              .state == "open" and
-              .head.repo.full_name == $candidateRepository and
-              .head.sha == $candidateSha and
-              .base.ref == "main" and
-              .base.repo.full_name == "NVIDIA/NemoClaw" and
-              .base.sha == $baseSha
-            ' <<<"$pull" >/dev/null || { echo "::error::Pull request identity changed before qualification planning" >&2; exit 1; }
-          dispatch_artifact_name="e2e-dispatch-${PRODUCER_RUN_ID}-${producer_run_attempt}"
-          artifacts="$(gh api --method GET \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}/artifacts" \
-            -f name="$dispatch_artifact_name" \
-            -f per_page=100)"
-          dispatch_artifact="$(jq -ce \
-            --arg name "$dispatch_artifact_name" \
-            --arg runId "$PRODUCER_RUN_ID" \
-            --arg workflowSha "$WORKFLOW_SHA" '
-              select(.total_count == 1 and (.artifacts | length) == 1) |
-              .artifacts[0] |
-              select(.name == $name and .expired == false) |
-              select(.size_in_bytes > 0 and .size_in_bytes <= 1048576) |
-              select((.id | tostring | test("^[1-9][0-9]{0,19}$"))) |
-              select((.digest // "") | test("^sha256:[a-f0-9]{64}$")) |
-              select((.workflow_run.id | tostring) == $runId) |
-              select(.workflow_run.head_sha == $workflowSha)
-            ' <<<"$artifacts")" || { echo "::error::Trusted dispatch receipt artifact is missing or ambiguous" >&2; exit 1; }
-          printf 'producer_run_attempt=%s\n' "$producer_run_attempt" >>"$GITHUB_OUTPUT"
-          printf 'dispatch_artifact_id=%s\n' "$(jq -r '.id | tostring' <<<"$dispatch_artifact")" >>"$GITHUB_OUTPUT"
-          printf 'dispatch_artifact_name=%s\n' "$dispatch_artifact_name" >>"$GITHUB_OUTPUT"
-          printf 'dispatch_artifact_digest=%s\n' "$(jq -r '.digest' <<<"$dispatch_artifact")" >>"$GITHUB_OUTPUT"
-          printf 'dispatch_artifact_size=%s\n' "$(jq -r '.size_in_bytes' <<<"$dispatch_artifact")" >>"$GITHUB_OUTPUT"
-
-      - name: Download the trusted dispatch receipt
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ steps.source.outputs.dispatch_artifact_id }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/native-runtime-qualification-dispatch
-          repository: NVIDIA/NemoClaw
-          run-id: ${{ inputs.native_runtime_qualification_run_id }}
-
-      - name: Validate the trusted dispatch receipt
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_ARTIFACT_DIGEST: ${{ steps.source.outputs.dispatch_artifact_digest }}
-          DISPATCH_ARTIFACT_ID: ${{ steps.source.outputs.dispatch_artifact_id }}
-          DISPATCH_ARTIFACT_NAME: ${{ steps.source.outputs.dispatch_artifact_name }}
-          DISPATCH_ARTIFACT_SIZE: ${{ steps.source.outputs.dispatch_artifact_size }}
-          DISPATCH_RECEIPT_PATH: ${{ runner.temp }}/native-runtime-qualification-dispatch/dispatch.json
-          PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCER_RUN_ATTEMPT: ${{ steps.source.outputs.producer_run_attempt }}
-          PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-collector.mts dispatch
-
-      - id: plan
-        name: Compile the trusted qualification matrix
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_ARTIFACT_DIGEST: ${{ steps.source.outputs.dispatch_artifact_digest }}
-          DISPATCH_ARTIFACT_ID: ${{ steps.source.outputs.dispatch_artifact_id }}
-          DISPATCH_ARTIFACT_NAME: ${{ steps.source.outputs.dispatch_artifact_name }}
-          DISPATCH_ARTIFACT_SIZE: ${{ steps.source.outputs.dispatch_artifact_size }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCER_RUN_ATTEMPT: ${{ steps.source.outputs.producer_run_attempt }}
-          PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-plan.mts --ci-output
-
-  native-runtime-qualification-collect:
-    needs: native-runtime-qualification-plan
-    if: ${{ needs.native-runtime-qualification-plan.result == 'success' }}
-    permissions:
-      actions: read
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.native-runtime-qualification-plan.outputs.matrix) }}
-    uses: ./.github/workflows/e2e-native-runtime-qualification-case.yaml
-    with:
-      case_id: ${{ matrix.id }}
-      artifact_name: ${{ matrix.artifactName }}
-      job_name: ${{ matrix.jobName }}
-      candidate_repository: ${{ matrix.candidateRepository }}
-      candidate_sha: ${{ matrix.candidateSha }}
-      pull_request_number: ${{ matrix.pullRequestNumber }}
-      base_sha: ${{ matrix.baseSha }}
-      workflow_sha: ${{ matrix.workflowSha }}
-      producer_run_id: ${{ matrix.producerRunId }}
-      producer_run_attempt: ${{ matrix.producerRunAttempt }}
-      dispatch_artifact_id: ${{ matrix.dispatchArtifact.id }}
-      dispatch_artifact_name: ${{ matrix.dispatchArtifact.name }}
-      dispatch_artifact_digest: ${{ matrix.dispatchArtifact.digest }}
-      dispatch_artifact_size: ${{ matrix.dispatchArtifact.sizeInBytes }}
-
-  native-runtime-qualification:
-    name: Native runtime qualification
-    needs:
-      [generate-matrix, native-runtime-qualification-plan, native-runtime-qualification-collect]
-    if: ${{ always() && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
-    env:
-      E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
-    steps:
-      - name: Require every case collector
-        env:
-          COLLECT_RESULT: ${{ needs.native-runtime-qualification-collect.result }}
-          PLAN_RESULT: ${{ needs.native-runtime-qualification-plan.result }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$PLAN_RESULT" == "success" && "$COLLECT_RESULT" == "success" ]] || {
-            echo "::error::Qualification evidence collection is incomplete" >&2
-            exit 1
-          }
-
-      - name: Check out the trusted qualification aggregate
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-          sparse-checkout: |
-            test/e2e/registry/native-runtime-qualification.ts
-            tools/e2e/native-runtime-qualification-plan.mts
-            tools/e2e/native-runtime-qualification-collector.mts
-          sparse-checkout-cone-mode: false
-
-      - name: Set up Node for qualification aggregation
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-
-      - name: Reauthenticate the producer run and current pull request
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_ARTIFACT_DIGEST: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}
-          DISPATCH_ARTIFACT_ID: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}
-          DISPATCH_ARTIFACT_NAME: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}
-          DISPATCH_ARTIFACT_SIZE: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
-          PRODUCER_RUN_ATTEMPT: ${{ needs.native-runtime-qualification-plan.outputs.producer_run_attempt }}
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          producer="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}")"
-          jq -e \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg runId "$PRODUCER_RUN_ID" \
-            --arg workflowSha "$WORKFLOW_SHA" '
-              (.id | tostring) == $runId and
-              .repository.full_name == $repository and
-              .event == "workflow_dispatch" and
-              .status == "completed" and
-              .conclusion == "success" and
-              .head_branch == "main" and
-              .head_sha == $workflowSha and
-              (.run_attempt | tostring) == env.PRODUCER_RUN_ATTEMPT and
-              .path == ".github/workflows/e2e.yaml"
-            ' <<<"$producer" >/dev/null || { echo "::error::Producer run changed before qualification aggregation" >&2; exit 1; }
-          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg baseSha "$BASE_SHA" \
-            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
-            --arg candidateSha "$CANDIDATE_SHA" '
-              .state == "open" and
-              .head.repo.full_name == $candidateRepository and
-              .head.sha == $candidateSha and
-              .base.ref == "main" and
-              .base.repo.full_name == "NVIDIA/NemoClaw" and
-              .base.sha == $baseSha
-            ' <<<"$pull" >/dev/null || { echo "::error::Pull request identity changed before qualification aggregation" >&2; exit 1; }
-          dispatch_artifact="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${DISPATCH_ARTIFACT_ID}")"
-          jq -e \
-            --arg name "$DISPATCH_ARTIFACT_NAME" \
-            --arg digest "$DISPATCH_ARTIFACT_DIGEST" \
-            --arg size "$DISPATCH_ARTIFACT_SIZE" \
-            --arg runId "$PRODUCER_RUN_ID" \
-            --arg workflowSha "$WORKFLOW_SHA" '
-              .name == $name and .digest == $digest and (.size_in_bytes | tostring) == $size and
-              .expired == false and (.workflow_run.id | tostring) == $runId and
-              .workflow_run.head_sha == $workflowSha
-            ' <<<"$dispatch_artifact" >/dev/null || { echo "::error::Dispatch artifact changed before qualification aggregation" >&2; exit 1; }
-
-      - name: Download validated case receipts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: ${{ runner.temp }}/native-runtime-qualification-receipts
-          pattern: native-runtime-qualification-receipt-${{ inputs.checkout_sha }}-*
-
-      - name: Aggregate the complete qualification evidence
-        env:
-          AGGREGATE_PATH: ${{ runner.temp }}/native-runtime-qualification-aggregate/aggregate.json
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_ARTIFACT_DIGEST: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}
-          DISPATCH_ARTIFACT_ID: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}
-          DISPATCH_ARTIFACT_NAME: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}
-          DISPATCH_ARTIFACT_SIZE: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          PRODUCER_RUN_ATTEMPT: ${{ needs.native-runtime-qualification-plan.outputs.producer_run_attempt }}
-          PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
-          RECEIPT_DIRECTORY: ${{ runner.temp }}/native-runtime-qualification-receipts
-          WORKFLOW_SHA: ${{ github.workflow_sha }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-collector.mts aggregate
-
-      - name: Upload the complete qualification evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: native-runtime-qualification-${{ inputs.checkout_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/native-runtime-qualification-aggregate/aggregate.json
-          if-no-files-found: error
-          retention-days: 30
 
   retired-selector-compatibility:
     needs: generate-matrix
@@ -4114,7 +3780,6 @@ jobs:
         cloud-onboard,
         openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
-        native-runtime-qualification,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
