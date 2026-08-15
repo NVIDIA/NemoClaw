@@ -606,9 +606,9 @@ describe("destroySandbox flow", () => {
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
   });
 
-  it("preserves registry state when exact Docker container removal fails (#9073)", async () => {
+  it("preserves registry state until exact Docker container removal succeeds on retry (#9073)", async () => {
     const containerId = "a".repeat(64);
-    const harness = createDestroyHarness({
+    const options = {
       sandboxPresent: false,
       dockerOrphanIds: [containerId],
       dockerRemoveStatus: 1,
@@ -616,12 +616,23 @@ describe("destroySandbox flow", () => {
         status: 0,
         stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
       },
-    });
+    };
+    const harness = createDestroyHarness(options);
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+
+    options.dockerRemoveStatus = 0;
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
   });
 
   it("preserves registry state when exact Docker container inspection fails (#9073)", async () => {
