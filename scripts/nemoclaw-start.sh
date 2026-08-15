@@ -6028,8 +6028,10 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exit "$_nemoclaw_cmd_rc"
 fi
 
-# Separate log for auto-pair so sandbox user can write to it
-_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 sandbox:sandbox
+# The root parent shell opens this redirection after CAP_DAC_OVERRIDE is gone;
+# keep the file root-owned and pass the already-open descriptor to the
+# stepped-down auto-pair watcher.
+_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root
 
 prepare_plugin_refresh_log || exit 1
 

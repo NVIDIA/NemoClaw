@@ -22,6 +22,17 @@ function safeTmpHelpers(src: string): string {
 describe("nemoclaw-start safe tmp file creation", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  it("keeps the root-mode auto-pair log openable after CAP_DAC_OVERRIDE is dropped", () => {
+    const rootModeStart = src.indexOf("# Verify locked config integrity before starting anything.");
+    const autoPairStart = src.indexOf("\nstart_auto_pair\n", rootModeStart);
+
+    expect(rootModeStart).toBeGreaterThanOrEqual(0);
+    expect(autoPairStart).toBeGreaterThan(rootModeStart);
+    expect(src.slice(rootModeStart, autoPairStart)).toContain(
+      "_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root",
+    );
+  });
+
   it("creates fixed runtime paths through the safe helper with the requested modes", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-safe-tmp-"));
     const gatewayLog = path.join(tmpDir, "gateway.log");
