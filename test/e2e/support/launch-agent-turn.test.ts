@@ -187,7 +187,13 @@ const append = (role, content) => fs.appendFileSync(
     }
     if (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_DUPLICATE_MARKER)) process.exit(68);
   }
-  process.stdin.once("data", () => fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_INPUT_MARKER, ""));
+  let observedPtyInput = "";
+  process.stdin.on("data", (chunk) => {
+    observedPtyInput += chunk.toString();
+    if (observedPtyInput.includes(process.env.NEMOCLAW_LAUNCH_FIRST_INPUT)) {
+      fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_INPUT_MARKER, "");
+    }
+  });
   if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
     let inputBeforeAttachment = false;
     const recordEarlyInput = () => { inputBeforeAttachment = true; };
