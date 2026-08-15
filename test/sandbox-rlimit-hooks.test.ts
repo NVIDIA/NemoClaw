@@ -11,6 +11,7 @@ import { dockerRunCommandBetween, runLoggedDockerShell } from "./helpers/dockerf
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
+const PI_DOCKERFILE_BASE = path.join(ROOT, "agents", "pi", "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const DCODE_DOCKERFILE_BASE = path.join(
   ROOT,
@@ -42,6 +43,10 @@ function rlimitShim(rlimitLib: string): string {
 
 function dcodeRlimitShim(rlimitLib: string): string {
   return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell." >&2; true; }`;
+}
+
+function piRlimitShim(rlimitLib: string): string {
+  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits_exact --quiet || { printf "%s\\n" "[SECURITY] Sandbox resource limits were NOT hardened for this shell; refusing shell startup." >&2; exit 1; }`;
 }
 
 type ProbeValues = Record<string, string | undefined>;
@@ -196,6 +201,62 @@ function expectDcodeRlimitHookWarnsWhenHelperIsMissing(hookPath: string, rlimitL
   expect(result.stderr).toContain(
     "[SECURITY] Sandbox resource limits were NOT hardened for this shell.",
   );
+}
+
+function expectPiRlimitHooksRejectFailedEnforcement(
+  hookPaths: Array<{ mode: "interactive" | "login"; path: string }>,
+  rlimitLib: string,
+): void {
+  const failures: Array<{ body?: string; name: string }> = [
+    { name: "missing helper" },
+    {
+      body: [
+        "harden_resource_limits() { return 1; }",
+        "verify_resource_limits_exact() { :; }",
+      ].join("\n"),
+      name: "failed hardening",
+    },
+    {
+      body: [
+        "harden_resource_limits() { :; }",
+        "verify_resource_limits_exact() { return 1; }",
+      ].join("\n"),
+      name: "failed verification",
+    },
+  ];
+
+  for (const failure of failures) {
+    if (failure.body === undefined) {
+      fs.rmSync(rlimitLib, { force: true });
+    } else {
+      fs.writeFileSync(rlimitLib, `${failure.body}\n`, { mode: 0o644 });
+      fs.chmodSync(rlimitLib, 0o644);
+    }
+
+    for (const hook of hookPaths) {
+      const args =
+        hook.mode === "login"
+          ? [
+              "--noprofile",
+              "--norc",
+              "-lc",
+              'source "$1"; printf "UNREACHABLE\\n"',
+              "pi-login",
+              hook.path,
+            ]
+          : ["--noprofile", "--rcfile", hook.path, "-ic", 'printf "UNREACHABLE\\n"'];
+      const result = spawnSync("bash", args, {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+
+      expect(result.status, `${hook.mode}: ${failure.name}\n${result.stderr}`).not.toBe(0);
+      expect(result.stdout).not.toContain("UNREACHABLE");
+      expect(result.stderr).toContain(
+        "[SECURITY] Sandbox resource limits were NOT hardened for this shell; refusing shell startup.",
+      );
+    }
+  }
 }
 
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
@@ -417,6 +478,44 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
       expectSystemRlimitHookIsSilentWhenVerificationFails(rlimitHook, rlimitLib);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("Pi login and interactive hooks reject shells when exact limit enforcement fails", () => {
+    const dockerfile = fs.readFileSync(PI_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pi-rlimit-hooks-"));
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+    const expectedRlimitShim = piRlimitShim(rlimitLib);
+
+    try {
+      fs.mkdirSync(path.dirname(rlimitHook), { recursive: true });
+      copyRlimitFixture(rlimitLib);
+      fs.writeFileSync(bashrc, "# existing Pi bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide RLIMIT hooks for Pi connect and login shells",
+        "COPY agents/pi/pi-runtime/package.json",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8")).toContain(expectedRlimitShim);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
+      expect(fs.readFileSync(bashrc, "utf-8")).toContain("# existing Pi bashrc");
+      expectPiRlimitHooksRejectFailedEnforcement(
+        [
+          { mode: "login", path: rlimitHook },
+          { mode: "interactive", path: bashrc },
+        ],
+        rlimitLib,
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
