@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 export const NATIVE_RUNTIME_QUALIFICATION_AGENTS = [
   "openclaw",
   "hermes",
@@ -212,6 +214,8 @@ export interface NativeRuntimeQualificationAuthority {
   readonly providerId: string;
   readonly source: NativeRuntimeQualificationExpectedSource;
 }
+
+export type NativeRuntimeQualificationReceiptReader = (path: string) => Buffer | null;
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -425,6 +429,7 @@ export const PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION =
 function validatedArtifactReceipt(
   value: unknown,
   label: string,
+  readReceipt: NativeRuntimeQualificationReceiptReader,
 ): NativeRuntimeQualificationArtifactReceipt {
   const artifact = record(value, label);
   exactKeys(artifact, ["path", "sha256"], label);
@@ -440,6 +445,14 @@ function validatedArtifactReceipt(
   }
   if (typeof artifact.sha256 !== "string" || !ARTIFACT_SHA256.test(artifact.sha256)) {
     throw new Error(`${label} sha256 must be an exact lowercase SHA-256 digest`);
+  }
+  const contents = readReceipt(artifactPath);
+  if (contents === null) {
+    throw new Error(`${label} receipt '${artifactPath}' is missing from the authenticated artifact`);
+  }
+  const actualSha256 = createHash("sha256").update(contents).digest("hex");
+  if (actualSha256 !== artifact.sha256) {
+    throw new Error(`${label} receipt '${artifactPath}' does not match its SHA-256 digest`);
   }
   return Object.freeze({ path: artifactPath, sha256: artifact.sha256 });
 }
@@ -558,6 +571,7 @@ function assertInstallerEvidence(
   definition: NativeRuntimeQualificationDefinition,
   qualificationCase: NativeRuntimeQualificationCase,
   label: string,
+  readReceipt: NativeRuntimeQualificationReceiptReader,
 ): void {
   const installer = record(value, `${label} installer`);
   exactKeys(
@@ -573,8 +587,8 @@ function assertInstallerEvidence(
   ) {
     throw new Error(`${label} has an invalid installer receipt`);
   }
-  validatedArtifactReceipt(installer.invocation, `${label} installer invocation`);
-  validatedArtifactReceipt(installer.script, `${label} installer script`);
+  validatedArtifactReceipt(installer.invocation, `${label} installer invocation`, readReceipt);
+  validatedArtifactReceipt(installer.script, `${label} installer script`, readReceipt);
 }
 
 function assertRuntimeEvidence(
@@ -582,6 +596,7 @@ function assertRuntimeEvidence(
   definition: NativeRuntimeQualificationDefinition,
   qualificationCase: NativeRuntimeQualificationCase,
   label: string,
+  readReceipt: NativeRuntimeQualificationReceiptReader,
 ): void {
   const runtime = record(value, `${label} runtime`);
   exactKeys(
@@ -625,13 +640,14 @@ function assertRuntimeEvidence(
     }
     roles.add(role);
   }
-  validatedArtifactReceipt(runtime.result, `${label} runtime result`);
+  validatedArtifactReceipt(runtime.result, `${label} runtime result`, readReceipt);
 }
 
 function assertOperationEvidence(
   value: unknown,
   qualificationCase: NativeRuntimeQualificationCase,
   label: string,
+  readReceipt: NativeRuntimeQualificationReceiptReader,
 ): void {
   if (!Array.isArray(value)) {
     throw new Error(`${label} operations must be an array`);
@@ -652,6 +668,7 @@ function assertOperationEvidence(
     validatedArtifactReceipt(
       operation.artifact,
       `${label} operation '${String(operationIds[index])}'`,
+      readReceipt,
     );
   });
 }
@@ -661,6 +678,7 @@ function assertCaseEvidence(
   definition: NativeRuntimeQualificationDefinition,
   qualificationCase: NativeRuntimeQualificationCase,
   expected: NativeRuntimeQualificationExpectedSource,
+  readReceipt: NativeRuntimeQualificationReceiptReader,
 ): void {
   const label = `Native runtime qualification case '${qualificationCase.id}'`;
   const evidence = record(value, label);
@@ -682,16 +700,16 @@ function assertCaseEvidence(
     throw new Error(`${label} identity is invalid`);
   }
   assertProtectedRun(evidence.protectedRun, expected, label);
-  assertInstallerEvidence(evidence.installer, definition, qualificationCase, label);
-  assertRuntimeEvidence(evidence.runtime, definition, qualificationCase, label);
-  assertOperationEvidence(evidence.operations, qualificationCase, label);
+  assertInstallerEvidence(evidence.installer, definition, qualificationCase, label, readReceipt);
+  assertRuntimeEvidence(evidence.runtime, definition, qualificationCase, label, readReceipt);
+  assertOperationEvidence(evidence.operations, qualificationCase, label, readReceipt);
   if (gpu) {
     const cdi = record(evidence.nvidiaCdi, `${label} NVIDIA CDI`);
     exactKeys(cdi, ["device", "artifact"], `${label} NVIDIA CDI`);
     if (cdi.device !== "nvidia.com/gpu=all") {
       throw new Error(`${label} must prove NVIDIA CDI access`);
     }
-    validatedArtifactReceipt(cdi.artifact, `${label} NVIDIA CDI`);
+    validatedArtifactReceipt(cdi.artifact, `${label} NVIDIA CDI`, readReceipt);
   }
 }
 
@@ -703,6 +721,7 @@ export function consumeNativeRuntimeQualificationEvidence(
   definition: NativeRuntimeQualificationDefinition,
   value: unknown,
   expectedSource: NativeRuntimeQualificationExpectedSource,
+  readReceipt: NativeRuntimeQualificationReceiptReader,
 ): NativeRuntimeQualificationAuthority {
   if (!compiledNativeRuntimeQualifications.has(definition)) {
     throw new Error("Native runtime qualification evidence requires a compiled definition");
@@ -735,7 +754,7 @@ export function consumeNativeRuntimeQualificationEvidence(
         `Native runtime qualification evidence names unknown case '${evidence.caseId}'`,
       );
     }
-    assertCaseEvidence(evidence, definition, qualificationCase, expected);
+    assertCaseEvidence(evidence, definition, qualificationCase, expected, readReceipt);
     evidenceById.set(evidence.caseId, evidence);
   }
   const missing = definition.cases.filter((entry) => !evidenceById.has(entry.id));

@@ -6,6 +6,7 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../src/lib/onboard/runti
 import {
   nativeQualificationEvidence as qualificationEvidence,
   nativeQualificationExpectedSource as expectedProtectedSource,
+  nativeQualificationReceiptReader,
   NATIVE_QUALIFICATION_HEAD_SHA,
 } from "../../helpers/native-runtime-qualification-evidence";
 import {
@@ -172,6 +173,7 @@ describe("native runtime qualification contract", () => {
       PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
       qualificationEvidence(),
       expectedProtectedSource(),
+      nativeQualificationReceiptReader,
     );
 
     expect(authority).toEqual({
@@ -203,6 +205,7 @@ describe("native runtime qualification contract", () => {
           PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
           qualificationEvidence(source),
           expectedProtectedSource(),
+          nativeQualificationReceiptReader,
         ),
       ).toThrow(error);
     },
@@ -222,6 +225,7 @@ describe("native runtime qualification contract", () => {
         PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
         qualificationEvidence(),
         source,
+        nativeQualificationReceiptReader,
       ),
     ).toThrow("GitHub artifact identity is invalid");
   });

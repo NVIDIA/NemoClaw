@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import {
   PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
   type NativeRuntimeQualificationEvidenceEnvelope,
@@ -11,7 +13,15 @@ import {
 export const NATIVE_QUALIFICATION_HEAD_SHA = "a".repeat(40);
 export const NATIVE_QUALIFICATION_BASE_SHA = "b".repeat(40);
 export const NATIVE_QUALIFICATION_ARTIFACT_SHA256 = "c".repeat(64);
+export const NATIVE_QUALIFICATION_RECEIPT_CONTENT = '{"qualified":true}\n';
+export const NATIVE_QUALIFICATION_RECEIPT_SHA256 = createHash("sha256")
+  .update(NATIVE_QUALIFICATION_RECEIPT_CONTENT)
+  .digest("hex");
 const IMAGE_DIGEST = `sha256:${"d".repeat(64)}`;
+
+export function nativeQualificationReceiptReader(): Buffer {
+  return Buffer.from(NATIVE_QUALIFICATION_RECEIPT_CONTENT, "utf8");
+}
 
 export function nativeQualificationExpectedSource(): NativeRuntimeQualificationExpectedSource {
   return {
@@ -59,11 +69,11 @@ export function nativeQualificationEvidence(
         exitCode: 0,
         invocation: {
           path: `installer/${entry.id}.json`,
-          sha256: NATIVE_QUALIFICATION_ARTIFACT_SHA256,
+          sha256: NATIVE_QUALIFICATION_RECEIPT_SHA256,
         },
         script: {
           path: "installer/install.sh",
-          sha256: NATIVE_QUALIFICATION_ARTIFACT_SHA256,
+          sha256: NATIVE_QUALIFICATION_RECEIPT_SHA256,
         },
       },
       runtime: {
@@ -78,14 +88,14 @@ export function nativeQualificationEvidence(
         managedImages: [{ role: "agent", digest: IMAGE_DIGEST }],
         result: {
           path: `runtime/${entry.id}.json`,
-          sha256: NATIVE_QUALIFICATION_ARTIFACT_SHA256,
+          sha256: NATIVE_QUALIFICATION_RECEIPT_SHA256,
         },
       },
       operations: entry.obligations.map((id) => ({
         id,
         artifact: {
           path: `operations/${entry.id}-${id}.json`,
-          sha256: NATIVE_QUALIFICATION_ARTIFACT_SHA256,
+          sha256: NATIVE_QUALIFICATION_RECEIPT_SHA256,
         },
       })),
       ...(entry.acceleration === "nvidia-gpu"
@@ -94,7 +104,7 @@ export function nativeQualificationEvidence(
               device: "nvidia.com/gpu=all" as const,
               artifact: {
                 path: `cdi/${entry.id}.json`,
-                sha256: NATIVE_QUALIFICATION_ARTIFACT_SHA256,
+                sha256: NATIVE_QUALIFICATION_RECEIPT_SHA256,
               },
             },
           }

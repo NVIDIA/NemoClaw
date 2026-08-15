@@ -115,6 +115,7 @@ describe("native runtime qualification collector workflow", () => {
     });
     expect(source).toContain("consumeNativeRuntimeQualificationEvidence");
     expect(source).toContain("readValidatedArtifactZipEntry");
+    expect(source).toContain("readValidatedArtifactZipEntryBytes");
     expect(source).toContain("collaborators/");
     expect(source).toContain("/attempts/");
     expect(source).toContain("actions/artifacts/");

@@ -43,25 +43,31 @@ function crc32(data: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+function isSafeExpectedFile(expectedFile: string): boolean {
+  const segments = expectedFile.split("/");
+  return (
+    expectedFile.length > 0 &&
+    !expectedFile.startsWith("/") &&
+    !expectedFile.endsWith("/") &&
+    !expectedFile.includes("\\") &&
+    !expectedFile.includes("\0") &&
+    segments.every((segment) => segment !== "" && segment !== "." && segment !== "..")
+  );
+}
+
 /**
- * Reads one exact root-level file from a GitHub artifact ZIP without
- * extracting paths to disk. Duplicate targets, links, encryption, split
- * archives, ZIP64, excess entries, and oversized payloads are rejected.
+ * Reads the exact bytes of one safe relative file from a GitHub artifact ZIP
+ * without extracting paths to disk. Duplicate targets, links, encryption,
+ * split archives, ZIP64, excess entries, and oversized payloads are rejected.
  */
-export function readValidatedArtifactZipEntry(
+export function readValidatedArtifactZipEntryBytes(
   archive: Buffer,
   expectedFile: string,
   options: { maxBytes: number; maxEntries?: number },
-): string | null {
+): Buffer | null {
   const maxEntries = options.maxEntries ?? 1000;
   const expectedFileName = Buffer.from(expectedFile, "utf8");
-  if (
-    expectedFile.length === 0 ||
-    expectedFile.includes("/") ||
-    expectedFile.includes("\\") ||
-    options.maxBytes < 1 ||
-    maxEntries < 1
-  ) {
+  if (!isSafeExpectedFile(expectedFile) || options.maxBytes < 1 || maxEntries < 1) {
     return null;
   }
 
@@ -175,5 +181,14 @@ export function readValidatedArtifactZipEntry(
     return null;
   }
   if (contents.length !== uncompressedSize || crc32(contents) !== expectedCrc) return null;
-  return contents.toString("utf8");
+  return contents;
+}
+
+/** Read one validated artifact entry as UTF-8 text. */
+export function readValidatedArtifactZipEntry(
+  archive: Buffer,
+  expectedFile: string,
+  options: { maxBytes: number; maxEntries?: number },
+): string | null {
+  return readValidatedArtifactZipEntryBytes(archive, expectedFile, options)?.toString("utf8") ?? null;
 }

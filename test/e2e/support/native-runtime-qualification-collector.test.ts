@@ -16,7 +16,9 @@ import {
   nativeQualificationExpectedSource,
   NATIVE_QUALIFICATION_BASE_SHA,
   NATIVE_QUALIFICATION_HEAD_SHA,
+  NATIVE_QUALIFICATION_RECEIPT_CONTENT,
 } from "../../helpers/native-runtime-qualification-evidence";
+import type { NativeRuntimeQualificationEvidenceEnvelope } from "../registry/native-runtime-qualification";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const ACTOR = "maintainer";
@@ -47,21 +49,58 @@ function collectorInput(
   };
 }
 
-function archiveFor(value: unknown): Buffer {
+type ReceiptArchiveOptions = {
+  readonly omitReceipt?: string;
+  readonly tamperReceipt?: string;
+};
+
+function receiptPaths(value: unknown): string[] {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray((value as { readonly cases?: unknown }).cases)
+  ) {
+    return [];
+  }
+  const envelope = value as NativeRuntimeQualificationEvidenceEnvelope;
+  return [
+    ...new Set(
+      envelope.cases.flatMap((entry) => [
+        entry.installer.invocation.path,
+        entry.installer.script.path,
+        entry.runtime.result.path,
+        ...entry.operations.map(({ artifact }) => artifact.path),
+        ...(entry.nvidiaCdi ? [entry.nvidiaCdi.artifact.path] : []),
+      ]),
+    ),
+  ];
+}
+
+function archiveFor(value: unknown, options: ReceiptArchiveOptions = {}): Buffer {
+  const receipts = receiptPaths(value)
+    .filter((receiptPath) => receiptPath !== options.omitReceipt)
+    .map((receiptPath) => ({
+      name: receiptPath,
+      contents:
+        receiptPath === options.tamperReceipt
+          ? '{"qualified":false}\n'
+          : NATIVE_QUALIFICATION_RECEIPT_CONTENT,
+    }));
   return artifactZip([
-    {
-      name: NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE,
-      contents: JSON.stringify(value),
-    },
+    { name: NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE, contents: JSON.stringify(value) },
+    ...receipts,
   ]);
 }
 
-function githubFixture(value: unknown = nativeQualificationEvidence()): {
+function githubFixture(
+  value: unknown = nativeQualificationEvidence(),
+  archiveOptions: ReceiptArchiveOptions = {},
+): {
   readonly api: GitHubQualificationReader;
   readonly archive: Buffer;
   readonly json: Map<string, unknown>;
 } {
-  const archive = archiveFor(value);
+  const archive = archiveFor(value, archiveOptions);
   const digest = `sha256:${createHash("sha256").update(archive).digest("hex")}`;
   const pull = {
     number: 9143,
@@ -220,5 +259,26 @@ describe("native runtime qualification protected evidence collector", () => {
     await expect(
       collectNativeRuntimeQualificationEvidence(fixture.api, collectorInput()),
     ).rejects.toThrow("downloaded artifact digest");
+  });
+
+  it("rejects a declared installer receipt that is absent from the authenticated artifact", async () => {
+    const evidence = nativeQualificationEvidence();
+    const missing = evidence.cases[0]!.installer.invocation.path;
+    const fixture = githubFixture(evidence, { omitReceipt: missing });
+
+    await expect(
+      collectNativeRuntimeQualificationEvidence(fixture.api, collectorInput()),
+    ).rejects.toThrow(`receipt '${missing}' is missing from the authenticated artifact`);
+  });
+
+  it("rejects a declared NVIDIA CDI receipt whose bytes do not match its digest", async () => {
+    const evidence = nativeQualificationEvidence();
+    const gpuCase = evidence.cases.find((entry) => entry.nvidiaCdi !== undefined)!;
+    const tampered = gpuCase.nvidiaCdi!.artifact.path;
+    const fixture = githubFixture(evidence, { tamperReceipt: tampered });
+
+    await expect(
+      collectNativeRuntimeQualificationEvidence(fixture.api, collectorInput()),
+    ).rejects.toThrow(`receipt '${tampered}' does not match its SHA-256 digest`);
   });
 });

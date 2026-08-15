@@ -6,13 +6,17 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { readValidatedArtifactZipEntry } from "../../scripts/scorecard/read-artifact-zip.mts";
+import {
+  readValidatedArtifactZipEntry,
+  readValidatedArtifactZipEntryBytes,
+} from "../../scripts/scorecard/read-artifact-zip.mts";
 import {
   compileNativeRuntimeQualification,
   consumeNativeRuntimeQualificationEvidence,
   nativeRuntimeQualificationDefinition,
   type NativeRuntimeQualificationAuthority,
   type NativeRuntimeQualificationExpectedSource,
+  type NativeRuntimeQualificationReceiptReader,
 } from "../../test/e2e/registry/native-runtime-qualification.ts";
 
 export const NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE =
@@ -26,6 +30,8 @@ const MAX_ITEMS = 100;
 const MAX_API_BYTES = 2 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 4 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 1024 * 1024;
+const MAX_RECEIPT_BYTES = 256 * 1024;
+const MAX_ARCHIVE_ENTRIES = 512;
 const REQUEST_ATTEMPTS = 3;
 const SHA = /^[a-f0-9]{40}$/u;
 const SAFE_PROVIDER_ID = /^[a-z][a-z0-9-]{0,62}$/u;
@@ -357,7 +363,10 @@ async function loadExpectedArtifact(
 async function loadEvidenceEnvelope(
   api: GitHubQualificationReader,
   artifact: WorkflowArtifact,
-): Promise<unknown> {
+): Promise<{
+  readonly envelope: unknown;
+  readonly readReceipt: NativeRuntimeQualificationReceiptReader;
+}> {
   const archive = await api.getBytes(artifact.archivePath);
   if (archive.length > MAX_ARCHIVE_BYTES) fail("protected evidence artifact is oversized");
   const actualDigest = `sha256:${createHash("sha256").update(archive).digest("hex")}`;
@@ -365,14 +374,29 @@ async function loadEvidenceEnvelope(
   const source = readValidatedArtifactZipEntry(
     archive,
     NATIVE_RUNTIME_QUALIFICATION_EVIDENCE_FILE,
-    { maxBytes: MAX_EVIDENCE_BYTES, maxEntries: 1 },
+    { maxBytes: MAX_EVIDENCE_BYTES, maxEntries: MAX_ARCHIVE_ENTRIES },
   );
-  if (source === null) fail("artifact is not one bounded evidence JSON file");
+  if (source === null) fail("artifact does not contain one bounded evidence JSON file");
+  let envelope: unknown;
   try {
-    return JSON.parse(source) as unknown;
+    envelope = JSON.parse(source) as unknown;
   } catch {
     fail("protected evidence artifact is not valid JSON");
   }
+  const cache = new Map<string, Buffer | null>();
+  const readReceipt: NativeRuntimeQualificationReceiptReader = (receiptPath) => {
+    if (!cache.has(receiptPath)) {
+      cache.set(
+        receiptPath,
+        readValidatedArtifactZipEntryBytes(archive, receiptPath, {
+          maxBytes: MAX_RECEIPT_BYTES,
+          maxEntries: MAX_ARCHIVE_ENTRIES,
+        }),
+      );
+    }
+    return cache.get(receiptPath) ?? null;
+  };
+  return { envelope, readReceipt };
 }
 
 export async function collectNativeRuntimeQualificationEvidence(
@@ -387,7 +411,7 @@ export async function collectNativeRuntimeQualificationEvidence(
   const run = await loadRun(api, input, workflow);
   const job = await loadExpectedJob(api, input, run);
   const artifact = await loadExpectedArtifact(api, input, run);
-  const envelope = await loadEvidenceEnvelope(api, artifact);
+  const evidence = await loadEvidenceEnvelope(api, artifact);
   const expected: NativeRuntimeQualificationExpectedSource = {
     repository: input.repository,
     workflow: input.evidenceWorkflow,
@@ -404,7 +428,12 @@ export async function collectNativeRuntimeQualificationEvidence(
   const qualification = compileNativeRuntimeQualification(
     nativeRuntimeQualificationDefinition(input.providerId),
   );
-  const authority = consumeNativeRuntimeQualificationEvidence(qualification, envelope, expected);
+  const authority = consumeNativeRuntimeQualificationEvidence(
+    qualification,
+    evidence.envelope,
+    expected,
+    evidence.readReceipt,
+  );
 
   const [confirmedPull, confirmedRun, confirmedArtifact] = await Promise.all([
     loadPullRequest(api, input),
