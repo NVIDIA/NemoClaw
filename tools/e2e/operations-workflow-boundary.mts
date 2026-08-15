@@ -432,6 +432,25 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     }
   }
 
+  const aggregationReauthentication = workflow.jobs[
+    "native-runtime-qualification"
+  ].steps?.find((step) => step.name === "Reauthenticate the producer run and current pull request");
+  const expectedDispatchArtifactEnvironment = {
+    DISPATCH_ARTIFACT_DIGEST:
+      "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}",
+    DISPATCH_ARTIFACT_ID:
+      "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}",
+    DISPATCH_ARTIFACT_NAME:
+      "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}",
+    DISPATCH_ARTIFACT_SIZE:
+      "${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}",
+  };
+  for (const [name, value] of Object.entries(expectedDispatchArtifactEnvironment)) {
+    if (aggregationReauthentication?.env?.[name] !== value) {
+      errors.push(`Native runtime qualification aggregation must bind ${name}`);
+    }
+  }
+
   for (const [jobName, job] of Object.entries(workflow.jobs)) {
     for (const step of job.steps ?? []) {
       const trustedHermesFixtureCheckout =

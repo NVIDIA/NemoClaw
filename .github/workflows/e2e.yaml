@@ -877,10 +877,6 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          DISPATCH_ARTIFACT_DIGEST: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}
-          DISPATCH_ARTIFACT_ID: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}
-          DISPATCH_ARTIFACT_NAME: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}
-          DISPATCH_ARTIFACT_SIZE: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}
@@ -1059,6 +1055,10 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_ARTIFACT_DIGEST: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_digest }}
+          DISPATCH_ARTIFACT_ID: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_id }}
+          DISPATCH_ARTIFACT_NAME: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_name }}
+          DISPATCH_ARTIFACT_SIZE: ${{ needs.native-runtime-qualification-plan.outputs.dispatch_artifact_size }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PRODUCER_RUN_ID: ${{ inputs.native_runtime_qualification_run_id }}

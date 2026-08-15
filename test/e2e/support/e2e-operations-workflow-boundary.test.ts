@@ -279,6 +279,18 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
   });
 
+  it("binds dispatch artifact identity for native qualification reauthentication", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const reauthentication = workflow.jobs["native-runtime-qualification"].steps!.find(
+      (step) => step.name === "Reauthenticate the producer run and current pull request",
+    )!;
+    delete reauthentication.env!.DISPATCH_ARTIFACT_DIGEST;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Native runtime qualification aggregation must bind DISPATCH_ARTIFACT_DIGEST",
+    );
+  });
+
   it("rejects changes that bypass E2E credential authorization (#9047)", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.jobs["generate-matrix"].outputs!.e2e_credentials_allowed;
