@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 interface RetryUntilBaseOptions<T> {
-  /** Return true when the current result completes the retry operation. */
+  /** Return true to stop retrying after this result. */
   accept: (result: T, attempt: number) => boolean;
   /** Delays before each additional attempt. */
   retryDelaysMs: readonly number[];

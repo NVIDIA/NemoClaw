@@ -65,7 +65,7 @@ describe("wait utility", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("retryUntil applies exact delays before a later accepted result (#9218)", () => {
+  it("retryUntil uses each scheduled delay before accepting the third result (#9218)", () => {
     const sleep = vi.fn();
 
     const result = retryUntil((attempt) => (attempt === 3 ? "ready" : "starting"), {
@@ -136,7 +136,7 @@ describe("wait utility", () => {
     expect(operation).toHaveBeenCalledOnce();
   });
 
-  it("retryUntilAsync applies exact delays before a later accepted result (#9218)", async () => {
+  it("retryUntilAsync uses each scheduled delay before accepting the third result (#9218)", async () => {
     const sleep = vi.fn(async () => {});
 
     const result = await retryUntilAsync(
