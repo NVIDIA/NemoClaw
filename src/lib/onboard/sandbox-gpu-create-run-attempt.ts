@@ -133,7 +133,9 @@ function probeExactOpenShellSandboxId(
     const sandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
     return sandboxId ? { state: "identified", sandboxId } : { state: "failed" };
   }
-  if (result.error || result.signal || result.status === null) return { state: "failed" };
+  if (result.error || result.status === null || ("signal" in result && result.signal)) {
+    return { state: "failed" };
+  }
   return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
     ? { state: "not_ready" }
     : { state: "failed" };
@@ -177,7 +179,9 @@ function checkSandboxExecutableReadiness(
     killSignal: "SIGKILL",
   });
   if (result.status === 0 && !result.error) return "ready";
-  if (result.error || result.signal || result.status === null) return "probe_failed";
+  if (result.error || result.status === null || ("signal" in result && result.signal)) {
+    return "probe_failed";
+  }
   return OPENSHELL_SANDBOX_NOT_READY.test(normalizedOpenShellCommandOutput(result))
     ? "not_ready"
     : "probe_failed";
