@@ -513,7 +513,7 @@ export function formatSandboxBridgeUnreachableMessage(
       result.detail ? `    ${result.detail}` : undefined,
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
-      "    Enable and start the user-scoped Podman socket:",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
       "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ]
@@ -539,7 +539,7 @@ export function formatSandboxBridgeUnreachableMessage(
       `    The probe mapped ${HOST_INTERNAL_NAME} to the OpenShell Podman host gateway.`,
       "    If the user-scoped Podman service is active, restart it:",
       "      systemctl --user try-restart podman.service",
-      "    Enable and start the user-scoped Podman socket:",
+      "    Start the current user's Podman socket for this session; this does not enable it for later sessions:",
       "      systemctl --user start podman.socket",
       `    Then rerun \`${cliName()} onboard --experimental-profile portable\`.`,
     ].join("\n");

@@ -19,6 +19,7 @@ import {
   installPortableDemoSandboxLifecycle,
   portableDemoLifecycleInternals,
 } from "../../../src/lib/onboard/experimental/portable-demo-lifecycle";
+import { inspectPortablePodmanReadiness } from "../../../src/lib/onboard/experimental/portable-runtime-readiness";
 import type {
   RuntimeProviderBundle,
   RuntimeProviderLifecycleInput,
@@ -60,9 +61,9 @@ const SUPERVISOR_IMAGE =
 const E2E_PHASES = [
   "pin the exact rootless Podman endpoint",
   "qualify the Podman 5 host contract",
+  "prove cold activation and warm API readiness",
   "start the pinned OpenShell Podman gateway",
   "activate registered-agent identities through the pinned OpenShell CLI",
-  "prove cold activation and warm API readiness",
   "exercise exact-container stop and start",
   "verify production portable ownership and final at-rest state",
 ] as const;
@@ -122,6 +123,43 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
       }),
     ).toContain(OPENSHELL_VERSION);
   }
+
+  const uid = process.getuid?.() ?? -1;
+  expect(uid, "Rootless portable lifecycle evidence requires a non-root Linux UID").toBeGreaterThan(
+    0,
+  );
+  const runtimeAuthority = {
+    schemaVersion: 1,
+    kind: "podman",
+    ownership: "current-user",
+    uid,
+    homeDir: os.homedir(),
+    configHome: path.join(os.homedir(), ".config"),
+    runtimeDir: path.join("/run/user", String(uid)),
+    socketPath: SOCKET_PATH,
+  } as const;
+
+  progress.phase("prove cold activation and warm API readiness");
+  await runCommand(
+    shellProbe,
+    "systemctl",
+    ["--user", "stop", "podman.service", "podman.socket"],
+    { artifactName: "podman-lifecycle-stop-user-units", timeoutMs: 10_000 },
+  );
+  for (const unit of ["podman.service", "podman.socket"]) {
+    expect(
+      await runCommand(shellProbe, "systemctl", ["--user", "is-active", unit], {
+        allowFailure: true,
+        artifactName: `podman-lifecycle-cold-${unit}`,
+        timeoutMs: 10_000,
+      }),
+    ).not.toBe("active");
+  }
+  const coldReadiness = inspectPortablePodmanReadiness(runtimeAuthority);
+  expect(coldReadiness).toMatchObject({ ok: true, timing: { mode: "cold" } });
+  const warmReadiness = inspectPortablePodmanReadiness(runtimeAuthority);
+  expect(warmReadiness).toMatchObject({ ok: true, timing: { mode: "warm" } });
+  runtimeEngines = engines();
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-openshell-"));
   const stateDir = path.join(root, "gateway-state");
@@ -254,24 +292,6 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
 
     const openclawSandbox = AGENTS[0].sandboxName;
     const portableStateDir = path.join(root, "portable-lifecycle");
-    const uid = process.getuid?.() ?? -1;
-    expect(uid, "Rootless portable lifecycle evidence requires a non-root Linux UID").toBeGreaterThan(
-      0,
-    );
-    progress.phase("prove cold activation and warm API readiness");
-    await runCommand(
-      shellProbe,
-      "systemctl",
-      ["--user", "stop", "podman.service", "podman.socket"],
-      { artifactName: "podman-lifecycle-stop-user-units", timeoutMs: 10_000 },
-    );
-    expect(
-      await runCommand(shellProbe, "systemctl", ["--user", "is-active", "podman.socket"], {
-        allowFailure: true,
-        artifactName: "podman-lifecycle-cold-socket-state",
-        timeoutMs: 10_000,
-      }),
-    ).not.toBe("active");
     const readinessLogs: string[] = [];
     installPortableDemoSandboxLifecycle(
       openclawSandbox,
@@ -290,26 +310,11 @@ test("activates pinned OpenShell sandboxes and preserves registered-agent Podman
         platform: "linux",
         log: (message) => readinessLogs.push(message),
         stateDir: portableStateDir,
-        runtimeAuthority: {
-          schemaVersion: 1,
-          kind: "podman",
-          ownership: "current-user",
-          uid,
-          homeDir: os.homedir(),
-          configHome: path.join(os.homedir(), ".config"),
-          runtimeDir: path.join("/run/user", String(uid)),
-          socketPath: SOCKET_PATH,
-        },
+        runtimeAuthority,
       },
     );
-    expect(readinessLogs).toContainEqual(expect.stringContaining("readiness: cold"));
+    expect(readinessLogs).toContainEqual(expect.stringContaining("readiness: warm"));
     runtimeEngines = engines();
-    const warmApi = runtimeEngines.sandboxLifecycle.capture(
-      ["version", "--format", "{{json .}}"],
-      10_000,
-    );
-    expect(warmApi.status).toBe(0);
-    expect(JSON.parse(warmApi.stdout)).toMatchObject({ Server: { Version: expect.any(String) } });
     const portableReceipt = JSON.parse(
       fs.readFileSync(
         portableDemoLifecycleInternals.receiptPath(openclawSandbox, portableStateDir),
