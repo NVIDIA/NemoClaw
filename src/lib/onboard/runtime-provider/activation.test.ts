@@ -406,4 +406,22 @@ describe("runtime provider activation catalog", () => {
       "must bind the protected qualification repository and producer workflow",
     );
   });
+
+  it("rejects qualification authority from a different candidate repository", () => {
+    const candidate = registration();
+    const mismatched = {
+      ...candidate,
+      qualificationAuthority: {
+        ...candidate.qualificationAuthority,
+        source: {
+          ...candidate.qualificationAuthority.source,
+          candidateRepository: "different/NemoClaw",
+        },
+      },
+    } as RuntimeProviderActivationRegistration;
+
+    expect(() => createRuntimeProviderActivationCatalog([mismatched])).toThrow(
+      "must bind the protected qualification repository and producer workflow",
+    );
+  });
 });

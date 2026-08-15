@@ -188,17 +188,17 @@ describe("native runtime qualification contract", () => {
 
   it.each([
     [
-      "head",
+      "candidate commit",
       { headSha: "e".repeat(40), baseSha: "f".repeat(40) },
       "externally expected protected source",
     ],
     [
-      "base",
+      "target-branch base SHA",
       { headSha: "f".repeat(40), baseSha: "e".repeat(40) },
       "externally expected protected source",
     ],
   ])(
-    "rejects an internally consistent but wrong %s/base evidence pair",
+    "rejects an internally consistent but wrong %s evidence pair",
     (_label, source, error) => {
       expect(() =>
         consumeNativeRuntimeQualificationEvidence(
