@@ -223,11 +223,17 @@ fi`,
       requireAuth: true,
       requireAuthModels: true,
     });
-    await artifacts.writeJson("jetson-compatible-inference.json", { baseUrl: inference.baseUrl });
     cleanup.trackDisposable("close Jetson compatible inference fixture", async () => {
-      await artifacts.writeJson("jetson-compatible-inference-requests.json", inference.requests());
-      await inference.close();
+      try {
+        await artifacts.writeJson(
+          "jetson-compatible-inference-requests.json",
+          inference.requests(),
+        );
+      } finally {
+        await inference.close();
+      }
     });
+    await artifacts.writeJson("jetson-compatible-inference.json", { baseUrl: inference.baseUrl });
     const inferenceEnv = {
       COMPATIBLE_API_KEY: INFERENCE_API_KEY,
       NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
