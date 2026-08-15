@@ -408,7 +408,8 @@ describe("complete managed-image publication workflow", () => {
     const matrix = prBuilder.strategy?.matrix?.include ?? [];
     const steps = prBuilder.steps ?? [];
     const permissionDrift = step(prBuilder, "Reproduce reviewed discovery permission drift");
-    const build = step(prBuilder, "Build PR managed image locally");
+    const localBaseBuild = step(prBuilder, "Build PR managed image from local base");
+    const registryBaseBuild = step(prBuilder, "Build PR managed image from registry base");
     const contract = step(prBuilder, "Validate exact PR managed image contract");
 
     expect(workflow.on?.pull_request?.paths).toEqual(
@@ -469,6 +470,7 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder.permissions).toEqual({ contents: "read", packages: "write" });
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
     expect([...matrixByAgent.keys()].sort()).toEqual([
       "hermes",
@@ -484,7 +486,8 @@ describe("complete managed-image publication workflow", () => {
     expect(steps.indexOf(permissionDrift)).toBeGreaterThan(
       steps.indexOf(step(prBuilder, "Checkout")),
     );
-    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(build));
+    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(localBaseBuild));
+    expect(steps.indexOf(permissionDrift)).toBeLessThan(steps.indexOf(registryBaseBuild));
 
     for (const action of steps.filter((candidate) => candidate.uses)) {
       expect(action.uses, action.name).toMatch(fullShaAction);
@@ -499,11 +502,29 @@ describe("complete managed-image publication workflow", () => {
       'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
     );
     expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
+    expect(resolveBase).toContain("--provenance=false");
+    expect(resolveBase).toContain("--sbom=false");
     expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
+    expect(resolveBase).toContain('--output "type=docker,dest=${local_base_archive}"');
+    expect(resolveBase).toContain('--output "type=oci,dest=${local_base_oci_archive}"');
+    expect(resolveBase).toContain('docker load --input "$local_base_archive"');
+    expect(resolveBase).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
+    expect(resolveBase).toContain("if length == 1 then .[0].digest");
+    expect(resolveBase).toContain(
+      "printf 'oci=%s@%s\\n' \"$local_base_oci\" \"$local_base_oci_digest\"",
+    );
     expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
     expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
 
-    expect(build.with).toMatchObject({
+    expect(localBaseBuild.if).toBe("steps.base.outputs.local == 'true'");
+    expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
+    const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
+    expect(localBuild).toContain("docker build");
+    expect(localBuild).toContain("--platform linux/amd64");
+    expect(localBuild).toContain('--build-arg "BASE_IMAGE=${BASE_IMAGE}"');
+    expect(localBuild).toContain('--tag "$IMAGE_REFERENCE"');
+    expect(localBuild).not.toContain("docker buildx build");
+    expect(registryBaseBuild.with).toMatchObject({
       platforms: "linux/amd64",
       load: true,
       push: false,
@@ -634,12 +655,18 @@ describe("complete managed-image publication workflow", () => {
     expect(login.if).toBe(sameRepository);
     expect(publish.if).toBe(sameRepository);
     expect(publish.with).toMatchObject({
+      builder: "${{ steps.buildx.outputs.name }}",
       platforms: "linux/amd64",
+      "build-contexts":
+        "${{ steps.base.outputs.local == 'true' && format('nemoclaw-pr-base=oci-layout://{0}', steps.base.outputs.oci) || '' }}",
       outputs:
         "type=image,name=${{ matrix.repository }},push-by-digest=true,name-canonical=true,push=true",
       provenance: false,
       sbom: false,
     });
+    expect(publish.with?.["build-args"]).toContain(
+      "BASE_IMAGE=${{ steps.base.outputs.local == 'true' && 'nemoclaw-pr-base' || steps.base.outputs.ref }}",
+    );
     expect(publish.with?.tags).toBeUndefined();
     expect(logout.if).toContain(sameRepository);
     expect(exportContract.if).toBe(sameRepository);
