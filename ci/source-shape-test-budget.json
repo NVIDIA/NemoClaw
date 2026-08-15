@@ -423,7 +423,7 @@
     },
     {
       "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "qualifies the published candidate through its declared entrypoint with corporate CA handoff",
+      "test": "qualifies local and published candidates through the declared entrypoint",
       "category": "security"
     },
     {

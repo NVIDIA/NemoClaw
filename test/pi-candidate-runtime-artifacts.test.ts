@@ -253,16 +253,22 @@ describe("Pi release cohort separation", () => {
     );
   });
 
-  // source-shape-contract: security -- Published-digest qualification must bind the declared OCI entrypoint and empty command to the held-state contract
-  it("qualifies the published candidate through its declared entrypoint with corporate CA handoff", () => {
+  // source-shape-contract: security -- Pull-request and published-digest qualification must bind the declared OCI entrypoint and empty command to the held-state contract
+  it("qualifies local and published candidates through the declared entrypoint", () => {
     const workflow = readRepoFile(".github/workflows/managed-images.yaml");
     const dockerfile = readRepoFile("agents/pi/Dockerfile");
     const entrypointStep = workflow.slice(
-      workflow.indexOf(
-        "- name: Exercise the published Pi candidate digest through its declared entrypoint",
-      ),
+      workflow.indexOf("- name: Exercise the Pi candidate through its declared entrypoint"),
       workflow.indexOf("- name: Record the exact Pi candidate contract"),
     );
+    expect(entrypointStep).not.toContain("if: github.event_name");
+    expect(entrypointStep).toContain("EVENT_NAME: ${{ github.event_name }}");
+    expect(entrypointStep).toContain(
+      "IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ github.sha }}",
+    );
+    expect(entrypointStep).toContain('if [ "$EVENT_NAME" = "pull_request" ]; then');
+    expect(entrypointStep).toContain('reference="$IMAGE_REFERENCE"');
+    expect(entrypointStep).toContain('reference="${REPOSITORY}@${DIGEST}"');
     expect(entrypointStep).not.toContain("--entrypoint /usr/local/bin/nemoclaw-start");
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]');
     expect(dockerfile).toContain("CMD []");

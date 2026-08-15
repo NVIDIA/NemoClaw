@@ -1083,22 +1083,28 @@ jobs:
           '
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
-      # correctly. Start the published digest through its declared entrypoint
-      # with no command, matching a real launch, and prove PID 1 drops to the
-      # sandbox user, hardens its resource limits, and persists the trusted
-      # proxy environment before it holds the sandbox open.
-      - name: Exercise the published Pi candidate digest through its declared entrypoint
-        if: github.event_name != 'pull_request'
+      # correctly. Start the local pull-request image or exact published digest
+      # through its declared entrypoint with no command, matching a real launch,
+      # and prove PID 1 drops to the sandbox user, hardens its resource limits,
+      # and persists the trusted proxy environment before it holds the sandbox
+      # open.
+      - name: Exercise the Pi candidate through its declared entrypoint
         shell: bash
         env:
           DIGEST: ${{ steps.publish.outputs.digest }}
+          EVENT_NAME: ${{ github.event_name }}
+          IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ github.sha }}
         run: |
           set -euo pipefail
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
-            exit 1
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            reference="$IMAGE_REFERENCE"
+          else
+            if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
+              exit 1
+            fi
+            reference="${REPOSITORY}@${DIGEST}"
           fi
-          reference="${REPOSITORY}@${DIGEST}"
           corporate_ca_dir="$(mktemp -d "$RUNNER_TEMP/pi-candidate-ca.XXXXXX")"
           corporate_ca="$corporate_ca_dir/corporate-ca.pem"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
