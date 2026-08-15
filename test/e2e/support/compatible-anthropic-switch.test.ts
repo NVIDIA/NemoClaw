@@ -54,6 +54,20 @@ const INVALID_MANAGED_GATEWAY_STATE_CASES = [
   },
 ] as const;
 
+function mockGatewayProcess(pid: number, gatewayBin: string): void {
+  const statSync = fs.statSync;
+  vi.spyOn(fs, "statSync").mockImplementation(((target) =>
+    String(target) === `/proc/${pid}`
+      ? ({ uid: process.getuid?.() ?? 0 } as fs.Stats)
+      : statSync(target)) as typeof fs.statSync);
+  const realpathSync = fs.realpathSync;
+  const gatewayExecutablePaths = new Set([`/proc/${pid}/exe`, gatewayBin]);
+  vi.spyOn(fs, "realpathSync").mockImplementation(((target) =>
+    gatewayExecutablePaths.has(String(target))
+      ? gatewayBin
+      : realpathSync(target)) as typeof fs.realpathSync);
+}
+
 describe("compatible Anthropic inference switch setup", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -99,11 +113,19 @@ describe("compatible Anthropic inference switch setup", () => {
     expect(rewrite).not.toHaveBeenCalled();
   });
 
-  it("uses the managed Docker-driver gateway before the user service (#9166)", async () => {
-    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-gateway-test-"));
+  it("uses managed Docker-driver gateway state from the target home before the user service (#9166)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-target-home-gateway-test-"));
+    const stateDirectory = path.join(
+      home,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway",
+    );
     const pid = process.pid;
     const gatewayBin = "/usr/bin/openshell-gateway";
-    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDirectory);
+    fs.mkdirSync(stateDirectory, { recursive: true });
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "");
     writeDockerDriverGatewayPidFile(path.join(stateDirectory, "openshell-gateway.pid"), pid);
     writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDirectory, {
       desiredEnv: {},
@@ -111,17 +133,16 @@ describe("compatible Anthropic inference switch setup", () => {
       gatewayBin,
       pid,
     });
-    const realpathSync = fs.realpathSync;
-    const gatewayExecutablePaths = new Set([`/proc/${pid}/exe`, gatewayBin]);
-    vi.spyOn(fs, "realpathSync").mockImplementation(
-      ((target) =>
-        gatewayExecutablePaths.has(String(target)) ? gatewayBin : realpathSync(target)) as typeof fs.realpathSync,
-    );
+    mockGatewayProcess(pid, gatewayBin);
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
     const add = vi.fn();
 
     try {
-      await installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, { add });
+      await installGatewayHostVerificationAlias(
+        { command } as unknown as HostCliClient,
+        { add },
+        home,
+      );
       const cleanupMount = add.mock.calls[0]?.[1] as () => Promise<void>;
       await cleanupMount();
 
@@ -133,7 +154,7 @@ describe("compatible Anthropic inference switch setup", () => {
         );
       }
     } finally {
-      fs.rmSync(stateDirectory, { force: true, recursive: true });
+      fs.rmSync(home, { force: true, recursive: true });
     }
   });
 
@@ -153,7 +174,11 @@ describe("compatible Anthropic inference switch setup", () => {
     const add = vi.fn();
 
     try {
-      await installGatewayHostVerificationAlias({ command } as unknown as HostCliClient, { add });
+      await installGatewayHostVerificationAlias(
+        { command } as unknown as HostCliClient,
+        { add },
+        stateDirectory,
+      );
       const cleanupMount = add.mock.calls[0]?.[1] as () => Promise<void>;
       await cleanupMount();
 
