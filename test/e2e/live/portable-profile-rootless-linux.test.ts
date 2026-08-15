@@ -14,7 +14,10 @@ import * as importedPortableHostPreparation from "../../../src/lib/onboard/exper
 import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
 import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
 import { test } from "../fixtures/e2e-test.ts";
-import { installPortableProfileSystemctlShim } from "../fixtures/portable-profile-systemctl.ts";
+import {
+  cleanupPortableProfileSystemctlFixture,
+  installPortableProfileSystemctlShim,
+} from "../fixtures/portable-profile-systemctl.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { verifyPinnedPodmanGatewayStarts } from "./portable-profile-gateway-proof.ts";
 
@@ -259,15 +262,8 @@ async function main(progress: TestProgress): Promise<void> {
       stdio: "ignore",
       timeout: 15_000,
     });
-    const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
-    const pid = fs.existsSync(pidFile)
-      ? Number(fs.readFileSync(pidFile, "utf-8").trim())
-      : Number.NaN;
-    const terminateService = Number.isInteger(pid)
-      ? () => process.kill(pid, "SIGTERM")
-      : () => undefined;
-    terminateService();
     try {
+      await cleanupPortableProfileSystemctlFixture(runtimeDir);
       fs.rmSync(root, { recursive: true, force: true });
     } catch (error) {
       console.warn(`Portable E2E temporary cleanup was incomplete: ${String(error)}`);

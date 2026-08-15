@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { installPortableProfileSystemctlShim } from "../fixtures/portable-profile-systemctl.ts";
+import {
+  cleanupPortableProfileSystemctlFixture,
+  installPortableProfileSystemctlShim,
+} from "../fixtures/portable-profile-systemctl.ts";
 import { readYaml, type Workflow, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "..", "..", "scripts", "install.sh");
@@ -121,14 +124,6 @@ async function waitForServiceStatus(scope: FixtureScope, expected: number): Prom
   });
 }
 
-function readFixturePids(scope: FixtureScope): number[] {
-  return ["nemoclaw-podman-socket-activator.pid", "nemoclaw-podman-service.pid"]
-    .map((name) => path.join(scope.runtimeDir, name))
-    .filter((pidFile) => fs.existsSync(pidFile))
-    .map((pidFile) => Number(fs.readFileSync(pidFile, "utf8").trim()))
-    .filter((pid) => Number.isInteger(pid) && pid > 0);
-}
-
 function pidIsActive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -139,24 +134,8 @@ function pidIsActive(pid: number): boolean {
   }
 }
 
-async function waitForExit(pid: number): Promise<void> {
-  await vi.waitFor(() => expect(pidIsActive(pid)).toBe(false), {
-    interval: 20,
-    timeout: 2_000,
-  });
-}
-
 async function cleanFixture(scope: FixtureScope): Promise<void> {
-  const pids = readFixturePids(scope);
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch (error) {
-      expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
-    }
-  }
-  await Promise.all(pids.map(waitForExit));
-  expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
+  await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
   fs.rmSync(scope.directory, { force: true, recursive: true });
 }
 
@@ -269,6 +248,47 @@ describe("portable profile systemctl fixture", () => {
         });
         expect(serviceStatus(scope)).toBe(0);
         expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+      } finally {
+        await cleanFixture(scope);
+      }
+    },
+  );
+
+  it(
+    "stops both fixture processes and removes both sockets during cleanup (#9006)",
+    { timeout: 30_000 },
+    async () => {
+      const scope = createFixture();
+      const activatorPidFile = path.join(scope.runtimeDir, "nemoclaw-podman-socket-activator.pid");
+      const servicePidFile = path.join(scope.runtimeDir, "nemoclaw-podman-service.pid");
+      const backendSocketPath = path.join(
+        scope.runtimeDir,
+        "podman",
+        "nemoclaw-podman-service.sock",
+      );
+      try {
+        expect(systemctl(scope, ["--user", "start", "podman.socket"]).status).toBe(0);
+        expect(await activateThroughSocket(scope.socketPath)).toBe("ready");
+        await waitForServiceStatus(scope, 0);
+
+        const pids = [activatorPidFile, servicePidFile].map((pidFile) =>
+          Number(fs.readFileSync(pidFile, "utf8").trim()),
+        );
+        expect(pids.every(pidIsActive)).toBe(true);
+        expect(fs.statSync(scope.socketPath).isSocket()).toBe(true);
+        expect(fs.statSync(backendSocketPath).isSocket()).toBe(true);
+
+        await cleanupPortableProfileSystemctlFixture(scope.runtimeDir);
+
+        expect(pids.every((pid) => !pidIsActive(pid))).toBe(true);
+        for (const artifact of [
+          activatorPidFile,
+          servicePidFile,
+          scope.socketPath,
+          backendSocketPath,
+        ]) {
+          expect(fs.existsSync(artifact), artifact).toBe(false);
+        }
       } finally {
         await cleanFixture(scope);
       }
