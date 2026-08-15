@@ -938,6 +938,9 @@ const { createSandbox } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "portable-managed-recreate.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const onboardSessionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const catalogPath = JSON.stringify(
@@ -962,6 +965,25 @@ const { createSandbox } = require(${onboardPath});
     const script = String.raw`
 const runner = require(${runnerPath});
 require(${scriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const onboardSession = require(${onboardSessionPath});
+onboardSession.loadSession = () => ({
+  checkpoint: {
+    profile: { kind: "selected", value: "portable" },
+    runtimeAuthority: {
+      kind: "selected",
+      value: {
+        schemaVersion: 1,
+        kind: "podman",
+        ownership: "current-user",
+        uid: 1001,
+        homeDir: "/home/tester",
+        configHome: "/home/tester/.config",
+        runtimeDir: "/run/user/1001",
+        socketPath: "/run/user/1001/podman/podman.sock",
+      },
+    },
+  },
+});
 const events = [];
 const normalize = (command) =>
   (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
