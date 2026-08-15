@@ -3412,6 +3412,8 @@ Do not replace either file.
 ```bash
 delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
 app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+delegation_drop_in_dir="$(dirname "$delegation_drop_in")"
+app_slice_drop_in_dir="$(dirname "$app_slice_drop_in")"
 
 for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
   if sudo test -e "$drop_in" || sudo test -L "$drop_in"; then
@@ -3420,12 +3422,53 @@ for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
   fi
 done
 
-sudo install -d -o root -g root -m 0755 -- "$(dirname "$delegation_drop_in")" || exit 1
-sudo install -d -o root -g root -m 0755 -- "$(dirname "$app_slice_drop_in")" || exit 1
+ensure_drop_in_dir() {
+  directory_name="$1"
+  drop_in_dir="$2"
+
+  if sudo test -L "$drop_in_dir" \
+    || { sudo test -e "$drop_in_dir" && ! sudo test -d "$drop_in_dir"; }; then
+    printf 'Refusing unexpected CPU controller drop-in directory: %s\n' "$drop_in_dir" >&2
+    return 1
+  fi
+
+  if sudo test -d "$drop_in_dir"; then
+    if [ "$(sudo stat -Lc '%U:%G %a' -- "$drop_in_dir")" != "root:root 755" ]; then
+      printf 'Refusing to change existing drop-in directory owner or mode: %s\n' \
+        "$drop_in_dir" >&2
+      return 1
+    fi
+    printf 'Record for rollback: %s_drop_in_dir_created=0\n' "$directory_name"
+    return 0
+  fi
+
+  if ! sudo mkdir -m 0755 -- "$drop_in_dir"; then
+    printf 'CPU controller drop-in directory creation failed: %s\n' "$drop_in_dir" >&2
+    return 1
+  fi
+
+  if ! drop_in_dir_id="$(sudo stat -Lc '%d:%i' -- "$drop_in_dir")"; then
+    printf 'CPU controller drop-in directory identity recording failed: %s\n' \
+      "$drop_in_dir" >&2
+    return 1
+  fi
+  printf 'Record for rollback: %s_drop_in_dir_created=1\n' "$directory_name"
+  printf 'Record for rollback: %s_drop_in_dir_id=%s\n' \
+    "$directory_name" "$drop_in_dir_id"
+
+  if [ "$(sudo stat -Lc '%U:%G %a' -- "$drop_in_dir")" != "root:root 755" ]; then
+    printf 'Unexpected owner or mode on new drop-in directory: %s\n' "$drop_in_dir" >&2
+    return 1
+  fi
+}
+
+ensure_drop_in_dir delegation "$delegation_drop_in_dir" || exit 1
+ensure_drop_in_dir app_slice "$app_slice_drop_in_dir" || exit 1
 
 create_drop_in() {
-  drop_in="$1"
-  shift
+  drop_in_name="$1"
+  drop_in="$2"
+  shift 2
   drop_in_dir="$(dirname -- "$drop_in")"
 
   if ! drop_in_tmp="$(sudo mktemp "${drop_in_dir}/.nemoclaw-cpu-controller.XXXXXX")"; then
@@ -3435,7 +3478,15 @@ create_drop_in() {
 
   if ! printf '%s\n' "$@" | sudo dd of="$drop_in_tmp" status=none \
     || ! sudo chown root:root -- "$drop_in_tmp" \
-    || ! sudo chmod 0644 -- "$drop_in_tmp" \
+    || ! sudo chmod 0644 -- "$drop_in_tmp"; then
+    printf 'CPU controller drop-in creation failed: %s\n' "$drop_in" >&2
+    if ! sudo rm -f -- "$drop_in_tmp"; then
+      printf 'CPU controller drop-in temporary file removal failed: %s\n' "$drop_in_tmp" >&2
+    fi
+    return 1
+  fi
+
+  if ! drop_in_id="$(sudo stat -Lc '%d:%i' -- "$drop_in_tmp")" \
     || ! sudo ln -T -- "$drop_in_tmp" "$drop_in"; then
     printf 'CPU controller drop-in creation failed: %s\n' "$drop_in" >&2
     if ! sudo rm -f -- "$drop_in_tmp"; then
@@ -3444,14 +3495,24 @@ create_drop_in() {
     return 1
   fi
 
+  printf 'Record for rollback: %s_drop_in_id=%s\n' "$drop_in_name" "$drop_in_id"
+
   if ! sudo rm -f -- "$drop_in_tmp"; then
     printf 'CPU controller drop-in temporary file removal failed: %s\n' "$drop_in_tmp" >&2
     return 1
   fi
 }
 
-create_drop_in "$delegation_drop_in" '[Service]' 'Delegate=cpu memory pids' &&
-  create_drop_in "$app_slice_drop_in" '[Slice]' 'CPUWeight=100'
+creation_failed=0
+if ! create_drop_in \
+  delegation "$delegation_drop_in" '[Service]' 'Delegate=cpu memory pids'; then
+  creation_failed=1
+elif ! create_drop_in app_slice "$app_slice_drop_in" '[Slice]' 'CPUWeight=100'; then
+  creation_failed=1
+fi
+if [ "$creation_failed" != "0" ]; then
+  exit 1
+fi
 ```
 
 If a creation command fails, do not reload systemd.
@@ -3470,11 +3531,12 @@ for drop_in in "$delegation_drop_in" "$app_slice_drop_in"; do
   fi
 done
 
+sudo stat -Lc '%n %d:%i' -- "$delegation_drop_in" "$app_slice_drop_in"
 sudo cat -- "$delegation_drop_in"
 sudo cat -- "$app_slice_drop_in"
 ```
 
-Continue only when the command exits with status `0` and prints this output:
+Continue only when the command exits with status `0`, both `device:inode` values match the creation command's rollback records, and the file content is:
 
 ```ini
 [Service]
@@ -3482,6 +3544,11 @@ Delegate=cpu memory pids
 [Slice]
 CPUWeight=100
 ```
+
+Record all rollback lines from the creation command in the administrator's change record, including both file `device:inode` values and both directory creation records.
+They identify the exact files and any directories created by this procedure and contain no credentials.
+Rollback must use those recorded values.
+If a required value is lost, do not use the removal command below; ask the administrator to inspect and remove the configuration through the host's normal change-management process.
 
 The administrator's `sudo` policy can request authentication.
 NemoClaw never receives that credential.
@@ -3538,37 +3605,116 @@ $$nemoclaw onboard --experimental-profile portable
 
 #### Remove the CPU Controller Drop-Ins
 
-Remove only the two named files that this procedure created.
+Remove only the two named files and any drop-in directory that the creation record marks as created by this procedure.
 Do not use `systemctl revert`.
-Do not remove another `user@.service` or `app.slice` drop-in.
+Do not remove another `user@.service` or `app.slice` drop-in or a pre-existing drop-in directory.
 
-Confirm both files before removal:
+Confirm both files and retrieve the `device:inode` values from the administrator's creation-time change record:
 
 ```bash
 delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
 app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
+expected_delegation_drop_in_id="<recorded-delegation-device:inode>"
+expected_app_slice_drop_in_id="<recorded-app-slice-device:inode>"
+delegation_drop_in_dir_created="<recorded-0-or-1>"
+delegation_drop_in_dir_id="<recorded-device:inode-if-created>"
+app_slice_drop_in_dir_created="<recorded-0-or-1>"
+app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
 sudo cat -- "$delegation_drop_in"
 sudo cat -- "$app_slice_drop_in"
+sudo stat -Lc '%n %d:%i' -- "$delegation_drop_in" "$app_slice_drop_in"
 ```
 
-Continue only when both paths and their content match this procedure.
+Continue only when both paths, their content, and their current `device:inode` values match the creation-time record.
 From an administrator session that does not depend on the affected user's manager, stop the manager first.
-Remove both files while the manager is inactive, then reload systemd and start the manager:
+The removal command is retry-safe: an already absent recorded path is accepted, an identity mismatch is refused, and reload/start are attempted after every removal attempt so a partial failure does not leave the manager stopped.
 
 ```bash
 uid="<affected-user-id>"
 delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"
 app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"
-sudo systemctl stop "user@${uid}.service" &&
-  sudo rm -- "$delegation_drop_in" "$app_slice_drop_in" &&
-  sudo systemctl daemon-reload &&
-  sudo systemctl start "user@${uid}.service"
+expected_delegation_drop_in_id="<recorded-delegation-device:inode>"
+expected_app_slice_drop_in_id="<recorded-app-slice-device:inode>"
+delegation_drop_in_dir_created="<recorded-0-or-1>"
+delegation_drop_in_dir_id="<recorded-device:inode-if-created>"
+app_slice_drop_in_dir_created="<recorded-0-or-1>"
+app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"
+
+remove_recorded_drop_in() {
+  drop_in="$1"
+  expected_id="$2"
+
+  if [[ ! "$expected_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+    printf 'Invalid creation-time identity for: %s\n' "$drop_in" >&2
+    return 1
+  fi
+  if ! sudo test -e "$drop_in" && ! sudo test -L "$drop_in"; then
+    return 0
+  fi
+  if sudo test -L "$drop_in" || ! sudo test -f "$drop_in"; then
+    printf 'Refusing unexpected CPU controller drop-in type: %s\n' "$drop_in" >&2
+    return 1
+  fi
+  if [ "$(sudo stat -Lc '%d:%i' -- "$drop_in")" != "$expected_id" ]; then
+    printf 'Refusing CPU controller drop-in whose identity changed: %s\n' "$drop_in" >&2
+    return 1
+  fi
+  sudo rm -- "$drop_in"
+}
+
+remove_recorded_directory_if_created() {
+  drop_in_dir="$1"
+  created="$2"
+  expected_id="$3"
+
+  if [ "$created" = "0" ]; then
+    return 0
+  fi
+  if [ "$created" != "1" ] || [[ ! "$expected_id" =~ ^[0-9]+:[0-9]+$ ]]; then
+    printf 'Invalid creation-time directory record for: %s\n' "$drop_in_dir" >&2
+    return 1
+  fi
+  if ! sudo test -e "$drop_in_dir" && ! sudo test -L "$drop_in_dir"; then
+    return 0
+  fi
+  if sudo test -L "$drop_in_dir" || ! sudo test -d "$drop_in_dir"; then
+    printf 'Refusing unexpected CPU controller drop-in directory type: %s\n' \
+      "$drop_in_dir" >&2
+    return 1
+  fi
+  if [ "$(sudo stat -Lc '%d:%i' -- "$drop_in_dir")" != "$expected_id" ]; then
+    printf 'Refusing CPU controller drop-in directory whose identity changed: %s\n' \
+      "$drop_in_dir" >&2
+    return 1
+  fi
+  sudo rmdir -- "$drop_in_dir"
+}
+
+cleanup_failed=0
+if ! sudo systemctl stop "user@${uid}.service"; then
+  exit 1
+fi
+remove_recorded_drop_in "$delegation_drop_in" "$expected_delegation_drop_in_id" ||
+  cleanup_failed=1
+remove_recorded_drop_in "$app_slice_drop_in" "$expected_app_slice_drop_in_id" ||
+  cleanup_failed=1
+remove_recorded_directory_if_created \
+  "$(dirname "$delegation_drop_in")" \
+  "$delegation_drop_in_dir_created" \
+  "$delegation_drop_in_dir_id" || cleanup_failed=1
+remove_recorded_directory_if_created \
+  "$(dirname "$app_slice_drop_in")" \
+  "$app_slice_drop_in_dir_created" \
+  "$app_slice_drop_in_dir_id" || cleanup_failed=1
+sudo systemctl daemon-reload || cleanup_failed=1
+sudo systemctl start "user@${uid}.service" || cleanup_failed=1
+exit "$cleanup_failed"
 ```
 
 The inactive reload removes both NemoClaw drop-ins from the instantiated units and recalculates ancestor controller masks before the manager starts.
 Do not replace this sequence with `systemctl restart`.
-The sequence stops at the first failed command.
-If a command fails after the manager stops, correct the failure and rerun the failed command and each remaining command.
+If the command exits nonzero, inspect every reported failure.
+After correcting it, rerun the complete removal command with the same creation-time identities; paths already removed by the earlier attempt are accepted.
 
 After the affected user signs in again, verify that systemd no longer loads either drop-in:
 

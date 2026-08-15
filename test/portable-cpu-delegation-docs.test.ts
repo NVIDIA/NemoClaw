@@ -16,7 +16,7 @@ type CommandFixture = {
   command: string;
   delegationDropIn: string;
   environment: NodeJS.ProcessEnv;
-  installCallMarker: string;
+  mkdirCallMarker: string;
 };
 
 function extractDropInCreationCommand(): string {
@@ -41,28 +41,41 @@ function makeCommandFixture(): CommandFixture {
   const delegationDropIn = path.join(root, "system", "90-nemoclaw-cpu-delegation.conf");
   const appSliceDropIn = path.join(root, "user", "90-nemoclaw-cpu-controller.conf");
   const fakeBin = path.join(root, "bin");
-  const installCallMarker = path.join(root, "install-call");
+  const mkdirCallMarker = path.join(root, "mkdir-call");
+  const linkCallMarker = path.join(root, "link-call");
   const sudo = path.join(fakeBin, "sudo");
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(
     sudo,
     `#!/bin/sh
 set -eu
-if [ "\${1-}" = install ]; then
-  install_call=1
-  if [ -e "$INSTALL_CALL_MARKER" ]; then
-    install_call=$(( $(cat "$INSTALL_CALL_MARKER") + 1 ))
+if [ "\${1-}" = mkdir ]; then
+  mkdir_call=1
+  if [ -e "$MKDIR_CALL_MARKER" ]; then
+    mkdir_call=$(( $(cat "$MKDIR_CALL_MARKER") + 1 ))
   fi
-  printf '%s\\n' "$install_call" > "$INSTALL_CALL_MARKER"
-  if [ "$install_call" -eq "\${FAIL_INSTALL_CALL:-0}" ]; then
+  printf '%s\\n' "$mkdir_call" > "$MKDIR_CALL_MARKER"
+  if [ "$mkdir_call" -eq "\${FAIL_MKDIR_CALL:-0}" ]; then
     printf '%s\\n' 'simulated directory creation failure' >&2
     exit 73
   fi
-  shift
-  exec install -d -m 0755 -- "$9"
+  exec mkdir -m 0755 "$5"
+fi
+if [ "\${1-}" = stat ]; then
+  if [ "\${3-}" = "%d:%i" ]; then
+    printf '%s\\n' '1:1'
+  elif [ "\${SUDO_SCENARIO:-}" = existing-directory-metadata ]; then
+    printf '%s\\n' 'root:root 750'
+  else
+    printf '%s\\n' 'root:root 755'
+  fi
+  exit 0
 fi
 if [ "\${1-}" = chown ]; then
   exit 0
+fi
+if [ "\${1-}" = chmod ]; then
+  exec chmod "$2" "$4"
 fi
 if [ "\${1-}" = dd ]; then
   if [ "\${SUDO_SCENARIO:-}" = write-failure ]; then
@@ -76,8 +89,20 @@ if [ "\${1-}" = dd ]; then
     exit 74
   fi
 fi
-if [ "\${1-}" = ln ] && [ "\${SUDO_SCENARIO:-}" = concurrent ]; then
-  printf '%s\\n' 'concurrent content' > "$FAILURE_TARGET"
+if [ "\${1-}" = ln ]; then
+  link_call=1
+  if [ -e "$LINK_CALL_MARKER" ]; then
+    link_call=$(( $(cat "$LINK_CALL_MARKER") + 1 ))
+  fi
+  printf '%s\\n' "$link_call" > "$LINK_CALL_MARKER"
+  if [ "$link_call" -eq "\${FAIL_LINK_CALL:-0}" ]; then
+    printf '%s\\n' 'simulated publish link failure' >&2
+    exit 75
+  fi
+  if [ "\${SUDO_SCENARIO:-}" = concurrent ]; then
+    printf '%s\\n' 'concurrent content' > "$FAILURE_TARGET"
+  fi
+  exec ln "$4" "$5"
 fi
 exec "$@"
 `,
@@ -101,11 +126,12 @@ exec "$@"
     environment: {
       ...process.env,
       FAILURE_TARGET: delegationDropIn,
-      INSTALL_CALL_MARKER: installCallMarker,
+      LINK_CALL_MARKER: linkCallMarker,
       LC_ALL: "C",
+      MKDIR_CALL_MARKER: mkdirCallMarker,
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
-    installCallMarker,
+    mkdirCallMarker,
   };
 }
 
@@ -139,6 +165,19 @@ afterEach(() => {
 });
 
 describe("portable CPU delegation documentation", () => {
+  it("binds retry-safe rollback to creation-time file identities (#9195)", () => {
+    const markdown = fs.readFileSync(troubleshootingPath, "utf8");
+    const rollback = markdown.slice(markdown.indexOf("#### Remove the CPU Controller Drop-Ins"));
+
+    expect(markdown).toContain("Record for rollback: %s_drop_in_id=%s");
+    expect(markdown).toContain("Record for rollback: %s_drop_in_dir_created=1");
+    expect(rollback).toContain("remove_recorded_drop_in()");
+    expect(rollback).toContain("remove_recorded_directory_if_created()");
+    expect(rollback).toContain("whose identity changed");
+    expect(rollback).toContain("sudo systemctl daemon-reload || cleanup_failed=1");
+    expect(rollback).toContain('sudo systemctl start "user@${uid}.service" || cleanup_failed=1');
+  });
+
   it("creates both drop-ins with their required content and mode (#9195)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture);
@@ -169,22 +208,83 @@ describe("portable CPU delegation documentation", () => {
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 
-  it.each([1, 2])(
-    "does not create a drop-in when directory creation command %i fails (#9195)",
-    (failedInstallCall) => {
+  it.each([
+    { failedMkdirCall: 1, recordsFirstDirectory: false },
+    { failedMkdirCall: 2, recordsFirstDirectory: true },
+  ])(
+    "does not create a drop-in when mkdir call $failedMkdirCall fails (#9195)",
+    ({ failedMkdirCall, recordsFirstDirectory }) => {
       const fixture = makeCommandFixture();
       const result = runDocumentedCommand(fixture, {
-        FAIL_INSTALL_CALL: String(failedInstallCall),
+        FAIL_MKDIR_CALL: String(failedMkdirCall),
       });
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("simulated directory creation failure");
-      expect(fs.readFileSync(fixture.installCallMarker, "utf8")).toBe(`${failedInstallCall}\n`);
+      expect(fs.readFileSync(fixture.mkdirCallMarker, "utf8")).toBe(`${failedMkdirCall}\n`);
       expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
       expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
       expect(listTemporaryDropIns(fixture)).toEqual([]);
+      expect(result.stdout.includes("delegation_drop_in_dir_created=1")).toBe(
+        recordsFirstDirectory,
+      );
+      expect(result.stdout.includes("delegation_drop_in_dir_id=1:1")).toBe(recordsFirstDirectory);
     },
   );
+
+  it("prints each creation identity before a later drop-in publish fails (#9195)", () => {
+    const fixture = makeCommandFixture();
+    const result = runDocumentedCommand(fixture, { FAIL_LINK_CALL: "2" });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("simulated publish link failure");
+    expect(result.stdout).toContain("delegation_drop_in_dir_created=1");
+    expect(result.stdout).toContain("delegation_drop_in_dir_id=1:1");
+    expect(result.stdout).toContain("app_slice_drop_in_dir_created=1");
+    expect(result.stdout).toContain("app_slice_drop_in_dir_id=1:1");
+    expect(result.stdout).toContain("delegation_drop_in_id=1:1");
+    expect(result.stdout).not.toContain("app_slice_drop_in_id=");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(true);
+    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+    expect(listTemporaryDropIns(fixture)).toEqual([]);
+  });
+
+  it("refuses and preserves pre-existing directory metadata (#9195)", () => {
+    const fixture = makeCommandFixture();
+    const delegationDirectory = path.dirname(fixture.delegationDropIn);
+    const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
+    fs.mkdirSync(delegationDirectory, { mode: 0o750 });
+    fs.mkdirSync(appSliceDirectory, { mode: 0o750 });
+
+    const result = runDocumentedCommand(fixture, {
+      SUDO_SCENARIO: "existing-directory-metadata",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Refusing to change existing drop-in directory owner or mode");
+    expect(fs.statSync(delegationDirectory).mode & 0o777).toBe(0o750);
+    expect(fs.statSync(appSliceDirectory).mode & 0o777).toBe(0o750);
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
+    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+  });
+
+  it("records valid pre-existing directories as preserved (#9195)", () => {
+    const fixture = makeCommandFixture();
+    const delegationDirectory = path.dirname(fixture.delegationDropIn);
+    const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
+    fs.mkdirSync(delegationDirectory, { mode: 0o755 });
+    fs.mkdirSync(appSliceDirectory, { mode: 0o755 });
+
+    const result = runDocumentedCommand(fixture);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("delegation_drop_in_dir_created=0");
+    expect(result.stdout).toContain("app_slice_drop_in_dir_created=0");
+    expect(result.stdout).not.toContain("delegation_drop_in_dir_id=");
+    expect(result.stdout).not.toContain("app_slice_drop_in_dir_id=");
+    expect(fs.statSync(delegationDirectory).mode & 0o777).toBe(0o755);
+    expect(fs.statSync(appSliceDirectory).mode & 0o777).toBe(0o755);
+  });
 
   it("removes the temporary file after its write fails (#9195)", () => {
     const fixture = makeCommandFixture();
