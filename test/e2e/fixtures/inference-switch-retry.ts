@@ -6,6 +6,8 @@ import { runBoundedRetry, type RetryEvidence } from "./retry-policy.ts";
 
 const TRANSIENT_INFERENCE_SET_FAILURE =
   /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b50[234]\b/iu;
+const TERMINAL_INFERENCE_SET_FAILURE =
+  /authentication failed|authorization failed|unauthorized|forbidden|HTTP 40[13]\b|\b40[13]\b|denied by network policy|network policy denied|policy (?:update |validation )?failed|malformed|invalid (?:provider|model|configuration|request|[^\r\n]*(?:credential|api[_ -]?key))|(?:model|route|verification) mismatch|expected (?:model|provider|route)[^\r\n]*(?:got|found)/iu;
 
 export interface InferenceSwitchRetryArtifactSink {
   writeJson(path: string, value: unknown): Promise<string>;
@@ -28,7 +30,10 @@ export function inferenceSetAttemptCount(raw: string | undefined, fallback = 3):
 }
 
 export function isTransientInferenceSetFailure(result: ShellProbeResult): boolean {
-  return TRANSIENT_INFERENCE_SET_FAILURE.test(`${result.stdout}\n${result.stderr}`);
+  const output = `${result.stdout}\n${result.stderr}`;
+  return (
+    !TERMINAL_INFERENCE_SET_FAILURE.test(output) && TRANSIENT_INFERENCE_SET_FAILURE.test(output)
+  );
 }
 
 export function inferenceResponseModel(raw: string): string {

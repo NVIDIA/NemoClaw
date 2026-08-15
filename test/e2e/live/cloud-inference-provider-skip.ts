@@ -10,8 +10,8 @@ const ENDPOINT_VALIDATION_RE =
   /endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation/i;
 const RATE_LIMIT_OR_SANITIZED_EXTERNAL_RE =
   /HTTP 429|\b429\b|rate[- ]?limit|too many requests|quota|temporar|timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|\b(redacted|sanitized)\b/i;
-const CREDENTIAL_OR_AUTH_RE =
-  /invalid.*(api[_-]?key|credential)|unauthorized|forbidden|HTTP 40[13]\b|\b40[13]\b/i;
+const TERMINAL_ENDPOINT_VALIDATION_RE =
+  /invalid.*(api[_ -]?key|credential|configuration|request|json)|authentication failed|authorization failed|unauthorized|forbidden|HTTP 40[13]\b|\b40[13]\b|denied by network policy|network policy denied|policy .*failed|routing .*failed|route .*failed|proxy .*failed|hop-by-hop|header stripping|malformed/i;
 const TRANSIENT_CHAT_FAILURE =
   /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|rate[- ]?limit/iu;
 const CLOUD_CHAT_HTTP_STATUS_MARKER = "__NEMOCLAW_HTTP_STATUS__:";
@@ -89,7 +89,7 @@ export function classifyPreContractExternalProviderFailure(
 ): PreContractExternalProviderFailure | null {
   const output = resultText(result);
   if (!ENDPOINT_VALIDATION_RE.test(output)) return null;
-  if (CREDENTIAL_OR_AUTH_RE.test(output)) return null;
+  if (TERMINAL_ENDPOINT_VALIDATION_RE.test(output)) return null;
   if (isTransientProviderValidationFailure(result)) {
     return {
       classifier: "transient-endpoint-validation",

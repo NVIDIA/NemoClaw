@@ -55,6 +55,15 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(isHermesTransientAgentFailure("503", "service unavailable")).toBe(true);
     expect(isHermesTransientAgentFailure("000", "request failed: ECONNRESET")).toBe(true);
     expect(isHermesTransientAgentFailure("401", "unauthorized")).toBe(false);
+    expect(isHermesTransientAgentFailure("401", "unauthorized after ECONNRESET")).toBe(false);
+    expect(isHermesTransientAgentFailure("403", "authorization failed after ETIMEDOUT")).toBe(
+      false,
+    );
+    expect(isHermesTransientAgentFailure("000", "authentication failed after ECONNRESET")).toBe(
+      false,
+    );
+    expect(isHermesTransientAgentFailure("503", "authentication failed upstream")).toBe(false);
+    expect(isHermesTransientAgentFailure("400", "request failed: ECONNRESET")).toBe(false);
     expect(isHermesTransientAgentFailure("200", "wrong deterministic answer")).toBe(false);
     expect(isHermesTransientAgentFailure("200", "reply mentions fetch failed")).toBe(false);
   });
@@ -81,6 +90,45 @@ describe("common-egress agent parsing and classification helpers", () => {
     expect(classifyOpenClawAgentAssertion({ ...result, response: "HTTP 403" })).toEqual({
       passed: false,
       failureClass: "authorization",
+    });
+    expect(
+      classifyOpenClawAgentAssertion({
+        ...result,
+        response: "authentication failed after timeout",
+      }),
+    ).toEqual({ passed: false, failureClass: "authentication" });
+    expect(
+      classifyOpenClawAgentAssertion({
+        ...result,
+        response: "authorization failed after ECONNRESET",
+      }),
+    ).toEqual({ passed: false, failureClass: "authorization" });
+    expect(
+      classifyOpenClawAgentAssertion({
+        ...result,
+        response: "denied by network policy after timeout",
+      }),
+    ).toEqual({ passed: false, failureClass: "policy-denial" });
+    expect(
+      classifyOpenClawAgentAssertion({ ...result, response: "malformed request after ETIMEDOUT" }),
+    ).toEqual({ passed: false, failureClass: "malformed-input" });
+    expect(
+      classifyOpenClawAgentAssertion({ ...result, response: "request failed: ECONNRESET" }),
+    ).toEqual({
+      passed: false,
+      failureClass: "transient-external",
+      recoveryRequired: false,
+    });
+    expect(
+      classifyOpenClawAgentAssertion({
+        ...result,
+        exitCode: 0,
+        response: "wrong product reply mentioning fetch failed and ETIMEDOUT",
+      }),
+    ).toEqual({
+      passed: false,
+      failureClass: "deterministic",
+      recoveryRequired: false,
     });
     expect(
       classifyOpenClawAgentAssertion({ ...result, response: "scope upgrade pending approval" }),
@@ -124,15 +172,43 @@ describe("common-egress agent parsing and classification helpers", () => {
       passed: false,
       failureClass: "transient-external",
     });
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        httpStatus: "503",
+        response: "authentication failed after timeout",
+      }),
+    ).toEqual({ passed: false, failureClass: "authentication" });
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        httpStatus: "000",
+        response: "authorization failed after ECONNRESET",
+      }),
+    ).toEqual({ passed: false, failureClass: "authorization" });
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        httpStatus: "000",
+        response: "denied by network policy after timeout",
+      }),
+    ).toEqual({ passed: false, failureClass: "policy-denial" });
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        httpStatus: "000",
+        response: "malformed request after ETIMEDOUT",
+      }),
+    ).toEqual({ passed: false, failureClass: "malformed-input" });
     expect(classifyHermesAgentAssertion(result)).toEqual({
       passed: false,
       failureClass: "deterministic",
     });
   });
 
-  it("records recovered OpenClaw success after reconciliation", async () => {
+  it("records OpenClaw success after the required scope recovery", async () => {
     const onEvidence = vi.fn();
-    const reconcile = vi.fn().mockResolvedValue(true);
+    const recover = vi.fn().mockResolvedValue(true);
     const run = vi
       .fn()
       .mockResolvedValueOnce({
@@ -146,7 +222,7 @@ describe("common-egress agent parsing and classification helpers", () => {
       attempts: 3,
       delayMs: () => 0,
       onEvidence,
-      reconcile,
+      recover,
       run,
     });
 
@@ -169,7 +245,91 @@ describe("common-egress agent parsing and classification helpers", () => {
         { attempt: 2, outcome: "passed", retryScheduled: false },
       ],
     });
-    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ recoveryRequired: true }), 1);
+    expect(recover).toHaveBeenCalledWith(expect.objectContaining({ recoveryRequired: true }), 1);
+  });
+
+  it("does not retry a plain OpenClaw transport failure without reconciliation", async () => {
+    const onEvidence = vi.fn();
+    const recover = vi.fn().mockResolvedValue(true);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ passed: false, failureClass: "transient-external" })
+      .mockResolvedValueOnce({ passed: true });
+
+    const result = await runOpenClawAgentAssertionRetry({
+      attempts: 3,
+      delayMs: () => 0,
+      onEvidence,
+      recover,
+      run,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(recover).not.toHaveBeenCalled();
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotence: "reconciled-mutation",
+        outcome: "failed-no-retry",
+        attempts: [
+          {
+            attempt: 1,
+            outcome: "failed",
+            failureClass: "transient-external",
+            reconciled: false,
+            retryScheduled: false,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("does not retry when OpenClaw scope recovery fails", async () => {
+    const onEvidence = vi.fn();
+    const recover = vi.fn().mockResolvedValue(false);
+    const run = vi.fn().mockResolvedValue({
+      passed: false,
+      failureClass: "transient-external",
+      recoveryRequired: true,
+    });
+
+    const result = await runOpenClawAgentAssertionRetry({
+      attempts: 3,
+      delayMs: () => 0,
+      onEvidence,
+      recover,
+      run,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(recover).toHaveBeenCalledOnce();
+    expect(result.evidence.attempts).toEqual([
+      expect.objectContaining({ reconciled: false, retryScheduled: false }),
+    ]);
+  });
+
+  it("does not retry when OpenClaw scope recovery throws", async () => {
+    const recover = vi.fn().mockRejectedValue(new Error("recovery unavailable"));
+    const run = vi.fn().mockResolvedValue({
+      passed: false,
+      failureClass: "transient-external",
+      recoveryRequired: true,
+    });
+
+    const result = await runOpenClawAgentAssertionRetry({
+      attempts: 3,
+      delayMs: () => 0,
+      onEvidence: vi.fn(),
+      recover,
+      run,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(result.evidence.attempts).toEqual([
+      expect.objectContaining({ reconciled: false, retryScheduled: false }),
+    ]);
   });
 
   it("records a deterministic Hermes failure without retrying", async () => {
@@ -246,5 +406,31 @@ describe("common-egress agent parsing and classification helpers", () => {
           "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_INFERENCE_API_KEY credential",
       }),
     ).toMatchObject({ matches: false });
+    expect(
+      classifyPreContractProviderValidationSkip({
+        stdout: "",
+        stderr: "endpoint validation failed: authentication failed after HTTP 429 rate limit",
+      }),
+    ).toMatchObject({
+      http429ProviderValidationFailure: false,
+      matches: false,
+      transientProviderValidationFailure: false,
+    });
+    expect(
+      classifyPreContractProviderValidationSkip({
+        stdout: "",
+        stderr: "endpoint validation failed: denied by network policy after timeout",
+      }),
+    ).toMatchObject({ matches: false, transientProviderValidationFailure: false });
+    expect(
+      classifyPreContractProviderValidationSkip({
+        stdout: "",
+        stderr: "endpoint validation failed: invalid JSON request after HTTP 429 timeout",
+      }),
+    ).toMatchObject({
+      http429ProviderValidationFailure: false,
+      matches: false,
+      transientProviderValidationFailure: false,
+    });
   });
 });

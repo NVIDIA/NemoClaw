@@ -45,9 +45,9 @@ describe("cloud inference pre-contract provider skip classifier", () => {
   });
 
   it("keeps authentication statuses terminal when transport text is present (#9166)", () => {
-    expect(
-      classifyCloudChatFailure("401", "request timed out", "expected PONG", undefined),
-    ).toBe("deterministic");
+    expect(classifyCloudChatFailure("401", "request timed out", "expected PONG", undefined)).toBe(
+      "deterministic",
+    );
     expect(
       classifyCloudChatFailure(
         "403",
@@ -107,6 +107,26 @@ describe("cloud inference pre-contract provider skip classifier", () => {
     expect(
       classifyPreContractExternalProviderFailure(
         probeOutput("Chat Completions API validation failed: HTTP 403 forbidden"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("endpoint validation failed: authentication failed after timeout"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("failed to verify inference endpoint: authorization failed after ECONNRESET"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("endpoint validation failed: denied by network policy after rate limit"),
+      ),
+    ).toBeNull();
+    expect(
+      classifyPreContractExternalProviderFailure(
+        probeOutput("endpoint validation failed: invalid JSON request after HTTP 429 timeout"),
       ),
     ).toBeNull();
   });

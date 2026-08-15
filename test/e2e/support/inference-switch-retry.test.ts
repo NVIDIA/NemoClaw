@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
+  isTransientInferenceSetFailure,
   runInferenceSetWithRetry,
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
@@ -157,6 +158,53 @@ printf 'terminal_rc=%s\n' "$rc"
 
     await runInferenceSetWithRetry({ attempts: 3, delay: async () => {}, run });
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("keeps mixed terminal verification failures out of the TypeScript retry path", () => {
+    expect(isTransientInferenceSetFailure(result(1, "authentication failed after timeout"))).toBe(
+      false,
+    );
+    expect(isTransientInferenceSetFailure(result(1, "authorization failed after ECONNRESET"))).toBe(
+      false,
+    );
+    expect(
+      isTransientInferenceSetFailure(result(1, "denied by network policy after ETIMEDOUT")),
+    ).toBe(false);
+    expect(isTransientInferenceSetFailure(result(1, "malformed request after timeout"))).toBe(
+      false,
+    );
+    expect(isTransientInferenceSetFailure(result(1, "model mismatch after timeout"))).toBe(false);
+    expect(isTransientInferenceSetFailure(result(1, "route mismatch after ECONNRESET"))).toBe(
+      false,
+    );
+    expect(isTransientInferenceSetFailure(result(1, "verification mismatch after timeout"))).toBe(
+      false,
+    );
+  });
+
+  it("keeps mixed terminal verification failures out of the shell retry path", () => {
+    const helper = path.resolve("test/e2e/lib/inference-switch-retry.sh");
+    const harness = String.raw`
+source "$1"
+for output in \
+  "authentication failed after timeout" \
+  "authorization failed after ECONNRESET" \
+  "denied by network policy after ETIMEDOUT" \
+  "malformed request after timeout" \
+  "model mismatch after timeout" \
+  "route mismatch after ECONNRESET" \
+  "verification mismatch after timeout"; do
+  if is_transient_inference_set_failure "$output"; then
+    printf 'misclassified=%s\n' "$output"
+    exit 91
+  fi
+done
+`;
+    const probe = spawnSync("bash", ["-s", "--", helper], {
+      encoding: "utf8",
+      input: harness,
+    });
+    expect(probe.status, `${probe.stdout}\n${probe.stderr}`).toBe(0);
   });
 
   it("validates the configured attempt count", () => {

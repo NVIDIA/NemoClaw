@@ -486,8 +486,7 @@ async function runOpenClawAgentAssertion(
         response: combined,
       });
     },
-    reconcile: async (attempt, attemptNumber) => {
-      if (!attempt.recoveryRequired) return true;
+    recover: async (_attempt, attemptNumber) => {
       const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
         artifactName: `${args.label}-recover-after-attempt-${attemptNumber}`,
         env: commandEnv(),

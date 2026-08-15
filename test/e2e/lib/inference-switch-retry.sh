@@ -7,6 +7,9 @@
 # returns. Exhausting the transient retry budget remains a verified failure.
 
 is_transient_inference_set_failure() {
+  if grep -qiE 'authentication failed|authorization failed|unauthorized|forbidden|HTTP 40[13]|(^|[^0-9])40[13]([^0-9]|$)|denied by network policy|network policy denied|policy (update |validation )?failed|malformed|invalid (provider|model|configuration|request|.*(credential|api[_ -]?key))|(model|route|verification) mismatch|expected (model|provider|route).*(got|found)' <<<"$1"; then
+    return 1
+  fi
   grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|(^|[^0-9])50[234]([^0-9]|$)' <<<"$1"
 }
 

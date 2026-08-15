@@ -200,7 +200,7 @@ describe("Hermes inference switch command shape", () => {
     expect(mockAnthropicSwitchEnabled({})).toBe(false);
   });
 
-  it("retries live PONG probes until the response model matches", async () => {
+  it("does not retry a successful Hermes response from the wrong model", async () => {
     const probeResult = (stdout: string): ShellProbeResult =>
       ({ exitCode: 0, stdout, stderr: "" }) as ShellProbeResult;
     const run = vi
@@ -213,14 +213,83 @@ describe("Hermes inference switch command shape", () => {
       );
     const delay = vi.fn().mockResolvedValue(undefined);
 
-    await expect(
-      runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
-    ).resolves.toMatchObject({ exitCode: 0 });
-    expect(run.mock.calls).toEqual([[1], [2]]);
-    expect(delay).toHaveBeenCalledWith(5_000);
+    const result = await runHermesPongWithRetry({
+      delay,
+      expectedModel: "target-model",
+      run,
+    });
+    expect(result.stdout).toContain("baseline-model");
+    expect(run.mock.calls).toEqual([[1]]);
+    expect(delay).not.toHaveBeenCalled();
   });
 
-  it("retries a Hermes CLI PONG until the selected route receives it", async () => {
+  it("retries an explicit Hermes transport failure and retains aggregate evidence", async () => {
+    const transient = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "request failed: ECONNRESET",
+    } as ShellProbeResult;
+    const passed = {
+      exitCode: 0,
+      stdout: '{"model":"target-model","choices":[{"message":{"content":"PONG"}}]}',
+      stderr: "",
+    } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValueOnce(transient).mockResolvedValueOnce(passed);
+    const delay = vi.fn().mockResolvedValue(undefined);
+    const onEvidence = vi.fn();
+
+    await expect(
+      runHermesPongWithRetry({
+        delay,
+        expectedModel: "target-model",
+        onEvidence,
+        run,
+      }),
+    ).resolves.toBe(passed);
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(delay).toHaveBeenCalledWith(5_000);
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotence: "read-only",
+        operation: "hermes-inference-switch.pong",
+        outcome: "passed-after-retry",
+      }),
+    );
+  });
+
+  it("does not retry mixed Hermes authentication and transport evidence", async () => {
+    const terminal = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "HTTP 401 authentication failed after ECONNRESET",
+    } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValue(terminal);
+    const delay = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
+    ).resolves.toBe(terminal);
+    expect(run).toHaveBeenCalledOnce();
+    expect(delay).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "HTTP 403 authorization failed after ECONNRESET",
+    "denied by network policy after timeout",
+    "invalid JSON request after timeout",
+  ])("does not retry terminal Hermes probe evidence: %s", async (stderr) => {
+    const terminal = { exitCode: 1, stdout: "", stderr } as ShellProbeResult;
+    const run = vi.fn().mockResolvedValue(terminal);
+    const delay = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
+    ).resolves.toBe(terminal);
+    expect(run).toHaveBeenCalledOnce();
+    expect(delay).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a Hermes CLI PONG from the wrong selected route", async () => {
     const requests: Array<{
       auth: string;
       authorizationSent: boolean;
@@ -259,12 +328,9 @@ describe("Hermes inference switch command shape", () => {
         run,
       }),
     ).resolves.toBe(result);
-    expect(requests).toEqual([
-      authenticatedRequest("stale-model"),
-      authenticatedRequest("selected-model"),
-    ]);
-    expect(run.mock.calls).toEqual([[1], [2]]);
-    expect(delay).toHaveBeenCalledWith(5_000);
+    expect(requests).toEqual([authenticatedRequest("stale-model")]);
+    expect(run.mock.calls).toEqual([[1]]);
+    expect(delay).not.toHaveBeenCalled();
   });
 
   it("parses exact provider and model values from an inference route", () => {
@@ -411,12 +477,11 @@ describe("Hermes inference switch command shape", () => {
     const writeJson = vi.fn().mockResolvedValue("inference-switch-retry-evidence.json");
 
     await expect(
-      runHermesInferenceSetWithRetry(
-        { command } as unknown as HostCliClient,
-        ["hosted-key"],
-        [],
-        { artifacts: { writeJson }, attempts: 2, delay: async () => {} },
-      ),
+      runHermesInferenceSetWithRetry({ command } as unknown as HostCliClient, ["hosted-key"], [], {
+        artifacts: { writeJson },
+        attempts: 2,
+        delay: async () => {},
+      }),
     ).resolves.toMatchObject({ exitCode: 0 });
 
     expect(command).toHaveBeenCalledTimes(2);
