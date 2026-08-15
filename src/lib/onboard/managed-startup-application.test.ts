@@ -125,7 +125,8 @@ function profileFor(
     },
     messaging: { plan: null },
     tuning: {
-      contextWindow: agent === "langchain-deepagents-code" ? null : 65_536,
+      contextWindow:
+        agent === "langchain-deepagents-code" || agent === "pi" ? null : 65_536,
       maxTokens: agent === "openclaw" ? 8192 : null,
       reasoning: agent === "openclaw" ? true : null,
       reasoningEffort: agent === "openclaw" ? "default" : null,

@@ -551,6 +551,6 @@ describe("Podman image-owned bootstrap transaction", () => {
       startPodmanBootstrapImageTransaction(startInput("pi", fake), {
         now: () => new Date("2026-08-01T12:00:00.000Z"),
       }),
-    ).toThrow("the managed agent is unsupported");
+    ).toThrow("agent 'pi' is not supported on Podman; onboard it through the Docker compute runtime");
   });
 });

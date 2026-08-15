@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  isCandidateManagedImageAgent,
   isManagedImageAgent,
   isManagedImagePlatform,
   isShippedManagedImageAgent,
@@ -154,6 +155,22 @@ export function managedImageRuntimePlatform(
 export function resolveSandboxWorkloadSource(
   options: ResolveSandboxWorkloadSourceOptions,
 ): SandboxWorkloadSource {
+  if (
+    isCandidateManagedImageAgent(options.agentName) &&
+    options.candidateAgentsEnabled === true
+  ) {
+    if (options.customDockerfilePath !== undefined && options.customDockerfilePath !== null) {
+      throw new SandboxWorkloadSourceError(
+        `Agent '${options.agentName}' is a release candidate and must use its exact managed image digest; a custom Dockerfile is not accepted.`,
+      );
+    }
+    if (!options.runtime.managedImages) {
+      throw new SandboxWorkloadSourceError(
+        `Agent '${options.agentName}' is a release candidate and driver '${options.runtime.driverName}' does not advertise managed images.`,
+      );
+    }
+  }
+
   if (options.customDockerfilePath !== undefined && options.customDockerfilePath !== null) {
     return legacySource(options, "custom-dockerfile");
   }

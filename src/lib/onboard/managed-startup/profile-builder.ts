@@ -912,6 +912,14 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
       reasoning: null,
       reasoningEffort: null,
     };
+  } else if (input.agent === "pi") {
+    agentConfig = { agent: "pi" };
+    tuning = {
+      contextWindow: null,
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    };
   } else {
     if (input.dcodeAutoApprovalMode === null || input.observabilityEnabled === null) {
       fail("DCode approval and observability state must be explicit");

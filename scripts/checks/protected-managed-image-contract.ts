@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ShippedManagedImageAgent } from "../../src/lib/onboard/managed-image/contract.ts";
+import {
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ShippedManagedImageAgent,
+} from "../../src/lib/onboard/managed-image/contract.ts";
 
-export const PROTECTED_MANAGED_IMAGE_AGENTS = [
-  "openclaw",
-  "hermes",
-  "langchain-deepagents-code",
-] as const satisfies readonly ShippedManagedImageAgent[];
+export const PROTECTED_MANAGED_IMAGE_AGENTS: readonly ShippedManagedImageAgent[] =
+  SHIPPED_MANAGED_IMAGE_AGENTS;
 
 export const PROTECTED_MANAGED_IMAGE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 export const PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID = "managed-image-multiarch-startup" as const;

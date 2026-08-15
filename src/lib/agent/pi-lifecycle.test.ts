@@ -17,9 +17,11 @@ import {
   resolveSandboxWorkloadSource,
   type SandboxWorkloadRuntimeCapabilities,
 } from "../onboard/workload/source";
+import { candidateQualificationEnvironment } from "./candidate-test-fixture";
 import { loadAgent } from "./defs";
+import { resolveAgent } from "./onboard";
 
-const CANDIDATE_ENV = { NEMOCLAW_CANDIDATE_AGENTS: "1" };
+const CANDIDATE_ENV = candidateQualificationEnvironment();
 const PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
 const DIGEST = `sha256:${"7a".repeat(32)}` as const;
 
@@ -99,6 +101,19 @@ describe("Pi candidate lifecycle integration", () => {
       settings?.restore?.merge === "key-allowlist" ? settings.restore.userKeys : undefined;
     expect(userKeys?.map(({ key }) => key)).toContain("theme");
     expect(userKeys?.map(({ key }) => key)).not.toContain("models");
+  });
+
+  it("refuses a public --agent pi selection without qualification authority (#7927)", () => {
+    const previous = { ...process.env };
+    try {
+      delete process.env.NEMOCLAW_CANDIDATE_AGENTS;
+      delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT;
+      delete process.env.NEMOCLAW_CANDIDATE_QUALIFICATION_RECEIPT_SHA256;
+      expect(() => resolveAgent({ agentFlag: "pi" })).toThrow("Unknown agent 'pi'");
+      expect(() => resolveAgent({ session: { agent: "pi" } })).not.toThrow();
+    } finally {
+      process.env = previous;
+    }
   });
 
   it("resolves Pi as a terminal runtime without a dashboard or MCP surface (#7927)", () => {

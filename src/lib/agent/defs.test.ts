@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { candidateQualificationEnvironment } from "./candidate-test-fixture";
 import YAML from "yaml";
 
 import {
@@ -80,15 +82,16 @@ describe("agent definitions", () => {
     );
   });
 
-  it("selects Pi only through the protected candidate gate (#7927)", () => {
-    const candidateEnv = { NEMOCLAW_CANDIDATE_AGENTS: "1" };
+  it("selects Pi only with protected candidate qualification authority (#7927)", () => {
+    const candidateEnv = candidateQualificationEnvironment();
 
     expect(listAgents(candidateEnv)).toContain("pi");
     expect(resolveAgentNameAlias("pi", listAgents(candidateEnv))).toBe("pi");
     expect(loadAgent("pi", candidateEnv).name).toBe("pi");
   });
 
-  it("keeps the candidate gate off for an unrelated environment value (#7927)", () => {
+  it("does not expose Pi from the protected flag alone (#7927)", () => {
+    expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "1" })).not.toContain("pi");
     expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "0" })).not.toContain("pi");
     expect(listAgents({ NEMOCLAW_CANDIDATE_AGENTS: "true" })).not.toContain("pi");
   });

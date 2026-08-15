@@ -26,6 +26,7 @@ import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/manag
 import { createDockerManagedBootstrapSurface } from "../../src/lib/onboard/managed-bootstrap/docker-runtime.ts";
 import {
   managedImageRuntimeIdentity,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
   type ShippedManagedImageAgent,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
@@ -61,11 +62,7 @@ import {
 // together so no cross-module return path can bypass rollback; stateless route
 // and profile policy remains in managed-image-protected-runtime-contract.ts.
 
-const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>([
-  "openclaw",
-  "hermes",
-  "langchain-deepagents-code",
-]);
+const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const GATEWAY_PORT = 8080;
 const IMMUTABLE_MANIFEST_REFERENCE_RE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/u;
