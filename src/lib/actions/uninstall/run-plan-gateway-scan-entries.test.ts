@@ -8,6 +8,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
+import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
   type UninstallRunDeps,
@@ -75,6 +80,26 @@ function makeHome(prefix: string, entries: readonly string[]): { home: string; s
   return { home, shims };
 }
 
+function writeScopedGatewayState(home: string): void {
+  const stateDir = path.join(home, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+  fs.writeFileSync(
+    path.join(stateDir, "openshell-gateway.toml"),
+    buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+        OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+      },
+      "/usr/bin/openshell-sandbox",
+      jwtBundle,
+      gatewayIdForStateDir(stateDir),
+    ),
+    { mode: 0o600 },
+  );
+}
+
 /**
  * Runs the plan and reports which shims are still on disk afterwards. Removal
  * goes through the real filesystem, restricted to the temporary home, so the
@@ -83,7 +108,7 @@ function makeHome(prefix: string, entries: readonly string[]): { home: string; s
 function uninstall(home: string, shims: readonly string[]) {
   const logs: string[] = [];
   const result = runUninstallPlan(
-    { assumeYes: true, deleteModels: false, keepOpenShell: false },
+    { assumeYes: true, deleteModels: false, keepOpenShell: true },
     {
       commandExists: (command) => command !== "docker" && command !== "lsof" && command !== "pgrep",
       env: { HOME: home } as NodeJS.ProcessEnv,
@@ -127,6 +152,7 @@ describe("uninstall gateway-directory scan", () => {
     [".DS_Store/"],
   ])("keeps the CLI shims when the gateways directory holds %s (#7905)", (entry) => {
     const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", [entry]);
+    writeScopedGatewayState(home);
 
     try {
       const { result, logs, survivors } = uninstall(home, shims);
@@ -141,6 +167,7 @@ describe("uninstall gateway-directory scan", () => {
 
   it("keeps the CLI shims for a desktop-metadata symlink (#7905)", () => {
     const { home, shims } = makeHome("nemoclaw-uninstall-conservative-", []);
+    writeScopedGatewayState(home);
     fs.symlinkSync(
       "concealed-gateway-state",
       path.join(home, ".nemoclaw", "gateways", ".DS_Store"),

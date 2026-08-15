@@ -194,7 +194,10 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     host,
     redactionValues,
     compatibleMetadataArgs,
-    { compatibleBinding: switchBinding },
+    {
+      artifacts,
+      compatibleBinding: switchBinding,
+    },
   );
   expect(switched.exitCode, resultText(switched)).toBe(0);
   expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
@@ -344,6 +347,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
   const inferenceLocal = await runHermesPongWithRetry({
     expectedModel: SWITCH_MODEL,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-inference-local-after-switch.json", evidence);
+    },
     run: (attempt) =>
       sandbox.execShell(
         SANDBOX_NAME,
@@ -367,6 +373,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
   const chat = await runHermesPongWithRetry({
     expectedModel: SWITCH_MODEL,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-api-after-switch.json", evidence);
+    },
     run: (attempt) =>
       sandbox.execShell(
         SANDBOX_NAME,
@@ -385,6 +394,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   progress.phase("run Hermes CLI adapter forms against switched provider");
   const hermesCli = await runHermesCliPongWithRetry({
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-cli-after-switch.json", evidence);
+    },
     run: (attempt) =>
       sandbox.exec(
         SANDBOX_NAME,
@@ -431,6 +443,9 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   const proxyResolutionCli = await runHermesCliPongWithRetry({
     accept: () =>
       hasAuthenticatedProxyResolutionRequest(mockBaseline, requestOffset, proxyResolutionModel),
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("retry/hermes-cli-proxy-resolution-after-switch.json", evidence);
+    },
     run: (attempt) =>
       sandbox.exec(
         SANDBOX_NAME,
