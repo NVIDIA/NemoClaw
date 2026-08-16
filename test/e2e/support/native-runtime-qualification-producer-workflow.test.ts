@@ -197,12 +197,18 @@ describe("native runtime qualification producer workflow", () => {
       producer,
       "Install locked candidate test dependencies without scripts",
     );
+    const gpuResources = step(producer, "Materialize exact credential-free GPU resources");
     const installer = step(producer, "Run the authenticated installer qualification");
     const execute = step(producer, "Execute the candidate qualification case without credentials");
     const validate = step(producer, "Validate receipts and emit bounded evidence");
     const upload = step(producer, "Upload the qualification case evidence");
     const cleanup = step(producer, "Remove qualification resources");
-    const source = JSON.stringify(producer);
+    const credentialFreeSource = JSON.stringify({
+      ...producer,
+      steps: producer.steps?.filter(
+        (entry) => entry.name !== "Materialize exact credential-free GPU resources",
+      ),
+    });
     const boundaryRun = boundary.run ?? "";
     const executeRun = execute.run ?? "";
 
@@ -221,7 +227,24 @@ describe("native runtime qualification producer workflow", () => {
     expect(harness.with?.["sparse-checkout"]).toContain(
       "test/e2e/registry/native-runtime-qualification.ts",
     );
-    expect(source).not.toMatch(/NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u);
+    expect(credentialFreeSource).not.toMatch(
+      /NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u,
+    );
+    expect(gpuResources.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(gpuResources.run).toContain("existing NVIDIA registry credential");
+    expect(gpuResources.run).toContain("login nvcr.io --username '$oauthtoken' --password-stdin");
+    expect(gpuResources.run).toContain("logout --all");
+    expect(gpuResources.run).toContain("unset NVIDIA_API_KEY");
+    expect(gpuResources.run).toContain("7ae557604adf67be50417f59c2c2f167def9a775");
+    expect(gpuResources.run).toContain("git hash-object --no-filters");
+    expect(gpuResources.run).toContain("sha256sum");
+    expect(gpuResources.run).toContain("model-free-nim@sha256:");
+    expect(gpuResources.run).toContain("nvcr.io/nvidia/vllm@sha256:");
+    expect(gpuResources.run).toContain("runner-contract.json");
+    expect(gpuResources.run).toContain(
+      'install -d --owner=root --group=root --mode=0711 "$resource_directory"',
+    );
+    expect(gpuResources.run).toContain('chmod 0555 "$resource_directory"');
     expect(podmanHost.run).toContain('[[ "${ID:-}" == "ubuntu" ]]');
     expect(podmanHost.run).toContain('"${VERSION_ID:-}" == "24.04"');
     expect(podmanHost.run).toContain('"${VERSION_ID:-}" == "26.04"');
@@ -259,12 +282,16 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
     expect(boundary.run).toContain('getent passwd "$account"');
     expect(boundary.run).toContain('grep -q "^${account}:" /etc/subuid /etc/subgid');
-    expect(boundary.run).toContain("Qualification account identity or subordinate-ID authorization already exists");
+    expect(boundary.run).toContain(
+      "Qualification account identity or subordinate-ID authorization already exists",
+    );
     expect(boundary.run).toContain('ownership_marker="/run/nemoclaw-native-runtime-owner-');
     expect(boundary.run).toContain("0:0:400");
     expect(boundary.run).toContain("Qualification account ownership marker is invalid");
     expect(boundary.run).toContain("rollback_unmarked_account");
-    expect(boundary.run).toContain("Partially created qualification account could not be rolled back");
+    expect(boundary.run).toContain(
+      "Partially created qualification account could not be rolled back",
+    );
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subuid --add-subuids");
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subgid --add-subgids");
     expect(boundary.run).toContain("has no free subordinate-ID range for rootless Podman");
@@ -282,7 +309,14 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("0:0:444");
     expect(boundary.run).toContain("/sys/module/apparmor/parameters/enabled");
     expect(boundary.run).toContain(
-      'profile ${apparmor_profile_name} ${podman_executable} flags=(unconfined)',
+      "profile ${apparmor_profile_name} ${podman_executable} flags=(unconfined)",
+    );
+    expect(boundary.run).toContain(
+      "profile ${pasta_apparmor_profile_name} ${pasta_executable} flags=(unconfined)",
+    );
+    expect(boundary.run).toContain("Run-owned qualification pasta executable digest changed");
+    expect(boundary.run).toContain(
+      'PATH="$guard_dir:$helper_directory:/usr/local/bin:/usr/bin:/bin"',
     );
     expect(boundary.env?.TOOLCHAIN_DIRECTORY).toBe(
       "${{ runner.temp }}/native-runtime-podman-toolchain",
@@ -290,7 +324,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain(
       'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     );
-    expect(boundary.run).toContain('sudo install --owner=root --group=root --mode=0555');
+    expect(boundary.run).toContain("sudo install --owner=root --group=root --mode=0555");
     expect(boundary.run).toContain("0:0:555");
     expect(boundary.run).toContain('"$podman_executable" info --format json');
     expect(boundary.run).toContain("userns,");
@@ -334,16 +368,15 @@ describe("native runtime qualification producer workflow", () => {
     expect(execute.run).not.toContain("GH_TOKEN");
     expect(execute.run).not.toContain("chown -R");
     expect(execute.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
-    expect(execute.env?.PODMAN_EXECUTABLE).toBe(
-      "${{ steps.boundary.outputs.podman_executable }}",
-    );
+    expect(execute.env?.PODMAN_EXECUTABLE).toBe("${{ steps.boundary.outputs.podman_executable }}");
     expect(execute.env?.STORAGE_CONFIG).toBe("${{ steps.boundary.outputs.storage_config }}");
+    expect(execute.env?.RUNNER_CONTRACT).toBe("${{ steps.gpu_resources.outputs.runner_contract }}");
     expect(execute.run).toContain('CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG"');
     expect(execute.run).toContain(
       'NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE="$PODMAN_EXECUTABLE"',
     );
     expect(execute.run).toContain(
-      'PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
+      'PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
     );
     expect(validate.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
     expect(validate.run).not.toContain('chown -R -h "$(id -u):$(id -g)"');
@@ -357,24 +390,34 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.if).toBe("always()");
     expect(cleanup.env?.ACCOUNT_CREATED).toBe("${{ steps.boundary.outputs.account_created }}");
     expect(cleanup.run).toContain('reported_account="${ACCOUNT:-}"');
-    expect(cleanup.run).not.toContain('ACCOUNT:-nemoclawq');
-    expect(cleanup.run).toContain("Qualification account ownership marker cleanup target is invalid");
+    expect(cleanup.run).not.toContain("ACCOUNT:-nemoclawq");
+    expect(cleanup.run).toContain(
+      "Qualification account ownership marker cleanup target is invalid",
+    );
     expect(cleanup.run).toContain('ownership="$(sudo cat "$ownership_marker")"');
     expect(cleanup.run).toContain("pkill -KILL -u");
     expect(cleanup.run).not.toContain("rm -rf");
     expect(cleanup.run).not.toContain("find ");
     expect(cleanup.run).toContain('systemd-user-runtime-dir stop "$uid"');
     expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
+    expect(cleanup.run).toContain('apparmor_parser -R "$pasta_apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
     expect(cleanup.run).toContain('sudo rm -f -- "$podman_executable"');
     expect(cleanup.run).toContain("Qualification Podman executable remains after cleanup");
-    expect(cleanup.run).toContain("Qualification runtime directory remains after its systemd cleanup");
+    expect(cleanup.run).toContain("Qualification GPU resource directory remains after cleanup");
+    expect(cleanup.run).toContain(
+      "Qualification runtime directory remains after its systemd cleanup",
+    );
     expect(cleanup.run).toContain("Qualification storage configuration remains after cleanup");
     expect(cleanup.run).toContain("userdel --remove");
     expect(cleanup.run).toContain("Qualification account still exists after cleanup");
-    expect(cleanup.run).toContain("Qualification subordinate-ID authorization remains after cleanup");
-    expect(cleanup.run).toContain("Qualification account output exists without its ownership marker");
+    expect(cleanup.run).toContain(
+      "Qualification subordinate-ID authorization remains after cleanup",
+    );
+    expect(cleanup.run).toContain(
+      "Qualification account output exists without its ownership marker",
+    );
     expect(cleanup.run).toContain('sudo rm -f -- "$ownership_marker"');
   });
 

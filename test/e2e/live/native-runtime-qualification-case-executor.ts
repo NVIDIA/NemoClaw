@@ -32,10 +32,12 @@ import type { NativeRuntimeQualificationObligation } from "../registry/native-ru
 import { nativeRuntimeQualificationOperationFile } from "../../../tools/e2e/native-runtime-qualification-producer-plan.mts";
 import {
   assertCredentialFreeQualificationEnvironment,
+  assertNativeRuntimeQualificationModelResource,
   digestFromImageReference,
   nativeRuntimeQualificationAgentImage,
   nativeRuntimeQualificationInferenceImage,
   nativeRuntimeQualificationPodmanExecutable,
+  nativeRuntimeQualificationRunnerContractPath,
   parseNativeRuntimeQualificationRow,
   readNativeRuntimeQualificationRunnerContract,
 } from "./native-runtime-qualification-case-helpers.ts";
@@ -331,31 +333,6 @@ function requirePreloadedImage(engine: PodmanBoundContainerEngine, imageRef: str
   capture(engine, ["image", "exists", imageRef], `inspect preloaded image ${imageRef}`);
 }
 
-function rootOwnedReadOnlyDirectory(directory: string): void {
-  const canonical = fs.realpathSync(directory);
-  if (canonical !== directory) {
-    throw new Error(`Runner model resource is not canonical: ${directory}`);
-  }
-  const boundary = "/var/lib/nemoclaw/native-runtime-qualification";
-  let current = directory;
-  while (current.startsWith(`${boundary}/`) || current === boundary) {
-    const metadata = fs.lstatSync(current);
-    if (
-      !metadata.isDirectory() ||
-      metadata.isSymbolicLink() ||
-      metadata.uid !== 0 ||
-      (metadata.mode & 0o022) !== 0
-    ) {
-      throw new Error(
-        `Runner model resource is not an exact root-owned read-only directory: ${current}`,
-      );
-    }
-    if (current === boundary) return;
-    current = path.dirname(current);
-  }
-  throw new Error(`Runner model resource escapes its reviewed root: ${directory}`);
-}
-
 function proveGpuDevices(
   engine: PodmanBoundContainerEngine,
   probeImageRef: string,
@@ -643,10 +620,13 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const network = createProviderNetwork(inferenceEngine, networkName, row.id);
     ownedNetworks.add(network.id);
     const hostPort = 20_000 + (Number.parseInt(caseSuffix.slice(0, 4), 16) % 20_000);
-    const runnerContract =
+    const runnerContractFile =
       row.case.acceleration === "nvidia-gpu"
-        ? readNativeRuntimeQualificationRunnerContract(row.case.architecture)
+        ? nativeRuntimeQualificationRunnerContractPath(process.env, uid)
         : undefined;
+    const runnerContract = runnerContractFile
+      ? readNativeRuntimeQualificationRunnerContract(row.case.architecture, runnerContractFile)
+      : undefined;
     const agentImage = nativeRuntimeQualificationAgentImage(row.case.architecture, row.case.agent);
     const inference = nativeRuntimeQualificationInferenceImage({
       architecture: row.case.architecture,
@@ -657,11 +637,11 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     pullPublicImage(inferenceEngine, agentImage);
     if (row.case.inference === "ollama") pullPublicImage(inferenceEngine, inference.imageRef);
     else {
-      if (!inference.cachePath || !path.isAbsolute(inference.cachePath)) {
-        throw new Error("Native runtime qualification GPU cache path must be absolute");
+      if (!inference.modelPath || !runnerContractFile || !path.isAbsolute(inference.modelPath)) {
+        throw new Error("Native runtime qualification GPU model path must be absolute");
       }
       requirePreloadedImage(inferenceEngine, inference.imageRef);
-      rootOwnedReadOnlyDirectory(inference.cachePath);
+      assertNativeRuntimeQualificationModelResource(inference.modelPath, uid, runnerContractFile);
     }
     if (runnerContract) {
       requirePreloadedImage(inferenceEngine, runnerContract.gpuProbeImageRef);
@@ -687,10 +667,19 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       `${QUALIFICATION_LABEL}=${row.id}`,
       ...(row.case.acceleration === "nvidia-gpu" ? ["--device", "nvidia.com/gpu=all"] : []),
       ...(row.case.inference === "nim"
-        ? ["--shm-size", "16g", "--volume", `${inference.cachePath}:/opt/nim/.cache:ro`]
+        ? [
+            "--shm-size",
+            "16g",
+            "--env",
+            "NIM_MODEL_PATH=/models",
+            "--env",
+            `NIM_SERVED_MODEL_NAME=${inference.model}`,
+            "--volume",
+            `${inference.modelPath}:/models:ro`,
+          ]
         : []),
       ...(row.case.inference === "vllm"
-        ? ["--shm-size", "16g", "--volume", `${inference.cachePath}:/models:ro`]
+        ? ["--shm-size", "16g", "--volume", `${inference.modelPath}:/models:ro`]
         : []),
       inference.imageRef,
       ...(row.case.inference === "vllm"
@@ -1034,6 +1023,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         rootMode: "rootless",
         podmanVersion,
         inferenceService: row.case.inference,
+        modelRevision: inference.modelRevision ?? null,
         focusedOperations: focusedResults,
         dockerBefore,
         dockerAfter,

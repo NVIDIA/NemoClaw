@@ -54,6 +54,14 @@ function fixtureSource(source: string): string {
       'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     )
     .replaceAll(
+      'helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+      'helper_directory="${FIXTURE_ROOT}/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    )
+    .replaceAll(
+      'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+      'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    )
+    .replaceAll(
       "/usr/lib/systemd/systemd-user-runtime-dir",
       "${FIXTURE_ROOT}/bin/systemd-user-runtime-dir",
     )
@@ -121,11 +129,28 @@ printf '%s:%s:%s\\n' "$3" "$start" "$((end - start + 1))" >>"$file"`,
   writeExecutable(path.join(bin, "chown"), ":");
   writeExecutable(path.join(bin, "chmod"), `exec /bin/chmod "$@"`);
   writeExecutable(
+    path.join(bin, "unlink"),
+    `/bin/chmod u+w "$(/usr/bin/dirname "$1")"\nexec /bin/unlink "$1"`,
+  );
+  writeExecutable(
+    path.join(bin, "rmdir"),
+    `/bin/chmod u+w "$(/usr/bin/dirname "$1")"\nexec /bin/rmdir "$1"`,
+  );
+  writeExecutable(
+    path.join(bin, "rm"),
+    `target="\${!#}"\n/bin/chmod u+w "$(/usr/bin/dirname "$target")"\nexec /bin/rm "$@"`,
+  );
+  writeExecutable(
     path.join(bin, "stat"),
     `case "$3" in
   *native-runtime-owner-*) printf '0:0:400\\n' ;;
   *native-runtime-podman-*) printf '0:0:555\\n' ;;
-  *podman.apparmor|*storage.conf) printf '0:0:444\\n' ;;
+  *native-runtime-helpers-*) printf '0:0:555\\n' ;;
+  *native-runtime-resources-*/model/*)
+    [[ "$2" == '%u:%g:%a:%h' ]] && printf '0:0:444:1\\n' || printf '0:0:444\\n'
+    ;;
+  *native-runtime-resources-*) printf '0:0:555\\n' ;;
+  *podman.apparmor|*pasta.apparmor|*runner-contract.json|*storage.conf) printf '0:0:444\\n' ;;
   *) exit 25 ;;
 esac`,
   );
@@ -169,7 +194,7 @@ function runFixture(
 ) {
   return spawnSync("bash", ["-c", fixtureSource(source)], {
     encoding: "utf8",
-    timeout: 5000,
+    timeout: 15_000,
     env: {
       ...process.env,
       ACCOUNT: "nemoclawq",
@@ -281,18 +306,45 @@ describe("native runtime qualification account lifecycle", () => {
     expect(fs.existsSync(fixture.marker)).toBe(false);
   });
 
-  it("removes the run-owned runtime, Podman executable, storage, and AppArmor profile", () => {
+  it("removes the run-owned runtime, immutable helpers, GPU resources, and AppArmor profiles", () => {
     const fixture = createFixture();
     const runtime = path.join(fixture.root, "run", "user", "1002", "libpod", "tmp");
     const storage = path.join(fixture.root, "run", "nemoclaw-native-runtime-42-1-1002");
     const podman = path.join(fixture.root, "nemoclaw-native-runtime-podman-42-1-1002");
+    const helpers = path.join(fixture.root, "nemoclaw-native-runtime-helpers-42-1-1002");
+    const resources = path.join(
+      fixture.root,
+      "var",
+      "tmp",
+      "nemoclaw-native-runtime-resources-42-1-1002",
+    );
+    const model = path.join(resources, "model");
     fs.mkdirSync(fixture.home, { recursive: true });
     fs.mkdirSync(runtime, { recursive: true });
     fs.mkdirSync(storage, { recursive: true });
     fs.writeFileSync(path.join(runtime, "alive"), "fixture");
     fs.writeFileSync(path.join(storage, "storage.conf"), "fixture");
     fs.writeFileSync(path.join(storage, "podman.apparmor"), "fixture");
+    fs.writeFileSync(path.join(storage, "pasta.apparmor"), "fixture");
+    fs.writeFileSync(path.join(storage, "runner-contract.json"), "fixture");
     fs.writeFileSync(podman, "fixture", { mode: 0o555 });
+    fs.mkdirSync(helpers, { recursive: true, mode: 0o755 });
+    fs.writeFileSync(path.join(helpers, "pasta"), "fixture", { mode: 0o555 });
+    fs.chmodSync(helpers, 0o555);
+    fs.mkdirSync(model, { recursive: true, mode: 0o755 });
+    for (const file of [
+      "config.json",
+      "generation_config.json",
+      "merges.txt",
+      "model.safetensors",
+      "tokenizer.json",
+      "tokenizer_config.json",
+      "vocab.json",
+    ]) {
+      fs.writeFileSync(path.join(model, file), "fixture", { mode: 0o444 });
+    }
+    fs.chmodSync(model, 0o555);
+    fs.chmodSync(resources, 0o555);
     fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1002::${fixture.home}:/usr/sbin/nologin\n`);
     fs.writeFileSync(fixture.subuid, "nemoclawq:200000:65536\n");
     fs.writeFileSync(fixture.subgid, "nemoclawq:300000:65536\n");
@@ -306,6 +358,8 @@ describe("native runtime qualification account lifecycle", () => {
     expect(fs.existsSync(path.join(fixture.root, "run", "user", "1002"))).toBe(false);
     expect(fs.existsSync(storage)).toBe(false);
     expect(fs.existsSync(podman)).toBe(false);
+    expect(fs.existsSync(helpers)).toBe(false);
+    expect(fs.existsSync(resources)).toBe(false);
   });
 
   it("does not run destructive cleanup when the run-owned marker is absent", () => {

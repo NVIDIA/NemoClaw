@@ -1,7 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { constants, closeSync, fstatSync, openSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  constants,
+  closeSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  readSync,
+} from "node:fs";
+import path from "node:path";
 
 import {
   NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE,
@@ -16,15 +26,59 @@ import {
   type NativeRuntimeQualificationInference,
 } from "../registry/native-runtime-qualification.ts";
 
-export const NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT =
-  "/etc/nemoclaw/native-runtime-qualification-v1.json";
+export const NATIVE_RUNTIME_QUALIFICATION_MODEL_REVISION =
+  "7ae557604adf67be50417f59c2c2f167def9a775";
 
 const SHA = /^[a-f0-9]{40}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const OCI_DIGEST = /^(?:[A-Za-z0-9._-]+(?::[0-9]+)?\/)*(?:[A-Za-z0-9._-]+)@sha256:[a-f0-9]{64}$/u;
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,511}$/u;
-const ABSOLUTE_CACHE =
-  /^\/var\/lib\/nemoclaw\/native-runtime-qualification\/[A-Za-z0-9._/-]{1,384}$/u;
+const ABSOLUTE_MODEL =
+  /^\/var\/tmp\/nemoclaw-native-runtime-resources-[1-9][0-9]*-[1-9][0-9]*-[1-9][0-9]*\/model$/u;
+const MODEL_FILES = Object.freeze([
+  Object.freeze({
+    path: "config.json",
+    size: 659,
+    algorithm: "sha1" as const,
+    digest: "0dbb161213629a23f0fc00ef286e6b1e366d180f",
+  }),
+  Object.freeze({
+    path: "generation_config.json",
+    size: 242,
+    algorithm: "sha1" as const,
+    digest: "dfc11073787daf1b0f9c0f1499487ab5f4c93738",
+  }),
+  Object.freeze({
+    path: "merges.txt",
+    size: 1_671_839,
+    algorithm: "sha1" as const,
+    digest: "20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0",
+  }),
+  Object.freeze({
+    path: "model.safetensors",
+    size: 988_097_824,
+    algorithm: "sha256" as const,
+    digest: "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+  }),
+  Object.freeze({
+    path: "tokenizer.json",
+    size: 7_031_645,
+    algorithm: "sha1" as const,
+    digest: "443909a61d429dff23010e5bddd28ff530edda00",
+  }),
+  Object.freeze({
+    path: "tokenizer_config.json",
+    size: 7_305,
+    algorithm: "sha1" as const,
+    digest: "07bfe0640cb5a0037f9322287fbfc682806cf672",
+  }),
+  Object.freeze({
+    path: "vocab.json",
+    size: 2_776_833,
+    algorithm: "sha1" as const,
+    digest: "4783fe10ac3adce15ac8f358ef5462739852c569",
+  }),
+]);
 const SENSITIVE_ENVIRONMENT =
   /^(?:GH_TOKEN|GITHUB_TOKEN|NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|NGC_API_KEY|NIM_NGC_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|SSH_AUTH_SOCK|DOCKER_CERT_PATH|DOCKER_CONFIG|DOCKER_CONTEXT|DOCKER_HOST|DOCKER_TLS_VERIFY|CONTAINER_HOST|AWS_.+|AZURE_.+|GOOGLE_.+|.*(?:_API_KEY|_ACCESS_TOKEN|_AUTH_TOKEN|_PASSWORD|_PRIVATE_KEY|_SECRET|_SECRET_KEY))$/u;
 
@@ -67,12 +121,14 @@ export interface NativeRuntimeQualificationRunnerContract {
   readonly nim: {
     readonly imageRef: string;
     readonly model: string;
-    readonly cachePath: string;
+    readonly modelPath: string;
+    readonly modelRevision: string;
   };
   readonly vllm: {
     readonly imageRef: string;
     readonly model: string;
     readonly modelPath: string;
+    readonly modelRevision: string;
   };
 }
 
@@ -224,31 +280,34 @@ export function nativeRuntimeQualificationPodmanExecutable(
 function exactRunnerRuntime(
   value: unknown,
   label: "NIM" | "vLLM",
-  cacheField: "cachePath" | "modelPath",
 ): {
   readonly imageRef: string;
   readonly model: string;
-  readonly cachePath: string;
+  readonly modelPath: string;
+  readonly modelRevision: string;
 } {
   const runtime = record(value, `${label} runner contract`);
-  exactKeys(runtime, ["imageRef", "model", cacheField], `${label} runner contract`);
-  const cachePath = runtime[cacheField];
+  exactKeys(
+    runtime,
+    ["imageRef", "model", "modelPath", "modelRevision"],
+    `${label} runner contract`,
+  );
   if (
     typeof runtime.imageRef !== "string" ||
     !OCI_DIGEST.test(runtime.imageRef) ||
     typeof runtime.model !== "string" ||
     !MODEL.test(runtime.model) ||
-    typeof cachePath !== "string" ||
-    !ABSOLUTE_CACHE.test(cachePath) ||
-    cachePath.includes("//") ||
-    cachePath.split("/").some((segment) => segment === "." || segment === "..")
+    typeof runtime.modelPath !== "string" ||
+    !ABSOLUTE_MODEL.test(runtime.modelPath) ||
+    runtime.modelRevision !== NATIVE_RUNTIME_QUALIFICATION_MODEL_REVISION
   ) {
     throw new Error(`${label} runner contract is invalid`);
   }
   return Object.freeze({
     imageRef: runtime.imageRef,
     model: runtime.model,
-    cachePath,
+    modelPath: runtime.modelPath,
+    modelRevision: runtime.modelRevision,
   });
 }
 
@@ -271,8 +330,8 @@ export function parseNativeRuntimeQualificationRunnerContract(
   ) {
     throw new Error("Native runtime qualification runner contract identity is invalid");
   }
-  const nim = exactRunnerRuntime(contract.nim, "NIM", "cachePath");
-  const vllm = exactRunnerRuntime(contract.vllm, "vLLM", "modelPath");
+  const nim = exactRunnerRuntime(contract.nim, "NIM");
+  const vllm = exactRunnerRuntime(contract.vllm, "vLLM");
   return Object.freeze({
     schemaVersion: 1,
     kind: "nemoclaw-native-runtime-qualification-runner-v1",
@@ -281,19 +340,21 @@ export function parseNativeRuntimeQualificationRunnerContract(
     nim: Object.freeze({
       imageRef: nim.imageRef,
       model: nim.model,
-      cachePath: nim.cachePath,
+      modelPath: nim.modelPath,
+      modelRevision: nim.modelRevision,
     }),
     vllm: Object.freeze({
       imageRef: vllm.imageRef,
       model: vllm.model,
-      modelPath: vllm.cachePath,
+      modelPath: vllm.modelPath,
+      modelRevision: vllm.modelRevision,
     }),
   });
 }
 
 export function readNativeRuntimeQualificationRunnerContract(
   architecture: NativeRuntimeQualificationArchitecture,
-  file = NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT,
+  file: string,
 ): NativeRuntimeQualificationRunnerContract {
   let descriptor: number | undefined;
   try {
@@ -303,7 +364,8 @@ export function readNativeRuntimeQualificationRunnerContract(
       !before.isFile() ||
       before.nlink !== 1n ||
       before.uid !== 0n ||
-      (before.mode & 0o022n) !== 0n ||
+      before.gid !== 0n ||
+      (before.mode & 0o777n) !== 0o444n ||
       before.size < 1n ||
       before.size > 65_536n
     ) {
@@ -336,6 +398,117 @@ export function readNativeRuntimeQualificationRunnerContract(
   }
 }
 
+export function nativeRuntimeQualificationRunnerContractPath(
+  environment: NodeJS.ProcessEnv,
+  uid: number,
+): string {
+  const file = environment.NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT ?? "";
+  const expected = new RegExp(
+    `^/run/nemoclaw-native-runtime-[1-9][0-9]*-[1-9][0-9]*-${String(uid)}/runner-contract\\.json$`,
+    "u",
+  );
+  if (!Number.isSafeInteger(uid) || uid <= 0 || !expected.test(file)) {
+    throw new Error("Native runtime qualification runner contract path is invalid");
+  }
+  return file;
+}
+
+function stableModelFileDigest(file: string, expected: (typeof MODEL_FILES)[number]): string {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile() ||
+      before.nlink !== 1n ||
+      before.uid !== 0n ||
+      before.gid !== 0n ||
+      (before.mode & 0o777n) !== 0o444n ||
+      before.size !== BigInt(expected.size)
+    ) {
+      throw new Error(`model file metadata is invalid: ${expected.path}`);
+    }
+    const digest = createHash(expected.algorithm);
+    if (expected.algorithm === "sha1") digest.update(`blob ${String(expected.size)}\0`);
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) {
+      const count = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (count === 0) break;
+      digest.update(buffer.subarray(0, count));
+    }
+    const after = fstatSync(descriptor, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.uid !== after.uid ||
+      before.gid !== after.gid ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    ) {
+      throw new Error(`model file changed during its stable read: ${expected.path}`);
+    }
+    return digest.digest("hex");
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function assertStableRootOwnedDirectory(directory: string): void {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      directory,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
+    const metadata = fstatSync(descriptor);
+    if (
+      !metadata.isDirectory() ||
+      metadata.uid !== 0 ||
+      metadata.gid !== 0 ||
+      (metadata.mode & 0o777) !== 0o555
+    ) {
+      throw new Error(`Runner model resource is not root-owned and read-only: ${directory}`);
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+export function assertNativeRuntimeQualificationModelResource(
+  directory: string,
+  uid: number,
+  contractFile: string,
+): void {
+  const contractMatch = contractFile.match(
+    /^\/run\/nemoclaw-native-runtime-([1-9][0-9]*)-([1-9][0-9]*)-([1-9][0-9]*)\/runner-contract\.json$/u,
+  );
+  const modelMatch = directory.match(
+    /^\/var\/tmp\/nemoclaw-native-runtime-resources-([1-9][0-9]*)-([1-9][0-9]*)-([1-9][0-9]*)\/model$/u,
+  );
+  if (
+    !contractMatch ||
+    !modelMatch ||
+    contractMatch.slice(1).join(":") !== modelMatch.slice(1).join(":") ||
+    contractMatch[3] !== String(uid)
+  ) {
+    throw new Error("Runner model resource does not match the run-owned contract identity");
+  }
+  assertStableRootOwnedDirectory(path.dirname(directory));
+  assertStableRootOwnedDirectory(directory);
+  const actual = readdirSync(directory).sort();
+  const expectedFiles = MODEL_FILES.map((entry) => entry.path).sort();
+  if (actual.join("\n") !== expectedFiles.join("\n")) {
+    throw new Error("Runner model resource file set is invalid");
+  }
+  for (const expected of MODEL_FILES) {
+    if (stableModelFileDigest(path.join(directory, expected.path), expected) !== expected.digest) {
+      throw new Error(`Runner model resource digest is invalid: ${expected.path}`);
+    }
+  }
+}
+
 export function nativeRuntimeQualificationAgentImage(
   architecture: NativeRuntimeQualificationArchitecture,
   agent: NativeRuntimeQualificationAgent,
@@ -351,7 +524,8 @@ export function nativeRuntimeQualificationInferenceImage(input: {
 }): {
   readonly imageRef: string;
   readonly model: string;
-  readonly cachePath?: string;
+  readonly modelPath?: string;
+  readonly modelRevision?: string;
 } {
   if (input.inference === "ollama") {
     return Object.freeze({
@@ -366,13 +540,15 @@ export function nativeRuntimeQualificationInferenceImage(input: {
     return Object.freeze({
       imageRef: input.runnerContract.nim.imageRef,
       model: input.runnerContract.nim.model,
-      cachePath: input.runnerContract.nim.cachePath,
+      modelPath: input.runnerContract.nim.modelPath,
+      modelRevision: input.runnerContract.nim.modelRevision,
     });
   }
   return Object.freeze({
     imageRef: input.runnerContract.vllm.imageRef,
     model: input.runnerContract.vllm.model,
-    cachePath: input.runnerContract.vllm.modelPath,
+    modelPath: input.runnerContract.vllm.modelPath,
+    modelRevision: input.runnerContract.vllm.modelRevision,
   });
 }
 
