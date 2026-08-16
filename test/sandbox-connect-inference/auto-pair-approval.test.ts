@@ -115,10 +115,11 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const script = extractApprovalPassScript(stateFile, sandboxName);
       // Disallowed/malformed/unknown requests are skipped by the policy before
       // an approve is even attempted (they `continue` before the attempt
-      // counter increments), so they do not consume the MAX_APPROVALS=1 budget
-      // (#4504). They are ordered first here to prove the rejection path runs;
-      // the single allowed request (`ok-cli`) is then approved and exhausts the
-      // one-attempt budget, so the trailing duplicate `ok-cli` is never reached.
+      // counter increments), so they do not consume the bounded approval
+      // budget (#4504). They are ordered first here to prove the rejection path
+      // runs. The initial CLI pairing and its write-scope upgrade are then both
+      // approved, while the trailing distinct request proves the two-approval
+      // cap stops the pass.
       const run = runApprovalPassScript(script, [
         {
           requestId: "admin-cli",
@@ -139,24 +140,28 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
           scopes: ["operator.read"],
         },
         {
-          requestId: "ok-cli",
-          clientId: "openclaw-cli",
+          requestId: "initial-cli-pairing",
+          clientId: "cli",
           clientMode: "cli",
-          scopes: ["operator.read", "operator.write"],
+          scopes: ["operator.pairing"],
         },
         {
-          requestId: "ok-cli",
-          clientId: "openclaw-cli",
+          requestId: "cli-write-upgrade",
+          clientId: "cli",
           clientMode: "cli",
+          scopes: ["operator.pairing", "operator.write"],
+        },
+        {
+          requestId: "later-webchat-upgrade",
+          clientId: "openclaw-control-ui",
+          clientMode: "webchat",
           scopes: ["operator.read", "operator.write"],
         },
       ]);
 
       expect(run.result.status).toBe(0);
-      // Only the first allowed request is approved — MAX_APPROVALS is 1 (#4504),
-      // the realistic single pending CLI/webchat scope upgrade.
-      expect(run.approvals).toEqual(["ok-cli"]);
-      expect(run.approvalEnv).toEqual(["unset:unset:unset"]);
+      expect(run.approvals).toEqual(["initial-cli-pairing", "cli-write-upgrade"]);
+      expect(run.approvalEnv).toEqual(["unset:unset:unset", "unset:unset:unset"]);
     },
   );
 

@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Finds `for` loops that make test cases or generated test definitions
-// iterative. Independent rows should use it.each or test.each so each failure
-// identifies one behavior. Required iteration can stay in a named helper
-// outside the test callback.
+// Finds `for` loops inside test callbacks and loops that generate test
+// definitions. Required iteration can stay in a named helper outside the test
+// callback. Independent rows should use it.each or test.each so each failure
+// identifies one behavior.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -264,14 +264,14 @@ function formatContext(occurrence: TestLoopOccurrence): string {
 
 export function formatReport(report: TestLoopReport, options: Pick<CliOptions, "top">): string {
   const lines = [
-    `Scanned ${report.summary.scannedFiles} test files; found ${report.summary.loopCount} table-test candidate loop(s) in ${report.summary.filesWithLoops} file(s).`,
+    `Scanned ${report.summary.scannedFiles} test files; found ${report.summary.loopCount} test loop(s) in ${report.summary.filesWithLoops} file(s).`,
     "",
     "Top files by loop count:",
   ];
   for (const file of report.files.slice(0, options.top)) {
     lines.push(`- ${file.file}: loops=${file.count}`);
   }
-  lines.push("", "Table-test candidate loops:");
+  lines.push("", "Test loops:");
   for (const occurrence of report.occurrences.slice(0, options.top)) {
     lines.push(
       `- ${occurrence.file}:${occurrence.line}:${occurrence.column} [${formatContext(occurrence)}] ${occurrence.kind}`,

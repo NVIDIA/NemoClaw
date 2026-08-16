@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts
 
-      - name: Require changed test files not to add table-test candidate loops
+      - name: Require changed test files not to increase test-loop counts
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
