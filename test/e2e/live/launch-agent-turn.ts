@@ -13,7 +13,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 // baseline. Session content never moves to the host.
 export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
 const crypto = require("node:crypto");
-const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -71,7 +70,11 @@ function openClawTuiProcessIds() {
   return pids;
 }
 
-function qualifyTuiInputMode() {
+// The terminal line discipline safely queues a complete submitted line even
+// while a canonical-mode TUI is still installing its reader. Raw mode is a UI
+// implementation detail, so the stable readiness boundary is the one matching
+// OpenClaw TUI process owning the launch PTY on standard input.
+function qualifyTuiInputPty() {
   const pids = openClawTuiProcessIds();
   if (pids.length === 0) finish(1);
   if (pids.length > 1) finish(2, "multiple_tui_processes");
@@ -83,16 +86,6 @@ function qualifyTuiInputMode() {
     finish(2, "tui_stdin_unavailable");
   }
   if (!/^\/dev\/pts\/\d+$/.test(ttyPath)) finish(2, "tui_stdin_not_pty");
-  let state;
-  try {
-    state = childProcess.execFileSync("stty", ["-F", ttyPath, "-a"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {
-    finish(2, "tui_termios_unavailable");
-  }
-  if (!/(^|[\s;])-icanon([\s;]|$)/.test(state)) finish(1);
   finish(0);
 }
 
@@ -228,7 +221,7 @@ function qualifyTurns() {
 
 try {
   if (mode === "baseline") recordBaseline();
-  if (mode === "input-mode") qualifyTuiInputMode();
+  if (mode === "input-pty") qualifyTuiInputPty();
   if (mode === "qualify") qualifyTurns();
 } catch {
   finish(2, "verifier_failed");
@@ -346,23 +339,23 @@ wait_for_turn_count() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
-wait_for_pty_input_mode() {
+wait_for_tui_input_pty() {
   local evidence_status
   while (( SECONDS < session_deadline )); do
-    if session_evidence input-mode >/dev/null 2>"$evidence_error"; then
+    if session_evidence input-pty >/dev/null 2>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
     if [[ "$evidence_status" != 1 ]]; then
-      fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
+      fail_launch_session "OpenClaw TUI input PTY evidence was invalid or unavailable (status $evidence_status)"
     fi
     if ! kill -0 "$session_pid" 2>/dev/null; then
       break
     fi
     sleep 0.1
   done
-  fail_launch_session "launch PTY did not enter input mode before the session deadline"
+  fail_launch_session "OpenClaw TUI did not attach standard input to the launch PTY before the session deadline"
 }
 
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
@@ -402,7 +395,7 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-wait_for_pty_input_mode
+wait_for_tui_input_pty
 if ! printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3; then
   fail_launch_session "launch exited before the first PTY input was submitted"
 fi

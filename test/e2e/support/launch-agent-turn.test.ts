@@ -28,9 +28,8 @@ const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
-  | "delayed-input-attachment"
+  | "delayed-input-reader"
   | "delayed-recording"
-  | "input-mode-timeout"
   | "invalid-order"
   | "late-extra"
   | "multiple-tui-processes"
@@ -256,13 +255,8 @@ if (process.argv[2] === "tui") (async () => {
     }
     process.exit(fs.existsSync(process.env.NEMOCLAW_FIXTURE_TUI_STDIN_RETRY) ? 0 : 68);
   }
-  if (mode === "delayed-input-attachment" || mode === "input-mode-timeout") {
-    let inputBeforeAttachment = false;
-    const recordEarlyInput = () => { inputBeforeAttachment = true; };
-    process.stdin.on("data", recordEarlyInput);
-    await new Promise((resolve) => setTimeout(resolve, mode === "input-mode-timeout" ? 10_000 : 1_500));
-    process.stdin.off("data", recordEarlyInput);
-    if (inputBeforeAttachment) process.exit(67);
+  if (mode === "delayed-input-reader") {
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const ask = () => new Promise((resolve) => rl.question("", resolve));
@@ -314,7 +308,7 @@ fi
 while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
 [[ "$#" -gt 0 ]]
 shift
-if [[ "$NEMOCLAW_FIXTURE_MODE" == "transient-tui-stdin" && "$4" == "input-mode" ]]; then
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "transient-tui-stdin" && "$4" == "input-pty" ]]; then
   set +e
   "$@"
   status=$?
@@ -487,10 +481,10 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "waits for the OpenClaw TUI input mode before submitting PTY input (#9160)",
+  "queues one canonical PTY line until the OpenClaw TUI installs its input reader (#9160)",
   () => {
     const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "delayed-input-attachment",
+      "delayed-input-reader",
       "absent",
     );
 
@@ -560,24 +554,6 @@ it.runIf(process.platform === "linux")(
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
-  },
-);
-
-it.runIf(process.platform === "linux")(
-  "reports a missing OpenClaw input mode before the PTY child timeout (#9160)",
-  () => {
-    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "input-mode-timeout",
-      "absent",
-    );
-
-    expect(ttyObserved).toBe(true);
-    expect(baselineRemoved).toBe(true);
-    expect(result.signal).toBeNull();
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      "launch PTY did not enter input mode before the session deadline",
-    );
   },
 );
 

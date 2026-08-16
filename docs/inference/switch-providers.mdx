@@ -73,6 +73,8 @@ Run the rebuild before relying on the running agent.
 
 Use `--no-verify` only when OpenShell cannot verify the target provider at switch time and you have already confirmed its provider and credential.
 This flag does not bypass shared-gateway compatibility checks.
+For a validated compatible-provider binding at `http://host.openshell.internal:<port>`, NemoClaw automatically skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
+Endpoint-shape and shared-gateway compatibility checks still apply.
 
 </AgentOnly>
 

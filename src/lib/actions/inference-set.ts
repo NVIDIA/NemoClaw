@@ -85,6 +85,7 @@ import {
   type EnsureHttpsPinRuntimeAdapterFn,
   finalizeInferenceSetRoute,
   type InferenceSetProviderBinding,
+  isSandboxBridgeProviderBinding,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
 } from "./inference-set-route-containment";
@@ -936,10 +937,14 @@ async function runInferenceSetWithoutHostLock(
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
   let effectiveNoVerify = options.noVerify === true;
-  // The adapter origin resolves only from inside the sandbox network. The
-  // host-side OpenShell verifier cannot resolve host.openshell.internal, so
-  // adapter registration + local health are the verification boundary.
-  if (httpsPinProviderBinding) effectiveNoVerify = true;
+  // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
+  // resolve only from inside the sandbox network. The host-side OpenShell
+  // verifier cannot resolve host.openshell.internal, so its result would be a
+  // guaranteed false negative. Endpoint validation above remains the trust
+  // boundary; the live sandbox request verifies actual route reachability.
+  if (isSandboxBridgeProviderBinding(httpsPinProviderBinding ?? directProviderBinding)) {
+    effectiveNoVerify = true;
+  }
   if (deps.isLocalInferenceProvider(provider)) {
     const localValidation = deps.validateLocalProvider(provider);
     if (localValidation.ok) {

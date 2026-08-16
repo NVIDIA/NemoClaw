@@ -364,6 +364,8 @@
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -448,6 +450,8 @@
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

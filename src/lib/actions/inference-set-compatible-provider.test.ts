@@ -616,7 +616,6 @@ describe("runInferenceSet compatible providers", () => {
       {
         provider: "compatible-anthropic-endpoint",
         model: "mock-anthropic-model",
-        noVerify: true,
         endpointUrl: "http://host.openshell.internal:18767/",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
         inferenceApi: "anthropic-messages",
@@ -644,6 +643,20 @@ describe("runInferenceSet compatible providers", () => {
       nimContainer: null,
     });
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "compatible-anthropic-endpoint",
+        "--model",
+        "mock-anthropic-model",
+        "--no-verify",
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 
   for (const provider of ["compatible-endpoint", "compatible-anthropic-endpoint"]) {
