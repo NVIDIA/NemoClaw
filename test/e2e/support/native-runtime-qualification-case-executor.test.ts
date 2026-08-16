@@ -32,7 +32,7 @@ function inspection(overrides: Record<string, unknown> = {}): string {
 
 type EngineOutput =
   | string
-  | Error
+  | (() => never)
   | { readonly status: number; readonly stdout?: string; readonly stderr?: string };
 
 function engine(outputs: readonly EngineOutput[]): {
@@ -41,8 +41,8 @@ function engine(outputs: readonly EngineOutput[]): {
 } {
   let index = 0;
   const capture = vi.fn((args: readonly string[]) => {
-    const output = outputs[index++];
-    if (output instanceof Error) throw output;
+    const configured = outputs[index++];
+    const output = typeof configured === "function" ? configured() : configured;
     return typeof output === "object"
       ? { status: output.status, stdout: output.stdout ?? "", stderr: output.stderr ?? "" }
       : {
@@ -195,7 +195,9 @@ describe("native runtime failed-case cleanup", () => {
 
   it("continues every resource class after one removal throws", () => {
     const lifecycle = engine([
-      new Error("container removal failed"),
+      () => {
+        throw new Error("container removal failed");
+      },
       { status: 0 },
       { status: 0 },
       { status: 1 },
