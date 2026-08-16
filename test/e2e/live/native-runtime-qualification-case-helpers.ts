@@ -206,6 +206,21 @@ export function assertCredentialFreeQualificationEnvironment(environment: NodeJS
   }
 }
 
+export function nativeRuntimeQualificationPodmanExecutable(
+  environment: NodeJS.ProcessEnv,
+  uid: number,
+): string {
+  const executable = environment.NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE ?? "";
+  const expected = new RegExp(
+    `^/opt/nemoclaw-native-runtime-podman-[1-9][0-9]*-[1-9][0-9]*-${String(uid)}$`,
+    "u",
+  );
+  if (!Number.isSafeInteger(uid) || uid <= 0 || !expected.test(executable)) {
+    throw new Error("Native runtime qualification Podman executable path is invalid");
+  }
+  return executable;
+}
+
 function exactRunnerRuntime(
   value: unknown,
   label: "NIM" | "vLLM",

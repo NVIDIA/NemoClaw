@@ -1359,6 +1359,7 @@ jobs:
         id: boundary
         env:
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -1480,6 +1481,7 @@ jobs:
           }
           storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           storage_config="${storage_config_directory}/storage.conf"
+          podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           apparmor_profile="${storage_config_directory}/podman.apparmor"
           apparmor_profile_name="nemoclaw-native-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
@@ -1487,6 +1489,30 @@ jobs:
             exit 1
           }
           sudo install -d -o root -g root -m 0755 "$storage_config_directory"
+          [[ -f "$TOOLCHAIN_DIRECTORY/bin/podman" && ! -L "$TOOLCHAIN_DIRECTORY/bin/podman" ]] || {
+            echo "::error::Pinned qualification Podman executable source is missing or invalid" >&2
+            exit 1
+          }
+          [[ ! -e "$podman_executable" && ! -L "$podman_executable" ]] || {
+            echo "::error::Run-owned qualification Podman executable already exists" >&2
+            exit 1
+          }
+          opt_mode="$(stat -c '%a' /opt)"
+          [[ -d /opt && ! -L /opt && "$(stat -c '%u:%g' /opt)" == "0:0" && "$opt_mode" =~ ^[0-7]{3,4}$ ]] &&
+            (( (8#$opt_mode & 8#022) == 0 )) || {
+              echo "::error::Qualification Podman executable parent is not root-owned and non-writable" >&2
+              exit 1
+            }
+          sudo install --owner=root --group=root --mode=0555 \
+            "$TOOLCHAIN_DIRECTORY/bin/podman" "$podman_executable"
+          [[ -f "$podman_executable" && ! -L "$podman_executable" && "$(stat -c '%u:%g:%a' "$podman_executable")" == "0:0:555" ]] || {
+            echo "::error::Run-owned qualification Podman executable is invalid" >&2
+            exit 1
+          }
+          [[ "$(sha256sum "$podman_executable" | cut -d' ' -f1)" == "$(sha256sum "$TOOLCHAIN_DIRECTORY/bin/podman" | cut -d' ' -f1)" ]] || {
+            echo "::error::Run-owned qualification Podman executable digest changed during installation" >&2
+            exit 1
+          }
           printf '%s\n' \
             '[storage]' \
             'driver = "overlay"' \
@@ -1509,7 +1535,7 @@ jobs:
               'abi <abi/4.0>,' \
               'include <tunables/global>' \
               '' \
-              "profile ${apparmor_profile_name} /usr/local/bin/podman flags=(unconfined) {" \
+              "profile ${apparmor_profile_name} ${podman_executable} flags=(unconfined) {" \
               '  userns,' \
               '}' | sudo tee "$apparmor_profile" >/dev/null
             sudo chown root:root "$apparmor_profile"
@@ -1545,7 +1571,7 @@ jobs:
             LANG=C.UTF-8 \
             PATH="$guard_dir:/usr/local/bin:/usr/bin:/bin" \
             XDG_RUNTIME_DIR="$runtime_dir" \
-            podman info --format json >/dev/null || {
+            "$podman_executable" info --format json >/dev/null || {
               echo "::error::Credential-free rootless Podman readiness failed" >&2
               exit 1
             }
@@ -1553,6 +1579,7 @@ jobs:
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
           printf 'node_dir=%s\n' "$node_directory" >>"$GITHUB_OUTPUT"
+          printf 'podman_executable=%s\n' "$podman_executable" >>"$GITHUB_OUTPUT"
           printf 'storage_config=%s\n' "$storage_config" >>"$GITHUB_OUTPUT"
 
       - name: Install locked candidate test dependencies without scripts
@@ -1622,6 +1649,7 @@ jobs:
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
           NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
+          PODMAN_EXECUTABLE: ${{ steps.boundary.outputs.podman_executable }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
           STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
@@ -1646,6 +1674,7 @@ jobs:
             LANG=C.UTF-8 \
             NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RECEIPT="$receipt_directory/execution.json" \
             NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_ROW="$QUALIFICATION_ROW" \
+            NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE="$PODMAN_EXECUTABLE" \
             NEMOCLAW_RUN_LIVE_E2E=1 \
             PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
@@ -1719,6 +1748,7 @@ jobs:
             fi
             runtime_dir="/run/user/${uid}"
             storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             apparmor_profile="${storage_config_directory}/podman.apparmor"
             if getent passwd "$account" >/dev/null; then
               sudo pkill -KILL -u "$uid" 2>/dev/null || true
@@ -1739,6 +1769,13 @@ jobs:
               fi
               sudo rm -f -- "$storage_config_directory/storage.conf"
               sudo rmdir "$storage_config_directory"
+            fi
+            if [[ -e "$podman_executable" || -L "$podman_executable" ]]; then
+              [[ -f "$podman_executable" && ! -L "$podman_executable" && "$(stat -c '%u:%g:%a' "$podman_executable")" == "0:0:555" ]] || {
+                echo "::error::Qualification Podman executable cleanup target is invalid" >&2
+                exit 1
+              }
+              sudo rm -f -- "$podman_executable"
             fi
             if [[ -e "$runtime_dir" || -L "$runtime_dir" ]]; then
               echo "::error::Qualification runtime directory remains after its systemd cleanup" >&2
@@ -1762,6 +1799,10 @@ jobs:
             storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
               echo "::error::Qualification storage configuration remains after cleanup" >&2
+              exit 1
+            }
+            [[ ! -e "$podman_executable" && ! -L "$podman_executable" ]] || {
+              echo "::error::Qualification Podman executable remains after cleanup" >&2
               exit 1
             }
             sudo rm -f -- "$ownership_marker"

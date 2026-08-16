@@ -50,6 +50,10 @@ function fixtureSource(source: string): string {
       'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     )
     .replaceAll(
+      'podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+      'podman_executable="${FIXTURE_ROOT}/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    )
+    .replaceAll(
       "/usr/lib/systemd/systemd-user-runtime-dir",
       "${FIXTURE_ROOT}/bin/systemd-user-runtime-dir",
     )
@@ -120,6 +124,7 @@ printf '%s:%s:%s\\n' "$3" "$start" "$((end - start + 1))" >>"$file"`,
     path.join(bin, "stat"),
     `case "$3" in
   *native-runtime-owner-*) printf '0:0:400\\n' ;;
+  *native-runtime-podman-*) printf '0:0:555\\n' ;;
   *podman.apparmor|*storage.conf) printf '0:0:444\\n' ;;
   *) exit 25 ;;
 esac`,
@@ -276,16 +281,19 @@ describe("native runtime qualification account lifecycle", () => {
     expect(fs.existsSync(fixture.marker)).toBe(false);
   });
 
-  it("removes the run-owned runtime, storage configuration, and AppArmor profile", () => {
+  it("removes the run-owned runtime, Podman executable, storage, and AppArmor profile", () => {
     const fixture = createFixture();
     const runtime = path.join(fixture.root, "run", "user", "1002", "libpod", "tmp");
     const storage = path.join(fixture.root, "run", "nemoclaw-native-runtime-42-1-1002");
+    const podman = path.join(fixture.root, "opt", "nemoclaw-native-runtime-podman-42-1-1002");
     fs.mkdirSync(fixture.home, { recursive: true });
     fs.mkdirSync(runtime, { recursive: true });
     fs.mkdirSync(storage, { recursive: true });
+    fs.mkdirSync(path.dirname(podman), { recursive: true });
     fs.writeFileSync(path.join(runtime, "alive"), "fixture");
     fs.writeFileSync(path.join(storage, "storage.conf"), "fixture");
     fs.writeFileSync(path.join(storage, "podman.apparmor"), "fixture");
+    fs.writeFileSync(podman, "fixture", { mode: 0o555 });
     fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1002::${fixture.home}:/usr/sbin/nologin\n`);
     fs.writeFileSync(fixture.subuid, "nemoclawq:200000:65536\n");
     fs.writeFileSync(fixture.subgid, "nemoclawq:300000:65536\n");
@@ -298,6 +306,7 @@ describe("native runtime qualification account lifecycle", () => {
     expect(calls).toContain("apparmor:-R");
     expect(fs.existsSync(path.join(fixture.root, "run", "user", "1002"))).toBe(false);
     expect(fs.existsSync(storage)).toBe(false);
+    expect(fs.existsSync(podman)).toBe(false);
   });
 
   it("does not run destructive cleanup when the run-owned marker is absent", () => {

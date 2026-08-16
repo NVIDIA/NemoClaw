@@ -12,6 +12,7 @@ import {
   digestFromImageReference,
   nativeRuntimeQualificationAgentImage,
   nativeRuntimeQualificationInferenceImage,
+  nativeRuntimeQualificationPodmanExecutable,
   parseNativeRuntimeQualificationRow,
   parseNativeRuntimeQualificationRunnerContract,
 } from "../live/native-runtime-qualification-case-helpers.ts";
@@ -84,6 +85,29 @@ describe("native runtime qualification case boundaries", () => {
     } satisfies NativeRuntimeQualificationProducerPlanInput).include[0]!;
 
     expect(parseNativeRuntimeQualificationRow(JSON.stringify(candidateRow))).toEqual(candidateRow);
+  });
+
+  it("accepts only the run-owned rootless Podman executable path for the current uid", () => {
+    const environment = {
+      NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE:
+        "/opt/nemoclaw-native-runtime-podman-123456-1-1002",
+    };
+    expect(nativeRuntimeQualificationPodmanExecutable(environment, 1002)).toBe(
+      environment.NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
+    );
+    for (const executable of [
+      "/usr/local/bin/podman",
+      "/opt/nemoclaw-native-runtime-podman-123456-1-0",
+      "/opt/nemoclaw-native-runtime-podman-123456-1-1003",
+      "/opt/nemoclaw-native-runtime-podman-123456-1-1002/../podman",
+    ]) {
+      expect(() =>
+        nativeRuntimeQualificationPodmanExecutable(
+          { NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE: executable },
+          1002,
+        ),
+      ).toThrow("Podman executable path is invalid");
+    }
   });
 
   it("rejects credential and alternate runtime authority environment names", () => {

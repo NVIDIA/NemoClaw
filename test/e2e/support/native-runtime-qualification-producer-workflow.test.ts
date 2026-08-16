@@ -279,12 +279,21 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("0:0:444");
     expect(boundary.run).toContain("/sys/module/apparmor/parameters/enabled");
     expect(boundary.run).toContain(
-      'profile ${apparmor_profile_name} /usr/local/bin/podman flags=(unconfined)',
+      'profile ${apparmor_profile_name} ${podman_executable} flags=(unconfined)',
     );
+    expect(boundary.env?.TOOLCHAIN_DIRECTORY).toBe(
+      "${{ runner.temp }}/native-runtime-podman-toolchain",
+    );
+    expect(boundary.run).toContain(
+      'podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    );
+    expect(boundary.run).toContain('sudo install --owner=root --group=root --mode=0555');
+    expect(boundary.run).toContain("Qualification Podman executable parent is not root-owned");
+    expect(boundary.run).toContain("0:0:555");
+    expect(boundary.run).toContain('"$podman_executable" info --format json');
     expect(boundary.run).toContain("userns,");
     expect(boundary.run).toContain('apparmor_parser -r "$apparmor_profile"');
     expect(boundary.run).not.toContain("apparmor_restrict_unprivileged_userns=");
-    expect(boundary.run).toContain("podman info --format json");
     expect(boundary.run).toContain("Credential-free rootless Podman readiness failed");
     expect(boundary.run).toContain('install -d -m 0755 "$guard_dir"');
     expect(boundary.run).toContain('chmod 0555 "$guard_dir/docker"');
@@ -323,8 +332,14 @@ describe("native runtime qualification producer workflow", () => {
     expect(execute.run).not.toContain("GH_TOKEN");
     expect(execute.run).not.toContain("chown -R");
     expect(execute.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
+    expect(execute.env?.PODMAN_EXECUTABLE).toBe(
+      "${{ steps.boundary.outputs.podman_executable }}",
+    );
     expect(execute.env?.STORAGE_CONFIG).toBe("${{ steps.boundary.outputs.storage_config }}");
     expect(execute.run).toContain('CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG"');
+    expect(execute.run).toContain(
+      'NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE="$PODMAN_EXECUTABLE"',
+    );
     expect(execute.run).toContain(
       'PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
     );
@@ -350,6 +365,8 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
+    expect(cleanup.run).toContain('sudo rm -f -- "$podman_executable"');
+    expect(cleanup.run).toContain("Qualification Podman executable remains after cleanup");
     expect(cleanup.run).toContain("Qualification runtime directory remains after its systemd cleanup");
     expect(cleanup.run).toContain("Qualification storage configuration remains after cleanup");
     expect(cleanup.run).toContain("userdel --remove");

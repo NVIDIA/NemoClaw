@@ -35,6 +35,7 @@ import {
   digestFromImageReference,
   nativeRuntimeQualificationAgentImage,
   nativeRuntimeQualificationInferenceImage,
+  nativeRuntimeQualificationPodmanExecutable,
   parseNativeRuntimeQualificationRow,
   readNativeRuntimeQualificationRunnerContract,
 } from "./native-runtime-qualification-case-helpers.ts";
@@ -44,7 +45,6 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
 const COMMAND_TIMEOUT = 60_000;
 const INFERENCE_TIMEOUT = 900_000;
 const QUALIFICATION_LABEL = "ai.nvidia.nemoclaw.qualification";
-const NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE = "/usr/local/bin/podman";
 export const NATIVE_RUNTIME_QUALIFICATION_E2E_PHASES = [
   "validate credential-free Docker-unavailable isolation",
   "bind the rootless Podman engine",
@@ -212,11 +212,12 @@ async function waitForSocket(socket: string, service: PodmanQualificationService
 
 function startPodmanQualificationService(
   socket: string,
+  podmanExecutable: string,
   progress: TestProgress,
 ): PodmanQualificationService {
   let diagnostic = "";
   const child = spawnObservedChild(
-    NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
+    podmanExecutable,
     ["system", "service", "--time=0", `unix://${socket}`],
     {
       activityLabel: "command: rootless Podman qualification service",
@@ -548,11 +549,13 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
   const dockerBefore = assertDockerUnavailable();
   const runtimeDirectory = process.env.XDG_RUNTIME_DIR ?? "";
   expect(runtimeDirectory).toBe(`/run/user/${String(uid)}`);
+  const podmanExecutable = nativeRuntimeQualificationPodmanExecutable(process.env, uid);
   const socket = path.join(runtimeDirectory, "podman", "podman.sock");
   fs.mkdirSync(path.dirname(socket), { recursive: true, mode: 0o700 });
 
   let service: PodmanQualificationService | null = startPodmanQualificationService(
     socket,
+    podmanExecutable,
     progress,
   );
   let hostEngine: PodmanBoundContainerEngine | null = null;
@@ -572,17 +575,17 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     await waitForSocket(socket, service);
     const socketAuthority = capturePodmanSocketAuthority(socket);
     hostEngine = createPodmanContainerEngine({
-      executable: NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
+      executable: podmanExecutable,
       operation: "host-doctor",
       socketAuthority,
     });
     inferenceEngine = createPodmanContainerEngine({
-      executable: NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
+      executable: podmanExecutable,
       operation: "host-local-inference",
       socketAuthority,
     });
     lifecycleEngine = createPodmanContainerEngine({
-      executable: NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
+      executable: podmanExecutable,
       operation: "sandbox-lifecycle",
       socketAuthority,
     });
