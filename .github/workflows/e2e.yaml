@@ -1742,8 +1742,10 @@ jobs:
           cleanup_registry_auth() {
             local result="$?"
             trap - EXIT
-            if [[ -e "$registry_auth_file" || -L "$registry_auth_file" ]]; then
-              [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+            if sudo test -e "$registry_auth_file" || sudo test -L "$registry_auth_file"; then
+              sudo test -f "$registry_auth_file" &&
+                sudo test ! -L "$registry_auth_file" &&
+                [[ "$(sudo stat -c '%u:%g:%a:%h' -- "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
                 echo "::error::Run-owned registry authentication file cleanup target is invalid" >&2
                 return 1
               }
@@ -1765,8 +1767,15 @@ jobs:
             REGISTRY_AUTH_FILE="$registry_auth_file" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
             "$PODMAN_EXECUTABLE" login nvcr.io --username '$oauthtoken' --password-stdin >/dev/null
-          [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+          sudo test -f "$registry_auth_file" &&
+            sudo test ! -L "$registry_auth_file" &&
+            [[ "$(sudo stat -c '%u:%g:%h' -- "$registry_auth_file")" == "${uid}:${gid}:1" ]] || {
             echo "::error::Run-owned registry authentication file is invalid" >&2
+            exit 1
+          }
+          sudo chmod 0600 -- "$registry_auth_file"
+          [[ "$(sudo stat -c '%u:%g:%a:%h' -- "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+            echo "::error::Run-owned registry authentication file permissions are invalid" >&2
             exit 1
           }
           image_to_pull="$probe_image"
@@ -2154,8 +2163,10 @@ jobs:
                   echo "::error::Qualification registry authentication directory cleanup target is invalid" >&2
                   exit 1
                 }
-                if [[ -e "$registry_auth_file" || -L "$registry_auth_file" ]]; then
-                  [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+                if sudo test -e "$registry_auth_file" || sudo test -L "$registry_auth_file"; then
+                  sudo test -f "$registry_auth_file" &&
+                    sudo test ! -L "$registry_auth_file" &&
+                    [[ "$(sudo stat -c '%u:%g:%a:%h' -- "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
                     echo "::error::Qualification registry authentication file cleanup target is invalid" >&2
                     exit 1
                   }

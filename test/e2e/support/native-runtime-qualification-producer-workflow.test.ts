@@ -211,6 +211,7 @@ describe("native runtime qualification producer workflow", () => {
     });
     const boundaryRun = boundary.run ?? "";
     const executeRun = execute.run ?? "";
+    const gpuResourcesRun = gpuResources.run ?? "";
 
     expect(producer.name).toBe("${{ matrix.jobName }}");
     expect(producer.needs).toEqual([
@@ -235,9 +236,19 @@ describe("native runtime qualification producer workflow", () => {
     expect(gpuResources.run).toContain("login nvcr.io --username '$oauthtoken' --password-stdin");
     expect(gpuResources.run).not.toContain("logout --all");
     expect(gpuResources.run).toContain('sudo unlink "$registry_auth_file"');
+    expect(gpuResources.run).toContain(
+      "$(sudo stat -c '%u:%g:%h' -- \"$registry_auth_file\")",
+    );
+    expect(gpuResources.run).toContain('sudo chmod 0600 -- "$registry_auth_file"');
     expect(gpuResources.env?.ACCOUNT_GID).toBe("${{ steps.boundary.outputs.gid }}");
     expect(gpuResources.env?.ACCOUNT_UID).toBe("${{ steps.boundary.outputs.uid }}");
     expect(gpuResources.run).toContain("${uid}:${gid}:600:1");
+    expect(gpuResourcesRun.indexOf('sudo chmod 0600 -- "$registry_auth_file"')).toBeGreaterThan(
+      gpuResourcesRun.indexOf("login nvcr.io --username '$oauthtoken' --password-stdin"),
+    );
+    expect(gpuResourcesRun.indexOf('sudo chmod 0600 -- "$registry_auth_file"')).toBeLessThan(
+      gpuResourcesRun.indexOf('"$PODMAN_EXECUTABLE" pull "$image"'),
+    );
     expect(gpuResources.run).toContain("unset NVIDIA_API_KEY");
     expect(gpuResources.run).toContain("7ae557604adf67be50417f59c2c2f167def9a775");
     expect(gpuResources.run).toContain("git hash-object --no-filters");
