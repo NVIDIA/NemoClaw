@@ -6,12 +6,19 @@ import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  fsyncSync,
+  ftruncateSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
+  type Stats,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -75,6 +82,26 @@ function writeSessionRecords(
   }
 }
 
+function withOwnedFixtureFile<T>(
+  filePath: string,
+  flags: number,
+  action: (descriptor: number, stats: Stats) => T,
+): T {
+  const descriptor = openSync(filePath, flags | constants.O_NOFOLLOW);
+  try {
+    const stats = fstatSync(descriptor);
+    expect([stats.isFile(), stats.uid, stats.mode & 0o777, stats.nlink]).toEqual([
+      true,
+      process.getuid?.(),
+      0o600,
+      1,
+    ]);
+    return action(descriptor, stats);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 function runEvidenceFixture(input: {
   after: SessionRecords;
   afterFinalNewline?: boolean;
@@ -118,13 +145,17 @@ function runEvidenceFixture(input: {
       ],
       { encoding: "utf8" },
     );
-    const baselineStats = statSync(baselinePath);
+    const baselineFile = withOwnedFixtureFile(
+      baselinePath,
+      constants.O_RDONLY,
+      (descriptor, stats) => ({ body: readFileSync(descriptor, "utf8"), stats }),
+    );
     return {
       baseline,
-      baselineKeys: Object.keys(JSON.parse(readFileSync(baselinePath, "utf8"))).sort(),
-      baselineMode: baselineStats.mode & 0o777,
-      baselineNlink: baselineStats.nlink,
-      baselineUid: baselineStats.uid,
+      baselineKeys: Object.keys(JSON.parse(baselineFile.body)).sort(),
+      baselineMode: baselineFile.stats.mode & 0o777,
+      baselineNlink: baselineFile.stats.nlink,
+      baselineUid: baselineFile.stats.uid,
       qualification,
     };
   } finally {
@@ -160,7 +191,12 @@ function runBaselineMutationFixture(mutation: "invalid" | "removed" | "rewritten
       { encoding: "utf8" },
     );
     const applyMutation: Record<typeof mutation, () => void> = {
-      invalid: () => writeFileSync(baselinePath, "{}"),
+      invalid: () =>
+        withOwnedFixtureFile(baselinePath, constants.O_WRONLY, (descriptor) => {
+          ftruncateSync(descriptor, 0);
+          writeFileSync(descriptor, "{}");
+          fsyncSync(descriptor);
+        }),
       removed: () => rmSync(sessionPath),
       rewritten: () =>
         writeFileSync(
@@ -201,6 +237,7 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const sessionRoot = join(fixtureRoot, "sessions");
   const tuiPidsPath = join(fixtureRoot, "tui-pids");
   const ttyMarker = join(fixtureRoot, "tty-observed");
+  const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyRecordReceiptPath = join(fixtureRoot, "pty-record-receipt.json");
   const runId = randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
@@ -216,7 +253,11 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
       fakeStty,
       String.raw`#!/usr/bin/env bash
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-termios-unavailable" ]]; then
-  exit 1
+  for _ in {1..200}; do
+    [[ ! -e "$NEMOCLAW_FIXTURE_TTY_MARKER" ]] || exit 1
+    sleep 0.01
+  done
+  exit 72
 fi
 exec /usr/bin/stty "$@"
 `,
@@ -310,7 +351,11 @@ if (process.argv[2] !== "tui") {
   if (mode === "delayed-recording") {
     const recordDelayedInput = (line) => delayedInputs.push(line);
     rl.on("line", recordDelayedInput);
-    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    const publicationDeadline = Date.now() + 2_000;
+    while (!fs.existsSync(process.env.NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER)) {
+      if (Date.now() >= publicationDeadline) process.exit(68);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     rl.off("line", recordDelayedInput);
   }
   if (mode === "recording-timeout") await new Promise((resolve) => setTimeout(resolve, 10_000));
@@ -353,6 +398,14 @@ fi
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "pty-record-timeout" && "$4" == "$NEMOCLAW_LAUNCH_RUN_ID" ]]; then
   exec node -e 'setTimeout(() => process.exit(0), 10_000)'
 fi
+if [[ "$NEMOCLAW_FIXTURE_MODE" == "delayed-recording" && "$4" == "qualify" && "$7" == "1" ]]; then
+  set +e
+  "$@"
+  status=$?
+  set -e
+  [[ "$status" != "1" ]] || : > "$NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER"
+  exit "$status"
+fi
 exec "$@"
 `,
     );
@@ -368,6 +421,7 @@ exec "$@"
         HOME: fixtureRoot,
         NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
         NEMOCLAW_FIXTURE_MODE: mode,
+        NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER: pendingQualificationMarker,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
         NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
         NEMOCLAW_FIXTURE_PTY_RECORD_RECEIPT: ptyRecordReceiptPath,
@@ -411,6 +465,7 @@ exec "$@"
         name.startsWith("nemoclaw-launch-host."),
       ),
       orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
+      pendingQualificationObserved: existsSync(pendingQualificationMarker),
       ptyRecordRemoved: !existsSync(ptyRecordRoot),
       ptyRecordReceipt: existsSync(ptyRecordReceiptPath)
         ? JSON.parse(readFileSync(ptyRecordReceiptPath, "utf8"))
@@ -738,37 +793,36 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it.runIf(process.platform === "linux")(
-  "rejects invalid PTY records and unavailable PTY input state before input (#9160)",
-  () => {
-    for (const [mode, reason] of [
-      ["pty-record-invalid", "pty_record_invalid"],
-      ["pty-record-permission", "pty_record_unavailable"],
-      ["pty-record-identity", "pty_identity_changed"],
-      ["pty-termios-unavailable", "pty_termios_unavailable"],
-    ] as const) {
-      const { baselineRemoved, orphanedTuiProcessIds, result, ttyObserved } =
-        runLaunchSessionFixture(mode, "absent");
+for (const [mode, reason, behavior] of [
+  ["pty-record-invalid", "pty_record_invalid", "invalid PTY record"],
+  ["pty-record-permission", "pty_record_unavailable", "unreadable PTY record"],
+  ["pty-record-identity", "pty_identity_changed", "changed PTY device identity"],
+  ["pty-termios-unavailable", "pty_termios_unavailable", "unavailable PTY terminal state"],
+] as const) {
+  it.runIf(process.platform === "linux")(`rejects ${behavior} before PTY input (#9160)`, () => {
+    const { baselineRemoved, orphanedTuiProcessIds, result, ttyObserved } = runLaunchSessionFixture(
+      mode,
+      "absent",
+    );
+    const failureEvidence = `${mode}: ${result.stderr}`;
 
-      expect(ttyObserved).toBe(true);
-      expect(orphanedTuiProcessIds).toEqual([]);
-      expect(baselineRemoved).toBe(true);
-      expect(result.signal).toBeNull();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(`"reason":"${reason}"`);
-    }
-  },
-);
+    expect(ttyObserved, failureEvidence).toBe(true);
+    expect(orphanedTuiProcessIds, failureEvidence).toEqual([]);
+    expect(baselineRemoved, failureEvidence).toBe(true);
+    expect(result.signal, failureEvidence).toBeNull();
+    expect(result.status, failureEvidence).toBe(1);
+    expect(result.stderr, failureEvidence).toContain(`"reason":"${reason}"`);
+  });
+}
 
 it.runIf(process.platform === "linux")(
   "submits each PTY turn once while structured recording is delayed (#9160)",
   () => {
-    const { baselineRemoved, result, ttyObserved } = runLaunchSessionFixture(
-      "delayed-recording",
-      "absent",
-    );
+    const { baselineRemoved, pendingQualificationObserved, result, ttyObserved } =
+      runLaunchSessionFixture("delayed-recording", "absent");
 
     expect(ttyObserved).toBe(true);
+    expect(pendingQualificationObserved).toBe(true);
     expect(baselineRemoved).toBe(true);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(0);
