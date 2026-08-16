@@ -388,19 +388,20 @@ describe("native runtime provider-network authority", () => {
   });
 
   it("routes inference inside the provider network without a host port publication", () => {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), "test/e2e/live/native-runtime-qualification-case-executor.ts"),
-      "utf8",
-    );
+    const plan = nativeRuntimeQualificationCaseInternals.inferenceContainerPlan({
+      acceleration: "cpu",
+      caseId: CASE_ID,
+      imageRef: `docker.io/ollama/ollama@sha256:${"e".repeat(64)}`,
+      inference: "ollama",
+      model: "qwen2.5:0.5b",
+      name: "nemoclaw-inference-fixture",
+      network: NETWORK_NAME,
+      port: 11434,
+    });
 
-    expect(source).not.toContain('"--publish"');
-    expect(source).toContain('route: "provider-network-dns"');
-    expect(source).toContain("http://${inferenceName}:${String(inferencePort)}");
-    expect(source).toContain("/no_think\\nReply with the single word qualified.");
-    expect(source).toContain('reasoning_effort: "none"');
-    expect(source).toContain("max_tokens: 128");
-    expect(source).toContain("trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done");
-    expect(source).toContain("Initial sandbox stop failed:");
-    expect(source).toContain("Snapshot sandbox stop failed:");
+    expect(plan.endpoint).toBe("http://nemoclaw-inference-fixture:11434");
+    expect(plan.arguments).toContain("--network");
+    expect(plan.arguments).toContain(NETWORK_NAME);
+    expect(plan.arguments).not.toContain("--publish");
   });
 });

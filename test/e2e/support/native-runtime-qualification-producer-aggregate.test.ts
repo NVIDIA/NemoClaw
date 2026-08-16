@@ -241,6 +241,23 @@ describe("native runtime qualification producer aggregate", () => {
     },
   );
 
+  it("preserves an existing immutable aggregate output", AGGREGATE_TEST_OPTIONS, () => {
+    const value = fixture();
+    const sentinel = path.join(value.evidenceDirectory, "sentinel.txt");
+    fs.mkdirSync(value.evidenceDirectory);
+    fs.writeFileSync(sentinel, "preserve me");
+
+    expect(() =>
+      aggregateNativeRuntimeQualificationProducerEvidence({
+        plan: value.plan,
+        caseArtifactRoot: value.artifactRoot,
+        evidenceDirectory: value.evidenceDirectory,
+        aggregateJobId: 811,
+      }),
+    ).toThrow("output must not already exist");
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("preserve me");
+  });
+
   it("rejects an omitted case artifact", AGGREGATE_TEST_OPTIONS, () => {
     const value = fixture();
     fs.renameSync(

@@ -36,40 +36,54 @@ function extractFunction(source: string, name: string): string {
   return `${name}() {${match![1]}\n}`;
 }
 
+function rewriteFixtureTarget(source: string, from: string, to: string): string {
+  if (!source.includes(from)) return source;
+  const rewritten = source.replaceAll(from, to);
+  expect(rewritten, `Fixture rewrite did not match host target: ${from}`).not.toBe(source);
+  return rewritten;
+}
+
 function fixtureSource(source: string): string {
-  return source
-    .replaceAll("/usr/bin/test", "/bin/test")
-    .replaceAll("/usr/bin/systemctl", "systemctl")
-    .replaceAll("PATH=/usr/bin:/bin", 'PATH="$FIXTURE_BIN:/usr/bin:/bin"')
-    .replaceAll("/etc/subuid", "${FIXTURE_ROOT}/etc/subuid")
-    .replaceAll("/etc/subgid", "${FIXTURE_ROOT}/etc/subgid")
-    .replaceAll(
+  const rewrites = [
+    ["/usr/bin/test", "/bin/test"],
+    ["/usr/bin/systemctl", "systemctl"],
+    ["PATH=/usr/bin:/bin", 'PATH="$FIXTURE_BIN:/usr/bin:/bin"'],
+    ["/etc/subuid", "${FIXTURE_ROOT}/etc/subuid"],
+    ["/etc/subgid", "${FIXTURE_ROOT}/etc/subgid"],
+    [
       'ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
       'ownership_marker="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
-    )
-    .replaceAll('"$home" == "/home/${account}"', '"$home" == "$FIXTURE_HOME"')
-    .replaceAll('runtime_dir="/run/user/${uid}"', 'runtime_dir="${FIXTURE_ROOT}/run/user/${uid}"')
-    .replaceAll(
+    ],
+    ['"$home" == "/home/${account}"', '"$home" == "$FIXTURE_HOME"'],
+    ['runtime_dir="/run/user/${uid}"', 'runtime_dir="${FIXTURE_ROOT}/run/user/${uid}"'],
+    [
       'user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"',
       'user_manager_dropin_directory="${FIXTURE_ROOT}/run/systemd/system/${user_manager_unit}.d"',
-    )
-    .replaceAll(
+    ],
+    [
       'storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
       'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    )
-    .replaceAll(
+    ],
+    [
       'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
       'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    )
-    .replaceAll(
+    ],
+    [
       'helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
       'helper_directory="${FIXTURE_ROOT}/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    )
-    .replaceAll(
+    ],
+    [
       'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
       'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    )
-    .replaceAll('"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"');
+    ],
+    ['"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"'],
+  ] as const;
+  let rewritten = source;
+  for (const [from, to] of rewrites) rewritten = rewriteFixtureTarget(rewritten, from, to);
+  expect(rewritten, "Fixture source retains an unredirected destructive host path").not.toMatch(
+    /(?:^|[\s"'=])\/(?:etc\/sub(?:uid|gid)|run\/(?:nemoclaw-native-runtime|systemd\/system|user\/)|(?:nemoclaw-native-runtime-(?:podman|helpers)|var\/tmp\/nemoclaw-native-runtime-resources)-)/mu,
+  );
+  return rewritten;
 }
 
 function writeExecutable(file: string, source: string): void {

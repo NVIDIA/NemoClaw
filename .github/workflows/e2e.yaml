@@ -1765,6 +1765,7 @@ jobs:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
           ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
           ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
+          ACCELERATION: ${{ matrix.case.acceleration }}
           ARCHITECTURE: ${{ matrix.case.architecture }}
           CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
@@ -1779,7 +1780,7 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          if [[ "${{ matrix.case.acceleration }}" != "nvidia-gpu" ]]; then
+          if [[ "$ACCELERATION" != "nvidia-gpu" ]]; then
             printf 'runner_contract=\n' >>"$GITHUB_OUTPUT"
             exit 0
           fi

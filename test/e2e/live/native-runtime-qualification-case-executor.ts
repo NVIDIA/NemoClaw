@@ -29,6 +29,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type {
+  NativeRuntimeQualificationAcceleration,
   NativeRuntimeQualificationAgent,
   NativeRuntimeQualificationInference,
   NativeRuntimeQualificationObligation,
@@ -603,6 +604,54 @@ function vllmServeArguments(model: string, port: number): readonly string[] {
   ];
 }
 
+function inferenceContainerPlan(input: {
+  readonly acceleration: NativeRuntimeQualificationAcceleration;
+  readonly caseId: string;
+  readonly imageRef: string;
+  readonly inference: NativeRuntimeQualificationInference;
+  readonly model: string;
+  readonly modelPath?: string;
+  readonly name: string;
+  readonly network: string;
+  readonly port: number;
+}): { readonly arguments: readonly string[]; readonly endpoint: string } {
+  if ((input.inference === "nim" || input.inference === "vllm") && !input.modelPath) {
+    throw new Error("Native runtime qualification GPU inference requires a model path");
+  }
+  return {
+    arguments: [
+      "run",
+      "--detach",
+      "--pull=never",
+      "--name",
+      input.name,
+      "--network",
+      input.network,
+      "--label",
+      `${QUALIFICATION_LABEL}=${input.caseId}`,
+      ...(input.acceleration === "nvidia-gpu" ? ["--device", "nvidia.com/gpu=all"] : []),
+      ...(input.inference === "nim"
+        ? [
+            "--shm-size",
+            "16g",
+            "--env",
+            "NIM_MODEL_PATH=/models",
+            "--env",
+            `NIM_SERVED_MODEL_NAME=${input.model}`,
+            "--volume",
+            `${input.modelPath}:/models:ro`,
+          ]
+        : []),
+      ...(input.inference === "vllm"
+        ? ["--shm-size", "16g", "--volume", `${input.modelPath}:/models:ro`]
+        : []),
+      input.imageRef,
+      ...(input.inference === "vllm" ? vllmServeArguments(input.model, input.port) : []),
+    ],
+    endpoint: `http://${input.name}:${String(input.port)}`,
+  };
+}
+
 function createAgentContainer(input: {
   readonly engine: PodmanBoundContainerEngine;
   readonly imageRef: string;
@@ -799,6 +848,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
   let gpuComputeProcesses: readonly GpuComputeProcess[] = [];
   let completed = false;
   let qualificationFailure: unknown;
+  const cleanupFailures: unknown[] = [];
   let snapshot: string | null = null;
   const operationDetails = new Map<NativeRuntimeQualificationObligation, Record<string, unknown>>();
 
@@ -867,39 +917,20 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const inferenceName = `nemoclaw-inference-${caseSuffix}`;
     progress.phase("launch exact local inference");
     const inferencePort = row.case.inference === "ollama" ? 11434 : 8000;
-    const endpoint = `http://${inferenceName}:${String(inferencePort)}`;
-    const inferenceArguments = [
-      "run",
-      "--detach",
-      "--pull=never",
-      "--name",
-      inferenceName,
-      "--network",
-      network.name,
-      "--label",
-      `${QUALIFICATION_LABEL}=${row.id}`,
-      ...(row.case.acceleration === "nvidia-gpu" ? ["--device", "nvidia.com/gpu=all"] : []),
-      ...(row.case.inference === "nim"
-        ? [
-            "--shm-size",
-            "16g",
-            "--env",
-            "NIM_MODEL_PATH=/models",
-            "--env",
-            `NIM_SERVED_MODEL_NAME=${inference.model}`,
-            "--volume",
-            `${inference.modelPath}:/models:ro`,
-          ]
-        : []),
-      ...(row.case.inference === "vllm"
-        ? ["--shm-size", "16g", "--volume", `${inference.modelPath}:/models:ro`]
-        : []),
-      inference.imageRef,
-      ...(row.case.inference === "vllm" ? vllmServeArguments(inference.model, inferencePort) : []),
-    ];
+    const inferencePlan = inferenceContainerPlan({
+      acceleration: row.case.acceleration,
+      caseId: row.id,
+      imageRef: inference.imageRef,
+      inference: row.case.inference,
+      model: inference.model,
+      ...(inference.modelPath ? { modelPath: inference.modelPath } : {}),
+      name: inferenceName,
+      network: network.name,
+      port: inferencePort,
+    });
     inferenceContainerId = capture(
       inferenceEngine,
-      inferenceArguments,
+      inferencePlan.arguments,
       `${row.case.inference} container start`,
       INFERENCE_TIMEOUT,
     );
@@ -956,7 +987,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const turnSha256 = await agentTurn(
       lifecycleEngine,
       agentId,
-      endpoint,
+      inferencePlan.endpoint,
       inference.model,
       row.case.inference,
     );
@@ -1133,7 +1164,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const reconciledTurnSha256 = await agentTurn(
       lifecycleEngine,
       agentId,
-      endpoint,
+      inferencePlan.endpoint,
       inference.model,
       row.case.inference,
     );
@@ -1317,9 +1348,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     completed = true;
   } catch (error) {
     qualificationFailure = error;
-    throw error;
   } finally {
-    const cleanupFailures: unknown[] = [];
     try {
       removeQualificationSnapshot(snapshot);
     } catch (error) {
@@ -1348,15 +1377,18 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       cleanupFailures.push(error);
     }
     service = null;
-    if (cleanupFailures.length > 0) {
-      if (qualificationFailure === undefined) {
-        throw new AggregateError(cleanupFailures, "Native runtime qualification cleanup failed");
-      }
-      throw new AggregateError(
-        [qualificationFailure, ...cleanupFailures],
-        "Native runtime qualification failed and cleanup could not be proven",
-      );
-    }
+  }
+  if (cleanupFailures.length > 0 && qualificationFailure === undefined) {
+    throw new AggregateError(cleanupFailures, "Native runtime qualification cleanup failed");
+  }
+  if (cleanupFailures.length > 0) {
+    throw new AggregateError(
+      [qualificationFailure, ...cleanupFailures],
+      "Native runtime qualification failed and cleanup could not be proven",
+    );
+  }
+  if (qualificationFailure !== undefined) {
+    throw qualificationFailure;
   }
 }
 
@@ -1364,6 +1396,7 @@ export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   collectOwnedResourceCleanupFailures,
   collectQualificationResourceCleanupFailures,
   createProviderNetwork,
+  inferenceContainerPlan,
   inferenceFailureDiagnostic,
   lifecycleSandboxName,
   parsePhysicalGpuDevices,
