@@ -480,6 +480,22 @@ function inferenceFailureDiagnostic(
   return `state=${state}; logs=${logs}`;
 }
 
+function vllmServeArguments(model: string, port: number): readonly string[] {
+  return [
+    "vllm",
+    "serve",
+    "/models",
+    "--served-model-name",
+    model,
+    "--host",
+    "0.0.0.0",
+    "--port",
+    String(port),
+    "--max-model-len",
+    "2048",
+  ];
+}
+
 function createAgentContainer(input: {
   readonly engine: PodmanBoundContainerEngine;
   readonly imageRef: string;
@@ -771,20 +787,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         ? ["--shm-size", "16g", "--volume", `${inference.modelPath}:/models:ro`]
         : []),
       inference.imageRef,
-      ...(row.case.inference === "vllm"
-        ? [
-            "--model",
-            "/models",
-            "--served-model-name",
-            inference.model,
-            "--host",
-            "0.0.0.0",
-            "--port",
-            String(inferencePort),
-            "--max-model-len",
-            "2048",
-          ]
-        : []),
+      ...(row.case.inference === "vllm" ? vllmServeArguments(inference.model, inferencePort) : []),
     ];
     inferenceContainerId = capture(
       inferenceEngine,
@@ -1261,4 +1264,5 @@ export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   parsePhysicalGpuDevices,
   proveGpuDevices,
   removeQualificationSnapshot,
+  vllmServeArguments,
 });

@@ -150,6 +150,29 @@ describe("native runtime failure diagnosis", () => {
   });
 });
 
+describe("native runtime vLLM launch", () => {
+  it("provides the pinned NGC image entrypoint with an exact serve command", () => {
+    expect(
+      nativeRuntimeQualificationCaseInternals.vllmServeArguments(
+        "Qwen/Qwen2.5-0.5B-Instruct",
+        8000,
+      ),
+    ).toEqual([
+      "vllm",
+      "serve",
+      "/models",
+      "--served-model-name",
+      "Qwen/Qwen2.5-0.5B-Instruct",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8000",
+      "--max-model-len",
+      "2048",
+    ]);
+  });
+});
+
 describe("native runtime provider-network authority", () => {
   it("uses distinct canonical sandbox names for every qualified agent", () => {
     const names = NATIVE_RUNTIME_QUALIFICATION_AGENTS.map((agent) =>
