@@ -29,6 +29,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type {
+  NativeRuntimeQualificationAgent,
   NativeRuntimeQualificationInference,
   NativeRuntimeQualificationObligation,
 } from "../registry/native-runtime-qualification.ts";
@@ -50,6 +51,11 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
 const COMMAND_TIMEOUT = 60_000;
 const INFERENCE_TIMEOUT = 900_000;
 const QUALIFICATION_LABEL = "ai.nvidia.nemoclaw.qualification";
+const LIFECYCLE_SANDBOX_NAMES = Object.freeze({
+  hermes: "q-hermes",
+  "langchain-deepagents-code": "q-deepagents",
+  openclaw: "q-openclaw",
+} as const satisfies Record<NativeRuntimeQualificationAgent, string>);
 export const NATIVE_RUNTIME_QUALIFICATION_E2E_PHASES = [
   "validate credential-free Docker-unavailable isolation",
   "bind the rootless Podman engine",
@@ -581,6 +587,10 @@ function lifecycleInput(agent: string, sandboxName: string): RuntimeProviderLife
   };
 }
 
+function lifecycleSandboxName(agent: NativeRuntimeQualificationAgent): string {
+  return LIFECYCLE_SANDBOX_NAMES[agent];
+}
+
 function assertNoQualificationResidue(engine: PodmanBoundContainerEngine, caseId: string): void {
   for (const [resource, args] of [
     ["container", ["ps", "--all", "--quiet", "--filter", `label=${QUALIFICATION_LABEL}=${caseId}`]],
@@ -770,7 +780,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
 
     const sandboxId = caseSuffix;
     progress.phase("onboard the managed agent image");
-    const sandboxName = `qualification-${row.case.agent}`;
+    const sandboxName = lifecycleSandboxName(row.case.agent);
     const agentName = `${PODMAN_SANDBOX_CONTAINER_PREFIX}${sandboxName}-${sandboxId}`;
     const volumeName = `nemoclaw-q-state-${caseSuffix}`;
     capture(
@@ -1210,5 +1220,6 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
 
 export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   createProviderNetwork,
+  lifecycleSandboxName,
   removeQualificationSnapshot,
 });

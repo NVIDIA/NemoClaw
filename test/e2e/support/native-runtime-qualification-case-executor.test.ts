@@ -8,7 +8,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { PodmanBoundContainerEngine } from "../../../src/lib/adapters/podman/index.ts";
+import { isValidName } from "../../../src/lib/name-validation.ts";
 import { nativeRuntimeQualificationCaseInternals } from "../live/native-runtime-qualification-case-executor.ts";
+import { NATIVE_RUNTIME_QUALIFICATION_AGENTS } from "../registry/native-runtime-qualification.ts";
 
 const NETWORK_ID = "a".repeat(64);
 const NETWORK_NAME = "nemoclaw-q-0123456789ab";
@@ -62,6 +64,16 @@ function engine(outputs: readonly EngineOutput[]): {
 }
 
 describe("native runtime provider-network authority", () => {
+  it("uses distinct canonical sandbox names for every qualified agent", () => {
+    const names = NATIVE_RUNTIME_QUALIFICATION_AGENTS.map((agent) =>
+      nativeRuntimeQualificationCaseInternals.lifecycleSandboxName(agent),
+    );
+
+    expect(names).toEqual(["q-openclaw", "q-hermes", "q-deepagents"]);
+    expect(names.every((name) => isValidName(name))).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
   it("resolves Podman 6.1 name output to one immutable labeled network ID", () => {
     const runtime = engine([NETWORK_NAME, inspection(), inspection()]);
 
