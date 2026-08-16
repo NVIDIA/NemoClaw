@@ -668,6 +668,8 @@ reviews them; redaction reduces exposure but does not prove that a report is
 credential-free. The command exits nonzero when a selected run is unfinished or
 failed-run evidence is unavailable. Do not accept a partial report as the
 weekly ledger.
+Every GitHub read names `NVIDIA/NemoClaw`, so a fork or different checkout remote
+cannot substitute another repository's run data.
 The command also stops when a workflow reaches the 1,000-run collection limit.
 Narrow the selected range and retry so the report cannot omit older runs silently.
 

@@ -15,6 +15,7 @@ import {
 } from "./unit-test-gaps-core.mts";
 
 const execFileAsync = promisify(execFile);
+const NEMOCLAW_REPOSITORY = "NVIDIA/NemoClaw";
 const DEFAULT_WORKFLOWS = ["e2e.yaml", "portable-profile-e2e.yaml"];
 const MAX_GH_BUFFER_BYTES = 128 * 1024 * 1024;
 const MAX_RUNS_PER_WORKFLOW = 1000;
@@ -140,28 +141,38 @@ export function requireCompleteRunSelection(workflow: string, runCount: number):
   );
 }
 
+export function listRunsArgs(workflow: string, range: { from: string; to: string }): string[] {
+  return [
+    "run",
+    "list",
+    "--repo",
+    NEMOCLAW_REPOSITORY,
+    "--workflow",
+    workflow,
+    "--branch",
+    "main",
+    "--event",
+    "push",
+    "--created",
+    `${range.from}..${range.to}`,
+    "--limit",
+    String(MAX_RUNS_PER_WORKFLOW),
+    "--json",
+    "attempt,conclusion,createdAt,databaseId,event,headBranch,headSha,name,status,url",
+  ];
+}
+
+export function failedRunLogArgs(databaseId: number): string[] {
+  return ["run", "view", String(databaseId), "--repo", NEMOCLAW_REPOSITORY, "--log-failed"];
+}
+
 async function collectRuns(
   workflows: readonly string[],
   range: { from: string; to: string },
 ): Promise<E2ERunRecord[]> {
   const records = await Promise.all(
     workflows.map(async (workflow) => {
-      const output = await gh([
-        "run",
-        "list",
-        "--workflow",
-        workflow,
-        "--branch",
-        "main",
-        "--event",
-        "push",
-        "--created",
-        `${range.from}..${range.to}`,
-        "--limit",
-        String(MAX_RUNS_PER_WORKFLOW),
-        "--json",
-        "attempt,conclusion,createdAt,databaseId,event,headBranch,headSha,name,status,url",
-      ]);
+      const output = await gh(listRunsArgs(workflow, range));
       const parsed = JSON.parse(output) as unknown;
       if (!Array.isArray(parsed)) throw new Error(`GitHub returned malformed runs for ${workflow}`);
       requireCompleteRunSelection(workflow, parsed.length);
@@ -197,7 +208,7 @@ async function collectEvidence(runs: readonly E2ERunRecord[]): Promise<RunLogEvi
   const logs = new Map<number, RunLogEvidence>();
   await parallelMap(failures, DEFAULT_CONCURRENCY, async (run) => {
     try {
-      const log = await gh(["run", "view", String(run.databaseId), "--log-failed"]);
+      const log = await gh(failedRunLogArgs(run.databaseId));
       logs.set(run.databaseId, { log, run });
     } catch (error) {
       logs.set(run.databaseId, {

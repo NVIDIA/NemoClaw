@@ -11,7 +11,12 @@ import {
   normalizeFailureSignature,
   type RunLogEvidence,
 } from "../../../tools/e2e/unit-test-gaps-core.mts";
-import { requireCompleteRunSelection, rollingRange } from "../../../tools/e2e/unit-test-gaps.mts";
+import {
+  failedRunLogArgs,
+  listRunsArgs,
+  requireCompleteRunSelection,
+  rollingRange,
+} from "../../../tools/e2e/unit-test-gaps.mts";
 
 function evidence(overrides: Partial<RunLogEvidence> = {}): RunLogEvidence {
   return {
@@ -69,6 +74,23 @@ describe("weekly E2E unit-test gap analysis", () => {
     );
   });
 
+  it("binds workflow and failed-log reads to the canonical repository", () => {
+    expect(
+      listRunsArgs("e2e.yaml", {
+        from: "2026-08-09T20:00:00.000Z",
+        to: "2026-08-16T20:00:00.000Z",
+      }),
+    ).toEqual(expect.arrayContaining(["--repo", "NVIDIA/NemoClaw", "--workflow", "e2e.yaml"]));
+    expect(failedRunLogArgs(12345678)).toEqual([
+      "run",
+      "view",
+      "12345678",
+      "--repo",
+      "NVIDIA/NemoClaw",
+      "--log-failed",
+    ]);
+  });
+
   it("groups volatile BuildKit references under the missing build-input contract", () => {
     expect(
       normalizeFailureSignature(
@@ -93,6 +115,20 @@ describe("weekly E2E unit-test gap analysis", () => {
         signature: "Error: Portable Podman readiness failed at service activation",
       },
       { job: "rootless-linux", signature: "npm error code EAI_AGAIN" },
+    ]);
+  });
+
+  it("strips terminal controls after a timestamp and preserves an unprefixed message", () => {
+    expect(
+      extractJobSignatures(
+        [
+          "online\tstep\t2026-08-12T10:00:00.0000000Z \u001b[31mError: colored failure\u001b[0m",
+          "offline\tstep\tError: offline evidence failed",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { job: "online", signature: "Error: colored failure" },
+      { job: "offline", signature: "Error: offline evidence failed" },
     ]);
   });
 

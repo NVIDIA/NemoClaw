@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stripVTControlCharacters } from "node:util";
+
 type SanitizationModule = typeof import("../../src/lib/readiness/sanitize.ts");
 
 const loadedSanitization = (await import("../../src/lib/readiness/sanitize.ts")) as unknown as {
@@ -56,7 +58,6 @@ export interface UnitGapReport {
   groups: UnitGapGroup[];
 }
 
-const ANSI_PATTERN = /\u001b\[[0-9;]*[A-Za-z]/gu;
 const TIMESTAMP_PATTERN = /^\uFEFF?\d{4}-\d{2}-\d{2}T\S+Z\s+/u;
 const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
@@ -84,11 +85,9 @@ function stripLogPrefix(line: string): { job: string; message: string } | null {
   const fields = line.split("\t");
   if (fields.length < 3) return null;
   const job = fields[0]!.trim();
-  const message = fields
-    .slice(2)
-    .join("\t")
-    .replace(ANSI_PATTERN, "")
-    .replace(TIMESTAMP_PATTERN, "");
+  const message = stripVTControlCharacters(
+    fields.slice(2).join("\t").replace(TIMESTAMP_PATTERN, ""),
+  );
   return job.length === 0 ? null : { job, message: message.trim() };
 }
 
