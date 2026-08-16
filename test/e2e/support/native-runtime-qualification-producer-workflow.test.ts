@@ -103,6 +103,10 @@ describe("native runtime qualification producer workflow", () => {
     const aardvarkSource = step(toolchain, "Check out the pinned Aardvark DNS source");
     const setupGo = step(toolchain, "Set up pinned Go for the Podman build");
     const setupRust = step(toolchain, "Set up pinned Rust for the network helper builds");
+    const buildDependencies = step(
+      toolchain,
+      "Install build dependencies from the signed runner OS repository",
+    );
     const build = step(toolchain, "Build and package the pinned native toolchain");
     const upload = step(toolchain, "Upload the pinned native Podman toolchain");
 
@@ -151,11 +155,14 @@ describe("native runtime qualification producer workflow", () => {
       "actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
     );
     expect(setupRust.with).toEqual({ toolchain: "1.88.0", cache: false, rustflags: "" });
+    expect(buildDependencies.run).not.toContain("libsubid-dev");
     expect(build.run).toContain("podman rootlessport PREFIX=/usr/local");
     expect(build.run).not.toContain("quadlet");
     expect(build.run).toContain("make --directory=.netavark-source --jobs=2 build");
     expect(build.run).toContain("make --directory=.aardvark-source --jobs=2 build");
     expect(build.run).toContain("sha256sum");
+    expect(build.run).toContain("Pinned Podman build has an unresolved runtime dependency");
+    expect(build.run).toContain("Pinned Podman build must not require the optional libsubid ABI");
     expect(build.run).toMatch(/sha256sum[\s\S]+manifest\.json/u);
     expect(build.run).toContain('"nemoclaw-native-podman-toolchain-v1"');
     expect(upload.with).toMatchObject({

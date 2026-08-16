@@ -1079,7 +1079,7 @@ jobs:
             gcc git libapparmor-dev libassuan-dev libbtrfs-dev libc6-dev \
             libdevmapper-dev libglib2.0-dev libgpg-error-dev libgpgme-dev \
             libprotobuf-c-dev libprotobuf-dev libseccomp-dev libselinux1-dev \
-            libsqlite3-dev libsubid-dev libsystemd-dev make pkg-config protobuf-compiler
+            libsqlite3-dev libsystemd-dev make pkg-config protobuf-compiler
 
       - name: Build and package the pinned native toolchain
         env:
@@ -1109,6 +1109,16 @@ jobs:
             make --directory=.netavark-source --jobs=2 build
           SOURCE_DATE_EPOCH=1785940850 CI=1 \
             make --directory=.aardvark-source --jobs=2 build
+
+          podman_dependencies="$(ldd .podman-source/bin/podman)"
+          if grep -F "not found" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Podman build has an unresolved runtime dependency" >&2
+            exit 1
+          fi
+          if grep -F "libsubid" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Podman build must not require the optional libsubid ABI" >&2
+            exit 1
+          fi
 
           install -D -m 0755 .podman-source/bin/podman "$TOOLCHAIN_DIRECTORY/bin/podman"
           install -D -m 0755 .podman-source/bin/rootlessport \
