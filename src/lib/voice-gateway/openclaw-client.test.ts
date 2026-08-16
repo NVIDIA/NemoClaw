@@ -210,7 +210,7 @@ describe("OpenClaw voice gateway client", () => {
     const { result, events, socket } = await runTurn(
       replyHandlers([
         { seq: 2, state: "delta", deltaText: "world", message: assistantMessage("Hello world") },
-        { seq: 7, state: "delta", deltaText: "!", message: assistantMessage("Hello world!") },
+        { seq: 7, state: "delta", deltaText: "", message: assistantMessage("Hello world") },
         {
           sessionKey: "other-session",
           seq: 7,

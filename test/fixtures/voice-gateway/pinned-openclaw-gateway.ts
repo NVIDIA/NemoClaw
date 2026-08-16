@@ -78,8 +78,8 @@ export class PinnedOpenClawGateway {
       runId: "pinned-openclaw-run",
       seq: 7,
       state: "delta",
-      deltaText: "!",
-      message: this.assistantMessage("Hello world!"),
+      deltaText: "",
+      message: this.assistantMessage("Hello world"),
     });
     this.chat({
       sessionKey,
