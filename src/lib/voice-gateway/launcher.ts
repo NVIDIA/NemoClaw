@@ -108,8 +108,29 @@ function closeDescriptors(descriptors: readonly number[]): void {
   if (cleanupError !== undefined) throw cleanupError;
 }
 
+/** Terminate and reap a spawned gateway that cannot be returned to its caller. */
+async function terminateChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    let forceTimer: NodeJS.Timeout;
+    const settled = () => {
+      clearTimeout(forceTimer);
+      child.off("error", settled);
+      child.off("exit", settled);
+      resolve();
+    };
+    forceTimer = setTimeout(() => {
+      if (!child.kill("SIGKILL")) settled();
+    }, 5_000);
+    forceTimer.unref();
+    child.once("error", settled);
+    child.once("exit", settled);
+    if (!child.kill("SIGTERM")) settled();
+  });
+}
+
 /** Launch the real gateway with only the two selected credential objects inherited. */
-export function launchVoiceGateway(options: VoiceGatewayLaunchOptions): ChildProcess {
+export async function launchVoiceGateway(options: VoiceGatewayLaunchOptions): Promise<ChildProcess> {
   const descriptors: number[] = [];
   let child: ChildProcess | undefined;
   let operationError: { readonly value: unknown } | undefined;
@@ -142,11 +163,16 @@ export function launchVoiceGateway(options: VoiceGatewayLaunchOptions): ChildPro
     operationError = { value: error };
   }
 
+  let cleanupError: unknown;
   try {
     closeDescriptors(descriptors);
   } catch (error) {
-    if (operationError === undefined) throw error;
+    cleanupError = error;
   }
   if (operationError !== undefined) throw operationError.value;
+  if (cleanupError !== undefined) {
+    await terminateChild(child!);
+    throw cleanupError;
+  }
   return child!;
 }

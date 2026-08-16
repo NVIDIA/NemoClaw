@@ -4518,7 +4518,7 @@ The command requires the exact feature gate `NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY
 Any other value stops the command before argument parsing, credential reads, or listener creation.
 Other experimental feature gates do not enable this command.
 
-Before starting the adapter, the bounded VoiceClaw launcher opens two owner-only regular files without following symbolic links and maps only these credential descriptors into the child process:
+Before starting the adapter, the bounded voice-gateway launcher opens two owner-only regular files without following symbolic links and maps only these inherited file descriptors into the child process:
 
 - Descriptor `3` supplies the deployment credential used during session admission.
 - Descriptor `4` supplies the OpenClaw credential with `operator.read` and `operator.write` scopes.
@@ -4531,9 +4531,11 @@ The launcher does not place credential source paths or values in arguments or en
 It intentionally inherits only credential descriptors `3` and `4` across this exec, then closes its parent copies.
 To rotate either credential, stop the command and restart it with newly opened descriptors.
 NemoClaw does not send the OpenClaw credential to the runtime.
+The external Gabby integration owns each source file's location and lifetime, while the identity lifecycle from #8403 owns replacement, removal, and revocation.
+Closing the descriptors or stopping the gateway does not remove a source file or revoke its credential; rotation and removal must replace or delete the source and revoke the old value through that lifecycle owner.
 
 The launcher is an internal library boundary for the external Gabby scenario, not another CLI command and not part of normal NemoClaw managed startup.
-Gabby calls `launchVoiceGateway()` with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that entry point and verifies descriptor cleanup and restart-based credential rotation.
+Gabby calls the shipped `runVoiceGatewayLaunch()` action with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that production entry point and verifies descriptor cleanup and restart-based credential rotation.
 The launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
 Do not run this child command directly because it requires the launcher's descriptor mapping.
 

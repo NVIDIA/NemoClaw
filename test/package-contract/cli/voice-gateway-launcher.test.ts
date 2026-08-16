@@ -10,8 +10,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildVoiceGatewayLaunchContract,
-  launchVoiceGateway,
 } from "../../../dist/lib/voice-gateway/launcher";
+import { runVoiceGatewayLaunch } from "../../../dist/lib/actions/voice-gateway/launch";
 import {
   openFileTargets,
   requestSession,
@@ -59,7 +59,7 @@ describe("voice gateway process launch contract", () => {
     expect(JSON.stringify(contract)).not.toContain(DEPLOYMENT_BEARER);
     expect(JSON.stringify(contract)).not.toContain(OPENCLAW_CREDENTIAL);
 
-    const first = launchVoiceGateway(options);
+    const first = await runVoiceGatewayLaunch(options);
     children.push(first);
     await waitForGatewayListening(first);
     expect(openFileTargets(first.pid!)).not.toContain(deploymentCredentialPath);
@@ -68,7 +68,7 @@ describe("voice gateway process launch contract", () => {
     await stopGateway(first);
 
     fs.writeFileSync(deploymentCredentialPath, ROTATED_DEPLOYMENT_BEARER, { mode: 0o600 });
-    const second = launchVoiceGateway(options);
+    const second = await runVoiceGatewayLaunch(options);
     children.push(second);
     await waitForGatewayListening(second);
     expect(openFileTargets(second.pid!)).not.toContain(deploymentCredentialPath);

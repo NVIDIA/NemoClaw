@@ -4,8 +4,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, spawn: vi.fn() };
+});
+
+import { spawn } from "node:child_process";
 
 import { buildVoiceGatewayLaunchContract, launchVoiceGateway } from "./launcher";
 
@@ -32,6 +41,7 @@ function options() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -47,7 +57,7 @@ describe("voice gateway launcher", () => {
     expect(contract.env).toEqual({ NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY: "1" });
   });
 
-  it("rejects a symbolic-link credential source before launch (#9235)", () => {
+  it("rejects a symbolic-link credential source before launch (#9235)", async () => {
     const launchOptions = options();
     const target = path.join(path.dirname(launchOptions.deploymentCredentialPath), "target");
     fs.writeFileSync(target, "deployment-credential-for-launcher-012345", { mode: 0o600 });
@@ -58,11 +68,46 @@ describe("voice gateway launcher", () => {
       { mode: 0o600 },
     );
 
-    expect(() => launchVoiceGateway(launchOptions)).toThrow("symbolic link");
-    expect(() => launchVoiceGateway(launchOptions)).toThrowError(
+    await expect(launchVoiceGateway(launchOptions)).rejects.toThrow("symbolic link");
+    await expect(launchVoiceGateway(launchOptions)).rejects.toThrowError(
       expect.objectContaining({
         message: expect.not.stringContaining(launchOptions.deploymentCredentialPath),
       }),
     );
+  });
+
+  it("terminates and reaps the child when parent descriptor cleanup fails (#9235)", async () => {
+    const launchOptions = options();
+    fs.writeFileSync(
+      launchOptions.deploymentCredentialPath,
+      "deployment-credential-for-launcher-012345",
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      launchOptions.openClawCredentialPath,
+      "openclaw-credential-for-launcher-01234567",
+      { mode: 0o600 },
+    );
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => {
+        queueMicrotask(() => child.emit("exit", null, "SIGTERM"));
+        return true;
+      }),
+    });
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const close = fs.closeSync.bind(fs);
+    vi.spyOn(fs, "closeSync")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("close failed"), { code: "EIO" });
+      })
+      .mockImplementation(close);
+
+    await expect(launchVoiceGateway(launchOptions)).rejects.toThrow("close failed");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
   });
 });
