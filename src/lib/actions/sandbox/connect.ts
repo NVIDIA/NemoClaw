@@ -5,6 +5,8 @@ import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
+
+  OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
@@ -12,6 +14,8 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { retryUntil } from "../../core/retry";
+
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
@@ -62,12 +66,10 @@ import {
   buildGatewayInferenceSetArgs,
 } from "./connect-inference-gateway";
 import {
+  buildSandboxInferenceRouteProbeArgs,
   type InferenceRouteProbeAgent,
-  type InferenceRouteProbeOptions,
-  probeSandboxInferenceRoute,
-  type SandboxInferenceRouteProbe,
-} from "./connect-inference-route-retry";
-export type { InferenceRouteProbeOptions, SandboxInferenceRouteProbe } from "./connect-inference-route-retry";
+  parseSandboxInferenceRouteProbeResult,
+} from "./connect-inference-route-probe";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
@@ -123,6 +125,19 @@ type SpawnLikeResult = {
 type SandboxListProbe = {
   status: number | null;
   output: string;
+};
+
+
+export type SandboxInferenceRouteProbe = {
+  healthy: boolean;
+  broken: boolean;
+  httpStatus?: number;
+  detail: string;
+};
+
+type InferenceRouteProbeOptions = {
+  attempts?: number;
+  delayMs?: number;
 };
 
 type SandboxInferenceRouteEnsureResult = {
@@ -386,6 +401,48 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
       lifecycle.status || lifecycle.gatewayInfo || "",
     );
   }
+}
+
+
+function sleepSync(milliseconds: number): void {
+  if (milliseconds <= 0) return;
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${milliseconds})`], {
+    stdio: "ignore",
+    timeout: milliseconds + 1_000,
+  });
+}
+
+function probeSandboxInferenceRoute(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
+): SandboxInferenceRouteProbe {
+  const attemptCount = Math.max(1, Math.floor(attempts));
+  return retryUntil(
+    () => {
+      // Keep the shell string inside the sandbox: curl write-out, body capture,
+      // and status classification must run as one bounded probe. sandboxName
+      // remains an argv value, so no user input is interpolated into the script.
+      const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
+        ignoreError: true,
+        includeStreams: true,
+        timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+      });
+      const parsed = parseSandboxInferenceRouteProbeResult(probe);
+      return {
+        healthy: parsed.healthy,
+        broken: parsed.broken,
+        httpStatus: parsed.httpStatus,
+        detail: parsed.detail,
+      };
+    },
+    {
+      accept: (result) => result.healthy,
+      retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
+      sleep: sleepSync,
+    },
+  );
 }
 
 

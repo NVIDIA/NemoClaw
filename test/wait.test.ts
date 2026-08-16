@@ -49,221 +49,106 @@ describe("wait utility", () => {
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
   });
 
-  it("retryUntil returns the first accepted result without sleeping (#9218)", () => {
+  const retryCases = [
+    { label: "accepts the first result", acceptAt: 1, delays: [10, 20], attempt: 1 },
+    { label: "accepts the third result", acceptAt: 3, delays: [10, 20, 30], attempt: 3 },
+    { label: "returns the exhausted result", acceptAt: 0, delays: [10, 20], attempt: 3 },
+    { label: "runs once without retries", acceptAt: 0, delays: [], attempt: 1 },
+  ] as const;
+
+  it.each(retryCases)("retryUntil $label (#9218)", ({ acceptAt, delays, attempt }) => {
+    const operation = vi.fn((currentAttempt: number) => `result-${currentAttempt}`);
+    const onRetry = vi.fn();
     const sleep = vi.fn();
-    const operation = vi.fn(() => "ready");
 
     const result = retryUntil(operation, {
-      accept: (value) => value === "ready",
-      retryDelaysMs: [10, 20],
+      accept: (_value, currentAttempt) => currentAttempt === acceptAt,
+      retryDelaysMs: delays,
+      onRetry,
       sleep,
     });
 
-    expect(result).toBe("ready");
-    expect(operation).toHaveBeenCalledOnce();
-    expect(operation).toHaveBeenCalledWith(1);
-    expect(sleep).not.toHaveBeenCalled();
+    expect(result).toBe(`result-${attempt}`);
+    expect(operation).toHaveBeenCalledTimes(attempt);
+    expect(sleep.mock.calls).toEqual(delays.slice(0, attempt - 1).map((delay) => [delay]));
+    expect(onRetry).toHaveBeenCalledTimes(attempt - 1);
   });
 
-  it("retryUntil uses each scheduled delay before accepting the third result (#9218)", () => {
-    const sleep = vi.fn();
+  it.each(["operation", "onRetry", "sleep"] as const)(
+    "retryUntil propagates a %s error before the next attempt (#9218)",
+    (failure) => {
+      const error = new Error(`${failure} failed`);
+      const operation = vi.fn(() => {
+        if (failure === "operation") throw error;
+        return "retry";
+      });
+      const onRetry = vi.fn(() => {
+        if (failure === "onRetry") throw error;
+      });
+      const sleep = vi.fn(() => {
+        if (failure === "sleep") throw error;
+      });
 
-    const result = retryUntil((attempt) => (attempt === 3 ? "ready" : "starting"), {
-      accept: (value) => value === "ready",
-      retryDelaysMs: [10, 20, 30],
-      sleep,
-    });
+      expect(() =>
+        retryUntil(operation, {
+          accept: () => false,
+          retryDelaysMs: [10],
+          onRetry,
+          sleep,
+        }),
+      ).toThrow(error);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledTimes(failure === "operation" ? 0 : 1);
+      expect(sleep).toHaveBeenCalledTimes(failure === "sleep" ? 1 : 0);
+    },
+  );
 
-    expect(result).toBe("ready");
-    expect(sleep.mock.calls).toEqual([[10], [20]]);
-  });
-
-  it("retryUntil returns the final unaccepted result after exhaustion (#9218)", () => {
-    const sleep = vi.fn();
-
-    const result = retryUntil((attempt) => `failure-${attempt}`, {
-      accept: () => false,
-      retryDelaysMs: [10, 20],
-      sleep,
-    });
-
-    expect(result).toBe("failure-3");
-    expect(sleep.mock.calls).toEqual([[10], [20]]);
-  });
-
-  it("retryUntil runs once with an empty retry schedule (#9218)", () => {
-    const operation = vi.fn(() => "failure");
-
-    const result = retryUntil(operation, {
-      accept: () => false,
-      retryDelaysMs: [],
-
-      sleep: vi.fn(),
-    });
-
-    expect(result).toBe("failure");
-    expect(operation).toHaveBeenCalledOnce();
-  });
-
-  it("retryUntil propagates an operation error without sleeping (#9218)", () => {
-    const sleep = vi.fn();
-    const error = new Error("operation failed");
-
-    expect(() =>
-      retryUntil(
-        () => {
-          throw error;
-        },
-        { accept: () => false, retryDelaysMs: [10], sleep },
-      ),
-    ).toThrow(error);
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
-  it("retryUntil propagates a sleep error without another attempt (#9218)", () => {
-    const operation = vi.fn(() => "starting");
-    const error = new Error("sleep failed");
-
-    expect(() =>
-      retryUntil(operation, {
-        accept: () => false,
-        retryDelaysMs: [10],
-        sleep: () => {
-          throw error;
-        },
-      }),
-    ).toThrow(error);
-    expect(operation).toHaveBeenCalledOnce();
-  });
-
-  it("retryUntil runs onRetry before sleep and propagates its error (#9218)", () => {
-    const events: string[] = [];
-    const error = new Error("retry callback failed");
-
-    expect(() =>
-      retryUntil((attempt) => `result-${attempt}`, {
-        accept: () => false,
-        retryDelaysMs: [10],
-        onRetry: (result, delayMs, attempt) => {
-          events.push(`${result}:${String(delayMs)}:${String(attempt)}`);
-          throw error;
-        },
-        sleep: () => events.push("sleep"),
-      }),
-    ).toThrow(error);
-    expect(events).toEqual(["result-1:10:1"]);
-  });
-
-  it("retryUntilAsync returns the first accepted result without sleeping (#9218)", async () => {
+  it.each(retryCases)("retryUntilAsync $label (#9218)", async ({ acceptAt, delays, attempt }) => {
+    const operation = vi.fn(async (currentAttempt: number) => `result-${currentAttempt}`);
+    const onRetry = vi.fn(async () => {});
     const sleep = vi.fn(async () => {});
-    const operation = vi.fn(async () => "ready");
 
     const result = await retryUntilAsync(operation, {
-      accept: (value) => value === "ready",
-      retryDelaysMs: [10, 20],
+      accept: (_value, currentAttempt) => currentAttempt === acceptAt,
+      retryDelaysMs: delays,
+      onRetry,
       sleep,
     });
 
-    expect(result).toBe("ready");
-    expect(operation).toHaveBeenCalledOnce();
-    expect(operation).toHaveBeenCalledWith(1);
-    expect(sleep).not.toHaveBeenCalled();
+    expect(result).toBe(`result-${attempt}`);
+    expect(operation).toHaveBeenCalledTimes(attempt);
+    expect(sleep.mock.calls).toEqual(delays.slice(0, attempt - 1).map((delay) => [delay]));
+    expect(onRetry).toHaveBeenCalledTimes(attempt - 1);
   });
 
-  it("retryUntilAsync uses each scheduled delay before accepting the third result (#9218)", async () => {
-    const sleep = vi.fn(async () => {});
+  it.each(["operation", "onRetry", "sleep"] as const)(
+    "retryUntilAsync propagates a %s error before the next attempt (#9218)",
+    async (failure) => {
+      const error = new Error(`${failure} failed`);
+      const operation = vi.fn(async () => {
+        if (failure === "operation") throw error;
+        return "retry";
+      });
+      const onRetry = vi.fn(async () => {
+        if (failure === "onRetry") throw error;
+      });
+      const sleep = vi.fn(async () => {
+        if (failure === "sleep") throw error;
+      });
 
-    const result = await retryUntilAsync(
-      async (attempt) => (attempt === 3 ? "ready" : "starting"),
-      {
-        accept: (value) => value === "ready",
-        retryDelaysMs: [10, 20, 30],
-        sleep,
-      },
-    );
-
-    expect(result).toBe("ready");
-    expect(sleep.mock.calls).toEqual([[10], [20]]);
-  });
-
-  it("retryUntilAsync awaits onRetry before sleep and propagates its error (#9218)", async () => {
-    const events: string[] = [];
-    const error = new Error("retry callback failed");
-
-    await expect(
-      retryUntilAsync(async (attempt) => `result-${attempt}`, {
-        accept: () => false,
-        retryDelaysMs: [10],
-        onRetry: async (result, delayMs, attempt) => {
-          await Promise.resolve();
-          events.push(`${result}:${String(delayMs)}:${String(attempt)}`);
-          throw error;
-        },
-        sleep: async () => {
-          events.push("sleep");
-        },
-      }),
-    ).rejects.toBe(error);
-    expect(events).toEqual(["result-1:10:1"]);
-  });
-
-  it("retryUntilAsync runs once with an empty retry schedule (#9218)", async () => {
-    const operation = vi.fn(async () => "failure");
-
-    const result = await retryUntilAsync(operation, {
-      accept: () => false,
-      retryDelaysMs: [],
-
-      sleep: vi.fn(async () => {}),
-    });
-
-    expect(result).toBe("failure");
-    expect(operation).toHaveBeenCalledOnce();
-  });
-
-  it("retryUntilAsync returns the final unaccepted result after exhaustion (#9218)", async () => {
-    const sleep = vi.fn(async () => {});
-
-    const result = await retryUntilAsync(async (attempt) => `failure-${attempt}`, {
-      accept: () => false,
-      retryDelaysMs: [10, 20],
-      sleep,
-    });
-
-    expect(result).toBe("failure-3");
-    expect(sleep.mock.calls).toEqual([[10], [20]]);
-  });
-
-  it("retryUntilAsync propagates an operation error without sleeping (#9218)", async () => {
-    const sleep = vi.fn(async () => {});
-    const error = new Error("operation failed");
-
-    await expect(
-      retryUntilAsync(
-        async () => {
-          throw error;
-        },
-        { accept: () => false, retryDelaysMs: [10], sleep },
-      ),
-    ).rejects.toBe(error);
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
-  it("retryUntilAsync propagates a sleep error without another attempt (#9218)", async () => {
-    const operation = vi.fn(async () => "starting");
-    const error = new Error("sleep failed");
-
-    await expect(
-      retryUntilAsync(operation, {
-        accept: () => false,
-        retryDelaysMs: [10],
-        sleep: async () => {
-          throw error;
-        },
-      }),
-    ).rejects.toBe(error);
-    expect(operation).toHaveBeenCalledOnce();
-  });
+      await expect(
+        retryUntilAsync(operation, {
+          accept: () => false,
+          retryDelaysMs: [10],
+          onRetry,
+          sleep,
+        }),
+      ).rejects.toBe(error);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledTimes(failure === "operation" ? 0 : 1);
+      expect(sleep).toHaveBeenCalledTimes(failure === "sleep" ? 1 : 0);
+    },
+  );
 
   it("waitUntil returns immediately when the condition is already true", () => {
     const sleeps: number[] = [];

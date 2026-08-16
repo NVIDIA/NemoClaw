@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
+import { retryUntilAsync } from "../../core/retry";
+
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
 import {
@@ -46,10 +50,8 @@ import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import {
   buildSandboxInferenceRouteHealth,
-  type InferenceRecoveryProbeDelay,
   type ProbeSandboxInferenceInvocation,
   probeSandboxInferenceGatewayHealth,
-  probeInferenceAfterGatewayRecovery,
   runSandboxInferenceInvocationProbe,
 } from "./inference-route-health";
 import {
@@ -68,7 +70,10 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
-type DelayInferenceRecoveryProbe = InferenceRecoveryProbeDelay;
+type DelayInferenceRecoveryProbe = (delayMs: number) => Promise<void>;
+
+const RECOVERED_INFERENCE_PROBE_ATTEMPTS = 3;
+const RECOVERED_INFERENCE_PROBE_DELAY_MS = 2_000;
 
 /**
  * Honest serving-process state while the self-report response and probe
@@ -579,11 +584,14 @@ export async function collectSandboxStatusSnapshot(
     try {
       const probe =
         opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
-      gatewayChain = await probeInferenceAfterGatewayRecovery({
-        recoveredManagedGateway,
-        probe: () => probe(sandboxName),
+      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
+      gatewayChain = await retryUntilAsync(() => probe(sandboxName), {
         accept: (result) => Boolean(result?.ok),
-        delay: opts.deps?.delayInferenceRecoveryProbe,
+        retryDelaysMs: Array.from(
+          { length: attempts - 1 },
+          () => RECOVERED_INFERENCE_PROBE_DELAY_MS,
+        ),
+        sleep: opts.deps?.delayInferenceRecoveryProbe ?? sleep,
       });
     } catch (error) {
       // This is a permanent fail-closed runtime boundary, but unexpected

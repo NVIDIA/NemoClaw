@@ -21,8 +21,6 @@ import {
 export type { SandboxInferenceInvocationResult } from "./inference-invocation-probe";
 export type ProbeSandboxInferenceInvocation = typeof probeSandboxInferenceInvocation;
 
-export { probeInferenceAfterGatewayRecovery } from "./status-inference-recovery-retry";
-export type { InferenceRecoveryProbeDelay } from "./status-inference-recovery-retry";
 
 export type SandboxInferenceRouteHealth = {
   ok: boolean;
