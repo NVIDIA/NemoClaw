@@ -560,6 +560,8 @@ interface SseEventCaptureResult {
   eventCounts: Map<string, number>;
   /** SSE `event:` types in stream order, for sequence validation. */
   eventSequence: string[];
+  /** Captured response body, retained only for protocol-specific validation. */
+  body: string;
 }
 
 /**
@@ -614,6 +616,7 @@ function captureSseEventCounts(
         detail,
         eventCounts: new Map(),
         eventSequence: [],
+        body: "",
       };
     }
 
@@ -632,6 +635,7 @@ function captureSseEventCounts(
         ),
         eventCounts: new Map(),
         eventSequence: [],
+        body: "",
       };
     }
 
@@ -654,6 +658,7 @@ function captureSseEventCounts(
       detail: "",
       eventCounts,
       eventSequence,
+      body,
     };
   } finally {
     cleanupTempDir(bodyFile, tempPrefix);
@@ -753,7 +758,18 @@ export interface AnthropicStreamingProbeResult {
   duplicateEvents: string[];
   /** Order violations, e.g. content deltas before message_start or after message_stop. */
   sequenceErrors: string[];
+  /** Structured tool-call contract violations when a named tool is required. */
+  toolCallErrors: AnthropicStreamingToolCallError[];
   message: string;
+}
+
+export type AnthropicStreamingToolCallError =
+  | "missing-expected-tool-use"
+  | "missing-tool-use-stop-reason";
+
+export interface AnthropicStreamingExpectations {
+  /** Require one structured `tool_use` content block for this exact tool name. */
+  expectedToolName?: string;
 }
 
 /**
@@ -791,6 +807,51 @@ function anthropicSequenceErrors(eventSequence: string[]): string[] {
   return errors;
 }
 
+function anthropicToolCallErrors(
+  body: string,
+  expectedToolName: string | undefined,
+): AnthropicStreamingToolCallError[] {
+  if (!expectedToolName) return [];
+  let hasExpectedToolUse = false;
+  let hasToolUseStopReason = false;
+
+  for (const eventBlock of body.split(/\r?\n\r?\n/)) {
+    const data = eventBlock
+      .split(/\r?\n/)
+      .flatMap((line) => {
+        const match = /^data:\s?(.*)$/i.exec(line);
+        return match ? [match[1]] : [];
+      })
+      .join("\n");
+    if (!data || data === "[DONE]") continue;
+    try {
+      const payload = JSON.parse(data) as {
+        type?: unknown;
+        content_block?: { type?: unknown; name?: unknown };
+        delta?: { stop_reason?: unknown };
+      };
+      if (
+        payload.type === "content_block_start" &&
+        payload.content_block?.type === "tool_use" &&
+        payload.content_block.name === expectedToolName
+      ) {
+        hasExpectedToolUse = true;
+      }
+      if (payload.type === "message_delta" && payload.delta?.stop_reason === "tool_use") {
+        hasToolUseStopReason = true;
+      }
+    } catch {
+      // Malformed data remains covered by the required structured observations
+      // below; never interpret JSON-shaped assistant text as a tool call.
+    }
+  }
+
+  return [
+    ...(hasExpectedToolUse ? [] : (["missing-expected-tool-use"] as const)),
+    ...(hasToolUseStopReason ? [] : (["missing-tool-use-stop-reason"] as const)),
+  ];
+}
+
 /**
  * Send a streaming request to an Anthropic-compatible `/v1/messages`
  * endpoint and verify the SSE event stream is well formed: the required
@@ -805,17 +866,19 @@ function anthropicSequenceErrors(eventSequence: string[]): string[] {
 export function runAnthropicStreamingEventProbe(
   argv: string[],
   opts: CurlProbeOptions = {},
+  expectations: AnthropicStreamingExpectations = {},
 ): AnthropicStreamingProbeResult {
   return withTraceSpan(
     "nemoclaw.inference.curl_anthropic_streaming_probe",
     getCurlProbeTraceAttributes(argv, opts),
-    () => runAnthropicStreamingEventProbeImpl(argv, opts),
+    () => runAnthropicStreamingEventProbeImpl(argv, opts, expectations),
   );
 }
 
 function runAnthropicStreamingEventProbeImpl(
   argv: string[],
   opts: CurlProbeOptions = {},
+  expectations: AnthropicStreamingExpectations = {},
 ): AnthropicStreamingProbeResult {
   try {
     const capture = captureSseEventCounts(argv, opts, "nemoclaw-anthropic-streaming-probe", true);
@@ -835,6 +898,7 @@ function runAnthropicStreamingEventProbeImpl(
         missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
         duplicateEvents: [],
         sequenceErrors: [],
+        toolCallErrors: [],
         message: `Streaming probe failed: ${compactText(capture.detail).slice(0, 200)}`,
       };
     }
@@ -847,7 +911,16 @@ function runAnthropicStreamingEventProbeImpl(
     );
     const sequenceErrors =
       missing.length === 0 ? anthropicSequenceErrors(capture.eventSequence) : [];
-    if (missing.length > 0 || duplicates.length > 0 || sequenceErrors.length > 0) {
+    const toolCallErrors =
+      missing.length === 0
+        ? anthropicToolCallErrors(capture.body, expectations.expectedToolName)
+        : [];
+    if (
+      missing.length > 0 ||
+      duplicates.length > 0 ||
+      sequenceErrors.length > 0 ||
+      toolCallErrors.length > 0
+    ) {
       const problems: string[] = [];
       if (duplicates.length > 0) {
         const detail = duplicates
@@ -861,12 +934,19 @@ function runAnthropicStreamingEventProbeImpl(
       if (sequenceErrors.length > 0) {
         problems.push(`emits events out of order (${sequenceErrors.join("; ")})`);
       }
+      if (toolCallErrors.includes("missing-expected-tool-use")) {
+        problems.push("does not emit the required structured tool_use content block");
+      }
+      if (toolCallErrors.includes("missing-tool-use-stop-reason")) {
+        problems.push("does not finish the tool request with stop_reason tool_use");
+      }
       emitCurlResultTraceEvent({
         ok: false,
         http_status: capture.httpStatus,
         missing_events_count: missing.length,
         duplicate_events_count: duplicates.length,
         sequence_errors_count: sequenceErrors.length,
+        tool_call_errors_count: toolCallErrors.length,
         curl_status: capture.curlStatus,
       });
       return {
@@ -876,9 +956,10 @@ function runAnthropicStreamingEventProbeImpl(
         missingEvents: missing,
         duplicateEvents: duplicates,
         sequenceErrors,
+        toolCallErrors,
         message:
           `Anthropic Messages streaming on this endpoint ${problems.join(" and ")}. ` +
-          "Agent runs use the streaming path and would fail with an empty final response.",
+          "Agent runs use the streaming path and require native protocol events.",
       };
     }
 
@@ -888,6 +969,7 @@ function runAnthropicStreamingEventProbeImpl(
       missing_events_count: 0,
       duplicate_events_count: 0,
       sequence_errors_count: 0,
+      tool_call_errors_count: 0,
       curl_status: capture.curlStatus,
     });
     return {
@@ -897,6 +979,7 @@ function runAnthropicStreamingEventProbeImpl(
       missingEvents: [],
       duplicateEvents: [],
       sequenceErrors: [],
+      toolCallErrors: [],
       message: "",
     };
   } catch (error) {
@@ -918,6 +1001,7 @@ function runAnthropicStreamingEventProbeImpl(
       missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
       duplicateEvents: [],
       sequenceErrors: [],
+      toolCallErrors: [],
       message: `Streaming probe error: ${detail}`,
     };
   }

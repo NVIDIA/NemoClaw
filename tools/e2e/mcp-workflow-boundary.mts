@@ -9,6 +9,14 @@ import {
   OPENSHELL_DEV_ARTIFACT_UPLOAD_NAME,
   UPLOAD_E2E_ARTIFACTS_ACTION,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  contentSha256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
+  MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
+  MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256,
+} from "./mcp-dev-workflow-boundary-digests.mts";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
@@ -46,6 +54,7 @@ const DEV_ARTIFACT_ENV = {
   OPENSHELL_DEV_EXPECTED_MANIFEST_SHA256: DEV_ARTIFACT_MANIFEST_OUTPUT,
   OPENSHELL_DEV_EXPECTED_SOURCE_COMMIT: DEV_ARTIFACT_SOURCE_OUTPUT,
 } as const;
+const DEV_TRUSTED_NODE_SETUP_NAME = "Set up Node.js for trusted OpenShell verification";
 const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-checksums-sha256.txt",
@@ -272,6 +281,14 @@ function validateJobSecurity(
   job: UnknownRecord,
   canonicalDockerAuth: UnknownRecord,
 ): void {
+  if (jobName === "mcp-bridge-dev") {
+    const { steps: _jobSteps, ...jobExecutionContext } = job;
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
+      errors.push(
+        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      );
+    }
+  }
   const permissions = asRecord(job.permissions);
   if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
     errors.push(`${jobName} must use only contents:read permissions`);
@@ -314,6 +331,17 @@ function validateJobSecurity(
   }
   const steps = asSteps(job);
   const checkoutIndex = steps.indexOf(checkouts[0] ?? {});
+  const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
+  const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
+  if (
+    jobName === "mcp-bridge-dev" &&
+    (contentSha256(trustedNodeSetup) !== MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ||
+      trustedNodeSetupIndex !== checkoutIndex - 1)
+  ) {
+    errors.push(
+      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
+    );
+  }
   if (steps.indexOf(login) !== checkoutIndex + 1) {
     errors.push(`${jobName} must authenticate immediately after credential-free checkout`);
   }
@@ -535,7 +563,15 @@ function validateJobExecution(
       errors.push("mcp-bridge-dev must not maintain a second OpenShell installer");
     }
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
+    const dockerAuth = namedStep(job, "Authenticate to Docker Hub");
+    const prepare = namedStep(job, "Prepare E2E workspace");
+    const trustedNodeSetup = namedStep(job, DEV_TRUSTED_NODE_SETUP_NAME);
+    const trustedNodeSetupIndex = steps.indexOf(trustedNodeSetup);
+    const dockerAuthIndex = steps.indexOf(dockerAuth);
+    const prepareIndex = steps.indexOf(prepare);
     const trustedCheckoutIndex = steps.indexOf(trustedCheckout);
+    const installIndex = steps.indexOf(install);
+    const restoreCliIndex = steps.indexOf(restoreCli);
     const trustedInstallSequence = [
       trustedCheckout,
       restoreArtifact,
@@ -544,14 +580,35 @@ function validateJobExecution(
       install,
     ];
     if (
-      steps.indexOf(restoreCli) < 0 ||
-      trustedCheckoutIndex <= steps.indexOf(restoreCli) ||
+      dockerAuthIndex !== trustedNodeSetupIndex + 2 ||
+      trustedCheckoutIndex !== dockerAuthIndex + 1 ||
+      prepareIndex !== installIndex + 1 ||
+      restoreCliIndex !== prepareIndex + 1 ||
       trustedInstallSequence.some(
         (step, offset) => steps[trustedCheckoutIndex + offset] !== step,
       )
     ) {
       errors.push(
-        "mcp-bridge-dev must keep trusted checkout, restore, verification, credential revocation, and install contiguous",
+        "mcp-bridge-dev must complete trusted Node.js setup, Docker auth, artifact verification, credential revocation, and installation before candidate dependency preparation and CLI restore",
+      );
+    }
+    if (
+      installIndex < 0 ||
+      contentSha256(steps.slice(0, installIndex + 1)) !==
+        MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256
+    ) {
+      errors.push(
+        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+      );
+    }
+    if (
+      prepareIndex < 0 ||
+      restoreCliIndex < prepareIndex ||
+      contentSha256(steps.slice(prepareIndex, restoreCliIndex + 1)) !==
+        MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256
+    ) {
+      errors.push(
+        "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
       );
     }
     if (compatibilitySteps.length !== 1 || compatibilitySteps[0] !== compatibility) {
@@ -1004,6 +1061,15 @@ export function validateMcpOpenShellWorkflowBoundary(
   const canonicalDockerAuth = namedStep(asRecord(jobs.live), "Authenticate to Docker Hub");
   const inputs = asRecord(asRecord(asRecord(workflow.on).workflow_dispatch).inputs);
   const globalEnv = asRecord(workflow.env);
+
+  if (
+    contentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
+    MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
+  ) {
+    errors.push(
+      "workflow must preserve the reviewed execution environment before candidate activation",
+    );
+  }
 
   if (Object.hasOwn(inputs, "openshell_channel")) {
     errors.push("the unified workflow must not expose a fan-out-wide OpenShell channel input");

@@ -470,17 +470,20 @@ Linux x64 archive and checksum file. It rejects release drift during download,
 then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
 
-The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify
-that same artifact with the trusted workflow revision. An exact-argument and
-asset-allowlisted `gh` shim presents only those retained files to the unchanged
-trusted `scripts/install-openshell.sh` path. A separate `curl` shim blocks
-network fallback. The installer still checks the release checksums and archive
-structure before installation. A missing, replaced, or corrupt upstream asset
-fails the resolver as an infrastructure failure. The job error reports the
-failed identifier and source URL, and `resolution.json` records them when the
-artifact directory remains writable. The three product shards do not start in
-that case, so the run cannot report a product failure before reaching product
-assertions.
+The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
+The `actions/setup-node` step selects Node.js 22 and disables automatic package manager caching before candidate checkout.
+An exact-argument and asset-allowlisted `gh` shim presents only the retained files to the unchanged trusted `scripts/install-openshell.sh` path.
+A separate `curl` shim blocks network fallback.
+The installer still checks the release checksums and archive structure before installation.
+Each product shard revokes Docker credentials, then installs OpenShell before candidate dependency preparation begins.
+Dependency preparation can read candidate project configuration and is the first candidate-controlled execution boundary.
+The candidate CLI artifact restore runs after dependency preparation.
+This ordering protects the bytes consumed by the trusted installer before candidate-controlled execution starts.
+It does not make the installed OpenShell files immutable after dependency preparation starts on the same runner.
+Subsequent product steps operate in candidate-controlled state.
+A missing, replaced, or corrupt upstream asset fails the resolver as an infrastructure failure.
+The job error reports the failed identifier and source URL, and `resolution.json` records them when the artifact directory remains writable.
+The three product shards do not start in that case, so the run cannot report a product failure before reaching product assertions.
 
 ## Larger-runner routing
 
