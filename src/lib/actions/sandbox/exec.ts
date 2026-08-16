@@ -412,6 +412,13 @@ function googleChatPairingActivationFailureMessage(
   );
 }
 
+function googleChatPairingUnmanagedCleanupFailureMessage(sandboxName: string): string {
+  return (
+    `  Google Chat pairing approval committed for '${sandboxName}', but post-command cleanup failed. ` +
+    "The approval was not rolled back. No owning managed gateway is registered, so NemoClaw did not attempt gateway activation."
+  );
+}
+
 export async function execSandbox(
   sandboxName: string,
   command: readonly string[],
@@ -486,8 +493,12 @@ export async function execSandbox(
     completion.commandCode === 0 && isGoogleChatPairingApproval(command);
   const managedGoogleChatApproval =
     googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
-  if (managedGoogleChatApproval && completion.cleanupError) {
-    console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+  if (googleChatApprovalCommitted && completion.cleanupError) {
+    console.error(
+      managedGoogleChatApproval
+        ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
+        : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+    );
   }
   if (exitCode === 0 && managedGoogleChatApproval) {
     let recordedAgent: string | null;

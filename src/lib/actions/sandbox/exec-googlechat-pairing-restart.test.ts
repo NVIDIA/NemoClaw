@@ -275,6 +275,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(restartGateway).not.toHaveBeenCalled();
     expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("approval was not rolled back"));
     expect(errorSpy).not.toHaveBeenCalledWith(
       expect.stringContaining("managed gateway activation failed"),
     );
