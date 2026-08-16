@@ -216,7 +216,18 @@ async function stopService(child: ChildProcess | null, socket: string): Promise<
     while (Date.now() < deadline && child.exitCode === null && child.signalCode === null) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) {
+      if (!child.kill("SIGKILL")) {
+        throw new Error("Rootless Podman API service rejected SIGKILL");
+      }
+      const killDeadline = Date.now() + 10_000;
+      while (Date.now() < killDeadline && child.exitCode === null && child.signalCode === null) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (child.exitCode === null && child.signalCode === null) {
+        throw new Error("Rootless Podman API service remained alive after SIGKILL");
+      }
+    }
   }
   fs.rmSync(socket, { force: true });
 }
