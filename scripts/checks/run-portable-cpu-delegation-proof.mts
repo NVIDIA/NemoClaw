@@ -20,6 +20,8 @@ export const PORTABLE_CPU_DELEGATION_PROOF_CONTRACT = Object.freeze({
   delegationDropIn: "/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf",
   delegationDropInContent: "[Service]\nDelegate=cpu memory pids\n",
   missingDelegationDropInContent: "[Service]\nDelegate=memory pids\n",
+  userSliceDropInName: "90-nemoclaw-cpu-controller.conf",
+  userSliceDropInContent: "[Slice]\nCPUWeight=100\n",
   appSliceDropIn: "/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf",
   appSliceDropInContent: "[Slice]\nCPUWeight=100\n",
   controllerEvidenceReadBytes: 4097,
@@ -93,23 +95,27 @@ type ProofContext = {
   readonly sourceCacheParent: string;
   readonly sourceCacheParentMarker: string;
   readonly stderr: Pick<NodeJS.WriteStream, "write">;
+  readonly userSliceDropInDirMarker: string;
+  readonly userSliceDropInMarker: string;
   readonly workspace: string;
   readonly workspaceTraverseMarker: string;
 };
 
+type PreparedDropIn = {
+  dirCreated: boolean;
+  dirId: string;
+  id: string;
+  temp: string;
+  tempId: string;
+};
+
 type PrepareState = {
-  appSliceDropInId: string;
-  appSliceDropInTemp: string;
-  appSliceDropInTempId: string;
-  createdAppSliceDropInDir: boolean;
+  readonly appSlice: PreparedDropIn;
   createdUser: boolean;
-  delegationDropInDirId: string;
-  delegationDropInId: string;
-  delegationDropInTemp: string;
-  delegationDropInTempId: string;
-  appSliceDropInDirId: string;
+  readonly delegation: PreparedDropIn;
   sourceCacheId: string;
   sourceCacheParentId: string;
+  readonly userSlice: PreparedDropIn;
   uid: string;
 };
 
@@ -128,6 +134,8 @@ const MARKER_NAMES = Object.freeze({
   delegationDropInDir: "nemoclaw-cpu-delegation-drop-in-dir-created",
   sourceCache: "nemoclaw-source-require-cache-created",
   sourceCacheParent: "nemoclaw-source-require-cache-parent-created",
+  userSliceDropIn: "nemoclaw-user-slice-drop-in-created",
+  userSliceDropInDir: "nemoclaw-user-slice-drop-in-dir-created",
   workspaceModes: "nemoclaw-workspace-traverse-modes",
 });
 
@@ -214,6 +222,10 @@ function requireNumeric(value: string | undefined, name: string): string {
   return value;
 }
 
+function userSliceDropIn(uid: string): string {
+  return `/etc/systemd/system/user-${uid}.slice.d/${PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.userSliceDropInName}`;
+}
+
 function context(deps: PortableCpuDelegationProofDeps): ProofContext {
   const env = deps.env ?? process.env;
   const workspace = requireAbsolutePath(env.GITHUB_WORKSPACE, "GITHUB_WORKSPACE");
@@ -254,6 +266,8 @@ function context(deps: PortableCpuDelegationProofDeps): ProofContext {
     sourceCacheParent: path.join(workspace, "node_modules", ".cache"),
     sourceCacheParentMarker: path.join(runnerTemp, MARKER_NAMES.sourceCacheParent),
     stderr: deps.stderr ?? process.stderr,
+    userSliceDropInDirMarker: path.join(runnerTemp, MARKER_NAMES.userSliceDropInDir),
+    userSliceDropInMarker: path.join(runnerTemp, MARKER_NAMES.userSliceDropIn),
     workspace,
     workspaceTraverseMarker: path.join(runnerTemp, MARKER_NAMES.workspaceModes),
   };
@@ -501,6 +515,53 @@ function createOwnedDropIn(
   }
 }
 
+function emptyPreparedDropIn(): PreparedDropIn {
+  return { dirCreated: false, dirId: "", id: "", temp: "", tempId: "" };
+}
+
+function prepareOwnedDropIn(
+  ctx: ProofContext,
+  state: PreparedDropIn,
+  target: string,
+  marker: string,
+  directoryMarker: string,
+  environmentPrefix: string,
+  template: string,
+  content: string,
+): void {
+  const directory = ensurePrivilegedDirectory(
+    ctx,
+    path.dirname(target),
+    directoryMarker,
+    `${environmentPrefix}_DROP_IN_DIR_CREATED`,
+    `${environmentPrefix}_DROP_IN_DIR_ID`,
+    `Proof drop-in directory ${path.dirname(target)}`,
+    (id) => {
+      state.dirCreated = true;
+      state.dirId = id;
+    },
+  );
+  state.dirCreated = directory.created;
+  state.dirId = directory.id;
+  createOwnedDropIn(
+    ctx,
+    target,
+    marker,
+    template,
+    content,
+    `${environmentPrefix}_DROP_IN_ID`,
+    `${environmentPrefix}_DROP_IN_CREATED`,
+    `${environmentPrefix}_DROP_IN_TEMP`,
+    `${environmentPrefix}_DROP_IN_TEMP_ID`,
+    `${environmentPrefix}_DROP_IN_TEMP_CREATED`,
+    (id, temporary, temporaryId) => {
+      state.id = id;
+      state.temp = temporary;
+      state.tempId = temporaryId;
+    },
+  );
+}
+
 function redact(ctx: ProofContext, content: string): string {
   return checked(ctx, "python3", ["test/e2e/lib/redact-text.py"], {
     cwd: ctx.workspace,
@@ -576,6 +637,17 @@ function appendInitialReceipts(ctx: ProofContext, userCommentValue: string): voi
     E2E_APP_SLICE_DROP_IN_TEMP: "",
     E2E_APP_SLICE_DROP_IN_TEMP_CREATED: "0",
     E2E_APP_SLICE_DROP_IN_TEMP_ID: "",
+    E2E_USER_SLICE_DROP_IN: "",
+    E2E_USER_SLICE_DROP_IN_DIR: "",
+    E2E_USER_SLICE_DROP_IN_DIR_CREATED: "0",
+    E2E_USER_SLICE_DROP_IN_DIR_ID: "",
+    E2E_USER_SLICE_DROP_IN_DIR_MARKER: ctx.userSliceDropInDirMarker,
+    E2E_USER_SLICE_DROP_IN_MARKER: ctx.userSliceDropInMarker,
+    E2E_USER_SLICE_DROP_IN_CREATED: "0",
+    E2E_USER_SLICE_DROP_IN_ID: "",
+    E2E_USER_SLICE_DROP_IN_TEMP: "",
+    E2E_USER_SLICE_DROP_IN_TEMP_CREATED: "0",
+    E2E_USER_SLICE_DROP_IN_TEMP_ID: "",
     E2E_SOURCE_CACHE_DIR: ctx.sourceCacheDir,
     E2E_SOURCE_CACHE_CREATED: "0",
     E2E_SOURCE_CACHE_ID: "",
@@ -791,12 +863,9 @@ function cleanupFailedPrepare(
     if (sudo(ctx, ["systemctl", "stop", `user@${state.uid}.service`]).status !== 0)
       complete = false;
   }
-  for (const [temporary, id] of [
-    [state.delegationDropInTemp, state.delegationDropInTempId],
-    [state.appSliceDropInTemp, state.appSliceDropInTempId],
-  ] as const) {
-    if (temporary && (!id || !removeOwnedTree(ctx, temporary, id))) complete = false;
-  }
+  for (const dropIn of [state.delegation, state.appSlice, state.userSlice])
+    if (dropIn.temp && (!dropIn.tempId || !removeOwnedTree(ctx, dropIn.temp, dropIn.tempId)))
+      complete = false;
   if (
     state.sourceCacheId &&
     !removeOwnedPath(ctx, ctx.sourceCacheDir, state.sourceCacheId, "directory")
@@ -807,29 +876,29 @@ function cleanupFailedPrepare(
     !removeDirectOwnedDirectory(ctx, ctx.sourceCacheParent, state.sourceCacheParentId)
   )
     complete = false;
+  const userSlicePath = state.uid ? userSliceDropIn(state.uid) : "";
+  for (const [dropIn, target] of [
+    [state.delegation, ctx.delegationDropIn],
+    [state.appSlice, ctx.appSliceDropIn],
+    [state.userSlice, userSlicePath],
+  ] as const)
+    if (dropIn.id && !removeOwnedPath(ctx, target, dropIn.id, "file")) complete = false;
   if (
-    state.delegationDropInId &&
-    !removeOwnedPath(ctx, ctx.delegationDropIn, state.delegationDropInId, "file")
+    (state.delegation.id || state.appSlice.id || state.userSlice.id) &&
+    sudo(ctx, ["systemctl", "daemon-reload"]).status !== 0
   )
     complete = false;
-  if (
-    state.appSliceDropInId &&
-    !removeOwnedPath(ctx, ctx.appSliceDropIn, state.appSliceDropInId, "file")
-  )
-    complete = false;
-  if (state.delegationDropInId && sudo(ctx, ["systemctl", "daemon-reload"]).status !== 0)
-    complete = false;
-  if (
-    state.createdAppSliceDropInDir &&
-    state.appSliceDropInDirId &&
-    !removeOwnedPath(ctx, ctx.appSliceDropInDir, state.appSliceDropInDirId, "directory")
-  )
-    complete = false;
-  if (
-    state.delegationDropInDirId &&
-    !removeOwnedPath(ctx, ctx.delegationDropInDir, state.delegationDropInDirId, "directory")
-  )
-    complete = false;
+  for (const [dropIn, target] of [
+    [state.appSlice, ctx.appSliceDropInDir],
+    [state.delegation, ctx.delegationDropInDir],
+    [state.userSlice, userSlicePath ? path.dirname(userSlicePath) : ""],
+  ] as const)
+    if (
+      dropIn.dirCreated &&
+      dropIn.dirId &&
+      !removeOwnedPath(ctx, target, dropIn.dirId, "directory")
+    )
+      complete = false;
   if (state.createdUser && userExists(ctx)) {
     if (userComment(ctx) === expectedComment) {
       if (sudo(ctx, ["loginctl", "disable-linger", ctx.proofUser]).status !== 0) complete = false;
@@ -851,18 +920,12 @@ function prepare(ctx: ProofContext): void {
   requireNumeric(ctx.env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
   const expectedComment = `nemoclaw-cpu-proof-${ctx.env.GITHUB_RUN_ID}-${ctx.env.GITHUB_RUN_ATTEMPT}`;
   const state: PrepareState = {
-    appSliceDropInId: "",
-    appSliceDropInTemp: "",
-    appSliceDropInTempId: "",
-    createdAppSliceDropInDir: false,
+    appSlice: emptyPreparedDropIn(),
     createdUser: false,
-    delegationDropInDirId: "",
-    delegationDropInId: "",
-    delegationDropInTemp: "",
-    delegationDropInTempId: "",
-    appSliceDropInDirId: "",
+    delegation: emptyPreparedDropIn(),
     sourceCacheId: "",
     sourceCacheParentId: "",
+    userSlice: emptyPreparedDropIn(),
     uid: "",
   };
   let complete = false;
@@ -880,6 +943,8 @@ function prepare(ctx: ProofContext): void {
       [ctx.delegationDropInDirMarker, "CPU delegation directory marker"],
       [ctx.appSliceDropInMarker, "app.slice proof ownership marker"],
       [ctx.appSliceDropInDirMarker, "app.slice directory marker"],
+      [ctx.userSliceDropInMarker, "per-user slice proof ownership marker"],
+      [ctx.userSliceDropInDirMarker, "per-user slice directory marker"],
       [ctx.sourceCacheMarker, "source-cache ownership marker"],
       [ctx.sourceCacheParentMarker, "source-cache parent ownership marker"],
       [ctx.workspaceTraverseMarker, "workspace traversal receipt"],
@@ -900,6 +965,11 @@ function prepare(ctx: ProofContext): void {
     appendGithubEnv(ctx, "E2E_CPU_DELEGATION_HOME", userHome(ctx));
     appendGithubEnv(ctx, "E2E_CPU_DELEGATION_UID", state.uid);
     appendGithubEnv(ctx, "E2E_CPU_DELEGATION_RUNTIME_DIR", `/run/user/${state.uid}`);
+    const userSlice = userSliceDropIn(state.uid);
+    const userSliceDir = path.dirname(userSlice);
+    appendGithubEnv(ctx, "E2E_USER_SLICE_DROP_IN", userSlice);
+    appendGithubEnv(ctx, "E2E_USER_SLICE_DROP_IN_DIR", userSliceDir);
+    if (sudoExists(ctx, userSlice)) throw new ProofError("Per-user slice proof drop-in exists.");
     prepareWorkspaceTraversal(ctx);
     prepareSourceCache(ctx, state);
     checkedSudo(ctx, [
@@ -913,65 +983,35 @@ function prepare(ctx: ProofContext): void {
       "0700",
       ctx.artifactDir,
     ]);
-    const appDir = ensurePrivilegedDirectory(
+    prepareOwnedDropIn(
       ctx,
-      ctx.appSliceDropInDir,
-      ctx.appSliceDropInDirMarker,
-      "E2E_APP_SLICE_DROP_IN_DIR_CREATED",
-      "E2E_APP_SLICE_DROP_IN_DIR_ID",
-      "app.slice proof drop-in directory",
-      (id) => {
-        state.createdAppSliceDropInDir = true;
-        state.appSliceDropInDirId = id;
-      },
+      state.userSlice,
+      userSlice,
+      ctx.userSliceDropInMarker,
+      ctx.userSliceDropInDirMarker,
+      "E2E_USER_SLICE",
+      ".nemoclaw-cpu-controller.XXXXXX",
+      PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.userSliceDropInContent,
     );
-    state.createdAppSliceDropInDir = appDir.created;
-    state.appSliceDropInDirId = appDir.id;
-    createOwnedDropIn(
+    prepareOwnedDropIn(
       ctx,
+      state.appSlice,
       ctx.appSliceDropIn,
       ctx.appSliceDropInMarker,
+      ctx.appSliceDropInDirMarker,
+      "E2E_APP_SLICE",
       ".nemoclaw-cpu-controller.XXXXXX",
       PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.appSliceDropInContent,
-      "E2E_APP_SLICE_DROP_IN_ID",
-      "E2E_APP_SLICE_DROP_IN_CREATED",
-      "E2E_APP_SLICE_DROP_IN_TEMP",
-      "E2E_APP_SLICE_DROP_IN_TEMP_ID",
-      "E2E_APP_SLICE_DROP_IN_TEMP_CREATED",
-      (id, temporary, temporaryId) => {
-        state.appSliceDropInId = id;
-        state.appSliceDropInTemp = temporary;
-        state.appSliceDropInTempId = temporaryId;
-      },
     );
-    const delegationDir = ensurePrivilegedDirectory(
+    prepareOwnedDropIn(
       ctx,
-      ctx.delegationDropInDir,
-      ctx.delegationDropInDirMarker,
-      "E2E_CPU_DELEGATION_DROP_IN_DIR_CREATED",
-      "E2E_CPU_DELEGATION_DROP_IN_DIR_ID",
-      "CPU delegation proof drop-in directory",
-      (id) => {
-        state.delegationDropInDirId = id;
-      },
-    );
-    state.delegationDropInDirId = delegationDir.id;
-    createOwnedDropIn(
-      ctx,
+      state.delegation,
       ctx.delegationDropIn,
       ctx.delegationDropInMarker,
+      ctx.delegationDropInDirMarker,
+      "E2E_CPU_DELEGATION",
       ".nemoclaw-cpu-delegation.XXXXXX",
       PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.missingDelegationDropInContent,
-      "E2E_CPU_DELEGATION_DROP_IN_ID",
-      "E2E_CPU_DELEGATION_DROP_IN_CREATED",
-      "E2E_CPU_DELEGATION_DROP_IN_TEMP",
-      "E2E_CPU_DELEGATION_DROP_IN_TEMP_ID",
-      "E2E_CPU_DELEGATION_DROP_IN_TEMP_CREATED",
-      (id, temporary, temporaryId) => {
-        state.delegationDropInId = id;
-        state.delegationDropInTemp = temporary;
-        state.delegationDropInTempId = temporaryId;
-      },
     );
     checkedSudo(ctx, ["systemctl", "daemon-reload"]);
     checkedSudo(ctx, ["loginctl", "enable-linger", ctx.proofUser]);
@@ -981,11 +1021,6 @@ function prepare(ctx: ProofContext): void {
       ctx.proofUser,
       path.join(ctx.artifactDir, "prepare-user-manager-diagnostics.txt"),
     );
-    checked(ctx, "grep", [
-      "-qw",
-      "cpu",
-      `/sys/fs/cgroup/user.slice/user-${state.uid}.slice/cgroup.controllers`,
-    ]);
     complete = true;
   } finally {
     if (!complete) cleanupFailedPrepare(ctx, state, expectedComment);
@@ -1031,12 +1066,27 @@ function expectedMarkerPath(ctx: ProofContext, envName: string, expected: string
     throw new ProofError(`${envName} does not match its fixed receipt path.`);
 }
 
+function userSliceReceiptPaths(ctx: ProofContext) {
+  const dropIn = userSliceDropIn(
+    requireNumeric(ctx.env.E2E_CPU_DELEGATION_UID, "E2E_CPU_DELEGATION_UID"),
+  );
+  const dropInDir = path.dirname(dropIn);
+  for (const [name, expected] of [
+    ["E2E_USER_SLICE_DROP_IN", dropIn],
+    ["E2E_USER_SLICE_DROP_IN_DIR", dropInDir],
+    ["E2E_USER_SLICE_DROP_IN_MARKER", ctx.userSliceDropInMarker],
+    ["E2E_USER_SLICE_DROP_IN_DIR_MARKER", ctx.userSliceDropInDirMarker],
+  ] as const)
+    expectedMarkerPath(ctx, name, expected);
+  return { dropIn, dropInDir };
+}
+
 function validateOwnedDropIn(
   ctx: ProofContext,
   target: string,
   marker: string,
   label: string,
-): string {
+): void {
   const expectedId = readMarker(ctx, marker);
   if (!/^[0-9]+:[0-9]+$/u.test(expectedId))
     throw new ProofError(`${label} ownership marker is invalid.`);
@@ -1047,10 +1097,10 @@ function validateOwnedDropIn(
   ) {
     throw new ProofError(`${label} identity changed before admission.`);
   }
-  return expectedId;
 }
 
 function admit(ctx: ProofContext): void {
+  const userSlice = userSliceReceiptPaths(ctx);
   expectedMarkerPath(ctx, "E2E_CPU_DELEGATION_DROP_IN_MARKER", ctx.delegationDropInMarker);
   expectedMarkerPath(ctx, "E2E_APP_SLICE_DROP_IN", ctx.appSliceDropIn);
   expectedMarkerPath(ctx, "E2E_APP_SLICE_DROP_IN_MARKER", ctx.appSliceDropInMarker);
@@ -1061,6 +1111,12 @@ function admit(ctx: ProofContext): void {
     "CPU delegation proof drop-in",
   );
   validateOwnedDropIn(ctx, ctx.appSliceDropIn, ctx.appSliceDropInMarker, "app.slice proof drop-in");
+  validateOwnedDropIn(
+    ctx,
+    userSlice.dropIn,
+    ctx.userSliceDropInMarker,
+    "per-user slice proof drop-in",
+  );
   const uid = requireNumeric(ctx.env.E2E_CPU_DELEGATION_UID, "E2E_CPU_DELEGATION_UID");
   checkedSudo(ctx, ["systemctl", "stop", `user@${uid}.service`]);
   checkedSudo(ctx, ["tee", ctx.delegationDropIn], {
@@ -1136,6 +1192,17 @@ type CreationState = "0" | "1" | "unrecorded";
 function creationState(ctx: ProofContext, name: string): CreationState | "invalid" {
   const value = ctx.env[name] ?? "0";
   return value === "0" || value === "1" || value === "unrecorded" ? value : "invalid";
+}
+
+function cleanupUserSliceReceiptPaths(ctx: ProofContext) {
+  const noCreatedObjects = [
+    "E2E_USER_SLICE_DROP_IN_CREATED",
+    "E2E_USER_SLICE_DROP_IN_DIR_CREATED",
+    "E2E_USER_SLICE_DROP_IN_TEMP_CREATED",
+  ].every((name) => creationState(ctx, name) === "0");
+  if (noCreatedObjects && !ctx.env.E2E_USER_SLICE_DROP_IN && !ctx.env.E2E_USER_SLICE_DROP_IN_DIR)
+    return undefined;
+  return userSliceReceiptPaths(ctx);
 }
 
 function ownershipReceipt(ctx: ProofContext, marker: string, idEnv: string): OwnershipReceipt {
@@ -1255,6 +1322,13 @@ function cleanupTemporary(
 
 function cleanup(ctx: ProofContext): void {
   let complete = true;
+  let userSlice: ReturnType<typeof cleanupUserSliceReceiptPaths>;
+  try {
+    userSlice = cleanupUserSliceReceiptPaths(ctx);
+  } catch (error) {
+    ctx.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    complete = false;
+  }
   const claimed = ctx.env.E2E_CPU_DELEGATION_USER_CLAIMED === "1";
   const expectedComment = ctx.env.E2E_CPU_DELEGATION_USER_COMMENT ?? "";
   let ownedUser = false;
@@ -1268,77 +1342,79 @@ function cleanup(ctx: ProofContext): void {
       complete = false;
     }
   }
-  if (
-    !cleanupTemporary(
-      ctx,
+  const temporaries: [string, string, string, string, string][] = [
+    [
       "E2E_CPU_DELEGATION_DROP_IN_TEMP",
       "E2E_CPU_DELEGATION_DROP_IN_TEMP_ID",
       "E2E_CPU_DELEGATION_DROP_IN_TEMP_CREATED",
       ctx.delegationDropInDir,
       ".nemoclaw-cpu-delegation.",
-    )
-  )
-    complete = false;
-  if (
-    !cleanupTemporary(
-      ctx,
+    ],
+    [
       "E2E_APP_SLICE_DROP_IN_TEMP",
       "E2E_APP_SLICE_DROP_IN_TEMP_ID",
       "E2E_APP_SLICE_DROP_IN_TEMP_CREATED",
       ctx.appSliceDropInDir,
       ".nemoclaw-cpu-controller.",
-    )
-  )
-    complete = false;
-  if (
-    !removeFromReceipt(
-      ctx,
+    ],
+  ];
+  if (userSlice)
+    temporaries.push([
+      "E2E_USER_SLICE_DROP_IN_TEMP",
+      "E2E_USER_SLICE_DROP_IN_TEMP_ID",
+      "E2E_USER_SLICE_DROP_IN_TEMP_CREATED",
+      userSlice.dropInDir,
+      ".nemoclaw-cpu-controller.",
+    ]);
+  for (const temporary of temporaries) if (!cleanupTemporary(ctx, ...temporary)) complete = false;
+  const dropIns: [string, string, string, string][] = [
+    [
       ctx.delegationDropIn,
       ctx.delegationDropInMarker,
       "E2E_CPU_DELEGATION_DROP_IN_ID",
       "E2E_CPU_DELEGATION_DROP_IN_CREATED",
-      "file",
-    )
-  )
-    complete = false;
-  if (
-    !removeFromReceipt(
-      ctx,
+    ],
+    [
       ctx.appSliceDropIn,
       ctx.appSliceDropInMarker,
       "E2E_APP_SLICE_DROP_IN_ID",
       "E2E_APP_SLICE_DROP_IN_CREATED",
-      "file",
-    )
-  )
-    complete = false;
+    ],
+  ];
+  if (userSlice)
+    dropIns.push([
+      userSlice.dropIn,
+      ctx.userSliceDropInMarker,
+      "E2E_USER_SLICE_DROP_IN_ID",
+      "E2E_USER_SLICE_DROP_IN_CREATED",
+    ]);
+  for (const dropIn of dropIns) if (!removeFromReceipt(ctx, ...dropIn, "file")) complete = false;
   if (!cleanupSourceCache(ctx)) complete = false;
   if (!cleanupSourceCacheParent(ctx)) complete = false;
   if (sudo(ctx, ["systemctl", "daemon-reload"]).status !== 0) complete = false;
-  if (
-    !removeFromReceipt(
-      ctx,
+  const directories: [string, string, string, string][] = [
+    [
       ctx.appSliceDropInDir,
       ctx.appSliceDropInDirMarker,
       "E2E_APP_SLICE_DROP_IN_DIR_ID",
       "E2E_APP_SLICE_DROP_IN_DIR_CREATED",
-      "directory",
-      "root:root 755",
-    )
-  )
-    complete = false;
-  if (
-    !removeFromReceipt(
-      ctx,
+    ],
+    [
       ctx.delegationDropInDir,
       ctx.delegationDropInDirMarker,
       "E2E_CPU_DELEGATION_DROP_IN_DIR_ID",
       "E2E_CPU_DELEGATION_DROP_IN_DIR_CREATED",
-      "directory",
-      "root:root 755",
-    )
-  )
-    complete = false;
+    ],
+  ];
+  if (userSlice)
+    directories.push([
+      userSlice.dropInDir,
+      ctx.userSliceDropInDirMarker,
+      "E2E_USER_SLICE_DROP_IN_DIR_ID",
+      "E2E_USER_SLICE_DROP_IN_DIR_CREATED",
+    ]);
+  for (const directory of directories)
+    if (!removeFromReceipt(ctx, ...directory, "directory", "root:root 755")) complete = false;
   if (ownedUser && userExists(ctx)) {
     if (sudo(ctx, ["loginctl", "disable-linger", ctx.proofUser]).status !== 0) complete = false;
     sudo(ctx, ["loginctl", "terminate-user", ctx.proofUser]);

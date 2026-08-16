@@ -30,6 +30,7 @@ import {
 
 const APP_DROP_IN = PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.appSliceDropIn;
 const DELEGATION_DROP_IN = PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.delegationDropIn;
+const USER_SLICE_DROP_IN = `/etc/systemd/system/user-1001.slice.d/${PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.userSliceDropInName}`;
 
 type PodmanProofWorkflow = Workflow & {
   on: { pull_request: { paths: string[]; types: string[] } };
@@ -179,11 +180,18 @@ class ProofFixtureRunner implements HostCommandRunner {
           : this.move(source, target);
       }
       case "rm":
-      case "rmdir":
         return target === this.failRemovalFor ||
           (this.failRemovalPrefix !== "" && target.startsWith(this.failRemovalPrefix))
           ? this.failed("removal fixture failure")
           : this.remove(target);
+      case "rmdir":
+        return [...this.files, ...this.directories].some(
+          (entry) => entry !== target && entry.startsWith(`${target}/`),
+        )
+          ? this.failed("directory not empty")
+          : target === this.failRemovalFor
+            ? this.failed("removal fixture failure")
+            : this.remove(target);
       case "tee":
         return this.failTee ? this.failed("tee fixture failure") : this.tee(target, options);
       case "cat":
@@ -427,7 +435,8 @@ describe("native Podman CPU proof workflow", () => {
       "npm run build:policy-boundary",
     );
     expect(
-      namedDelegationStep("Prepare app.slice CPU setting without service delegation").run,
+      namedDelegationStep("Prepare system and app slice CPU settings without service delegation")
+        .run,
     ).toBe(modeCommand("prepare"));
     expect(
       namedDelegationStep(
@@ -490,6 +499,7 @@ describe("native Podman CPU proof workflow", () => {
       ).toBe(true);
       expect(fixture.runner.files.has(DELEGATION_DROP_IN)).toBe(false);
       expect(fixture.runner.files.has(APP_DROP_IN)).toBe(false);
+      expect(fixture.runner.files.has(USER_SLICE_DROP_IN)).toBe(false);
       expect(fs.existsSync(fixture.env.E2E_WORKSPACE_TRAVERSE_MARKER!)).toBe(false);
       expect(fixture.runner.userCreated).toBe(false);
       expect(fixture.filesystem.calls.map(({ operation }) => operation)).toEqual(
@@ -599,6 +609,7 @@ describe("native Podman CPU proof workflow", () => {
       const cache = path.join(parent, "nemoclaw-source-require");
       const appTemp = fixture.env.E2E_APP_SLICE_DROP_IN_TEMP!;
       const delegationTemp = fixture.env.E2E_CPU_DELEGATION_DROP_IN_TEMP!;
+      const userSliceTemp = fixture.env.E2E_USER_SLICE_DROP_IN_TEMP!;
       const records = [
         [fixture.filesystem.envAtCreate.get(parent), "E2E_SOURCE_CACHE_PARENT_CREATED"],
         [fixture.runner.envAtCreate.get(cache), "E2E_SOURCE_CACHE_CREATED"],
@@ -610,8 +621,13 @@ describe("native Podman CPU proof workflow", () => {
           fixture.runner.envAtCreate.get(path.dirname(DELEGATION_DROP_IN)),
           "E2E_CPU_DELEGATION_DROP_IN_DIR_CREATED",
         ],
+        [
+          fixture.runner.envAtCreate.get(path.dirname(USER_SLICE_DROP_IN)),
+          "E2E_USER_SLICE_DROP_IN_DIR_CREATED",
+        ],
         [fixture.runner.envAtCreate.get(appTemp), "E2E_APP_SLICE_DROP_IN_TEMP_CREATED"],
         [fixture.runner.envAtCreate.get(delegationTemp), "E2E_CPU_DELEGATION_DROP_IN_TEMP_CREATED"],
+        [fixture.runner.envAtCreate.get(userSliceTemp), "E2E_USER_SLICE_DROP_IN_TEMP_CREATED"],
       ] as const;
       for (const [environment, name] of records)
         expect(environment).toContain(`${name}=unrecorded\n`);
@@ -621,9 +637,12 @@ describe("native Podman CPU proof workflow", () => {
       expect(fixture.runner.envAtCreate.get(delegationTemp)).toContain(
         `E2E_CPU_DELEGATION_DROP_IN_TEMP=${delegationTemp}\n`,
       );
+      expect(fixture.runner.envAtCreate.get(userSliceTemp)).toContain(
+        `E2E_USER_SLICE_DROP_IN_TEMP=${userSliceTemp}\n`,
+      );
     });
   });
-  it.each(["app", "delegation", "cache", "staging"] as const)(
+  it.each(["app", "delegation", "userSlice", "cache", "staging"] as const)(
     "rolls back an ordinary caught %s identity failure (#9188)",
     (targetName) => {
       withProofFixture((fixture) => {
@@ -632,6 +651,7 @@ describe("native Podman CPU proof workflow", () => {
           app: path.dirname(APP_DROP_IN),
           cache: path.join(parent, "nemoclaw-source-require"),
           delegation: path.dirname(DELEGATION_DROP_IN),
+          userSlice: path.dirname(USER_SLICE_DROP_IN),
           staging: `${path.dirname(APP_DROP_IN)}/.nemoclaw-cpu-controller.00000000-0000-4000-8000-000000000000`,
         } as const;
         const target = targets[targetName];
@@ -653,7 +673,7 @@ describe("native Podman CPU proof workflow", () => {
       expect(fs.existsSync(parent)).toBe(false);
     });
   });
-  it.each(["app", "delegation", "cache", "staging"] as const)(
+  it.each(["app", "delegation", "userSlice", "cache", "staging"] as const)(
     "recovers an exact %s post-create crash snapshot without an identity (#9188)",
     (targetName) => {
       withProofFixture((fixture) => {
@@ -662,6 +682,7 @@ describe("native Podman CPU proof workflow", () => {
           app: path.dirname(APP_DROP_IN),
           cache: path.join(parent, "nemoclaw-source-require"),
           delegation: path.dirname(DELEGATION_DROP_IN),
+          userSlice: path.dirname(USER_SLICE_DROP_IN),
           staging: `${path.dirname(APP_DROP_IN)}/.nemoclaw-cpu-controller.00000000-0000-4000-8000-000000000000`,
         } as const;
         const receipts = {
@@ -683,6 +704,12 @@ describe("native Podman CPU proof workflow", () => {
             "root:root 755",
             "nemoclaw-cpu-delegation-drop-in-dir-created",
           ],
+          userSlice: [
+            "E2E_USER_SLICE_DROP_IN_DIR_CREATED",
+            "E2E_USER_SLICE_DROP_IN_DIR_ID",
+            "root:root 755",
+            "nemoclaw-user-slice-drop-in-dir-created",
+          ],
           staging: [
             "E2E_APP_SLICE_DROP_IN_TEMP_CREATED",
             "E2E_APP_SLICE_DROP_IN_TEMP_ID",
@@ -692,6 +719,24 @@ describe("native Podman CPU proof workflow", () => {
         } as const;
         const target = targets[targetName];
         const [createdEnv, idEnv, ownerMode, markerName] = receipts[targetName];
+        Object.assign(
+          fixture.env,
+          targetName === "userSlice"
+            ? {
+                E2E_CPU_DELEGATION_UID: "1001",
+                E2E_USER_SLICE_DROP_IN: USER_SLICE_DROP_IN,
+                E2E_USER_SLICE_DROP_IN_DIR: path.dirname(USER_SLICE_DROP_IN),
+                E2E_USER_SLICE_DROP_IN_MARKER: path.join(
+                  fixture.env.RUNNER_TEMP!,
+                  "nemoclaw-user-slice-drop-in-created",
+                ),
+                E2E_USER_SLICE_DROP_IN_DIR_MARKER: path.join(
+                  fixture.env.RUNNER_TEMP!,
+                  "nemoclaw-user-slice-drop-in-dir-created",
+                ),
+              }
+            : {},
+        );
         fixture.env[createdEnv] = "unrecorded";
         fixture.env[idEnv] = "";
         fixture.env.E2E_APP_SLICE_DROP_IN_TEMP =
@@ -723,7 +768,7 @@ describe("native Podman CPU proof workflow", () => {
       expect(fs.existsSync(parent)).toBe(false);
     });
   });
-  it("rolls back the first published drop-in when the second publication fails (#9188)", () => {
+  it("rolls back earlier drop-ins when the final publication fails (#9188)", () => {
     withProofFixture((fixture) => {
       fixture.runner.failMoveFor = DELEGATION_DROP_IN;
       expect(() => runPortableCpuDelegationProofMode("prepare", fixture)).toThrow(
@@ -731,6 +776,7 @@ describe("native Podman CPU proof workflow", () => {
       );
       expect(fixture.runner.files.has(APP_DROP_IN)).toBe(false);
       expect(fixture.runner.files.has(DELEGATION_DROP_IN)).toBe(false);
+      expect(fixture.runner.files.has(USER_SLICE_DROP_IN)).toBe(false);
     });
   });
   it.each([
@@ -738,10 +784,10 @@ describe("native Podman CPU proof workflow", () => {
     [
       "drop-in directory",
       "directory",
-      "nemoclaw-app-slice-drop-in-dir-created",
-      "E2E_APP_SLICE_DROP_IN_DIR_ID",
+      "nemoclaw-user-slice-drop-in-dir-created",
+      "E2E_USER_SLICE_DROP_IN_DIR_ID",
     ],
-    ["drop-in", "file", "nemoclaw-app-slice-drop-in-created", "E2E_APP_SLICE_DROP_IN_ID"],
+    ["drop-in", "file", "nemoclaw-user-slice-drop-in-created", "E2E_USER_SLICE_DROP_IN_ID"],
   ] as const)(
     "retries a %s after receipt publication and rollback both fail (#9188)",
     (_name, targetName, markerName, idEnv) => {
@@ -751,8 +797,8 @@ describe("native Podman CPU proof workflow", () => {
             fixture.env.GITHUB_WORKSPACE!,
             "node_modules/.cache/nemoclaw-source-require",
           ),
-          directory: path.dirname(APP_DROP_IN),
-          file: APP_DROP_IN,
+          directory: path.dirname(USER_SLICE_DROP_IN),
+          file: USER_SLICE_DROP_IN,
         } as const;
         const target = targets[targetName];
         const marker = path.join(fixture.env.RUNNER_TEMP!, markerName);
@@ -776,11 +822,11 @@ describe("native Podman CPU proof workflow", () => {
   it("retries an identity-recorded temp after content and rollback fail (#9188)", () => {
     withProofFixture((fixture) => {
       fixture.runner.failTee = true;
-      fixture.runner.failRemovalPrefix = `${path.dirname(APP_DROP_IN)}/.nemoclaw-cpu-controller.`;
+      fixture.runner.failRemovalPrefix = `${path.dirname(USER_SLICE_DROP_IN)}/.nemoclaw-cpu-controller.`;
       expect(() => runPortableCpuDelegationProofMode("prepare", fixture)).toThrow(/tee fixture/u);
       loadGithubEnv(fixture);
-      const temporary = fixture.env.E2E_APP_SLICE_DROP_IN_TEMP!;
-      expect(fixture.env.E2E_APP_SLICE_DROP_IN_TEMP_ID).toMatch(/^[0-9]+:[0-9]+$/u);
+      const temporary = fixture.env.E2E_USER_SLICE_DROP_IN_TEMP!;
+      expect(fixture.env.E2E_USER_SLICE_DROP_IN_TEMP_ID).toMatch(/^[0-9]+:[0-9]+$/u);
       expect(fixture.runner.directories.has(temporary)).toBe(true);
       fixture.runner.failRemovalPrefix = "";
       runPortableCpuDelegationProofMode("cleanup", fixture);

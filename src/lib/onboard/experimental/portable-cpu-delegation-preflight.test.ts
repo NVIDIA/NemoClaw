@@ -61,6 +61,12 @@ function expectManagerInterruptionGuidance(detail: string): void {
   expect(saveHostWork).toBeLessThan(reboot);
 }
 
+function expectThreeCpuControllerSettings(detail: string): void {
+  expect(detail).toContain("`CPUWeight=100` for `user-1001.slice`");
+  expect(detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
+  expect(detail).toContain("`CPUWeight=100` for `app.slice`");
+}
+
 describe("inspectPortableCpuDelegation", () => {
   it("skips the check on non-Linux platforms", () => {
     const preflight = inspectPortableCpuDelegation({
@@ -122,13 +128,57 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
-    expect(preflight.detail).toContain("`CPUWeight=100` for `app.slice`");
+    expectThreeCpuControllerSettings(preflight.detail);
     expectManagerInterruptionGuidance(preflight.detail);
+  });
+
+  it.each([
+    ["is missing", files({ [PATHS.root]: CPU_FULL })],
+    ["does not expose cpu", files({ [PATHS.root]: CPU_FULL, [PATHS.userSlice]: NO_CPU })],
+  ] as const)(
+    "reports when the per-user systemd slice %s (#9188)",
+    (_condition, readControllerFile) => {
+      const readControllerFileSync = vi.fn(readControllerFile);
+      const preflight = inspectPortableCpuDelegation({
+        platform: "linux",
+        uid: UID,
+        readControllerFileSync,
+      });
+
+      expect(preflight.ok).toBe(false);
+      expect(preflight.failure).toBe("systemd-user-slice-cpu-unavailable");
+      expect(preflight.detail).toContain(PATHS.userSlice);
+      expectThreeCpuControllerSettings(preflight.detail);
+      expectManagerInterruptionGuidance(preflight.detail);
+      expect(readControllerFileSync.mock.calls).toEqual([
+        [PATHS.root, 4097],
+        [PATHS.userSlice, 4097],
+      ]);
+    },
+  );
+
+  it("reports access recovery when the per-user slice evidence is unreadable (#9188)", () => {
+    const readControllerFileSync = vi.fn(unreadableAt(PATHS.userSlice, { [PATHS.root]: CPU_FULL }));
+    const preflight = inspectPortableCpuDelegation({
+      platform: "linux",
+      uid: UID,
+      readControllerFileSync,
+    });
+
+    expect(preflight.ok).toBe(false);
+    expect(preflight.failure).toBe("cgroup-controllers-unreadable");
+    expect(preflight.detail).toContain(PATHS.userSlice);
+    expect(preflight.detail).toContain("Do not change systemd delegation");
+    expect(preflight.detail).not.toContain("CPUWeight=100");
+    expect(readControllerFileSync.mock.calls).toEqual([
+      [PATHS.root, 4097],
+      [PATHS.userSlice, 4097],
+    ]);
   });
 
   it("reports access recovery when the user manager controllers file is unreadable", () => {
@@ -137,6 +187,7 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: unreadableAt(PATHS.userManager, {
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
@@ -152,14 +203,14 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: NO_CPU,
         [PATHS.appSlice]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
-    expect(preflight.detail).toContain("`CPUWeight=100` for `app.slice`");
+    expectThreeCpuControllerSettings(preflight.detail);
     expectManagerInterruptionGuidance(preflight.detail);
   });
 
@@ -169,6 +220,7 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
         [PATHS.appSlice]: NO_CPU,
       }),
@@ -186,6 +238,7 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
       }),
     });
@@ -201,6 +254,7 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: unreadableAt(PATHS.appSlice, {
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
       }),
     });
@@ -213,8 +267,17 @@ describe("inspectPortableCpuDelegation", () => {
 
   it.each([
     ["root", PATHS.root, {}],
-    ["user manager", PATHS.userManager, { [PATHS.root]: CPU_FULL }],
-    ["app.slice", PATHS.appSlice, { [PATHS.root]: CPU_FULL, [PATHS.userManager]: CPU_FULL }],
+    ["per-user slice", PATHS.userSlice, { [PATHS.root]: CPU_FULL }],
+    ["user manager", PATHS.userManager, { [PATHS.root]: CPU_FULL, [PATHS.userSlice]: CPU_FULL }],
+    [
+      "app.slice",
+      PATHS.appSlice,
+      {
+        [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
+        [PATHS.userManager]: CPU_FULL,
+      },
+    ],
   ])(
     "rejects malformed %s controller evidence before remediation (#9188)",
     (_name, path, prefix) => {
@@ -257,6 +320,7 @@ describe("inspectPortableCpuDelegation", () => {
     const readControllerFileSync = vi.fn(
       files({
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
         [PATHS.appSlice]: CPU_FULL,
       }),
@@ -267,6 +331,7 @@ describe("inspectPortableCpuDelegation", () => {
     ).toBe(true);
     expect(readControllerFileSync.mock.calls).toEqual([
       [PATHS.root, 4097],
+      [PATHS.userSlice, 4097],
       [PATHS.userManager, 4097],
       [PATHS.appSlice, 4097],
     ]);
@@ -278,6 +343,7 @@ describe("inspectPortableCpuDelegation", () => {
       uid: UID,
       readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
+        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
         [PATHS.appSlice]: CPU_FULL,
       }),

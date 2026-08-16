@@ -24,6 +24,7 @@ export type CpuDelegationFailureReason =
   | "cgroup-controllers-unreadable"
   | "cgroup-controllers-malformed"
   | "cpu-controller-unavailable"
+  | "systemd-user-slice-cpu-unavailable"
   | "systemd-user-delegation-missing"
   | "app-slice-cpu-unavailable";
 
@@ -45,14 +46,25 @@ const CONTROLLER_NAME = /^[a-z][a-z0-9_]*$/u;
 
 export function cpuDelegationControllerPaths(uid: number): {
   readonly root: string;
+  readonly userSlice: string;
   readonly userManager: string;
   readonly appSlice: string;
 } {
   return {
     root: `${CGROUP_ROOT}/cgroup.controllers`,
+    userSlice: `${CGROUP_ROOT}/user.slice/user-${uid}.slice/cgroup.controllers`,
     userManager: `${CGROUP_ROOT}/user.slice/user-${uid}.slice/user@${uid}.service/cgroup.controllers`,
     appSlice: `${CGROUP_ROOT}/user.slice/user-${uid}.slice/user@${uid}.service/app.slice/cgroup.controllers`,
   };
+}
+
+function cpuControllerSettingsGuidance(uid: number): string {
+  return (
+    "Have an administrator apply all three CPU controller settings described in the " +
+    `troubleshooting guide: \`CPUWeight=100\` for \`user-${uid}.slice\`, ` +
+    "`Delegate=cpu memory pids` for `user@.service`, and `CPUWeight=100` for " +
+    "`app.slice`. "
+  );
 }
 
 type ControllerEvidence =
@@ -196,7 +208,8 @@ export function inspectPortableCpuDelegation(
     };
   }
   const readControllerFile = deps.readControllerFileSync ?? readControllerFileSync;
-  const { root, userManager, appSlice } = cpuDelegationControllerPaths(Number(uid));
+  const numericUid = Number(uid);
+  const { root, userSlice, userManager, appSlice } = cpuDelegationControllerPaths(numericUid);
 
   const rootRead = readControllers(root, readControllerFile);
   if (!rootRead.ok) {
@@ -237,6 +250,46 @@ export function inspectPortableCpuDelegation(
     };
   }
 
+  const userSliceRead = readControllers(userSlice, readControllerFile);
+  if (!userSliceRead.ok) {
+    if (userSliceRead.condition === "unreadable") {
+      return {
+        ok: false,
+        failure: "cgroup-controllers-unreadable",
+        detail: unreadableControllersDetail(userSlice, userSliceRead.errorCode),
+      };
+    }
+    return {
+      ok: false,
+      failure: "systemd-user-slice-cpu-unavailable",
+      detail:
+        `The current user's systemd slice has no cgroup controllers file ` +
+        `(${userSlice} is missing), so the cpu controller is not available at the ` +
+        `user-${numericUid}.slice ancestor. ` +
+        cpuControllerSettingsGuidance(numericUid) +
+        managerRecoveryGuidance() +
+        " Then rerun the portable preflight.",
+    };
+  }
+  const parsedUserSlice = parseControllers(userSlice, userSliceRead.content);
+  if (!parsedUserSlice.ok) {
+    return parsedUserSlice.preflight;
+  }
+  if (!parsedUserSlice.names.has("cpu")) {
+    return {
+      ok: false,
+      failure: "systemd-user-slice-cpu-unavailable",
+      detail:
+        `The cpu controller is not available at the current user's systemd slice: ` +
+        `${userSlice} is "${parsedUserSlice.content.trim()}" (no "cpu"). ` +
+        `The user manager and app.slice cannot activate a controller that their ` +
+        `user-${numericUid}.slice ancestor did not receive. ` +
+        cpuControllerSettingsGuidance(numericUid) +
+        managerRecoveryGuidance() +
+        " Then rerun the portable preflight.",
+    };
+  }
+
   const userManagerRead = readControllers(userManager, readControllerFile);
   if (!userManagerRead.ok) {
     if (userManagerRead.condition === "unreadable") {
@@ -252,9 +305,7 @@ export function inspectPortableCpuDelegation(
       detail:
         `The current user's systemd manager has no cgroup controllers file ` +
         `(${userManager} is missing), so systemd has not exposed controllers to it. ` +
-        "Have an administrator apply both CPU controller settings described in the " +
-        "troubleshooting guide: `Delegate=cpu memory pids` for `user@.service` and " +
-        "`CPUWeight=100` for `app.slice`. " +
+        cpuControllerSettingsGuidance(numericUid) +
         managerRecoveryGuidance() +
         " Then rerun the portable preflight.",
     };
@@ -272,10 +323,8 @@ export function inspectPortableCpuDelegation(
       detail:
         `systemd did not delegate the cpu controller to the current user's manager: ` +
         `${userManager} is "${userManagerContent.trim()}" (no "cpu"). The stock ` +
-        "user@.service delegates only `pids memory`. Have an administrator apply both " +
-        "CPU controller settings described in the troubleshooting guide: " +
-        "`Delegate=cpu memory pids` for `user@.service` and `CPUWeight=100` for " +
-        "`app.slice`. " +
+        "user@.service delegates only `pids memory`. " +
+        cpuControllerSettingsGuidance(numericUid) +
         managerRecoveryGuidance() +
         " Then rerun the portable preflight.",
     };
@@ -296,8 +345,7 @@ export function inspectPortableCpuDelegation(
       detail:
         `The current user's app.slice has no cgroup controllers file (${appSlice} is ` +
         "missing), so the cpu controller is not available to it for this boot. " +
-        "Have an administrator apply the documented app.slice CPU controller setting " +
-        "and delegation change. " +
+        cpuControllerSettingsGuidance(numericUid) +
         managerRecoveryGuidance() +
         " Then rerun the portable preflight.",
     };
@@ -314,9 +362,8 @@ export function inspectPortableCpuDelegation(
       failure: "app-slice-cpu-unavailable",
       detail:
         `The cpu controller is not available to the current user's app.slice for ` +
-        `this boot: ${appSlice} is "${appSliceContent.trim()}" (no "cpu"). Have an ` +
-        "administrator apply the documented app.slice CPU controller setting and " +
-        "delegation change. " +
+        `this boot: ${appSlice} is "${appSliceContent.trim()}" (no "cpu"). ` +
+        cpuControllerSettingsGuidance(numericUid) +
         managerRecoveryGuidance() +
         " Then rerun the portable preflight.",
     };
@@ -326,8 +373,8 @@ export function inspectPortableCpuDelegation(
     ok: true,
     detail:
       "The current user's systemd/cgroup hierarchy can enforce the sandbox CPU " +
-      "limit: the cpu controller is exposed, delegated to the user manager, and " +
-      "available to app.slice.",
+      "limit: the cpu controller is exposed at the per-user system slice, delegated " +
+      "to the user manager, and available to app.slice.",
   };
 }
 

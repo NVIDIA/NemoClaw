@@ -69,7 +69,7 @@ jobs:
       - name: Build shared sandbox-name contract
         run: npm run build:policy-boundary
 
-      - name: Prepare app.slice CPU setting without service delegation
+      - name: Prepare system and app slice CPU settings without service delegation
         shell: bash
         run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts prepare
 
