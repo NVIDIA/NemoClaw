@@ -8,9 +8,7 @@ import type { ChildProcess } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  buildVoiceGatewayLaunchContract,
-} from "../../../dist/lib/voice-gateway/launcher";
+import { buildVoiceGatewayLaunchContract } from "../../../dist/lib/voice-gateway/launcher";
 import { runVoiceGatewayLaunch } from "../../../dist/lib/actions/voice-gateway/launch";
 import {
   openFileTargets,

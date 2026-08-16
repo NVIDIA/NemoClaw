@@ -130,7 +130,9 @@ async function terminateChild(child: ChildProcess): Promise<void> {
 }
 
 /** Launch the real gateway with only the two selected credential objects inherited. */
-export async function launchVoiceGateway(options: VoiceGatewayLaunchOptions): Promise<ChildProcess> {
+export async function launchVoiceGateway(
+  options: VoiceGatewayLaunchOptions,
+): Promise<ChildProcess> {
   const descriptors: number[] = [];
   let child: ChildProcess | undefined;
   let operationError: { readonly value: unknown } | undefined;

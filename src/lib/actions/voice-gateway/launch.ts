@@ -3,10 +3,7 @@
 
 import type { ChildProcess } from "node:child_process";
 
-import {
-  launchVoiceGateway,
-  type VoiceGatewayLaunchOptions,
-} from "../../voice-gateway/launcher";
+import { launchVoiceGateway, type VoiceGatewayLaunchOptions } from "../../voice-gateway/launcher";
 
 /** Start the voice gateway for a trusted external integration such as Gabby. */
 export async function runVoiceGatewayLaunch(
