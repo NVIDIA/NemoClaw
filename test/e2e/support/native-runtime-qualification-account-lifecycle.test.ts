@@ -37,10 +37,7 @@ function extractFunction(source: string, name: string): string {
 }
 
 function rewriteFixtureTarget(source: string, from: string, to: string): string {
-  if (!source.includes(from)) return source;
-  const rewritten = source.replaceAll(from, to);
-  expect(rewritten, `Fixture rewrite did not match host target: ${from}`).not.toBe(source);
-  return rewritten;
+  return source.replaceAll(from, to);
 }
 
 function fixtureSource(source: string): string {
