@@ -1362,7 +1362,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in awk git jq node npm pgrep podman setfacl sha256sum stat systemctl tee usermod; do
+          for command in apparmor_parser awk cat getent git grep id jq node npm pgrep podman setfacl sha256sum stat systemctl tee useradd userdel usermod; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
@@ -1381,8 +1381,47 @@ jobs:
           ! pgrep -x dockerd >/dev/null
           [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
           account="nemoclawq"
-          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
+          ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if getent passwd "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
+            echo "::error::Qualification account identity or subordinate-ID authorization already exists" >&2
+            exit 1
+          fi
+          [[ ! -e "$ownership_marker" && ! -L "$ownership_marker" ]] || {
+            echo "::error::Qualification account ownership marker already exists" >&2
+            exit 1
+          }
+          account_created_without_marker=0
+          rollback_unmarked_account() {
+            local result="$?"
+            trap - EXIT
+            if ((result != 0 && account_created_without_marker == 1)); then
+              sudo userdel --remove "$account" 2>/dev/null || true
+              sudo rm -f -- "$ownership_marker"
+              if getent passwd "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
+                echo "::error::Partially created qualification account could not be rolled back" >&2
+                exit 1
+              fi
+            fi
+            exit "$result"
+          }
+          trap rollback_unmarked_account EXIT
           sudo useradd --create-home --shell /usr/sbin/nologin "$account"
+          account_created_without_marker=1
+          uid="$(id -u "$account")"
+          home="$(getent passwd "$account" | cut -d: -f6)"
+          [[ "$uid" =~ ^[0-9]+$ && "$home" == "/home/${account}" && -d "$home" && ! -L "$home" ]] || {
+            echo "::error::Qualification account identity is missing or invalid" >&2
+            exit 1
+          }
+          printf '%s:%s\n' "$account" "$uid" | sudo tee "$ownership_marker" >/dev/null
+          sudo chown root:root "$ownership_marker"
+          sudo chmod 0400 "$ownership_marker"
+          [[ -f "$ownership_marker" && ! -L "$ownership_marker" && "$(stat -c '%u:%g:%a' "$ownership_marker")" == "0:0:400" ]] || {
+            echo "::error::Qualification account ownership marker is invalid" >&2
+            exit 1
+          }
+          account_created_without_marker=0
+          trap - EXIT
           ensure_subordinate_range() {
             local file="$1"
             local option="$2"
@@ -1427,16 +1466,19 @@ jobs:
           }
           ensure_subordinate_range /etc/subuid --add-subuids
           ensure_subordinate_range /etc/subgid --add-subgids
-          uid="$(id -u "$account")"
-          home="$(getent passwd "$account" | cut -d: -f6)"
-          [[ "$home" == "/home/${account}" && -d "$home" && ! -L "$home" ]] || {
-            echo "::error::Qualification account home is missing or invalid" >&2
+          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
+          printf 'account_created=true\n' >>"$GITHUB_OUTPUT"
+          runtime_dir="/run/user/${uid}"
+          systemctl cat user-runtime-dir@.service >/dev/null
+          sudo systemctl start "user-runtime-dir@${uid}.service"
+          [[ -d "$runtime_dir" && ! -L "$runtime_dir" && "$(stat -c '%u:%g:%a' "$runtime_dir")" == "${uid}:${uid}:700" ]] || {
+            echo "::error::Qualification runtime directory is missing or invalid" >&2
             exit 1
           }
-          runtime_dir="/run/user/${uid}"
-          sudo install -d -o "$uid" -g "$uid" -m 0700 "$runtime_dir"
           storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           storage_config="${storage_config_directory}/storage.conf"
+          apparmor_profile="${storage_config_directory}/podman.apparmor"
+          apparmor_profile_name="nemoclaw-native-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
             echo "::error::Qualification storage configuration directory already exists" >&2
             exit 1
@@ -1457,6 +1499,24 @@ jobs:
             echo "::error::Qualification storage configuration is not root-owned and read-only" >&2
             exit 1
           }
+          if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+            printf '%s\n' \
+              '# This ephemeral profile grants user namespaces only to the pinned qualification Podman binary.' \
+              '' \
+              'abi <abi/4.0>,' \
+              'include <tunables/global>' \
+              '' \
+              "profile ${apparmor_profile_name} /usr/local/bin/podman flags=(unconfined) {" \
+              '  userns,' \
+              '}' | sudo tee "$apparmor_profile" >/dev/null
+            sudo chown root:root "$apparmor_profile"
+            sudo chmod 0444 "$apparmor_profile"
+            [[ -f "$apparmor_profile" && ! -L "$apparmor_profile" && "$(stat -c '%u:%g:%a' "$apparmor_profile")" == "0:0:444" ]] || {
+              echo "::error::Qualification AppArmor profile is not root-owned and read-only" >&2
+              exit 1
+            }
+            sudo apparmor_parser -r "$apparmor_profile"
+          fi
           ancestor="$(dirname "$CANDIDATE_DIRECTORY")"
           while [[ "$ancestor" != "/home" ]]; do
             [[ ("$ancestor" == "/home/runner" || "$ancestor" == /home/runner/*) && -d "$ancestor" && ! -L "$ancestor" ]] || {
@@ -1619,39 +1679,79 @@ jobs:
         if: always()
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_CREATED: ${{ steps.boundary.outputs.account_created }}
         shell: bash
         run: |
           set -euo pipefail
-          account="${ACCOUNT:-nemoclawq}"
+          reported_account="${ACCOUNT:-}"
+          reported_created="${ACCOUNT_CREATED:-}"
+          ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          account=""
           uid=""
-          if id "$account" >/dev/null 2>&1; then
-            uid="$(id -u "$account")"
+          if [[ -e "$ownership_marker" || -L "$ownership_marker" ]]; then
+            [[ -f "$ownership_marker" && ! -L "$ownership_marker" && "$(stat -c '%u:%g:%a' "$ownership_marker")" == "0:0:400" ]] || {
+              echo "::error::Qualification account ownership marker cleanup target is invalid" >&2
+              exit 1
+            }
+            ownership="$(sudo cat "$ownership_marker")"
+            [[ "$ownership" =~ ^nemoclawq:([0-9]+)$ ]] || {
+              echo "::error::Qualification account ownership marker content is invalid" >&2
+              exit 1
+            }
+            account="nemoclawq"
+            uid="${BASH_REMATCH[1]}"
+            [[ -z "$reported_account" || "$reported_account" == "$account" ]] || {
+              echo "::error::Qualification account output does not match its ownership marker" >&2
+              exit 1
+            }
+            if getent passwd "$uid" >/dev/null && ! getent passwd "$account" >/dev/null; then
+              echo "::error::Qualification account UID belongs to a different host account" >&2
+              exit 1
+            fi
+            if getent passwd "$account" >/dev/null; then
+              [[ "$(id -u "$account")" == "$uid" ]] || {
+                echo "::error::Qualification account UID changed before cleanup" >&2
+                exit 1
+              }
+            fi
             runtime_dir="/run/user/${uid}"
             storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-            sudo pkill -KILL -u "$uid" 2>/dev/null || true
+            apparmor_profile="${storage_config_directory}/podman.apparmor"
+            if getent passwd "$account" >/dev/null; then
+              sudo pkill -KILL -u "$uid" 2>/dev/null || true
+            fi
+            sudo systemctl stop "user-runtime-dir@${uid}.service"
             if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
               [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
                 echo "::error::Qualification storage configuration cleanup target is invalid" >&2
                 exit 1
               }
+              if [[ -e "$apparmor_profile" || -L "$apparmor_profile" ]]; then
+                [[ -f "$apparmor_profile" && ! -L "$apparmor_profile" && "$(stat -c '%u:%g:%a' "$apparmor_profile")" == "0:0:444" ]] || {
+                  echo "::error::Qualification AppArmor profile cleanup target is invalid" >&2
+                  exit 1
+                }
+                sudo apparmor_parser -R "$apparmor_profile"
+                sudo rm -f -- "$apparmor_profile"
+              fi
               sudo rm -f -- "$storage_config_directory/storage.conf"
               sudo rmdir "$storage_config_directory"
             fi
             if [[ -e "$runtime_dir" || -L "$runtime_dir" ]]; then
-              [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] || {
-                echo "::error::Qualification runtime cleanup target is invalid" >&2
-                exit 1
-              }
-              sudo rmdir "$runtime_dir/podman" 2>/dev/null || true
-              sudo rmdir "$runtime_dir"
+              echo "::error::Qualification runtime directory remains after its systemd cleanup" >&2
+              exit 1
             fi
-            sudo userdel --remove "$account"
-          fi
-          if id "$account" >/dev/null 2>&1; then
-            echo "::error::Qualification account still exists after cleanup" >&2
-            exit 1
-          fi
-          if [[ -n "$uid" ]]; then
+            if getent passwd "$account" >/dev/null; then
+              sudo userdel --remove "$account"
+            fi
+            if getent passwd "$account" >/dev/null; then
+              echo "::error::Qualification account still exists after cleanup" >&2
+              exit 1
+            fi
+            if grep -q "^${account}:" /etc/subuid /etc/subgid; then
+              echo "::error::Qualification subordinate-ID authorization remains after cleanup" >&2
+              exit 1
+            fi
             [[ ! -e "/run/user/${uid}" && ! -L "/run/user/${uid}" ]] || {
               echo "::error::Qualification runtime directory remains after cleanup" >&2
               exit 1
@@ -1661,7 +1761,15 @@ jobs:
               echo "::error::Qualification storage configuration remains after cleanup" >&2
               exit 1
             }
+            sudo rm -f -- "$ownership_marker"
+          elif [[ -n "$reported_account" || "$reported_created" == "true" ]]; then
+            echo "::error::Qualification account output exists without its ownership marker" >&2
+            exit 1
           fi
+          [[ ! -e "$ownership_marker" && ! -L "$ownership_marker" ]] || {
+            echo "::error::Qualification account ownership marker remains after cleanup" >&2
+            exit 1
+          }
 
       - name: Upload the qualification case evidence
         if: success()

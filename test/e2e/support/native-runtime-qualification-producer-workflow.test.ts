@@ -257,22 +257,46 @@ describe("native runtime qualification producer workflow", () => {
     expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
+    expect(boundary.run).toContain('getent passwd "$account"');
+    expect(boundary.run).toContain('grep -q "^${account}:" /etc/subuid /etc/subgid');
+    expect(boundary.run).toContain("Qualification account identity or subordinate-ID authorization already exists");
+    expect(boundary.run).toContain('ownership_marker="/run/nemoclaw-native-runtime-owner-');
+    expect(boundary.run).toContain("0:0:400");
+    expect(boundary.run).toContain("Qualification account ownership marker is invalid");
+    expect(boundary.run).toContain("rollback_unmarked_account");
+    expect(boundary.run).toContain("Partially created qualification account could not be rolled back");
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subuid --add-subuids");
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subgid --add-subgids");
     expect(boundary.run).toContain("has no free subordinate-ID range for rootless Podman");
+    expect(boundary.run).toContain("systemctl cat user-runtime-dir@.service");
+    expect(boundary.run).toContain('systemctl start "user-runtime-dir@${uid}.service"');
+    expect(boundary.run).toContain("Qualification runtime directory is missing or invalid");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
     expect(boundary.run).toContain("rootless_storage_path");
     expect(boundary.run).toContain("${home}/.local/share/containers/storage");
     expect(boundary.run).toContain('mount_program = "/usr/bin/fuse-overlayfs"');
     expect(boundary.run).toContain("0:0:444");
+    expect(boundary.run).toContain("/sys/module/apparmor/parameters/enabled");
+    expect(boundary.run).toContain(
+      'profile ${apparmor_profile_name} /usr/local/bin/podman flags=(unconfined)',
+    );
+    expect(boundary.run).toContain("userns,");
+    expect(boundary.run).toContain('apparmor_parser -r "$apparmor_profile"');
+    expect(boundary.run).not.toContain("apparmor_restrict_unprivileged_userns=");
     expect(boundary.run).toContain("podman info --format json");
     expect(boundary.run).toContain("Credential-free rootless Podman readiness failed");
     expect(boundary.run).toContain('install -d -m 0755 "$guard_dir"');
     expect(boundary.run).toContain('chmod 0555 "$guard_dir/docker"');
     expect(boundary.run).toContain('setfacl --modify "u:${account}:--x"');
     expect(boundary.run).not.toContain("chmod o+x");
-    expect(boundaryRun.indexOf("printf 'account=%s")).toBeLessThan(
+    expect(boundaryRun.indexOf("useradd --create-home")).toBeLessThan(
+      boundaryRun.indexOf("printf 'account=%s"),
+    );
+    expect(boundaryRun.indexOf("Qualification account ownership marker is invalid")).toBeLessThan(
+      boundaryRun.indexOf("printf 'account=%s"),
+    );
+    expect(boundaryRun.indexOf("printf 'account=%s")).toBeGreaterThan(
       boundaryRun.indexOf("useradd --create-home"),
     );
     expect(dependencies.run).toContain('sudo -u "$ACCOUNT" env -i');
@@ -314,14 +338,25 @@ describe("native runtime qualification producer workflow", () => {
       path: "${{ runner.temp }}/native-runtime-evidence/",
     });
     expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toContain('account="${ACCOUNT:-nemoclawq}"');
+    expect(cleanup.env?.ACCOUNT_CREATED).toBe("${{ steps.boundary.outputs.account_created }}");
+    expect(cleanup.run).toContain('reported_account="${ACCOUNT:-}"');
+    expect(cleanup.run).not.toContain('ACCOUNT:-nemoclawq');
+    expect(cleanup.run).toContain("Qualification account ownership marker cleanup target is invalid");
+    expect(cleanup.run).toContain('ownership="$(sudo cat "$ownership_marker")"');
     expect(cleanup.run).toContain("pkill -KILL -u");
     expect(cleanup.run).not.toContain("rm -rf");
+    expect(cleanup.run).not.toContain("find ");
+    expect(cleanup.run).toContain('systemctl stop "user-runtime-dir@${uid}.service"');
+    expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
+    expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
-    expect(cleanup.run).toContain('sudo rmdir "$runtime_dir/podman"');
+    expect(cleanup.run).toContain("Qualification runtime directory remains after its systemd cleanup");
     expect(cleanup.run).toContain("Qualification storage configuration remains after cleanup");
     expect(cleanup.run).toContain("userdel --remove");
     expect(cleanup.run).toContain("Qualification account still exists after cleanup");
+    expect(cleanup.run).toContain("Qualification subordinate-ID authorization remains after cleanup");
+    expect(cleanup.run).toContain("Qualification account output exists without its ownership marker");
+    expect(cleanup.run).toContain('sudo rm -f -- "$ownership_marker"');
   });
 
   it("aggregates the exact successful 24-case cohort in a separate trusted job", () => {
