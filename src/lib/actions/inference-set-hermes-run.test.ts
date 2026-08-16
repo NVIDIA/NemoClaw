@@ -207,7 +207,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(seedOrder).toBeGreaterThan(writeOrder);
   });
 
-  it("does not re-seed the dashboard when the in-sandbox config write fails (#6893)", async () => {
+  it("fails after commit when the in-sandbox config write fails (#7083)", async () => {
     const config: ConfigObject = {
       model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
     };
@@ -227,22 +227,32 @@ describe("runInferenceSet Hermes routing", () => {
       throw new Error("write failed");
     });
 
-    await runInferenceSet(
-      {
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
-    );
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/Hermes inference route synchronization did not complete/);
 
     // A failed gateway-config write leaves the old config in place; re-seeding the
-    // dashboard from it would be pointless (and the guidance is to rebuild).
+    // dashboard from it would be pointless. The host route remains committed, but
+    // the command must fail so automation cannot accept a partial switch.
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      }),
+    );
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
   });
 
-  it("does not re-seed or report synced when the config hash refresh fails (#6893)", async () => {
+  it("fails after commit when the config hash refresh fails (#7083)", async () => {
     const config: ConfigObject = {
       model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
     };
@@ -262,15 +272,17 @@ describe("runInferenceSet Hermes routing", () => {
       throw new Error("hash refresh failed");
     });
 
-    await runInferenceSet(
-      {
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
-    );
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/Hermes inference route synchronization did not complete/);
 
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();

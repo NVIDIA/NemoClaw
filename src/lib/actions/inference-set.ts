@@ -1299,7 +1299,7 @@ async function runInferenceSetWithoutHostLock(
       reasoningEffortRequest,
     );
 
-    return finalizeInferenceMutation(
+    const mutation = finalizeInferenceMutation(
       {
         agentName,
         configChanged: patched.changed,
@@ -1319,6 +1319,14 @@ async function runInferenceSetWithoutHostLock(
       },
       deps,
     );
+    if (agentName === "hermes" && !inSandboxConfigSynced) {
+      throw new InferenceSetError(
+        `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
+          `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
+          `Hermes config is stale. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+      );
+    }
+    return mutation;
   } catch (error) {
     if (!providerMutation) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;
