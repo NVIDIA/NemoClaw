@@ -3,6 +3,7 @@
 
 export const HOSTED_INFERENCE_SECRET = "NVIDIA_INFERENCE_API_KEY";
 export const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
+export const HOSTED_INFERENCE_MODELS_PROBE_SECRET_ENV = HOSTED_INFERENCE_SECRET;
 export const HOSTED_INFERENCE_PROVIDER = "custom";
 export const HOSTED_INFERENCE_PROVIDER_NAME = "compatible-endpoint";
 export const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.com/v1";
@@ -26,6 +27,33 @@ export interface HostedInferenceConfig {
   model: string;
   endpointUrl: string;
   contractLabel: string;
+}
+
+export interface HostedInferenceModelsProbe {
+  args: string[];
+  command: "bash";
+  env: NodeJS.ProcessEnv;
+}
+
+export function buildHostedInferenceModelsProbe(
+  apiKey: string,
+  endpointUrl: string,
+): HostedInferenceModelsProbe {
+  if (!apiKey || /[\r\n]/u.test(apiKey)) {
+    throw new Error("hosted inference API key must be nonempty and single-line");
+  }
+  const baseUrl = endpointUrl.endsWith("/") ? endpointUrl : `${endpointUrl}/`;
+  const modelsUrl = new URL("models", baseUrl).toString();
+  return {
+    command: "bash",
+    args: [
+      "-c",
+      `set -euo pipefail; printf 'Authorization: Bearer %s\\n' "$${HOSTED_INFERENCE_MODELS_PROBE_SECRET_ENV}" | curl -fsS --max-time 60 --header @- "$1"`,
+      "hosted-inference-models-probe",
+      modelsUrl,
+    ],
+    env: { [HOSTED_INFERENCE_MODELS_PROBE_SECRET_ENV]: apiKey },
+  };
 }
 
 export function requireHostedInferenceConfig(

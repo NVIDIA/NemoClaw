@@ -14,7 +14,7 @@
       "src/lib/cli/branding.ts": 87,
       "src/lib/cli/nemoclaw-oclif-command.ts": 106,
       "src/lib/cli/terminal-style.ts": 43,
-      "src/lib/core/json-types.ts": 37,
+      "src/lib/core/json-types.ts": 36,
       "src/lib/core/ports.ts": 89,
       "src/lib/core/shell-quote.ts": 28,
       "src/lib/core/url-utils.ts": 29,

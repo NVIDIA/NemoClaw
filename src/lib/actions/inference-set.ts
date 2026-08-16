@@ -1306,8 +1306,9 @@ async function runInferenceSetWithoutHostLock(
         ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
         : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
     );
-    // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent):
-    //   - don't abort on failure; track whether it synced, never report a false "synced"
+    // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent).
+    // OpenClaw keeps its existing degraded result on failure. Hermes finalizes the committed
+    // route and registry, then returns an error so automation cannot accept partial convergence.
     // Two degraded states, both fixed by `rebuild` (regenerates openclaw.json + .config-hash from registry):
     //   - write fails:           config left old (old .config-hash still matches it)
     //   - hash recompute fails:  config new but .config-hash stale -> integrity-guard mismatch
@@ -1366,7 +1367,7 @@ async function runInferenceSetWithoutHostLock(
       reasoningEffortRequest,
     );
 
-    return finalizeInferenceMutation(
+    const mutation = finalizeInferenceMutation(
       {
         agentName,
         configChanged: patched.changed,
@@ -1386,6 +1387,14 @@ async function runInferenceSetWithoutHostLock(
       },
       deps,
     );
+    if (agentName === "hermes" && !inSandboxConfigSynced) {
+      throw new InferenceSetError(
+        `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
+          `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
+          `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+      );
+    }
+    return mutation;
   } catch (error) {
     if (!providerMutation) throw error;
     if (restoredSelectionAfterProviderFailure) throw error;

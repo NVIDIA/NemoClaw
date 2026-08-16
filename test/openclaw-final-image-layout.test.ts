@@ -53,6 +53,7 @@ describe("OpenClaw final image layout", () => {
           "COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
           "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
           "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
+          "COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts",
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
           "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
@@ -89,6 +90,7 @@ describe("OpenClaw final image layout", () => {
         stage: "openclaw-runtime-payload",
         copies: [
           "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh",
           "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
@@ -159,6 +161,7 @@ describe("OpenClaw final image layout", () => {
       runtimeCopy,
     ]);
     for (const metadataContract of [
+      "/scripts/lib/bundled-npm-package.mts 'root:root:644'",
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
       "/scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",

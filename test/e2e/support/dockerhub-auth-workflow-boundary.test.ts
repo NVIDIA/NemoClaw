@@ -308,13 +308,16 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       const [routingAuth] = routingSteps.splice(routingAuthIndex, 1);
       routingSteps.splice(routingSteps.length - 1, 0, routingAuth);
 
-      workflow.jobs["shared-e2e"].steps!.push({ ...canonicalAuth });
+      for (const jobName of NO_IMAGE_E2E_JOBS) {
+        workflow.jobs[jobName].steps!.push({ ...canonicalAuth });
+      }
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
         "messaging-providers Docker Hub auth must reuse the canonical workflow alias",
         "openclaw-plugin-runtime-exdev Docker Hub auth must run immediately after checkout",
+        "staging-brev-launchable no-image job must not receive Docker Hub authentication",
         "shared-e2e no-image job must not receive Docker Hub authentication",
       ]),
     );

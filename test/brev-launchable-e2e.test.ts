@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const SCRIPT = path.join(REPO_ROOT, "tools", "e2e", "brev-launchable-e2e.sh");
+const REAL_PYTHON3 = spawnSync("which", ["python3"], { encoding: "utf8" }).stdout.trim();
 const candidateSha = "a".repeat(40);
 const roots: string[] = [];
 
@@ -102,6 +103,23 @@ exec "$@"
   executable(
     path.join(bin, "sleep"),
     '#!/usr/bin/env bash\nprintf "sleep %s\\n" "$*" >> "$FAKE_CALLS"\n',
+  );
+  executable(
+    path.join(bin, "python3"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "-" ] && [[ "\${2:-}" == */brev-launchable-e2e.*/full-e2e.raw ]]; then
+  [ "$#" -eq 3 ]
+  [ -n "\${NEMOCLAW_REDACTION_SECRET:-}" ]
+  raw_mode="$(stat -c '%a' "$2" 2>/dev/null || stat -f '%Lp' "$2")"
+  directory_mode="$(stat -c '%a' "$(dirname "$2")" 2>/dev/null || stat -f '%Lp' "$(dirname "$2")")"
+  [ "$raw_mode" = "600" ]
+  [ "$directory_mode" = "700" ]
+  printf 'python redactor arg-count %s with environment secret and modes %s/%s\n' \
+    "$#" "$raw_mode" "$directory_mode" >> "$FAKE_CALLS"
+fi
+exec ${JSON.stringify(REAL_PYTHON3)} "$@"
+`,
   );
   executable(
     path.join(bin, "gh"),
@@ -340,6 +358,72 @@ function emittedOutput(result: ReturnType<typeof run>, workDir: string): string 
 }
 
 describe("focused staging Brev Launchable lane", () => {
+  it("publishes exact image evidence without Brev or inference access (#8924)", () => {
+    const { calls, env, state, workDir } = fixture();
+    const imageOnlyEnv: NodeJS.ProcessEnv = {
+      ...env,
+      NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+    };
+    delete imageOnlyEnv.BREV_API_KEY;
+    delete imageOnlyEnv.BREV_LAUNCHABLE_ID;
+    delete imageOnlyEnv.INSTANCE_NAME;
+    delete imageOnlyEnv.NVIDIA_INFERENCE_API_KEY;
+    const result = run(imageOnlyEnv);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+    const commands = fs.readFileSync(calls, "utf8");
+    expect(commands.match(/\/dispatches/gu)).toHaveLength(1);
+    expect(commands).not.toMatch(/\bbrev\b|\bssh\b|sleep 300|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(state)).toBe(false);
+    expect(fs.readdirSync(workDir).sort()).toEqual(["lane.log", "launchable-image.json"]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "launchable-image.json"), "utf8")),
+    ).toEqual({
+      schemaVersion: 1,
+      kind: "nemoclaw-staging-launchable-image-v1",
+      candidateSha,
+      producer: {
+        repository: "brevdev/nemoclaw-image",
+        workflow: ".github/workflows/build-launchable-e2e-image.yml",
+        runId: "123",
+        status: "success",
+      },
+      image: {
+        uri: "projects/brevdevprod/global/images/nemoclaw-test-image",
+        family: "nemoclaw-brev-staging-cpu",
+        imageRepositorySha: "b".repeat(40),
+      },
+      validation: {
+        launchable: "not-run",
+        runtime: "not-run",
+        inference: "not-run",
+      },
+    });
+    expect(fs.readFileSync(path.join(workDir, "lane.log"), "utf8")).toContain(
+      "Launchable deployment, runtime, and inference validation did not run",
+    );
+
+    const wrongReceipt = fixture({ receiptSha: "b".repeat(40) });
+    const wrongResult = run({
+      ...wrongReceipt.env,
+      NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1",
+    });
+    expect(wrongResult.status).not.toBe(0);
+    expect(wrongResult.stderr).toContain("producer receipt does not match the candidate");
+    expect(fs.readFileSync(wrongReceipt.calls, "utf8")).not.toMatch(/\bbrev\b|\bssh\b/u);
+    expect(fs.existsSync(path.join(wrongReceipt.workDir, "launchable-image.json"))).toBe(false);
+  });
+
+  it("rejects an invalid image-publication mode before dispatch (#8924)", () => {
+    const { calls, env, workDir } = fixture();
+    const result = run({ ...env, NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "yes" });
+    expect(result.status).not.toBe(0);
+    expect(emittedOutput(result, workDir)).toContain(
+      "NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY must be 0 or 1",
+    );
+    expect(fs.existsSync(calls)).toBe(false);
+  });
+
   it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
     const { calls, env, sshAttempts, state, workDir } = fixture({
       sshReadyAfter: 6,
@@ -492,6 +576,27 @@ describe("focused staging Brev Launchable lane", () => {
     const result = run(env);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("full E2E failed");
+    expect(fs.existsSync(state)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
+      status: "ABSENT",
+    });
+  });
+
+  it("protects and removes raw inference evidence without passing the credential to redactor arguments", () => {
+    const { calls, env, state, workDir } = fixture();
+    fs.mkdirSync(path.join(workDir, "full-e2e.log"));
+    const result = run(env);
+
+    expect(result.status).not.toBe(0);
+    expect(fs.readFileSync(calls, "utf8")).toContain(
+      "python redactor arg-count 3 with environment secret and modes 600/700",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("nvapi-test-value");
+    expect(
+      fs
+        .readdirSync(String(env.RUNNER_TEMP))
+        .filter((entry) => entry.startsWith("brev-launchable-e2e.")),
+    ).toEqual([]);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",

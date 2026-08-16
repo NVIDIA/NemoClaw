@@ -6,11 +6,13 @@ import type { Server } from "node:http";
 import { createVoiceGatewayServer } from "../../adapters/http/voice-gateway-server";
 import {
   DEFAULT_VOICE_GATEWAY_LISTEN_PORT,
+  VOICE_GATEWAY_DEPLOYMENT_CREDENTIAL_FD,
   VOICE_GATEWAY_FEATURE_ENV,
   VOICE_GATEWAY_LISTEN_ADDRESS,
+  VOICE_GATEWAY_OPENCLAW_CREDENTIAL_FD,
   type VoiceGatewayDiagnostic,
 } from "../../voice-gateway/contracts";
-import { readPrivateBearerFile } from "../../voice-gateway/credential-file";
+import { readPrivateBearerDescriptors } from "../../voice-gateway/credential-file";
 import { OpenClawVoiceClient } from "../../voice-gateway/openclaw-client";
 import { VoiceSessionService } from "../../voice-gateway/session-service";
 
@@ -25,8 +27,6 @@ interface ProcessEvents {
 }
 
 export interface VoiceGatewayServeOptions {
-  readonly deploymentCredentialFile: string;
-  readonly openClawCredentialFile: string;
   readonly gatewayUrl: string;
   readonly runtimeIdentity: string;
   readonly runtimeProfile: string;
@@ -37,7 +37,7 @@ export interface VoiceGatewayServeOptions {
 
 export interface VoiceGatewayServeDeps {
   readonly env?: NodeJS.ProcessEnv;
-  readonly readBearerFile?: typeof readPrivateBearerFile;
+  readonly readBearerDescriptors?: typeof readPrivateBearerDescriptors;
   readonly createServer?: typeof createVoiceGatewayServer;
   readonly processEvents?: ProcessEvents;
   readonly log?: (entry: VoiceGatewayDiagnostic) => void;
@@ -119,15 +119,11 @@ export async function runVoiceGatewayServe(
   validatePort(listenPort);
   const gatewayUrl = validateOpenClawGatewayUrl(options.gatewayUrl);
 
-  const readBearerFile = deps.readBearerFile ?? readPrivateBearerFile;
-  const deploymentCredential = readBearerFile(
-    options.deploymentCredentialFile,
-    "Voice gateway deployment credential",
-  );
-  const openClawCredential = readBearerFile(
-    options.openClawCredentialFile,
-    "Voice gateway OpenClaw credential",
-  );
+  const readBearerDescriptors = deps.readBearerDescriptors ?? readPrivateBearerDescriptors;
+  const { deploymentCredential, openClawCredential } = readBearerDescriptors({
+    deployment: VOICE_GATEWAY_DEPLOYMENT_CREDENTIAL_FD,
+    openClaw: VOICE_GATEWAY_OPENCLAW_CREDENTIAL_FD,
+  });
   const log =
     deps.log ??
     ((entry: VoiceGatewayDiagnostic) => {

@@ -115,6 +115,7 @@ describe("stageCreateSandboxBuildContext", () => {
       ["agents/hermes/plugin/entry.py", "required-plugin-bytes"],
       ["src/lib/tool-disclosure.ts", "required-tool-disclosure-bytes"],
       ["scripts/lib/reviewed-npm-archive.mts", "required-script-bytes"],
+      ["scripts/lib/bundled-npm-package.mts", "required-package-helper-bytes"],
       ["scripts/lib/seed-reviewed-npm-cache.mts", "required-cache-seed-bytes"],
       ["nemoclaw-blueprint/blueprint.yaml", "required-blueprint-bytes"],
     ] as const;
