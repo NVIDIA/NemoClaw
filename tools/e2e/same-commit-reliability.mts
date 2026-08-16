@@ -3,7 +3,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -766,16 +765,8 @@ async function main(): Promise<void> {
     candidateSha: currentSample?.candidateSha ?? null,
     groups,
   };
-  fs.writeFileSync(
-    requiredEnvironment("RELIABILITY_REPORT_PATH"),
-    `${JSON.stringify(report, null, 2)}\n`,
-    {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    },
-  );
-  console.log(formatReliabilityReport(groups));
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  process.stderr.write(`${formatReliabilityReport(groups)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

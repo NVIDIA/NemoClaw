@@ -101,14 +101,15 @@ jobs:
       - name: Build advisory same-commit reliability report
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          RELIABILITY_REPORT_PATH: ${{ runner.temp }}/same-commit-reliability.json
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         shell: bash
         run: |
           set -euo pipefail
           node --experimental-strip-types --no-warnings \
             tools/e2e/same-commit-reliability.mts \
-            | tee "${RUNNER_TEMP}/same-commit-reliability.md"
+            >"${RUNNER_TEMP}/same-commit-reliability.json" \
+            2>"${RUNNER_TEMP}/same-commit-reliability.md"
+          cat "${RUNNER_TEMP}/same-commit-reliability.md"
           cat "${RUNNER_TEMP}/same-commit-reliability.md" >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload advisory reliability evidence

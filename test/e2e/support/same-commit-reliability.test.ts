@@ -188,6 +188,13 @@ describe("same-commit E2E reliability", () => {
       ref: "${{ github.workflow_sha }}",
       "persist-credentials": false,
     });
+    const build = workflowStep(reporter, "Build advisory same-commit reliability report");
+    expect(build.env).toEqual({
+      GITHUB_TOKEN: "${{ github.token }}",
+      SOURCE_RUN_ID: "${{ github.event.workflow_run.id }}",
+    });
+    expect(build.run).toContain('>"${RUNNER_TEMP}/same-commit-reliability.json"');
+    expect(build.run).toContain('2>"${RUNNER_TEMP}/same-commit-reliability.md"');
   });
 
   it("consumes dispatch, retry, and runner classifications without retaining payload text", async () => {
