@@ -195,6 +195,7 @@
       "scripts/patch-openclaw-device-self-approval.mts",
       "scripts/verify-wechat-runtime-lock.mts",
       "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/lib/bundled-npm-package.mts",
       "src/lib/sandbox/build-context.ts"
     ],
     "adjustedMetrics": [

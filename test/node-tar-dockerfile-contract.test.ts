@@ -29,7 +29,7 @@ const dockerfiles = [
     installsPatchDownloader: false,
     installsWithNpm: false,
   },
-  { file: "agents/pi/Dockerfile.base", installsPatchDownloader: true, installsWithNpm: true },
+  { file: "agents/pi/Dockerfile.base", installsPatchDownloader: true, installsWithNpm: false },
   { file: "agents/pi/Dockerfile", installsPatchDownloader: false, installsWithNpm: false },
 ] as const;
 const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
@@ -146,7 +146,7 @@ describe("node-tar image remediation contract", () => {
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(
       flattenedPatchInputStage.includes(
-        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+        "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
       ) ||
         patchInputStage.includes(
           "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",

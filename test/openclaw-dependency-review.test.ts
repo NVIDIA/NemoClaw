@@ -558,7 +558,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
     const flattenedDockerfile = dockerfile.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const groupedHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
+      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/bundled-npm-package.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
     );
     const legacyHelperCopy = flattenedDockerfile.indexOf(
       "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",

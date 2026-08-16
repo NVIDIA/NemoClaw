@@ -244,6 +244,7 @@ describe("Hermes final image layout", () => {
         stage: "hermes-npm-patch-payload",
         copies: [
           "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
+          "COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts",
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
           "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts",
           "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
@@ -440,6 +441,7 @@ describe("Hermes final image layout", () => {
     expect(modeNormalize).toBeGreaterThan(darwinCompatibility);
     expect(modeNormalize).toBeLessThan(metadataCheck);
     for (const metadataContract of [
+      "/scripts/lib/bundled-npm-package.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
       "/scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
