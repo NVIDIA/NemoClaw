@@ -242,6 +242,24 @@ describe("E2E scorecard", () => {
     expect(failureSection?.text?.text).toContain(`<${failureUrl}|live (openclaw-nvidia)>`);
   });
 
+  it("keeps every failed-job section within Slack's 3000-character limit", () => {
+    const failedJobs = Array.from({ length: 61 }, (_, index) => ({
+      name: `failure-${index}-${"x".repeat(80)}`,
+      url: `https://github.com/NVIDIA/NemoClaw/actions/runs/31962084507/job/${95201570000 + index}`,
+    }));
+    const failedJobSections = slack
+      .buildBlocks(scorecardData({ failure: failedJobs.length, perfect: false, failedJobs }))
+      .filter(
+        (block): block is typeof block & { type: "section"; text: { text: string } } =>
+          block.type === "section" && block.text?.text.includes("Failed jobs") === true,
+      );
+
+    expect(failedJobSections.length).toBeGreaterThan(1);
+    expect(failedJobSections.every((block) => block.text.text.length <= 3_000)).toBe(true);
+    const rendered = failedJobSections.map((block) => block.text.text).join("\n");
+    for (const job of failedJobs) expect(rendered).toContain(`<${job.url}|${job.name}>`);
+  });
+
   it("compares only allowlisted onboard timing phases", () => {
     const rows = trace.buildPhaseRows(
       {

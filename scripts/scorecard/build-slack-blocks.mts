@@ -37,6 +37,39 @@ type SlackButtonElement = {
 type SlackActionsBlock = { type: "actions"; elements: SlackButtonElement[] };
 type SlackBlock = SlackActionsBlock | SlackContextBlock | SlackSectionBlock;
 
+const SLACK_SECTION_TEXT_LIMIT = 3_000;
+
+function buildFailedJobBlocks(data: ScorecardData): SlackSectionBlock[] {
+  const entries = data.failedJobs.map((job) =>
+    job.url ? `• <${job.url}|${job.name}>` : `• \`${job.name}\``,
+  );
+  const blocks: SlackSectionBlock[] = [];
+  let heading = `*Failed jobs (${data.failedJobs.length}):*`;
+  let lines: string[] = [];
+
+  for (const entry of entries) {
+    const candidate = [heading, ...lines, entry].join("\n");
+    if (candidate.length > SLACK_SECTION_TEXT_LIMIT && lines.length > 0) {
+      blocks.push({
+        type: "section",
+        text: { type: "mrkdwn", text: [heading, ...lines].join("\n") },
+      });
+      heading = "*Failed jobs (continued):*";
+      lines = [entry];
+    } else {
+      lines.push(entry);
+    }
+  }
+
+  if (lines.length > 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: [heading, ...lines].join("\n") },
+    });
+  }
+  return blocks;
+}
+
 function buildBlocks(data: ScorecardData): SlackBlock[] {
   const blocks: SlackBlock[] = [];
   const showActor = data.runMode !== "Main push" && Boolean(data.actor);
@@ -75,16 +108,7 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
       text: { type: "mrkdwn", text: ":tada: *All jobs passed!*" },
     });
   } else if (data.failedJobs.length > 0) {
-    const list = data.failedJobs
-      .map((job) => (job.url ? `• <${job.url}|${job.name}>` : `• \`${job.name}\``))
-      .join("\n");
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Failed jobs (${data.failedJobs.length}):*\n${list}`,
-      },
-    });
+    blocks.push(...buildFailedJobBlocks(data));
   }
 
   if (data.traceTimingLine) {
