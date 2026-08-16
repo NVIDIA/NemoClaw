@@ -20,7 +20,7 @@ service_pid_file="${runtime_dir}/nemoclaw-podman-service.pid"
 log_file="${runtime_dir}/nemoclaw-podman-service.log"
 gateway_service_name="nemoclaw-openshell-gateway"
 gateway_unit_path="${config_home}/systemd/user/${gateway_service_name}.service"
-gateway_binary_path="${bin_home}/openshell-gateway"
+gateway_binary_path=""
 gateway_env_file="${config_home}/openshell/gateway.env"
 gateway_tls_dir="${state_home}/openshell/tls"
 gateway_state_dir="${state_home}/openshell/gateway"
@@ -460,6 +460,34 @@ stop_runtime() {
   rm -f "$socket_path" "$backend_socket_path"
 }
 
+gateway_binary_path_is_trusted() {
+  local candidate="$1"
+  local user_bin_home="${bin_home%/}"
+  case "$candidate" in
+    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+read_managed_gateway_binary_path() {
+  local candidate="" count=0 line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      ExecStart=*)
+        candidate="${line#ExecStart=}"
+        ((count += 1))
+        ;;
+    esac
+  done <"$gateway_unit_path"
+  [[ "$count" -eq 1 && "$candidate" == /* && "$candidate" != *[[:space:]]* ]] || return 1
+  gateway_binary_path_is_trusted "$candidate" || return 1
+  printf '%s\n' "$candidate"
+}
+
 validate_gateway_unit() {
   if [[ ! -f "$gateway_unit_path" || -L "$gateway_unit_path" || ! -r "$gateway_unit_path" ]]; then
     echo "Portable profile fixture requires the managed gateway user service at ${gateway_unit_path}." >&2
@@ -469,15 +497,21 @@ validate_gateway_unit() {
     echo "Portable profile fixture rejected the foreign gateway user service at ${gateway_unit_path}." >&2
     return 1
   fi
-  if [[ "$(grep -Fxc "ExecStart=${gateway_binary_path}" "$gateway_unit_path" || true)" -ne 1 ]] \
-    || [[ "$(grep -Fxc "ExecStartPre=${gateway_binary_path} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal" "$gateway_unit_path" || true)" -ne 1 ]] \
+  local unit_gateway_binary
+  unit_gateway_binary="$(read_managed_gateway_binary_path)" || {
+    echo "Portable profile fixture rejected the OpenShell gateway user service identity at ${gateway_unit_path}." >&2
+    return 1
+  }
+  if [[ "$(grep -Fxc "ExecStart=${unit_gateway_binary}" "$gateway_unit_path" || true)" -ne 1 ]] \
+    || [[ "$(grep -Fxc "ExecStartPre=${unit_gateway_binary} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal" "$gateway_unit_path" || true)" -ne 1 ]] \
     || [[ "$(grep -Fxc 'StateDirectory=openshell/gateway' "$gateway_unit_path" || true)" -ne 1 ]] \
     || [[ "$(grep -Fxc 'Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls' "$gateway_unit_path" || true)" -ne 1 ]] \
     || [[ "$(grep -Fxc 'EnvironmentFile=-%E/openshell/gateway.env' "$gateway_unit_path" || true)" -ne 1 ]] \
-    || [[ ! -x "$gateway_binary_path" || -L "$gateway_binary_path" ]]; then
-    echo "Portable profile fixture rejected the gateway user service identity at ${gateway_unit_path}." >&2
+    || [[ ! -f "$unit_gateway_binary" || ! -r "$unit_gateway_binary" || ! -x "$unit_gateway_binary" || -L "$unit_gateway_binary" ]]; then
+    echo "Portable profile fixture rejected the OpenShell gateway user service identity at ${gateway_unit_path}." >&2
     return 1
   fi
+  gateway_binary_path="$unit_gateway_binary"
 }
 
 load_gateway_environment() {
