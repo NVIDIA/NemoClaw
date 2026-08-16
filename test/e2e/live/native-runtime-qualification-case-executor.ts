@@ -388,7 +388,9 @@ function parsePhysicalGpuDevices(output: string): readonly string[] {
     new Set(devices).size !== devices.length ||
     devices.some((device) => !PHYSICAL_GPU_UUID.test(device))
   ) {
-    throw new Error("NVIDIA CDI runtime proof did not return exact physical GPU UUIDs");
+    throw new Error(
+      `NVIDIA CDI runtime proof did not return exact physical GPU UUIDs: ${bounded(JSON.stringify(devices))}`,
+    );
   }
   return Object.freeze(devices);
 }

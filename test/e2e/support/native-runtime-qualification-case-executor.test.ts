@@ -93,6 +93,14 @@ describe("native runtime GPU evidence", () => {
       "NVIDIA CDI runtime proof did not return exact physical GPU UUIDs",
     );
   });
+
+  it("reports the bounded rejected rows for protected-run diagnosis", () => {
+    expect(() =>
+      nativeRuntimeQualificationCaseInternals.parsePhysicalGpuDevices("unexpected-row"),
+    ).toThrow(
+      'NVIDIA CDI runtime proof did not return exact physical GPU UUIDs: ["unexpected-row"]',
+    );
+  });
 });
 
 describe("native runtime provider-network authority", () => {
