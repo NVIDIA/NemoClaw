@@ -2,6 +2,11 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
+      "file": "src/lib/actions/sandbox/mcp-bridge-input-validation.test.ts",
+      "test": "rejects every OpenShell child-visible credential key at each MCP boundary",
+      "category": "security"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"

@@ -11,8 +11,8 @@ export const NVIDIA_FEATURED_MODELS_URL =
 // NVIDIA Endpoints retirement contract: the public featured feed and
 // authenticated /models catalog can lag a runtime retirement. The repository
 // authority is CLOUD_MODEL_OPTIONS. nvidia-featured-models.test.ts verifies
-// that the NVIDIA Endpoints picker excludes retired entries, and config.test.ts verifies
-// that Hermes Provider retains its independent model catalog. Keep entries
+// the featured-feed filter, and config.test.ts verifies that retired model IDs
+// remain absent from NVIDIA Endpoints choices. Keep entries
 // in this policy deny-list until a deliberate product change confirms that the
 // NVIDIA chat-completions route is available again or names a live successor.
 const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set([

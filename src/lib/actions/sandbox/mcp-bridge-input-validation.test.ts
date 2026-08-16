@@ -119,6 +119,35 @@ describe("MCP CLI input validation", () => {
     }
   });
 
+  // source-shape-contract: security -- Manifest-owned OpenShell child-visible keys must fail at every MCP credential attachment boundary
+  it("rejects every OpenShell child-visible credential key at each MCP boundary", () => {
+    const groups = [
+      {
+        names: childVisibleCredentialManifest.rawChildValueKeys,
+        error: /materialized as a raw child-process value|preserve the host-only credential boundary/,
+      },
+      {
+        names: childVisibleCredentialManifest.rewrittenChildValueKeys,
+        error: /rewritten by OpenShell's Google Cloud metadata compatibility path/,
+      },
+    ];
+
+    for (const { names, error } of groups) {
+      for (const name of names) {
+        expect(() =>
+          parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+        ).toThrow(error);
+        expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
+        expect(() =>
+          buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
+            [name]: "host-only-secret",
+          }),
+        ).toThrow(error);
+      }
+    }
+  });
+
+
   it("rejects sandbox runtime-control names as MCP credentials", () => {
     for (const name of [
       "BASH_ENV",
