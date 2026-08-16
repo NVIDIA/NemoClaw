@@ -724,7 +724,7 @@ describe("portable runtime uninstall cleanup", () => {
     });
 
     afterAll(() => {
-      if (writer?.exitCode === null) writer.kill("SIGTERM");
+      writer?.kill("SIGTERM");
     });
 
     it("blocks real lifecycle and registry writers through final supersession (#9189)", async () => {

@@ -15,6 +15,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   cleanupPodmanLifecycle,
   executableOnPath,
+  inspectContainer,
   runCommand,
   SOCKET_PATH,
 } from "./podman-cpu-lifecycle-helpers.ts";
@@ -26,7 +27,6 @@ const UNRELATED_IMAGE =
 const UNUSED_IMAGE =
   "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
 const SANDBOX_NAME = "podman-uninstall";
-const SANDBOX_ID = "proof-alpha";
 const UNRELATED_NAME = "nemoclaw-uninstall-unrelated";
 const REGISTRY_NAME = "nemoclaw-portable-registry";
 const UNINSTALL_ARGS = [
@@ -49,22 +49,21 @@ const E2E_PHASES = [
 
 function sandboxCreateArgs(): string[] {
   return [
+    "sandbox",
     "create",
+    "-g",
+    "nemoclaw",
     "--name",
-    `openshell-default--${SANDBOX_NAME}-${SANDBOX_ID}`,
-    "--label",
-    "openshell.managed=true",
-    "--label",
-    `openshell.ai/sandbox-id=${SANDBOX_ID}`,
-    "--label",
-    `openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-    "--label",
-    "openshell.ai/sandbox-namespace=",
-    "--label",
-    "openshell.ai/sandbox-workspace=default",
+    SANDBOX_NAME,
+    "--from",
     BASE_IMAGE,
-    "sleep",
-    "infinity",
+    "--policy",
+    path.join(REPO_ROOT, "test/e2e/live/podman-cpu-lifecycle-policy.yaml"),
+    "--no-tty",
+    "--",
+    "/bin/sh",
+    "-lc",
+    "true",
   ];
 }
 
@@ -179,10 +178,15 @@ test(
       for (const image of imageWasPresent.keys()) {
         expect(engine.capture(["pull", image]).status).toBe(0);
       }
-      const sandboxCreate = engine.capture(sandboxCreateArgs());
-      expect(sandboxCreate.status).toBe(0);
-      const sandboxContainerId = sandboxCreate.stdout.trim();
-      expect(sandboxContainerId).toMatch(/^[a-f0-9]{64}$/u);
+      await runCommand(shellProbe, openshellBin, sandboxCreateArgs(), {
+        artifactName: "podman-uninstall-create-sandbox",
+        env: cliEnv,
+        timeoutMs: 240_000,
+      });
+      const sandboxInspection = inspectContainer(engine, SANDBOX_NAME);
+      const sandboxContainerId = sandboxInspection.Id;
+      const sandboxId = sandboxInspection.Config.Labels["openshell.ai/sandbox-id"];
+      expect(sandboxId).toMatch(/^[A-Za-z0-9._:-]{1,256}$/u);
       createdContainerIds.push(sandboxContainerId);
 
       const unrelatedCreate = engine.capture(unrelatedCreateArgs());
@@ -227,7 +231,7 @@ test(
           {
             schemaVersion: 4,
             sandboxName: SANDBOX_NAME,
-            sandboxId: SANDBOX_ID,
+            sandboxId,
             containerId: sandboxContainerId,
             dashboardPort: 18789,
             registryGeneration: sandboxContainerId,
