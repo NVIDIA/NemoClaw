@@ -23,16 +23,26 @@ function inspection(overrides: Record<string, unknown> = {}): string {
   ]);
 }
 
-function engine(outputs: readonly string[]): {
+type EngineOutput =
+  | string
+  | { readonly status: number; readonly stdout?: string; readonly stderr?: string };
+
+function engine(outputs: readonly EngineOutput[]): {
   readonly capture: ReturnType<typeof vi.fn>;
   readonly value: PodmanBoundContainerEngine;
 } {
   let index = 0;
-  const capture = vi.fn(() => ({
-    status: 0,
-    stdout: outputs[index++] ?? "",
-    stderr: "",
-  }));
+  const capture = vi.fn((args: readonly string[]) => {
+    const output = outputs[index++];
+    if (typeof output === "object") {
+      return { status: output.status, stdout: output.stdout ?? "", stderr: output.stderr ?? "" };
+    }
+    return {
+      status: output === undefined && args[0] === "network" && args[1] === "exists" ? 1 : 0,
+      stdout: output ?? "",
+      stderr: "",
+    };
+  });
   return {
     capture,
     value: {
@@ -91,6 +101,7 @@ describe("native runtime provider-network authority", () => {
     expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([
       ["network", "create", "--label", `${QUALIFICATION_LABEL}=${CASE_ID}`, NETWORK_NAME],
       ["network", "rm", "--force", NETWORK_NAME],
+      ["network", "exists", NETWORK_NAME],
     ]);
   });
 
@@ -116,9 +127,37 @@ describe("native runtime provider-network authority", () => {
         CASE_ID,
       ),
     ).toThrow("Provider network identity changed after immutable-ID resolution");
-    expect(changedGateway.capture).toHaveBeenLastCalledWith(
+    expect(changedGateway.capture).toHaveBeenNthCalledWith(
+      4,
       ["network", "rm", "--force", NETWORK_NAME],
       60_000,
     );
+    expect(changedGateway.capture).toHaveBeenLastCalledWith(
+      ["network", "exists", NETWORK_NAME],
+      60_000,
+    );
+  });
+
+  it("reports validation and cleanup together when network removal cannot be proven", () => {
+    const runtime = engine([
+      "unexpected-network",
+      { status: 1, stderr: "remove failed" },
+      { status: 0 },
+    ]);
+
+    expect(() =>
+      nativeRuntimeQualificationCaseInternals.createProviderNetwork(
+        runtime.value,
+        NETWORK_NAME,
+        CASE_ID,
+      ),
+    ).toThrow(
+      "Provider network creation returned an unexpected identity; provider network cleanup could not prove removal (remove exit 1; exists exit 0)",
+    );
+    expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([
+      ["network", "create", "--label", `${QUALIFICATION_LABEL}=${CASE_ID}`, NETWORK_NAME],
+      ["network", "rm", "--force", NETWORK_NAME],
+      ["network", "exists", NETWORK_NAME],
+    ]);
   });
 });

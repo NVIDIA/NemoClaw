@@ -318,7 +318,32 @@ function createProviderNetwork(
     return Object.freeze({ id, name, gateway });
   } catch (error) {
     if (created) {
-      engine.capture(["network", "rm", "--force", name], COMMAND_TIMEOUT);
+      let removalOutcome = "not attempted";
+      try {
+        const removal = engine.capture(["network", "rm", "--force", name], COMMAND_TIMEOUT);
+        removalOutcome = `exit ${String(removal.status)}`;
+      } catch (cleanupError) {
+        removalOutcome = `threw ${bounded(
+          cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        )}`;
+      }
+      let existenceOutcome = "not attempted";
+      let removalProven = false;
+      try {
+        const existence = engine.capture(["network", "exists", name], COMMAND_TIMEOUT);
+        existenceOutcome = `exit ${String(existence.status)}`;
+        removalProven = existence.status === 1;
+      } catch (cleanupError) {
+        existenceOutcome = `threw ${bounded(
+          cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        )}`;
+      }
+      if (!removalProven) {
+        const validationFailure = bounded(error instanceof Error ? error.message : String(error));
+        throw new Error(
+          `${validationFailure}; provider network cleanup could not prove removal (remove ${removalOutcome}; exists ${existenceOutcome})`,
+        );
+      }
     }
     throw error;
   }
