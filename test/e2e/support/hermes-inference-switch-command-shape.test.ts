@@ -289,7 +289,7 @@ describe("Hermes inference switch command shape", () => {
     expect(delay).not.toHaveBeenCalled();
   });
 
-  it("does not retry a Hermes CLI PONG from the wrong selected route", async () => {
+  it("retries a Hermes CLI PONG until the selected route receives it", async () => {
     const requests: Array<{
       auth: string;
       authorizationSent: boolean;
@@ -320,17 +320,29 @@ describe("Hermes inference switch command shape", () => {
       .fn(recordRouteAndReturnPong("selected-model"))
       .mockImplementationOnce(recordRouteAndReturnPong("stale-model"));
     const delay = vi.fn().mockResolvedValue(undefined);
+    const onEvidence = vi.fn().mockResolvedValue(undefined);
 
     await expect(
       runHermesCliPongWithRetry({
         accept: () => hasAuthenticatedProxyResolutionRequest(baseline, 0, "selected-model"),
         delay,
+        onEvidence,
         run,
       }),
     ).resolves.toBe(result);
-    expect(requests).toEqual([authenticatedRequest("stale-model")]);
-    expect(run.mock.calls).toEqual([[1]]);
-    expect(delay).not.toHaveBeenCalled();
+    expect(requests).toEqual([
+      authenticatedRequest("stale-model"),
+      authenticatedRequest("selected-model"),
+    ]);
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(delay).toHaveBeenCalledOnce();
+    expect(delay).toHaveBeenCalledWith(5_000);
+    expect(onEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "hermes-inference-switch.cli-pong",
+        outcome: "passed-after-retry",
+      }),
+    );
   });
 
   it("parses exact provider and model values from an inference route", () => {

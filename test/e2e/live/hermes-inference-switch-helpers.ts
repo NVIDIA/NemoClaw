@@ -421,12 +421,12 @@ export async function runHermesCliPongWithRetry(
     onEvidence: options.onEvidence,
     run: async (attempt) => {
       const result = await options.run(attempt);
+      const pong = result.exitCode === 0 && /\bPONG\b/iu.test(result.stdout);
+      const selectedRouteAccepted = pong && (options.accept?.(result, attempt) ?? true);
       return {
-        passed:
-          result.exitCode === 0 &&
-          /\bPONG\b/iu.test(result.stdout) &&
-          (options.accept?.(result, attempt) ?? true),
+        passed: selectedRouteAccepted,
         result,
+        selectedRoutePending: pong && !selectedRouteAccepted,
       };
     },
     sleep: options.delay,
@@ -435,6 +435,9 @@ export async function runHermesCliPongWithRetry(
         return { outcome: "failed", failureClass: "deterministic" };
       }
       if (value.passed) return { outcome: "passed" };
+      if (value.selectedRoutePending) {
+        return { outcome: "failed", failureClass: "transient-external" };
+      }
       return { outcome: "failed", failureClass: hermesProbeFailureClass(value.result) };
     },
   });
