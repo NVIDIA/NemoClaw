@@ -257,6 +257,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
+    expect(boundary.run).toContain("ensure_subordinate_range /etc/subuid --add-subuids");
+    expect(boundary.run).toContain("ensure_subordinate_range /etc/subgid --add-subgids");
+    expect(boundary.run).toContain("has no free subordinate-ID range for rootless Podman");
+    expect(boundary.run).toContain('sudo -u "$account" env -i');
+    expect(boundary.run).toContain("podman info --format json");
+    expect(boundary.run).toContain("Credential-free rootless Podman readiness failed");
     expect(boundary.run).toContain('install -d -m 0755 "$guard_dir"');
     expect(boundary.run).toContain('chmod 0555 "$guard_dir/docker"');
     expect(boundary.run).toContain('setfacl --modify "u:${account}:--x"');

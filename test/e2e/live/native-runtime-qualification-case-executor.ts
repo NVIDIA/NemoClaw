@@ -61,6 +61,11 @@ interface PodmanNetworkAuthority {
   readonly gateway: string;
 }
 
+interface PodmanQualificationService {
+  readonly child: ChildProcess;
+  readonly diagnostic: () => string;
+}
+
 interface CommandResult {
   readonly status: number;
   readonly stdout: string;
@@ -188,11 +193,14 @@ function assertDockerUnavailable(): Record<string, true> {
   };
 }
 
-async function waitForSocket(socket: string, child: ChildProcess): Promise<void> {
+async function waitForSocket(socket: string, service: PodmanQualificationService): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
+    const { child } = service;
     if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error("Rootless Podman API service exited before its socket became ready");
+      throw new Error(
+        `Rootless Podman API service exited before its socket became ready (exit=${String(child.exitCode)}, signal=${String(child.signalCode)}): ${service.diagnostic() || "no bounded diagnostic"}`,
+      );
     }
     const metadata = fs.lstatSync(socket, { throwIfNoEntry: false });
     if (metadata?.isSocket()) return;
@@ -201,12 +209,24 @@ async function waitForSocket(socket: string, child: ChildProcess): Promise<void>
   throw new Error("Rootless Podman API service did not create its socket");
 }
 
-function startPodmanQualificationService(socket: string, progress: TestProgress): ChildProcess {
-  return spawnObservedChild("podman", ["system", "service", "--time=0", `unix://${socket}`], {
-    activityLabel: "command: rootless Podman qualification service",
-    progress,
-    spawn: { env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+function startPodmanQualificationService(
+  socket: string,
+  progress: TestProgress,
+): PodmanQualificationService {
+  let diagnostic = "";
+  const child = spawnObservedChild(
+    "podman",
+    ["system", "service", "--time=0", `unix://${socket}`],
+    {
+      activityLabel: "command: rootless Podman qualification service",
+      progress,
+      spawn: { env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+    },
+  );
+  child.stderr?.on("data", (value: Buffer | string) => {
+    diagnostic = bounded(`${diagnostic} ${String(value)}`);
   });
+  return Object.freeze({ child, diagnostic: () => diagnostic });
 }
 
 async function stopService(child: ChildProcess | null, socket: string): Promise<void> {
@@ -530,7 +550,10 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
   const socket = path.join(runtimeDirectory, "podman", "podman.sock");
   fs.mkdirSync(path.dirname(socket), { recursive: true, mode: 0o700 });
 
-  let service: ChildProcess | null = startPodmanQualificationService(socket, progress);
+  let service: PodmanQualificationService | null = startPodmanQualificationService(
+    socket,
+    progress,
+  );
   let hostEngine: PodmanBoundContainerEngine | null = null;
   let inferenceEngine: PodmanBoundContainerEngine | null = null;
   let lifecycleEngine: PodmanBoundContainerEngine | null = null;
@@ -1059,7 +1082,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         }
       }
     }
-    await stopService(service, socket);
+    await stopService(service?.child ?? null, socket);
     service = null;
   }
 }

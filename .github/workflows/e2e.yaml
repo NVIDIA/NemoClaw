@@ -1362,7 +1362,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in git jq node npm pgrep podman setfacl sha256sum systemctl; do
+          for command in awk git jq node npm pgrep podman setfacl sha256sum systemctl usermod; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
@@ -1383,6 +1383,50 @@ jobs:
           account="nemoclawq"
           printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
           sudo useradd --create-home --shell /usr/sbin/nologin "$account"
+          ensure_subordinate_range() {
+            local file="$1"
+            local option="$2"
+            local range_start=100000
+            local range_end
+            local conflict_end
+            [[ -f "$file" && ! -L "$file" ]] || {
+              echo "::error::Rootless Podman subordinate-ID file is missing or invalid: $file" >&2
+              exit 1
+            }
+            if awk -F: -v account="$account" '
+              $1 == account && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$file"; then
+              return
+            fi
+            while :; do
+              ((range_start <= 4294901760)) || {
+                echo "::error::Protected runner has no free subordinate-ID range for rootless Podman" >&2
+                exit 1
+              }
+              range_end=$((range_start + 65535))
+              conflict_end="$(awk -F: -v start="$range_start" -v end="$range_end" '
+                $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {
+                  current_end = $2 + $3 - 1
+                  if ($2 <= end && current_end >= start && current_end > maximum) maximum = current_end
+                }
+                END { if (maximum != "") print maximum }
+              ' "$file")"
+              [[ -n "$conflict_end" ]] || break
+              range_start=$((conflict_end + 1))
+            done
+            range_end=$((range_start + 65535))
+            sudo usermod "$option" "${range_start}-${range_end}" "$account"
+            awk -F: -v account="$account" '
+              $1 == account && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$file" || {
+              echo "::error::Protected runner did not provision rootless Podman subordinate IDs" >&2
+              exit 1
+            }
+          }
+          ensure_subordinate_range /etc/subuid --add-subuids
+          ensure_subordinate_range /etc/subgid --add-subgids
           uid="$(id -u "$account")"
           home="$(getent passwd "$account" | cut -d: -f6)"
           runtime_dir="/run/user/${uid}"
@@ -1406,6 +1450,15 @@ jobs:
           install -d -m 0755 "$guard_dir"
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
           chmod 0555 "$guard_dir/docker"
+          sudo -u "$account" env -i \
+            HOME="$home" \
+            LANG=C.UTF-8 \
+            PATH="$guard_dir:/usr/local/bin:/usr/bin:/bin" \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            podman info --format json >/dev/null || {
+              echo "::error::Credential-free rootless Podman readiness failed" >&2
+              exit 1
+            }
           printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
