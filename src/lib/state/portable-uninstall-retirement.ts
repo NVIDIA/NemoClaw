@@ -652,19 +652,17 @@ function openOwnedDirectory(
     throw error;
   }
 }
-function ownedDirectoryEntries(handle: OwnedDirectoryHandle): string[] {
+function ownedDirectoryIsEmpty(handle: OwnedDirectoryHandle): boolean {
   assertOwnedDirectory(handle);
-  const entries = fs.readdirSync(handle.path).sort();
-  if (entries.length > MAX_DIRECTORY_ENTRIES)
-    throw new Error(`Portable uninstall directory has too many entries: ${handle.path}`);
+  const isEmpty = fs.readdirSync(handle.path).length === 0;
   assertOwnedDirectory(handle);
-  return entries;
+  return isEmpty;
 }
 function removeOwnedEmptyDirectory(
   handle: OwnedDirectoryHandle,
   parent: OwnedDirectoryHandle,
 ): boolean {
-  if (ownedDirectoryEntries(handle).length > 0) return false;
+  if (!ownedDirectoryIsEmpty(handle)) return false;
   assertOwnedDirectory(parent);
   assertOwnedDirectory(handle);
   try {
@@ -706,7 +704,7 @@ function removeRetiredPortableConfigDirectories(homeDir: string): void {
     assertOwnedDirectory(configHome);
     if (portableConfig && !removeOwnedEmptyDirectory(portableConfig, nemoclawConfig)) return;
     assertOwnedDirectory(nemoclawConfig);
-    if (ownedDirectoryEntries(nemoclawConfig).length > 0) return;
+    if (!ownedDirectoryIsEmpty(nemoclawConfig)) return;
     removeOwnedEmptyDirectory(nemoclawConfig, configHome);
     assertOwnedDirectory(configHome);
     assertOwnedDirectory(home);

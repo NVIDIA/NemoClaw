@@ -212,6 +212,22 @@ describe("portable uninstall retirement state", () => {
     },
   );
 
+  it("preserves a NemoClaw configuration directory with more than 1,024 entries (#9189)", () => {
+    const test = fixture();
+    const prepared = prepareFixture(test);
+    const configDir = path.dirname(path.dirname(test.config));
+    const readdir = fs.readdirSync.bind(fs);
+    vi.spyOn(fs, "readdirSync").mockImplementation(((target, options) =>
+      String(target) === configDir
+        ? new Array<string>(1_025).fill("operator-owned.conf")
+        : readdir(target, options as never)) as typeof fs.readdirSync);
+
+    expect(() => publishAndRetirePortableEvidence(prepared)).not.toThrow();
+    expect(fs.existsSync(test.config)).toBe(false);
+    expect(fs.existsSync(path.dirname(test.config))).toBe(false);
+    expect(fs.existsSync(configDir)).toBe(true);
+  });
+
   it("rejects a symlink that replaces the portable configuration directory (#9189)", () => {
     const test = fixture();
     const portableDir = path.dirname(test.config);
