@@ -593,18 +593,16 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
     ).toEqual(ok("other/alpha usable"));
   });
 
-  it("accepts exact named sandbox absence only after proving gateway reachability (#9189)", () => {
+  it("accepts exact structured sandbox absence only after proving gateway reachability (#9189)", () => {
     const registeredSandboxes = new Set(["unrelated"]);
     const { homeDir, sharedPaths: sharedOpenShellPaths } = sharedOpenShellFixture(
       "nemoclaw-portable-absent-",
     );
     const removed: string[] = [];
+    const error = "code:'Some requested entity was not found',message:'sandbox not found'";
     const runHandlers = new Map<string, () => RunResult>([
-      [
-        "openshell sandbox delete -g nemoclaw alpha",
-        () => ({ status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }),
-      ],
-      ["openshell sandbox get -g nemoclaw alpha", () => sandboxAbsent("alpha")],
+      ["openshell sandbox delete -g nemoclaw alpha", () => sandboxAbsent("alpha")],
+      ["openshell sandbox get -g nemoclaw alpha", () => ({ status: 1, stdout: "", stderr: error })],
       ["openshell status -g nemoclaw", () => ok("Status: Connected\nGateway: nemoclaw\n")],
       ["pgrep", notFound],
       ["lsof", notFound],
