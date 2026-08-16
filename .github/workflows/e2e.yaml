@@ -1068,6 +1068,8 @@ jobs:
           node-version: 22.19.0
 
       - name: Install Podman 5 and rootless prerequisites from the signed runner OS repository
+        env:
+          PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
         shell: bash
         run: |
           set -euo pipefail
@@ -1078,11 +1080,11 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
             --yes --no-install-recommends \
-            acl apparmor fuse-overlayfs passt podman slirp4netns uidmap
-          [[ "$(podman --version)" =~ ^podman\ version\ 5[.] ]] || {
-            echo "::error::Protected runner must provide Podman 5" >&2
-            exit 1
-          }
+            acl apparmor fuse-overlayfs passt "podman=$PODMAN_APT_VERSION" slirp4netns uidmap
+          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+          version="$(podman --version)"
+          [[ "$package_version" == "$PODMAN_APT_VERSION" ]]
+          [[ "$version" == "podman version 5.7.0" ]]
 
       - name: Prepare the credential-free execution account and disable Docker
         id: boundary
@@ -1097,8 +1099,8 @@ jobs:
               exit 1
             }
           done
-          [[ "$(podman --version)" =~ ^podman\ version\ 5[.] ]] || {
-            echo "::error::Protected runner must provide Podman 5" >&2
+          [[ "$(podman --version)" == "podman version 5.7.0" ]] || {
+            echo "::error::Protected runner must provide Podman 5.7.0" >&2
             exit 1
           }
           sudo systemctl stop docker.service docker.socket 2>/dev/null || true

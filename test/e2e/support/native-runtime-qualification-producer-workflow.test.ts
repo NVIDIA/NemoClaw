@@ -142,7 +142,10 @@ describe("native runtime qualification producer workflow", () => {
     ]) {
       expect(podman.run).toContain(requiredPackage);
     }
-    expect(podman.run).toContain("^podman\\ version\\ 5[.]");
+    expect(podman.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
+    expect(podman.run).toContain('"podman=$PODMAN_APT_VERSION"');
+    expect(podman.run).toContain('[[ "$package_version" == "$PODMAN_APT_VERSION" ]]');
+    expect(podman.run).toContain('[[ "$version" == "podman version 5.7.0" ]]');
     expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
