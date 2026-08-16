@@ -4532,7 +4532,9 @@ It intentionally inherits only credential descriptors `3` and `4` across this ex
 To rotate either credential, stop the command and restart it with newly opened descriptors.
 NemoClaw does not send the OpenClaw credential to the runtime.
 The trusted caller selects each credential source path and invokes the launcher.
-That caller must create, replace, and remove each source file and revoke old credential values, while the launcher owns each descriptor from opening through parent and child closure.
+That caller must create, replace, and remove each source file and revoke old credential values.
+The launcher opens each source file, maps the inherited child descriptors, and closes its parent copies.
+The child validates, reads, and closes descriptors `3` and `4` before it accepts traffic.
 Closing the descriptors or stopping the gateway does not remove a source file or revoke its credential.
 
 The launcher is an internal library boundary for trusted external integrations, not another CLI command and not part of normal NemoClaw managed startup.
