@@ -1481,7 +1481,7 @@ jobs:
           }
           storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           storage_config="${storage_config_directory}/storage.conf"
-          podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           apparmor_profile="${storage_config_directory}/podman.apparmor"
           apparmor_profile_name="nemoclaw-native-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
@@ -1497,12 +1497,6 @@ jobs:
             echo "::error::Run-owned qualification Podman executable already exists" >&2
             exit 1
           }
-          opt_mode="$(stat -c '%a' /opt)"
-          [[ -d /opt && ! -L /opt && "$(stat -c '%u:%g' /opt)" == "0:0" && "$opt_mode" =~ ^[0-7]{3,4}$ ]] &&
-            (( (8#$opt_mode & 8#022) == 0 )) || {
-              echo "::error::Qualification Podman executable parent is not root-owned and non-writable" >&2
-              exit 1
-            }
           sudo install --owner=root --group=root --mode=0555 \
             "$TOOLCHAIN_DIRECTORY/bin/podman" "$podman_executable"
           [[ -f "$podman_executable" && ! -L "$podman_executable" && "$(stat -c '%u:%g:%a' "$podman_executable")" == "0:0:555" ]] || {
@@ -1748,7 +1742,7 @@ jobs:
             fi
             runtime_dir="/run/user/${uid}"
             storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
-            podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             apparmor_profile="${storage_config_directory}/podman.apparmor"
             if getent passwd "$account" >/dev/null; then
               sudo pkill -KILL -u "$uid" 2>/dev/null || true

@@ -212,7 +212,7 @@ export function nativeRuntimeQualificationPodmanExecutable(
 ): string {
   const executable = environment.NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE ?? "";
   const expected = new RegExp(
-    `^/opt/nemoclaw-native-runtime-podman-[1-9][0-9]*-[1-9][0-9]*-${String(uid)}$`,
+    `^/nemoclaw-native-runtime-podman-[1-9][0-9]*-[1-9][0-9]*-${String(uid)}$`,
     "u",
   );
   if (!Number.isSafeInteger(uid) || uid <= 0 || !expected.test(executable)) {

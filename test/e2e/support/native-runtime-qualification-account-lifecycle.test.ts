@@ -50,8 +50,8 @@ function fixtureSource(source: string): string {
       'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     )
     .replaceAll(
-      'podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-      'podman_executable="${FIXTURE_ROOT}/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+      'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+      'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     )
     .replaceAll(
       "/usr/lib/systemd/systemd-user-runtime-dir",
@@ -285,11 +285,10 @@ describe("native runtime qualification account lifecycle", () => {
     const fixture = createFixture();
     const runtime = path.join(fixture.root, "run", "user", "1002", "libpod", "tmp");
     const storage = path.join(fixture.root, "run", "nemoclaw-native-runtime-42-1-1002");
-    const podman = path.join(fixture.root, "opt", "nemoclaw-native-runtime-podman-42-1-1002");
+    const podman = path.join(fixture.root, "nemoclaw-native-runtime-podman-42-1-1002");
     fs.mkdirSync(fixture.home, { recursive: true });
     fs.mkdirSync(runtime, { recursive: true });
     fs.mkdirSync(storage, { recursive: true });
-    fs.mkdirSync(path.dirname(podman), { recursive: true });
     fs.writeFileSync(path.join(runtime, "alive"), "fixture");
     fs.writeFileSync(path.join(storage, "storage.conf"), "fixture");
     fs.writeFileSync(path.join(storage, "podman.apparmor"), "fixture");

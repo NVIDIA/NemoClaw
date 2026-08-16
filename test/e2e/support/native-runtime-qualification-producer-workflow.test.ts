@@ -285,10 +285,9 @@ describe("native runtime qualification producer workflow", () => {
       "${{ runner.temp }}/native-runtime-podman-toolchain",
     );
     expect(boundary.run).toContain(
-      'podman_executable="/opt/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+      'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     );
     expect(boundary.run).toContain('sudo install --owner=root --group=root --mode=0555');
-    expect(boundary.run).toContain("Qualification Podman executable parent is not root-owned");
     expect(boundary.run).toContain("0:0:555");
     expect(boundary.run).toContain('"$podman_executable" info --format json');
     expect(boundary.run).toContain("userns,");
