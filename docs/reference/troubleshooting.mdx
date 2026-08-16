@@ -1132,6 +1132,50 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 $$nemoclaw onboard
 ```
 
+### Onboarding Reports a Rejected or Unconfirmed Policy Update
+
+The onboarding policy step composes a policy document for the presets you selected and deselected, then submits it to the OpenShell gateway.
+NemoClaw removes the temporary policy file it submits whether or not the gateway accepts it.
+If the submission does not succeed, onboarding stops and:
+
+- does not record the presets as applied to the sandbox;
+- marks the session failed and resumable;
+- reports one of the two results below.
+
+The gateway read the policy and refused it:
+
+```text
+OpenShell rejected the policy for sandbox 'my-assistant' (exit 1): <OpenShell diagnostic>. The policy was not applied and re-applying it will be rejected again; change the preset selection instead.
+```
+
+The live policy is unchanged.
+Resume reapplies the recorded selection, so it submits the same document and receives the same refusal.
+Use the quoted OpenShell diagnostic to identify what the gateway refused.
+Then follow [Previous onboarding session failed](#previous-onboarding-session-failed) to start fresh onboarding, and choose a different preset selection.
+The default selection can be the refused one, so read the diagnostic before you assume a preset you added caused it.
+
+NemoClaw could not confirm the result, for example, because the gateway connection ended before the result arrived:
+
+```text
+Could not confirm the policy update for sandbox 'my-assistant': <transport or command error>. The gateway may or may not have applied it; read the current policy back before retrying.
+```
+
+The gateway state is unknown, so read the sandbox policy back before you retry:
+
+```bash
+$$nemoclaw <name> policy list
+```
+
+`policy list` compares the local registry with the live gateway policy and flags a preset that is applied in one place but not the other.
+Because the failed step did not record the presets as applied, a preset that the gateway did apply appears as that disagreement.
+
+The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
+When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
+That output reports local state, so it does not tell you whether the gateway applied the policy.
+Restore the gateway connection and run `policy list` again before you decide.
+
+After you know the live policy, follow [Previous onboarding session failed](#previous-onboarding-session-failed) to resume or restart onboarding.
+
 ### Previous onboarding session failed
 
 If a previous `$$nemoclaw onboard` attempt fails partway through (for example, a provider or inference-setup step reporting an error), NemoClaw records the failure in `~/.nemoclaw/onboard-session.json`.
