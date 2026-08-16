@@ -154,6 +154,33 @@ describe("fresh sandbox executable readiness", () => {
     });
   });
 
+  it("removes a fresh sandbox when sandbox get omits a durable ID (#9050)", async () => {
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation(
+      createSequencedOpenShellRunner([
+        ["sandbox get alpha", [{ status: 0, stdout: "Name: alpha\nState: Ready\n", stderr: "" }]],
+      ]),
+    );
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "true"],
+      expect.anything(),
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  NemoClaw could not verify that sandbox 'alpha' returned a durable ID and accepted commands.",
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
+  });
+
   it("fails when the identity probe times out after emitting not-ready output (#9050)", async () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
