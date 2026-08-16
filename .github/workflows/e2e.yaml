@@ -1463,8 +1463,12 @@ jobs:
               --architecture "$ARCHITECTURE" \
               --artifact-dir "$INSTALLER_RECEIPT_PARENT/receipts"
           sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
-          [[ -d "$INSTALLER_RECEIPT_PARENT/receipts" && ! -L "$INSTALLER_RECEIPT_PARENT/receipts" ]] || {
+          sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts" || {
             echo "::error::Installer receipt directory is missing or invalid" >&2
+            exit 1
+          }
+          sudo test ! -L "$INSTALLER_RECEIPT_PARENT/receipts" || {
+            echo "::error::Installer receipt directory must not be a symlink" >&2
             exit 1
           }
 

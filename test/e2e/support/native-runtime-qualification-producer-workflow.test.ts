@@ -272,7 +272,8 @@ describe("native runtime qualification producer workflow", () => {
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(installer.run).toContain("run-native-runtime-installer-qualification.sh");
     expect(installer.run).not.toContain("chown -R");
-    expect(installer.run).toContain('[[ -d "$INSTALLER_RECEIPT_PARENT/receipts" && ! -L');
+    expect(installer.run).toContain('sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts"');
+    expect(installer.run).toContain('sudo test ! -L "$INSTALLER_RECEIPT_PARENT/receipts"');
     expect(execute.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(execute.run).toContain("native-runtime-qualification-case.test.ts");
     expect(execute.run).not.toContain("GITHUB_TOKEN");
