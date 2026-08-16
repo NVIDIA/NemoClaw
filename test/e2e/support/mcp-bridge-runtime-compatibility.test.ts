@@ -48,6 +48,7 @@ function assertRuntimeVersion(version: string): () => void {
 
 describe("MCP bridge dev runtime compatibility", () => {
   it("selects the full lifecycle for the reviewed OpenShell runtime (#6426)", () => {
+    expect(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION).toBe("0.0.106");
     expect(
       classifyMcpBridgeRuntimeCompatibility(
         assertRuntimeVersion(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION),

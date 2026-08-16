@@ -89,7 +89,7 @@ describe("docker-driver gateway runtime helpers", () => {
         },
         () => {
           const { helpers } = makeHelpers({
-            supportedOpenshellFallbackVersion: "0.0.101",
+            supportedOpenshellFallbackVersion: "0.0.106",
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
@@ -100,7 +100,7 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("custom-openshell-docker");
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(path.resolve(sandboxBin));
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
-            "ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
+            "ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
           );
           expect(env.OPENSHELL_GATEWAY_CONFIG).toBe(
             path.join(path.resolve(stateDir), "openshell-gateway.toml"),
@@ -131,20 +131,20 @@ describe("docker-driver gateway runtime helpers", () => {
     ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
   });
 
-  it("pins the stable 0.0.101 supervisor default while preserving an explicit override", () => {
+  it("pins the stable 0.0.106 supervisor default while preserving an explicit override", () => {
     const image = (fallback: string) =>
       makeHelpers({
-        getBlueprintMaxOpenshellVersion: () => "0.0.101",
+        getBlueprintMaxOpenshellVersion: () => "0.0.106",
         supportedOpenshellFallbackVersion: fallback,
       }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
     const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () =>
-      image("0.0.101"),
+      image("0.0.106"),
     );
     expect(stable).toBe(
-      "ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb",
+      "ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01",
     );
     const override = "registry.example.test/supervisor@sha256:override";
-    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.101"))).toBe(
+    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.106"))).toBe(
       override,
     );
   });

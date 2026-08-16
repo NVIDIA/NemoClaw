@@ -118,7 +118,7 @@ function stubRecreateJournal(): RebuildRecreateJournal {
   };
 }
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
 const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   github: {

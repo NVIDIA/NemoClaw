@@ -51,12 +51,12 @@ function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   // invalidState: a host alias is accepted without an attested gateway address,
   // forcing broad private-range policy instead of an exact destination pin.
   // sourceBoundary: the pinned OpenShell release owns gateway-address discovery.
-  // whyNotSourceFix: v0.0.101 exposes no attested driver gateway address.
+  // whyNotSourceFix: v0.0.106 exposes no attested driver gateway address.
   // regressionTest: URL validation and all three live adapters reject aliases.
   // removalCondition: remove only after a reviewed OpenShell capability exposes
   // an attested address; a future version number alone is not that capability.
   throw new McpBridgeError(
-    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.101 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
+    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.106 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
     2,
   );
 }
@@ -66,7 +66,7 @@ function rejectUnsupportedOpenShellMcpIpv6Literal(hostname: string): void {
   // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
   // represent and enforce its exact proxy target safely.
   // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
-  // whyNotSourceFix: v0.0.101 does not support this target form.
+  // whyNotSourceFix: v0.0.106 does not support this target form.
   // regressionTest: URL normalization and resolved-target preflight both reject
   // private and public IPv6 literals with this capability-specific result.
   // removalCondition: remove only with reviewed parser support and parity proof;
@@ -230,7 +230,7 @@ export async function preflightMcpServerUrlResolvedTarget(
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
   // With its operator-controlled proxy_connect_by_hostname option disabled,
-  // OpenShell v0.0.101 resolves, validates every answer against allowed_ips, and
+  // OpenShell v0.0.106 resolves, validates every answer against allowed_ips, and
   // connects with that same SocketAddr list. This URL validator cannot observe
   // gateway configuration; the documented guarantee and residual risk are
   // therefore explicitly conditional on that option remaining disabled.

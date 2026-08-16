@@ -89,21 +89,21 @@ function selectOpenShellV00103(): {
 } {
   const installer = addSandboxBuildPins(
     replaceRequired(INSTALLER_TEMPLATE, [
-      ['DEV_MIN_VERSION="0.0.101"', 'DEV_MIN_VERSION="0.0.103"'],
-      ['MIN_VERSION="0.0.101"', 'MIN_VERSION="0.0.103"'],
-      ['MAX_VERSION="0.0.101"', 'MAX_VERSION="0.0.103"'],
-      ["v0.0.101:", "v0.0.103:"],
+      ['DEV_MIN_VERSION="0.0.106"', 'DEV_MIN_VERSION="0.0.103"'],
+      ['MIN_VERSION="0.0.106"', 'MIN_VERSION="0.0.103"'],
+      ['MAX_VERSION="0.0.106"', 'MAX_VERSION="0.0.103"'],
+      ["v0.0.106:", "v0.0.103:"],
     ]),
   );
   const brevInstaller = replaceRequired(BREV_TEMPLATE, [
     [
-      'stable | auto) OPENSHELL_VERSION="v0.0.101" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.106" ;;',
       'stable | auto) OPENSHELL_VERSION="v0.0.103" ;;',
     ],
-    ["v0.0.101:", "v0.0.103:"],
+    ["v0.0.106:", "v0.0.103:"],
   ]);
   const blueprint = replaceRequired(BLUEPRINT_TEMPLATE, [
-    ['max_openshell_version: "0.0.101"', 'max_openshell_version: "0.0.103"'],
+    ['max_openshell_version: "0.0.106"', 'max_openshell_version: "0.0.103"'],
   ]);
   return { blueprint, brevInstaller, installer };
 }

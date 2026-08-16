@@ -72,15 +72,15 @@ const CREDENTIAL_WINDOW_ARTIFACT_DIR = "e2e-artifacts/live/openshell-credential-
 const CREDENTIAL_WINDOW_RUN_STEP = "Run OpenShell credential generation-window live test";
 const CREDENTIAL_WINDOW_JOB_CONDITION =
   "${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}";
-const STABLE_RELEASE_SOURCE_SHA = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
+const STABLE_RELEASE_SOURCE_SHA = "c4b500a7de64d0b66e3ee8098f58d14299092162";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb";
+  "722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
 const STABLE_RELEASE_IDENTITY_TOKENS = [
-  'releaseTag: "v0.0.101"',
+  'releaseTag: "v0.0.106"',
   STABLE_RELEASE_SOURCE_SHA,
-  "1ad48efd5e1de8f3f017a81b3a7177872f350343a1a8d8074c7e844bca4801e9",
-  "a6a5d754605a2144b148637b85a09291d2eeb77e08a4ee34b83685c6920448f5",
-  "a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920",
+  "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59",
+  "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c",
+  "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
 ] as const;
 const STABLE_RELEASE_PROVENANCE_TOKENS = [
   ...STABLE_RELEASE_IDENTITY_TOKENS,

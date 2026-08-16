@@ -298,7 +298,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
           "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
           "COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py",
-          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.101.json",
+          "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
           "COPY scripts/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
           "COPY scripts/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py",

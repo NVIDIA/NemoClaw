@@ -62,6 +62,9 @@ const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([
   // OpenShell v0.0.101 standalone sandbox binaries.
   ["a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920", "0.0.101"],
   ["88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4", "0.0.101"],
+  // OpenShell v0.0.106 standalone sandbox binaries.
+  ["019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8", "0.0.106"],
+  ["0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55", "0.0.106"],
 ]);
 
 export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | null {
@@ -113,7 +116,7 @@ function componentBuildVersionsMatch(left: string, right: string): boolean {
 // from version text alone. sourceBoundary: OpenShell owns component identity
 // and the future native capability response; this scanner is an artifact and
 // install-repair preflight only and never authorizes an MCP mutation.
-// whyNotSourceFix: v0.0.101 has no structured installed-feature response.
+// whyNotSourceFix: v0.0.106 has no structured installed-feature response.
 // regressionTest: openshell-feature-gate.test.ts covers mixed roots, symlink
 // farms, stale components, unreadable binaries, and the pinned sandbox digest.
 // removalCondition: replace this scan when OpenShell exposes a versioned native
@@ -178,7 +181,6 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
     (candidate): candidate is string => candidate !== null,
   );
 
-  const requiredMarkers = REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => Buffer.from(marker));
   const foundMarkers = new Set<string>();
   const seen = new Set<string>();
   for (const candidate of candidates) {
@@ -195,10 +197,8 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
     } finally {
       if (fd !== null) fs.closeSync(fd);
     }
-    for (let index = 0; index < requiredMarkers.length; index += 1) {
-      if (content.includes(requiredMarkers[index])) {
-        foundMarkers.add(REQUIRED_OPENSHELL_MCP_FEATURES[index]);
-      }
+    for (const marker of REQUIRED_OPENSHELL_MCP_FEATURES) {
+      if (content.includes(Buffer.from(marker))) foundMarkers.add(marker);
     }
     if (REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => foundMarkers.has(marker))) break;
   }

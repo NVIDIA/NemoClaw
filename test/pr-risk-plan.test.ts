@@ -403,7 +403,7 @@ describe("deterministic PR risk plan", () => {
       "agents/hermes/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile",
       "scripts/checks/run-managed-image-direct-e2e.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
       "src/lib/onboard/managed-startup/image-runtime.ts",
     ];
     const result = plan(...managedImageInputs);
@@ -432,7 +432,7 @@ describe("deterministic PR risk plan", () => {
     "nemoclaw/src/index.ts",
     "nemoclaw-blueprint/blueprint.yaml",
     "scripts/checks/build-protected-managed-images.sh",
-    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
     "src/lib/core/json-types.ts",
     "src/lib/core/ports.ts",
     "src/lib/messaging/runtime.ts",

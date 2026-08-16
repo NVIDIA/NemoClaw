@@ -53,6 +53,15 @@ const previousManifest = JSON.parse(
     "utf8",
   ),
 ) as CredentialManifest;
+const currentManifest = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      repoRoot,
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
+    ),
+    "utf8",
+  ),
+) as CredentialManifest;
 
 const SOURCE_COMMIT = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
 const NEW_COMMITS = [
@@ -66,6 +75,12 @@ const NEW_COMMITS = [
   "d85339d621e0e96697499a9d4c8780ee9b9c1324",
   SOURCE_COMMIT,
 ] as const;
+
+function sha256File(relativePath: string): string {
+  return createHash("sha256")
+    .update(fs.readFileSync(path.join(repoRoot, relativePath)))
+    .digest("hex");
+}
 
 const RANGES = [
   ["v0.0.85 -> v0.0.86", 12, 109],
@@ -139,12 +154,6 @@ const RELEASE_IDENTITIES = [
   "sha256:44aecbbbf4a4b46e88de3fea28476ca2abf043f543d1e9cb9089bcec1ee3aa74",
   "sha256:d30bb067e4769c743cdf020e736cf88f090dc2d66cc01cbaf18f0098cfb90da1",
 ] as const;
-
-function sha256File(relativePath: string): string {
-  return createHash("sha256")
-    .update(fs.readFileSync(path.join(repoRoot, relativePath)))
-    .digest("hex");
-}
 
 function parseRangeTable(): Map<string, readonly [number, number]> {
   const result = new Map<string, readonly [number, number]>();
@@ -235,9 +244,14 @@ describe("OpenShell 0.0.101 migration review", () => {
       ],
     });
 
-    for (const evidence of manifest.generation?.nemoclawSourceEvidence ?? []) {
+    expect(currentManifest).toMatchObject({
+      openshellCommit: "c4b500a7de64d0b66e3ee8098f58d14299092162",
+      openshellVersion: "0.0.106",
+    });
+    for (const evidence of currentManifest.generation?.nemoclawSourceEvidence ?? []) {
       expect(sha256File(evidence.path), evidence.path).toBe(evidence.sha256);
     }
+
     for (const key of [
       "rawChildValueKeys",
       "rewrittenChildValueKeys",
