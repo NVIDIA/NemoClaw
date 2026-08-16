@@ -3,7 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 
-import { classifyPolicySetResult } from "./policy-set-outcome";
+import { classifyPolicySetResult, type PolicySetOutcome } from "./policy-set-outcome";
+
+/**
+ * Narrow to the ambiguous arm so a test can assert on `detail` in a straight
+ * line. A non-ambiguous outcome returns its kind, which fails the assertion
+ * with the arm that was actually produced.
+ */
+function ambiguousDetail(outcome: PolicySetOutcome): string {
+  return outcome.kind === "ambiguous" ? outcome.detail : `outcome kind: ${outcome.kind}`;
+}
 
 /**
  * Observed verbatim in issue #8991. The stream died mid-call, so the
@@ -30,22 +39,21 @@ describe("openshell policy set outcome classification", () => {
   it("preserves the status and authoritative message of a semantic rejection (#9206)", () => {
     const outcome = classifyPolicySetResult({ status: 1, stderr: SEMANTIC_REJECTION_STDERR });
 
-    expect(outcome.kind).toBe("rejected");
-    if (outcome.kind !== "rejected") return;
-    expect(outcome.status).toBe(1);
-    expect(outcome.message).toBe(
-      'network policy "team-web" rejected: preset "slack" declares an egress host ' +
+    expect(outcome).toEqual({
+      kind: "rejected",
+      status: 1,
+      message:
+        'network policy "team-web" rejected: preset "slack" declares an egress host ' +
         "that conflicts with the sandbox baseline",
-    );
+    });
   });
 
   it("treats an HTTP/2 stream reset as ambiguous rather than a refusal (#9206)", () => {
     const outcome = classifyPolicySetResult({ status: 1, stderr: HTTP2_RESET_STDERR });
 
     expect(outcome.kind).toBe("ambiguous");
-    if (outcome.kind !== "ambiguous") return;
-    expect(outcome.detail).toContain("h2 protocol error");
-    expect(outcome.detail).toContain("Reset(StreamId(3), PROTOCOL_ERROR, Library)");
+    expect(ambiguousDetail(outcome)).toContain("h2 protocol error");
+    expect(ambiguousDetail(outcome)).toContain("Reset(StreamId(3), PROTOCOL_ERROR, Library)");
   });
 
   it("treats a spawn-level failure with no exit status as ambiguous (#9206)", () => {
@@ -55,8 +63,7 @@ describe("openshell policy set outcome classification", () => {
     });
 
     expect(outcome.kind).toBe("ambiguous");
-    if (outcome.kind !== "ambiguous") return;
-    expect(outcome.detail).toContain("ENOENT");
+    expect(ambiguousDetail(outcome)).toContain("ENOENT");
   });
 
   it("treats a nonzero exit with no diagnostic output as ambiguous (#9206)", () => {
@@ -94,7 +101,6 @@ describe("openshell policy set outcome classification", () => {
     });
 
     expect(outcome.kind).toBe("ambiguous");
-    if (outcome.kind !== "ambiguous") return;
-    expect(outcome.detail).toContain("stream closed before the response completed");
+    expect(ambiguousDetail(outcome)).toContain("stream closed before the response completed");
   });
 });

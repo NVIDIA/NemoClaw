@@ -75,11 +75,20 @@ describe("waitForPolicyMutation", () => {
   });
 
   it("keeps re-polling a sandbox that has not appeared yet until the mutation lands (#9206)", () => {
+    const behaviours: ReadonlyArray<() => boolean> = [
+      () => {
+        throw new Error(TRANSIENT_STARTUP_ERROR_MESSAGE);
+      },
+      () => {
+        throw new Error(TRANSIENT_STARTUP_ERROR_MESSAGE);
+      },
+      () => true,
+    ];
     let attempts = 0;
     const mutate = (): boolean => {
+      const behaviour = behaviours[attempts] ?? (() => true);
       attempts += 1;
-      if (attempts < 3) throw new Error(TRANSIENT_STARTUP_ERROR_MESSAGE);
-      return true;
+      return behaviour();
     };
 
     expect(() => waitForPolicyMutation("applyPreset(slack)", mutate)).not.toThrow();
