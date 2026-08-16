@@ -193,7 +193,7 @@ describe("native runtime failed-case cleanup", () => {
     expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([remove, exists]);
   });
 
-  it("continues every resource class after one removal throws", () => {
+  it("routes each resource to its owning engine and continues after one removal throws", () => {
     const lifecycle = engine([
       () => {
         throw new Error("container removal failed");
@@ -202,13 +202,17 @@ describe("native runtime failed-case cleanup", () => {
       { status: 0 },
       { status: 1 },
     ]);
-    const inference = engine([{ status: 0 }, { status: 1 }]);
+    const inference = engine([{ status: 0 }, { status: 1 }, { status: 0 }, { status: 1 }]);
 
-    const failures = nativeRuntimeQualificationCaseInternals.collectOwnedResourceCleanupFailures([
-      { engine: lifecycle.value, identities: ["container-id"], kind: "container" },
-      { engine: lifecycle.value, identities: ["volume-id"], kind: "volume" },
-      { engine: inference.value, identities: ["network-id"], kind: "network" },
-    ]);
+    const failures =
+      nativeRuntimeQualificationCaseInternals.collectQualificationResourceCleanupFailures({
+        inferenceContainers: ["inference-id"],
+        inferenceEngine: inference.value,
+        lifecycleContainers: ["container-id"],
+        lifecycleEngine: lifecycle.value,
+        networks: ["network-id"],
+        volumes: ["volume-id"],
+      });
 
     expect(failures.map((failure) => failure.message)).toEqual([
       "Native runtime qualification container cleanup failed for container-id (remove threw; exists exit 0)",
@@ -220,6 +224,8 @@ describe("native runtime failed-case cleanup", () => {
       ["volume", "exists", "volume-id"],
     ]);
     expect(inference.capture.mock.calls.map(([args]) => args)).toEqual([
+      ["rm", "--force", "inference-id"],
+      ["container", "exists", "inference-id"],
       ["network", "rm", "--force", "network-id"],
       ["network", "exists", "network-id"],
     ]);

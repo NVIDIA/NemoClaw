@@ -547,6 +547,46 @@ function collectOwnedResourceCleanupFailures(groups: readonly OwnedResourceGroup
   return failures;
 }
 
+function collectQualificationResourceCleanupFailures(input: {
+  readonly inferenceContainers: readonly string[];
+  readonly inferenceEngine: PodmanBoundContainerEngine | null;
+  readonly lifecycleContainers: readonly string[];
+  readonly lifecycleEngine: PodmanBoundContainerEngine | null;
+  readonly networks: readonly string[];
+  readonly volumes: readonly string[];
+}): Error[] {
+  return collectOwnedResourceCleanupFailures([
+    ...(input.lifecycleEngine
+      ? [
+          {
+            engine: input.lifecycleEngine,
+            identities: input.lifecycleContainers,
+            kind: "container" as const,
+          },
+          {
+            engine: input.lifecycleEngine,
+            identities: input.volumes,
+            kind: "volume" as const,
+          },
+        ]
+      : []),
+    ...(input.inferenceEngine
+      ? [
+          {
+            engine: input.inferenceEngine,
+            identities: input.inferenceContainers,
+            kind: "container" as const,
+          },
+          {
+            engine: input.inferenceEngine,
+            identities: input.networks,
+            kind: "network" as const,
+          },
+        ]
+      : []),
+  ]);
+}
+
 function vllmServeArguments(model: string, port: number): readonly string[] {
   return [
     "vllm",
@@ -750,7 +790,8 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
   let hostEngine: PodmanBoundContainerEngine | null = null;
   let inferenceEngine: PodmanBoundContainerEngine | null = null;
   let lifecycleEngine: PodmanBoundContainerEngine | null = null;
-  const ownedContainers = new Set<string>();
+  const ownedInferenceContainers = new Set<string>();
+  const ownedLifecycleContainers = new Set<string>();
   const ownedVolumes = new Set<string>();
   const ownedNetworks = new Set<string>();
   let inferenceContainerId = "";
@@ -865,7 +906,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     if (!FULL_ID.test(inferenceContainerId)) {
       throw new Error("Inference container did not return a full immutable ID");
     }
-    ownedContainers.add(inferenceContainerId);
+    ownedInferenceContainers.add(inferenceContainerId);
     if (row.case.inference === "ollama") {
       capture(
         inferenceEngine,
@@ -900,7 +941,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       sandboxName,
       volume: volumeName,
     });
-    ownedContainers.add(agentId);
+    ownedLifecycleContainers.add(agentId);
     capture(
       lifecycleEngine,
       ["exec", agentId, "/bin/sh", "-c", "printf '%s\\n' qualified >/qualification/state"],
@@ -977,7 +1018,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       "sandbox state mutation",
     );
     capture(lifecycleEngine, ["rm", "--force", agentId], "remove sandbox before rebuild");
-    ownedContainers.delete(agentId);
+    ownedLifecycleContainers.delete(agentId);
     capture(lifecycleEngine, ["volume", "rm", volumeName], "remove sandbox volume");
     ownedVolumes.delete(volumeName);
     capture(
@@ -1002,7 +1043,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       sandboxName,
       volume: volumeName,
     });
-    ownedContainers.add(agentId);
+    ownedLifecycleContainers.add(agentId);
     expect(
       capture(lifecycleEngine, ["exec", agentId, "cat", "/qualification/state"], "restored state"),
     ).toBe("qualified");
@@ -1042,7 +1083,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         sandboxName: `${sandboxName}-clone`,
         volume: cloneVolume,
       });
-      ownedContainers.add(cloneId);
+      ownedLifecycleContainers.add(cloneId);
       expect(
         capture(lifecycleEngine, ["exec", cloneId, "cat", "/qualification/state"], "clone state"),
       ).toBe("qualified");
@@ -1129,18 +1170,17 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
 
     progress.phase("prove exact cleanup");
     capture(lifecycleEngine, ["rm", "--force", agentId], "agent cleanup");
-    ownedContainers.delete(agentId);
-    for (const containerId of [...ownedContainers]) {
-      if (containerId === inferenceContainerId) continue;
+    ownedLifecycleContainers.delete(agentId);
+    for (const containerId of [...ownedLifecycleContainers]) {
       capture(lifecycleEngine, ["rm", "--force", containerId], "focused container cleanup");
-      ownedContainers.delete(containerId);
+      ownedLifecycleContainers.delete(containerId);
     }
     for (const volume of [...ownedVolumes]) {
       capture(lifecycleEngine, ["volume", "rm", volume], "qualification volume cleanup");
       ownedVolumes.delete(volume);
     }
     capture(inferenceEngine, ["rm", "--force", inferenceContainerId], "inference runtime cleanup");
-    ownedContainers.delete(inferenceContainerId);
+    ownedInferenceContainers.delete(inferenceContainerId);
     capture(inferenceEngine, ["network", "rm", network.id], "provider network cleanup");
     ownedNetworks.delete(network.id);
     removeQualificationSnapshot(snapshot);
@@ -1292,31 +1332,14 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         );
       }
       cleanupFailures.push(
-        ...collectOwnedResourceCleanupFailures([
-          ...(lifecycleEngine
-            ? [
-                {
-                  engine: lifecycleEngine,
-                  identities: [...ownedContainers],
-                  kind: "container" as const,
-                },
-                {
-                  engine: lifecycleEngine,
-                  identities: [...ownedVolumes],
-                  kind: "volume" as const,
-                },
-              ]
-            : []),
-          ...(inferenceEngine
-            ? [
-                {
-                  engine: inferenceEngine,
-                  identities: [...ownedNetworks],
-                  kind: "network" as const,
-                },
-              ]
-            : []),
-        ]),
+        ...collectQualificationResourceCleanupFailures({
+          inferenceContainers: [...ownedInferenceContainers],
+          inferenceEngine,
+          lifecycleContainers: [...ownedLifecycleContainers],
+          lifecycleEngine,
+          networks: [...ownedNetworks],
+          volumes: [...ownedVolumes],
+        }),
       );
     }
     try {
@@ -1339,6 +1362,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
 
 export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   collectOwnedResourceCleanupFailures,
+  collectQualificationResourceCleanupFailures,
   createProviderNetwork,
   inferenceFailureDiagnostic,
   lifecycleSandboxName,
