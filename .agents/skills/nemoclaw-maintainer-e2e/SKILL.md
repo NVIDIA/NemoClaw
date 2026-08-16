@@ -22,7 +22,7 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 ## Manual PR E2E
 
 Use this mode when the maintainer requests E2E for a pull request.
-It normally runs an authorized E2E selection against the current PR head commit
+It normally runs an authorized E2E selection against the latest PR commit
 while the workflow definition remains on `main`. The native runtime producer
 also accepts the administrator-only source-branch workflow path below for an
 open same-repository PR.
@@ -81,8 +81,8 @@ Choose exactly one mode:
   - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
   The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
   It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
-- For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
-- For native-runtime qualification evidence, set `E2E_JOBS=native-runtime-qualification-producer`. Use a same-repository open PR and the first workflow attempt. Choose either the trusted `main` workflow at the exact PR-recorded base commit or, after a repository administrator authorizes the exact candidate workflow commit, the PR source-branch workflow at the exact candidate commit. The workflow runs each case under a credential-free candidate account on a reviewed ephemeral runner. The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts` before the selector can pass.
+- For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The commit under review must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+- For native-runtime qualification evidence, set `E2E_JOBS=native-runtime-qualification-producer`. Use a same-repository open PR and the first workflow attempt. Choose either the trusted `main` workflow at the PR-recorded base commit or, after a repository administrator authorizes the commit under review as the workflow commit, the PR source-branch workflow at that commit. The workflow runs each case under a credential-free candidate account on a reviewed ephemeral runner. The commit under review must contain `test/e2e/live/native-runtime-qualification-case.test.ts` before the selector can pass.
 
 For the administrator-authorized source-branch path, record the authorization and
 select it explicitly before running the dispatch block:
@@ -219,7 +219,7 @@ test "$(jq -r .base.repo.full_name <<<"$CURRENT_PR")" = NVIDIA/NemoClaw
 
 For native runtime qualification, workflow success is not sufficient. Resolve
 the exact aggregate job and artifact, verify the downloaded archive digest and
-safe file inventory, then run the canonical evidence consumer from the exact
+exact file inventory, then run the canonical evidence consumer from the exact
 workflow checkout. This validates all 24 case identities and every declared
 installer, runtime, operation, and NVIDIA CDI receipt digest. The four additional
 installer identity receipts are required in each case and reported with their
@@ -335,6 +335,10 @@ DOWNLOAD
       .workflow_run.head_sha == $workflowSha
     ' <<<"$CONFIRMED_ARTIFACT" >/dev/null
 
+  test -z "$(git status --porcelain=v1 --untracked-files=all)"
+  git fetch --no-tags origin "$WORKFLOW_REF"
+  test "$(git rev-parse FETCH_HEAD)" = "$WORKFLOW_SHA"
+  git switch --detach "$WORKFLOW_SHA"
   test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
   test -z "$(git status --porcelain=v1 --untracked-files=all)"
   export ARCHIVE_PATH ARTIFACT_DIGEST ARTIFACT_ID ARTIFACT_NAME ARTIFACT_SIZE
@@ -510,12 +514,12 @@ NODE
 fi
 ```
 
-Return the PR number, head repository, head SHA, base SHA, workflow ref and SHA,
+Return the PR number, PR source repository, latest PR commit SHA, base SHA, workflow ref and SHA,
 correlation ID, run ID, run attempt, workflow URL, and result. For native runtime
 qualification, also return the aggregate job ID, artifact ID/name/digest, the
 24 case IDs, and each case's installer and execution receipt paths and SHA-256
 digests.
-A changed head repository, head SHA, or base SHA invalidates the evidence and requires a new run.
+A changed PR source repository, latest PR commit SHA, or base SHA invalidates the evidence and requires a new run.
 
 ## Select the Main Mode
 
