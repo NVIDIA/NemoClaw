@@ -284,10 +284,7 @@ describe("protected managed-image runtime contract", () => {
     },
   );
 
-  it.each([
-    ["exact", `NAME STATUS\n${VALID_SANDBOX} Ready\n`, false],
-    ["containing", `NAME STATUS\n${VALID_SANDBOX}-other Ready\n`, true],
-  ] as const)("%s-match checks the retained OpenShell sandbox name exactly", (_case, output, rejects) => {
+  it("accepts an exact retained OpenShell sandbox name", () => {
     const expectedSandboxId = "sandbox-id-123";
     const input = parseManagedImageOpenShellE2eInputs([
       "--agent",
@@ -297,10 +294,49 @@ describe("protected managed-image runtime contract", () => {
       "--sandbox",
       VALID_SANDBOX,
     ]);
-    const runOpenshell = vi.fn((argv: readonly string[]) =>
-      argv[1] === "get"
-        ? { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" }
-        : { status: 0, stdout: output, stderr: `diagnostic mentions ${VALID_SANDBOX}` },
+    const responses = new Map([
+      ["get", { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" }],
+      ["list", { status: 0, stdout: `NAME STATUS\n${VALID_SANDBOX} Ready\n`, stderr: "" }],
+    ]);
+    const runOpenshell = vi.fn(
+      (argv: readonly string[]) =>
+        responses.get(argv[1] ?? "") ?? { status: 1, stdout: "", stderr: "unexpected command" },
+    );
+
+    expect(() =>
+      assertFailedSandboxOwnerCleanupRetention(
+        { runOpenshell } as never,
+        input,
+        expectedSandboxId,
+        {},
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects a containing sandbox name and an exact name mentioned only in stderr", () => {
+    const expectedSandboxId = "sandbox-id-123";
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const responses = new Map([
+      ["get", { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" }],
+      [
+        "list",
+        {
+          status: 0,
+          stdout: `NAME STATUS\n${VALID_SANDBOX}-other Ready\n`,
+          stderr: `diagnostic mentions ${VALID_SANDBOX}`,
+        },
+      ],
+    ]);
+    const runOpenshell = vi.fn(
+      (argv: readonly string[]) =>
+        responses.get(argv[1] ?? "") ?? { status: 1, stdout: "", stderr: "unexpected command" },
     );
     const assertion = () =>
       assertFailedSandboxOwnerCleanupRetention(
@@ -310,11 +346,7 @@ describe("protected managed-image runtime contract", () => {
         {},
       );
 
-    if (rejects) {
-      expect(assertion).toThrow("exact OpenShell owner-cleanup state");
-    } else {
-      expect(assertion).not.toThrow();
-    }
+    expect(assertion).toThrow("exact OpenShell owner-cleanup state");
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       ["sandbox", "list"],
