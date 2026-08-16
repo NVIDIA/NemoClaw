@@ -81,7 +81,7 @@ describe("wait utility", () => {
   });
 
   it.each(["operation", "onRetry", "sleep"] as const)(
-    "retryUntil propagates a %s error before the next attempt (#9218)",
+    "retryUntil propagates an error from %s before the next attempt (#9218)",
     (failure) => {
       const error = new Error(`${failure} failed`);
       const operation = vi.fn(() => {
@@ -128,7 +128,7 @@ describe("wait utility", () => {
   });
 
   it.each(["operation", "onRetry", "sleep"] as const)(
-    "retryUntilAsync propagates a %s error before the next attempt (#9218)",
+    "retryUntilAsync propagates an error from %s before the next attempt (#9218)",
     async (failure) => {
       const error = new Error(`${failure} failed`);
       const operation = vi.fn(async () => {

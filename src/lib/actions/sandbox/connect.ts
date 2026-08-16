@@ -413,7 +413,7 @@ function sleepSync(milliseconds: number): void {
   });
 }
 
-function probeSandboxInferenceRoute(
+export function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},

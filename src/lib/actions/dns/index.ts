@@ -488,7 +488,7 @@ export function runSetupDnsProxy(
   );
   if (!dnsReady)
     log(
-      "WARNING: DNS forwarder did not respond after 10 attempts. The following DNS checks might report failures.",
+      "WARNING: DNS forwarder did not respond after 10 attempts. The following DNS checks can report failures.",
     );
 
   const sandboxNamespace = selectSandboxNamespace(
