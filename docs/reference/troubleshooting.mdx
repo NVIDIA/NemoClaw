@@ -3486,7 +3486,7 @@ Reboot only after the drop-in verification succeeds:
 sudo systemctl reboot
 ```
 
-Verify the root hierarchy, current user manager, and `app.slice`:
+Verify the root hierarchy, current user manager, and `app.slice`: this command also verifies the per-user slice, for four boundaries in total.
 
 ```bash
 uid="$(id -u)"
