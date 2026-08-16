@@ -1076,8 +1076,8 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
             --yes --no-install-recommends \
-            gcc git libapparmor-dev libassuan-dev libbtrfs-dev libc6-dev \
-            libdevmapper-dev libglib2.0-dev libgpg-error-dev libgpgme-dev \
+            gcc git libapparmor-dev libbtrfs-dev libc6-dev \
+            libdevmapper-dev libglib2.0-dev \
             libprotobuf-c-dev libprotobuf-dev libseccomp-dev libselinux1-dev \
             libsqlite3-dev libsystemd-dev make pkg-config protobuf-compiler
 
@@ -1103,6 +1103,7 @@ jobs:
 
           SOURCE_DATE_EPOCH=1786554266 \
             BUILD_ORIGIN="NVIDIA/NemoClaw native runtime qualification" \
+            EXTRA_BUILDTAGS=containers_image_openpgp \
             make --directory=.podman-source --jobs=2 \
               podman rootlessport PREFIX=/usr/local
           SOURCE_DATE_EPOCH=1785940686 CI=1 \
@@ -1111,12 +1112,13 @@ jobs:
             make --directory=.aardvark-source --jobs=2 build
 
           podman_dependencies="$(ldd .podman-source/bin/podman)"
+          printf '%s\n' "$podman_dependencies"
           if grep -F "not found" <<<"$podman_dependencies"; then
             echo "::error::Pinned Podman build has an unresolved runtime dependency" >&2
             exit 1
           fi
-          if grep -F "libsubid" <<<"$podman_dependencies"; then
-            echo "::error::Pinned Podman build must not require the optional libsubid ABI" >&2
+          if grep -E "libgpgme|libsubid" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Podman build must not require an optional host ABI" >&2
             exit 1
           fi
 

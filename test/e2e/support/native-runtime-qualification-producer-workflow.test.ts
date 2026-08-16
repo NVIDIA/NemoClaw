@@ -156,13 +156,18 @@ describe("native runtime qualification producer workflow", () => {
     );
     expect(setupRust.with).toEqual({ toolchain: "1.88.0", cache: false, rustflags: "" });
     expect(buildDependencies.run).not.toContain("libsubid-dev");
+    expect(buildDependencies.run).not.toContain("libgpgme-dev");
+    expect(buildDependencies.run).not.toContain("libassuan-dev");
+    expect(buildDependencies.run).not.toContain("libgpg-error-dev");
     expect(build.run).toContain("podman rootlessport PREFIX=/usr/local");
+    expect(build.run).toContain("EXTRA_BUILDTAGS=containers_image_openpgp");
     expect(build.run).not.toContain("quadlet");
     expect(build.run).toContain("make --directory=.netavark-source --jobs=2 build");
     expect(build.run).toContain("make --directory=.aardvark-source --jobs=2 build");
     expect(build.run).toContain("sha256sum");
     expect(build.run).toContain("Pinned Podman build has an unresolved runtime dependency");
-    expect(build.run).toContain("Pinned Podman build must not require the optional libsubid ABI");
+    expect(build.run).toContain("Pinned Podman build must not require an optional host ABI");
+    expect(build.run).toContain('grep -E "libgpgme|libsubid"');
     expect(build.run).toMatch(/sha256sum[\s\S]+manifest\.json/u);
     expect(build.run).toContain('"nemoclaw-native-podman-toolchain-v1"');
     expect(upload.with).toMatchObject({
