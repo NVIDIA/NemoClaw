@@ -32,6 +32,7 @@ function inspection(overrides: Record<string, unknown> = {}): string {
 
 type EngineOutput =
   | string
+  | Error
   | { readonly status: number; readonly stdout?: string; readonly stderr?: string };
 
 function engine(outputs: readonly EngineOutput[]): {
@@ -41,6 +42,7 @@ function engine(outputs: readonly EngineOutput[]): {
   let index = 0;
   const capture = vi.fn((args: readonly string[]) => {
     const output = outputs[index++];
+    if (output instanceof Error) throw output;
     return typeof output === "object"
       ? { status: output.status, stdout: output.stdout ?? "", stderr: output.stderr ?? "" }
       : {
@@ -128,24 +130,96 @@ describe("native runtime GPU evidence", () => {
 });
 
 describe("native runtime failure diagnosis", () => {
-  it("captures bounded inference state and logs without changing the case result", () => {
+  it("emits only allowlisted inference state without logs or child output", () => {
     const containerId = "e".repeat(64);
     const runtime = engine([
-      '{"Status":"exited","ExitCode":1}',
-      "runtime failed after credential-free startup",
+      JSON.stringify({
+        Status: "exited",
+        ExitCode: 1,
+        OOMKilled: false,
+        Running: false,
+        Error: "Authorization: Bearer credential-like-value",
+        Request: "private request content",
+      }),
     ]);
 
-    expect(
-      nativeRuntimeQualificationCaseInternals.inferenceFailureDiagnostic(
-        runtime.value,
-        containerId,
-      ),
-    ).toBe(
-      'state={"Status":"exited","ExitCode":1}; logs=runtime failed after credential-free startup',
+    const diagnostic = nativeRuntimeQualificationCaseInternals.inferenceFailureDiagnostic(
+      runtime.value,
+      containerId,
     );
+
+    expect(diagnostic).toBe(
+      'state={"status":"exited","exitCode":1,"oomKilled":false,"running":false}',
+    );
+    expect(diagnostic).not.toContain("credential-like-value");
+    expect(diagnostic).not.toContain("private request content");
     expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([
       ["inspect", "--format", "{{json .State}}", containerId],
-      ["logs", "--tail", "50", containerId],
+    ]);
+  });
+
+  it("does not echo an unexpected state string", () => {
+    const diagnostic = nativeRuntimeQualificationCaseInternals.inferenceFailureDiagnostic(
+      engine([JSON.stringify({ Status: "credential-like-value" })]).value,
+      "e".repeat(64),
+    );
+
+    expect(diagnostic).toBe(
+      'state={"status":"unknown","exitCode":null,"oomKilled":false,"running":false}',
+    );
+    expect(diagnostic).not.toContain("credential-like-value");
+  });
+});
+
+describe("native runtime failed-case cleanup", () => {
+  it.each([
+    ["container", ["rm", "--force", "container-id"], ["container", "exists", "container-id"]],
+    ["volume", ["volume", "rm", "--force", "volume-id"], ["volume", "exists", "volume-id"]],
+    ["network", ["network", "rm", "--force", "network-id"], ["network", "exists", "network-id"]],
+  ] as const)("reports an unproven %s removal without child output", (kind, remove, exists) => {
+    const runtime = engine([
+      { status: 1, stderr: "Authorization: Bearer cleanup-secret" },
+      { status: 0 },
+    ]);
+
+    const failures = nativeRuntimeQualificationCaseInternals.collectOwnedResourceCleanupFailures([
+      { engine: runtime.value, identities: [`${kind}-id`], kind },
+    ]);
+
+    expect(failures.map((failure) => failure.message)).toEqual([
+      `Native runtime qualification ${kind} cleanup failed for ${kind}-id (remove exit 1; exists exit 0)`,
+    ]);
+    expect(failures[0]?.message).not.toContain("cleanup-secret");
+    expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([remove, exists]);
+  });
+
+  it("continues every resource class after one removal throws", () => {
+    const lifecycle = engine([
+      new Error("container removal failed"),
+      { status: 0 },
+      { status: 0 },
+      { status: 1 },
+    ]);
+    const inference = engine([{ status: 0 }, { status: 1 }]);
+
+    const failures = nativeRuntimeQualificationCaseInternals.collectOwnedResourceCleanupFailures([
+      { engine: lifecycle.value, identities: ["container-id"], kind: "container" },
+      { engine: lifecycle.value, identities: ["volume-id"], kind: "volume" },
+      { engine: inference.value, identities: ["network-id"], kind: "network" },
+    ]);
+
+    expect(failures.map((failure) => failure.message)).toEqual([
+      "Native runtime qualification container cleanup failed for container-id (remove threw; exists exit 0)",
+    ]);
+    expect(lifecycle.capture.mock.calls.map(([args]) => args)).toEqual([
+      ["rm", "--force", "container-id"],
+      ["container", "exists", "container-id"],
+      ["volume", "rm", "--force", "volume-id"],
+      ["volume", "exists", "volume-id"],
+    ]);
+    expect(inference.capture.mock.calls.map(([args]) => args)).toEqual([
+      ["network", "rm", "--force", "network-id"],
+      ["network", "exists", "network-id"],
     ]);
   });
 });

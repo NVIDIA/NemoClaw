@@ -465,19 +465,86 @@ function inferenceFailureDiagnostic(
   engine: PodmanBoundContainerEngine,
   containerId: string,
 ): string {
-  const inspect = (args: readonly string[]): string => {
-    try {
-      const result = engine.capture(args, COMMAND_TIMEOUT);
-      return bounded(
-        result.stderr || result.stdout || `command returned exit ${String(result.status)}`,
-      );
-    } catch (error) {
-      return bounded(error instanceof Error ? error.message : String(error));
+  let result: ReturnType<PodmanBoundContainerEngine["capture"]>;
+  try {
+    result = engine.capture(
+      ["inspect", "--format", "{{json .State}}", containerId],
+      COMMAND_TIMEOUT,
+    );
+  } catch {
+    return "state=unavailable; inspect=threw";
+  }
+  if (result.status !== 0) {
+    return `state=unavailable; inspectExit=${String(result.status)}`;
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return "state=unparseable";
     }
-  };
-  const state = inspect(["inspect", "--format", "{{json .State}}", containerId]);
-  const logs = inspect(["logs", "--tail", "50", containerId]);
-  return `state=${state}; logs=${logs}`;
+    const knownStatuses = new Set([
+      "configured",
+      "created",
+      "exited",
+      "initialized",
+      "paused",
+      "removing",
+      "running",
+      "stopped",
+      "stopping",
+      "unknown",
+    ]);
+    return `state=${JSON.stringify({
+      status:
+        typeof parsed.Status === "string" && knownStatuses.has(parsed.Status)
+          ? parsed.Status
+          : "unknown",
+      exitCode: Number.isSafeInteger(parsed.ExitCode) ? parsed.ExitCode : null,
+      oomKilled: parsed.OOMKilled === true,
+      running: parsed.Running === true,
+    })}`;
+  } catch {
+    return "state=unparseable";
+  }
+}
+
+type OwnedResourceKind = "container" | "network" | "volume";
+
+type OwnedResourceGroup = {
+  readonly engine: PodmanBoundContainerEngine;
+  readonly identities: readonly string[];
+  readonly kind: OwnedResourceKind;
+};
+
+function collectOwnedResourceCleanupFailures(groups: readonly OwnedResourceGroup[]): Error[] {
+  const failures: Error[] = [];
+  for (const { engine, identities, kind } of groups) {
+    for (const identity of identities) {
+      const outcomes: string[] = [];
+      const removeArgs =
+        kind === "container" ? ["rm", "--force", identity] : [kind, "rm", "--force", identity];
+      try {
+        const removal = engine.capture(removeArgs, COMMAND_TIMEOUT);
+        if (removal.status !== 0) outcomes.push(`remove exit ${String(removal.status)}`);
+      } catch {
+        outcomes.push("remove threw");
+      }
+      try {
+        const existence = engine.capture([kind, "exists", identity], COMMAND_TIMEOUT);
+        if (existence.status !== 1) outcomes.push(`exists exit ${String(existence.status)}`);
+      } catch {
+        outcomes.push("exists threw");
+      }
+      if (outcomes.length > 0) {
+        failures.push(
+          new Error(
+            `Native runtime qualification ${kind} cleanup failed for ${identity} (${outcomes.join("; ")})`,
+          ),
+        );
+      }
+    }
+  }
+  return failures;
 }
 
 function vllmServeArguments(model: string, port: number): readonly string[] {
@@ -1224,19 +1291,33 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
           `Native runtime qualification inference failure diagnostic: ${inferenceFailureDiagnostic(inferenceEngine, inferenceContainerId)}`,
         );
       }
-      if (lifecycleEngine) {
-        for (const containerId of ownedContainers) {
-          lifecycleEngine.capture(["rm", "--force", containerId], COMMAND_TIMEOUT);
-        }
-        for (const volume of ownedVolumes) {
-          lifecycleEngine.capture(["volume", "rm", "--force", volume], COMMAND_TIMEOUT);
-        }
-      }
-      if (inferenceEngine) {
-        for (const networkId of ownedNetworks) {
-          inferenceEngine.capture(["network", "rm", "--force", networkId], COMMAND_TIMEOUT);
-        }
-      }
+      cleanupFailures.push(
+        ...collectOwnedResourceCleanupFailures([
+          ...(lifecycleEngine
+            ? [
+                {
+                  engine: lifecycleEngine,
+                  identities: [...ownedContainers],
+                  kind: "container" as const,
+                },
+                {
+                  engine: lifecycleEngine,
+                  identities: [...ownedVolumes],
+                  kind: "volume" as const,
+                },
+              ]
+            : []),
+          ...(inferenceEngine
+            ? [
+                {
+                  engine: inferenceEngine,
+                  identities: [...ownedNetworks],
+                  kind: "network" as const,
+                },
+              ]
+            : []),
+        ]),
+      );
     }
     try {
       await stopService(service?.child ?? null, socket);
@@ -1248,16 +1329,16 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       if (qualificationFailure === undefined) {
         throw new AggregateError(cleanupFailures, "Native runtime qualification cleanup failed");
       }
-      console.error(
-        `Native runtime qualification also encountered cleanup failures: ${cleanupFailures
-          .map((error) => bounded(error instanceof Error ? error.message : String(error)))
-          .join("; ")}`,
+      throw new AggregateError(
+        [qualificationFailure, ...cleanupFailures],
+        "Native runtime qualification failed and cleanup could not be proven",
       );
     }
   }
 }
 
 export const nativeRuntimeQualificationCaseInternals = Object.freeze({
+  collectOwnedResourceCleanupFailures,
   createProviderNetwork,
   inferenceFailureDiagnostic,
   lifecycleSandboxName,
