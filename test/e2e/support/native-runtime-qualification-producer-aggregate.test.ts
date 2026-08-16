@@ -241,7 +241,7 @@ describe("native runtime qualification producer aggregate", () => {
     },
   );
 
-  it("preserves an existing immutable aggregate output", AGGREGATE_TEST_OPTIONS, () => {
+  it("rejects replacing an existing aggregate output", AGGREGATE_TEST_OPTIONS, () => {
     const value = fixture();
     const sentinel = path.join(value.evidenceDirectory, "sentinel.txt");
     fs.mkdirSync(value.evidenceDirectory);

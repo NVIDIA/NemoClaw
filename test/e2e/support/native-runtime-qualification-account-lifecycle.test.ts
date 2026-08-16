@@ -36,49 +36,94 @@ function extractFunction(source: string, name: string): string {
   return `${name}() {${match![1]}\n}`;
 }
 
-function rewriteFixtureTarget(source: string, from: string, to: string): string {
+const fixtureRewrites = {
+  testExecutable: ["/usr/bin/test", "/bin/test"],
+  systemctlExecutable: ["/usr/bin/systemctl", "systemctl"],
+  commandPath: ["PATH=/usr/bin:/bin", 'PATH="$FIXTURE_BIN:/usr/bin:/bin"'],
+  subuid: ["/etc/subuid", "${FIXTURE_ROOT}/etc/subuid"],
+  subgid: ["/etc/subgid", "${FIXTURE_ROOT}/etc/subgid"],
+  ownershipMarker: [
+    'ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
+    'ownership_marker="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
+  ],
+  homeIdentity: ['"$home" == "/home/${account}"', '"$home" == "$FIXTURE_HOME"'],
+  runtimeDirectory: [
+    'runtime_dir="/run/user/${uid}"',
+    'runtime_dir="${FIXTURE_ROOT}/run/user/${uid}"',
+  ],
+  userManagerDropinDirectory: [
+    'user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"',
+    'user_manager_dropin_directory="${FIXTURE_ROOT}/run/systemd/system/${user_manager_unit}.d"',
+  ],
+  storageConfigDirectory: [
+    'storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+  ],
+  podmanExecutable: [
+    'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+  ],
+  helperDirectory: [
+    'helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'helper_directory="${FIXTURE_ROOT}/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+  ],
+  resourceDirectory: [
+    'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+    'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
+  ],
+  userRuntimePath: ['"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"'],
+} as const;
+
+type FixtureRewrite = keyof typeof fixtureRewrites;
+type FixtureRewriteProfile = "bus" | "cleanup" | "provision" | "subgid" | "subuid" | "unitPath";
+type FixtureRewriteContract = {
+  readonly required: readonly FixtureRewrite[];
+  readonly optional: readonly FixtureRewrite[];
+};
+
+const fixtureRewriteProfiles: Record<FixtureRewriteProfile, FixtureRewriteContract> = {
+  bus: { required: ["testExecutable"], optional: [] },
+  unitPath: { required: ["systemctlExecutable", "commandPath"], optional: [] },
+  provision: {
+    required: ["subuid", "subgid", "ownershipMarker", "homeIdentity"],
+    optional: [],
+  },
+  subuid: { required: ["subuid"], optional: [] },
+  subgid: { required: ["subgid"], optional: [] },
+  cleanup: {
+    required: [
+      "subuid",
+      "subgid",
+      "ownershipMarker",
+      "runtimeDirectory",
+      "userManagerDropinDirectory",
+      "storageConfigDirectory",
+      "podmanExecutable",
+      "helperDirectory",
+      "resourceDirectory",
+      "userRuntimePath",
+    ],
+    optional: [],
+  },
+};
+
+function rewriteRequiredFixtureTarget(source: string, target: FixtureRewrite): string {
+  const [from, to] = fixtureRewrites[target];
+  expect(source, `Missing mandatory fixture rewrite '${target}'`).toContain(from);
   return source.replaceAll(from, to);
 }
 
-function fixtureSource(source: string): string {
-  const rewrites = [
-    ["/usr/bin/test", "/bin/test"],
-    ["/usr/bin/systemctl", "systemctl"],
-    ["PATH=/usr/bin:/bin", 'PATH="$FIXTURE_BIN:/usr/bin:/bin"'],
-    ["/etc/subuid", "${FIXTURE_ROOT}/etc/subuid"],
-    ["/etc/subgid", "${FIXTURE_ROOT}/etc/subgid"],
-    [
-      'ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
-      'ownership_marker="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
-    ],
-    ['"$home" == "/home/${account}"', '"$home" == "$FIXTURE_HOME"'],
-    ['runtime_dir="/run/user/${uid}"', 'runtime_dir="${FIXTURE_ROOT}/run/user/${uid}"'],
-    [
-      'user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"',
-      'user_manager_dropin_directory="${FIXTURE_ROOT}/run/systemd/system/${user_manager_unit}.d"',
-    ],
-    [
-      'storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-      'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    ],
-    [
-      'podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-      'podman_executable="${FIXTURE_ROOT}/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    ],
-    [
-      'helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-      'helper_directory="${FIXTURE_ROOT}/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    ],
-    [
-      'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-      'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
-    ],
-    ['"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"'],
-  ] as const;
+function fixtureSource(source: string, profile: FixtureRewriteProfile): string {
   let rewritten = source;
-  for (const [from, to] of rewrites) rewritten = rewriteFixtureTarget(rewritten, from, to);
+  for (const target of fixtureRewriteProfiles[profile].required) {
+    rewritten = rewriteRequiredFixtureTarget(rewritten, target);
+  }
+  for (const target of fixtureRewriteProfiles[profile].optional) {
+    const [from, to] = fixtureRewrites[target];
+    rewritten = rewritten.replaceAll(from, to);
+  }
   expect(rewritten, "Fixture source retains an unredirected destructive host path").not.toMatch(
-    /(?:^|[\s"'=])\/(?:etc\/sub(?:uid|gid)|run\/(?:nemoclaw-native-runtime|systemd\/system|user\/)|(?:nemoclaw-native-runtime-(?:podman|helpers)|var\/tmp\/nemoclaw-native-runtime-resources)-)/mu,
+    /(?:\/usr\/bin\/(?:systemctl|test)|PATH=\/usr\/bin:\/bin|"\$home" == "\/home\/\$\{account\}"|(?:^|[\s"'=])\/(?:etc\/sub(?:uid|gid)|run\/(?:nemoclaw-native-runtime|systemd\/system|user\/)|(?:nemoclaw-native-runtime-(?:podman|helpers)|var\/tmp\/nemoclaw-native-runtime-resources)-))/mu,
   );
   return rewritten;
 }
@@ -245,9 +290,10 @@ mv "$FIXTURE_ROOT/etc/group.next" "$FIXTURE_ROOT/etc/group"`,
 function runFixture(
   fixture: ReturnType<typeof createFixture>,
   source: string,
+  profile: FixtureRewriteProfile,
   extraEnv: Record<string, string> = {},
 ) {
-  return spawnSync("bash", ["-c", fixtureSource(source)], {
+  return spawnSync("bash", ["-c", fixtureSource(source, profile)], {
     encoding: "utf8",
     timeout: 15_000,
     env: {
@@ -276,6 +322,12 @@ function provisionBlock(): string {
 }
 
 describe("native runtime qualification account lifecycle", () => {
+  it("fails closed when a mandatory fixture rewrite no longer matches", () => {
+    expect(() => fixtureSource("set -euo pipefail", "bus")).toThrow(
+      "Missing mandatory fixture rewrite 'testExecutable'",
+    );
+  });
+
   it("rejects a symlinked or wrong-owner user bus while accepting the exact account socket", async () => {
     const fixture = createFixture();
     const socketRoot = fs.mkdtempSync("/tmp/nrq-bus-");
@@ -293,14 +345,14 @@ describe("native runtime qualification account lifecycle", () => {
       `set -euo pipefail\n${verifyUserBus}\nverify_user_bus nemoclawq 1002 ${JSON.stringify(candidate)} fixture`;
 
     try {
-      const exact = runFixture(fixture, source(socket));
+      const exact = runFixture(fixture, source(socket), "bus");
       expect(exact.status, exact.stderr).toBe(0);
 
-      const symlink = runFixture(fixture, source(socketLink));
+      const symlink = runFixture(fixture, source(socketLink), "bus");
       expect(symlink.status).not.toBe(0);
       expect(symlink.stderr).toContain("Qualification systemd user bus fixture");
 
-      const wrongOwner = runFixture(fixture, source(socket), { BUS_UID: "1003" });
+      const wrongOwner = runFixture(fixture, source(socket), "bus", { BUS_UID: "1003" });
       expect(wrongOwner.status).not.toBe(0);
       expect(wrongOwner.stderr).toContain("Qualification systemd user bus fixture");
     } finally {
@@ -321,12 +373,12 @@ trusted_user_unit_path=/usr/lib/systemd/user:/lib/systemd/user
 ${verifyUnitPath}
 verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/1002"`;
 
-    const trusted = runFixture(fixture, source, {
+    const trusted = runFixture(fixture, source, "unitPath", {
       SYSTEMD_ENVIRONMENT: "SYSTEMD_UNIT_PATH=/usr/lib/systemd/user:/lib/systemd/user",
     });
     expect(trusted.status, trusted.stderr).toBe(0);
 
-    const candidateWritable = runFixture(fixture, source, {
+    const candidateWritable = runFixture(fixture, source, "unitPath", {
       SYSTEMD_ENVIRONMENT:
         "SYSTEMD_UNIT_PATH=/home/nemoclawq/.config/systemd/user:/usr/lib/systemd/user:/lib/systemd/user",
     });
@@ -346,7 +398,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
             ? "nemoclawq:x:1007:\n"
             : "nemoclawq:200000:65536\n",
       );
-      const result = runFixture(fixture, provisionBlock());
+      const result = runFixture(fixture, provisionBlock(), "provision");
       expect(result.status, `${state}: ${result.stderr}`).not.toBe(0);
       expect(fs.readFileSync(fixture.calls, "utf8")).not.toContain("useradd:");
       expect(fs.existsSync(fixture.marker)).toBe(false);
@@ -355,7 +407,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
 
   it("does not publish ownership when account creation fails", () => {
     const fixture = createFixture();
-    const result = runFixture(fixture, provisionBlock(), { FAIL_USERADD: "1" });
+    const result = runFixture(fixture, provisionBlock(), "provision", { FAIL_USERADD: "1" });
     expect(result.status).toBe(23);
     expect(fs.existsSync(fixture.marker)).toBe(false);
     expect(fs.readFileSync(fixture.passwd, "utf8")).toBe("");
@@ -363,7 +415,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
 
   it("records the exact private group when its numeric GID differs from the UID", () => {
     const fixture = createFixture();
-    const result = runFixture(fixture, provisionBlock());
+    const result = runFixture(fixture, provisionBlock(), "provision");
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(fixture.marker, "utf8")).toBe("nemoclawq:1002:1007\n");
     expect(fs.readFileSync(fixture.calls, "utf8")).toContain(
@@ -373,7 +425,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
 
   it("rolls back an account when identity validation fails before marker publication", () => {
     const fixture = createFixture();
-    const result = runFixture(fixture, provisionBlock(), { FAIL_ID: "1" });
+    const result = runFixture(fixture, provisionBlock(), "provision", { FAIL_ID: "1" });
     expect(result.status).not.toBe(0);
     expect(fs.readFileSync(fixture.calls, "utf8")).toContain("userdel:--remove nemoclawq");
     expect(fs.readFileSync(fixture.passwd, "utf8")).not.toContain("nemoclawq:");
@@ -389,6 +441,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     const validResult = runFixture(
       valid,
       `set -euo pipefail\naccount=nemoclawq\n${rangeFunction}\nensure_subordinate_range /etc/subuid --add-subuids`,
+      "subuid",
     );
     expect(validResult.status, validResult.stderr).toBe(0);
     expect(fs.readFileSync(valid.calls, "utf8")).not.toContain("usermod:");
@@ -398,6 +451,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     const overlappingResult = runFixture(
       overlapping,
       `set -euo pipefail\naccount=nemoclawq\n${rangeFunction}\nensure_subordinate_range /etc/subuid --add-subuids`,
+      "subuid",
     );
     expect(overlappingResult.status, overlappingResult.stderr).toBe(0);
     expect(fs.readFileSync(overlapping.subuid, "utf8")).toContain("nemoclawq:231072:65536");
@@ -410,6 +464,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     const result = runFixture(
       fixture,
       `set -euo pipefail\naccount=nemoclawq\n${rangeFunction}\nensure_subordinate_range /etc/subgid --add-subgids`,
+      "subgid",
     );
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("no free subordinate-ID range");
@@ -425,7 +480,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     fs.writeFileSync(fixture.subgid, "nemoclawq:300000:65536\n");
     fs.writeFileSync(fixture.marker, "nemoclawq:1002:1007\n", { mode: 0o400 });
 
-    const result = runFixture(fixture, workflowScripts().cleanup);
+    const result = runFixture(fixture, workflowScripts().cleanup, "cleanup");
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(fixture.calls, "utf8")).toContain("userdel:--remove nemoclawq");
     expect(fs.readFileSync(fixture.passwd, "utf8")).not.toContain("nemoclawq:");
@@ -435,7 +490,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     expect(fs.existsSync(fixture.marker)).toBe(false);
   });
 
-  it("removes the run-owned runtime, immutable helpers, GPU resources, and AppArmor profiles", () => {
+  it("removes the run-owned runtime, helper copies, GPU resources, and AppArmor profiles", () => {
     const fixture = createFixture();
     const runtime = path.join(fixture.root, "run", "user", "1002", "libpod", "tmp");
     const storage = path.join(fixture.root, "run", "nemoclaw-native-runtime-42-1-1002");
@@ -494,7 +549,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     fs.writeFileSync(fixture.subgid, "nemoclawq:300000:65536\n");
     fs.writeFileSync(fixture.marker, "nemoclawq:1002:1007\n", { mode: 0o400 });
 
-    const result = runFixture(fixture, workflowScripts().cleanup);
+    const result = runFixture(fixture, workflowScripts().cleanup, "cleanup");
     expect(result.status, result.stderr).toBe(0);
     const calls = fs.readFileSync(fixture.calls, "utf8");
     expect(calls).toContain("systemctl:stop user@1002.service user-runtime-dir@1002.service");
@@ -510,7 +565,9 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
 
   it("does not run destructive cleanup when the run-owned marker is absent", () => {
     const fixture = createFixture();
-    const result = runFixture(fixture, workflowScripts().cleanup, { ACCOUNT_CREATED: "" });
+    const result = runFixture(fixture, workflowScripts().cleanup, "cleanup", {
+      ACCOUNT_CREATED: "",
+    });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("output exists without its ownership marker");
     const calls = fs.readFileSync(fixture.calls, "utf8");
@@ -524,7 +581,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     fs.writeFileSync(fixture.group, "nemoclawq:x:1008:\n");
     fs.writeFileSync(fixture.marker, "nemoclawq:1002:1007\n", { mode: 0o400 });
 
-    const result = runFixture(fixture, workflowScripts().cleanup);
+    const result = runFixture(fixture, workflowScripts().cleanup, "cleanup");
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("private group identity changed before cleanup");
     expect(fs.readFileSync(fixture.calls, "utf8")).not.toMatch(
