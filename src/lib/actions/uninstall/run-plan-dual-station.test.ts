@@ -32,6 +32,7 @@ function ok(stdout = ""): RunResult {
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
   return runUninstallPlanBase(options, {
+    hasPortableRuntimeCleanup: () => false,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,

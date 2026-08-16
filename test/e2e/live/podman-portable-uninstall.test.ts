@@ -16,6 +16,10 @@ import { executableOnPath, runCommand, SOCKET_PATH } from "./podman-cpu-lifecycl
 
 const BASE_IMAGE =
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1";
+const UNRELATED_IMAGE =
+  "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
+const UNUSED_IMAGE =
+  "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
 const SANDBOX_NAME = "podman-uninstall";
 const SANDBOX_ID = "proof-alpha";
 const UNRELATED_NAME = "nemoclaw-uninstall-unrelated";
@@ -65,7 +69,7 @@ function unrelatedCreateArgs(): string[] {
     UNRELATED_NAME,
     "--label",
     "com.nvidia.nemoclaw.e2e-unrelated=1",
-    BASE_IMAGE,
+    UNRELATED_IMAGE,
     "sleep",
     "infinity",
   ];
@@ -86,6 +90,8 @@ function writePortableUninstallSummary(artifactDir: string | undefined, uid: num
               sandboxRemoved: true,
               unrelatedContainerPreserved: true,
               registryRemoved: true,
+              sandboxImagePreserved: true,
+              unrelatedImagesPreserved: true,
               receiptRetired: true,
               configRetired: true,
               exactSelectorsCleared: true,
@@ -125,9 +131,18 @@ test(
     expect(fs.existsSync(stateDir)).toBe(false);
     expect(fs.existsSync(configDir)).toBe(false);
     const createdContainerIds: string[] = [];
+    const imageWasPresent = new Map(
+      [UNRELATED_IMAGE, UNUSED_IMAGE].map((image) => [
+        image,
+        engine.capture(["image", "exists", image]).status === 0,
+      ]),
+    );
     let releaseProjectedSelectors = async (): Promise<void> => undefined;
     try {
       progress.phase("create receipt-owned and unrelated resources");
+      for (const image of imageWasPresent.keys()) {
+        expect(engine.capture(["pull", image]).status).toBe(0);
+      }
       const sandboxCreate = engine.capture(sandboxCreateArgs());
       expect(sandboxCreate.status).toBe(0);
       const sandboxContainerId = sandboxCreate.stdout.trim();
@@ -265,8 +280,19 @@ test(
       expect(postUninstallEngine.capture(["inspect", sandboxContainerId]).status).not.toBe(0);
       expect(postUninstallEngine.capture(["inspect", registryContainerId]).status).not.toBe(0);
       expect(postUninstallEngine.capture(["inspect", unrelatedContainerId]).status).toBe(0);
+      expect(postUninstallEngine.capture(["image", "exists", BASE_IMAGE]).status).toBe(0);
+      expect(postUninstallEngine.capture(["image", "exists", UNRELATED_IMAGE]).status).toBe(0);
+      expect(postUninstallEngine.capture(["image", "exists", UNUSED_IMAGE]).status).toBe(0);
       expect(fs.existsSync(receiptFile)).toBe(false);
-      expect(fs.existsSync(stateDir)).toBe(false);
+      const retirementRecord = path.join(stateDir, "portable-uninstall-retirement.json");
+      expect(fs.existsSync(retirementRecord)).toBe(true);
+      expect(fs.statSync(stateDir).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(retirementRecord).mode & 0o777).toBe(0o600);
+      const residualFiles = fs
+        .readdirSync(stateDir, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() || entry.isSymbolicLink())
+        .map((entry) => path.join(entry.parentPath, entry.name));
+      expect(residualFiles).toEqual([retirementRecord]);
       expect(fs.existsSync(configDir)).toBe(false);
       const managerEnvironment = await runCommand(
         shellProbe,
@@ -364,6 +390,9 @@ test "$DOCKER_HOST" = "unix://$2"
         });
         for (const containerId of createdContainerIds.reverse()) {
           cleanupEngine.capture(["rm", "--force", containerId]);
+        }
+        for (const [image, existed] of imageWasPresent) {
+          existed || cleanupEngine.capture(["image", "rm", image]);
         }
       } catch {
         // The workflow's always-run cleanup owns any resources left after a socket failure.

@@ -53,6 +53,15 @@ describe("native Podman CPU proof workflow", () => {
       "src/lib/actions/uninstall/portable-runtime-cleanup.ts",
     );
     expect(parsed.on.pull_request.paths).toContain("src/lib/actions/uninstall/run-plan.ts");
+    for (const owner of [
+      "src/lib/onboard/portable-retirement-authority.ts",
+      "src/lib/onboard.ts",
+      "src/lib/actions/uninstall/all-gateway-ports.ts",
+      "src/commands/internal/uninstall/run-plan.ts",
+      "src/lib/state/portable-uninstall-retirement.ts",
+      "src/lib/state/registry/lock.ts",
+    ])
+      expect(parsed.on.pull_request.paths).toContain(owner);
     expect(parsed.on.pull_request.paths).toContain(
       "src/lib/onboard/runtime-provider/container-state-mutation.ts",
     );

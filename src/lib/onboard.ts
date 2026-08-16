@@ -342,6 +342,7 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
+const portableRetirementAuthority: typeof import("./onboard/portable-retirement-authority") = require("./onboard/portable-retirement-authority");
 const {
   registerIncompleteOnboardExitHandlerForSession,
 }: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
@@ -3100,6 +3101,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const releaseOnboardLock = () => {
     if (lockReleased || !ownsOnboardLock) return;
     lockReleased = true;
+    process.removeListener("exit", releaseOnboardLock);
     onboardSession.releaseOnboardLock();
   };
   if (ownsOnboardLock) process.once("exit", releaseOnboardLock);
@@ -3107,6 +3109,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   let portableEnvScope:
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
     | null = null;
+  const restorePortableEnvScope = () => portableEnvScope?.restore();
   // Secure removal remains gated on successful migration of every staged legacy credential.
   let stagedLegacyKeys: string[] = [];
 
@@ -3116,6 +3119,20 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   };
   let completed = false, returnedNormally = false;
   try {
+    const homeDir = process.env.HOME || os.homedir();
+    const portableRetirementBoundary = {
+      homeDir,
+      registryFile: registry.REGISTRY_FILE,
+      sessionFile: onboardSession.SESSION_FILE,
+      stateDir: path.dirname(onboardSession.SESSION_FILE),
+    };
+    const portableRetirementDeps = {
+      loadRegistry: registry.load,
+      withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
+    };
+    await portableRetirementAuthority.withPortableOnboardRetirementBoundary(
+      portableRetirementBoundary,
+      async () => {
     const lockedRuntime = await resumeRuntime.prepare(opts, resume, isNonInteractive(), onboardSession.loadSession);
     portableEnvScope = lockedRuntime.environmentScope;
     entryDecisions.clearGatewayEnvironmentWithoutBinding(authoritativeGateway, process.env);
@@ -3708,11 +3725,21 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     completed = finalFlowResult.session.machine.state === "complete";
+    if (completed && finalFlowResult.session.sandboxName) {
+      await portableRetirementAuthority.supersedePortableRetirementAfterCompletedOnboard(
+        portableRetirementBoundary,
+        lockedRuntime.checkpointProfile,
+        portableRetirementDeps,
+      );
+    }
     process.exitCode = completed ? 0 : 1;
+      },
+      portableRetirementDeps,
+    );
   } finally {
     try {
       await hermesApiPortReservationScope.release();
-      portableEnvScope?.restore();
+      restorePortableEnvScope();
       releaseOnboardLock();
       onboardRuntimeBoundary.clear();
       onboardTracing.finishOnboardTrace(onboardTrace, completed);
@@ -3723,7 +3750,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
       resetGatewayOwnerBinding();
     } finally {
-      portableEnvScope?.restore();
+      restorePortableEnvScope();
       hostMountScope.restore();
     }
   }

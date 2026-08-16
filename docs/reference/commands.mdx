@@ -4250,7 +4250,7 @@ $$nemoclaw gc [--dry-run] [--yes|-y|--force]
 
 ### `$$nemoclaw uninstall`
 
-Run `uninstall.sh` to remove NemoClaw sandboxes, local gateway resources, related images and containers, and local state.
+Run `uninstall.sh` to uninstall NemoClaw. Unless this section explicitly describes portable cleanup, its resource-removal statements apply outside portable cleanup.
 The CLI runs the local `uninstall.sh` shipped with the installed npm package.
 If that local script is missing, the CLI does not auto-fetch a remote copy.
 It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
@@ -4270,7 +4270,7 @@ If Docker is unavailable or a resource does not match its persisted ownership st
 Host-local cleanup can partially complete before an error.
 Restore Docker access or resolve the named ownership conflict, inspect the remaining container and network, and retry uninstall.
 Managed llama.cpp and vLLM model files remain in the shared Hugging Face cache by default.
-With `--delete-models`, uninstall deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache.
+Outside portable cleanup, `--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache.
 This opt-in can delete cached files that other applications installed or use.
 It preserves the Hugging Face `token` and `stored_tokens` authentication files.
 NemoClaw stops and verifies its managed local and distributed model runtimes before it deletes non-credential data from the local Hugging Face cache.
@@ -4285,16 +4285,16 @@ Refer to [Declare the OpenShell Gateway Lifecycle Authority](../deployment/gatew
 
 </AgentOnly>
 
-Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
+Outside portable cleanup, uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
 
-For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
+Outside portable cleanup, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
 When sibling gateways remain, uninstall leaves the shared proxy running for them.
 
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`, the gateway is externally supervised, or another gateway-port environment remains on the host.
+Outside portable cleanup, Linux uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`, the gateway is externally supervised, or another gateway-port environment remains on the host.
 That directory contains NemoClaw-owned Docker-driver gateway configuration and SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
 Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state.
 When another gateway-port environment remains, uninstall removes only the selected gateway port's subdirectory of that directory and keeps the other ports' subdirectories.
@@ -4306,8 +4306,8 @@ Uninstall does not otherwise target the declared external directory.
 |---|---|
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
-| `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
-| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
+| `--delete-models` | Outside portable cleanup, delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. Portable cleanup preserves both model stores and every Podman image. |
+| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`). Portable cleanup still retains its recovery record until later completed onboarding durably supersedes it. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
@@ -4360,7 +4360,8 @@ Fresh state roots and already scoped configurations continue to use the state-ro
 The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
-Full single-gateway Podman uninstall continues to use normal graceful teardown.
+Full single-gateway Podman uninstall for the portable experimental profile uses exact receipt-owned durable retirement.
+It preserves shared OpenShell providers, the gateway service and process, binaries, configuration, model stores, and Podman images under the [portable authority, retry, and preservation contract](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.
@@ -4391,8 +4392,8 @@ The sweep enumerates the default state root and the non-default roots under `~/.
 When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
 When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
-The selected port runs last so its pass can remove the shared host resources once no other environment remains.
-`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
+Outside portable cleanup, the selected port runs last so its pass can remove the shared host resources once no other environment remains.
+`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port, subject to the portable preservation contract; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
 The sweep cannot select an unidentified environment until its gateway port can be determined.
 A port that fails to uninstall is reported, the sweep continues, and the exit code is nonzero.
@@ -4411,7 +4412,7 @@ The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-When uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
+Outside portable cleanup, when uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
@@ -4436,8 +4437,8 @@ Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot
 
 The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own.
 Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration.
-After uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
-For a NemoClaw-managed gateway, it also removes the Docker image.
+Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
+Outside portable cleanup, a NemoClaw-managed gateway also removes the Docker image.
 For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources.
 Uninstall warns about this at preserve time.
 After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it.

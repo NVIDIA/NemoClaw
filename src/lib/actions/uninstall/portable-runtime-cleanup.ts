@@ -2,13 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import crypto from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import { isDeepStrictEqual } from "node:util";
 
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
+import { hasPortableUninstallAuthority } from "../../onboard/portable-retirement-authority";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
+import {
+  inspectPortableRetirementRecovery,
+  PORTABLE_RETIREMENT_STATE_ENTRIES,
+  preparePortableRetirement,
+  publishAndRetirePortableEvidence,
+  resumePortableEvidenceRetirement,
+  withPortableHostFence,
+  type PreparedPortableRetirement,
+  type PortableRetirementRecovery,
+} from "../../state/portable-uninstall-retirement";
+
+export { PORTABLE_RETIREMENT_STATE_ENTRIES, withPortableHostFence };
+import { withProcessBoundRegistryLockAt } from "../../state/registry/lock";
 import {
   readGatewayRegistryFile,
   registryEntryGatewayPort,
@@ -37,22 +52,16 @@ const PORTABLE_SELECTOR_NAMES = [
   "CONTAINER_CONNECTION",
   "CONTAINER_SSHKEY",
 ] as const;
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 interface PortableRegistryRemoval {
   readonly present: boolean;
   removeAndVerify(): void;
 }
 
-interface RegistryFence {
-  readonly lockPath: string;
-  readonly ownerPath: string;
-  readonly token: string;
-  readonly device: bigint;
-  readonly inode: bigint;
-}
-
 export interface PortableRuntimeCleanupInput {
   readonly env: NodeJS.ProcessEnv;
+  readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly homeDir: string;
   readonly registryFile: string;
@@ -65,6 +74,20 @@ export interface PortableRuntimeCleanupDeps extends PortableDemoLifecycleDeps {
     env: NodeJS.ProcessEnv,
   ) => PortablePodmanLifecycleCommandResult;
   readonly withLifecycleLock?: <T>(sandboxName: string, operation: () => T, stateDir: string) => T;
+  readonly withRegistryLock?: <T>(registryFile: string, operation: () => T) => T;
+  readonly inspectRetirement?: (homeDir: string) => PortableRetirementRecovery | null;
+  readonly prepareRetirement?: (
+    homeDir: string,
+    receiptBasenames: readonly string[],
+  ) => PreparedPortableRetirement;
+  readonly publishRetirement?: (prepared: PreparedPortableRetirement) => void;
+  readonly resumeRetirement?: (homeDir: string) => void;
+}
+
+export interface PortableRuntimeCleanupResult {
+  readonly registryRemoved: boolean;
+  readonly sandboxContainersRemoved: number;
+  readonly selectorsRemoved: readonly string[];
 }
 
 function commandDetail(result: PortablePodmanLifecycleCommandResult): string {
@@ -92,91 +115,25 @@ function isMissingContainer(result: PortablePodmanLifecycleCommandResult): boole
   );
 }
 
-function acquireRegistryFence(registryFile: string): RegistryFence {
-  const lockPath = `${registryFile}.lock`;
-  const ownerPath = path.join(lockPath, "uninstall-owner");
-  const token = crypto.randomUUID();
-  let created = false;
-  try {
-    fs.mkdirSync(lockPath);
-    created = true;
-    const stat = fs.lstatSync(lockPath, { bigint: true });
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
-      throw new Error(`Portable uninstall registry fence '${lockPath}' is not a real directory`);
-    }
-    fs.writeFileSync(ownerPath, `${JSON.stringify({ pid: process.pid, token })}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: 0o600,
-    });
-    return {
-      lockPath,
-      ownerPath,
-      token,
-      device: stat.dev,
-      inode: stat.ino,
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`Another sandbox registry operation owns '${lockPath}'`);
-    }
-    if (created) {
-      try {
-        fs.unlinkSync(ownerPath);
-      } catch {
-        // The exact empty directory is removed below when possible.
-      }
-      try {
-        fs.rmdirSync(lockPath);
-      } catch {
-        // Preserve an ambiguous fence generation.
-      }
-    }
-    throw error;
-  }
-}
-
-function releaseRegistryFence(fence: RegistryFence): void {
-  const stat = fs.lstatSync(fence.lockPath, { bigint: true });
-  if (
-    stat.isSymbolicLink() ||
-    !stat.isDirectory() ||
-    stat.dev !== fence.device ||
-    stat.ino !== fence.inode
-  ) {
-    throw new Error(`Portable uninstall registry fence '${fence.lockPath}' changed ownership`);
-  }
-  const owner = JSON.parse(fs.readFileSync(fence.ownerPath, "utf8")) as unknown;
-  if (!isRecord(owner) || owner.pid !== process.pid || owner.token !== fence.token) {
-    throw new Error(`Portable uninstall registry fence '${fence.lockPath}' changed ownership`);
-  }
-  fs.unlinkSync(fence.ownerPath);
-  fs.rmdirSync(fence.lockPath);
-}
-
 function withPortableFences<T>(
   input: PortableRuntimeCleanupInput,
-  receipts: readonly PortableDemoLifecycleReceiptRecord[],
+  sandboxNames: readonly string[],
   deps: PortableRuntimeCleanupDeps,
   operation: () => T,
 ): T {
-  const fence = acquireRegistryFence(input.registryFile);
   const lifecycleStateDir = path.join(input.stateDir, "state");
   const withLifecycleLock =
     deps.withLifecycleLock ??
     (<Value>(sandboxName: string, inner: () => Value, stateDir: string) =>
       withMcpLifecycleLockSync(sandboxName, inner, { stateDir }));
+  const withRegistryLock = deps.withRegistryLock ?? withProcessBoundRegistryLockAt;
   const acquireNext = (index: number): T => {
-    const receipt = receipts[index];
-    return receipt
-      ? withLifecycleLock(receipt.sandboxName, () => acquireNext(index + 1), lifecycleStateDir)
-      : operation();
+    const sandboxName = sandboxNames[index];
+    return sandboxName
+      ? withLifecycleLock(sandboxName, () => acquireNext(index + 1), lifecycleStateDir)
+      : withRegistryLock(input.registryFile, operation);
   };
-  try {
-    return acquireNext(0);
-  } finally {
-    releaseRegistryFence(fence);
-  }
+  return acquireNext(0);
 }
 
 function commonRuntimeAuthority(
@@ -196,10 +153,17 @@ function requireReceiptRegistryOwnership(
   receipt: PortableDemoLifecycleReceiptRecord,
   entry: GatewayRegistryEntry | undefined,
   gatewayPort: number,
+  gatewayName: string,
 ): void {
-  if (!entry) return;
+  if (!entry) {
+    throw new Error(
+      `Portable lifecycle receipt for sandbox '${receipt.sandboxName}' has no current registry ownership`,
+    );
+  }
   if (
     registryEntryGatewayPort(entry) !== gatewayPort ||
+    entry.gatewayPort !== gatewayPort ||
+    entry.gatewayName !== gatewayName ||
     entry.agent !== "openclaw" ||
     entry.openshellDriver !== "docker" ||
     entry.lifecycleGeneration !== receipt.registryGeneration
@@ -210,46 +174,189 @@ function requireReceiptRegistryOwnership(
   }
 }
 
+function requireCompleteReceiptRegistryOwnership(
+  receipts: readonly PortableDemoLifecycleReceiptRecord[],
+  registry: ReturnType<typeof readGatewayRegistryFile>,
+  gatewayPort: number,
+  gatewayName: string,
+): string {
+  if (!registry) throw new Error("Portable lifecycle receipts have no current sandbox registry");
+  const receiptNames = receipts.map((receipt) => receipt.sandboxName);
+  for (const receipt of receipts) {
+    requireReceiptRegistryOwnership(
+      receipt,
+      registry.sandboxes[receipt.sandboxName],
+      gatewayPort,
+      gatewayName,
+    );
+  }
+  const registryNames = Object.keys(registry.sandboxes).sort();
+  if (!isDeepStrictEqual(registryNames, receiptNames)) {
+    throw new Error(
+      "Portable sandbox registry ownership is not represented by the complete lifecycle receipt set",
+    );
+  }
+  return gatewayName;
+}
+
 function currentReceipts(stateDir: string): PortableDemoLifecycleReceiptRecord[] {
-  return listPortableDemoSandboxLifecycleReceipts(stateDir);
+  return listPortableDemoSandboxLifecycleReceipts(stateDir).sort((left, right) =>
+    left.sandboxName.localeCompare(right.sandboxName),
+  );
 }
 
 /** Detect portable uninstall from strict durable receipts, never ambient selectors or names. */
 export function hasPortableRuntimeCleanup(stateDir: string): boolean {
-  return currentReceipts(stateDir).length > 0;
+  const homeDir = path.dirname(stateDir);
+  const registryFile = path.join(stateDir, "sandboxes.json");
+  return hasPortableUninstallAuthority(
+    {
+      homeDir,
+      registryFile,
+      sessionFile: path.join(stateDir, "onboard-session.json"),
+      stateDir,
+    },
+    {
+      loadRegistry: () => {
+        const registry = readGatewayRegistryFile(homeDir, registryFile);
+        if (!registry) throw new Error("Completed onboarding registry is missing");
+        return registry;
+      },
+    },
+  );
 }
 
-/** Remove every exact receipt-owned sandbox after one all-target prevalidation pass. */
-export function removePortableSandboxContainers(
-  input: PortableRuntimeCleanupInput,
-  deps: PortableRuntimeCleanupDeps = {},
-): number {
-  const receipts = currentReceipts(input.stateDir);
-  if (receipts.length === 0) return 0;
-  return withPortableFences(input, receipts, deps, () => {
-    const current = currentReceipts(input.stateDir);
-    if (!isDeepStrictEqual(current, receipts)) {
-      throw new Error("Portable lifecycle receipts changed while uninstall acquired its fences");
+export function portableRetirementPreservationEntries(stateDir: string): {
+  config: string[];
+  stateRoot: string[];
+} {
+  const artifacts = inspectPortableRetirementRecovery(path.dirname(stateDir))?.artifacts ?? [];
+  return {
+    config: artifacts.filter(({ root }) => root === "config").map(({ basename }) => basename),
+    stateRoot: artifacts.filter(({ root }) => root === "registry").map(({ basename }) => basename),
+  };
+}
+
+function recordedRegistrySandboxNames(registryBytes: Buffer): string[] {
+  let registry: unknown;
+  try {
+    registry = JSON.parse(UTF8.decode(registryBytes));
+  } catch {
+    throw new Error("Recorded portable registry authority is malformed");
+  }
+  if (!isRecord(registry) || !isRecord(registry.sandboxes)) {
+    throw new Error("Recorded portable registry authority is invalid");
+  }
+  const names = Object.entries(registry.sandboxes).map(([name, value]) => {
+    if (!isRecord(value) || value.name !== name || name.length < 1 || name.length > 256) {
+      throw new Error("Recorded portable registry sandbox identity is invalid");
     }
-    const registry = readGatewayRegistryFile(input.homeDir, input.registryFile);
-    const transport = createPortablePodmanLifecycleTransport(commonRuntimeAuthority(receipts), {
-      ...deps,
-      env: input.env,
-      stateDir: input.stateDir,
-    });
-    const prepared = receipts.map((receipt) => {
-      requireReceiptRegistryOwnership(
-        receipt,
-        registry?.sandboxes[receipt.sandboxName],
-        input.gatewayPort,
-      );
-      return preparePortableDemoSandboxRemoval(receipt, transport, input.stateDir);
-    });
-    preparePortableRegistryRemoval(transport);
-    inspectPortableUserManagerEnvironment(commonRuntimeAuthority(receipts), input.env, deps);
-    for (const target of prepared) target.removeAndVerify();
-    return prepared.filter((target) => target.present).length;
+    return name;
   });
+  return names.sort();
+}
+
+/**
+ * Remove receipt-owned portable resources while one registry fence and every
+ * receipt lifecycle lock remain held across OpenShell cleanup and the caller's
+ * final evidence-retirement operation.
+ */
+export function runPortableRuntimeCleanupTransaction(
+  input: PortableRuntimeCleanupInput,
+  continueAfterSandboxRemoval: (
+    removed: number,
+    sandboxNames: readonly string[],
+    gatewayName: string,
+  ) => boolean,
+  deps: PortableRuntimeCleanupDeps = {},
+): PortableRuntimeCleanupResult | null {
+  const inspectRetirement = deps.inspectRetirement ?? inspectPortableRetirementRecovery;
+  const recovery = inspectRetirement(input.homeDir);
+  if (recovery) {
+    const sandboxNames = recovery.registryBytes
+      ? recordedRegistrySandboxNames(recovery.registryBytes)
+      : [];
+    return withPortableFences(input, sandboxNames, deps, () => {
+      (deps.resumeRetirement ?? resumePortableEvidenceRetirement)(input.homeDir);
+      return { registryRemoved: false, sandboxContainersRemoved: 0, selectorsRemoved: [] };
+    });
+  }
+  const receipts = currentReceipts(input.stateDir);
+  const registry = readGatewayRegistryFile(input.homeDir, input.registryFile);
+  if (receipts.length === 0) {
+    throw new Error("Portable lifecycle receipts disappeared before uninstall acquired its fences");
+  }
+  return withPortableFences(
+    input,
+    receipts.map((receipt) => receipt.sandboxName),
+    deps,
+    () => {
+      const current = currentReceipts(input.stateDir);
+      const currentRegistry = readGatewayRegistryFile(input.homeDir, input.registryFile);
+      if (!isDeepStrictEqual(current, receipts) || !isDeepStrictEqual(currentRegistry, registry)) {
+        throw new Error(
+          "Portable lifecycle or registry state changed while uninstall acquired its fences",
+        );
+      }
+      const authority = commonRuntimeAuthority(receipts);
+      const transport = createPortablePodmanLifecycleTransport(authority, {
+        ...deps,
+        env: input.env,
+        stateDir: input.stateDir,
+      });
+      const gatewayName = requireCompleteReceiptRegistryOwnership(
+        receipts,
+        registry,
+        input.gatewayPort,
+        input.gatewayName,
+      );
+      const receiptBasenames = receipts.map(
+        (receipt) => `${createHash("sha256").update(receipt.sandboxName).digest("hex")}.json`,
+      );
+      const retirement = (deps.prepareRetirement ?? preparePortableRetirement)(
+        input.homeDir,
+        receiptBasenames,
+      );
+      const prepared = receipts.map((receipt) =>
+        preparePortableDemoSandboxRemoval(receipt, transport, input.stateDir),
+      );
+      const portableRegistry = preparePortableRegistryRemoval(transport);
+      inspectPortableUserManagerEnvironment(authority, input.env, deps);
+      for (const target of prepared) target.removeAndVerify();
+      const sandboxContainersRemoved = prepared.filter((target) => target.present).length;
+      if (
+        !continueAfterSandboxRemoval(
+          sandboxContainersRemoved,
+          receipts.map((receipt) => receipt.sandboxName),
+          gatewayName,
+        )
+      )
+        return null;
+      if (
+        !isDeepStrictEqual(currentReceipts(input.stateDir), receipts) ||
+        !isDeepStrictEqual(readGatewayRegistryFile(input.homeDir, input.registryFile), registry)
+      ) {
+        throw new Error(
+          "Portable lifecycle or registry state changed during exact uninstall cleanup",
+        );
+      }
+      for (const target of prepared) target.verifyAbsent();
+      portableRegistry.removeAndVerify();
+      const selectorsRemoved = clearPortableUserManagerSelectors(authority, input.env, deps);
+      if (
+        !isDeepStrictEqual(currentReceipts(input.stateDir), receipts) ||
+        !isDeepStrictEqual(readGatewayRegistryFile(input.homeDir, input.registryFile), registry)
+      ) {
+        throw new Error("Portable lifecycle or registry state changed before evidence retirement");
+      }
+      (deps.publishRetirement ?? publishAndRetirePortableEvidence)(retirement);
+      return {
+        registryRemoved: portableRegistry.present,
+        sandboxContainersRemoved,
+        selectorsRemoved,
+      };
+    },
+  );
 }
 
 function parseContainerIds(
@@ -340,7 +447,10 @@ function preparePortableRegistryRemoval(
       if (currentId !== containerId) {
         throw new Error("The portable registry container changed after prevalidation");
       }
-      transport.podman(["rm", "--force", containerId]);
+      requireCommand(
+        transport.podman(["rm", "--force", containerId]),
+        "Removing the managed portable registry container",
+      );
       const exact = transport.podman(["inspect", containerId]);
       if (!isMissingContainer(exact)) {
         if (exact.status !== 0 || exact.error) {
@@ -444,35 +554,4 @@ function clearPortableUserManagerSelectors(
     throw new Error("A NemoClaw portable selector remains in the current-user systemd manager");
   }
   return unset;
-}
-
-/** Verify sandbox absence, remove the exact managed registry, and clear exact selectors. */
-export function removePortableSharedResources(
-  input: PortableRuntimeCleanupInput,
-  deps: PortableRuntimeCleanupDeps = {},
-): { readonly registryRemoved: boolean; readonly selectorsRemoved: readonly string[] } {
-  const receipts = currentReceipts(input.stateDir);
-  if (receipts.length === 0) return { registryRemoved: false, selectorsRemoved: [] };
-  return withPortableFences(input, receipts, deps, () => {
-    if (!isDeepStrictEqual(currentReceipts(input.stateDir), receipts)) {
-      throw new Error("Portable lifecycle receipts changed while uninstall acquired its fences");
-    }
-    const authority = commonRuntimeAuthority(receipts);
-    const transport = createPortablePodmanLifecycleTransport(authority, {
-      ...deps,
-      env: input.env,
-      stateDir: input.stateDir,
-    });
-    const sandboxes = receipts.map((receipt) =>
-      preparePortableDemoSandboxRemoval(receipt, transport, input.stateDir),
-    );
-    if (sandboxes.some((target) => target.present)) {
-      throw new Error("A receipt-owned portable sandbox remains before shared runtime cleanup");
-    }
-    for (const target of sandboxes) target.verifyAbsent();
-    const registry = preparePortableRegistryRemoval(transport);
-    registry.removeAndVerify();
-    const selectorsRemoved = clearPortableUserManagerSelectors(authority, input.env, deps);
-    return { registryRemoved: registry.present, selectorsRemoved };
-  });
 }
