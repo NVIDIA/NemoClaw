@@ -8,6 +8,8 @@ import type { ConfigValue } from "./credential-filter-boundary.cjs";
 import {
   CONTEXT_PATTERNS,
   CREDENTIAL_PLACEHOLDER,
+  isConfigObject,
+  isConfigValue,
   isCredentialField,
   isSafeCredentialPlaceholder,
   isSensitiveFile,
@@ -32,6 +34,20 @@ describe("shared credential filter", () => {
     expect(result).toEqual({ token: CREDENTIAL_PLACEHOLDER });
     expect(stripCredentials(null as ConfigValue)).toBeNull();
     expectTypeOf(result).toEqualTypeOf<ConfigValue>();
+  });
+
+  it("accepts only recursively representable configuration values (#8291)", () => {
+    const nullPrototype = Object.assign(Object.create(null), { enabled: true });
+
+    expect(isConfigObject({})).toBe(true);
+    expect(isConfigObject(nullPrototype)).toBe(true);
+    expect(isConfigObject(null)).toBe(false);
+    expect(isConfigObject([])).toBe(false);
+    expect(isConfigValue(undefined)).toBe(true);
+    expect(isConfigValue(["model", 1, false, null, nullPrototype])).toBe(true);
+    expect(isConfigValue(new Date())).toBe(false);
+    expect(isConfigValue({ nested: new Date() })).toBe(false);
+    expect(isConfigValue(["model", new Date()])).toBe(false);
   });
 
   it("classifies credential names without treating public keys as secrets (#8291)", () => {
