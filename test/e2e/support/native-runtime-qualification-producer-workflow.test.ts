@@ -307,9 +307,11 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("/usr/bin/systemctl --user start dbus.socket");
     expect(boundary.run).toContain("/usr/bin/systemctl --user is-active --quiet dbus.socket");
     expect(boundary.run).toContain("Qualification systemd user bus socket unit is not active");
-    expect(boundary.run).toContain("stat -c '%u' \"$runtime_dir/bus\"");
-    expect(boundary.run).not.toContain("stat -c '%u:%g' \"$runtime_dir/bus\"");
-    expect(boundary.run).toContain("Qualification systemd user bus is missing or invalid");
+    expect(boundary.run).toContain('sudo -u "$account" /usr/bin/test -S "$runtime_dir/bus"');
+    expect(boundary.run).not.toContain("stat -c '%u' \"$runtime_dir/bus\"");
+    expect(boundary.run).toContain(
+      "Qualification systemd user bus is not accessible to the execution account",
+    );
     expect(boundary.run).toContain('sudo -u "$account" env -i');
     expect(boundary.run).toContain('CONTAINERS_CONF="$containers_config"');
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
@@ -376,8 +378,13 @@ describe("native runtime qualification producer workflow", () => {
     expect(installer.run).toContain('sudo chown "$ACCOUNT_UID:$ACCOUNT_GID"');
     expect(installer.run).toContain("/usr/bin/systemctl --user start dbus.socket");
     expect(installer.run).toContain("Qualification systemd user bus socket unit did not restart");
-    expect(installer.run).toContain("stat -c '%u' \"$RUNTIME_DIRECTORY/bus\"");
-    expect(installer.run).not.toContain("stat -c '%u:%g' \"$RUNTIME_DIRECTORY/bus\"");
+    expect(installer.run).toContain(
+      'sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus"',
+    );
+    expect(installer.run).not.toContain("stat -c '%u' \"$RUNTIME_DIRECTORY/bus\"");
+    expect(installer.run).toContain(
+      "Qualification systemd user bus is not accessible after installer isolation",
+    );
     expect(installer.env?.CONTAINERS_CONFIG).toBe(
       "${{ steps.boundary.outputs.containers_config }}",
     );
