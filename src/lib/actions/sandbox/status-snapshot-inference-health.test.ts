@@ -183,6 +183,53 @@ describe("collectSandboxStatusSnapshot inference route health", () => {
     expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
   });
 
+  it("reports unhealthy after every recovered inference request fails", async () => {
+    const healthy: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const failedInvocation: SandboxInferenceInvocationResult = {
+      ok: false,
+      detail: "sandbox inference invocation failed with status 503",
+      httpStatus: 503,
+    };
+    const options = snapshotDeps(healthy);
+    options.deps.reconcile = async () => ({
+      state: "present",
+      output: "Phase: Ready",
+      recoveredSandbox: true,
+      recoverySandboxVia: "started-stopped-original",
+    });
+    const probeSandboxInferenceGatewayHealthImpl = vi.fn(async () => healthy);
+    const probeSandboxInferenceInvocationImpl = vi.fn(() => failedInvocation);
+    const delayInferenceRecoveryProbe = vi.fn(async () => undefined);
+    const recoverSandboxProcesses = vi.fn(() => ({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    }));
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: {
+        ...options.deps,
+        delayInferenceRecoveryProbe,
+        probeSandboxInferenceGatewayHealthImpl,
+        probeSandboxInferenceInvocationImpl,
+        recoverSandboxProcesses,
+      },
+    });
+
+    expect(probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledTimes(3);
+    expect(probeSandboxInferenceInvocationImpl).toHaveBeenCalledTimes(3);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledTimes(2);
+    expect(delayInferenceRecoveryProbe).toHaveBeenCalledWith(2_000);
+    expect(snapshot.inferenceHealth).toMatchObject({ ok: false, failureLabel: "unhealthy" });
+  });
+
   it("reports the inference route as unreachable after all post-recovery probes", async () => {
     const unreachable: SandboxInferenceRouteHealth = {
       ok: false,
