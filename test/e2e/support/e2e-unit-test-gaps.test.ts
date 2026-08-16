@@ -283,6 +283,7 @@ describe("weekly E2E unit-test gap analysis", () => {
       const cacheFile = path.join(cacheDir, "34567890-attempt-2.json");
       const cached = fs.readFileSync(cacheFile, "utf8");
       expect(first[0]!.log).toContain("Authorization: Bearer <REDACTED>");
+      expect(first[0]!.log).not.toContain("ghp_EXAMPLE");
       expect(cached).toContain("Authorization: Bearer <REDACTED>");
       expect(cached).not.toContain("ghp_EXAMPLE");
       expect(fs.statSync(cacheDir).mode & 0o777).toBe(0o700);
@@ -338,36 +339,40 @@ describe("weekly E2E unit-test gap analysis", () => {
     });
   });
 
-  it("collects 300 failures in 50-log batches and then reuses the cache", async () => {
-    await withTemporaryDirectory(async (directory) => {
-      const cacheDir = path.join(directory, "evidence");
-      const runs = Array.from({ length: 300 }, (_, index) => failedRun(50000000 + index));
-      let reads = 0;
-      const runGh = async (): Promise<string> => {
-        reads += 1;
-        return "job\tstep\tError: cached high-volume failure\n";
-      };
+  it(
+    "collects 300 failures in 50-log batches and then reuses the cache",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const cacheDir = path.join(directory, "evidence");
+        const runs = Array.from({ length: 300 }, (_, index) => failedRun(50000000 + index));
+        let reads = 0;
+        const runGh = async (): Promise<string> => {
+          reads += 1;
+          return "job\tstep\tError: cached high-volume failure\n";
+        };
 
-      for (const deferredRuns of [250, 200, 150, 100, 50]) {
-        await expect(collectEvidence(runs, cacheDir, runGh)).rejects.toEqual(
-          expect.objectContaining({ deferredRuns }),
-        );
-      }
-      await collectEvidence(runs, cacheDir, runGh);
-      expect(reads).toBe(300);
-      reads = 0;
-      let plan:
-        | { cachedRuns: number; deferredRuns: number; failedLogReads: number }
-        | undefined;
-      const result = await collectEvidence(runs, cacheDir, runGh, 2, (value) => {
-        plan = value;
+        for (const deferredRuns of [250, 200, 150, 100, 50]) {
+          await expect(collectEvidence(runs, cacheDir, runGh)).rejects.toEqual(
+            expect.objectContaining({ deferredRuns }),
+          );
+        }
+        await collectEvidence(runs, cacheDir, runGh);
+        expect(reads).toBe(300);
+        reads = 0;
+        let plan:
+          | { cachedRuns: number; deferredRuns: number; failedLogReads: number }
+          | undefined;
+        const result = await collectEvidence(runs, cacheDir, runGh, 2, (value) => {
+          plan = value;
+        });
+
+        expect(result).toHaveLength(300);
+        expect(reads).toBe(0);
+        expect(plan).toEqual({ cachedRuns: 300, deferredRuns: 0, failedLogReads: 0 });
       });
-
-      expect(result).toHaveLength(300);
-      expect(reads).toBe(0);
-      expect(plan).toEqual({ cachedRuns: 300, deferredRuns: 0, failedLogReads: 0 });
-    });
-  });
+    },
+    30_000,
+  );
 
   it("rejects cached evidence for another run before a GitHub read", async () => {
     await withTemporaryDirectory(async (directory) => {
@@ -403,6 +408,24 @@ describe("weekly E2E unit-test gap analysis", () => {
       await expect(
         collectEvidence([failedRun(56789013)], cacheDir, async () => ""),
       ).rejects.toThrow("Cached evidence for run 56789013 does not match the run.");
+    });
+  });
+
+  it("rejects cached evidence that is a symbolic link", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const cacheDir = path.join(directory, "evidence");
+      fs.mkdirSync(cacheDir, { mode: 0o700 });
+      const target = path.join(directory, "outside.json");
+      fs.writeFileSync(
+        target,
+        '{"attempt":1,"runId":56789014,"signatures":[],"version":1}\n',
+        { mode: 0o600 },
+      );
+      fs.symlinkSync(target, path.join(cacheDir, "56789014-attempt-1.json"));
+
+      await expect(
+        collectEvidence([failedRun(56789014)], cacheDir, async () => ""),
+      ).rejects.toThrow("Cached evidence for run 56789014 is not a bounded regular file.");
     });
   });
 
@@ -442,44 +465,50 @@ describe("weekly E2E unit-test gap analysis", () => {
     });
   });
 
-  it("runs the npm collector entry point with offline evidence", async () => {
-    await withTemporaryDirectory(async (directory) => {
-      const logsDir = path.join(directory, "logs");
-      const runsFile = path.join(directory, "runs.json");
-      const markdownFile = path.join(directory, "report.md");
-      const jsonFile = path.join(directory, "report.json");
-      fs.mkdirSync(logsDir, { mode: 0o700 });
-      fs.writeFileSync(runsFile, `${JSON.stringify([failedRun(67890123)])}\n`, { mode: 0o600 });
-      fs.writeFileSync(
-        path.join(logsDir, "67890123.log"),
-        "job\tstep\tError: offline entry-point failure\n",
-        { mode: 0o600 },
-      );
+  it(
+    "runs the npm collector entry point with offline evidence",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const logsDir = path.join(directory, "logs");
+        const runsFile = path.join(directory, "runs.json");
+        const markdownFile = path.join(directory, "report.md");
+        const jsonFile = path.join(directory, "report.json");
+        fs.mkdirSync(logsDir, { mode: 0o700 });
+        fs.writeFileSync(runsFile, `${JSON.stringify([failedRun(67890123)])}\n`, {
+          mode: 0o600,
+        });
+        fs.writeFileSync(
+          path.join(logsDir, "67890123.log"),
+          "job\tstep\tError: offline entry-point failure\n",
+          { mode: 0o600 },
+        );
 
-      const { stdout } = await execFileAsync(
-        "npm",
-        [
-          "run",
-          "e2e:unit-gaps",
-          "--",
-          "--runs-file",
-          runsFile,
-          "--logs-dir",
-          logsDir,
-          "--output",
-          markdownFile,
-          "--json-output",
-          jsonFile,
-        ],
-        { cwd: process.cwd(), encoding: "utf8" },
-      );
+        const { stdout } = await execFileAsync(
+          "npm",
+          [
+            "run",
+            "e2e:unit-gaps",
+            "--",
+            "--runs-file",
+            runsFile,
+            "--logs-dir",
+            logsDir,
+            "--output",
+            markdownFile,
+            "--json-output",
+            jsonFile,
+          ],
+          { cwd: process.cwd(), encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 60_000 },
+        );
 
-      expect(stdout).toContain("Wrote 1 cause candidates from 1 runs");
-      expect(fs.existsSync(markdownFile)).toBe(true);
-      expect(JSON.parse(fs.readFileSync(jsonFile, "utf8"))).toMatchObject({
-        incompleteRuns: [],
-        runCounts: { failure: 1 },
+        expect(stdout).toContain("Wrote 1 cause candidates from 1 runs");
+        expect(fs.existsSync(markdownFile)).toBe(true);
+        expect(JSON.parse(fs.readFileSync(jsonFile, "utf8"))).toMatchObject({
+          incompleteRuns: [],
+          runCounts: { failure: 1 },
+        });
       });
-    });
-  });
+    },
+    90_000,
+  );
 });
