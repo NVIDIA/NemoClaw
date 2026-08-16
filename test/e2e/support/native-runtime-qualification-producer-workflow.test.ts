@@ -99,6 +99,10 @@ describe("native runtime qualification producer workflow", () => {
   it("runs each candidate case in an isolated account and emits one trusted artifact", () => {
     const producer = job("native-runtime-qualification-producer");
     const harness = step(producer, "Check out the trusted qualification harness");
+    const podman = step(
+      producer,
+      "Install Podman 5 and rootless prerequisites from the signed runner OS repository",
+    );
     const boundary = step(
       producer,
       "Prepare the credential-free execution account and disable Docker",
@@ -126,14 +130,33 @@ describe("native runtime qualification producer workflow", () => {
       "test/e2e/registry/native-runtime-qualification.ts",
     );
     expect(source).not.toMatch(/NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u);
+    expect(podman.run).toContain("/usr/bin/apt-get install");
+    for (const requiredPackage of [
+      "acl",
+      "apparmor",
+      "fuse-overlayfs",
+      "passt",
+      "podman",
+      "slirp4netns",
+      "uidmap",
+    ]) {
+      expect(podman.run).toContain(requiredPackage);
+    }
+    expect(podman.run).toContain("^podman\\ version\\ 5[.]");
+    expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
     expect(boundary.run).toContain('install -d -m 0755 "$guard_dir"');
     expect(boundary.run).toContain('chmod 0555 "$guard_dir/docker"');
+    expect(boundary.run).toContain('setfacl --modify "u:${account}:--x"');
+    expect(boundary.run).not.toContain("chmod o+x");
     expect(boundaryRun.indexOf("printf 'account=%s")).toBeLessThan(
       boundaryRun.indexOf("useradd --create-home"),
     );
     expect(dependencies.run).toContain('sudo -u "$ACCOUNT" env -i');
+    expect(dependencies.run).toContain('cd "$1"');
+    expect(dependencies.run).toContain("package.json package-lock.json");
+    expect(dependencies.run).toContain('! -L "$file" && -O "$file"');
     expect(dependencies.run).toContain("npm --prefix");
     expect(dependencies.run).toContain("ci --ignore-scripts");
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');

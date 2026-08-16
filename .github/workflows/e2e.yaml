@@ -1067,6 +1067,23 @@ jobs:
         with:
           node-version: 22.19.0
 
+      - name: Install Podman 5 and rootless prerequisites from the signed runner OS repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -x /usr/bin/apt-get ]] || {
+            echo "::error::Protected runner cannot install Podman from its signed OS repository" >&2
+            exit 1
+          }
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
+            --yes --no-install-recommends \
+            acl apparmor fuse-overlayfs passt podman slirp4netns uidmap
+          [[ "$(podman --version)" =~ ^podman\ version\ 5[.] ]] || {
+            echo "::error::Protected runner must provide Podman 5" >&2
+            exit 1
+          }
+
       - name: Prepare the credential-free execution account and disable Docker
         id: boundary
         env:
@@ -1074,7 +1091,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in git jq node npm pgrep podman sha256sum systemctl; do
+          for command in git jq node npm pgrep podman setfacl sha256sum systemctl; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
@@ -1099,6 +1116,15 @@ jobs:
           home="$(getent passwd "$account" | cut -d: -f6)"
           runtime_dir="/run/user/${uid}"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$runtime_dir"
+          ancestor="$(dirname "$CANDIDATE_DIRECTORY")"
+          while [[ "$ancestor" != "/home" ]]; do
+            [[ ("$ancestor" == "/home/runner" || "$ancestor" == /home/runner/*) && -d "$ancestor" && ! -L "$ancestor" ]] || {
+              echo "::error::Candidate checkout ancestor is outside the reviewed runner workspace" >&2
+              exit 1
+            }
+            sudo setfacl --modify "u:${account}:--x" "$ancestor"
+            ancestor="$(dirname "$ancestor")"
+          done
           sudo chown -R "$uid:$uid" "$CANDIDATE_DIRECTORY"
           node_directory="$(dirname "$(command -v node)")"
           [[ "$node_directory" == /* && -x "$node_directory/node" && -x "$node_directory/npm" ]] || {
@@ -1128,7 +1154,17 @@ jobs:
             HOME="$QUALIFICATION_HOME" \
             LANG=C.UTF-8 \
             PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
-            npm --prefix "$CANDIDATE_DIRECTORY" ci --ignore-scripts
+            /bin/bash --noprofile --norc -c '
+              set -euo pipefail
+              cd "$1"
+              for file in package.json package-lock.json; do
+                [[ -f "$file" && ! -L "$file" && -O "$file" ]] || {
+                  echo "Candidate dependency manifest is missing or invalid: $file" >&2
+                  exit 1
+                }
+              done
+              exec npm --prefix "$1" ci --ignore-scripts
+            ' bash "$CANDIDATE_DIRECTORY"
 
       - name: Run the authenticated installer qualification
         env:

@@ -129,7 +129,7 @@ function validateSource(
 function runnerForCase(entry: NativeRuntimeQualificationCase, arm64GpuRunner: string): string {
   if (entry.architecture === "amd64" && entry.acceleration === "cpu") return "ubuntu-26.04";
   if (entry.architecture === "arm64" && entry.acceleration === "cpu") {
-    return "ubuntu-24.04-arm";
+    return "ubuntu-26.04-arm";
   }
   if (entry.architecture === "amd64") return "linux-amd64-gpu-rtxpro6000-latest-1";
   if (!RUNNER_LABEL.test(arm64GpuRunner)) {

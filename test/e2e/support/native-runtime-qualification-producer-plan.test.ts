@@ -66,7 +66,7 @@ describe("native runtime qualification producer plan", () => {
       plan.include.find(
         (entry) => entry.case.architecture === "arm64" && entry.case.acceleration === "cpu",
       )?.runner,
-    ).toBe("ubuntu-24.04-arm");
+    ).toBe("ubuntu-26.04-arm");
     expect(
       plan.include.find(
         (entry) => entry.case.architecture === "amd64" && entry.case.acceleration === "nvidia-gpu",
