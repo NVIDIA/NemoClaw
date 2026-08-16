@@ -221,7 +221,7 @@ jobs:
               matrix='[{"id":"ubuntu-policy-custom-missing-presets-negative","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest"},{"id":"ubuntu-repo-cloud-openclaw","runner":"ubuntu-latest"},{"id":"ubuntu-repo-docker-post-reboot-recovery","runner":"ubuntu-latest"}]'
               test_matrix='[{"id":"onboard-managed-image-buildless-e2e","file":"test/onboard-managed-image-buildless-e2e.test.ts","project":"integration"},{"id":"vllm-docker-storage","file":"test/vllm-docker-storage.test.ts","project":"integration"}]'
               ;;
-            inference-routing: | managed-image-protected-runtime: | :jetson-nvmap-gpu)
+            inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)
               matrix='[]'
               ;;
             :ubuntu-repo-cloud-langchain-deepagents-code)
@@ -312,9 +312,9 @@ jobs:
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
           case "${JOBS}:${TARGETS}:${INCLUDE_LAUNCHABLE}:${ALLOW_JETSON_DISPATCH}" in
-            ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | :jetson-nvmap-gpu:false:true) ;;
+            ::false:false | inference-routing::false:false | managed-image-protected-runtime::false:false | native-runtime-qualification-producer::false:false | :jetson-nvmap-gpu:false:true) ;;
             *)
-              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, or jetson-nvmap-gpu with its dispatch flag" >&2
+              echo "::error::Manual PR E2E accepts only empty selectors, inference-routing, managed-image-protected-runtime, native-runtime-qualification-producer, or jetson-nvmap-gpu with its dispatch flag" >&2
               exit 1
               ;;
           esac
@@ -533,6 +533,7 @@ jobs:
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -540,7 +541,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate manual PR checkout
-        if: ${{ inputs.checkout_sha != '' }}
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -563,7 +564,7 @@ jobs:
 
       - id: e2e_credentials
         name: Authorize E2E credentials
-        if: ${{ inputs.checkout_sha != '' }}
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
@@ -589,10 +590,12 @@ jobs:
           printf 'allowed=%s\n' "$credentials_allowed" >> "$GITHUB_OUTPUT"
 
       - name: Prepare E2E workspace
+        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
 
       - id: package_cli_artifact
         name: Package exact-commit CLI
+        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
@@ -705,6 +708,7 @@ jobs:
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
+        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.package_cli_artifact.outputs.artifact_name }}
@@ -715,6 +719,7 @@ jobs:
 
       - id: record_cli_artifact
         name: Record CLI artifact provenance
+        if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
         env:
           ARTIFACT_DIGEST: ${{ steps.upload_cli_artifact.outputs.artifact-digest }}
           ARTIFACT_ID: ${{ steps.upload_cli_artifact.outputs.artifact-id }}
@@ -779,6 +784,24 @@ jobs:
           RELEASE_QUALIFICATION_WAIVED_JOBS: ${{ inputs.release_qualification_waived_jobs }}
         run: |
           set -euo pipefail
+          if [[ "${JOBS:-}" == "native-runtime-qualification-producer" && -z "${TARGETS:-}" ]]; then
+            {
+              echo 'matrix=[]'
+              echo 'test_matrix=[]'
+              echo 'catalogue_standard_matrix=[]'
+              echo 'catalogue_nvidia_api_matrix=[]'
+              echo 'catalogue_nvidia_inference_matrix=[]'
+              echo 'catalogue_github_read_matrix=[]'
+              echo 'catalogue_brave_nvidia_inference_matrix=[]'
+              echo 'selected_jobs=["native-runtime-qualification-producer"]'
+              echo 'selected_workflow_jobs=["native-runtime-qualification-producer"]'
+              echo 'hermes_selected=false'
+              echo 'explicit_only_jobs=native-runtime-qualification-producer'
+              echo 'release_qualification_waived_jobs=[]'
+              echo 'release_required_jobs=[]'
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${EVENT_NAME:-}" = "push" ]; then
             [[ "${BEFORE_SHA}" =~ ^[a-f0-9]{40}$ && "${CANDIDATE_SHA}" =~ ^[a-f0-9]{40}$ ]] || {
               echo "::error::Main push E2E requires exact before and candidate commit SHAs" >&2
@@ -802,6 +825,349 @@ jobs:
               exit 1
             fi
           fi
+
+  native-runtime-qualification-producer-plan:
+    needs: generate-matrix
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Check out the trusted qualification producer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-producer-plan.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Check out the candidate for source authentication
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          path: .candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node for trusted qualification planning
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - id: source
+        name: Authenticate the candidate and dispatch artifact
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PRODUCER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PRODUCER_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REPOSITORY" == "NVIDIA/NemoClaw" ]] || {
+            echo "::error::Native runtime qualification accepts only a branch in NVIDIA/NemoClaw" >&2
+            exit 1
+          }
+          [[ "$PRODUCER_RUN_ATTEMPT" == "1" ]] || {
+            echo "::error::Native runtime qualification producer runs cannot be rerun" >&2
+            exit 1
+          }
+          [[ "$BASE_SHA" == "$WORKFLOW_SHA" && "$CANDIDATE_SHA" != "$WORKFLOW_SHA" ]] || {
+            echo "::error::Native runtime qualification requires base_sha to equal workflow_sha and checkout_sha to name a different commit" >&2
+            exit 1
+          }
+          [[ "$(git -C .candidate-source rev-parse --verify 'HEAD^{commit}')" == "$CANDIDATE_SHA" ]] || {
+            echo "::error::Candidate checkout does not match the authenticated candidate commit" >&2
+            exit 1
+          }
+          pull="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg baseSha "$BASE_SHA" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" '
+              .state == "open" and
+              .head.repo.full_name == $candidateRepository and
+              .head.sha == $candidateSha and
+              .base.repo.full_name == "NVIDIA/NemoClaw" and
+              .base.ref == "main" and
+              .base.sha == $baseSha
+            ' <<<"$pull" >/dev/null || {
+              echo "::error::Pull request identity changed before qualification planning" >&2
+              exit 1
+            }
+          artifact_name="e2e-dispatch-${PRODUCER_RUN_ID}-${PRODUCER_RUN_ATTEMPT}"
+          artifacts="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}/artifacts" \
+            -f name="$artifact_name" \
+            -f per_page=100)"
+          artifact="$(jq -ce \
+            --arg name "$artifact_name" \
+            --arg runId "$PRODUCER_RUN_ID" \
+            --arg workflowSha "$WORKFLOW_SHA" '
+              select(.total_count == 1 and (.artifacts | length) == 1) |
+              .artifacts[0] |
+              select(.name == $name and .expired == false) |
+              select(.size_in_bytes > 0 and .size_in_bytes <= 1048576) |
+              select((.id | tostring | test("^[1-9][0-9]{0,19}$"))) |
+              select((.digest // "") | test("^sha256:[a-f0-9]{64}$")) |
+              select((.workflow_run.id | tostring) == $runId) |
+              select(.workflow_run.head_sha == $workflowSha)
+            ' <<<"$artifacts")" || {
+              echo "::error::Trusted dispatch artifact is missing or ambiguous" >&2
+              exit 1
+            }
+          installer_sha256="$(sha256sum .candidate-source/scripts/install.sh | awk '{print $1}')"
+          [[ "$installer_sha256" =~ ^[a-f0-9]{64}$ ]] || {
+            echo "::error::Candidate installer SHA-256 is invalid" >&2
+            exit 1
+          }
+          printf 'artifact_id=%s\n' "$(jq -r '.id | tostring' <<<"$artifact")" >>"$GITHUB_OUTPUT"
+          printf 'artifact_name=%s\n' "$artifact_name" >>"$GITHUB_OUTPUT"
+          printf 'artifact_digest=%s\n' "$(jq -r '.digest' <<<"$artifact")" >>"$GITHUB_OUTPUT"
+          printf 'artifact_size=%s\n' "$(jq -r '.size_in_bytes' <<<"$artifact")" >>"$GITHUB_OUTPUT"
+          printf 'installer_sha256=%s\n' "$installer_sha256" >>"$GITHUB_OUTPUT"
+
+      - id: plan
+        name: Compile the trusted qualification producer matrix
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_ARTIFACT_DIGEST: ${{ steps.source.outputs.artifact_digest }}
+          DISPATCH_ARTIFACT_ID: ${{ steps.source.outputs.artifact_id }}
+          DISPATCH_ARTIFACT_NAME: ${{ steps.source.outputs.artifact_name }}
+          DISPATCH_ARTIFACT_SIZE: ${{ steps.source.outputs.artifact_size }}
+          INSTALLER_SHA256: ${{ steps.source.outputs.installer_sha256 }}
+          NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL: ${{ vars.NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PRODUCER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PRODUCER_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-plan.mts --ci-output
+
+  native-runtime-qualification-producer:
+    name: ${{ matrix.jobName }}
+    needs: [generate-matrix, native-runtime-qualification-producer-plan]
+    if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.native-runtime-qualification-producer-plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      QUALIFICATION_ROW: ${{ toJSON(matrix) }}
+    steps:
+      - name: Require an ephemeral qualification runner
+        env:
+          REVIEWED_EPHEMERAL_POOL: ${{ vars.NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_ENVIRONMENT" != "github-hosted" && "$REVIEWED_EPHEMERAL_POOL" != "enabled" ]]; then
+            echo "::error::Self-hosted native runtime qualification requires the reviewed ephemeral runner pool" >&2
+            exit 1
+          fi
+
+      - name: Check out the trusted qualification harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.source.workflowSha }}
+          path: .trusted-qualification
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/checks/run-native-runtime-installer-qualification.sh
+            tools/e2e/native-runtime-qualification-producer-evidence.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Check out the candidate commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.source.candidateRepository }}
+          ref: ${{ matrix.source.candidateSha }}
+          path: .candidate-runtime
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node for candidate execution
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Install locked candidate test dependencies without scripts
+        working-directory: .candidate-runtime
+        run: npm ci --ignore-scripts
+
+      - name: Prepare the credential-free execution account and disable Docker
+        id: boundary
+        env:
+          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          for command in git jq node pgrep podman sha256sum systemctl; do
+            command -v "$command" >/dev/null || {
+              echo "::error::Protected runner is missing required command: $command" >&2
+              exit 1
+            }
+          done
+          [[ "$(podman --version)" =~ ^podman\ version\ 5[.] ]] || {
+            echo "::error::Protected runner must provide Podman 5" >&2
+            exit 1
+          }
+          sudo systemctl stop docker.service docker.socket 2>/dev/null || true
+          sudo systemctl mask --runtime docker.service docker.socket 2>/dev/null || true
+          sudo pkill -TERM -x dockerd 2>/dev/null || true
+          sudo rm -f /var/run/docker.sock /run/docker.sock
+          ! systemctl is-active --quiet docker.service
+          ! systemctl is-active --quiet docker.socket
+          ! pgrep -x dockerd >/dev/null
+          [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
+          account="nemoclawq"
+          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
+          sudo useradd --create-home --shell /usr/sbin/nologin "$account"
+          uid="$(id -u "$account")"
+          home="$(getent passwd "$account" | cut -d: -f6)"
+          runtime_dir="/run/user/${uid}"
+          sudo install -d -o "$uid" -g "$uid" -m 0700 "$runtime_dir"
+          sudo chown -R "$uid:$uid" "$CANDIDATE_DIRECTORY"
+          guard_dir="${RUNNER_TEMP}/native-runtime-docker-guard"
+          install -d -m 0700 "$guard_dir"
+          printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
+          chmod 0500 "$guard_dir/docker"
+          printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
+          printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
+          printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
+
+      - name: Run the authenticated installer qualification
+        env:
+          ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ARCHITECTURE: ${{ matrix.case.architecture }}
+          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          CANDIDATE_SHA: ${{ matrix.source.candidateSha }}
+          GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          INSTALLER_RECEIPT_PARENT: ${{ runner.temp }}/native-runtime-installer
+          INSTALLER_SHA256: ${{ matrix.installerSha256 }}
+          QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
+          sudo chown "$ACCOUNT:$ACCOUNT" "$INSTALLER_RECEIPT_PARENT"
+          sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH="$GUARD_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            bash .trusted-qualification/scripts/checks/run-native-runtime-installer-qualification.sh \
+              --candidate-checkout "$CANDIDATE_DIRECTORY" \
+              --candidate-sha "$CANDIDATE_SHA" \
+              --installer-sha256 "$INSTALLER_SHA256" \
+              --architecture "$ARCHITECTURE" \
+              --artifact-dir "$INSTALLER_RECEIPT_PARENT/receipts"
+          sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
+          [[ -d "$INSTALLER_RECEIPT_PARENT/receipts" && ! -L "$INSTALLER_RECEIPT_PARENT/receipts" ]] || {
+            echo "::error::Installer receipt directory is missing or invalid" >&2
+            exit 1
+          }
+          sudo chown -R -h root:root "$INSTALLER_RECEIPT_PARENT/receipts"
+
+      - name: Execute the candidate qualification case without credentials
+        env:
+          ACCOUNT: ${{ steps.boundary.outputs.account }}
+          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+          RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          live_test="$CANDIDATE_DIRECTORY/test/e2e/live/native-runtime-qualification-case.test.ts"
+          [[ -f "$live_test" && ! -L "$live_test" ]] || {
+            echo "::error::Candidate commit does not provide the native runtime qualification case executor" >&2
+            exit 1
+          }
+          receipt_directory="${RUNNER_TEMP}/native-runtime-case"
+          install -d -m 0700 "$receipt_directory"
+          sudo chown "$ACCOUNT:$ACCOUNT" "$receipt_directory"
+          sudo -u "$ACCOUNT" env -i \
+            CI=true \
+            E2E_DEFAULT_ENABLED=0 \
+            E2E_JOB=1 \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RECEIPT="$receipt_directory/execution.json" \
+            NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_ROW="$QUALIFICATION_ROW" \
+            NEMOCLAW_RUN_LIVE_E2E=1 \
+            PATH="$GUARD_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            "$CANDIDATE_DIRECTORY/node_modules/.bin/vitest" run \
+              --config "$CANDIDATE_DIRECTORY/vitest.config.ts" \
+              --project e2e-live \
+              "$live_test"
+          sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
+          sudo chown -R root:root "$receipt_directory"
+
+      - name: Verify Docker stayed unavailable
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! systemctl is-active --quiet docker.service
+          ! systemctl is-active --quiet docker.socket
+          ! pgrep -x dockerd >/dev/null
+          [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
+
+      - name: Validate receipts and emit bounded evidence
+        env:
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-evidence
+          EXECUTION_RECEIPT_PATH: ${{ runner.temp }}/native-runtime-case/execution.json
+          INSTALLER_RECEIPT_DIRECTORY: ${{ runner.temp }}/native-runtime-installer/receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" \
+            "$INSTALLER_RECEIPT_DIRECTORY" \
+            "$(dirname "$EXECUTION_RECEIPT_PATH")"
+          node --experimental-strip-types --no-warnings \
+            .trusted-qualification/tools/e2e/native-runtime-qualification-producer-evidence.mts
+
+      - name: Remove qualification resources
+        if: always()
+        env:
+          ACCOUNT: ${{ steps.boundary.outputs.account }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          account="${ACCOUNT:-nemoclawq}"
+          if id "$account" >/dev/null 2>&1; then
+            sudo pkill -KILL -u "$(id -u "$account")" 2>/dev/null || true
+            sudo userdel --remove "$account"
+          fi
+          if id "$account" >/dev/null 2>&1; then
+            echo "::error::Qualification account still exists after cleanup" >&2
+            exit 1
+          fi
+
+      - name: Upload the qualification case evidence
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: ${{ matrix.artifactName }}
+          path: ${{ runner.temp }}/native-runtime-evidence/evidence.json
 
   retired-selector-compatibility:
     needs: generate-matrix
@@ -3780,6 +4146,7 @@ jobs:
         cloud-onboard,
         openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
+        native-runtime-qualification-producer,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
