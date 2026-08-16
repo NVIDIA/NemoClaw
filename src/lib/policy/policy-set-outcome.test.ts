@@ -130,7 +130,7 @@ describe("openshell policy set outcome classification", () => {
     const outcome = classifyPolicySetResult({
       status: 1,
       stderr:
-        "Error: code: 'Deadline exceeded', message: 'deadline has elapsed', submitted document:\n" +
+        "Error: code: 'Invalid argument', message: 'invalid request', submitted document:\n" +
         "network_policies:\n  custom:\n    description: 'grpc_status: 9 seen in prod'",
     });
 
@@ -141,7 +141,7 @@ describe("openshell policy set outcome classification", () => {
     const outcome = classifyPolicySetResult({
       status: 1,
       stderr:
-        "Error: code: 'Unavailable', message: 'connection refused'\n" +
+        "Error: code: 'Invalid argument', message: 'invalid request'\n" +
         "code: 'Failed precondition', message: 'echoed from the submitted policy'",
     });
 
