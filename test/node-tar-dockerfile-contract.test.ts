@@ -29,6 +29,8 @@ const dockerfiles = [
     installsPatchDownloader: false,
     installsWithNpm: false,
   },
+  { file: "agents/pi/Dockerfile.base", installsPatchDownloader: true, installsWithNpm: true },
+  { file: "agents/pi/Dockerfile", installsPatchDownloader: false, installsWithNpm: false },
 ] as const;
 const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
@@ -130,6 +132,7 @@ describe("node-tar image remediation contract", () => {
       patchPayloadStage === undefined ? source : namedStage(dockerfile, patchPayloadStage);
     const flattenedPatchInputStage = patchInputStage.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
     const reviewedCopy = patchInputStage.indexOf("COPY scripts/lib/reviewed-npm-archive.mts");
+    const helperCopy = patchInputStage.indexOf("scripts/lib/bundled-npm-package.mts");
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
@@ -150,7 +153,8 @@ describe("node-tar image remediation contract", () => {
         ),
       file,
     ).toBe(true);
-    expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
+    expect(helperCopy, file).toBeGreaterThan(reviewedCopy);
+    expect(patchCopy, file).toBeGreaterThan(helperCopy);
     expect(patchRun, file).toBeGreaterThan(patchInputReady);
     const aptInstall = source.indexOf(
       "RUN apt-get update && apt-get install -y --no-install-recommends",
