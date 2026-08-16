@@ -668,6 +668,105 @@ describe("runInferenceSet compatible providers", () => {
     );
   });
 
+  it("waits for a changed API family to replace the previous sandbox route", async () => {
+    const captureOpenshell = createCompatibleProviderCapture({
+      name: "compatible-anthropic-endpoint",
+      type: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "ANTHROPIC_BASE_URL",
+      initiallyPresent: false,
+    });
+    const probeSandboxRoute = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 400",
+        httpStatus: 400,
+      })
+      .mockReturnValueOnce({ ok: true });
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "old-model",
+      },
+      session: baseSession({
+        provider: "compatible-endpoint",
+        model: "old-model",
+        preferredInferenceApi: "openai-completions",
+      }),
+      captureOpenshell,
+      probeSandboxRoute,
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        endpointUrl: "http://host.openshell.internal:18767/",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        inferenceApi: "anthropic-messages",
+      },
+      deps,
+    );
+
+    expect(probeSandboxRoute).toHaveBeenCalledTimes(2);
+    expect(deps.calls.sleep).toHaveBeenCalledWith(1_000);
+    expect(deps.calls.updateSandbox).toHaveBeenCalled();
+  });
+
+  it("does not retry a target rejection when the API family did not change", async () => {
+    const captureOpenshell = createCompatibleProviderCapture({
+      name: "compatible-endpoint",
+      type: "openai",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+      initiallyPresent: false,
+    });
+    const probeSandboxRoute = vi.fn(() => ({
+      ok: false as const,
+      detail: "sandbox inference invocation probe returned HTTP 400",
+      httpStatus: 400,
+    }));
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      captureOpenshell,
+      probeSandboxRoute,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "mock-model",
+          endpointUrl: "http://host.openshell.internal:18767/",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/Sandbox-side verification rejected/);
+
+    expect(probeSandboxRoute).toHaveBeenCalledOnce();
+    expect(deps.calls.sleep).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "returns a rejection",

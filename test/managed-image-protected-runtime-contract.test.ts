@@ -19,7 +19,7 @@ import {
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
   assertExactSandboxImage,
-  assertFailedBootstrapContainerCleanup,
+  assertFailedBootstrapOwnerCleanupRetention,
   createProtectedManagedImageBootstrapInput,
   failureInjectingAdapter,
   MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
@@ -44,7 +44,10 @@ const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
   stderr: "",
 };
 
-function managedContainerInspectResult(contentId: string): ManagedImageCommandResult {
+function managedContainerInspectResult(
+  contentId: string,
+  running: boolean,
+): ManagedImageCommandResult {
   return {
     status: 0,
     stdout: `${JSON.stringify([
@@ -57,6 +60,7 @@ function managedContainerInspectResult(contentId: string): ManagedImageCommandRe
         },
         Image: contentId,
         NetworkSettings: { Networks: { "managed-network": {} } },
+        State: { Paused: false, Restarting: false, Running: running },
       },
     ])}\n`,
     stderr: "",
@@ -69,11 +73,12 @@ function createManagedImageCommandRunner(
   listScope: "-q" | "-aq",
   listOutput: string,
   calls: string[][],
+  running = listScope === "-q",
 ): ManagedImageCommandRunner {
   const responses = new Map<string, ManagedImageCommandResult>([
     ["docker image inspect", { status: 0, stdout: `${contentId}\n`, stderr: "" }],
     [`docker ps ${listScope}`, { status: 0, stdout: listOutput, stderr: "" }],
-    [`docker inspect ${containerId}`, managedContainerInspectResult(contentId)],
+    [`docker inspect ${containerId}`, managedContainerInspectResult(contentId, running)],
   ]);
   return (argv) => {
     calls.push([...argv]);
@@ -202,7 +207,7 @@ describe("protected managed-image runtime contract", () => {
     expect(fs.existsSync(stateDir)).toBe(false);
   });
 
-  it("qualifies the running exact image before rollback cleanup (#7744)", () => {
+  it("distinguishes the running image from exact quiescent rollback retention (#7744)", () => {
     const calls: string[][] = [];
     const contentId = `sha256:${"b".repeat(64)}`;
     const containerId = "c".repeat(64);
@@ -221,45 +226,62 @@ describe("protected managed-image runtime contract", () => {
       `${containerId}\n`,
       calls,
     );
-    const cleanedCommand = createManagedImageCommandRunner(
-      contentId,
-      containerId,
-      "-aq",
-      "",
-      calls,
-    );
-
-    expect(assertExactSandboxImage(input, "managed-network", {}, runningCommand)).toBe(containerId);
-    assertFailedBootstrapContainerCleanup(input, "managed-network", {}, cleanedCommand);
-
-    expect(calls.filter((argv) => argv[1] === "ps").map((argv) => argv[2])).toEqual(["-q", "-aq"]);
-  });
-
-  it("rejects a stopped labeled container after failed bootstrap cleanup (#7744)", () => {
-    const contentId = `sha256:${"b".repeat(64)}`;
-    const containerId = "c".repeat(64);
-    const input = parseManagedImageOpenShellE2eInputs([
-      "--agent",
-      "openclaw",
-      "--image",
-      IMAGE,
-      "--sandbox",
-      VALID_SANDBOX,
-    ]);
-    const runCommand = createManagedImageCommandRunner(
+    const retainedCommand = createManagedImageCommandRunner(
       contentId,
       containerId,
       "-aq",
       `${containerId}\n`,
-      [],
+      calls,
     );
 
-    expect(() =>
-      assertFailedBootstrapContainerCleanup(input, "managed-network", {}, runCommand),
-    ).toThrow(
-      "managed-bootstrap rollback retained a failed held sandbox: found 1 labeled and 1 exact containers",
+    expect(assertExactSandboxImage(input, "managed-network", {}, runningCommand)).toBe(containerId);
+    assertFailedBootstrapOwnerCleanupRetention(
+      input,
+      "managed-network",
+      containerId,
+      {},
+      retainedCommand,
     );
+
+    expect(calls.filter((argv) => argv[1] === "ps").map((argv) => argv[2])).toEqual(["-q", "-aq"]);
   });
+
+  it.each([
+    ["missing", "", false, "one exact owner-cleanup runtime"],
+    ["running", `${"c".repeat(64)}\n`, true, "quiescent owner-cleanup runtime"],
+  ] as const)(
+    "rejects a %s owner-cleanup runtime after failed bootstrap",
+    (_case, list, running, message) => {
+      const contentId = `sha256:${"b".repeat(64)}`;
+      const containerId = "c".repeat(64);
+      const input = parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        "openclaw",
+        "--image",
+        IMAGE,
+        "--sandbox",
+        VALID_SANDBOX,
+      ]);
+      const runCommand = createManagedImageCommandRunner(
+        contentId,
+        containerId,
+        "-aq",
+        list,
+        [],
+        running,
+      );
+
+      expect(() =>
+        assertFailedBootstrapOwnerCleanupRetention(
+          input,
+          "managed-network",
+          containerId,
+          {},
+          runCommand,
+        ),
+      ).toThrow(message);
+    },
+  );
 
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
     const routeKinds = [...MANAGED_IMAGE_LOCAL_INFERENCE_KINDS, "rollback"] as const;

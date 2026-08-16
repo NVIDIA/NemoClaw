@@ -160,6 +160,7 @@ export function createDeps(options: {
     ensureHttpsPinRuntimeAdapter: ReturnType<typeof vi.fn>;
     revokeHttpsPinRuntimeAdapterRoute: ReturnType<typeof vi.fn>;
     probeSandboxRoute: ReturnType<typeof vi.fn>;
+    sleep: ReturnType<typeof vi.fn>;
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
@@ -221,6 +222,7 @@ export function createDeps(options: {
       options.revokeHttpsPinRuntimeAdapterRoute ?? (async () => true),
     ),
     probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (() => ({ ok: true }) as const)),
+    sleep: vi.fn(async () => {}),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
         ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
@@ -266,6 +268,7 @@ export function createDeps(options: {
     revokeHttpsPinRuntimeAdapterRoute:
       calls.revokeHttpsPinRuntimeAdapterRoute as InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"],
     probeSandboxRoute: calls.probeSandboxRoute as InferenceSetDeps["probeSandboxRoute"],
+    sleep: calls.sleep,
     withGatewayRouteMutationLock:
       calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
     restartSandboxGateway: calls.restartSandboxGateway,

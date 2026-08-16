@@ -50,6 +50,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const finalizeBackup = vi.fn(() => ({
       backupRemoved: true,
       rolledBack: false,
+      replacementRestarted: true,
     }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
@@ -89,6 +90,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     await patch.commitAfterReady();
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
+    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
@@ -159,13 +161,13 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.waitForSupervisorReconnectIfNeeded();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
 
-    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
-    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
 
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        message: expect.stringContaining("rollback backup"),
+        message: expect.stringContaining("final runtime handoff"),
       }),
     );
     expect(onPatchFailureExit.mock.calls[0]?.[2]).toEqual(
