@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and verifies trusted or administrator-authorized GitHub Actions E2E for NemoClaw maintainers, including manual PR E2E for the latest PR commit and staging Launchable image publication. Use for requests such as run E2E for PR #123, run native runtime qualification, run the E2E suite, publish the Launchable image, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
+description: Dispatches and verifies trusted GitHub Actions E2E for NemoClaw maintainers, including manual PR E2E for the latest PR commit and staging Launchable image publication. Use for requests such as run E2E for PR #123, run the E2E suite, publish the Launchable image, run the Launchable E2E, run the full E2E suite, deploy pre-release full E2E, run pre-tag full E2E, or run release-candidate E2E.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -8,9 +8,7 @@ description: Dispatches and verifies trusted or administrator-authorized GitHub 
 
 # Run Maintainer E2E
 
-Use `.github/workflows/e2e.yaml` from trusted `main` except for the narrow
-administrator-only native runtime PR source-branch workflow path documented
-below.
+Use `.github/workflows/e2e.yaml` from trusted `main`.
 Each push to `main` selects catalogue targets and retained workflow jobs that own changed files.
 Each trusted push also selects the CPU-only `jetson-nvmap-gpu` proof.
 Push runs skip `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` because push events cannot set the required workflow dispatch flag.
@@ -22,10 +20,7 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 ## Manual PR E2E
 
 Use this mode when the maintainer requests E2E for a pull request.
-It normally runs an authorized E2E selection against the latest PR commit
-while the workflow definition remains on `main`. The native runtime producer
-also accepts the administrator-only source-branch workflow path below for an
-open same-repository PR.
+It runs an authorized E2E selection against the current PR head commit while the workflow definition remains on `main`.
 It is advisory and does not create a required PR check.
 
 An empty-selector manual run exposes these values to candidate-controlled job processes:
@@ -56,19 +51,15 @@ Resolve the current PR and trusted workflow identities:
 set -euo pipefail
 PR_NUMBER=123
 git fetch --prune origin main
-MAIN_WORKFLOW_SHA="$(git rev-parse origin/main)"
+WORKFLOW_SHA="$(git rev-parse origin/main)"
 PR_JSON="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
 test "$(jq -r .state <<<"$PR_JSON")" = open
 HEAD_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
 BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
 HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
-HEAD_REF="$(jq -r .head.ref <<<"$PR_JSON")"
-test "$(jq -r .base.ref <<<"$PR_JSON")" = main
-test "$(jq -r .base.repo.full_name <<<"$PR_JSON")" = NVIDIA/NemoClaw
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-[[ "$MAIN_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
-test -n "$HEAD_REF"
+[[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
 ```
 
 Require a review reason containing 10 to 500 printable characters.
@@ -81,18 +72,8 @@ Choose exactly one mode:
   - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
   The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
   It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
-- For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The commit under review must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
-- For native-runtime qualification evidence, set `E2E_JOBS=native-runtime-qualification-producer`. Use a same-repository open PR and the first workflow attempt. Choose either the trusted `main` workflow at the PR-recorded base commit or, after a repository administrator authorizes the commit under review as the workflow commit, the PR source-branch workflow at that commit. The workflow runs each case under a credential-free candidate account on a reviewed ephemeral runner. The commit under review must contain `test/e2e/live/native-runtime-qualification-case.test.ts` before the selector can pass.
-
-For the administrator-authorized source-branch path, record the authorization and
-select it explicitly before running the dispatch block:
-
-```bash
-NATIVE_RUNTIME_WORKFLOW_MODE=administrator-source-branch
-```
-
-Use `NATIVE_RUNTIME_WORKFLOW_MODE=trusted-main` for the trusted `main` native
-runtime path. Do not set either value for another job selector.
+- For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+- For native-runtime qualification evidence, set `E2E_JOBS=native-runtime-qualification-producer`. Use a same-repository open PR and the first workflow attempt. The trusted workflow runs each case under a credential-free candidate account on a reviewed ephemeral runner. The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts` before the selector can pass.
 
 Leave `targets` empty and keep Launchable disabled:
 
@@ -102,28 +83,6 @@ case "$E2E_JOBS" in
   "" | managed-image-protected-runtime | native-runtime-qualification-producer) ;;
   *) echo "Unsupported manual PR E2E job selector" >&2; exit 1 ;;
 esac
-WORKFLOW_REF=main
-WORKFLOW_SHA="$MAIN_WORKFLOW_SHA"
-if [[ "$E2E_JOBS" == "native-runtime-qualification-producer" ]]; then
-  case "${NATIVE_RUNTIME_WORKFLOW_MODE:-trusted-main}" in
-    trusted-main)
-      test "$MAIN_WORKFLOW_SHA" = "$BASE_SHA" || {
-        echo "Trusted-main native runtime qualification requires origin/main to equal the PR-recorded base SHA" >&2
-        exit 1
-      }
-      WORKFLOW_SHA="$BASE_SHA"
-      ;;
-    administrator-source-branch)
-      test "$HEAD_REPOSITORY" = "NVIDIA/NemoClaw" || {
-        echo "Administrator source-branch qualification requires a same-repository PR" >&2
-        exit 1
-      }
-      WORKFLOW_REF="$HEAD_REF"
-      WORKFLOW_SHA="$HEAD_SHA"
-      ;;
-    *) echo "Unsupported native runtime workflow mode" >&2; exit 1 ;;
-  esac
-fi
 REVIEW_REASON='Reviewed the commit under review and selected E2E boundary.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 INFERENCE_MODE=mock
@@ -131,7 +90,7 @@ ALLOW_JETSON_DISPATCH=false
 ALLOW_DGX_SPARK_RUNNER_QUEUE=false
 gh workflow run .github/workflows/e2e.yaml \
   --repo NVIDIA/NemoClaw \
-  --ref "$WORKFLOW_REF" \
+  --ref main \
   -f targets= \
   -f "jobs=${E2E_JOBS}" \
   -f "inference_mode=${INFERENCE_MODE}" \
@@ -147,43 +106,11 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted `main` pre-checkout path requires current `maintain` or `admin`
-permission. The native runtime PR source-branch workflow path requires `admin`
-permission for the actor and, when different, the triggering actor. Both paths
-validate the actor, open PR, repository, latest PR commit SHA, base SHA, workflow
-SHA, review reason, and allowed jobs, targets, and Launchable combination.
+The trusted pre-checkout step requires current `maintain` or `admin` permission.
+It validates the actor, open PR, repository, head SHA, base SHA, workflow SHA, review reason, and allowed jobs, targets, and Launchable combination.
 A second validation after checkout rejects a changed PR identity before preparation.
 
-The native-runtime producer binds the open PR, candidate commit, base commit,
-executing workflow commit, and first workflow attempt. Candidate workflow code
-controls the administrator check that the source-branch workflow runs. NemoClaw
-repository policy permits only a repository administrator to dispatch this path.
-The administrator check is defense in depth, not an independent authorization
-boundary. Before dispatch, the administrator must review and authorize the exact
-commit, including the workflow and every action or script that the commit loads.
-
-On the source-branch path, every repository secret received by the workflow
-is accessible to candidate workflow code. In the reviewed workflow, the host-side
-preparation step receives the long-lived `NVIDIA_API_KEY` repository secret in
-its environment. It creates runner-local registry authentication and pulls
-pinned GPU images. It then deletes the registry authentication file and unsets
-the variable before the separate candidate installer or live-test process
-starts. The preparation step is itself candidate-controlled workflow code on
-this path. It can read or copy the key before cleanup, so cleanup does not
-prevent exposure. Cleanup removes runner-local registry authentication but does
-not revoke the key. The key remains valid in the issuing NVIDIA service until
-it expires or that service revokes it. If exposure occurs or cleanup cannot be
-confirmed, revoke the key in the issuing NVIDIA service. Alternatively, rotate
-the key and invalidate the old value. Verify that the old value is invalid.
-
-The unprivileged installer and live-test processes run with `env -i`.
-They receive no GitHub, inference provider, API, or messaging credential.
-Docker is unavailable to these processes.
-Configure
-`NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU
-cases also require `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides
-no fallback runner. The qualification neither registers nor selects production
-Podman and does not establish public Podman support.
+The native-runtime producer binds the open PR, candidate commit, base commit, trusted workflow commit, and first workflow attempt. It runs the trusted plan from `main` and passes no GitHub, model-provider, API, or messaging credentials to candidate code. Configure `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU case also requires `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides no fallback runner.
 
 The producer stops Docker, masks its service and socket, removes Docker sockets, and rejects a usable `docker` command before candidate execution. It runs the candidate case under a temporary unprivileged account and uploads one evidence artifact for each planned case. Cleanup terminates processes owned by the candidate account and removes that account. If cleanup fails or the runner becomes unavailable, inspect the host and remove the ephemeral runner from service. Recover or replace the runner before dispatching a new run. Do not rerun the same workflow attempt; the producer rejects attempts after the first.
 
@@ -194,7 +121,7 @@ RUN_TITLE="E2E PR #${PR_NUMBER} (${CORRELATION_ID})"
 MATCHES='[]'
 for POLL_INDEX in $(seq 1 30); do
   RUNS="$(gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
-    --event workflow_dispatch --branch "$WORKFLOW_REF" --limit 50 \
+    --event workflow_dispatch --branch main --limit 50 \
     --json databaseId,displayTitle,url)"
   MATCHES="$(jq -c --arg title "$RUN_TITLE" \
     '[.[] | select(.displayTitle == $title)]' <<<"$RUNS")"
@@ -206,21 +133,13 @@ if test "$(jq 'length' <<<"$MATCHES")" -ne 1; then
   echo 'The dispatched run was not visible after bounded polling. Do not dispatch again. Inspect the E2E Actions runs for the recorded correlation ID and clean up any resources from a matching run.' >&2
   exit 1
 fi
-RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")"
+RUN_ID="$(jq -r '.[0].databaseId' <<<"$MATCHES")
 RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
-jq -e \
-  --argjson runId "$RUN_ID" \
-  --arg branch "$WORKFLOW_REF" \
-  --arg sha "$WORKFLOW_SHA" '
-  .id == $runId and
-  .event == "workflow_dispatch" and
-  .head_sha == $sha and
-  .head_branch == $branch and
-  .path == ".github/workflows/e2e.yaml" and
-  .repository.full_name == "NVIDIA/NemoClaw" and
+jq -e --arg sha "$WORKFLOW_SHA" '
   .run_attempt == 1 and
+  .head_sha == $sha and
   .status == "completed" and
   .conclusion == "success"
 ' <<<"$RUN_JSON" >/dev/null
@@ -229,314 +148,10 @@ test "$(jq -r .state <<<"$CURRENT_PR")" = open
 test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
 test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
 test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
-test "$(jq -r .head.ref <<<"$CURRENT_PR")" = "$HEAD_REF"
-test "$(jq -r .base.ref <<<"$CURRENT_PR")" = main
-test "$(jq -r .base.repo.full_name <<<"$CURRENT_PR")" = NVIDIA/NemoClaw
 ```
 
-For native runtime qualification, workflow success is not sufficient. Resolve
-the exact aggregate job and artifact, verify the downloaded archive digest and
-exact file inventory, then run the canonical evidence consumer from the exact
-workflow checkout. This validates all 24 case identities and every declared
-installer, runtime, operation, and NVIDIA CDI receipt digest. The four additional
-installer identity receipts are required in each case and reported with their
-downloaded SHA-256 digests. This is underlying evidence validation; it is not a
-substitute for any separately required collector authority receipt.
-
-```bash
-if [[ "$E2E_JOBS" == "native-runtime-qualification-producer" ]]; then
-  RUN_ATTEMPT="$(jq -er '.run_attempt | select(. == 1)' <<<"$RUN_JSON")"
-  JOBS_JSON="$(gh api --method GET \
-    "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs" \
-    -f per_page=100)"
-  jq -e '
-    .total_count == (.jobs | length) and
-    .total_count >= 1 and
-    .total_count <= 100
-  ' <<<"$JOBS_JSON" >/dev/null
-  AGGREGATE_JOB_ID="$(jq -er \
-    --arg name 'Aggregate native runtime qualification evidence' \
-    --argjson runId "$RUN_ID" \
-    --argjson attempt "$RUN_ATTEMPT" \
-    --arg workflowSha "$WORKFLOW_SHA" '
-      [.jobs[] | select(
-        .name == $name and
-        .run_id == $runId and
-        .run_attempt == $attempt and
-        .head_sha == $workflowSha and
-        .status == "completed" and
-        .conclusion == "success"
-      )] |
-      select(length == 1) |
-      .[0].id
-    ' <<<"$JOBS_JSON")"
-
-  ARTIFACT_NAME="native-runtime-qualification-${HEAD_SHA}"
-  ARTIFACTS_JSON="$(gh api --method GET \
-    "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}/artifacts" -f per_page=100)"
-  jq -e '
-    .total_count == (.artifacts | length) and
-    .total_count >= 1 and
-    .total_count <= 100
-  ' <<<"$ARTIFACTS_JSON" >/dev/null
-  ARTIFACT_JSON="$(jq -ec \
-    --arg name "$ARTIFACT_NAME" \
-    --argjson runId "$RUN_ID" \
-    --arg workflowSha "$WORKFLOW_SHA" '
-      [.artifacts[] | select(
-        .name == $name and
-        .expired == false and
-        (.size_in_bytes | type) == "number" and
-        .size_in_bytes >= 1 and
-        .size_in_bytes <= 4194304 and
-        .workflow_run.id == $runId and
-        .workflow_run.head_sha == $workflowSha and
-        (.digest | test("^sha256:[a-f0-9]{64}$"))
-      )] |
-      select(length == 1) |
-      .[0]
-    ' <<<"$ARTIFACTS_JSON")"
-  ARTIFACT_ID="$(jq -er '.id | select(type == "number" and . >= 1)' <<<"$ARTIFACT_JSON")"
-  ARTIFACT_DIGEST="$(jq -er '.digest' <<<"$ARTIFACT_JSON")"
-  ARTIFACT_SIZE="$(jq -er '.size_in_bytes' <<<"$ARTIFACT_JSON")"
-
-  EVIDENCE_DIR="$(mktemp -d)"
-  chmod 700 "$EVIDENCE_DIR"
-  trap 'rm -rf "$EVIDENCE_DIR"' EXIT
-  ARCHIVE_PATH="$EVIDENCE_DIR/native-runtime-qualification.zip"
-  export ARCHIVE_PATH ARTIFACT_ID
-  node --input-type=module <<'DOWNLOAD'
-import fs from "node:fs";
-import { spawnSync } from "node:child_process";
-
-const limit = 4 * 1024 * 1024;
-const artifactId = process.env.ARTIFACT_ID;
-const archivePath = process.env.ARCHIVE_PATH;
-if (!artifactId || !archivePath) throw new Error("Artifact download identity is missing");
-const result = spawnSync(
-  "gh",
-  ["api", `repos/NVIDIA/NemoClaw/actions/artifacts/${artifactId}/zip`],
-  { encoding: null, maxBuffer: limit, timeout: 120_000 },
-);
-if (
-  result.error ||
-  result.status !== 0 ||
-  !Buffer.isBuffer(result.stdout) ||
-  result.stdout.length < 1 ||
-  result.stdout.length > limit
-) {
-  throw new Error("Bounded aggregate artifact download failed");
-}
-fs.writeFileSync(archivePath, result.stdout, { flag: "wx", mode: 0o600 });
-DOWNLOAD
-  DOWNLOADED_SIZE="$(wc -c <"$ARCHIVE_PATH" | tr -d '[:space:]')"
-  [[ "$DOWNLOADED_SIZE" =~ ^[1-9][0-9]*$ ]] &&
-    (( DOWNLOADED_SIZE <= 4194304 ))
-  ACTUAL_ARCHIVE_DIGEST="sha256:$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')"
-  test "$ACTUAL_ARCHIVE_DIGEST" = "$ARTIFACT_DIGEST"
-
-  CONFIRMED_ARTIFACT="$(gh api "repos/NVIDIA/NemoClaw/actions/artifacts/${ARTIFACT_ID}")"
-  jq -e \
-    --argjson id "$ARTIFACT_ID" \
-    --arg name "$ARTIFACT_NAME" \
-    --arg digest "$ARTIFACT_DIGEST" \
-    --argjson size "$ARTIFACT_SIZE" \
-    --argjson runId "$RUN_ID" \
-    --arg workflowSha "$WORKFLOW_SHA" '
-      .id == $id and
-      .name == $name and
-      .digest == $digest and
-      .size_in_bytes == $size and
-      .expired == false and
-      .workflow_run.id == $runId and
-      .workflow_run.head_sha == $workflowSha
-    ' <<<"$CONFIRMED_ARTIFACT" >/dev/null
-
-  test -z "$(git status --porcelain=v1 --untracked-files=all)"
-  git fetch --no-tags origin "$WORKFLOW_REF"
-  test "$(git rev-parse FETCH_HEAD)" = "$WORKFLOW_SHA"
-  git switch --detach "$WORKFLOW_SHA"
-  test "$(git rev-parse HEAD)" = "$WORKFLOW_SHA"
-  test -z "$(git status --porcelain=v1 --untracked-files=all)"
-  export ARCHIVE_PATH ARTIFACT_DIGEST ARTIFACT_ID ARTIFACT_NAME ARTIFACT_SIZE
-  export AGGREGATE_JOB_ID BASE_SHA HEAD_REPOSITORY HEAD_SHA PR_NUMBER
-  export RUN_ATTEMPT RUN_ID WORKFLOW_SHA
-  node --experimental-strip-types --no-warnings --input-type=module <<'NODE'
-import { createHash } from "node:crypto";
-import fs from "node:fs";
-import {
-  listValidatedArtifactZipEntries,
-  readValidatedArtifactZipEntryBytes,
-} from "./scripts/scorecard/read-artifact-zip.mts";
-import {
-  consumeNativeRuntimeQualificationEvidence,
-  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
-} from "./test/e2e/registry/native-runtime-qualification.ts";
-
-const required = (name) => {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing ${name}`);
-  return value;
-};
-const descriptor = fs.openSync(
-  required("ARCHIVE_PATH"),
-  fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-);
-let archive;
-try {
-  const before = fs.fstatSync(descriptor);
-  if (!before.isFile() || before.size < 1 || before.size > 4 * 1024 * 1024) {
-    throw new Error("Aggregate artifact archive is oversized or invalid");
-  }
-  archive = fs.readFileSync(descriptor);
-  const after = fs.fstatSync(descriptor);
-  if (
-    before.dev !== after.dev ||
-    before.ino !== after.ino ||
-    before.size !== after.size ||
-    before.mtimeMs !== after.mtimeMs ||
-    archive.length !== before.size
-  ) {
-    throw new Error("Aggregate artifact archive changed while reading");
-  }
-} finally {
-  fs.closeSync(descriptor);
-}
-const actualArchiveDigest =
-  `sha256:${createHash("sha256").update(archive).digest("hex")}`;
-if (actualArchiveDigest !== required("ARTIFACT_DIGEST")) {
-  throw new Error("Aggregate artifact digest does not match the consumed bytes");
-}
-const entries = listValidatedArtifactZipEntries(archive, { maxEntries: 512 });
-if (!entries) throw new Error("Aggregate artifact ZIP structure is invalid");
-const readReceipt = (receiptPath) =>
-  readValidatedArtifactZipEntryBytes(archive, receiptPath, {
-    maxBytes: 524_288,
-    maxEntries: 512,
-  });
-const evidencePath = "native-runtime-qualification-evidence.json";
-const evidenceBytes = readReceipt(evidencePath);
-if (!evidenceBytes) throw new Error("Aggregate evidence envelope is missing");
-const evidence = JSON.parse(evidenceBytes.toString("utf8"));
-const expectedSource = {
-  repository: "NVIDIA/NemoClaw",
-  workflow: ".github/workflows/e2e.yaml",
-  pullRequestNumber: Number(required("PR_NUMBER")),
-  candidateRepository: required("HEAD_REPOSITORY"),
-  headSha: required("HEAD_SHA"),
-  baseRef: "main",
-  baseSha: required("BASE_SHA"),
-  runId: Number(required("RUN_ID")),
-  attempt: Number(required("RUN_ATTEMPT")),
-  jobId: Number(required("AGGREGATE_JOB_ID")),
-  artifact: {
-    id: Number(required("ARTIFACT_ID")),
-    name: required("ARTIFACT_NAME"),
-    digest: required("ARTIFACT_DIGEST"),
-  },
-};
-const authority = consumeNativeRuntimeQualificationEvidence(
-  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
-  evidence,
-  expectedSource,
-  (receiptPath) => readReceipt(receiptPath),
-);
-const installerNames = [
-  "architecture.json",
-  "candidate-source.json",
-  "docker-absence.json",
-  "installed-source.json",
-  "installer.sh",
-  "invocation.json",
-];
-const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const receipt = (receiptPath) => {
-  const bytes = readReceipt(receiptPath);
-  if (!bytes) throw new Error(`Missing receipt ${receiptPath}`);
-  return { path: receiptPath, sha256: digest(bytes) };
-};
-const cases = evidence.cases.map((entry) => ({
-  caseId: entry.caseId,
-  installerReceipts: installerNames.map((name) =>
-    receipt(`receipts/${entry.caseId}/installer/${name}`),
-  ),
-  executionReceipts: [
-    receipt(entry.runtime.result.path),
-    ...entry.operations.map(({ artifact }) => receipt(artifact.path)),
-    ...(entry.nvidiaCdi ? [receipt(entry.nvidiaCdi.artifact.path)] : []),
-  ],
-}));
-const expectedEntries = [
-  evidencePath,
-  ...cases.flatMap((entry) => [
-    ...entry.installerReceipts.map(({ path }) => path),
-    ...entry.executionReceipts.map(({ path }) => path),
-  ]),
-].sort();
-if (
-  cases.length !== 24 ||
-  new Set(cases.map(({ caseId }) => caseId)).size !== 24 ||
-  JSON.stringify(entries) !== JSON.stringify(expectedEntries)
-) {
-  throw new Error("Aggregate artifact does not contain the exact 24-case receipt cohort");
-}
-console.log(JSON.stringify({
-  caseCount: cases.length,
-  workflowSha: required("WORKFLOW_SHA"),
-  authority: authority.source,
-  cases,
-}, null, 2));
-NODE
-
-  CONFIRMED_PR="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
-  test "$(jq -r .state <<<"$CONFIRMED_PR")" = open
-  test "$(jq -r .head.sha <<<"$CONFIRMED_PR")" = "$HEAD_SHA"
-  test "$(jq -r .base.sha <<<"$CONFIRMED_PR")" = "$BASE_SHA"
-  test "$(jq -r .head.repo.full_name <<<"$CONFIRMED_PR")" = "$HEAD_REPOSITORY"
-  test "$(jq -r .head.ref <<<"$CONFIRMED_PR")" = "$HEAD_REF"
-  test "$(jq -r .base.ref <<<"$CONFIRMED_PR")" = main
-  test "$(jq -r .base.repo.full_name <<<"$CONFIRMED_PR")" = NVIDIA/NemoClaw
-  CONFIRMED_RUN="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
-  jq -e \
-    --argjson runId "$RUN_ID" \
-    --argjson attempt "$RUN_ATTEMPT" \
-    --arg branch "$WORKFLOW_REF" \
-    --arg sha "$WORKFLOW_SHA" '
-      .id == $runId and
-      .event == "workflow_dispatch" and
-      .head_sha == $sha and
-      .head_branch == $branch and
-      .path == ".github/workflows/e2e.yaml" and
-      .repository.full_name == "NVIDIA/NemoClaw" and
-      .run_attempt == $attempt and
-      .status == "completed" and
-      .conclusion == "success"
-    ' <<<"$CONFIRMED_RUN" >/dev/null
-  CONFIRMED_ARTIFACT="$(gh api "repos/NVIDIA/NemoClaw/actions/artifacts/${ARTIFACT_ID}")"
-  jq -e \
-    --argjson id "$ARTIFACT_ID" \
-    --arg name "$ARTIFACT_NAME" \
-    --arg digest "$ARTIFACT_DIGEST" \
-    --argjson size "$ARTIFACT_SIZE" \
-    --argjson runId "$RUN_ID" \
-    --arg workflowSha "$WORKFLOW_SHA" '
-      .id == $id and
-      .name == $name and
-      .digest == $digest and
-      .size_in_bytes == $size and
-      .expired == false and
-      .workflow_run.id == $runId and
-      .workflow_run.head_sha == $workflowSha
-    ' <<<"$CONFIRMED_ARTIFACT" >/dev/null
-fi
-```
-
-Return the PR number, PR source repository, latest PR commit SHA, base SHA, workflow ref and SHA,
-correlation ID, run ID, run attempt, workflow URL, and result. For native runtime
-qualification, also return the aggregate job ID, artifact ID/name/digest, the
-24 case IDs, and each case's installer and execution receipt paths and SHA-256
-digests.
-A changed PR source repository, latest PR commit SHA, or base SHA invalidates the evidence and requires a new run.
+Return the PR number, head repository, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
+A changed head repository, head SHA, or base SHA invalidates the evidence and requires a new run.
 
 ## Select the Main Mode
 

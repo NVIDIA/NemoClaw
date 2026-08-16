@@ -26,6 +26,20 @@ function step(owner: WorkflowJob, name: string): WorkflowStep {
   return value!;
 }
 
+function expectRequiredPodmanPackages(run: string): void {
+  for (const requiredPackage of [
+    "acl",
+    "apparmor",
+    "conmon",
+    "golang-github-containers-common",
+    "runc",
+    "slirp4netns",
+    "uidmap",
+  ]) {
+    expect(run).toContain(requiredPackage);
+  }
+}
+
 describe("native runtime qualification producer workflow", () => {
   it("keeps candidate execution out of the authenticated controller", () => {
     const generate = job("generate-matrix");
@@ -172,7 +186,7 @@ describe("native runtime qualification producer workflow", () => {
     );
     expect(build.env?.PASTA_SOURCE_SHA).toBe("f8df3f1b228fe19a74a269334fdfe6cc7d0605ce");
     expect(build.env?.PASTA_VERSION).toBe("2026_07_28.f8df3f1");
-    expect(build.run).toContain("sha256sum \"$pasta_source_archive\"");
+    expect(build.run).toContain('sha256sum "$pasta_source_archive"');
     expect(build.run).toContain("--no-same-owner --no-same-permissions");
     expect(build.run).toContain("[[ ! -e .passt-source/passt && ! -L .passt-source/passt ]]");
     expect(build.run).not.toMatch(/\bgit\s+fetch\b/u);
@@ -259,9 +273,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(gpuResources.run).toContain("login nvcr.io --username '$oauthtoken' --password-stdin");
     expect(gpuResources.run).not.toContain("logout --all");
     expect(gpuResources.run).toContain('sudo unlink "$registry_auth_file"');
-    expect(gpuResources.run).toContain(
-      "$(sudo stat -c '%u:%g:%h' -- \"$registry_auth_file\")",
-    );
+    expect(gpuResources.run).toContain("$(sudo stat -c '%u:%g:%h' -- \"$registry_auth_file\")");
     expect(gpuResources.run).toContain('sudo chmod 0600 -- "$registry_auth_file"');
     expect(gpuResources.env?.ACCOUNT_GID).toBe("${{ steps.boundary.outputs.gid }}");
     expect(gpuResources.env?.ACCOUNT_UID).toBe("${{ steps.boundary.outputs.uid }}");
@@ -301,17 +313,7 @@ describe("native runtime qualification producer workflow", () => {
       path: "${{ runner.temp }}/native-runtime-podman-toolchain",
     });
     expect(podman.run).toContain("/usr/bin/apt-get install");
-    for (const requiredPackage of [
-      "acl",
-      "apparmor",
-      "conmon",
-      "golang-github-containers-common",
-      "runc",
-      "slirp4netns",
-      "uidmap",
-    ]) {
-      expect(podman.run).toContain(requiredPackage);
-    }
+    expectRequiredPodmanPackages(podman.run ?? "");
     expect(podman.run).not.toMatch(/\s+passt(?:\s|$)/u);
     expect(podman.run).not.toContain("fuse-overlayfs");
     expect(podman.run).toContain("find -P");
@@ -356,14 +358,10 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("/usr/bin/systemctl --user start dbus.socket");
     expect(boundary.run).toContain("/usr/bin/systemctl --user is-active --quiet dbus.socket");
     expect(boundary.run).toContain("Qualification systemd user bus socket unit is not active");
-    expect(boundary.run).toContain(
-      'sudo -u "$execution_account" /usr/bin/test -S "$bus"',
-    );
+    expect(boundary.run).toContain('sudo -u "$execution_account" /usr/bin/test -S "$bus"');
     expect(boundary.run).toContain('sudo /usr/bin/test ! -L "$bus"');
     expect(boundary.run).toContain("sudo stat -c '%u' -- \"$bus\"");
-    expect(boundary.run).toContain(
-      "Qualification systemd user bus $context",
-    );
+    expect(boundary.run).toContain("Qualification systemd user bus $context");
     expect(boundary.run).toContain(
       'trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"',
     );
@@ -391,9 +389,7 @@ describe("native runtime qualification producer workflow", () => {
       "profile ${pasta_apparmor_profile_name} ${pasta_executable} flags=(unconfined)",
     );
     expect(boundary.run).toContain("Run-owned qualification pasta executable digest changed");
-    expect(boundary.run).toContain(
-      '"$TOOLCHAIN_DIRECTORY/bin/pasta" "$pasta_executable"',
-    );
+    expect(boundary.run).toContain('"$TOOLCHAIN_DIRECTORY/bin/pasta" "$pasta_executable"');
     expect(boundary.run).not.toContain("/usr/bin/pasta");
     expect(boundary.run).toContain(
       'PATH="$guard_dir:$helper_directory:/usr/local/bin:/usr/bin:/bin"',
@@ -439,20 +435,14 @@ describe("native runtime qualification producer workflow", () => {
     expect(installer.run).toContain('sudo chown "$ACCOUNT_UID:$ACCOUNT_GID"');
     expect(installer.run).toContain("/usr/bin/systemctl --user start dbus.socket");
     expect(installer.run).toContain("Qualification systemd user bus socket unit did not restart");
-    expect(installer.run).toContain(
-      'sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus"',
-    );
+    expect(installer.run).toContain('sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus"');
     expect(installer.run).toContain('sudo /usr/bin/test ! -L "$RUNTIME_DIRECTORY/bus"');
     expect(installer.run).toContain("sudo stat -c '%u' -- \"$RUNTIME_DIRECTORY/bus\"");
     expect(installer.run).toContain(
       "Qualification systemd user bus is invalid or inaccessible after installer isolation",
     );
-    expect(installer.env?.TRUSTED_USER_UNIT_PATH).toBe(
-      "/usr/lib/systemd/user:/lib/systemd/user",
-    );
-    expect(installer.run).toContain(
-      "/usr/bin/systemctl --user show-environment",
-    );
+    expect(installer.env?.TRUSTED_USER_UNIT_PATH).toBe("/usr/lib/systemd/user:/lib/systemd/user");
+    expect(installer.run).toContain("/usr/bin/systemctl --user show-environment");
     expect(installer.env?.CONTAINERS_CONFIG).toBe(
       "${{ steps.boundary.outputs.containers_config }}",
     );

@@ -67,6 +67,71 @@ function runnerContract() {
   } as const;
 }
 
+function expectInvalidPodmanExecutablesRejected(): void {
+  for (const executable of [
+    "/usr/local/bin/podman",
+    "/nemoclaw-native-runtime-podman-123456-1-0",
+    "/nemoclaw-native-runtime-podman-123456-1-1003",
+    "/nemoclaw-native-runtime-podman-123456-1-1002/../podman",
+  ]) {
+    expect(() =>
+      nativeRuntimeQualificationPodmanExecutable(
+        { NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE: executable },
+        1002,
+      ),
+    ).toThrow("Podman executable path is invalid");
+  }
+}
+
+function expectCredentialEnvironmentNamesRejected(): void {
+  for (const name of [
+    "GITHUB_TOKEN",
+    "NGC_API_KEY",
+    "HF_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "SSH_AUTH_SOCK",
+    "DOCKER_CONFIG",
+    "DOCKER_HOST",
+    "CUSTOM_API_KEY",
+  ]) {
+    expect(() => assertCredentialFreeQualificationEnvironment({ [name]: "forbidden" })).toThrow(
+      name,
+    );
+  }
+}
+
+function expectInvalidRunnerContractPathsRejected(): void {
+  for (const file of [
+    "/etc/nemoclaw/native-runtime-qualification-v1.json",
+    "/run/nemoclaw-native-runtime-123456-1-1003/runner-contract.json",
+    "/run/nemoclaw-native-runtime-123456-1-1002/../runner-contract.json",
+  ]) {
+    expect(() =>
+      nativeRuntimeQualificationRunnerContractPath(
+        { NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT: file },
+        1002,
+      ),
+    ).toThrow("runner contract path is invalid");
+  }
+}
+
+function expectPublicCaseImagesPinned(): void {
+  for (const architecture of ["amd64", "arm64"] as const) {
+    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"] as const) {
+      expect(nativeRuntimeQualificationAgentImage(architecture, agent)).toMatch(
+        /@sha256:[a-f0-9]{64}$/u,
+      );
+    }
+    const ollama = nativeRuntimeQualificationInferenceImage({
+      architecture,
+      acceleration: "cpu",
+      inference: "ollama",
+    });
+    expect(ollama).toMatchObject({ model: "qwen3:0.6b" });
+    expect(digestFromImageReference(ollama.imageRef)).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  }
+}
+
 describe("native runtime qualification case boundaries", () => {
   it("accepts only an exact canonical trusted-plan row", () => {
     const expected = row();
@@ -98,19 +163,7 @@ describe("native runtime qualification case boundaries", () => {
     expect(nativeRuntimeQualificationPodmanExecutable(environment, 1002)).toBe(
       environment.NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
     );
-    for (const executable of [
-      "/usr/local/bin/podman",
-      "/nemoclaw-native-runtime-podman-123456-1-0",
-      "/nemoclaw-native-runtime-podman-123456-1-1003",
-      "/nemoclaw-native-runtime-podman-123456-1-1002/../podman",
-    ]) {
-      expect(() =>
-        nativeRuntimeQualificationPodmanExecutable(
-          { NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE: executable },
-          1002,
-        ),
-      ).toThrow("Podman executable path is invalid");
-    }
+    expectInvalidPodmanExecutablesRejected();
   });
 
   it("rejects credential and alternate runtime authority environment names", () => {
@@ -120,20 +173,7 @@ describe("native runtime qualification case boundaries", () => {
         PATH: "/usr/bin",
       }),
     ).not.toThrow();
-    for (const name of [
-      "GITHUB_TOKEN",
-      "NGC_API_KEY",
-      "HF_TOKEN",
-      "AWS_SECRET_ACCESS_KEY",
-      "SSH_AUTH_SOCK",
-      "DOCKER_CONFIG",
-      "DOCKER_HOST",
-      "CUSTOM_API_KEY",
-    ]) {
-      expect(() => assertCredentialFreeQualificationEnvironment({ [name]: "forbidden" })).toThrow(
-        name,
-      );
-    }
+    expectCredentialEnvironmentNamesRejected();
   });
 
   it("accepts only typed immutable GPU runner resources", () => {
@@ -169,35 +209,11 @@ describe("native runtime qualification case boundaries", () => {
     expect(nativeRuntimeQualificationRunnerContractPath(environment, 1002)).toBe(
       environment.NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT,
     );
-    for (const file of [
-      "/etc/nemoclaw/native-runtime-qualification-v1.json",
-      "/run/nemoclaw-native-runtime-123456-1-1003/runner-contract.json",
-      "/run/nemoclaw-native-runtime-123456-1-1002/../runner-contract.json",
-    ]) {
-      expect(() =>
-        nativeRuntimeQualificationRunnerContractPath(
-          { NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT: file },
-          1002,
-        ),
-      ).toThrow("runner contract path is invalid");
-    }
+    expectInvalidRunnerContractPathsRejected();
   });
 
   it("pins every public case image to architecture-specific immutable digests", () => {
-    for (const architecture of ["amd64", "arm64"] as const) {
-      for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"] as const) {
-        expect(nativeRuntimeQualificationAgentImage(architecture, agent)).toMatch(
-          /@sha256:[a-f0-9]{64}$/u,
-        );
-      }
-      const ollama = nativeRuntimeQualificationInferenceImage({
-        architecture,
-        acceleration: "cpu",
-        inference: "ollama",
-      });
-      expect(ollama).toMatchObject({ model: "qwen3:0.6b" });
-      expect(digestFromImageReference(ollama.imageRef)).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    }
+    expectPublicCaseImagesPinned();
   });
 
   it("requires the root-owned typed contract for NIM and vLLM", () => {

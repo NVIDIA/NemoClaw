@@ -321,6 +321,39 @@ function provisionBlock(): string {
   return `set -euo pipefail\n${source.slice(start, end)}`;
 }
 
+function expectPreExistingAccountStateRejected(): void {
+  for (const state of ["passwd", "group", "subuid", "subgid"] as const) {
+    const fixture = createFixture();
+    const file = fixture[state];
+    fs.appendFileSync(
+      file,
+      state === "passwd"
+        ? `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`
+        : state === "group"
+          ? "nemoclawq:x:1007:\n"
+          : "nemoclawq:200000:65536\n",
+    );
+    const result = runFixture(fixture, provisionBlock(), "provision");
+    expect(result.status, `${state}: ${result.stderr}`).not.toBe(0);
+    expect(fs.readFileSync(fixture.calls, "utf8")).not.toContain("useradd:");
+    expect(fs.existsSync(fixture.marker)).toBe(false);
+  }
+}
+
+function writeModelFixtureFiles(model: string): void {
+  for (const file of [
+    "config.json",
+    "generation_config.json",
+    "merges.txt",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+  ]) {
+    fs.writeFileSync(path.join(model, file), "fixture", { mode: 0o444 });
+  }
+}
+
 describe("native runtime qualification account lifecycle", () => {
   it("fails closed when a mandatory fixture rewrite no longer matches", () => {
     expect(() => fixtureSource("set -euo pipefail", "bus")).toThrow(
@@ -387,22 +420,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
   });
 
   it("rejects pre-existing accounts and stale subordinate-ID authorization before mutation", () => {
-    for (const state of ["passwd", "group", "subuid", "subgid"] as const) {
-      const fixture = createFixture();
-      const file = fixture[state];
-      fs.appendFileSync(
-        file,
-        state === "passwd"
-          ? `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`
-          : state === "group"
-            ? "nemoclawq:x:1007:\n"
-            : "nemoclawq:200000:65536\n",
-      );
-      const result = runFixture(fixture, provisionBlock(), "provision");
-      expect(result.status, `${state}: ${result.stderr}`).not.toBe(0);
-      expect(fs.readFileSync(fixture.calls, "utf8")).not.toContain("useradd:");
-      expect(fs.existsSync(fixture.marker)).toBe(false);
-    }
+    expectPreExistingAccountStateRejected();
   });
 
   it("does not publish ownership when account creation fails", () => {
@@ -530,17 +548,7 @@ verify_user_manager_unit_path nemoclawq "$FIXTURE_HOME" "$FIXTURE_ROOT/run/user/
     fs.writeFileSync(path.join(helpers, "pasta"), "fixture", { mode: 0o555 });
     fs.chmodSync(helpers, 0o555);
     fs.mkdirSync(model, { recursive: true, mode: 0o755 });
-    for (const file of [
-      "config.json",
-      "generation_config.json",
-      "merges.txt",
-      "model.safetensors",
-      "tokenizer.json",
-      "tokenizer_config.json",
-      "vocab.json",
-    ]) {
-      fs.writeFileSync(path.join(model, file), "fixture", { mode: 0o444 });
-    }
+    writeModelFixtureFiles(model);
     fs.chmodSync(model, 0o555);
     fs.chmodSync(resources, 0o555);
     fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`);
