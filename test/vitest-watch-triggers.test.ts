@@ -60,7 +60,6 @@ const OPAQUE_INPUTS = [
   "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
-  "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/e2e-standard-profile.yaml",
   ".github/workflows/portable-profile-e2e.yaml",
@@ -155,9 +154,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-manifests.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
-    expect(triggeredBy("test/e2e/docs/parity-inventory.generated.json")).toEqual([
-      "test/e2e/support/e2e-migration-policy.test.ts",
-    ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",

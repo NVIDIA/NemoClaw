@@ -68,6 +68,7 @@
     "source-shape:check": "tsx scripts/find-source-shape-tests.mts --check",
     "test-size:check": "tsx scripts/check-test-file-size-budget.mts",
     "test-conditionals:scan": "tsx scripts/find-test-conditionals.mts",
+    "test-loops:scan": "tsx scripts/growth-guardrails/find-test-loops.mts",
     "bump:version": "tsx scripts/bump-version.mts",
     "release:plan": "tsx scripts/release-plan.mts",
     "release:cut": "bash scripts/release-cut-tag.sh",

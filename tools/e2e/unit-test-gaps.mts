@@ -5,10 +5,11 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   buildUnitGapReport,
+  extractJobSignatures,
   type E2ERunRecord,
   formatUnitGapReport,
   type RunLogEvidence,
@@ -19,9 +20,52 @@ const NEMOCLAW_REPOSITORY = "NVIDIA/NemoClaw";
 const DEFAULT_WORKFLOWS = ["e2e.yaml", "portable-profile-e2e.yaml"];
 const MAX_GH_BUFFER_BYTES = 128 * 1024 * 1024;
 const MAX_RUNS_PER_WORKFLOW = 1000;
-const DEFAULT_CONCURRENCY = 6;
+const MAX_CACHE_FILE_BYTES = 1024 * 1024;
+const MAX_FAILED_LOG_READS = 50;
+const DEFAULT_CONCURRENCY = 2;
+const CACHE_VERSION = 1;
+
+type GhRunner = (args: readonly string[]) => Promise<string>;
+
+interface CachedFailureEvidence {
+  attempt: number;
+  runId: number;
+  signatures: Array<{ job: string; signature: string }>;
+  version: typeof CACHE_VERSION;
+}
+
+export interface EvidenceCollectionPlan {
+  cachedRuns: number;
+  deferredRuns: number;
+  failedLogReads: number;
+}
+
+export class EvidenceBatchIncompleteError extends Error {
+  constructor(readonly deferredRuns: number) {
+    super(
+      `${String(deferredRuns)} failed runs remain after this 50-log batch. Rerun the command with the same cache directory.`,
+    );
+    this.name = "EvidenceBatchIncompleteError";
+  }
+}
+
+export class GitHubEvidenceReadError extends Error {
+  constructor(
+    readonly kind: "access" | "rate-limit",
+    readonly runId: number | null,
+  ) {
+    const resource = runId === null ? "the workflow run list" : `logs for run ${String(runId)}`;
+    super(
+      kind === "rate-limit"
+        ? `GitHub rate limit prevented reading ${resource}. Wait for the quota to reset, then reuse the same cache directory.`
+        : `GitHub denied access to ${resource}. Correct gh authentication or authorization before retrying with the same cache directory.`,
+    );
+    this.name = "GitHubEvidenceReadError";
+  }
+}
 
 interface Options {
+  cacheDir?: string;
   days: number;
   jsonOutput: string;
   logsDir?: string;
@@ -33,7 +77,7 @@ interface Options {
 
 function usage(): never {
   throw new Error(
-    "usage: unit-test-gaps.mts [--days 7 | --since YYYY-MM-DD] --output REPORT.md --json-output REPORT.json [--workflow FILE] [--runs-file RUNS.json --logs-dir DIR]",
+    "usage: unit-test-gaps.mts [--days 7 | --since YYYY-MM-DD] --output REPORT.md --json-output REPORT.json (--cache-dir DIR [--workflow FILE] | --runs-file RUNS.json --logs-dir DIR)",
   );
 }
 
@@ -62,6 +106,9 @@ function parseArgs(argv: readonly string[]): Options {
     } else if (flag === "--json-output" && value !== undefined) {
       options.jsonOutput = value;
       index += 1;
+    } else if (flag === "--cache-dir" && value !== undefined) {
+      options.cacheDir = value;
+      index += 1;
     } else if (flag === "--workflow" && value !== undefined) {
       options.workflows.push(value);
       index += 1;
@@ -77,6 +124,8 @@ function parseArgs(argv: readonly string[]): Options {
   }
   if (options.output.length === 0 || options.jsonOutput.length === 0) usage();
   if ((options.runsFile === undefined) !== (options.logsDir === undefined)) usage();
+  if (options.runsFile === undefined && options.cacheDir === undefined) usage();
+  if (options.runsFile !== undefined && options.cacheDir !== undefined) usage();
   if (options.workflows.length === 0) options.workflows = [...DEFAULT_WORKFLOWS];
   return options;
 }
@@ -169,16 +218,23 @@ export function failedRunLogArgs(databaseId: number): string[] {
 async function collectRuns(
   workflows: readonly string[],
   range: { from: string; to: string },
+  runGh: GhRunner,
 ): Promise<E2ERunRecord[]> {
-  const records = await Promise.all(
-    workflows.map(async (workflow) => {
-      const output = await gh(listRunsArgs(workflow, range));
-      const parsed = JSON.parse(output) as unknown;
-      if (!Array.isArray(parsed)) throw new Error(`GitHub returned malformed runs for ${workflow}`);
-      requireCompleteRunSelection(workflow, parsed.length);
-      return parsed.map(normalizeRun);
-    }),
-  );
+  const records: E2ERunRecord[][] = [];
+  for (const workflow of workflows) {
+    let output: string;
+    try {
+      output = await runGh(listRunsArgs(workflow, range));
+    } catch (error) {
+      const kind = classifyGitHubEvidenceReadError(error);
+      if (kind !== null) throw new GitHubEvidenceReadError(kind, null);
+      throw error;
+    }
+    const parsed = JSON.parse(output) as unknown;
+    if (!Array.isArray(parsed)) throw new Error(`GitHub returned malformed runs for ${workflow}`);
+    requireCompleteRunSelection(workflow, parsed.length);
+    records.push(parsed.map(normalizeRun));
+  }
   const byId = new Map<number, E2ERunRecord>();
   for (const run of records.flat()) byId.set(run.databaseId, run);
   return [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -203,20 +259,187 @@ async function parallelMap<T, R>(
   return output;
 }
 
-async function collectEvidence(runs: readonly E2ERunRecord[]): Promise<RunLogEvidence[]> {
+function signaturesToLog(
+  signatures: ReadonlyArray<{ job: string; signature: string }>,
+): string {
+  if (signatures.length === 0) return "";
+  return `${signatures.map(({ job, signature }) => `${job}\tstep\t${signature}`).join("\n")}\n`;
+}
+
+function cacheFile(cacheDir: string, run: E2ERunRecord): string {
+  return path.join(cacheDir, `${String(run.databaseId)}-attempt-${String(run.attempt)}.json`);
+}
+
+function ensurePrivateDirectory(directory: string): void {
+  if (fs.existsSync(directory)) {
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error("The evidence cache path must be a directory, not a symbolic link.");
+    }
+  } else {
+    fs.mkdirSync(directory, { mode: 0o700, recursive: true });
+  }
+  fs.chmodSync(directory, 0o700);
+}
+
+function parseCachedEvidence(contents: string, run: E2ERunRecord): CachedFailureEvidence {
+  const parsed = JSON.parse(contents) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Cached evidence for run ${String(run.databaseId)} is not a JSON object.`);
+  }
+  const record = parsed as Record<string, unknown>;
+  const signatures = record.signatures;
+  if (
+    record.version !== CACHE_VERSION ||
+    record.runId !== run.databaseId ||
+    record.attempt !== run.attempt ||
+    !Array.isArray(signatures) ||
+    signatures.some(
+      (entry) =>
+        !entry ||
+        typeof entry !== "object" ||
+        Array.isArray(entry) ||
+        typeof (entry as Record<string, unknown>).job !== "string" ||
+        typeof (entry as Record<string, unknown>).signature !== "string" ||
+        ((entry as Record<string, unknown>).job as string).length === 0 ||
+        ((entry as Record<string, unknown>).signature as string).length === 0 ||
+        ((entry as Record<string, unknown>).job as string).length > 512 ||
+        ((entry as Record<string, unknown>).signature as string).length > 240 ||
+        /[\r\n\t]/u.test((entry as Record<string, unknown>).job as string) ||
+        /[\r\n\t]/u.test((entry as Record<string, unknown>).signature as string),
+    )
+  ) {
+    throw new Error(`Cached evidence for run ${String(run.databaseId)} does not match the run.`);
+  }
+  return parsed as CachedFailureEvidence;
+}
+
+function readCachedEvidence(cacheDir: string, run: E2ERunRecord): CachedFailureEvidence | null {
+  const file = cacheFile(cacheDir, run);
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("O_NOFOLLOW is required for the evidence cache.");
+  }
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | fs.constants.O_NONBLOCK);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    if (code === "ELOOP") {
+      throw new Error(
+        `Cached evidence for run ${String(run.databaseId)} is not a bounded regular file.`,
+      );
+    }
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > MAX_CACHE_FILE_BYTES) {
+      throw new Error(
+        `Cached evidence for run ${String(run.databaseId)} is not a bounded regular file.`,
+      );
+    }
+    fs.fchmodSync(descriptor, 0o600);
+    return parseCachedEvidence(fs.readFileSync(descriptor, "utf8"), run);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function writeCachedEvidence(
+  cacheDir: string,
+  run: E2ERunRecord,
+  signatures: CachedFailureEvidence["signatures"],
+): void {
+  const destination = cacheFile(cacheDir, run);
+  const temporary = `${destination}.${String(process.pid)}.tmp`;
+  try {
+    fs.writeFileSync(
+      temporary,
+      `${JSON.stringify(
+        { attempt: run.attempt, runId: run.databaseId, signatures, version: CACHE_VERSION },
+        null,
+        2,
+      )}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+    fs.renameSync(temporary, destination);
+    fs.chmodSync(destination, 0o600);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function commandErrorText(error: unknown): string {
+  if (error && typeof error === "object" && "stderr" in error) {
+    const stderr = (error as { stderr?: unknown }).stderr;
+    if (typeof stderr === "string") return stderr;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function classifyGitHubEvidenceReadError(error: unknown): "access" | "rate-limit" | null {
+  const message = commandErrorText(error);
+  if (/API rate limit exceeded|secondary rate limit|abuse detection|HTTP\s+429/iu.test(message)) {
+    return "rate-limit";
+  }
+  if (
+    /HTTP\s+(?:401|403)|authentication|authorization|resource not accessible|single sign-on|\bSSO\b|credential|permission denied/iu.test(
+      message,
+    )
+  ) {
+    return "access";
+  }
+  return null;
+}
+
+export async function collectEvidence(
+  runs: readonly E2ERunRecord[],
+  cacheDir: string,
+  runGh: GhRunner = gh,
+  concurrency = DEFAULT_CONCURRENCY,
+  reportPlan: (plan: EvidenceCollectionPlan) => void = () => undefined,
+): Promise<RunLogEvidence[]> {
+  ensurePrivateDirectory(cacheDir);
   const failures = runs.filter((run) => run.status === "completed" && run.conclusion === "failure");
   const logs = new Map<number, RunLogEvidence>();
-  await parallelMap(failures, DEFAULT_CONCURRENCY, async (run) => {
+  const missing: E2ERunRecord[] = [];
+  for (const run of failures) {
+    const cached = readCachedEvidence(cacheDir, run);
+    if (cached === null) {
+      missing.push(run);
+    } else {
+      logs.set(run.databaseId, { log: signaturesToLog(cached.signatures), run });
+    }
+  }
+  const scheduled = missing.slice(0, MAX_FAILED_LOG_READS);
+  const deferredRuns = missing.length - scheduled.length;
+  reportPlan({
+    cachedRuns: failures.length - missing.length,
+    deferredRuns,
+    failedLogReads: scheduled.length,
+  });
+
+  let fatalError: GitHubEvidenceReadError | null = null;
+  await parallelMap(scheduled, concurrency, async (run) => {
+    if (fatalError !== null) return;
     try {
-      const log = await gh(failedRunLogArgs(run.databaseId));
-      logs.set(run.databaseId, { log, run });
+      const rawLog = await runGh(failedRunLogArgs(run.databaseId));
+      const signatures = extractJobSignatures(rawLog);
+      writeCachedEvidence(cacheDir, run, signatures);
+      logs.set(run.databaseId, { log: signaturesToLog(signatures), run });
     } catch (error) {
-      logs.set(run.databaseId, {
-        error: error instanceof Error ? error.message : "failed log unavailable",
-        run,
-      });
+      const kind = classifyGitHubEvidenceReadError(error);
+      if (kind !== null) {
+        fatalError ??= new GitHubEvidenceReadError(kind, run.databaseId);
+      } else {
+        logs.set(run.databaseId, { error: "failed log unavailable", run });
+      }
     }
   });
+  if (fatalError !== null) throw fatalError;
+  if (deferredRuns > 0) throw new EvidenceBatchIncompleteError(deferredRuns);
   return runs.map((run) => logs.get(run.databaseId) ?? { run });
 }
 
@@ -230,7 +453,9 @@ function readOfflineEvidence(runsFile: string, logsDir: string): RunLogEvidence[
     const error = fs.existsSync(errorPath) ? fs.readFileSync(errorPath, "utf8").trim() : "";
     return {
       ...(error.length > 0 ? { error } : {}),
-      ...(fs.existsSync(logPath) ? { log: fs.readFileSync(logPath, "utf8") } : {}),
+      ...(fs.existsSync(logPath)
+        ? { log: signaturesToLog(extractJobSignatures(fs.readFileSync(logPath, "utf8"))) }
+        : {}),
       run,
     };
   });
@@ -242,13 +467,28 @@ function writePrivate(file: string, contents: string): void {
   fs.chmodSync(file, 0o600);
 }
 
-export async function main(argv = process.argv.slice(2)): Promise<void> {
+export async function main(
+  argv = process.argv.slice(2),
+  dependencies: { now?: Date; runGh?: GhRunner } = {},
+): Promise<void> {
   const options = parseArgs(argv);
-  const range = rangeFromOptions(options);
+  const range = rangeFromOptions(options, dependencies.now);
+  const runGh = dependencies.runGh ?? gh;
+  if (options.cacheDir !== undefined) ensurePrivateDirectory(options.cacheDir);
   const evidence =
     options.runsFile !== undefined && options.logsDir !== undefined
       ? readOfflineEvidence(options.runsFile, options.logsDir)
-      : await collectEvidence(await collectRuns(options.workflows, range));
+      : await collectEvidence(
+          await collectRuns(options.workflows, range, runGh),
+          options.cacheDir!,
+          runGh,
+          DEFAULT_CONCURRENCY,
+          ({ cachedRuns, deferredRuns, failedLogReads }) => {
+            process.stdout.write(
+              `Reusing ${String(cachedRuns)} cached failed runs; reading ${String(failedLogReads)} failed logs; deferring ${String(deferredRuns)} runs.\n`,
+            );
+          },
+        );
   const report = buildUnitGapReport(evidence, range);
   writePrivate(options.output, formatUnitGapReport(report));
   writePrivate(options.jsonOutput, `${JSON.stringify(report, null, 2)}\n`);
@@ -258,6 +498,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (report.incompleteRuns.length > 0) process.exitCode = 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
   await main();
 }

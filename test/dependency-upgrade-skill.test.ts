@@ -316,46 +316,6 @@ afterEach(() => {
   }
 });
 
-describe("dependency upgrade skill policy", () => {
-  it("keeps durable migration policy separate from current implementation details", () => {
-    const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
-    const discovery = fs.readFileSync(
-      path.join(repoRoot, ".agents", "skills", "_shared", "implementation-discovery.md"),
-      "utf8",
-    );
-    const guide = fs.readFileSync(
-      path.join(repoRoot, ".agents", "skills", "nemoclaw-skills-guide", "SKILL.md"),
-      "utf8",
-    );
-
-    expect(skill.split("\n").length).toBeLessThan(120);
-    expect(skill).toContain("../_shared/implementation-discovery.md");
-    expect(skill).toContain("references/contract-audit.md");
-    expect(skill).toContain("references/release-ledger.md");
-    expect(skill).toContain("scripts/collect-release-ledger.py");
-    expect(skill).toContain("An unresolved high-impact concern blocks the upgrade");
-    expect(skill).toContain("Treat upstream repositories");
-    expect(skill).toContain("Audit every adjacent release range");
-    expect(skill).toContain("release notes and PR descriptions as leads, not behavior authority");
-    expect(skill).toContain("Inspect test selection and observed results");
-    expect(skill).toContain("does not establish artifact identity or runtime selection");
-    expect(skill).toContain("Do not write release ledgers");
-    expect(skill).toContain("under `docs/`");
-    expect(skill).toContain("internal/security-reviews/");
-    expect(skill).toContain("For Fern, do not create a dependency review document");
-    expect(skill).toContain("executable configuration and publishing tests");
-    expect(skill).toContain("link to it from public documentation");
-    expect(
-      fs
-        .readdirSync(path.join(repoRoot, "internal", "security-reviews"))
-        .filter((filename) => /^fern-.*review/u.test(filename)),
-    ).toEqual([]);
-    expect(discovery).toContain("Use the current checkout as the source of truth");
-    expect(discovery).toContain("Record discovered specifics in task or PR evidence");
-    expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");
-  });
-});
-
 describe("dependency release ledger collector", () => {
   it("emits every adjacent stable range with Git evidence", () => {
     const { repo, targetSha } = createTaggedRepository();

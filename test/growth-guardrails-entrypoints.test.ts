@@ -89,6 +89,29 @@ describe("growth-guardrails executable entrypoints (#6953)", () => {
     expect(result.stderr).toContain("test/a.test.ts: 1 if statement(s), up from 0");
   });
 
+  it("prints the test-loop guardrail PASS diagnostic", () => {
+    const result = runEntrypoint("tools/growth-guardrails/test-loops.mts", [[]]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "PASS: changed test files did not add table-test candidate loops (0 at the latest PR commit vs 0 at base).",
+    );
+  });
+
+  it("prints the test-loop guardrail FAIL heading and file detail", () => {
+    const result = runEntrypoint("tools/growth-guardrails/test-loops.mts", [
+      [{ filename: "test/a.test.ts", status: "modified" }],
+      blobPayload("it('a', () => { expect(1).toBe(1); });"),
+      blobPayload("it('a', () => { for (const row of rows) expect(row).toBeDefined(); });"),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("FAIL: changed test files add table-test candidate loops.");
+    expect(result.stderr).toContain(
+      "test/a.test.ts: 1 table-test candidate loop(s), up from 0",
+    );
+  });
+
   it("prints the size-budget guardrail PASS diagnostic", () => {
     const result = runEntrypoint("tools/growth-guardrails/test-size-budget.mts", [
       [],

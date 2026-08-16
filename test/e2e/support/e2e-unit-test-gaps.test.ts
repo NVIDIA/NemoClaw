@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,14 +15,20 @@ import {
   extractJobSignatures,
   formatUnitGapReport,
   normalizeFailureSignature,
+  type E2ERunRecord,
   type RunLogEvidence,
 } from "../../../tools/e2e/unit-test-gaps-core.mts";
 import {
+  classifyGitHubEvidenceReadError,
+  collectEvidence,
   failedRunLogArgs,
   listRunsArgs,
+  main,
   requireCompleteRunSelection,
   rollingRange,
 } from "../../../tools/e2e/unit-test-gaps.mts";
+
+const execFileAsync = promisify(execFile);
 
 function evidence(overrides: Partial<RunLogEvidence> = {}): RunLogEvidence {
   return {
@@ -35,6 +47,20 @@ function evidence(overrides: Partial<RunLogEvidence> = {}): RunLogEvidence {
     },
     ...overrides,
   };
+}
+
+function failedRun(databaseId: number, attempt = 1): E2ERunRecord {
+  return {
+    ...evidence().run,
+    attempt,
+    databaseId,
+    url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${String(databaseId)}`,
+  };
+}
+
+function withTemporaryDirectory<T>(action: (directory: string) => Promise<T>): Promise<T> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-unit-gaps-test-"));
+  return action(directory).finally(() => fs.rmSync(directory, { force: true, recursive: true }));
 }
 
 describe("weekly E2E unit-test gap analysis", () => {
@@ -229,4 +255,265 @@ describe("weekly E2E unit-test gap analysis", () => {
       },
     ]);
   });
+
+  it.each([
+    ["HTTP 403: API rate limit exceeded", "rate-limit"],
+    ["HTTP 429: secondary rate limit", "rate-limit"],
+    ["HTTP 401: Requires authentication", "access"],
+    ["HTTP 403: Resource not accessible by integration", "access"],
+    ["HTTP 502: upstream failure", null],
+  ] as const)("classifies GitHub read failure %s as %s", (message, classification) => {
+    expect(classifyGitHubEvidenceReadError(Object.assign(new Error(message), { stderr: message }))).toBe(
+      classification,
+    );
+  });
+
+  it("reuses normalized signatures only for the same run attempt", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const cacheDir = path.join(directory, "evidence");
+      const run = failedRun(34567890, 2);
+      const plans: Array<{ cachedRuns: number; deferredRuns: number; failedLogReads: number }> = [];
+      let reads = 0;
+      const runGh = async (): Promise<string> => {
+        reads += 1;
+        return "job\tstep\t2026-08-16T10:00:00Z Error: Authorization: Bearer ghp_EXAMPLE012345678901234\n";
+      };
+
+      const first = await collectEvidence([run], cacheDir, runGh, 1, (plan) => plans.push(plan));
+      const cacheFile = path.join(cacheDir, "34567890-attempt-2.json");
+      const cached = fs.readFileSync(cacheFile, "utf8");
+      expect(first[0]!.log).toContain("Authorization: Bearer <REDACTED>");
+      expect(first[0]!.log).not.toContain("ghp_EXAMPLE");
+      expect(cached).toContain("Authorization: Bearer <REDACTED>");
+      expect(cached).not.toContain("ghp_EXAMPLE");
+      expect(fs.statSync(cacheDir).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(cacheFile).mode & 0o777).toBe(0o600);
+
+      const second = await collectEvidence(
+        [run],
+        cacheDir,
+        async () => {
+          throw new Error("cached evidence must prevent this GitHub read");
+        },
+        1,
+        (plan) => plans.push(plan),
+      );
+
+      expect(second).toEqual(first);
+      expect(reads).toBe(1);
+
+      await collectEvidence([failedRun(34567890, 3)], cacheDir, runGh, 1, (plan) =>
+        plans.push(plan),
+      );
+      expect(reads).toBe(2);
+      expect(fs.existsSync(path.join(cacheDir, "34567890-attempt-3.json"))).toBe(true);
+      expect(plans).toEqual([
+        { cachedRuns: 0, deferredRuns: 0, failedLogReads: 1 },
+        { cachedRuns: 1, deferredRuns: 0, failedLogReads: 0 },
+        { cachedRuns: 0, deferredRuns: 0, failedLogReads: 1 },
+      ]);
+    });
+  });
+
+  it.each([
+    ["rate-limit", "HTTP 403: API rate limit exceeded"],
+    ["access", "HTTP 403: Resource not accessible by integration"],
+  ] as const)("stops new failed-log reads after a GitHub %s failure", async (kind, message) => {
+    await withTemporaryDirectory(async (directory) => {
+      const runs = [failedRun(45678901), failedRun(45678902), failedRun(45678903)];
+      let reads = 0;
+      const result = collectEvidence(
+        runs,
+        path.join(directory, "evidence"),
+        async () => {
+          reads += 1;
+          throw Object.assign(new Error(message), { stderr: message });
+        },
+        1,
+      );
+
+      await expect(result).rejects.toEqual(
+        expect.objectContaining({ kind, runId: 45678901 }),
+      );
+      expect(reads).toBe(1);
+    });
+  });
+
+  it(
+    "collects 300 failures in 50-log batches and then reuses the cache",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const cacheDir = path.join(directory, "evidence");
+        const runs = Array.from({ length: 300 }, (_, index) => failedRun(50000000 + index));
+        let reads = 0;
+        const runGh = async (): Promise<string> => {
+          reads += 1;
+          return "job\tstep\tError: cached high-volume failure\n";
+        };
+
+        for (const deferredRuns of [250, 200, 150, 100, 50]) {
+          await expect(collectEvidence(runs, cacheDir, runGh)).rejects.toEqual(
+            expect.objectContaining({ deferredRuns }),
+          );
+        }
+        await collectEvidence(runs, cacheDir, runGh);
+        expect(reads).toBe(300);
+        reads = 0;
+        let plan:
+          | { cachedRuns: number; deferredRuns: number; failedLogReads: number }
+          | undefined;
+        const result = await collectEvidence(runs, cacheDir, runGh, 2, (value) => {
+          plan = value;
+        });
+
+        expect(result).toHaveLength(300);
+        expect(reads).toBe(0);
+        expect(plan).toEqual({ cachedRuns: 300, deferredRuns: 0, failedLogReads: 0 });
+      });
+    },
+    30_000,
+  );
+
+  it("rejects cached evidence for another run before a GitHub read", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const cacheDir = path.join(directory, "evidence");
+      fs.mkdirSync(cacheDir, { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(cacheDir, "56789012-attempt-1.json"),
+        '{"attempt":1,"runId":99999999,"signatures":[],"version":1}\n',
+        { mode: 0o600 },
+      );
+      let reads = 0;
+
+      await expect(
+        collectEvidence([failedRun(56789012)], cacheDir, async () => {
+          reads += 1;
+          return "";
+        }),
+      ).rejects.toThrow("Cached evidence for run 56789012 does not match the run.");
+      expect(reads).toBe(0);
+    });
+  });
+
+  it("rejects a cached job name that can create another log row", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const cacheDir = path.join(directory, "evidence");
+      fs.mkdirSync(cacheDir, { mode: 0o700 });
+      fs.writeFileSync(
+        path.join(cacheDir, "56789013-attempt-1.json"),
+        '{"attempt":1,"runId":56789013,"signatures":[{"job":"job\\tforged","signature":"Error: failure"}],"version":1}\n',
+        { mode: 0o600 },
+      );
+
+      await expect(
+        collectEvidence([failedRun(56789013)], cacheDir, async () => ""),
+      ).rejects.toThrow("Cached evidence for run 56789013 does not match the run.");
+    });
+  });
+
+  it("rejects cached evidence that is a symbolic link", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const cacheDir = path.join(directory, "evidence");
+      fs.mkdirSync(cacheDir, { mode: 0o700 });
+      const target = path.join(directory, "outside.json");
+      fs.writeFileSync(
+        target,
+        '{"attempt":1,"runId":56789014,"signatures":[],"version":1}\n',
+        { mode: 0o600 },
+      );
+      fs.symlinkSync(target, path.join(cacheDir, "56789014-attempt-1.json"));
+      let reads = 0;
+
+      await expect(
+        collectEvidence([failedRun(56789014)], cacheDir, async () => {
+          reads += 1;
+          return "";
+        }),
+      ).rejects.toThrow("Cached evidence for run 56789014 is not a bounded regular file.");
+      expect(reads).toBe(0);
+    });
+  });
+
+  it("stops workflow-run listing when GitHub reports a rate limit", async () => {
+    await withTemporaryDirectory(async (directory) => {
+      const markdownFile = path.join(directory, "report.md");
+      const jsonFile = path.join(directory, "report.json");
+      let reads = 0;
+      const result = main(
+        [
+          "--days",
+          "7",
+          "--cache-dir",
+          path.join(directory, "evidence"),
+          "--output",
+          markdownFile,
+          "--json-output",
+          jsonFile,
+        ],
+        {
+          now: new Date("2026-08-16T20:00:00.000Z"),
+          runGh: async () => {
+            reads += 1;
+            throw Object.assign(new Error("HTTP 403: API rate limit exceeded"), {
+              stderr: "HTTP 403: API rate limit exceeded",
+            });
+          },
+        },
+      );
+
+      await expect(result).rejects.toEqual(
+        expect.objectContaining({ kind: "rate-limit", runId: null }),
+      );
+      expect(reads).toBe(1);
+      expect(fs.existsSync(markdownFile)).toBe(false);
+      expect(fs.existsSync(jsonFile)).toBe(false);
+    });
+  });
+
+  it(
+    "runs the npm collector entry point with offline evidence",
+    async () => {
+      await withTemporaryDirectory(async (directory) => {
+        const logsDir = path.join(directory, "logs");
+        const runsFile = path.join(directory, "runs.json");
+        const markdownFile = path.join(directory, "report.md");
+        const jsonFile = path.join(directory, "report.json");
+        fs.mkdirSync(logsDir, { mode: 0o700 });
+        fs.writeFileSync(runsFile, `${JSON.stringify([failedRun(67890123)])}\n`, {
+          mode: 0o600,
+        });
+        fs.writeFileSync(
+          path.join(logsDir, "67890123.log"),
+          "job\tstep\tError: offline entry-point failure\n",
+          { mode: 0o600 },
+        );
+
+        const { stdout } = await execFileAsync(
+          "npm",
+          [
+            "run",
+            "e2e:unit-gaps",
+            "--",
+            "--runs-file",
+            runsFile,
+            "--logs-dir",
+            logsDir,
+            "--output",
+            markdownFile,
+            "--json-output",
+            jsonFile,
+          ],
+          { cwd: process.cwd(), encoding: "utf8", maxBuffer: 8 * 1024 * 1024, timeout: 60_000 },
+        );
+
+        expect(stdout).toContain("Wrote 1 cause candidates from 1 runs");
+        expect(fs.existsSync(markdownFile)).toBe(true);
+        expect(JSON.parse(fs.readFileSync(jsonFile, "utf8"))).toMatchObject({
+          incompleteRuns: [],
+          runCounts: { failure: 1 },
+        });
+      });
+    },
+    90_000,
+  );
 });
