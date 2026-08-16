@@ -422,10 +422,15 @@ describe("weekly E2E unit-test gap analysis", () => {
         { mode: 0o600 },
       );
       fs.symlinkSync(target, path.join(cacheDir, "56789014-attempt-1.json"));
+      let reads = 0;
 
       await expect(
-        collectEvidence([failedRun(56789014)], cacheDir, async () => ""),
+        collectEvidence([failedRun(56789014)], cacheDir, async () => {
+          reads += 1;
+          return "";
+        }),
       ).rejects.toThrow("Cached evidence for run 56789014 is not a bounded regular file.");
+      expect(reads).toBe(0);
     });
   });
 
