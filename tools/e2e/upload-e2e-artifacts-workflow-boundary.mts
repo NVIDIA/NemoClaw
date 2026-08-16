@@ -198,6 +198,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "native-runtime-qualification-podman-toolchain",
+    {
+      name: "native-runtime-podman-toolchain-${{ matrix.architecture }}",
+      path: "${{ runner.temp }}/native-runtime-podman-toolchain/",
+    },
+  ],
+  [
     "native-runtime-qualification-producer",
     {
       name: "${{ matrix.artifactName }}",
@@ -257,6 +264,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["generate-matrix", "${{ github.event_name == 'workflow_dispatch' }}"],
+  ["native-runtime-qualification-podman-toolchain", "success()"],
   ["native-runtime-qualification-producer", "success()"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
@@ -392,6 +400,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||
+          jobName === "native-runtime-qualification-podman-toolchain" ||
           jobName === "openshell-dev-artifact" ||
           jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||

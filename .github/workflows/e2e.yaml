@@ -1012,9 +1012,159 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-plan.mts --ci-output
 
+  native-runtime-qualification-podman-toolchain:
+    name: Build pinned native Podman toolchain / ${{ matrix.architecture }}
+    needs: [generate-matrix, native-runtime-qualification-producer-plan]
+    if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pinned Podman source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: podman-container-tools/podman
+          ref: cade97a52ebdf9dbf9e81de8009015776837a074 # v6.1.0
+          path: .podman-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Netavark source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: containers/netavark
+          ref: 8e91ad1d947ed325327b638f0cb906bea1f7d0ab # v2.1.0
+          path: .netavark-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Aardvark DNS source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: containers/aardvark-dns
+          ref: cd7417681229219059939bdd9f0b3bd9ac9abb08 # v2.1.0
+          path: .aardvark-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pinned Go for the Podman build
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.25.9
+          cache: false
+
+      - name: Set up pinned Rust for the network helper builds
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.88.0
+
+      - name: Install build dependencies from the signed runner OS repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
+            --yes --no-install-recommends \
+            gcc git libapparmor-dev libassuan-dev libbtrfs-dev libc6-dev \
+            libdevmapper-dev libglib2.0-dev libgpg-error-dev libgpgme-dev \
+            libprotobuf-c-dev libprotobuf-dev libseccomp-dev libselinux1-dev \
+            libsqlite3-dev libsubid-dev libsystemd-dev make pkg-config protobuf-compiler
+
+      - name: Build and package the pinned native toolchain
+        env:
+          AARDVARK_SOURCE_SHA: cd7417681229219059939bdd9f0b3bd9ac9abb08
+          EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+          NETAVARK_SOURCE_SHA: 8e91ad1d947ed325327b638f0cb906bea1f7d0ab
+          PODMAN_SOURCE_SHA: cade97a52ebdf9dbf9e81de8009015776837a074
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(dpkg --print-architecture)" == "$EXPECTED_ARCHITECTURE" ]]
+          [[ "$(git -C .podman-source rev-parse --verify 'HEAD^{commit}')" == "$PODMAN_SOURCE_SHA" ]]
+          [[ "$(git -C .netavark-source rev-parse --verify 'HEAD^{commit}')" == "$NETAVARK_SOURCE_SHA" ]]
+          [[ "$(git -C .aardvark-source rev-parse --verify 'HEAD^{commit}')" == "$AARDVARK_SOURCE_SHA" ]]
+          for source in .podman-source .netavark-source .aardvark-source; do
+            [[ -z "$(git -C "$source" status --porcelain --untracked-files=no)" ]]
+          done
+          [[ "$(go version)" == go\ version\ go1.25.9\ * ]]
+          [[ "$(rustc --version)" == rustc\ 1.88.0\ * ]]
+
+          SOURCE_DATE_EPOCH=1786554266 \
+            BUILD_ORIGIN="NVIDIA/NemoClaw native runtime qualification" \
+            make --directory=.podman-source --jobs=2 \
+              podman rootlessport PREFIX=/usr/local
+          SOURCE_DATE_EPOCH=1785940686 CI=1 \
+            make --directory=.netavark-source --jobs=2 build
+          SOURCE_DATE_EPOCH=1785940850 CI=1 \
+            make --directory=.aardvark-source --jobs=2 build
+
+          install -D -m 0755 .podman-source/bin/podman "$TOOLCHAIN_DIRECTORY/bin/podman"
+          install -D -m 0755 .podman-source/bin/rootlessport \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/rootlessport"
+          install -D -m 0755 .netavark-source/bin/netavark \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/netavark"
+          install -D -m 0755 .aardvark-source/bin/aardvark-dns \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/aardvark-dns"
+          install -D -m 0644 \
+            .podman-source/vendor/go.podman.io/common/pkg/config/containers.conf \
+            "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf"
+
+          [[ "$("$TOOLCHAIN_DIRECTORY/bin/podman" --version)" == "podman version 6.1.0" ]]
+          [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/netavark" --version)" == "netavark 2.1.0" ]]
+          [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/aardvark-dns" --version)" == "aardvark-dns 2.1.0" ]]
+          jq -n \
+            --arg architecture "$EXPECTED_ARCHITECTURE" \
+            --arg aardvarkDnsSourceSha "$AARDVARK_SOURCE_SHA" \
+            --arg netavarkSourceSha "$NETAVARK_SOURCE_SHA" \
+            --arg podmanSourceSha "$PODMAN_SOURCE_SHA" '
+              {
+                schemaVersion: 1,
+                kind: "nemoclaw-native-podman-toolchain-v1",
+                architecture: $architecture,
+                podmanVersion: "6.1.0",
+                podmanSourceSha: $podmanSourceSha,
+                netavarkVersion: "2.1.0",
+                netavarkSourceSha: $netavarkSourceSha,
+                aardvarkDnsVersion: "2.1.0",
+                aardvarkDnsSourceSha: $aardvarkDnsSourceSha,
+                goVersion: "1.25.9",
+                rustVersion: "1.88.0"
+              }
+            ' >"$TOOLCHAIN_DIRECTORY/manifest.json"
+          (
+            cd "$TOOLCHAIN_DIRECTORY"
+            sha256sum \
+              bin/podman \
+              libexec/podman/aardvark-dns \
+              libexec/podman/netavark \
+              libexec/podman/rootlessport \
+              manifest.json \
+              share/containers/containers.conf >SHA256SUMS
+          )
+
+      - name: Upload the pinned native Podman toolchain
+        if: success()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: native-runtime-podman-toolchain-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/native-runtime-podman-toolchain/
+
   native-runtime-qualification-producer:
     name: ${{ matrix.jobName }}
-    needs: [generate-matrix, native-runtime-qualification-producer-plan]
+    needs:
+      - generate-matrix
+      - native-runtime-qualification-podman-toolchain
+      - native-runtime-qualification-producer-plan
     if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
     strategy:
       fail-fast: false
@@ -1067,9 +1217,35 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Install Podman 5 and rootless prerequisites from the signed runner OS repository
+      - name: Require a reviewed Ubuntu runtime host
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -r /etc/os-release ]] || {
+            echo "::error::Protected runner does not expose an OS release identity" >&2
+            exit 1
+          }
+          # shellcheck disable=SC1091
+          source /etc/os-release
+          [[ "${ID:-}" == "ubuntu" ]] || {
+            echo "::error::Protected runner must use a reviewed Ubuntu image" >&2
+            exit 1
+          }
+          [[ "${VERSION_ID:-}" == "24.04" || "${VERSION_ID:-}" == "26.04" ]] || {
+            echo "::error::Protected runner Ubuntu release is not reviewed for Podman qualification" >&2
+            exit 1
+          }
+
+      - name: Download the pinned native Podman toolchain
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-runtime-podman-toolchain-${{ matrix.case.architecture }}
+          path: ${{ runner.temp }}/native-runtime-podman-toolchain
+
+      - name: Install the pinned native Podman toolchain and rootless prerequisites
         env:
-          PODMAN_APT_VERSION: "5.7.0+ds2-3build1"
+          EXPECTED_ARCHITECTURE: ${{ matrix.case.architecture }}
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
         shell: bash
         run: |
           set -euo pipefail
@@ -1080,11 +1256,90 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
             --yes --no-install-recommends \
-            acl apparmor fuse-overlayfs passt "podman=$PODMAN_APT_VERSION" slirp4netns uidmap
-          package_version="$(dpkg-query --show --showformat='${Version}' podman)"
+            acl apparmor btrfs-progs conmon fuse-overlayfs \
+            golang-github-containers-common iptables nftables passt runc slirp4netns uidmap
+
+          [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
+          [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
+          mapfile -t actual_files < <(
+            cd "$TOOLCHAIN_DIRECTORY"
+            find . -type f -print | LC_ALL=C sort
+          )
+          expected_files=(
+            ./SHA256SUMS
+            ./bin/podman
+            ./libexec/podman/aardvark-dns
+            ./libexec/podman/netavark
+            ./libexec/podman/rootlessport
+            ./manifest.json
+            ./share/containers/containers.conf
+          )
+          [[ "${actual_files[*]}" == "${expected_files[*]}" ]] || {
+            echo "::error::Downloaded native Podman toolchain contains unexpected files" >&2
+            exit 1
+          }
+          (
+            cd "$TOOLCHAIN_DIRECTORY"
+            sha256sum --check --strict SHA256SUMS
+          )
+          jq -e \
+            --arg architecture "$EXPECTED_ARCHITECTURE" '
+              type == "object" and
+              keys == [
+                "aardvarkDnsSourceSha",
+                "aardvarkDnsVersion",
+                "architecture",
+                "goVersion",
+                "kind",
+                "netavarkSourceSha",
+                "netavarkVersion",
+                "podmanSourceSha",
+                "podmanVersion",
+                "rustVersion",
+                "schemaVersion"
+              ] and
+              .schemaVersion == 1 and
+              .kind == "nemoclaw-native-podman-toolchain-v1" and
+              .architecture == $architecture and
+              .podmanVersion == "6.1.0" and
+              .podmanSourceSha == "cade97a52ebdf9dbf9e81de8009015776837a074" and
+              .netavarkVersion == "2.1.0" and
+              .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
+              .aardvarkDnsVersion == "2.1.0" and
+              .aardvarkDnsSourceSha == "cd7417681229219059939bdd9f0b3bd9ac9abb08" and
+              .goVersion == "1.25.9" and
+              .rustVersion == "1.88.0"
+            ' "$TOOLCHAIN_DIRECTORY/manifest.json" >/dev/null
+          for target in \
+            /usr/local/bin/podman \
+            /usr/local/libexec/podman/aardvark-dns \
+            /usr/local/libexec/podman/netavark \
+            /usr/local/libexec/podman/rootlessport \
+            /usr/share/containers/containers.conf; do
+            [[ ! -L "$target" ]] || {
+              echo "::error::Native Podman toolchain target must not be a symlink: $target" >&2
+              exit 1
+            }
+          done
+          sudo install --owner=root --group=root --mode=0755 \
+            "$TOOLCHAIN_DIRECTORY/bin/podman" /usr/local/bin/podman
+          for helper in aardvark-dns netavark rootlessport; do
+            sudo install -D --owner=root --group=root --mode=0755 \
+              "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
+              "/usr/local/libexec/podman/$helper"
+          done
+          sudo install --owner=root --group=root --mode=0644 \
+            "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf" \
+            /usr/share/containers/containers.conf
+          [[ "$(command -v podman)" == "/usr/local/bin/podman" ]]
+          conmon_version="$(conmon --version | awk 'NR == 1 { print $NF }')"
+          runc_version="$(runc --version | awk 'NR == 1 { print $NF }')"
+          dpkg --compare-versions "$conmon_version" ge 2.1.7
+          dpkg --compare-versions "$runc_version" ge 1.1.11
+          [[ "$(/usr/local/libexec/podman/netavark --version)" == "netavark 2.1.0" ]]
+          [[ "$(/usr/local/libexec/podman/aardvark-dns --version)" == "aardvark-dns 2.1.0" ]]
           version="$(podman --version)"
-          [[ "$package_version" == "$PODMAN_APT_VERSION" ]]
-          [[ "$version" == "podman version 5.7.0" ]]
+          [[ "$version" == "podman version 6.1.0" ]]
 
       - name: Prepare the credential-free execution account and disable Docker
         id: boundary
@@ -1099,8 +1354,8 @@ jobs:
               exit 1
             }
           done
-          [[ "$(podman --version)" == "podman version 5.7.0" ]] || {
-            echo "::error::Protected runner must provide Podman 5.7.0" >&2
+          [[ "$(podman --version)" == "podman version 6.1.0" ]] || {
+            echo "::error::Protected runner must provide Podman 6.1.0" >&2
             exit 1
           }
           sudo systemctl stop docker.service docker.socket 2>/dev/null || true

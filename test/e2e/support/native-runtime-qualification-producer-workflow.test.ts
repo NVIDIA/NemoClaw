@@ -96,12 +96,84 @@ describe("native runtime qualification producer workflow", () => {
     expect(source).toContain('"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"');
   });
 
+  it("builds one pinned Podman 6 toolchain for each qualified architecture", () => {
+    const toolchain = job("native-runtime-qualification-podman-toolchain");
+    const podmanSource = step(toolchain, "Check out the pinned Podman source");
+    const netavarkSource = step(toolchain, "Check out the pinned Netavark source");
+    const aardvarkSource = step(toolchain, "Check out the pinned Aardvark DNS source");
+    const setupGo = step(toolchain, "Set up pinned Go for the Podman build");
+    const setupRust = step(toolchain, "Set up pinned Rust for the network helper builds");
+    const build = step(toolchain, "Build and package the pinned native toolchain");
+    const upload = step(toolchain, "Upload the pinned native Podman toolchain");
+
+    expect(toolchain.name).toBe(
+      "Build pinned native Podman toolchain / ${{ matrix.architecture }}",
+    );
+    expect(toolchain.needs).toEqual([
+      "generate-matrix",
+      "native-runtime-qualification-producer-plan",
+    ]);
+    expect(toolchain["runs-on"]).toBe("${{ matrix.runner }}");
+    expect(toolchain.permissions).toEqual({ contents: "read" });
+    expect(toolchain.strategy).toMatchObject({
+      "fail-fast": false,
+      matrix: {
+        include: [
+          { architecture: "amd64", runner: "ubuntu-24.04" },
+          { architecture: "arm64", runner: "ubuntu-24.04-arm" },
+        ],
+      },
+    });
+    expect(podmanSource.with).toMatchObject({
+      repository: "podman-container-tools/podman",
+      ref: "cade97a52ebdf9dbf9e81de8009015776837a074",
+      path: ".podman-source",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(netavarkSource.with).toMatchObject({
+      repository: "containers/netavark",
+      ref: "8e91ad1d947ed325327b638f0cb906bea1f7d0ab",
+      path: ".netavark-source",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(aardvarkSource.with).toMatchObject({
+      repository: "containers/aardvark-dns",
+      ref: "cd7417681229219059939bdd9f0b3bd9ac9abb08",
+      path: ".aardvark-source",
+      "fetch-depth": 1,
+      "persist-credentials": false,
+    });
+    expect(setupGo.uses).toBe("actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00");
+    expect(setupGo.with).toEqual({ "go-version": "1.25.9", cache: false });
+    expect(setupRust.uses).toBe("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c");
+    expect(setupRust.with).toEqual({ toolchain: "1.88.0" });
+    expect(build.run).toContain("podman rootlessport PREFIX=/usr/local");
+    expect(build.run).not.toContain("quadlet");
+    expect(build.run).toContain("make --directory=.netavark-source --jobs=2 build");
+    expect(build.run).toContain("make --directory=.aardvark-source --jobs=2 build");
+    expect(build.run).toContain("sha256sum");
+    expect(build.run).toMatch(/sha256sum[\s\S]+manifest\.json/u);
+    expect(build.run).toContain('"nemoclaw-native-podman-toolchain-v1"');
+    expect(upload.with).toMatchObject({
+      name: "native-runtime-podman-toolchain-${{ matrix.architecture }}",
+      path: "${{ runner.temp }}/native-runtime-podman-toolchain/",
+    });
+    expect(upload.if).toBe("success()");
+    expect(upload.uses).toBe(
+      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
+    );
+  });
+
   it("runs each candidate case in an isolated account and emits one trusted artifact", () => {
     const producer = job("native-runtime-qualification-producer");
     const harness = step(producer, "Check out the trusted qualification harness");
+    const podmanHost = step(producer, "Require a reviewed Ubuntu runtime host");
+    const podmanDownload = step(producer, "Download the pinned native Podman toolchain");
     const podman = step(
       producer,
-      "Install Podman 5 and rootless prerequisites from the signed runner OS repository",
+      "Install the pinned native Podman toolchain and rootless prerequisites",
     );
     const boundary = step(
       producer,
@@ -120,6 +192,11 @@ describe("native runtime qualification producer workflow", () => {
     const boundaryRun = boundary.run ?? "";
 
     expect(producer.name).toBe("${{ matrix.jobName }}");
+    expect(producer.needs).toEqual([
+      "generate-matrix",
+      "native-runtime-qualification-podman-toolchain",
+      "native-runtime-qualification-producer-plan",
+    ]);
     expect(producer["runs-on"]).toBe("${{ matrix.runner }}");
     expect(producer.permissions).toEqual({ contents: "read" });
     expect(producer.strategy).toMatchObject({ "fail-fast": false });
@@ -130,22 +207,38 @@ describe("native runtime qualification producer workflow", () => {
       "test/e2e/registry/native-runtime-qualification.ts",
     );
     expect(source).not.toMatch(/NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u);
+    expect(podmanHost.run).toContain('[[ "${ID:-}" == "ubuntu" ]]');
+    expect(podmanHost.run).toContain('"${VERSION_ID:-}" == "24.04"');
+    expect(podmanHost.run).toContain('"${VERSION_ID:-}" == "26.04"');
+    expect(podmanHost.run).toContain("Ubuntu release is not reviewed");
+    expect(podmanDownload.with).toMatchObject({
+      name: "native-runtime-podman-toolchain-${{ matrix.case.architecture }}",
+      path: "${{ runner.temp }}/native-runtime-podman-toolchain",
+    });
     expect(podman.run).toContain("/usr/bin/apt-get install");
     for (const requiredPackage of [
       "acl",
       "apparmor",
+      "conmon",
       "fuse-overlayfs",
+      "golang-github-containers-common",
       "passt",
-      "podman",
+      "runc",
       "slirp4netns",
       "uidmap",
     ]) {
       expect(podman.run).toContain(requiredPackage);
     }
-    expect(podman.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
-    expect(podman.run).toContain('"podman=$PODMAN_APT_VERSION"');
-    expect(podman.run).toContain('[[ "$package_version" == "$PODMAN_APT_VERSION" ]]');
-    expect(podman.run).toContain('[[ "$version" == "podman version 5.7.0" ]]');
+    expect(podman.run).toContain("find -P");
+    expect(podman.run).toContain("sha256sum --check --strict SHA256SUMS");
+    expect(podman.run).toContain('"nemoclaw-native-podman-toolchain-v1"');
+    expect(podman.run).toContain("Downloaded native Podman toolchain contains unexpected files");
+    expect(podman.run).toContain("Native Podman toolchain target must not be a symlink");
+    expect(podman.run).toContain('dpkg --compare-versions "$conmon_version" ge 2.1.7');
+    expect(podman.run).toContain('dpkg --compare-versions "$runc_version" ge 1.1.11');
+    expect(podman.run).toContain('"netavark 2.1.0"');
+    expect(podman.run).toContain('"aardvark-dns 2.1.0"');
+    expect(podman.run).toContain('[[ "$version" == "podman version 6.1.0" ]]');
     expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");

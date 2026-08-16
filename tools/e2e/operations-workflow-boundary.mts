@@ -16,6 +16,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const META_JOBS = new Set([
+  "native-runtime-qualification-podman-toolchain",
   "native-runtime-qualification-producer-plan",
   "release-qualification",
   "relevant-e2e",
@@ -489,6 +490,27 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
       const trustedNativeRuntimeCheckout =
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Podman source" &&
+          step.with?.repository === "podman-container-tools/podman" &&
+          step.with?.ref === "cade97a52ebdf9dbf9e81de8009015776837a074" &&
+          step.with?.path === ".podman-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Netavark source" &&
+          step.with?.repository === "containers/netavark" &&
+          step.with?.ref === "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" &&
+          step.with?.path === ".netavark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Aardvark DNS source" &&
+          step.with?.repository === "containers/aardvark-dns" &&
+          step.with?.ref === "cd7417681229219059939bdd9f0b3bd9ac9abb08" &&
+          step.with?.path === ".aardvark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
         (jobName === "native-runtime-qualification-producer-plan" &&
           step.name === "Check out the trusted qualification producer" &&
           step.with?.ref === "${{ github.workflow_sha }}") ||
