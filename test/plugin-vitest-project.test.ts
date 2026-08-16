@@ -62,6 +62,13 @@ describe("plugin Vitest project contract", () => {
         replacement: path.join(repositoryRoot, "nemoclaw/src/shared/banner-boundary.cts"),
       },
       {
+        find: /^.*credential-filter-boundary\.cjs$/,
+        replacement: path.join(
+          repositoryRoot,
+          "nemoclaw/src/shared/credential-filter-boundary.cts",
+        ),
+      },
+      {
         find: /^.*openshell-policy-boundary\.cjs$/,
         replacement: path.join(repositoryRoot, "nemoclaw/src/shared/openshell-policy-boundary.cts"),
       },

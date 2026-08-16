@@ -5,6 +5,10 @@ import path from "node:path";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const canonicalBannerBoundary = path.resolve(import.meta.dirname, "src/shared/banner-boundary.cts");
+const canonicalCredentialFilterBoundary = path.resolve(
+  import.meta.dirname,
+  "src/shared/credential-filter-boundary.cts",
+);
 const canonicalOpenShellPolicyBoundary = path.resolve(
   import.meta.dirname,
   "src/shared/openshell-policy-boundary.cts",
@@ -47,6 +51,10 @@ const pluginVitestProjectOptions = {
       {
         find: /^.*banner-boundary\.cjs$/,
         replacement: canonicalBannerBoundary,
+      },
+      {
+        find: /^.*credential-filter-boundary\.cjs$/,
+        replacement: canonicalCredentialFilterBoundary,
       },
       {
         find: /^.*openshell-policy-boundary\.cjs$/,
