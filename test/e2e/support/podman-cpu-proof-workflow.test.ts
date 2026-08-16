@@ -949,6 +949,10 @@ describe("native Podman CPU proof workflow", () => {
     expect(proof.run).toContain("test/e2e/live/podman-portable-uninstall.test.ts");
     const uninstallSource = readRepoText("test/e2e/live/podman-portable-uninstall.test.ts");
     expect(uninstallSource).toContain('executableOnPath("nemoclaw")');
+    expect(uninstallSource).toContain("startPinnedGateway");
+    expect(uninstallSource).toContain("waitForHealthyGateway");
+    expect(uninstallSource).toContain('["gateway", "remove", GATEWAY_NAME]');
+    expect(uninstallSource).toContain('gatewayName: "nemoclaw"');
     expect(uninstallSource).toContain('"--all-gateway-ports"');
     expect(uninstallSource).toContain('"--delete-models"');
     expect(uninstallSource).toContain('"--destroy-user-data"');

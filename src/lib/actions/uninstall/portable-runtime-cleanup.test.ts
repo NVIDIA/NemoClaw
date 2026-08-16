@@ -587,6 +587,16 @@ describe("portable runtime uninstall cleanup", () => {
     },
   );
 
+  it("skips completed authority proof when no retirement record exists (#9189)", async () => {
+    const authority = completedOnboardAuthority(fixture(), false);
+    const loadRegistry = vi.fn(() => authority.deps.loadRegistry());
+    await supersedePortableRetirementAfterCompletedOnboard(authority.boundary, "default", {
+      ...authority.deps,
+      loadRegistry,
+    });
+    expect(loadRegistry).not.toHaveBeenCalled();
+  });
+
   it.each(
     (
       [

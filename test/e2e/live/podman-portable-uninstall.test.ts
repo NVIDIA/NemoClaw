@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,10 +10,20 @@ import {
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
 } from "../../../src/lib/adapters/podman";
+import { buildDockerDriverGatewayEnv } from "../../../src/lib/onboard/docker-driver-gateway-env";
+import { ensureDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
 import { portableDemoReceiptPath } from "../../../src/lib/onboard/experimental/portable-runtime-receipt-readiness";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { executableOnPath, runCommand, SOCKET_PATH } from "./podman-cpu-lifecycle-helpers.ts";
+import {
+  cleanupPodmanLifecycle,
+  executableOnPath,
+  GATEWAY_NAME,
+  runCommand,
+  SOCKET_PATH,
+  startPinnedGateway,
+  waitForHealthyGateway,
+} from "./podman-cpu-lifecycle-helpers.ts";
 
 const BASE_IMAGE =
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1";
@@ -24,6 +35,8 @@ const SANDBOX_NAME = "podman-uninstall";
 const SANDBOX_ID = "proof-alpha";
 const UNRELATED_NAME = "nemoclaw-uninstall-unrelated";
 const REGISTRY_NAME = "nemoclaw-portable-registry";
+const SUPERVISOR_IMAGE =
+  "ghcr.io/nvidia/openshell/supervisor@sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb";
 const UNINSTALL_ARGS = [
   "uninstall",
   "--all-gateway-ports",
@@ -33,6 +46,7 @@ const UNINSTALL_ARGS = [
 ] as const;
 const E2E_PHASES = [
   "pin the current-user Podman authority",
+  "start an authenticated pinned OpenShell gateway",
   "create receipt-owned and unrelated resources",
   "project portable selectors",
   "run the exact full uninstall command",
@@ -123,6 +137,9 @@ test(
     const engine = createPodmanContainerEngine({ operation: "sandbox-lifecycle", socketAuthority });
     expect(engine.capture(["version", "--format", "json"]).status).toBe(0);
     const nemoclawBin = executableOnPath("nemoclaw");
+    const openshellBin = executableOnPath("openshell");
+    const gatewayBin = executableOnPath("openshell-gateway");
+    const sandboxBin = executableOnPath("openshell-sandbox");
 
     const homeDir = os.homedir();
     const stateDir = path.join(homeDir, ".nemoclaw");
@@ -130,6 +147,14 @@ test(
     const registryFile = path.join(stateDir, "sandboxes.json");
     expect(fs.existsSync(stateDir)).toBe(false);
     expect(fs.existsSync(configDir)).toBe(false);
+    const gatewayRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-podman-uninstall-"));
+    const gatewayDir = path.join(gatewayRoot, "gateway-state");
+    const cliEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      XDG_CONFIG_HOME: path.join(gatewayRoot, "cli-config"),
+    };
+    const previousPortableProfile = process.env.NEMOCLAW_EXPERIMENTAL_PROFILE;
+    let gateway: ChildProcess | null = null;
     const createdContainerIds: string[] = [];
     const imageWasPresent = new Map(
       [UNRELATED_IMAGE, UNUSED_IMAGE].map((image) => [
@@ -139,6 +164,34 @@ test(
     );
     let releaseProjectedSelectors = async (): Promise<void> => undefined;
     try {
+      progress.phase("start an authenticated pinned OpenShell gateway");
+      process.env.NEMOCLAW_EXPERIMENTAL_PROFILE = "portable";
+      const gatewayEnv = buildDockerDriverGatewayEnv({
+        platform: "linux",
+        gatewayPort: 8080,
+        stateDir: gatewayDir,
+        podmanSocketPath: SOCKET_PATH,
+        getDockerSupervisorImage: () => SUPERVISOR_IMAGE,
+        resolveSandboxBin: () => sandboxBin,
+      });
+      const tls = ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin, stateDir: gatewayDir });
+      cliEnv.OPENSHELL_LOCAL_TLS_DIR = tls.localTlsDir;
+      gateway = await startPinnedGateway(gatewayBin, gatewayEnv, progress);
+      for (const gatewayName of [GATEWAY_NAME, "nemoclaw"])
+        await runCommand(
+          shellProbe,
+          openshellBin,
+          ["gateway", "add", "https://127.0.0.1:8080", "--local", "--name", gatewayName],
+          { artifactName: `podman-uninstall-add-gateway-${gatewayName}`, env: cliEnv },
+        );
+      expect(await waitForHealthyGateway(shellProbe, openshellBin, cliEnv, gateway)).toMatchObject({
+        status: "healthy",
+      });
+      await runCommand(shellProbe, openshellBin, ["gateway", "remove", GATEWAY_NAME], {
+        artifactName: "podman-uninstall-remove-helper-gateway",
+        env: cliEnv,
+      });
+
       progress.phase("create receipt-owned and unrelated resources");
       for (const image of imageWasPresent.keys()) {
         expect(engine.capture(["pull", image]).status).toBe(0);
@@ -269,6 +322,7 @@ test(
       progress.phase("run the exact full uninstall command");
       await runCommand(shellProbe, nemoclawBin, UNINSTALL_ARGS, {
         artifactName: "podman-exact-full-uninstall",
+        env: cliEnv,
         timeoutMs: 240_000,
       });
 
@@ -399,6 +453,17 @@ test "$DOCKER_HOST" = "unix://$2"
       }
       fs.rmSync(stateDir, { recursive: true, force: true });
       fs.rmSync(configDir, { recursive: true, force: true });
+      await cleanupPodmanLifecycle({
+        cliEnv,
+        completed: true,
+        createdSandboxes: [],
+        engine,
+        gateway,
+        openshellBin,
+        previousPortableProfile,
+        root: gatewayRoot,
+        shellProbe,
+      });
     }
   },
 );

@@ -502,6 +502,8 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   expected: Profile,
   deps: PortableRetirementAuthorityDeps,
 ): Promise<void> {
+  const recovery = inspectPortableOnboardSupersession(boundary.homeDir);
+  if (recovery === null) return rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
   await lockedAuthority(boundary, expected, deps, (authority) =>
     supersedePortableRetirementAfterOnboard(boundary.homeDir, authority),
   );
