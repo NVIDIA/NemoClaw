@@ -107,6 +107,11 @@
       "category": "security"
     },
     {
+      "file": "test/openclaw-lifecycle-policy.test.ts",
+      "test": "cross-checks the allowlist against every production archive install boundary",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"
