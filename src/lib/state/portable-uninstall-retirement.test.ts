@@ -39,6 +39,7 @@ function fixture() {
 
 type Fixture = ReturnType<typeof fixture>;
 type TargetRole = "config" | "receipt" | "registry";
+const noMutation = (): void => undefined;
 
 function prepareFixture(test: Fixture) {
   return preparePortableRetirement(test.homeDir, [RECEIPT_BASENAME]);
@@ -217,12 +218,15 @@ describe("portable uninstall retirement state", () => {
     const outside = path.join(test.homeDir, "outside");
     fs.mkdirSync(outside, { mode: 0o700 });
     const unlink = fs.unlinkSync.bind(fs);
+    const replacePortableDirectory = () => {
+      fs.rmdirSync(portableDir);
+      fs.symlinkSync(outside, portableDir, "dir");
+    };
     vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
       unlink(target);
-      if (String(target).includes(".containers.conf.portable-uninstall-")) {
-        fs.rmdirSync(portableDir);
-        fs.symlinkSync(outside, portableDir, "dir");
-      }
+      (String(target).includes(".containers.conf.portable-uninstall-")
+        ? replacePortableDirectory
+        : noMutation)();
     });
 
     expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow();
@@ -238,13 +242,16 @@ describe("portable uninstall retirement state", () => {
     const outside = path.join(test.homeDir, "outside");
     fs.mkdirSync(path.join(outside, "portable"), { mode: 0o700, recursive: true });
     const unlink = fs.unlinkSync.bind(fs);
+    const replaceConfigDirectory = () => {
+      fs.rmdirSync(portableDir);
+      fs.rmdirSync(configDir);
+      fs.symlinkSync(outside, configDir, "dir");
+    };
     vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
       unlink(target);
-      if (String(target).includes(".containers.conf.portable-uninstall-")) {
-        fs.rmdirSync(portableDir);
-        fs.rmdirSync(configDir);
-        fs.symlinkSync(outside, configDir, "dir");
-      }
+      (String(target).includes(".containers.conf.portable-uninstall-")
+        ? replaceConfigDirectory
+        : noMutation)();
     });
 
     expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow();
@@ -268,14 +275,18 @@ describe("portable uninstall retirement state", () => {
     const lstat = fs.lstatSync.bind(fs);
     vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
       const stat = lstat(target, options as never);
-      if (String(target) !== portableDir || typeof stat.uid !== "bigint") return stat;
-      return new Proxy(stat, {
-        get(current, property) {
-          if (property === "uid") return current.uid + 1n;
-          const value = Reflect.get(current, property, current) as unknown;
-          return typeof value === "function" ? value.bind(current) : value;
-        },
-      });
+      return String(target) === portableDir && typeof stat.uid === "bigint"
+        ? new Proxy(stat, {
+            get(current, property) {
+              const value = Reflect.get(current, property, current) as unknown;
+              return property === "uid"
+                ? current.uid + 1n
+                : typeof value === "function"
+                  ? value.bind(current)
+                  : value;
+            },
+          })
+        : stat;
     }) as typeof fs.lstatSync);
 
     expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow(/Unsafe/);
@@ -289,11 +300,12 @@ describe("portable uninstall retirement state", () => {
     const marker = path.join(portableDir, "concurrent.conf");
     const rmdir = fs.rmdirSync.bind(fs);
     let inserted = false;
+    const insertMarker = () => {
+      inserted = true;
+      fs.writeFileSync(marker, "concurrent\n", { mode: 0o600 });
+    };
     vi.spyOn(fs, "rmdirSync").mockImplementation((target) => {
-      if (!inserted && String(target) === portableDir) {
-        inserted = true;
-        fs.writeFileSync(marker, "concurrent\n", { mode: 0o600 });
-      }
+      (!inserted && String(target) === portableDir ? insertMarker : noMutation)();
       return rmdir(target);
     });
 
@@ -307,13 +319,14 @@ describe("portable uninstall retirement state", () => {
     const portableDir = path.dirname(test.config);
     const readdir = fs.readdirSync.bind(fs);
     let replaced = false;
+    const replacePortableDirectory = () => {
+      replaced = true;
+      fs.rmdirSync(portableDir);
+      fs.mkdirSync(portableDir, { mode: 0o700 });
+    };
     vi.spyOn(fs, "readdirSync").mockImplementation(((target, options) => {
       const entries = readdir(target, options as never);
-      if (!replaced && String(target) === portableDir) {
-        replaced = true;
-        fs.rmdirSync(portableDir);
-        fs.mkdirSync(portableDir, { mode: 0o700 });
-      }
+      (!replaced && String(target) === portableDir ? replacePortableDirectory : noMutation)();
       return entries;
     }) as typeof fs.readdirSync);
 
