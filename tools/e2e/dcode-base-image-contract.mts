@@ -8,11 +8,13 @@ import { fileURLToPath } from "node:url";
 
 const AGENT = "langchain-deepagents-code";
 const IMAGE = "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base";
+const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const IMPORT_MARKER = "nemoclaw-dcode-base-imports-ok";
 
 type JsonRecord = Record<string, unknown>;
+export type DcodePlatform = (typeof PLATFORMS)[number];
 
 export interface DcodeBaseImageContract {
   contractVersion: 1;
@@ -20,9 +22,9 @@ export interface DcodeBaseImageContract {
   image: typeof IMAGE;
   digest: string;
   reference: string;
-  platforms: ["linux/amd64", "linux/arm64"];
-  platformDigests: Record<"linux/amd64" | "linux/arm64", string>;
-  platformReferences: Record<"linux/amd64" | "linux/arm64", string>;
+  platforms: typeof PLATFORMS;
+  platformDigests: Record<DcodePlatform, string>;
+  platformReferences: Record<DcodePlatform, string>;
   sourceRevision: string;
   run: { id: number; attempt: number };
 }
@@ -48,10 +50,7 @@ function exactKeys(value: JsonRecord, expected: readonly string[], label: string
   }
 }
 
-export function validateDcodeBaseImageContract(
-  value: unknown,
-  expected: { runId: number; runAttempt: number; headSha: string },
-): DcodeBaseImageContract {
+export function parseDcodeBaseImageContract(value: unknown): DcodeBaseImageContract {
   const contract = record(value, "Deep Agents Code base contract");
   exactKeys(
     contract,
@@ -78,12 +77,12 @@ export function validateDcodeBaseImageContract(
   if (contract.reference !== `${IMAGE}@${contract.digest}`) {
     throw new Error("base contract reference must match its image and digest");
   }
-  if (!SHA_PATTERN.test(expected.headSha) || contract.sourceRevision !== expected.headSha) {
-    throw new Error("base contract source revision does not match the selected publication");
+  if (typeof contract.sourceRevision !== "string" || !SHA_PATTERN.test(contract.sourceRevision)) {
+    throw new Error("base contract source revision must be a lowercase 40-character SHA");
   }
   if (
     !Array.isArray(contract.platforms) ||
-    JSON.stringify(contract.platforms) !== JSON.stringify(["linux/amd64", "linux/arm64"])
+    JSON.stringify(contract.platforms) !== JSON.stringify(PLATFORMS)
   ) {
     throw new Error("base contract platforms must be linux/amd64 and linux/arm64");
   }
@@ -105,13 +104,29 @@ export function validateDcodeBaseImageContract(
   }
   const run = record(contract.run, "base contract run");
   exactKeys(run, ["attempt", "id"], "base contract run");
+  positiveInteger(run.id, "base contract run id");
+  positiveInteger(run.attempt, "base contract run attempt");
+  return contract as unknown as DcodeBaseImageContract;
+}
+
+export function validateDcodeBaseImageContract(
+  value: unknown,
+  expected: { runId: number; runAttempt: number; headSha: string },
+): DcodeBaseImageContract {
+  if (!SHA_PATTERN.test(expected.headSha)) {
+    throw new Error("base contract source revision does not match the selected publication");
+  }
+  const contract = parseDcodeBaseImageContract(value);
+  if (contract.sourceRevision !== expected.headSha) {
+    throw new Error("base contract source revision does not match the selected publication");
+  }
   if (
-    positiveInteger(run.id, "base contract run id") !== expected.runId ||
-    positiveInteger(run.attempt, "base contract run attempt") !== expected.runAttempt
+    contract.run.id !== expected.runId ||
+    contract.run.attempt !== expected.runAttempt
   ) {
     throw new Error("base contract run does not match the selected publication");
   }
-  return contract as unknown as DcodeBaseImageContract;
+  return contract;
 }
 
 export function validateDcodeBaseImageImports(
@@ -119,6 +134,7 @@ export function validateDcodeBaseImageImports(
   runDocker: (args: string[]) => string = (args) =>
     execFileSync("docker", args, {
       encoding: "utf8",
+      killSignal: "SIGKILL",
       maxBuffer: 4 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120_000,

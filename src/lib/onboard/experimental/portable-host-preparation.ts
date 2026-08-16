@@ -23,6 +23,12 @@ import {
   portablePodmanReadinessError,
   type PortablePodmanReadinessDeps,
 } from "./portable-runtime-readiness";
+import {
+  inspectPortableCpuDelegation,
+  portableCpuDelegationError,
+  type CpuDelegationPreflight,
+  type CpuDelegationPreflightDeps,
+} from "./portable-cpu-delegation-preflight";
 
 const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
 const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
@@ -53,16 +59,8 @@ export interface PortableHostPreparationDeps {
   platform?: NodeJS.Platform;
   home?: string;
   uid?: number;
-  systemctl?: (
-    args: readonly string[],
-    env: NodeJS.ProcessEnv,
-    timeoutMs?: number,
-  ) => SpawnResult;
-  podman?: (
-    args: readonly string[],
-    env: NodeJS.ProcessEnv,
-    timeoutMs?: number,
-  ) => SpawnResult;
+  systemctl?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
+  podman?: (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult;
   docker?: (args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult;
   hardenSocketDirectory?: (socketPath: string, uid: number) => void;
   captureSocketAuthority?: (socketPath: string, uid: number) => PodmanSocketAuthority;
@@ -76,6 +74,7 @@ export interface PortableHostPreparationDeps {
     socketPath: string | null;
     uid: number;
   }) => void;
+  cpuDelegationPreflight?: (deps: CpuDelegationPreflightDeps) => CpuDelegationPreflight;
 }
 
 export interface PortableHostPreparationResult {
@@ -355,6 +354,13 @@ export function preparePortableExperimentalHost(
   if (!Number.isInteger(uid) || Number(uid) < 0) {
     throw new Error("The portable experimental profile could not resolve the current user ID.");
   }
+  // Fail early, before any config write or service activation, when the
+  // current user's systemd/cgroup hierarchy cannot enforce the sandbox CPU
+  // limit (gh #9188). The diagnostic is credential-free and never edits
+  // systemd units or weakens isolation.
+  const cpuDelegation = deps.cpuDelegationPreflight ?? inspectPortableCpuDelegation;
+  const cpuPreflight = cpuDelegation({ platform: deps.platform, uid: Number(uid) });
+  if (!cpuPreflight.ok) throw portableCpuDelegationError(cpuPreflight);
   const currentHome = canonicalAbsolute(deps.home ?? os.userInfo().homedir, "home directory");
   const home = canonicalAbsolute(expectedAuthority?.homeDir ?? currentHome, "home directory");
   const configHome = path.join(home, ".config");

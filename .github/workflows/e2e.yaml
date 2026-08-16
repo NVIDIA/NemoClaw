@@ -2318,6 +2318,14 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
+      # setup-node probes package managers in the workspace.
+      # Run it before candidate checkout with automatic caching disabled.
+      - name: Set up Node.js for trusted OpenShell verification
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -2325,16 +2333,6 @@ jobs:
           persist-credentials: false
 
       - *dockerhub-auth
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Checkout trusted OpenShell dev tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2410,6 +2408,21 @@ jobs:
           chmod 700 "$shim_dir/gh" "$shim_dir/curl"
           PATH="$shim_dir:$PATH" \
             bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh"
+
+      # Dependency preparation can read candidate project configuration. Keep
+      # it after the trusted installer has consumed the verified OpenShell
+      # assets and Docker credentials have been revoked.
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      # The restore action executes the candidate CLI for its final identity
+      # check. Candidate-controlled state starts with dependency preparation.
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
