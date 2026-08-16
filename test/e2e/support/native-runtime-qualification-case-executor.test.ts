@@ -34,14 +34,13 @@ function engine(outputs: readonly EngineOutput[]): {
   let index = 0;
   const capture = vi.fn((args: readonly string[]) => {
     const output = outputs[index++];
-    if (typeof output === "object") {
-      return { status: output.status, stdout: output.stdout ?? "", stderr: output.stderr ?? "" };
-    }
-    return {
-      status: output === undefined && args[0] === "network" && args[1] === "exists" ? 1 : 0,
-      stdout: output ?? "",
-      stderr: "",
-    };
+    return typeof output === "object"
+      ? { status: output.status, stdout: output.stdout ?? "", stderr: output.stderr ?? "" }
+      : {
+          status: output === undefined && args[0] === "network" && args[1] === "exists" ? 1 : 0,
+          stdout: output ?? "",
+          stderr: "",
+        };
   });
   return {
     capture,
