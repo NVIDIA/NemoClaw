@@ -157,17 +157,20 @@ function fixture(options: { readonly gpu?: boolean } = {}) {
       }),
     );
   }
-  if (row.case.acceleration === "nvidia-gpu") {
-    fs.writeFileSync(
-      path.join(executionDirectory, "nvidia-cdi.json"),
-      JSON.stringify({
-        schemaVersion: 1,
-        kind: "nemoclaw-native-runtime-qualification-nvidia-cdi-v1",
-        caseId: row.id,
-        result: "passed",
-        details: { device: "nvidia.com/gpu=all" },
-      }),
-    );
+  const cdiReceipts =
+    row.case.acceleration === "nvidia-gpu"
+      ? [
+          {
+            schemaVersion: 1,
+            kind: "nemoclaw-native-runtime-qualification-nvidia-cdi-v1",
+            caseId: row.id,
+            result: "passed",
+            details: { device: "nvidia.com/gpu=all" },
+          },
+        ]
+      : [];
+  for (const receipt of cdiReceipts) {
+    fs.writeFileSync(path.join(executionDirectory, "nvidia-cdi.json"), JSON.stringify(receipt));
   }
   fs.writeFileSync(
     path.join(executionDirectory, "case-evidence.json"),

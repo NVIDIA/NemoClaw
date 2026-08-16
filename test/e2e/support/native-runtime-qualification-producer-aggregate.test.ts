@@ -121,14 +121,20 @@ function candidateReceipts(
       details: { proof: id },
     });
   }
-  if (row.case.acceleration === "nvidia-gpu") {
-    writeJson(path.join(directory, "nvidia-cdi.json"), {
-      schemaVersion: 1,
-      kind: "nemoclaw-native-runtime-qualification-nvidia-cdi-v1",
-      caseId: row.id,
-      result: "passed",
-      details: { device: "nvidia.com/gpu=all" },
-    });
+  const cdiReceipts =
+    row.case.acceleration === "nvidia-gpu"
+      ? [
+          {
+            schemaVersion: 1,
+            kind: "nemoclaw-native-runtime-qualification-nvidia-cdi-v1",
+            caseId: row.id,
+            result: "passed",
+            details: { device: "nvidia.com/gpu=all" },
+          },
+        ]
+      : [];
+  for (const receipt of cdiReceipts) {
+    writeJson(path.join(directory, "nvidia-cdi.json"), receipt);
   }
   writeJson(path.join(directory, "case-evidence.json"), {
     schemaVersion: 1,

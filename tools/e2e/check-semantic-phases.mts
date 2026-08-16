@@ -392,7 +392,7 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "progress" },
   ],
   [
-    "test/e2e/live/native-runtime-qualification-case.test.ts#startPodmanQualificationService",
+    "test/e2e/live/native-runtime-qualification-case-executor.ts#startPodmanQualificationService",
     { kind: "path", path: "progress" },
   ],
   [
