@@ -1270,7 +1270,7 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
             --yes --no-install-recommends \
-            acl apparmor btrfs-progs conmon fuse-overlayfs \
+            acl apparmor btrfs-progs conmon \
             golang-github-containers-common iptables nftables passt runc slirp4netns uidmap
 
           [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
@@ -1512,10 +1512,7 @@ jobs:
             'driver = "overlay"' \
             "runroot = \"${home}/.local/share/containers/runroot\"" \
             "graphroot = \"${home}/.local/share/containers/storage\"" \
-            "rootless_storage_path = \"${home}/.local/share/containers/storage\"" \
-            '' \
-            '[storage.options.overlay]' \
-            'mount_program = "/usr/bin/fuse-overlayfs"' | sudo tee "$storage_config" >/dev/null
+            "rootless_storage_path = \"${home}/.local/share/containers/storage\"" | sudo tee "$storage_config" >/dev/null
           sudo chown root:root "$storage_config"
           sudo chmod 0444 "$storage_config"
           [[ -f "$storage_config" && ! -L "$storage_config" && "$(stat -c '%u:%g:%a' "$storage_config")" == "0:0:444" ]] || {
@@ -1559,16 +1556,24 @@ jobs:
           install -d -m 0755 "$guard_dir"
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
           chmod 0555 "$guard_dir/docker"
-          sudo -u "$account" env -i \
+          podman_info="$(sudo -u "$account" env -i \
             CONTAINERS_STORAGE_CONF="$storage_config" \
             HOME="$home" \
             LANG=C.UTF-8 \
             PATH="$guard_dir:/usr/local/bin:/usr/bin:/bin" \
             XDG_RUNTIME_DIR="$runtime_dir" \
-            "$podman_executable" info --format json >/dev/null || {
+            "$podman_executable" info --format json)" || {
               echo "::error::Credential-free rootless Podman readiness failed" >&2
               exit 1
             }
+          jq -e '
+            .host.security.rootless == true and
+            .store.graphDriverName == "overlay" and
+            (((.store.graphOptions // {})["overlay.mount_program"].Executable? // "") == "")
+          ' <<<"$podman_info" >/dev/null || {
+            echo "::error::Qualification requires native rootless overlay storage" >&2
+            exit 1
+          }
           printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"

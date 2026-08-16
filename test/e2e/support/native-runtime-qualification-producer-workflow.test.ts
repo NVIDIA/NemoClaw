@@ -235,7 +235,6 @@ describe("native runtime qualification producer workflow", () => {
       "acl",
       "apparmor",
       "conmon",
-      "fuse-overlayfs",
       "golang-github-containers-common",
       "passt",
       "runc",
@@ -244,6 +243,7 @@ describe("native runtime qualification producer workflow", () => {
     ]) {
       expect(podman.run).toContain(requiredPackage);
     }
+    expect(podman.run).not.toContain("fuse-overlayfs");
     expect(podman.run).toContain("find -P");
     expect(podman.run).toContain("sha256sum --check --strict SHA256SUMS");
     expect(podman.run).toContain('"nemoclaw-native-podman-toolchain-v1"');
@@ -275,7 +275,10 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
     expect(boundary.run).toContain("rootless_storage_path");
     expect(boundary.run).toContain("${home}/.local/share/containers/storage");
-    expect(boundary.run).toContain('mount_program = "/usr/bin/fuse-overlayfs"');
+    expect(boundary.run).not.toContain('mount_program = "/usr/bin/fuse-overlayfs"');
+    expect(boundary.run).toContain('.store.graphDriverName == "overlay"');
+    expect(boundary.run).toContain('["overlay.mount_program"].Executable?');
+    expect(boundary.run).toContain("Qualification requires native rootless overlay storage");
     expect(boundary.run).toContain("0:0:444");
     expect(boundary.run).toContain("/sys/module/apparmor/parameters/enabled");
     expect(boundary.run).toContain(
