@@ -80,7 +80,24 @@ describe("weekly E2E unit-test gap analysis", () => {
         from: "2026-08-09T20:00:00.000Z",
         to: "2026-08-16T20:00:00.000Z",
       }),
-    ).toEqual(expect.arrayContaining(["--repo", "NVIDIA/NemoClaw", "--workflow", "e2e.yaml"]));
+    ).toEqual([
+      "run",
+      "list",
+      "--repo",
+      "NVIDIA/NemoClaw",
+      "--workflow",
+      "e2e.yaml",
+      "--branch",
+      "main",
+      "--event",
+      "push",
+      "--created",
+      "2026-08-09T20:00:00.000Z..2026-08-16T20:00:00.000Z",
+      "--limit",
+      "1000",
+      "--json",
+      "attempt,conclusion,createdAt,databaseId,event,headBranch,headSha,name,status,url",
+    ]);
     expect(failedRunLogArgs(12345678)).toEqual([
       "run",
       "view",
