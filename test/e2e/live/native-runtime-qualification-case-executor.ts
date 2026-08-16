@@ -481,7 +481,7 @@ function createAgentContainer(input: {
       "/bin/sh",
       input.imageRef,
       "-c",
-      "while :; do sleep 3600; done",
+      "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $!; done",
     ],
     "agent container creation",
     INFERENCE_TIMEOUT,
@@ -499,6 +499,7 @@ async function agentTurn(
 ): Promise<string> {
   const body = JSON.stringify({
     model,
+    ...(inference === "ollama" ? { reasoning_effort: "none" } : {}),
     messages: [
       {
         role: "user",
@@ -826,13 +827,15 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const lifecycle = bundle.lifecycle;
     const input = lifecycleInput(row.case.agent, sandboxName);
     let beforeStopCalled = false;
-    expect(
-      lifecycle.stop(input, {
-        beforeStop: () => {
-          beforeStopCalled = true;
-        },
-      }),
-    ).toMatchObject({ exitCode: 0, state: "stopped" });
+    const firstStop = lifecycle.stop(input, {
+      beforeStop: () => {
+        beforeStopCalled = true;
+      },
+    });
+    if (firstStop.exitCode !== 0) {
+      throw new Error(`Initial sandbox stop failed: ${bounded(firstStop.message ?? "unknown")}`);
+    }
+    expect(firstStop.state).toBe("stopped");
     expect(beforeStopCalled).toBe(true);
     expect(lifecycle.start(input)).toEqual({ exitCode: 0 });
     operationDetails.set("sandbox.stop-start", {
@@ -842,7 +845,12 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     });
 
     snapshot = path.join(os.tmpdir(), `nemoclaw-q-${caseSuffix}.tar`);
-    expect(lifecycle.stop(input, { beforeStop: () => undefined })).toMatchObject({ exitCode: 0 });
+    const snapshotStop = lifecycle.stop(input, { beforeStop: () => undefined });
+    if (snapshotStop.exitCode !== 0) {
+      throw new Error(
+        `Snapshot sandbox stop failed: ${bounded(snapshotStop.message ?? "unknown")}`,
+      );
+    }
     capture(
       lifecycleEngine,
       ["volume", "export", "--output", snapshot, volumeName],

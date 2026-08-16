@@ -159,11 +159,31 @@ describe("native runtime qualification producer workflow", () => {
     expect(buildDependencies.run).not.toContain("libgpgme-dev");
     expect(buildDependencies.run).not.toContain("libassuan-dev");
     expect(buildDependencies.run).not.toContain("libgpg-error-dev");
+    expect(buildDependencies.run).toContain("curl");
     expect(build.run).toContain("podman rootlessport PREFIX=/usr/local");
     expect(build.run).toContain("EXTRA_BUILDTAGS=containers_image_openpgp");
     expect(build.run).not.toContain("quadlet");
     expect(build.run).toContain("make --directory=.netavark-source --jobs=2 build");
     expect(build.run).toContain("make --directory=.aardvark-source --jobs=2 build");
+    expect(build.run).toContain("https://passt.top/passt");
+    expect(build.run).toContain("/usr/bin/curl");
+    expect(build.env?.PASTA_SOURCE_ARCHIVE_SHA256).toBe(
+      "54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958",
+    );
+    expect(build.env?.PASTA_SOURCE_SHA).toBe("f8df3f1b228fe19a74a269334fdfe6cc7d0605ce");
+    expect(build.env?.PASTA_VERSION).toBe("2026_07_28.f8df3f1");
+    expect(build.run).toContain("sha256sum \"$pasta_source_archive\"");
+    expect(build.run).toContain("--no-same-owner --no-same-permissions");
+    expect(build.run).toContain("[[ ! -e .passt-source/passt && ! -L .passt-source/passt ]]");
+    expect(build.run).not.toMatch(/\bgit\s+fetch\b/u);
+    expect(build.run).toContain(
+      'make --directory=.passt-source --jobs=2 VERSION="$PASTA_VERSION" passt',
+    );
+    expect(build.run).toContain(
+      'install -D -m 0755 .passt-source/passt "$TOOLCHAIN_DIRECTORY/bin/pasta"',
+    );
+    expect(build.run).toContain('"pasta $PASTA_VERSION"');
+    expect(build.run).toMatch(/sha256sum[\s\S]+bin\/pasta[\s\S]+manifest\.json/u);
     expect(build.run).toContain("sha256sum");
     expect(build.run).toContain("Pinned Podman build has an unresolved runtime dependency");
     expect(build.run).toContain("Pinned Podman build must not require an optional host ABI");
@@ -252,6 +272,14 @@ describe("native runtime qualification producer workflow", () => {
     expect(gpuResources.run).toContain("unset NVIDIA_API_KEY");
     expect(gpuResources.run).toContain("7ae557604adf67be50417f59c2c2f167def9a775");
     expect(gpuResources.run).toContain("sudo stat -c '%u:%g:%a:%h:%s' -- \"$target\"");
+    expect(gpuResources.run).toContain("sudo stat -c '%u:%g:%h:%s' -- \"$target\"");
+    expect(gpuResources.run).toContain('sudo chmod 0600 -- "$target"');
+    expect(gpuResourcesRun.indexOf('sudo chmod 0600 -- "$target"')).toBeGreaterThan(
+      gpuResourcesRun.indexOf("sudo stat -c '%u:%g:%h:%s'"),
+    );
+    expect(gpuResourcesRun.indexOf('sudo chmod 0600 -- "$target"')).toBeLessThan(
+      gpuResourcesRun.indexOf("sudo stat -c '%u:%g:%a:%h:%s'"),
+    );
     expect(gpuResources.run).toContain('sudo git hash-object --no-filters -- "$target"');
     expect(gpuResources.run).toContain('sudo sha256sum -- "$target"');
     expect(gpuResources.run).toContain("model-free-nim@sha256:");
@@ -275,16 +303,17 @@ describe("native runtime qualification producer workflow", () => {
       "apparmor",
       "conmon",
       "golang-github-containers-common",
-      "passt",
       "runc",
       "slirp4netns",
       "uidmap",
     ]) {
       expect(podman.run).toContain(requiredPackage);
     }
+    expect(podman.run).not.toMatch(/\s+passt(?:\s|$)/u);
     expect(podman.run).not.toContain("fuse-overlayfs");
     expect(podman.run).toContain("find -P");
     expect(podman.run).toContain("sha256sum --check --strict SHA256SUMS");
+    expect(podman.run).toContain("./bin/pasta");
     expect(podman.run).toContain('"nemoclaw-native-podman-toolchain-v1"');
     expect(podman.run).toContain("Downloaded native Podman toolchain contains unexpected files");
     expect(podman.run).toContain("Native Podman toolchain target must not be a symlink");
@@ -292,6 +321,11 @@ describe("native runtime qualification producer workflow", () => {
     expect(podman.run).toContain('dpkg --compare-versions "$runc_version" ge 1.1.11');
     expect(podman.run).toContain('"netavark 2.1.0"');
     expect(podman.run).toContain('"aardvark-dns 2.1.0"');
+    expect(podman.run).toContain('"2026_07_28.f8df3f1"');
+    expect(podman.run).toContain(
+      '"54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958"',
+    );
+    expect(podman.run).toContain('"f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"');
     expect(podman.run).toContain('[[ "$version" == "podman version 6.1.0" ]]');
     expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
@@ -354,6 +388,10 @@ describe("native runtime qualification producer workflow", () => {
       "profile ${pasta_apparmor_profile_name} ${pasta_executable} flags=(unconfined)",
     );
     expect(boundary.run).toContain("Run-owned qualification pasta executable digest changed");
+    expect(boundary.run).toContain(
+      '"$TOOLCHAIN_DIRECTORY/bin/pasta" "$pasta_executable"',
+    );
+    expect(boundary.run).not.toContain("/usr/bin/pasta");
     expect(boundary.run).toContain(
       'PATH="$guard_dir:$helper_directory:/usr/local/bin:/usr/bin:/bin"',
     );
@@ -486,6 +524,10 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain('sudo unlink "$storage_config_directory/containers.conf"');
     expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
     expect(cleanup.run).toContain('sudo rm -f -- "$podman_executable"');
+    expect(cleanup.run).toContain('sudo test -e "$model_directory"');
+    expect(cleanup.run).toContain("sudo stat -c '%u:%g:%a' -- \"$model_directory\"");
+    expect(cleanup.run).toContain('sudo test -f "$target"');
+    expect(cleanup.run).toContain('sudo test ! -L "$target"');
     expect(cleanup.run).toContain("Qualification Podman executable remains after cleanup");
     expect(cleanup.run).toContain("Qualification GPU resource directory remains after cleanup");
     expect(cleanup.run).toContain(

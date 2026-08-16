@@ -1076,7 +1076,7 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
             --yes --no-install-recommends \
-            gcc git libapparmor-dev libbtrfs-dev libc6-dev \
+            curl gcc git libapparmor-dev libbtrfs-dev libc6-dev \
             libdevmapper-dev libglib2.0-dev \
             libprotobuf-c-dev libprotobuf-dev libseccomp-dev libselinux1-dev \
             libsqlite3-dev libsystemd-dev make pkg-config protobuf-compiler
@@ -1086,6 +1086,9 @@ jobs:
           AARDVARK_SOURCE_SHA: cd7417681229219059939bdd9f0b3bd9ac9abb08
           EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
           NETAVARK_SOURCE_SHA: 8e91ad1d947ed325327b638f0cb906bea1f7d0ab
+          PASTA_SOURCE_ARCHIVE_SHA256: 54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958
+          PASTA_SOURCE_SHA: f8df3f1b228fe19a74a269334fdfe6cc7d0605ce
+          PASTA_VERSION: 2026_07_28.f8df3f1
           PODMAN_SOURCE_SHA: cade97a52ebdf9dbf9e81de8009015776837a074
           TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
         shell: bash
@@ -1095,6 +1098,24 @@ jobs:
           [[ "$(git -C .podman-source rev-parse --verify 'HEAD^{commit}')" == "$PODMAN_SOURCE_SHA" ]]
           [[ "$(git -C .netavark-source rev-parse --verify 'HEAD^{commit}')" == "$NETAVARK_SOURCE_SHA" ]]
           [[ "$(git -C .aardvark-source rev-parse --verify 'HEAD^{commit}')" == "$AARDVARK_SOURCE_SHA" ]]
+          [[ ! -e .passt-source && ! -L .passt-source ]]
+          pasta_source_archive="${RUNNER_TEMP}/passt-${PASTA_SOURCE_SHA}.tar.gz"
+          [[ ! -e "$pasta_source_archive" && ! -L "$pasta_source_archive" ]]
+          /usr/bin/curl \
+            --fail --location --proto '=https' --proto-redir '=https' \
+            --retry 3 --show-error --silent --tlsv1.2 \
+            --output "$pasta_source_archive" \
+            "https://passt.top/passt/snapshot/passt-${PASTA_SOURCE_SHA}.tar.gz"
+          [[ -f "$pasta_source_archive" && ! -L "$pasta_source_archive" ]]
+          [[ "$(sha256sum "$pasta_source_archive" | cut -d' ' -f1)" == "$PASTA_SOURCE_ARCHIVE_SHA256" ]]
+          mkdir .passt-source
+          tar \
+            --extract --gzip --file="$pasta_source_archive" \
+            --directory=.passt-source --strip-components=1 \
+            --no-same-owner --no-same-permissions
+          [[ -f .passt-source/Makefile && ! -L .passt-source/Makefile ]]
+          [[ -f .passt-source/passt.c && ! -L .passt-source/passt.c ]]
+          [[ ! -e .passt-source/passt && ! -L .passt-source/passt ]]
           for source in .podman-source .netavark-source .aardvark-source; do
             [[ -z "$(git -C "$source" status --porcelain --untracked-files=no)" ]]
           done
@@ -1110,6 +1131,8 @@ jobs:
             make --directory=.netavark-source --jobs=2 build
           SOURCE_DATE_EPOCH=1785940850 CI=1 \
             make --directory=.aardvark-source --jobs=2 build
+          SOURCE_DATE_EPOCH=1785255008 \
+            make --directory=.passt-source --jobs=2 VERSION="$PASTA_VERSION" passt
 
           podman_dependencies="$(ldd .podman-source/bin/podman)"
           printf '%s\n' "$podman_dependencies"
@@ -1123,6 +1146,8 @@ jobs:
           fi
 
           install -D -m 0755 .podman-source/bin/podman "$TOOLCHAIN_DIRECTORY/bin/podman"
+          [[ -f .passt-source/passt && ! -L .passt-source/passt ]]
+          install -D -m 0755 .passt-source/passt "$TOOLCHAIN_DIRECTORY/bin/pasta"
           install -D -m 0755 .podman-source/bin/rootlessport \
             "$TOOLCHAIN_DIRECTORY/libexec/podman/rootlessport"
           install -D -m 0755 .netavark-source/bin/netavark \
@@ -1134,12 +1159,16 @@ jobs:
             "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf"
 
           [[ "$("$TOOLCHAIN_DIRECTORY/bin/podman" --version)" == "podman version 6.1.0" ]]
+          [[ "$("$TOOLCHAIN_DIRECTORY/bin/pasta" --version)" == "pasta $PASTA_VERSION" ]]
           [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/netavark" --version)" == "netavark 2.1.0" ]]
           [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/aardvark-dns" --version)" == "aardvark-dns 2.1.0" ]]
           jq -n \
             --arg architecture "$EXPECTED_ARCHITECTURE" \
             --arg aardvarkDnsSourceSha "$AARDVARK_SOURCE_SHA" \
             --arg netavarkSourceSha "$NETAVARK_SOURCE_SHA" \
+            --arg pastaSourceArchiveSha256 "$PASTA_SOURCE_ARCHIVE_SHA256" \
+            --arg pastaSourceSha "$PASTA_SOURCE_SHA" \
+            --arg pastaVersion "$PASTA_VERSION" \
             --arg podmanSourceSha "$PODMAN_SOURCE_SHA" '
               {
                 schemaVersion: 1,
@@ -1151,6 +1180,9 @@ jobs:
                 netavarkSourceSha: $netavarkSourceSha,
                 aardvarkDnsVersion: "2.1.0",
                 aardvarkDnsSourceSha: $aardvarkDnsSourceSha,
+                pastaVersion: $pastaVersion,
+                pastaSourceArchiveSha256: $pastaSourceArchiveSha256,
+                pastaSourceSha: $pastaSourceSha,
                 goVersion: "1.25.9",
                 rustVersion: "1.88.0"
               }
@@ -1158,6 +1190,7 @@ jobs:
           (
             cd "$TOOLCHAIN_DIRECTORY"
             sha256sum \
+              bin/pasta \
               bin/podman \
               libexec/podman/aardvark-dns \
               libexec/podman/netavark \
@@ -1271,7 +1304,7 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
             --yes --no-install-recommends \
             acl apparmor btrfs-progs conmon \
-            golang-github-containers-common iptables nftables passt runc slirp4netns uidmap
+            golang-github-containers-common iptables nftables runc slirp4netns uidmap
 
           [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
           [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
@@ -1281,6 +1314,7 @@ jobs:
           )
           expected_files=(
             ./SHA256SUMS
+            ./bin/pasta
             ./bin/podman
             ./libexec/podman/aardvark-dns
             ./libexec/podman/netavark
@@ -1307,6 +1341,9 @@ jobs:
                 "kind",
                 "netavarkSourceSha",
                 "netavarkVersion",
+                "pastaSourceArchiveSha256",
+                "pastaSourceSha",
+                "pastaVersion",
                 "podmanSourceSha",
                 "podmanVersion",
                 "rustVersion",
@@ -1321,6 +1358,9 @@ jobs:
               .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
               .aardvarkDnsVersion == "2.1.0" and
               .aardvarkDnsSourceSha == "cd7417681229219059939bdd9f0b3bd9ac9abb08" and
+              .pastaVersion == "2026_07_28.f8df3f1" and
+              .pastaSourceArchiveSha256 == "54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958" and
+              .pastaSourceSha == "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce" and
               .goVersion == "1.25.9" and
               .rustVersion == "1.88.0"
             ' "$TOOLCHAIN_DIRECTORY/manifest.json" >/dev/null
@@ -1592,12 +1632,13 @@ jobs:
             echo "::error::Run-owned qualification Podman executable digest changed during installation" >&2
             exit 1
           }
-          [[ -f /usr/bin/pasta && ! -L /usr/bin/pasta && "$(stat -c '%u:%g:%a' /usr/bin/pasta)" == "0:0:755" ]] || {
-            echo "::error::Signed-OS pasta helper is missing or writable" >&2
+          [[ -f "$TOOLCHAIN_DIRECTORY/bin/pasta" && ! -L "$TOOLCHAIN_DIRECTORY/bin/pasta" ]] || {
+            echo "::error::Pinned qualification pasta executable source is missing or invalid" >&2
             exit 1
           }
           sudo install -d --owner=root --group=root --mode=0555 "$helper_directory"
-          sudo install --owner=root --group=root --mode=0555 /usr/bin/pasta "$pasta_executable"
+          sudo install --owner=root --group=root --mode=0555 \
+            "$TOOLCHAIN_DIRECTORY/bin/pasta" "$pasta_executable"
           [[ -d "$helper_directory" && ! -L "$helper_directory" && "$(stat -c '%u:%g:%a' "$helper_directory")" == "0:0:555" ]] || {
             echo "::error::Run-owned qualification helper directory is invalid" >&2
             exit 1
@@ -1606,7 +1647,7 @@ jobs:
             echo "::error::Run-owned qualification pasta executable is invalid" >&2
             exit 1
           }
-          [[ "$(sha256sum "$pasta_executable" | cut -d' ' -f1)" == "$(sha256sum /usr/bin/pasta | cut -d' ' -f1)" ]] || {
+          [[ "$(sha256sum "$pasta_executable" | cut -d' ' -f1)" == "$(sha256sum "$TOOLCHAIN_DIRECTORY/bin/pasta" | cut -d' ' -f1)" ]] || {
             echo "::error::Run-owned qualification pasta executable digest changed during installation" >&2
             exit 1
           }
@@ -1865,8 +1906,13 @@ jobs:
                   "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/resolve/${model_revision}/${file}?download=true"
               sudo test -f "$target" &&
                 sudo test ! -L "$target" &&
-                [[ "$(sudo stat -c '%u:%g:%a:%h:%s' -- "$target")" == "${uid}:${gid}:600:1:${size}" ]] || {
+                [[ "$(sudo stat -c '%u:%g:%h:%s' -- "$target")" == "${uid}:${gid}:1:${size}" ]] || {
                 echo "::error::Downloaded GPU model file metadata is invalid: $file" >&2
+                exit 1
+              }
+              sudo chmod 0600 -- "$target"
+              [[ "$(sudo stat -c '%u:%g:%a:%h:%s' -- "$target")" == "${uid}:${gid}:600:1:${size}" ]] || {
+                echo "::error::Downloaded GPU model file permissions are invalid: $file" >&2
                 exit 1
               }
               if [[ "$algorithm" == "sha256" ]]; then
@@ -2275,17 +2321,21 @@ jobs:
                 echo "::error::Qualification GPU resource directory cleanup target is invalid" >&2
                 exit 1
               }
-              if [[ -e "$model_directory" || -L "$model_directory" ]]; then
-                model_mode="$(stat -c '%u:%g:%a' "$model_directory")"
-                [[ -d "$model_directory" && ! -L "$model_directory" && ("$model_mode" == "${uid}:${gid}:700" || "$model_mode" == "0:0:555") ]] || {
+              if sudo test -e "$model_directory" || sudo test -L "$model_directory"; then
+                model_mode="$(sudo stat -c '%u:%g:%a' -- "$model_directory")"
+                sudo test -d "$model_directory" &&
+                  sudo test ! -L "$model_directory" &&
+                  [[ "$model_mode" == "${uid}:${gid}:700" || "$model_mode" == "0:0:555" ]] || {
                   echo "::error::Qualification GPU model directory cleanup target is invalid" >&2
                   exit 1
                 }
                 for file in config.json generation_config.json merges.txt model.safetensors tokenizer.json tokenizer_config.json vocab.json; do
                   target="${model_directory}/${file}"
-                  if [[ -e "$target" || -L "$target" ]]; then
-                    file_mode="$(stat -c '%u:%g:%a:%h' "$target")"
-                    [[ -f "$target" && ! -L "$target" && ("$file_mode" == "${uid}:${gid}:600:1" || "$file_mode" == "0:0:444:1") ]] || {
+                  if sudo test -e "$target" || sudo test -L "$target"; then
+                    file_mode="$(sudo stat -c '%u:%g:%a:%h' -- "$target")"
+                    sudo test -f "$target" &&
+                      sudo test ! -L "$target" &&
+                      [[ "$file_mode" == "${uid}:${gid}:600:1" || "$file_mode" == "0:0:444:1" ]] || {
                       echo "::error::Qualification GPU model file cleanup target is invalid: $file" >&2
                       exit 1
                     }
