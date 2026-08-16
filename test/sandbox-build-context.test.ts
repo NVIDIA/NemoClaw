@@ -293,16 +293,17 @@ describe("sandbox build context staging", () => {
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
     const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    const copiedScripts = dockerfile.split("\n").flatMap((line) => {
-      const tokens = line.trim().split(/\s+/u);
-      if (tokens[0] !== "COPY") return [];
-      const firstSource = tokens.findIndex((token, index) => index > 0 && !token.startsWith("--"));
-      if (firstSource < 0) return [];
-      return tokens
-        .slice(firstSource, -1)
-        .filter((token) => token.startsWith("scripts/"))
-        .map((token) => token.slice("scripts/".length));
-    });
+    const copiedScripts = dockerfile
+      .split("\n")
+      .flatMap(
+        (line) =>
+          line
+            .trim()
+            .match(/^COPY(?:\s+--\S+)*\s+(.+)\s+\S+$/u)?.[1]
+            ?.split(/\s+/u) ?? [],
+      )
+      .filter((token) => token.startsWith("scripts/"))
+      .map((token) => token.slice("scripts/".length));
     expect(copiedScripts).not.toHaveLength(0);
 
     for (const relativePath of copiedScripts) {
