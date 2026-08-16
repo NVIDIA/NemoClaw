@@ -87,7 +87,7 @@ function withOwnedFixtureFile<T>(
   flags: number,
   action: (descriptor: number, stats: Stats) => T,
 ): T {
-  const descriptor = openSync(filePath, flags | constants.O_NOFOLLOW);
+  const descriptor = openSync(filePath, flags | constants.O_NOFOLLOW, 0o600);
   try {
     const stats = fstatSync(descriptor);
     expect([stats.isFile(), stats.uid, stats.mode & 0o777, stats.nlink]).toEqual([
