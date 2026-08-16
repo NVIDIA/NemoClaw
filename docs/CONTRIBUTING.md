@@ -6,9 +6,8 @@
 # Contributing to NemoClaw Documentation
 
 This guide owns the public-facing documentation procedure and rules for NemoClaw.
-After a code-changing pull request (PR) merges, `Docs / Post-Merge Catch-Up` reviews its documentation impact.
-Code-changing PRs are not required to include documentation updates.
-If a managed documentation PR is open, later merged changes wait for its merge-triggered cumulative review.
+Code-changing pull requests (PRs) may defer public `docs/**`, `fern/docs.yml`, and `fern/assets/**` updates to `Docs / Post-Merge Catch-Up`.
+Code merges continue while later merged changes remain pending for documentation catch-up.
 
 ## When to Update Docs
 
@@ -86,11 +85,8 @@ Fern publishes Markdown routes for AI agents from the same source pages.
 
 The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
-The end-of-day maintainer workflow continues the managed documentation PR when one exists.
-Otherwise, it opens a direct documentation-only PR for the planned release entry.
-It merges the documentation PR before loading `nemoclaw-maintainer-cut-release-tag`.
-The `nemoclaw-maintainer-cut-release-tag` skill requires the exact `origin/main` run's publisher job to succeed, with no managed documentation PR or branch for that commit.
-It does not author, validate, or review documentation.
+The end-of-day flow merges the planned release entry.
+The tag skill then requires a successful no-change publisher job for the exact `origin/main` commit, no open managed documentation PR, and no branch for that candidate.
 
 For each release:
 

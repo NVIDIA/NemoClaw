@@ -41,33 +41,15 @@ A polished site with weak retrieval or verification is not agent-ready.
 
 ## Move Documentation Into the Engineering Loop
 
-Many documentation workflows depend on a writer reconstructing product changes before a release.
-NemoClaw instead starts documentation work after each push to `main`.
-The authoring agent inspects the merged implementation, tests, documentation, and commit history from the latest reachable semver tag through the pushed commit.
+Each push to `main` starts `Docs / Post-Merge Catch-Up` for the merged implementation, tests, and documentation from the latest reachable semver tag through the pushed commit.
 
-The workflow performs the following work:
+1. It authors documentation changes in a credential-free OpenShell sandbox.
+2. A separate read-only sandbox reviews the exact documentation candidate.
+3. For an approved nonempty patch, a publisher with no model credential creates a GitHub-verified commit and one SHA-specific draft PR.
 
-1. It exits before model execution when a managed documentation PR is open.
-2. It authors documentation changes in a credential-free OpenShell sandbox.
-3. It accepts changes only under `docs/` and `fern/`.
-4. A separate read-only sandbox reviews the exact candidate.
-5. A credential-free job runs `npm run docs:validate` on the approved candidate.
-6. A publisher with no model credential creates a GitHub-verified commit and one SHA-specific draft documentation PR.
-
-At most one managed documentation PR is open.
-Changes that reach `main` while it is open wait for the run triggered by that PR's merge.
-That run reviews the complete range from the latest reachable semver tag through the resulting `main` commit.
-If `main` changes during authoring, publication stops.
-The queued run then reviews the cumulative range through the newer `main` commit.
-Code-changing PRs are not required to include documentation updates.
-
-The draft PR records the successful validation and independent review.
-Maintainers inspect the draft PR for GitHub checks and approve any runs that require approval before merge.
-The end-of-day maintainer workflow continues the managed documentation PR when one exists.
-Otherwise, it opens a direct documentation-only PR for the dated release entry.
-It merges the documentation PR before loading the tag skill.
-The `nemoclaw-maintainer-cut-release-tag` skill then requires the exact `origin/main` run's publisher job to succeed, with no managed documentation PR or branch for that commit.
-The skill checks this state without repeating documentation analysis, authoring, validation, or review.
+An approved empty patch creates no PR; repeat after each nonempty draft merges until a later cumulative exact-SHA run approves an empty patch.
+Code merges continue while their documentation changes remain pending.
+Required PR checks run `npm run docs` after any required approval.
 
 ## Use a Layered Architecture
 
@@ -564,10 +546,9 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Reusable structured facts have a parity-checked reference owner that task pages and agent workflows consult instead of copying.
 - Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
-- Post-merge authoring and independent review cover the exact merged commit range.
-- The publisher accepts only the validated, approved patch for the exact `main` commit.
-- Maintainers inspect the workflow-created draft PR for GitHub checks and approve any runs that require approval.
-- Release tagging requires the exact `main` run's publisher job to succeed, with no managed documentation PR or branch for that commit.
+- Post-merge publication binds the approved patch digest to the repository and exact `main` commit.
+- Required checks run `npm run docs` after a maintainer starts any approval-required runs.
+- Release tagging requires the exact `main` run's no-change publisher job to succeed, with no managed documentation PR open and no branch for that candidate.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
 - Documentation accuracy claims identify their source-derived parity test, executable journey test, or evidence-based review coverage.
 - Release publication uses an approved immutable revision.

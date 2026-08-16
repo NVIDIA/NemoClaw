@@ -281,20 +281,11 @@ If the command trace contains no reviewer-request write, report the event as an 
 
 ## Documentation
 
-- Treat `docs/` as the source of truth for public-facing documentation.
-  Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow,
-  including DORI routing.
-- Ordinary code PRs do not need to include their documentation updates. A push to `main` starts
-  `Docs / Post-Merge Catch-Up`, which analyzes merged changes, authors and validates documentation,
-  runs an independent review, and opens one draft PR on an `automation/post-merge-docs-*` branch.
-- Direct documentation-only changes must receive an independent documentation writer review and follow
-  `docs/AGENTS.md`, the shared
-  [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md)
-  contract, and the documented validation.
-- Before tagging, `nemoclaw-maintainer-evening` ensures that a documentation PR contains the dated
-  release entry and is merged. `nemoclaw-maintainer-cut-release-tag` only
-  checks that the exact `origin/main` run published successfully, with no managed PR or branch
-  remaining for that commit.
+- Treat `docs/` as the source of truth for public-facing documentation. Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow, including DORI routing.
+- Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**` changes to `Docs / Post-Merge Catch-Up`.
+  Keep all other owning repository guidance in the same PR, including active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.
+- Direct documentation-only changes follow `docs/AGENTS.md`, the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract, documented validation, and independent review.
+- Before tagging, `nemoclaw-maintainer-evening` merges the dated release entry. The tag skill requires a successful no-change publisher job for the exact `origin/main` commit, no open managed documentation PR, and no branch for that candidate.
 
 ## PR Requirements
 
@@ -306,7 +297,7 @@ If the command trace contains no reviewer-request write, report the event as an 
 - If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
 - Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
 - Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run validate:pr`
-- Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
+- Direct PRs follow `.github/PULL_REQUEST_TEMPLATE.md`; the managed documentation workflow uses its generated body
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
 - Apply the 10-open-PR limit from `.github/workflows/pr-limit.yaml` only to accounts that the workflow does not exempt

@@ -487,6 +487,11 @@
       "category": "security"
     },
     {
+      "file": "test/pr-docs-only-merge-base-workflow.test.ts",
+      "test": "keeps hooks scoped to docs when main advances after the branch base (#8160)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
       "test": "binds host-prepared GitHub context to the selected repository and pull request",
       "category": "compatibility"

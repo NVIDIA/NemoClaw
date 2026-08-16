@@ -274,6 +274,9 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Error or recovery:");
     expect(skill).toContain("Boundary or ambiguous state:");
     expect(skill).toContain("Name the operation and failure class the change belongs to");
+    expect(skill).toContain("Keep owning repository guidance in the same change.");
+    expect(skill).toContain("`.agents/skills/**`");
+    expect(skill).toContain("`test/e2e/**/README.md`");
     expect(skill).toContain("Record the sibling paths");
     expect(skill).toContain("Re-check the recorded operation and failure class");
     expect(skill).toContain("Sibling paths checked:");

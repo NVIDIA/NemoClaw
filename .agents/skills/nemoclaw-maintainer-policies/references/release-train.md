@@ -22,15 +22,12 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 ## Release-Prep Docs
 
-During the evening flow, continue the `Docs / Post-Merge Catch-Up` PR whose head starts with
-`automation/post-merge-docs-` when one exists. Otherwise, open a direct documentation-only PR.
-Ensure that the documentation PR creates or updates `docs/changelog/YYYY-MM-DD.mdx` with the
-required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets. Merge the
-documentation PR before generating the final release plan.
+During the evening flow, continue the managed documentation PR when one exists; otherwise open a
+direct documentation-only PR. Add `docs/changelog/YYYY-MM-DD.mdx` with its required `## vX.Y.Z`
+heading, parser-safe MDX SPDX comment, summary, and detailed bullets. Merge it before the final plan.
 
-The latest completed, successful `Docs / Post-Merge Catch-Up` push run must use the exact release
-candidate commit, and its `Open the documentation pull request` job must succeed. At plan
-generation and tag cut, no managed documentation PR or candidate branch may remain.
+Require the exact candidate's successful no-change `Docs / Post-Merge Catch-Up` publisher job.
+At plan generation and tag cut, no managed documentation PR may be open and no branch may exist for the exact candidate.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
 ## Cutoff
@@ -42,14 +39,12 @@ At cutoff:
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Confirm the documentation PR with the dated release entry is merged.
-5. Require the exact release candidate's successful `Docs / Post-Merge Catch-Up` publisher job,
-   with no managed documentation PR or candidate branch.
-6. Generate QA handoff from merged PRs.
-7. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
-8. Review the candidate commit's pre-tag E2E evidence.
-9. Cut the release tag only with explicit maintainer confirmation.
-10. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
+4. Complete [Release-Prep Docs](#release-prep-docs) for the exact candidate.
+5. Generate QA handoff from merged PRs.
+6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
+7. Review the candidate commit's pre-tag E2E evidence.
+8. Cut the release tag only with explicit maintainer confirmation.
+9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
 
 ## Pre-Tag E2E Evidence
 

@@ -11,21 +11,27 @@ import { pathToFileURL } from "node:url";
 import {
   configureOpenShellInference,
   createOpenShellSandbox,
+  defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,
   execOpenShellSandbox,
   required,
+  type OpenShellTools,
 } from "../openshell-agent/runtime.mts";
 import {
   RESOLVER_MODEL_ID,
   resolverModelConfiguration,
 } from "../pr-merge-conflict-fixer/resolve.mts";
+import { allowedDocumentationPath, readBoundedFile } from "./contract.mts";
 
 const PATCH_FILE = "docs.patch";
 const MAX_PATCH_BYTES = 5_242_880;
 const MAX_FILE_BYTES = 1_048_576;
 const SHA = /^[0-9a-f]{40}$/u;
-const TAG = /^v\d+\.\d+\.\d+$/u;
+const AGENT_FLAGS =
+  "--no-context-files --no-extensions --no-prompt-templates --no-session --no-skills --no-themes --offline --print".split(
+    " ",
+  );
 const GIT_ENV = {
   ...process.env,
   GIT_CONFIG_GLOBAL: "/dev/null",
@@ -34,10 +40,8 @@ const GIT_ENV = {
 };
 type Phase = "author" | "review";
 
-export class PostMergeDocsError extends Error {}
-
 function fail(message: string): never {
-  throw new PostMergeDocsError(message);
+  throw new Error(message);
 }
 
 function phase(env: NodeJS.ProcessEnv): Phase {
@@ -65,21 +69,6 @@ function reset(directory: string): void {
   fs.mkdirSync(directory, { mode: 0o700, recursive: true });
 }
 
-function read(file: string, maximum: number): Buffer {
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || stat.size > maximum) {
-      fail(`Invalid or oversized file: ${path.basename(file)}`);
-    }
-    const content = fs.readFileSync(descriptor);
-    if (content.length !== stat.size) fail(`File changed while reading: ${path.basename(file)}`);
-    return content;
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
-
 function write(file: string, content: string | Buffer): void {
   fs.writeFileSync(file, content, { flag: "wx", mode: 0o600 });
 }
@@ -89,61 +78,34 @@ function prepareRepository(env: NodeJS.ProcessEnv): string {
   const repository = path.join(work, "repo");
   const mainSha = exactSha(env.GITHUB_SHA, "GITHUB_SHA");
   reset(work);
-  execFileSync(
-    "git",
-    [
-      "clone",
-      "--no-hardlinks",
-      "--no-checkout",
-      required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"),
-      repository,
-    ],
-    { env: GIT_ENV, stdio: "inherit" },
-  );
+  const source = required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT");
+  execFileSync("git", ["clone", "--no-hardlinks", "--no-checkout", source, repository], {
+    env: GIT_ENV,
+    stdio: "inherit",
+  });
   git(repository, ["checkout", "--detach", mainSha]);
-  if (git(repository, ["rev-parse", "HEAD"]) !== mainSha) {
+  if (git(repository, ["rev-parse", "HEAD"]) !== mainSha)
     fail("The prepared checkout does not match GITHUB_SHA");
-  }
   return repository;
 }
 
-function validatePath(file: string): void {
-  const parts = file.split("/");
-  if (
-    !/^[A-Za-z0-9._/-]+$/u.test(file) ||
-    Buffer.byteLength(file) > 512 ||
-    (!file.startsWith("docs/") && !file.startsWith("fern/")) ||
-    file === "docs/_build" ||
-    file.startsWith("docs/_build/") ||
-    file === "fern/fern.config.json" ||
-    parts.some((part) =>
-      ["", ".", "..", ".git", ".gitattributes", ".gitmodules", "node_modules"].includes(part),
-    )
-  ) {
-    fail(`Documentation patch contains an unsupported path: ${file}`);
-  }
-}
-
-function validateCandidate(repository: string): string[] {
+function validateCandidate(repository: string): void {
   const output = git(repository, ["diff", "--cached", "--name-only", "-z"]);
   const files = output ? output.split("\0").filter(Boolean) : [];
   if (files.length > 200) fail("Documentation patch changes too many files");
   let total = 0;
   for (const file of files) {
-    validatePath(file);
+    if (!allowedDocumentationPath(file))
+      fail(`Documentation patch contains an unsupported path: ${file}`);
     const entry = git(repository, ["ls-files", "--stage", "--", file]);
     if (!entry) continue;
-    if (!entry.startsWith("100644 ")) {
-      fail(`Documentation output must be a regular file: ${file}`);
-    }
+    if (!entry.startsWith("100644 ")) fail(`Documentation output must be a regular file: ${file}`);
     const stat = fs.lstatSync(path.join(repository, file));
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
+    if (!stat.isFile() || stat.size > MAX_FILE_BYTES)
       fail(`Documentation file is invalid or too large: ${file}`);
-    }
     total += stat.size;
   }
   if (total > MAX_PATCH_BYTES) fail("Documentation output exceeds the total size limit");
-  return files.sort();
 }
 
 function patchPath(env: NodeJS.ProcessEnv): string {
@@ -153,8 +115,8 @@ function patchPath(env: NodeJS.ProcessEnv): string {
   );
 }
 
-function applyPatch(repository: string, file: string): string[] {
-  const patch = read(file, MAX_PATCH_BYTES);
+function applyPatch(repository: string, file: string): void {
+  const patch = readBoundedFile(file, MAX_PATCH_BYTES, true);
   if (patch.length) {
     execFileSync(
       "git",
@@ -162,21 +124,18 @@ function applyPatch(repository: string, file: string): string[] {
       { env: GIT_ENV, input: patch, stdio: ["pipe", "inherit", "inherit"] },
     );
   }
-  return validateCandidate(repository);
+  validateCandidate(repository);
 }
 
 function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
   const range = exactSha(env.RANGE_START_SHA, "RANGE_START_SHA");
   const main = exactSha(env.GITHUB_SHA, "GITHUB_SHA");
-  const rules = [
-    "Read AGENTS.md, WRITING.md, docs/AGENTS.md, docs/CONTRIBUTING.md,",
-    ".agents/skills/nemoclaw-contributor-update-docs/SKILL.md, and",
-    ".agents/skills/_shared/documentation-writing-review.md.",
-  ];
+  const rules =
+    "Read AGENTS.md, WRITING.md, docs/AGENTS.md, docs/CONTRIBUTING.md, .agents/skills/nemoclaw-contributor-update-docs/SKILL.md, and .agents/skills/_shared/documentation-writing-review.md.";
   if (current === "review") {
     return [
       `Independently review documentation coverage for ${range}..${main}.`,
-      ...rules,
+      rules,
       "Inspect the committed range and staged candidate. Do not edit the repository.",
       "Approve only if it completely and accurately covers user-visible changes, follows DORI and writing rules, and makes no unsupported claim.",
       "An empty patch is valid only when no documentation update is needed.",
@@ -184,12 +143,11 @@ function prompt(env: NodeJS.ProcessEnv, current: Phase): string {
     ].join("\n");
   }
   const tag = required(env.RANGE_START_TAG, "RANGE_START_TAG");
-  if (!TAG.test(tag)) fail("RANGE_START_TAG must be an exact semver tag");
   return [
     `Update NemoClaw documentation for committed changes from ${tag} (${range}) through ${main}.`,
-    ...rules,
+    rules,
     `Inspect git history and git diff ${range}..${main}, then verify behavior in source and tests.`,
-    "Update only public docs/ files and Fern navigation or assets under fern/.",
+    "Update only public docs/ files, fern/docs.yml, or files under fern/assets/.",
     "Do not change fern/fern.config.json, docs/_build, dependencies, or code.",
     "Make no speculative or unrelated edits. Do not commit. If coverage is current, leave the worktree unchanged.",
   ].join("\n");
@@ -210,14 +168,6 @@ function prepare(env: NodeJS.ProcessEnv): void {
   write(path.join(config, "task.txt"), `${prompt(env, current)}\n`);
 }
 
-async function configure(env: NodeJS.ProcessEnv): Promise<void> {
-  await configureOpenShellInference(env, {
-    gatewayId: "post-merge-docs",
-    modelId: RESOLVER_MODEL_ID,
-    providerName: "docs",
-  });
-}
-
 function agentCommand(current: Phase): string[] {
   return [
     "/usr/bin/node",
@@ -230,86 +180,98 @@ function agentCommand(current: Phase): string[] {
     "medium",
     "--tools",
     current === "author" ? "read,bash,edit,write,grep,find,ls" : "read,bash,grep,find,ls",
-    "--no-context-files",
-    "--no-extensions",
-    "--no-prompt-templates",
-    "--no-session",
-    "--no-skills",
-    "--no-themes",
-    "--offline",
-    "--print",
+    ...AGENT_FLAGS,
     "@/sandbox/config/task.txt",
   ];
 }
 
-function create(env: NodeJS.ProcessEnv): void {
+function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   const current = phase(env);
   const work = required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR");
-  createOpenShellSandbox(env, {
-    command: ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
-    image: required(env.PI_IMAGE, "PI_IMAGE"),
-    name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
-    policyPath: path.join(
-      required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"),
-      "tools",
-      current === "author" ? "pr-merge-conflict-fixer" : "post-merge-docs",
-      current === "author" ? "policy.yaml" : "review-policy.yaml",
-    ),
-    uploads: [
-      { destination: "/sandbox", source: path.join(work, "repo") },
-      {
-        destination: "/sandbox",
-        source: required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR"),
-      },
-      { destination: "/sandbox", source: path.join(work, "output") },
-    ],
-  });
-}
-
-function run(env: NodeJS.ProcessEnv): void {
-  execOpenShellSandbox(env, {
-    command: agentCommand(phase(env)),
-    environment: {
-      HOME: "/sandbox/output",
-      PI_CODING_AGENT_DIR: "/sandbox/config",
-      PI_OFFLINE: "1",
-      TMPDIR: "/sandbox/output",
+  const policy =
+    current === "author"
+      ? "pr-merge-conflict-fixer/policy.yaml"
+      : "post-merge-docs/review-policy.yaml";
+  createOpenShellSandbox(
+    env,
+    {
+      command: ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
+      image: required(env.PI_IMAGE, "PI_IMAGE"),
+      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      policyPath: path.join(required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"), "tools", policy),
+      uploads: [
+        { destination: "/sandbox", source: path.join(work, "repo") },
+        {
+          destination: "/sandbox",
+          source: required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR"),
+        },
+        { destination: "/sandbox", source: path.join(work, "output") },
+      ],
     },
-    name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
-    timeoutSeconds: 1200,
-    workdir: "/sandbox/repo",
-  });
+    tools,
+  );
 }
 
-function download(env: NodeJS.ProcessEnv, name: string): Buffer {
+function run(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
+  execOpenShellSandbox(
+    env,
+    {
+      command: agentCommand(phase(env)),
+      environment: {
+        HOME: "/sandbox/output",
+        PI_CODING_AGENT_DIR: "/sandbox/config",
+        PI_OFFLINE: "1",
+        TMPDIR: "/sandbox/output",
+      },
+      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      timeoutSeconds: 1200,
+      workdir: "/sandbox/repo",
+    },
+    tools,
+  );
+}
+
+function download(env: NodeJS.ProcessEnv, name: string, tools: OpenShellTools): Buffer {
   const directory = path.join(
     required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR"),
     "download",
   );
   reset(directory);
-  downloadOpenShellPath(env, {
-    destination: `${directory}/`,
-    name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
-    source: `/sandbox/output/${name}`,
-  });
-  return read(path.join(directory, name), name === PATCH_FILE ? MAX_PATCH_BYTES : 1_024);
+  downloadOpenShellPath(
+    env,
+    {
+      destination: `${directory}/`,
+      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      source: `/sandbox/output/${name}`,
+    },
+    tools,
+  );
+  return readBoundedFile(
+    path.join(directory, name),
+    name === PATCH_FILE ? MAX_PATCH_BYTES : 1_024,
+    true,
+  );
 }
 
-function exportArtifact(env: NodeJS.ProcessEnv): void {
+function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   const artifact = required(env.POST_MERGE_DOCS_ARTIFACT_DIR, "POST_MERGE_DOCS_ARTIFACT_DIR");
   reset(artifact);
   if (phase(env) === "author") {
-    execOpenShellSandbox(env, {
-      command: [
-        "/usr/bin/bash",
-        "-c",
-        `set -euo pipefail\ngit add -N -- docs fern\ngit diff --binary --full-index HEAD -- docs fern > /sandbox/output/${PATCH_FILE}`,
-      ],
-      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
-      timeoutSeconds: 60,
-      workdir: "/sandbox/repo",
-    });
-    const patch = download(env, PATCH_FILE);
+    execOpenShellSandbox(
+      env,
+      {
+        command: [
+          "/usr/bin/bash",
+          "-c",
+          `set -euo pipefail\ngit add -N -- docs fern\ngit diff --binary --full-index HEAD -- docs fern > /sandbox/output/${PATCH_FILE}`,
+        ],
+        name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+        timeoutSeconds: 60,
+        workdir: "/sandbox/repo",
+      },
+      tools,
+    );
+    const patch = download(env, PATCH_FILE, tools);
     const file = path.join(artifact, PATCH_FILE);
     write(file, patch);
     applyPatch(
@@ -318,10 +280,10 @@ function exportArtifact(env: NodeJS.ProcessEnv): void {
     );
     return;
   }
-  if (download(env, "decision.json").toString("utf8").trim() !== '{"outcome":"approved"}') {
+  if (download(env, "decision.json", tools).toString("utf8").trim() !== '{"outcome":"approved"}') {
     fail("Independent documentation review did not approve the candidate");
   }
-  const patch = read(patchPath(env), MAX_PATCH_BYTES);
+  const patch = readBoundedFile(patchPath(env), MAX_PATCH_BYTES, true);
   write(path.join(artifact, PATCH_FILE), patch);
   write(
     path.join(artifact, "review.json"),
@@ -335,35 +297,31 @@ function exportArtifact(env: NodeJS.ProcessEnv): void {
   );
 }
 
-function materialize(env: NodeJS.ProcessEnv): void {
-  applyPatch(prepareRepository(env), patchPath(env));
-}
-
-function removeSandbox(env: NodeJS.ProcessEnv): void {
-  deleteOpenShellSandbox(env, required(env.SANDBOX_NAME, "SANDBOX_NAME"));
-}
-
-function execute(env: NodeJS.ProcessEnv): void {
+export function executePostMergeDocs(
+  env: NodeJS.ProcessEnv,
+  tools: OpenShellTools = defaultOpenShellTools,
+): void {
   prepare(env);
   try {
-    create(env);
-    run(env);
-    exportArtifact(env);
+    create(env, tools);
+    run(env, tools);
+    exportArtifact(env, tools);
   } finally {
-    removeSandbox(env);
+    deleteOpenShellSandbox(env, required(env.SANDBOX_NAME, "SANDBOX_NAME"), tools);
   }
 }
 
 async function main(): Promise<void> {
   switch (required(process.argv[2], "command")) {
     case "configure":
-      await configure(process.env);
+      await configureOpenShellInference(process.env, {
+        gatewayId: "post-merge-docs",
+        modelId: RESOLVER_MODEL_ID,
+        providerName: "docs",
+      });
       return;
     case "execute":
-      execute(process.env);
-      return;
-    case "materialize":
-      materialize(process.env);
+      executePostMergeDocs(process.env);
       return;
     default:
       fail(`Unsupported command: ${process.argv[2] ?? ""}`);

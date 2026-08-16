@@ -231,9 +231,10 @@ Follow these rules when filling in the template:
   - The test that protects the behavior.
 - **Type of Change:** Check one box. Use `[x]` for checked, `[ ]` for unchecked.
 - **Quality Gates:** Select the lines that apply. Explain why tests are not necessary when no test
-  command applies. For a direct documentation PR, record the applicable documentation validation.
-  Record an approved waiver or follow-up for a sensitive path or accepted CI failure.
-- **Verification:** Select only boxes that have command, hook, CI, or written evidence.
+  command applies. Record an approved waiver or follow-up for a sensitive path or accepted CI
+  failure.
+- **Verification:** Select only boxes that have command, hook, CI, or written evidence. For a direct
+  documentation PR, record the applicable documentation validation here.
   Do not select a box for a skipped step.
   Select the DCO and commit-verification box after Step 4 passes.
   Leave the broad-gate box clear unless you ran that gate.

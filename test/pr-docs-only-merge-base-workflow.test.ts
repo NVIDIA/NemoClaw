@@ -22,9 +22,14 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 describe("pull request docs-only merge base", () => {
+  // source-shape-contract: compatibility -- Generated docs PRs must enter the required docs-only validation lane when they change Fern navigation or assets
   it("keeps hooks scoped to docs when main advances after the branch base (#8160)", () => {
     const job = workflow.jobs["docs-only-checks"];
     const resolveBase = requiredStep(job, "Resolve checked-out merge base for docs-only checks");
+    expect(requiredStep(job, "Validate documentation").run).toBe("npm run docs");
+    const changes = JSON.stringify(workflow.jobs.changes);
+    expect(changes).toMatch(/!fern\/docs[.]yml[\s\S]*!fern\/assets\/[*][*]/u);
+    expect(changes).not.toContain("!fern/**");
     const temp = mkdtempSync(join(tmpdir(), "nemoclaw-docs-only-merge-base-"));
     const githubEnv = join(temp, "github-env");
     const git = (...args: string[]): string => {

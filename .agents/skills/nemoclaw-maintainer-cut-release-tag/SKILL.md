@@ -36,9 +36,7 @@ The downstream scheduled reconciliation remains available if the event-driven di
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
-- At plan generation and immediately before cutting, require a successful
-  `Docs / Post-Merge Catch-Up` publish job for the exact candidate, no open
-  `automation/post-merge-docs-*` PR, and no branch for that candidate.
+- At plan generation and immediately before cutting, require a successful no-change `Docs / Post-Merge Catch-Up` publish job for the exact candidate, no open managed documentation PR, and no branch for that candidate.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
 - Use a passing `Release qualification` check from a full pre-tag run, with or without an administrator-authorized job waiver.
@@ -83,17 +81,18 @@ Do not dispatch or poll a workflow during this pass.
 Use GitHub's observed workflow and PR state:
 
 ```bash
+set -euo pipefail
+CANDIDATE_SHA="$(git rev-parse --verify 'origin/main^{commit}')"
 gh run list --repo NVIDIA/NemoClaw --workflow post-merge-docs.yaml --event push \
   --branch main --status success --limit 1 --json databaseId,headSha,status,conclusion,url
-gh pr list --repo NVIDIA/NemoClaw --state open --limit 100 \
-  --json number,headRefName,url
+gh api --paginate "repos/NVIDIA/NemoClaw/pulls?state=open&base=main&per_page=100" | jq --slurp -e '[.[][] | select((.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")] | length == 0' >/dev/null
+REMOTE_BRANCH="$(git ls-remote --heads origin "automation/post-merge-docs-${CANDIDATE_SHA:0:12}")"
+[[ -z "$REMOTE_BRANCH" ]]
 ```
 
-Use `gh run view <databaseId> --json jobs` and require exactly one successful job named
-`Open the documentation pull request`; a skipped job is not readiness. Filter the PR result by the
-`automation/post-merge-docs-` head prefix, and require `git ls-remote --heads origin
-"automation/post-merge-docs-${CANDIDATE_SHA:0:12}"` to be empty. Stop on any mismatch and return
-documentation work to `nemoclaw-maintainer-evening`.
+Require the returned `headSha` to equal `CANDIDATE_SHA`.
+Require `gh run view <databaseId> --json jobs` to show one successful no-change `Publish documentation catch-up` job; a skipped or PR-opening job is not readiness.
+Stop on any mismatch and return to `nemoclaw-maintainer-evening`.
 
 Run one of:
 

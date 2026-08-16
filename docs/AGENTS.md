@@ -67,6 +67,5 @@ Follow the skill or workflow that DORI returns.
    [route-style link](CONTRIBUTING.md#route-style-links), and
    [writing convention](CONTRIBUTING.md#writing-conventions) rules.
 2. Run the commands required by
-   [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface.
-3. For a direct documentation-only change, obtain an independent documentation writer review
-   before handoff.
+   [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface and
+   obtain an independent documentation writer review before a direct documentation-only handoff.

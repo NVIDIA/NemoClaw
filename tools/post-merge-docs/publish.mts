@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { allowedDocumentationPath, readBoundedFile } from "./contract.mts";
+
 const PREFIX = "automation/post-merge-docs-";
 const SIGN_OFF =
   "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
@@ -26,8 +28,6 @@ type Pull = {
   state: string;
 };
 type Change = { mode: "100644"; path: string; sha: string | null; type: "blob" };
-type Status = "no_changes" | "pr_created";
-type Result = { status: Status; prNumber?: number; prUrl?: string };
 function fail(message: string): never {
   throw new Error(message);
 }
@@ -37,24 +37,13 @@ function environment(name: string): string {
 function sha(value: string, name: string): string {
   return SHA.test(value) ? value : fail(`${name} must be a lowercase 40-character Git SHA`);
 }
-function boundedFile(root: string, name: string, limit: number, empty = false): Buffer {
-  const fd = fs.openSync(path.join(root, name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > limit || (!empty && !stat.size))
-      fail(`${name} must be a bounded regular file`);
-    const value = fs.readFileSync(fd);
-    if (value.length !== stat.size) fail(`${name} changed while it was read`);
-    return value;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 function approvedPatch(directory: string, repository: string, mainSha: string): Buffer {
-  const patch = boundedFile(directory, "docs.patch", 5_242_880, true);
+  const patch = readBoundedFile(path.join(directory, "docs.patch"), 5_242_880, true);
   let value: unknown;
   try {
-    value = JSON.parse(boundedFile(directory, "review.json", 8_192).toString("utf8"));
+    value = JSON.parse(
+      readBoundedFile(path.join(directory, "review.json"), 8_192).toString("utf8"),
+    );
   } catch {
     fail("review.json must contain valid JSON");
   }
@@ -107,19 +96,6 @@ function git(repository: string, args: readonly string[], buffer = false): strin
     fail(`Git ${args[0] ?? "command"} failed: ${String(result.stderr).trim()}`);
   return result.stdout;
 }
-function allowed(file: string): boolean {
-  return (
-    /^[A-Za-z0-9._/-]+$/u.test(file) &&
-    Buffer.byteLength(file) <= 512 &&
-    file !== "docs/_build" &&
-    !file.startsWith("docs/_build/") &&
-    file !== "fern/fern.config.json" &&
-    (file.startsWith("docs/") || file.startsWith("fern/")) &&
-    !file.includes("//") &&
-    !/(?:^|\/)(?:\.{1,2}|\.git|\.gitattributes|\.gitmodules|node_modules)(?:\/|$)/u.test(file) &&
-    !file.endsWith("/")
-  );
-}
 function prepare(source: string, destination: string, mainSha: string, patch: Buffer) {
   git(source, ["clone", "--no-hardlinks", "--no-checkout", source, destination]);
   git(destination, ["checkout", "--detach", mainSha]);
@@ -139,7 +115,8 @@ function prepare(source: string, destination: string, mainSha: string, patch: Bu
   for (let index = 0; index < fields.length; index += 2) {
     const status = fields[index] ?? "";
     const file = fields[index + 1] ?? "";
-    if (!/^[ADM]$/u.test(status) || !allowed(file)) fail(`patch changes unsupported path: ${file}`);
+    if (!/^[ADM]$/u.test(status) || !allowedDocumentationPath(file))
+      fail(`patch changes unsupported path: ${file}`);
     const tree = status === "D" ? mainSha : finalTree;
     const entry = String(git(destination, ["ls-tree", tree, "--", file])).trim();
     const match = /^100644 blob ([0-9a-f]{40})\t/u.exec(entry);
@@ -204,7 +181,7 @@ export async function publishDocumentation(input: {
   expectedRepository: string;
   request: Request;
   sourceRepository: string;
-}): Promise<Result> {
+}): Promise<void> {
   const { expectedRepository: repository, request } = input;
   const mainSha = sha(input.expectedMainSha, "GITHUB_SHA");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) fail("GITHUB_REPOSITORY is invalid");
@@ -215,7 +192,7 @@ export async function publishDocumentation(input: {
     const destination = path.join(temporary, "repository");
     const prepared = prepare(input.sourceRepository, destination, mainSha, patch);
     await checkpoint(repository, mainSha, request);
-    if (!prepared.changes.length) return { status: "no_changes" };
+    if (!prepared.changes.length) return;
     const branch = `${PREFIX}${mainSha.slice(0, 12)}`;
     const refPath = `/repos/${repository}/git/ref/heads/${branch}`;
     const ref = (await request("GET", refPath)) as { object?: { sha?: string } } | null;
@@ -280,7 +257,7 @@ export async function publishDocumentation(input: {
       }
     }
     await checkpoint(repository, mainSha, request);
-    const body = `## Summary\n\nUpdates documentation for merged changes through \`${mainSha}\`.\n\n## Verification\n\n- \`npm run docs:validate\` passed before publication.\n- An independent documentation writer approved the exact patch.\n- A maintainer must inspect and approve any approval-required pull-request workflow runs.\n\n${SIGN_OFF}`;
+    const body = `## Summary\n\nUpdates documentation for merged changes through \`${mainSha}\`.\n\n## Verification\n\n- An independent documentation writer approved the exact patch.\n- Required PR checks must run \`npm run docs\` before merge.\n- A maintainer must inspect and approve any approval-required workflow runs.\n\n${SIGN_OFF}`;
     let pull: Pull;
     try {
       pull = (await request("POST", `/repos/${repository}/pulls`, {
@@ -297,7 +274,7 @@ export async function publishDocumentation(input: {
     }
     checkedPull(pull, repository, branch, body);
     if (pull.head.sha !== commitSha) fail("documentation PR does not point to the verified commit");
-    return { status: "pr_created", prNumber: pull.number, prUrl: pull.html_url };
+    fail(`Documentation remains pending in ${pull.html_url}`);
   } finally {
     fs.rmSync(temporary, { force: true, recursive: true });
   }
@@ -324,20 +301,14 @@ function client(token: string): Request {
     return value;
   };
 }
-function output(key: string, value: string | number): void {
-  if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
-}
 async function main(): Promise<void> {
-  const result = await publishDocumentation({
+  await publishDocumentation({
     artifactDirectory: environment("POST_MERGE_DOCS_ARTIFACT_DIR"),
     expectedMainSha: environment("GITHUB_SHA"),
     expectedRepository: environment("GITHUB_REPOSITORY"),
     request: client(environment("GITHUB_TOKEN")),
     sourceRepository: environment("TRUSTED_CHECKOUT"),
   });
-  output("status", result.status);
-  if (result.prNumber) output("pr_number", result.prNumber);
-  if (result.prUrl) output("pr_url", result.prUrl);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   main().catch((error: unknown) => {

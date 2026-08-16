@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { publishDocumentation, type Request } from "../tools/post-merge-docs/publish.mts";
+import { executePostMergeDocs } from "../tools/post-merge-docs/run.mts";
+import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
 
 const directories: string[] = [];
 const repository = "NVIDIA/NemoClaw";
@@ -84,12 +86,6 @@ class FakeGitHub {
   constructor(readonly value: Fixture) {
     this.branch = `automation/post-merge-docs-${value.mainSha.slice(0, 12)}`;
     this.liveSha = value.mainSha;
-  }
-  get branchSha() {
-    return this.branchRef?.object.sha ?? null;
-  }
-  get openPull() {
-    return this.openPulls[0] ?? null;
   }
   loseResponses() {
     this.afterPull = () => {
@@ -172,6 +168,96 @@ function postCount(api: FakeGitHub, suffix?: string): number {
     ([method, url]) => method === "POST" && (!suffix || url.endsWith(suffix)),
   ).length;
 }
+
+const credentials =
+  "GH_TOKEN GITHUB_TOKEN NVIDIA_API_KEY OPENAI_API_KEY PR_REVIEW_ADVISOR_API_KEY".split(" ");
+type RunnerStage = "create" | "agent" | "export" | "download";
+function runnerFixture(phase: "author" | "review") {
+  const { mainSha, source } = sourceFixture();
+  fs.writeFileSync(path.join(source, "docs/guide.mdx"), "later\n");
+  git(source, ["commit", "-am", "docs: advance source"]);
+  const root = temporary("docs-runner");
+  const candidate = path.join(root, "candidate");
+  fs.mkdirSync(candidate);
+  fs.writeFileSync(path.join(candidate, "docs.patch"), "");
+  return {
+    root,
+    env: {
+      ...process.env,
+      ...Object.fromEntries(credentials.map((name) => [name, "secret"])),
+      GITHUB_REPOSITORY: repository,
+      GITHUB_SHA: mainSha,
+      HOME: root,
+      PI_IMAGE: "image",
+      POST_MERGE_DOCS_ARTIFACT_DIR: path.join(root, "artifact"),
+      POST_MERGE_DOCS_CANDIDATE_DIR: candidate,
+      POST_MERGE_DOCS_CONFIG_DIR: path.join(root, "config"),
+      POST_MERGE_DOCS_PHASE: phase,
+      POST_MERGE_DOCS_WORKDIR: path.join(root, "work"),
+      RANGE_START_SHA: mainSha,
+      RANGE_START_TAG: "v1.0.0",
+      SANDBOX_NAME: `docs-${phase}`,
+      TRUSTED_CHECKOUT: source,
+    },
+  };
+}
+function runnerTools(
+  input: ReturnType<typeof runnerFixture>,
+  failure?: RunnerStage,
+  decision = "approved",
+) {
+  const { env, root } = input;
+  const sandbox = path.join(root, "sandbox");
+  const output = path.join(root, "work/output");
+  const state = { deleted: false };
+  const continueAt = (stage: RunnerStage) => expect(stage).not.toBe(failure);
+  const handlers: Record<string, (args: readonly string[]) => unknown> = {
+    create: () => {
+      fs.cpSync(path.join(root, "work/repo"), sandbox, { recursive: true });
+      expect(git(sandbox, ["rev-parse", "HEAD"])).toBe(env.GITHUB_SHA);
+      continueAt("create");
+    },
+    agent: () => {
+      continueAt("agent");
+      const agents = {
+        author: () => fs.writeFileSync(path.join(sandbox, "docs/guide.mdx"), "authored\n"),
+        review: () =>
+          fs.writeFileSync(
+            path.join(output, "decision.json"),
+            JSON.stringify({ outcome: decision }),
+          ),
+      };
+      agents[env.POST_MERGE_DOCS_PHASE]();
+    },
+    export: () => {
+      continueAt("export");
+      const patch = execFileSync(
+        "git",
+        ["diff", "--binary", "--full-index", "HEAD", "--", "docs", "fern"],
+        { cwd: sandbox },
+      );
+      fs.writeFileSync(path.join(output, "docs.patch"), patch);
+    },
+    download: (args) => {
+      continueAt("download");
+      const name = path.basename(args[3]);
+      fs.copyFileSync(path.join(output, name), path.join(args[4], name));
+    },
+    list: () => env.SANDBOX_NAME,
+    delete: () => (state.deleted = true),
+  };
+  const commands: Record<string, string> = { bash: "export", node: "agent" };
+  const tools: OpenShellTools = {
+    run: (_command, args, options) => {
+      for (const name of credentials) expect(options.env).not.toHaveProperty(name);
+      const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
+      return String(handlers[commands[executable] ?? args[1]](args) ?? "");
+    },
+    start: () => undefined,
+    wait: async () => undefined,
+  };
+  return { state, tools };
+}
 afterEach(() => {
   vi.restoreAllMocks();
   for (const directory of directories.splice(0))
@@ -182,19 +268,16 @@ describe("post-merge documentation publisher", () => {
   it("creates one immutable branch and draft PR from the approved patch", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
-    expect(await publish(value, api)).toMatchObject({ status: "pr_created", prNumber: 42 });
-    expect(api.commitBody).toMatchObject({
-      message: expect.stringContaining(signOff),
-      parents: [value.mainSha],
-      tree: value.finalTree,
-    });
-    expect(api.branchSha).toBe(api.commitSha);
-    expect(api.openPull?.body).toMatch(/docs:validate[\s\S]*approval-required/u);
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.commitBody?.message).toEqual(expect.stringContaining(signOff));
+    expect(api.commitBody).toMatchObject({ parents: [value.mainSha], tree: value.finalTree });
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(api.openPulls[0]?.body).toMatch(/`npm run docs`[\s\S]*approval-required/u);
   });
-  it("returns no_changes for an approved empty patch without writes", async () => {
+  it("creates no writes for an approved empty patch", async () => {
     const value = emptyFixture();
     const api = new FakeGitHub(value);
-    await expect(publish(value, api)).resolves.toEqual({ status: "no_changes" });
+    await publish(value, api);
     expect(postCount(api)).toBe(0);
   });
   it("rejects a patch whose digest was not approved", async () => {
@@ -205,12 +288,15 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api, approved)).rejects.toThrow("does not approve the exact patch");
     expect(api.request).not.toHaveBeenCalled();
   });
-  it("rejects an approved patch outside docs and fern", async () => {
-    const value = fixture("src/bad.ts");
-    const api = new FakeGitHub(value);
-    await expect(publish(value, api)).rejects.toThrow("patch changes unsupported path");
-    expect(postCount(api)).toBe(0);
-  });
+  it.each(["src/bad.ts", "fern/package.json", "fern/.npmrc", "fern/components/CustomFooter.tsx"])(
+    "rejects an approved patch at unsupported path %s",
+    async (file) => {
+      const value = fixture(file);
+      const api = new FakeGitHub(value);
+      await expect(publish(value, api)).rejects.toThrow("patch changes unsupported path");
+      expect(postCount(api)).toBe(0);
+    },
+  );
   it("stops when main moved after review", async () => {
     const value = emptyFixture();
     const api = new FakeGitHub(value);
@@ -242,10 +328,50 @@ describe("post-merge documentation publisher", () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.loseResponses();
-    expect(await publish(value, api)).toMatchObject({ status: "pr_created", prNumber: 42 });
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
     expect(postCount(api, "/pulls")).toBe(1);
     expect(postCount(api, "/git/refs")).toBe(1);
   });
+});
+
+describe("post-merge documentation runner", () => {
+  it("authors from the triggering SHA without exposing host credentials", () => {
+    const input = runnerFixture("author");
+    const { state, tools } = runnerTools(input);
+    executePostMergeDocs(input.env, tools);
+    expect(fs.readFileSync(path.join(input.root, "artifact/docs.patch"), "utf8")).toContain(
+      "+authored",
+    );
+    expect(state.deleted).toBe(true);
+  });
+  it("records the exact independent approval", () => {
+    const input = runnerFixture("review");
+    executePostMergeDocs(input.env, runnerTools(input).tools);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(input.root, "artifact/review.json"), "utf8")),
+    ).toEqual({
+      mainSha: input.env.GITHUB_SHA,
+      outcome: "approved",
+      patchSha256: createHash("sha256").update("").digest("hex"),
+      repository,
+      version: 1,
+    });
+  });
+  it("rejects an independent review denial and deletes the sandbox", () => {
+    const input = runnerFixture("review");
+    const { state, tools } = runnerTools(input, undefined, "rejected");
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow("did not approve");
+    expect(state.deleted).toBe(true);
+  });
+  it.each<RunnerStage>(["create", "agent", "export", "download"])(
+    "deletes the sandbox after %s fails",
+    (stage) => {
+      const input = runnerFixture("author");
+      const { state, tools } = runnerTools(input, stage);
+      expect(() => executePostMergeDocs(input.env, tools)).toThrow();
+      expect(state.deleted).toBe(true);
+    },
+  );
 });
 
 describe("post-merge documentation workflow boundary", () => {
@@ -265,7 +391,6 @@ describe("post-merge documentation workflow boundary", () => {
     expect(workflow.permissions).toEqual({});
     expect(JSON.stringify(workflow.jobs.gate)).toContain("| jq --slurp");
     expect(workflow.jobs.author?.permissions).toEqual({ contents: "read" });
-    expect(workflow.jobs.validate?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(workflow.jobs.publish?.permissions).toEqual({
       actions: "read",
       contents: "write",

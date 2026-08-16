@@ -42,17 +42,11 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 
 ## Pre-Tag Docs
 
-Continue the PR whose head starts with `automation/post-merge-docs-` when one exists. If no managed
-documentation PR exists, create a feature branch from the current `main` commit and open a direct
-documentation-only PR for the release entry. Ensure that the documentation PR creates or updates
-one direct child of `docs/changelog/` for the planned date and contains the exact `## <version>`
-heading, parser-safe MDX SPDX comment, summary, and detailed release bullets. Follow the
-documentation-only validation, writing, review, and PR guidance for any release-entry edit.
-
-Merge that PR before loading `cut-release-tag`. Its merge starts `Docs / Post-Merge Catch-Up` for
-the resulting `main` commit. Wait for that run to succeed and confirm that no managed
-documentation PR or managed branch for that commit remains. If any intended PR merges afterward,
-repeat this step for the new `main` commit before cutting the tag.
+Follow [Release-Prep Docs](../nemoclaw-maintainer-policies/references/release-train.md#release-prep-docs).
+Continue the managed documentation PR when one exists; otherwise open a direct documentation-only
+PR for the release entry. Merge it, then repeat until a later exact-SHA `Docs / Post-Merge Catch-Up`
+run completes its no-change publisher job successfully. Confirm that no managed documentation PR
+is open and no branch exists for that candidate. Repeat after any later intended merge.
 
 ## Step 4: Cut the Tag and Publish Release Notes
 
