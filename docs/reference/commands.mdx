@@ -4102,7 +4102,8 @@ Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `open
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 For a validated compatible-provider binding at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
 Before it persists the route in the NemoClaw registry or agent config, the command sends one request from the target sandbox with a 16-token output limit.
-If that request fails, the command restores the previous OpenShell selection and removes a provider that this switch created.
+If that request fails, the command attempts to restore the previous OpenShell selection and remove a provider that this switch created.
+If the error reports that rollback could not complete, re-run onboarding before using or retrying the route.
 Endpoint-shape and shared-gateway compatibility checks still apply.
 When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL and, except for the Hermes case below, `--inference-api` with its API family so NemoClaw can persist a complete route identity for rebuild and shared-gateway checks.
 For a Hermes `compatible-anthropic-endpoint` target, `--inference-api` may be omitted because NemoClaw deterministically selects `openai-completions`; an explicit different API family is rejected.
