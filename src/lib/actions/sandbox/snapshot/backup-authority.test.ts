@@ -3,7 +3,23 @@
 
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const privilegedCaptureMocks = vi.hoisted(() => ({
+  dockerSpawnSync: vi.fn(),
+  privilegedSandboxExecArgv: vi.fn(() => ["exec", "container", "python3"]),
+  withPrivilegedSandboxExecutionLease: vi.fn(
+    (_sandboxName: string, _operation: string, run: () => unknown) => run(),
+  ),
+}));
+
+vi.mock("../../../adapters/docker/exec", () => ({
+  dockerSpawnSync: privilegedCaptureMocks.dockerSpawnSync,
+}));
+vi.mock("../../../sandbox/privileged-exec", () => ({
+  privilegedSandboxExecArgv: privilegedCaptureMocks.privilegedSandboxExecArgv,
+  withPrivilegedSandboxExecutionLease: privilegedCaptureMocks.withPrivilegedSandboxExecutionLease,
+}));
 
 import { managedStartupE2eProfile } from "../../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
@@ -18,8 +34,11 @@ import { encodeManagedStartupProfile } from "../../../onboard/managed-startup/pr
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../../state/registry/types";
 import { createSandboxHostLocalInferenceProvenance } from "../../../state/registry/host-local-inference";
-import type { BackupOptions, BackupResult } from "../../../state/sandbox";
-import { backupSandboxStateWithManagedAuthority } from "./backup-authority";
+import type { BackupOptions, BackupResult, StateFileCaptureRequest } from "../../../state/sandbox";
+import {
+  backupSandboxStateWithManagedAuthority,
+  captureOpenClawStateFile,
+} from "./backup-authority";
 
 function workload(
   agent: ShippedManagedImageAgent,
@@ -166,6 +185,76 @@ function explicitLlamaSandbox(agent: "openclaw" | "hermes" | "langchain-deepagen
 }
 
 describe("managed snapshot backup authority", () => {
+  beforeEach(() => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReset();
+    privilegedCaptureMocks.privilegedSandboxExecArgv.mockClear();
+    privilegedCaptureMocks.withPrivilegedSandboxExecutionLease.mockClear();
+  });
+
+  it("captures the exact OpenClaw config through bounded privileged execution", () => {
+    const data = Buffer.from('{"models":{"default":"nvidia/test"}}\n');
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stdout: data,
+      stderr: Buffer.alloc(0),
+    } as never);
+
+    const result = captureOpenClawStateFile("alpha", {
+      sandboxName: "alpha",
+      dir: "/sandbox/.openclaw",
+      spec: { path: "openclaw.json", strategy: "copy" },
+    });
+
+    expect(result).toEqual({ outcome: "backed_up", data });
+    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).toHaveBeenCalledWith(
+      "alpha",
+      "OpenClaw config snapshot capture",
+      expect.any(Function),
+    );
+    expect(privilegedCaptureMocks.privilegedSandboxExecArgv).toHaveBeenCalledWith(
+      "alpha",
+      expect.arrayContaining(["/usr/bin/python3", "-I", "-S", "-c"]),
+      false,
+      true,
+    );
+    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenCalledWith(
+      ["exec", "container", "python3"],
+      expect.objectContaining({
+        encoding: null,
+        timeout: 30_000,
+        maxBuffer: 17 * 1024 * 1024,
+      }),
+    );
+  });
+
+  it("does not grant privileged capture to undeclared paths or strategies", () => {
+    const requests: StateFileCaptureRequest[] = [
+      {
+        sandboxName: "alpha",
+        dir: "/sandbox/.openclaw",
+        spec: { path: "credentials/token", strategy: "copy" },
+      },
+      {
+        sandboxName: "alpha",
+        dir: "/sandbox/.openclaw",
+        spec: { path: "openclaw.json", strategy: "sqlite_backup" },
+      },
+      {
+        sandboxName: "alpha",
+        dir: "/sandbox/other",
+        spec: { path: "openclaw.json", strategy: "copy" },
+      },
+    ];
+
+    for (const request of requests) {
+      expect(captureOpenClawStateFile("alpha", request)).toBeNull();
+    }
+    expect(privilegedCaptureMocks.withPrivilegedSandboxExecutionLease).not.toHaveBeenCalled();
+    expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "captures and republishes exact %s provider authority",
     (agent) => {
@@ -287,7 +376,10 @@ describe("managed snapshot backup authority", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(backup).toHaveBeenCalledWith("alpha", { name: "legacy" });
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ name: "legacy", captureStateFile: expect.any(Function) }),
+    );
     expect(requireProvider).not.toHaveBeenCalled();
     expect(captureRuntime).not.toHaveBeenCalled();
   });

@@ -3,6 +3,7 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import { dockerSpawnSync } from "../../../adapters/docker/exec";
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import {
@@ -12,6 +13,10 @@ import {
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
+import {
+  privilegedSandboxExecArgv,
+  withPrivilegedSandboxExecutionLease,
+} from "../../../sandbox/privileged-exec";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
 import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
 
@@ -31,6 +36,106 @@ interface SnapshotBackupAuthorityDependencies {
   readonly prepareHostLocalInference: typeof prepareSandboxHostLocalInferenceAuthority;
   readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly backup: typeof sandboxState.backupSandboxState;
+  readonly captureOpenClawStateFile: typeof captureOpenClawStateFile;
+}
+
+const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
+const OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER = MAX_OPENCLAW_CONFIG_BYTES + 1024 * 1024;
+const OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS = 30_000;
+const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
+maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
+directory = "/sandbox/.openclaw"
+name = "openclaw.json"
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+try:
+    directory_fd = os.open(directory, directory_flags)
+except OSError:
+    raise SystemExit(10)
+try:
+    try:
+        file_fd = os.open(name, file_flags, dir_fd=directory_fd)
+    except FileNotFoundError:
+        raise SystemExit(2)
+    except OSError:
+        raise SystemExit(10)
+    try:
+        before = os.fstat(file_fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > maximum:
+            raise SystemExit(11)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(file_fd, min(64 * 1024, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise SystemExit(12)
+        after = os.fstat(file_fd)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
+        if identity(before) != identity(after) or identity(before) != identity(current) or not stat.S_ISREG(current.st_mode):
+            raise SystemExit(13)
+        sys.stdout.buffer.write(b"".join(chunks))
+    finally:
+        os.close(file_fd)
+finally:
+    os.close(directory_fd)
+`;
+
+export function captureOpenClawStateFile(
+  sandboxName: string,
+  request: sandboxState.StateFileCaptureRequest,
+): sandboxState.StateFileCaptureResult | null {
+  if (
+    request.dir !== "/sandbox/.openclaw" ||
+    request.spec.path !== "openclaw.json" ||
+    request.spec.strategy !== "copy"
+  ) {
+    return null;
+  }
+  try {
+    return withPrivilegedSandboxExecutionLease(
+      sandboxName,
+      "OpenClaw config snapshot capture",
+      () => {
+        const argv = privilegedSandboxExecArgv(
+          sandboxName,
+          ["/usr/bin/python3", "-I", "-S", "-c", OPENCLAW_CONFIG_CAPTURE_SCRIPT],
+          false,
+          true,
+        );
+        const result = dockerSpawnSync(argv, {
+          encoding: null,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+          maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
+        });
+        if (result.status === 2 && result.signal === null && !result.error) {
+          return { outcome: "missing" };
+        }
+        if (
+          result.status !== 0 ||
+          result.signal !== null ||
+          result.error ||
+          !Buffer.isBuffer(result.stdout)
+        ) {
+          const detail =
+            result.error?.message ??
+            (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+          return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
+        }
+        return { outcome: "backed_up", data: result.stdout };
+      },
+    );
+  } catch (error) {
+    return {
+      outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox"> = {
@@ -42,6 +147,7 @@ const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox
   // Keep the call late-bound so tests and alternative state stores can replace
   // the module export without this adapter retaining an import-time reference.
   backup: (...args) => sandboxState.backupSandboxState(...args),
+  captureOpenClawStateFile,
 };
 
 function failure(error: unknown): sandboxState.BackupResult {
@@ -59,9 +165,9 @@ function failure(error: unknown): sandboxState.BackupResult {
 function backupStateOnly(
   dependencies: SnapshotBackupAuthorityDependencies,
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name">,
+  options: Pick<sandboxState.BackupOptions, "name" | "captureStateFile">,
 ): sandboxState.BackupResult {
-  return options.name === undefined
+  return options.name === undefined && options.captureStateFile === undefined
     ? dependencies.backup(sandboxName)
     : dependencies.backup(sandboxName, options);
 }
@@ -201,6 +307,15 @@ export function backupSandboxStateWithManagedAuthority(
   const entry = dependencies.getSandbox(sandboxName);
   if (!entry) return backupStateOnly(dependencies, sandboxName, options);
 
+  const stateFileOptions: Pick<sandboxState.BackupOptions, "captureStateFile"> =
+    !entry.agent || entry.agent === "openclaw"
+      ? {
+          captureStateFile: (request) =>
+            dependencies.captureOpenClawStateFile(sandboxName, request),
+        }
+      : {};
+  const backupOptions = { ...options, ...stateFileOptions };
+
   let authority: SnapshotBackupAuthority | null;
   try {
     authority = captureSnapshotAuthority(entry, dependencies);
@@ -208,6 +323,6 @@ export function backupSandboxStateWithManagedAuthority(
     return failure(error);
   }
   return authority
-    ? dependencies.backup(sandboxName, { ...options, ...authority })
-    : backupStateOnly(dependencies, sandboxName, options);
+    ? dependencies.backup(sandboxName, { ...backupOptions, ...authority })
+    : backupStateOnly(dependencies, sandboxName, backupOptions);
 }
