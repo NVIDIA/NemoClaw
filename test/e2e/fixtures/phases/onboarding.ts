@@ -9,6 +9,7 @@ import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero, resultText } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
+import { DCODE_BASE_IMAGE_ENV, requireDcodeBaseImageReference } from "../dcode-base-image.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_BASE_URL,
   DEFAULT_HOSTED_INFERENCE_MODEL,
@@ -239,6 +240,7 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const baseImageReference = requireDcodeBaseImageReference();
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw([...ONBOARD_ARGS, "--observability"], {
@@ -260,6 +262,7 @@ export class OnboardingPhaseFixture {
         NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
         NVIDIA_INFERENCE_API_KEY: apiKey,
         [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
+        [DCODE_BASE_IMAGE_ENV]: baseImageReference,
       }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,

@@ -5,12 +5,58 @@
 set -euo pipefail
 
 runtime_dir="${XDG_RUNTIME_DIR:?}"
+home_dir="${HOME:?}"
+config_home="${XDG_CONFIG_HOME:-}"
+[[ "$config_home" == /* ]] || config_home="${home_dir}/.config"
+state_home="${XDG_STATE_HOME:-}"
+[[ "$state_home" == /* ]] || state_home="${home_dir}/.local/state"
+bin_home="${XDG_BIN_HOME:-}"
+[[ "$bin_home" == /* ]] || bin_home="${home_dir}/.local/bin"
 service_dir="${runtime_dir}/podman"
 socket_path="${service_dir}/podman.sock"
 backend_socket_path="${service_dir}/nemoclaw-podman-service.sock"
 activator_pid_file="${runtime_dir}/nemoclaw-podman-socket-activator.pid"
 service_pid_file="${runtime_dir}/nemoclaw-podman-service.pid"
 log_file="${runtime_dir}/nemoclaw-podman-service.log"
+gateway_service_name="nemoclaw-openshell-gateway"
+gateway_unit_path="${config_home}/systemd/user/${gateway_service_name}.service"
+gateway_binary_path="${bin_home}/openshell-gateway"
+gateway_env_file="${config_home}/openshell/gateway.env"
+gateway_tls_dir="${state_home}/openshell/tls"
+gateway_state_dir="${state_home}/openshell/gateway"
+gateway_pid_file="${runtime_dir}/nemoclaw-openshell-gateway.pid"
+gateway_launch_pid_file="${runtime_dir}/nemoclaw-openshell-gateway-launch.pid"
+gateway_log_file="${runtime_dir}/nemoclaw-openshell-gateway.log"
+gateway_environment_keys=(
+  CONTAINERS_CONF
+  DOCKER_HOST
+  OPENSHELL_DRIVERS
+  OPENSHELL_BIND_ADDRESS
+  OPENSHELL_SERVER_PORT
+  OPENSHELL_DISABLE_TLS
+  OPENSHELL_DISABLE_GATEWAY_AUTH
+  OPENSHELL_LOCAL_TLS_DIR
+  OPENSHELL_DB_URL
+  OPENSHELL_GRPC_ENDPOINT
+  OPENSHELL_SSH_GATEWAY_HOST
+  OPENSHELL_SSH_GATEWAY_PORT
+  OPENSHELL_DOCKER_NETWORK_NAME
+  OPENSHELL_DOCKER_SUPERVISOR_IMAGE
+  OPENSHELL_DOCKER_SUPERVISOR_BIN
+  OPENSHELL_PODMAN_SOCKET
+  OPENSHELL_GATEWAY_CONFIG
+  OPENSHELL_VM_DRIVER_STATE_DIR
+  OPENSHELL_DRIVER_DIR
+  NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS
+  NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE
+  NETAVARK_FW
+)
+gateway_fixture_environment_keys=(
+  FAKE_GATEWAY_CERT_MARKER
+  FAKE_GATEWAY_COMMAND_LOG
+)
+gateway_process_environment=()
+gateway_launch_start_time=""
 process_identity_env="NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID"
 process_identity_failure_role="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_ROLE:-}"
 process_identity_failure_record="${NEMOCLAW_PODMAN_IDENTITY_FAILURE_RECORD:-}"
@@ -412,6 +458,286 @@ stop_runtime() {
   stop_service
   stop_recorded_process "$activator_pid_file" activator
   rm -f "$socket_path" "$backend_socket_path"
+}
+
+validate_gateway_unit() {
+  if [[ ! -f "$gateway_unit_path" || -L "$gateway_unit_path" || ! -r "$gateway_unit_path" ]]; then
+    echo "Portable profile fixture requires the managed gateway user service at ${gateway_unit_path}." >&2
+    return 1
+  fi
+  if [[ "$(grep -Fxc '# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1' "$gateway_unit_path" || true)" -ne 1 ]]; then
+    echo "Portable profile fixture rejected the foreign gateway user service at ${gateway_unit_path}." >&2
+    return 1
+  fi
+  if [[ "$(grep -Fxc "ExecStart=${gateway_binary_path}" "$gateway_unit_path" || true)" -ne 1 ]] \
+    || [[ "$(grep -Fxc "ExecStartPre=${gateway_binary_path} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal" "$gateway_unit_path" || true)" -ne 1 ]] \
+    || [[ "$(grep -Fxc 'StateDirectory=openshell/gateway' "$gateway_unit_path" || true)" -ne 1 ]] \
+    || [[ "$(grep -Fxc 'Environment=OPENSHELL_LOCAL_TLS_DIR=%S/openshell/tls' "$gateway_unit_path" || true)" -ne 1 ]] \
+    || [[ "$(grep -Fxc 'EnvironmentFile=-%E/openshell/gateway.env' "$gateway_unit_path" || true)" -ne 1 ]] \
+    || [[ ! -x "$gateway_binary_path" || -L "$gateway_binary_path" ]]; then
+    echo "Portable profile fixture rejected the gateway user service identity at ${gateway_unit_path}." >&2
+    return 1
+  fi
+}
+
+load_gateway_environment() {
+  local key
+  for key in "${gateway_environment_keys[@]}"; do
+    unset "$key"
+  done
+  export OPENSHELL_LOCAL_TLS_DIR="$gateway_tls_dir"
+  [[ -e "$gateway_env_file" || -L "$gateway_env_file" ]] || return 0
+  if [[ ! -f "$gateway_env_file" || -L "$gateway_env_file" || ! -r "$gateway_env_file" ]]; then
+    echo "Portable profile fixture rejected the gateway environment file at ${gateway_env_file}." >&2
+    return 1
+  fi
+
+  local line value managed_key managed_key_candidate
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" && "$line" != \#* ]] || continue
+    [[ "$line" == *=* ]] || {
+      echo "Portable profile fixture rejected an invalid gateway environment assignment." >&2
+      return 1
+    }
+    key="${line%%=*}"
+    value="${line#*=}"
+    managed_key=false
+    for managed_key_candidate in "${gateway_environment_keys[@]}"; do
+      if [[ "$key" == "$managed_key_candidate" ]]; then
+        managed_key=true
+        break
+      fi
+    done
+    if [[ "$managed_key" != true ]]; then
+      echo "Portable profile fixture rejected gateway environment key ${key}." >&2
+      return 1
+    fi
+    if [[ "$value" == \'* || "$value" == *\' ]]; then
+      if [[ "$value" != \'*\' || "${#value}" -lt 2 ]]; then
+        echo "Portable profile fixture rejected an invalid gateway environment value for ${key}." >&2
+        return 1
+      fi
+      value="${value:1:${#value}-2}"
+    fi
+    export "${key}=${value}"
+  done <"$gateway_env_file"
+}
+
+build_gateway_process_environment() {
+  gateway_process_environment=(
+    "HOME=${home_dir}"
+    "PATH=/usr/local/bin:/usr/bin:/bin"
+    "XDG_BIN_HOME=${bin_home}"
+    "XDG_CONFIG_HOME=${config_home}"
+    "XDG_RUNTIME_DIR=${runtime_dir}"
+    "XDG_STATE_HOME=${state_home}"
+  )
+  local key
+  for key in "${gateway_environment_keys[@]}" "${gateway_fixture_environment_keys[@]}"; do
+    if declare -p "$key" >/dev/null 2>&1; then
+      gateway_process_environment+=("${key}=${!key}")
+    fi
+  done
+}
+
+gateway_service_is_active() {
+  recorded_process_is_active "$gateway_pid_file" gateway
+}
+
+stop_gateway_service() {
+  stop_recorded_process "$gateway_pid_file" gateway
+}
+
+stop_gateway_launch() {
+  stop_recorded_process "$gateway_launch_pid_file" gateway
+}
+
+wait_for_gateway_launch_record() {
+  local pid="$1"
+  local identity="$2"
+  local status
+  for ((attempt = 0; attempt < 100; attempt += 1)); do
+    if read_pid_record "$gateway_launch_pid_file" gateway; then
+      if [[ "$recorded_pid" != "$pid" || "$recorded_identity" != "$identity" ]]; then
+        echo "Portable profile fixture gateway launch record does not match the launched process." >&2
+        return 2
+      fi
+      gateway_launch_start_time="$recorded_start_time"
+      return 0
+    else
+      status=$?
+      [[ "$status" -eq 1 ]] || return "$status"
+    fi
+    kill -0 "$pid" 2>/dev/null || return 1
+    sleep 0.05
+  done
+  return 2
+}
+
+stop_gateway_without_launch_record() {
+  local pid="$1"
+  local identity="$2"
+  if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_UNRECORDED_CLEANUP_FAILURE:-}" == "1" ]]; then
+    return 2
+  fi
+  stop_unrecorded_process "$pid" "$identity" ""
+}
+
+fail_recorded_gateway_start() {
+  local cleanup_status
+  if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_CLEANUP_FAILURE:-}" == "1" ]]; then
+    cleanup_status=2
+  elif stop_gateway_launch; then
+    cleanup_status=0
+  else
+    cleanup_status=$?
+  fi
+  echo "Portable profile fixture could not create the gateway process identity record." >&2
+  if [[ "$cleanup_status" -ne 0 ]]; then
+    echo "Portable profile fixture could not stop the gateway launch process." >&2
+    return "$cleanup_status"
+  fi
+  return 1
+}
+
+start_gateway_service() {
+  validate_gateway_unit
+  stop_gateway_launch
+  load_gateway_environment
+  build_gateway_process_environment
+  install -d -m 700 "$OPENSHELL_LOCAL_TLS_DIR" "$gateway_state_dir"
+  install -m 600 /dev/null "$gateway_log_file"
+  if ! env -i "${gateway_process_environment[@]}" "$gateway_binary_path" generate-certs \
+    --output-dir "$OPENSHELL_LOCAL_TLS_DIR" \
+    --server-san host.openshell.internal >>"$gateway_log_file" 2>&1; then
+    echo "Portable profile fixture could not generate gateway certificates." >&2
+    return 1
+  fi
+
+  local cleanup_status failure_status gateway_drift_identity gateway_identity gateway_pid
+  gateway_identity="gateway:$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
+  # shellcheck disable=SC2016 # Positional parameters and variables expand inside the launch wrapper.
+  env -i "${gateway_process_environment[@]}" \
+    "NEMOCLAW_PORTABLE_PROFILE_PROCESS_ID=${gateway_identity}" nohup "$BASH" -c '
+      set -euo pipefail
+      gateway_binary_path="$1"
+      gateway_launch_pid_file="$2"
+      gateway_identity="$3"
+      inject_record_failure="$4"
+      local_start_time=""
+      if [[ -r "/proc/$$/stat" ]]; then
+        stat="$(<"/proc/$$/stat")"
+        stat="${stat##*) }"
+        read -r -a fields <<<"$stat"
+        [[ "${#fields[@]}" -gt 19 && "${fields[19]}" =~ ^[0-9]+$ ]]
+        local_start_time="proc:${fields[19]}"
+      else
+        [[ ! -e /proc/self/stat ]]
+        local_start_time="$(ps -o lstart= -p "$$")"
+        read -r -a fields <<<"$local_start_time"
+        [[ "${#fields[@]}" -gt 0 ]]
+        local_start_time="ps:${fields[*]}"
+      fi
+      if [[ "$inject_record_failure" == "1" ]]; then
+        printf "Portable profile fixture injected gateway launch-record failure for process %s.\n" "$$"
+        exit 73
+      fi
+      launch_pid_file_tmp="${gateway_launch_pid_file}.$$.tmp"
+      trap '\''rm -f "$launch_pid_file_tmp"'\'' EXIT
+      printf "%s\t%s\t%s\n" "$$" "$local_start_time" "$gateway_identity" \
+        >"$launch_pid_file_tmp"
+      chmod 600 "$launch_pid_file_tmp"
+      mv "$launch_pid_file_tmp" "$gateway_launch_pid_file"
+      trap - EXIT
+      exec "$gateway_binary_path"
+    ' portable-profile-gateway-launch "$gateway_binary_path" "$gateway_launch_pid_file" \
+    "$gateway_identity" "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_LAUNCH_RECORD_FAILURE:-0}" \
+    >>"$gateway_log_file" 2>&1 </dev/null &
+  gateway_pid=$!
+  if wait_for_gateway_launch_record "$gateway_pid" "$gateway_identity"; then
+    :
+  else
+    failure_status=$?
+    if stop_gateway_without_launch_record "$gateway_pid" "$gateway_identity"; then
+      cleanup_status=0
+    else
+      cleanup_status=$?
+    fi
+    echo "Portable profile fixture could not create the gateway launch identity record." >&2
+    if [[ "$cleanup_status" -ne 0 ]]; then
+      echo "Portable profile fixture could not complete gateway launch cleanup." >&2
+      return "$cleanup_status"
+    fi
+    return "$failure_status"
+  fi
+  if acquire_process_identity "$gateway_pid" "$gateway_identity" \
+    && [[ "$acquired_process_start_time" == "$gateway_launch_start_time" ]]; then
+    if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_FAILURE:-}" == "1" ]]; then
+      if fail_recorded_gateway_start; then
+        failure_status=1
+      else
+        failure_status=$?
+      fi
+      return "$failure_status"
+    fi
+    mv "$gateway_launch_pid_file" "$gateway_pid_file"
+    if [[ "${NEMOCLAW_PORTABLE_PROFILE_TEST_GATEWAY_RECORD_DRIFT:-}" == "1" ]]; then
+      cp "$gateway_pid_file" "${gateway_pid_file}.before-validation"
+      gateway_drift_identity="gateway:00000000000000000000000000000000"
+      if [[ "$gateway_drift_identity" == "$gateway_identity" ]]; then
+        gateway_drift_identity="gateway:11111111111111111111111111111111"
+      fi
+      printf '%s\t%s\t%s\n' "$gateway_pid" "$acquired_process_start_time" \
+        "$gateway_drift_identity" \
+        >"$gateway_pid_file"
+    fi
+  else
+    if fail_recorded_gateway_start; then
+      failure_status=1
+    else
+      failure_status=$?
+    fi
+    return "$failure_status"
+  fi
+
+  local gateway_status
+  if gateway_service_is_active; then
+    return 0
+  else
+    gateway_status=$?
+  fi
+  if [[ "$gateway_status" -eq 1 ]]; then
+    rm -f "$gateway_pid_file"
+  fi
+  echo "Portable profile fixture gateway process did not remain active." >&2
+  return 1
+}
+
+restart_gateway_service() {
+  validate_gateway_unit
+  stop_gateway_launch
+  stop_gateway_service
+  start_gateway_service
+}
+
+print_gateway_identity() {
+  validate_gateway_unit
+  printf 'FragmentPath=%s\n' "$gateway_unit_path"
+  printf 'ExecStart={ path=%s ; argv[]=%s ; }\n' "$gateway_binary_path" "$gateway_binary_path"
+}
+
+print_active_gateway_identity() {
+  print_gateway_identity
+  local status gateway_pid=0 active_state=inactive
+  if gateway_service_is_active; then
+    gateway_pid="$recorded_pid"
+    active_state=active
+  else
+    status=$?
+    [[ "$status" -eq 1 ]] || return "$status"
+  fi
+  printf 'ActiveState=%s\n' "$active_state"
+  printf 'MainPID=%s\n' "$gateway_pid"
 }
 
 refresh_service() {
@@ -904,6 +1230,74 @@ if [[ "$#" -eq 4 &&
   "$3" == "NETAVARK_FW=iptables" &&
   "$4" == CONTAINERS_CONF=?* ]]; then
   exit 0
+fi
+
+if [[ "$#" -eq 2 &&
+  "$1" == "--user" &&
+  "$2" == "daemon-reload" ]]; then
+  validate_gateway_unit
+  exit 0
+fi
+
+if [[ "$#" -eq 5 &&
+  "$1" == "--user" &&
+  "$2" == "show" &&
+  "$3" == "$gateway_service_name" &&
+  "$4" == "--property=FragmentPath" &&
+  "$5" == "--property=ExecStart" ]]; then
+  print_gateway_identity
+  exit 0
+fi
+
+if [[ "$#" -eq 7 &&
+  "$1" == "--user" &&
+  "$2" == "show" &&
+  "$3" == "$gateway_service_name" &&
+  "$4" == "--property=FragmentPath" &&
+  "$5" == "--property=ExecStart" &&
+  "$6" == "--property=ActiveState" &&
+  "$7" == "--property=MainPID" ]]; then
+  print_active_gateway_identity
+  exit 0
+fi
+
+if [[ "$#" -eq 3 &&
+  "$1" == "--user" &&
+  "$2" == "stop" &&
+  "$3" == "$gateway_service_name" ]]; then
+  validate_gateway_unit
+  stop_gateway_service
+  exit 0
+fi
+
+if [[ "$#" -eq 3 &&
+  "$1" == "--user" &&
+  "$2" == "enable" &&
+  "$3" == "$gateway_service_name" ]]; then
+  validate_gateway_unit
+  exit 0
+fi
+
+if [[ "$#" -eq 3 &&
+  "$1" == "--user" &&
+  "$2" == "restart" &&
+  "$3" == "$gateway_service_name" ]]; then
+  restart_gateway_service
+  exit 0
+fi
+
+if [[ "$#" -eq 4 &&
+  "$1" == "--user" &&
+  "$2" == "is-active" &&
+  "$3" == "--quiet" &&
+  "$4" == "$gateway_service_name" ]]; then
+  if gateway_service_is_active; then
+    exit 0
+  else
+    status=$?
+    [[ "$status" -eq 1 ]] || exit "$status"
+  fi
+  exit 3
 fi
 
 if [[ "$#" -eq 3 &&

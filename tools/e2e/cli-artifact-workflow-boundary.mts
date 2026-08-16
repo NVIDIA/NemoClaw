@@ -13,6 +13,14 @@ import {
   PREPARE_E2E_NO_BUILD_JOBS,
   PREPARE_E2E_TRUSTED_BUILD_JOBS,
 } from "./prepare-e2e-workflow-boundary.mts";
+import {
+  contentSha256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
+  MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
+  MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
+  MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256,
+} from "./mcp-dev-workflow-boundary-digests.mts";
 import { E2E_ACTION_PROVENANCE } from "./workflow-boundary-policy.mts";
 
 export const CLI_ARTIFACT_DOWNLOAD_ACTION =
@@ -38,7 +46,6 @@ const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
-
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
@@ -59,17 +66,14 @@ function steps(value: unknown): WorkflowStep[] {
   return Array.isArray(value) ? (value as WorkflowStep[]) : [];
 }
 
-function hasUnsafeShellHook(value: unknown): boolean {
+function hasUnsafeProcessHook(value: unknown): boolean {
   const environment = record(value);
-  return ["BASH_ENV", "ENV"].some(
-    (name) => Object.hasOwn(environment, name) && environment[name] !== "/dev/null",
+  return (
+    Object.hasOwn(environment, "NODE_OPTIONS") ||
+    ["BASH_ENV", "ENV"].some(
+      (name) => Object.hasOwn(environment, name) && environment[name] !== "/dev/null",
+    )
   );
-}
-
-function workflowContentSha256(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(value) ?? "")
-    .digest("hex");
 }
 
 function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
@@ -340,6 +344,16 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
+  if (jobName === "mcp-bridge-dev") {
+    const { steps: _jobSteps, ...jobExecutionContext } = job;
+    if (
+      contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256
+    ) {
+      errors.push(
+        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      );
+    }
+  }
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
   if (jobName === "mcp-bridge-dev") {
     expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
@@ -350,7 +364,7 @@ function validateConsumer(
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
   const candidateCheckoutIndexes = jobSteps.flatMap((step, index) =>
-    workflowContentSha256(step) === CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 ? [index] : [],
+    contentSha256(step) === CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 ? [index] : [],
   );
   if (candidateCheckoutIndexes.length !== 1) {
     errors.push(
@@ -374,12 +388,24 @@ function validateConsumer(
     errors.push(`${jobName} must use the immutable complete CLI artifact restore contract`);
   }
   const restoreIndex = jobSteps.indexOf(restore);
-  const stepsThroughRestore = jobSteps.slice(0, restoreIndex + 1);
+  const trustedInstallIndex = jobSteps.findIndex(
+    (step) => step.name === "Install immutable OpenShell dev artifact",
+  );
+  const securityBoundaryIndex =
+    jobName === "mcp-bridge-dev"
+      ? trustedInstallIndex >= 0
+        ? trustedInstallIndex
+        : jobSteps.length - 1
+      : restoreIndex;
+  const stepsThroughSecurityBoundary = jobSteps.slice(
+    0,
+    securityBoundaryIndex + 1,
+  );
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
-  const unsafePreRestoreStep = stepsThroughRestore.some(
+  const unsafePreRestoreStep = stepsThroughSecurityBoundary.some(
     (step) =>
-      hasUnsafeShellHook(step.env) ||
+      hasUnsafeProcessHook(step.env) ||
       step.uses?.startsWith("./") ||
       (jobName !== "hermes-gpu-startup" &&
         (/GITHUB_WORKSPACE/u.test(step.run ?? "") ||
@@ -387,29 +413,79 @@ function validateConsumer(
             step.run ?? "",
           ))),
   );
-  if (hasUnsafeShellHook(jobEnv) || defaultShell !== undefined || unsafePreRestoreStep) {
+  if (hasUnsafeProcessHook(jobEnv) || defaultShell !== undefined || unsafePreRestoreStep) {
     errors.push(
-      `${jobName} must not use candidate-controlled shell hooks before CLI artifact restore`,
+      jobName === "mcp-bridge-dev"
+        ? "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation"
+        : `${jobName} must not use candidate-controlled process hooks before CLI artifact restore`,
     );
   }
   const candidateCheckoutIndex = candidateCheckoutIndexes[0] ?? -1;
+  if (jobName === "mcp-bridge-dev") {
+    const trustedNodeSetupIndexes = jobSteps.flatMap((step, index) =>
+      contentSha256(step) === MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256 ? [index] : [],
+    );
+    if (
+      trustedNodeSetupIndexes.length !== 1 ||
+      trustedNodeSetupIndexes[0] !== candidateCheckoutIndex - 1
+    ) {
+      errors.push(
+        "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
+      );
+    }
+  }
   if (candidateCheckoutIndex >= restoreIndex) {
     errors.push(`${jobName} must check out the candidate before CLI artifact restore`);
   }
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
   }
+  if (
+    jobName === "mcp-bridge-dev" &&
+    (trustedInstallIndex < 0 ||
+      contentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
+        MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256)
+  ) {
+    errors.push(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+    );
+  }
+  if (
+    jobName === "mcp-bridge-dev" &&
+    (prepareIndex < 0 ||
+      restoreIndex < prepareIndex ||
+      contentSha256(jobSteps.slice(prepareIndex, restoreIndex + 1)) !==
+        MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256)
+  ) {
+    errors.push(
+      "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
+    );
+  }
   const reviewedStepsBeforeRestore =
-    jobName === "live" ? ["Record immutable Deep Agents Code base evidence"] : [];
+    jobName === "live"
+      ? ["Record immutable Deep Agents Code base evidence"]
+      : jobName === "mcp-bridge-dev"
+        ? [
+            "Authenticate to Docker Hub",
+            "Checkout trusted OpenShell dev tooling",
+            "Restore immutable OpenShell dev artifact",
+            "Verify immutable OpenShell dev artifact",
+            "Revoke Docker auth before OpenShell development tooling",
+            "Install immutable OpenShell dev artifact",
+            "Prepare E2E workspace",
+          ]
+        : [];
+  const reviewedStepsStart =
+    jobName === "mcp-bridge-dev" ? candidateCheckoutIndex + 1 : prepareIndex + 1;
   const stepsBeforeRestore = jobSteps
-    .slice(prepareIndex + 1, restoreIndex)
+    .slice(reviewedStepsStart, restoreIndex)
     .map((step) => step.name);
   if (
     prepareIndex >= 0 &&
     !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
   ) {
     errors.push(
-      `${jobName} must contain only reviewed steps between workspace preparation and CLI artifact restore`,
+      `${jobName} must preserve its reviewed steps through CLI artifact restore`,
     );
   }
 }
@@ -420,8 +496,16 @@ export function validateCliArtifactWorkflowBoundary(
 ): string[] {
   const errors = validateCliArtifactRestoreAction(actionPath);
   const workflowEnv = record(workflow.env);
-  if (hasUnsafeShellHook(workflowEnv)) {
-    errors.push("workflow must not set shell startup hooks before CLI artifact restore");
+  if (
+    contentSha256({ env: workflow.env, defaults: workflow.defaults }) !==
+    MCP_DEV_WORKFLOW_EXECUTION_CONTEXT_SHA256
+  ) {
+    errors.push(
+      "workflow must preserve the reviewed execution environment before candidate activation",
+    );
+  }
+  if (hasUnsafeProcessHook(workflowEnv)) {
+    errors.push("workflow must not set process startup hooks before CLI artifact restore");
   }
   const jobs = record(workflow.jobs);
   const producer = record(jobs[CLI_ARTIFACT_PRODUCER_JOB]);
@@ -431,13 +515,17 @@ export function validateCliArtifactWorkflowBoundary(
   }
   validateProducer(errors, producer);
 
+  if (Object.keys(record(jobs["mcp-bridge-dev"])).length === 0) {
+    errors.push("workflow is missing required CLI artifact consumer mcp-bridge-dev");
+  }
+
   for (const [jobName, value] of Object.entries(jobs)) {
     const job = record(value);
     const jobSteps = steps(job.steps);
     const usesPrepare = jobSteps.some((step) => step.uses === PREPARE_E2E_ACTION);
     const artifactSteps = jobSteps.filter(isCliArtifactRestoreStep);
     const shouldConsume =
-      usesPrepare &&
+      (usesPrepare || jobName === "mcp-bridge-dev") &&
       jobName !== CLI_ARTIFACT_PRODUCER_JOB &&
       !PREPARE_E2E_NO_BUILD_JOBS.has(jobName) &&
       !PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);

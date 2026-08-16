@@ -3167,6 +3167,16 @@ PYAUTOPAIR
   echo "[gateway] auto-pair watcher launched (pid $AUTO_PAIR_PID)" >&2
 }
 
+prepare_auto_pair_log() {
+  if [ "$(id -u)" -eq 0 ]; then
+    # PID 1 opens the redirection after CAP_DAC_OVERRIDE is gone, then passes
+    # the already-open descriptor to the stepped-down watcher.
+    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root
+  else
+    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
+  fi
+}
+
 # ── Proxy environment ────────────────────────────────────────────
 # OpenShell injects HTTP_PROXY/HTTPS_PROXY/NO_PROXY into the sandbox, but its
 # NO_PROXY is limited to 127.0.0.1,localhost,::1 — missing the gateway IP.
@@ -5894,8 +5904,7 @@ if [ "$(id -u)" -ne 0 ]; then
   write_auth_profile
   harden_auth_profiles
 
-  # Separate log for auto-pair in non-root mode as well.
-  _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
+  prepare_auto_pair_log
 
   prepare_plugin_refresh_log || exit 1
 
@@ -6028,8 +6037,7 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exit "$_nemoclaw_cmd_rc"
 fi
 
-# Separate log for auto-pair so sandbox user can write to it
-_nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 sandbox:sandbox
+prepare_auto_pair_log
 
 prepare_plugin_refresh_log || exit 1
 

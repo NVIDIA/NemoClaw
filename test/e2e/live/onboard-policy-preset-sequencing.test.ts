@@ -119,7 +119,7 @@ test(
         { trigger: "OpenAI-compatible base URL", response: `${fake.baseUrl}\n` },
         { trigger: "Other OpenAI-compatible endpoint API key:", response: `${apiKey}\n` },
         { trigger: "endpoint model", response: `${MODEL}\n` },
-        { trigger: "Apply this configuration?", response: "y\n" },
+        { trigger: "Choose an action:", response: "1\n" },
         { trigger: "Enable web search", response: "1\n" },
         // Raw-mode messaging-channel selector; Enter with none toggled skips.
         { trigger: "Press 1-7 to toggle", response: "\r" },

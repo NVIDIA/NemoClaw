@@ -28,10 +28,11 @@ import {
   getOccupiedPorts,
   getPersistedDashboardPort,
   getRegistryOccupiedDashboardPorts,
+  isPortBoundOnHost,
   isLiveForwardStatus,
   type ListSandboxesFn,
 } from "./dashboard-port";
-import { bestEffortForwardStop } from "./forward-cleanup";
+import { bestEffortForwardStop, waitForStoppedForwardPortRelease } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
@@ -71,6 +72,8 @@ export interface OnboardDashboardDeps {
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
   // callers leave it unset and the helper falls back to the live registry.
   listSandboxes?: ListSandboxesFn;
+  /** Host-listener probe injected by forward release race tests. */
+  isPortBoundOnHost?: typeof isPortBoundOnHost;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -285,7 +288,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       preferredEntry &&
       (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
     ) {
-      stopForwardForSandbox(preferredPort);
+      const stopResult = stopForwardForSandbox(preferredPort);
+      if (
+        preferredEntry.sandboxName === sandboxName &&
+        (stopResult === "stopped" || stopResult === "no-entry")
+      ) {
+        // OpenShell can remove forward metadata before the SSH listener exits.
+        // Do not classify that retiring listener as a foreign fixed-port
+        // conflict; use the same bounded five-second release window as runtime
+        // forward recovery.
+        waitForStoppedForwardPortRelease(
+          preferredPort,
+          deps.isPortBoundOnHost ?? isPortBoundOnHost,
+          { sleep: (milliseconds) => deps.sleep(milliseconds / 1_000) },
+        );
+      }
       existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     }
     let actualPort: number;
@@ -294,7 +311,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         sandboxName,
         preferredPort,
         existingForwards,
-        undefined,
+        deps.isPortBoundOnHost ?? isPortBoundOnHost,
         getRegistryOccupiedDashboardPorts(sandboxName, deps.listSandboxes),
       );
     } catch (err) {

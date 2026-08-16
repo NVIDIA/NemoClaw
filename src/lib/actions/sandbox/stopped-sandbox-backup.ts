@@ -3,6 +3,7 @@
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture, dockerRun } from "../../adapters/docker/run";
+import { retryUntilAsync } from "../../core/retry";
 import { resolveSandboxContainerOwner } from "../../domain/sandbox/container-owner";
 import {
   findLabeledSandboxContainers,
@@ -208,14 +209,12 @@ export async function backupStartedSandboxState(
   depsOverride: Partial<BackupRetryDeps> = {},
 ): Promise<sandboxState.BackupResult> {
   const deps: BackupRetryDeps = { ...defaultBackupRetryDeps, ...depsOverride };
-  let result = deps.backup(sandboxName);
-  for (
-    let attempt = 1;
-    attempt < deps.attempts && !result.success && result.unreachable;
-    attempt++
-  ) {
-    await deps.sleep(deps.delayMs);
-    result = deps.backup(sandboxName);
-  }
-  return result;
+  return retryUntilAsync(() => deps.backup(sandboxName), {
+    accept: (result) => result.success || !result.unreachable,
+    retryDelaysMs: Array.from(
+      { length: Math.max(0, Math.ceil(deps.attempts) - 1) },
+      () => deps.delayMs,
+    ),
+    sleep: deps.sleep,
+  });
 }
