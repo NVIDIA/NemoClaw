@@ -259,30 +259,67 @@ function createProviderNetwork(
   name: string,
   caseId: string,
 ): PodmanNetworkAuthority {
-  const id = capture(
-    engine,
-    ["network", "create", "--label", `${QUALIFICATION_LABEL}=${caseId}`, name],
-    "provider network creation",
-  );
-  if (!FULL_ID.test(id)) throw new Error("Provider network did not return a full immutable ID");
-  const inspected = JSON.parse(
-    capture(engine, ["network", "inspect", id], "provider network inspection"),
-  ) as Array<{
-    id?: unknown;
-    name?: unknown;
-    subnets?: Array<{ gateway?: unknown }>;
-  }>;
-  const entry = inspected[0];
-  const gateway = entry?.subnets?.[0]?.gateway;
-  if (
-    inspected.length !== 1 ||
-    entry?.id !== id ||
-    entry.name !== name ||
-    typeof gateway !== "string"
-  ) {
-    throw new Error("Provider network inspection lacks exact identity");
+  let created = false;
+  try {
+    const createdIdentity = capture(
+      engine,
+      ["network", "create", "--label", `${QUALIFICATION_LABEL}=${caseId}`, name],
+      "provider network creation",
+    );
+    created = true;
+    if (createdIdentity !== name && !FULL_ID.test(createdIdentity)) {
+      throw new Error("Provider network creation returned an unexpected identity");
+    }
+    type NetworkInspection = {
+      id?: unknown;
+      labels?: unknown;
+      name?: unknown;
+      subnets?: Array<{ gateway?: unknown }>;
+    };
+    const inspect = (identity: string, label: string): NetworkInspection => {
+      const inspected = JSON.parse(capture(engine, ["network", "inspect", identity], label)) as
+        | NetworkInspection[]
+        | unknown;
+      if (!Array.isArray(inspected) || inspected.length !== 1) {
+        throw new Error("Provider network inspection lacks one exact identity");
+      }
+      return inspected[0] as NetworkInspection;
+    };
+    const entry = inspect(createdIdentity, "provider network creation inspection");
+    const id = typeof entry.id === "string" ? entry.id : "";
+    const gateway = entry?.subnets?.[0]?.gateway;
+    const labels =
+      typeof entry.labels === "object" && entry.labels !== null && !Array.isArray(entry.labels)
+        ? (entry.labels as Record<string, unknown>)
+        : null;
+    if (
+      !FULL_ID.test(id) ||
+      (FULL_ID.test(createdIdentity) && createdIdentity !== id) ||
+      entry.name !== name ||
+      typeof gateway !== "string" ||
+      labels?.[QUALIFICATION_LABEL] !== caseId
+    ) {
+      throw new Error("Provider network inspection lacks exact identity");
+    }
+    const immutable = inspect(id, "provider network immutable-ID inspection");
+    if (
+      immutable.id !== id ||
+      immutable.name !== name ||
+      immutable.subnets?.[0]?.gateway !== gateway ||
+      typeof immutable.labels !== "object" ||
+      immutable.labels === null ||
+      Array.isArray(immutable.labels) ||
+      (immutable.labels as Record<string, unknown>)[QUALIFICATION_LABEL] !== caseId
+    ) {
+      throw new Error("Provider network identity changed after immutable-ID resolution");
+    }
+    return Object.freeze({ id, name, gateway });
+  } catch (error) {
+    if (created) {
+      engine.capture(["network", "rm", "--force", name], COMMAND_TIMEOUT);
+    }
+    throw error;
   }
-  return Object.freeze({ id, name, gateway });
 }
 
 function pullPublicImage(engine: PodmanBoundContainerEngine, imageRef: string): void {
@@ -597,9 +634,10 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     });
     expect(bundle.identity.id).toBe("podman");
     expect(bundle.workload.profile.support).toBeNull();
-    expect(bundle.preflightDoctor.inspectHost()).toMatchObject({
-      status: "ok",
-    });
+    const hostInspection = bundle.preflightDoctor.inspectHost();
+    if (hostInspection.status !== "ok") {
+      throw new Error(`Podman host qualification failed: ${bounded(hostInspection.detail)}`);
+    }
     const caseSuffix = sha256(row.id).slice(0, 12);
     const networkName = `nemoclaw-q-${caseSuffix}`;
     const network = createProviderNetwork(inferenceEngine, networkName, row.id);
@@ -1093,3 +1131,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     service = null;
   }
 }
+
+export const nativeRuntimeQualificationCaseInternals = Object.freeze({
+  createProviderNetwork,
+});
