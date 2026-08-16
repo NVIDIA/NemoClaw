@@ -1093,7 +1093,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
     mockProvider = await startMockAnthropicProvider();
-    await installGatewayHostVerificationAlias(host, cleanup);
+    await installGatewayHostVerificationAlias(host, cleanup, home);
     await artifacts.writeJson("mock-anthropic-provider.json", {
       endpointUrl: mockProvider.endpointUrl,
     });

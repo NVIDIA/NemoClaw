@@ -101,6 +101,7 @@ describe("runtime provider central source boundary", () => {
       "onboard/workload/runtime.ts": read("src/lib/onboard/workload/runtime.ts"),
     };
     const providerContract = {
+      activation: read("src/lib/onboard/runtime-provider/activation.ts"),
       contract: read("src/lib/onboard/runtime-provider/contract.ts"),
       current: read("src/lib/onboard/runtime-provider/current.ts"),
       docker: read("src/lib/onboard/runtime-provider/docker.ts"),
@@ -137,6 +138,10 @@ describe("runtime provider central source boundary", () => {
       "../managed-bootstrap/docker-runtime",
     ]);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
+    expect(providerContract.activation).not.toMatch(/\b(?:podman|mxc)\b/iu);
+    expect(providerContract.activation).not.toMatch(
+      /(?:providerId|driverName)\s*(?:===|!==)\s*["'](?:docker|podman|mxc)["']/iu,
+    );
   });
 
   it("inventories every managed-bootstrap protocol source", () => {
@@ -165,6 +170,7 @@ describe("runtime provider central source boundary", () => {
   it("inventories every runtime-provider implementation", () => {
     expect(providerPaths).toEqual([
       "src/lib/onboard/runtime-provider/access.ts",
+      "src/lib/onboard/runtime-provider/activation.ts",
       "src/lib/onboard/runtime-provider/container-state-mutation.ts",
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
@@ -180,6 +186,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/host-local-inference-routing.ts",
       "src/lib/onboard/runtime-provider/host-local-inference.ts",
       "src/lib/onboard/runtime-provider/mxc.ts",
+      "src/lib/onboard/runtime-provider/native-qualification-authority.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-authority.ts",
       "src/lib/onboard/runtime-provider/persisted-engine-lifecycle.ts",
       "src/lib/onboard/runtime-provider/podman-gpu.ts",

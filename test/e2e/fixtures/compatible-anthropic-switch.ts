@@ -123,8 +123,8 @@ function readOwnedGatewayStateFile(filePath: string, currentUid: number): string
   }
 }
 
-function managedOpenShellGatewayPid(): number | null {
-  const stateDirectory = resolveDockerDriverGatewayStateDir(process.env, os.homedir());
+function managedOpenShellGatewayPid(homeDir: string): number | null {
+  const stateDirectory = resolveDockerDriverGatewayStateDir(process.env, homeDir);
   const pidPath = path.join(stateDirectory, "openshell-gateway.pid");
   const markerPath = path.join(stateDirectory, "runtime.json");
   const pidPathExists = pathExists(pidPath);
@@ -186,8 +186,8 @@ function managedOpenShellGatewayPid(): number | null {
   return pid;
 }
 
-async function activeOpenShellGatewayPid(host: HostCliClient): Promise<number> {
-  const managedPid = managedOpenShellGatewayPid();
+async function activeOpenShellGatewayPid(host: HostCliClient, homeDir: string): Promise<number> {
+  const managedPid = managedOpenShellGatewayPid(homeDir);
   if (managedPid !== null) return managedPid;
   for (const serviceName of GATEWAY_SERVICE_NAMES) {
     const result = await host.command(
@@ -219,11 +219,12 @@ async function activeOpenShellGatewayPid(host: HostCliClient): Promise<number> {
 export async function installGatewayHostVerificationAlias(
   host: HostCliClient,
   cleanup: { add(name: string, run: () => Promise<void> | void): void },
+  homeDir: string = os.homedir(),
 ): Promise<void> {
-  const gatewayPid = await activeOpenShellGatewayPid(host);
+  const gatewayPid = await activeOpenShellGatewayPid(host, homeDir);
   const ownerToken = randomBytes(16).toString("hex");
   const fixtureDirectory = fs.mkdtempSync(
-    path.join(os.homedir(), ".nemoclaw-gateway-resolver-"),
+    path.join(homeDir, ".nemoclaw-gateway-resolver-"),
   );
   const resolverSource = path.join(fixtureDirectory, "hosts");
   const ownedLine = `127.0.0.1 ${OPENSHELL_HOST_ALIAS} # nemoclaw-gateway-host-verifier:${ownerToken}`;

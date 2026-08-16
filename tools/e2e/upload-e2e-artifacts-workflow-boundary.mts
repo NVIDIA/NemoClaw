@@ -183,6 +183,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "native-runtime-qualification-producer",
+    {
+      name: "${{ matrix.artifactName }}",
+      path: "${{ runner.temp }}/native-runtime-evidence/evidence.json",
+    },
+  ],
+  [
     "llama-cpp-dgx-spark-qualification",
     {
       name: "e2e-llama-cpp-dgx-spark-qualification",
