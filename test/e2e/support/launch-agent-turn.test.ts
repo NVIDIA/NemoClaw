@@ -539,12 +539,23 @@ function runOpenShellShimFixture(gatewayArgs: string[]) {
   writeFileSync(
     realOpenShell,
     String.raw`#!/usr/bin/env node
+const authorityNames = new Set([
+  "NEMOCLAW_OPENSHELL_COMMAND",
+  "NEMOCLAW_LAUNCH_SANDBOX",
+  "NEMOCLAW_LAUNCH_RUN_ID",
+  "NEMOCLAW_LAUNCH_INTERCEPT_PATH",
+  "NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
+  "NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
+]);
 require("node:fs").appendFileSync(
   ${JSON.stringify(callsPath)},
   JSON.stringify({
     argv: process.argv.slice(2),
     authorityNames: Object.keys(process.env)
-      .filter((name) => name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"))
+      .filter(
+        (name) =>
+          authorityNames.has(name) || name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
+      )
       .sort(),
   }) + "\n",
 );
@@ -555,6 +566,12 @@ require("node:fs").appendFileSync(
   chmodSync(shim, 0o755);
   const hostEnv = {
     ...process.env,
+    NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
+    NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT: OPENCLAW_PTY_RECORD_WRITER_SCRIPT,
+    NEMOCLAW_LAUNCH_RUN_ID: runId,
+    NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
+    NEMOCLAW_LAUNCH_SANDBOX: sandboxName,
+    NEMOCLAW_OPENSHELL_COMMAND: realOpenShell,
     OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
     OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT: OPENCLAW_PTY_RECORD_WRITER_SCRIPT,
     OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND: realOpenShell,
@@ -568,10 +585,10 @@ require("node:fs").appendFileSync(
         entry[1] !== undefined && isSubprocessEnvNameAllowed(entry[0]),
     ),
   );
-  const runShim = (args: string[]) =>
+  const runShim = (args: string[], childEnv: NodeJS.ProcessEnv = env) =>
     spawnSync(process.execPath, [shim, ...args], {
       encoding: "utf8",
-      env,
+      env: childEnv,
       timeout: 2_000,
       killSignal: "SIGKILL",
     });
@@ -594,7 +611,7 @@ require("node:fs").appendFileSync(
   const ttyIndex = malformedArgv.indexOf("--tty");
   malformedArgv.splice(ttyIndex, 3, "--timeout", "0", "--tty");
   try {
-    const passThrough = runShim(passThroughArgv);
+    const passThrough = runShim(passThroughArgv, hostEnv);
     const ttyPassThrough = runShim(ttyPassThroughArgv);
     const malformed = runShim(malformedArgv);
     const intercepted = runShim(exactArgv);
@@ -711,7 +728,7 @@ it("rejects an invalid baseline or a removed, rewritten, or truncated session (#
   }
 });
 
-it("intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority before real OpenShell calls (#9160)", () => {
+it("intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments (#9160)", () => {
   for (const gatewayArgs of [[], ["-g", "fixture-gateway"]]) {
     const fixture = runOpenShellShimFixture(gatewayArgs);
     const separator = fixture.exactArgv.indexOf("--");

@@ -135,7 +135,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const argv = process.argv.slice(2);
+// Direct CLI exec paths can inherit source names that filtered helpers omit.
 const authorityNames = [
+  "NEMOCLAW_OPENSHELL_COMMAND",
+  "NEMOCLAW_LAUNCH_SANDBOX",
+  "NEMOCLAW_LAUNCH_RUN_ID",
+  "NEMOCLAW_LAUNCH_INTERCEPT_PATH",
+  "NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
+  "NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
   "OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND",
   "OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX",
   "OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID",
