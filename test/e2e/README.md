@@ -666,11 +666,11 @@ directory with mode `0700` and writes normalized job-and-signature JSON files
 with mode `0600`. Each cache entry binds sanitized evidence to one GitHub run ID
 and attempt. A later seven-day run with the same cache directory reuses matching
 entries. Each invocation reads logs for at most 50 uncached failed runs. When
-more failed runs remain, the command saves the sanitized evidence from that
-batch, exits nonzero, and asks you to rerun the same command with the same cache
-directory. Repeat until the command completes; each rerun reuses prior batches
-and collects the next one. The command reports cache hits and planned failed-log
-reads.
+more failed runs remain, the command saves normalized job names and sanitized
+signatures for that batch. The command then exits nonzero. Rerun the command
+with the same cache directory. Repeat until the command completes; each rerun
+reuses prior batches and collects the next one. The command reports cache hits
+and planned failed-log reads.
 
 The command extracts signatures in memory and does not retain raw GitHub logs.
 It applies the shared full secret redactor and removes volatile identifiers,

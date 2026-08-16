@@ -268,7 +268,7 @@ describe("weekly E2E unit-test gap analysis", () => {
     );
   });
 
-  it("stores normalized signatures and reuses them for the same run attempt", async () => {
+  it("reuses normalized signatures only for the same run attempt", async () => {
     await withTemporaryDirectory(async (directory) => {
       const cacheDir = path.join(directory, "evidence");
       const run = failedRun(34567890, 2);
@@ -300,9 +300,16 @@ describe("weekly E2E unit-test gap analysis", () => {
 
       expect(second).toEqual(first);
       expect(reads).toBe(1);
+
+      await collectEvidence([failedRun(34567890, 3)], cacheDir, runGh, 1, (plan) =>
+        plans.push(plan),
+      );
+      expect(reads).toBe(2);
+      expect(fs.existsSync(path.join(cacheDir, "34567890-attempt-3.json"))).toBe(true);
       expect(plans).toEqual([
         { cachedRuns: 0, deferredRuns: 0, failedLogReads: 1 },
         { cachedRuns: 1, deferredRuns: 0, failedLogReads: 0 },
+        { cachedRuns: 0, deferredRuns: 0, failedLogReads: 1 },
       ]);
     });
   });
