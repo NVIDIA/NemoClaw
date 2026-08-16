@@ -1321,6 +1321,11 @@ When cleanup succeeds, `exec` returns the remote command's exit code.
 If cleanup cannot inspect, restore, or verify that contract, it fails closed and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
 In that case, `exec` returns the cleanup failure instead of the remote command's status.
 
+For a registered OpenClaw sandbox, a successful direct `openclaw pairing approve googlechat <code>` command also restarts the managed gateway after cleanup so the new sender allowlist applies to the next message.
+If cleanup or restart fails after the approval commits, `exec` exits with status `1` and reports that the approval was not rolled back.
+Correct any reported cleanup problem, then run `$$nemoclaw <name> gateway restart` before testing the next message.
+NemoClaw does not apply this automatic restart to unregistered or non-OpenClaw sandboxes.
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 
@@ -2147,6 +2152,10 @@ Use `--` to separate `exec` options from the command you want to run inside the 
 After the remote command exits, NemoClaw verifies and, when needed, restores the mutable OpenClaw config permission contract.
 When cleanup succeeds, `exec` preserves the remote command's exit code.
 When cleanup fails closed, `exec` returns the cleanup failure and reports both statuses on `stderr`.
+
+A successful direct `openclaw pairing approve googlechat <code>` command in a registered OpenClaw sandbox restarts the managed gateway after cleanup, so the new sender allowlist applies to the next message.
+If the approval commits but cleanup or restart fails, `exec` exits with status `1`, reports that the approval was not rolled back, and directs you to run `$$nemoclaw <name> gateway restart` after correcting any cleanup problem.
+Unregistered and non-OpenClaw sandboxes do not receive this automatic restart.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

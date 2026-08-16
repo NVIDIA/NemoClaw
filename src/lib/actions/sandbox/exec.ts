@@ -29,6 +29,8 @@ export type SandboxExecOptions = {
 
 export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
 
+export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
+
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
@@ -368,6 +370,8 @@ export type ExecSandboxDeps = {
   cleanupDeps?: SandboxExecCleanupDeps;
   /** Activate config written by a successful direct Google Chat pairing approval. */
   restartGateway?: SandboxExecGatewayRestart;
+  /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
+  resolveSandboxAgent?: SandboxExecAgentResolver;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
   selectGateway?: (sandboxName: string) => GatewaySelectResult;
 };
@@ -388,6 +392,24 @@ function defaultRestartGateway(sandboxName: string): { ok: boolean } {
   const { defaultInferenceGatewayRestart } =
     require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
   return defaultInferenceGatewayRestart(sandboxName);
+}
+
+function defaultResolveSandboxAgent(sandboxName: string): string | null {
+  const entry = (
+    require("../../state/registry") as typeof import("../../state/registry")
+  ).getSandbox(sandboxName);
+  if (!entry) return null;
+  return entry.agent ?? "openclaw";
+}
+
+function googleChatPairingActivationFailureMessage(
+  cliName: string,
+  sandboxName: string,
+): string {
+  return (
+    `  Google Chat pairing approval committed for '${sandboxName}', but managed gateway activation failed. ` +
+    `The approval was not rolled back. Run '${cliName} ${sandboxName} gateway restart' before testing the next message.`
+  );
 }
 
 export async function execSandbox(
@@ -460,9 +482,32 @@ export async function execSandbox(
   }
   await emitPolicyDenialHint(completion);
   let exitCode = completion.code;
-  if (exitCode === 0 && isGoogleChatPairingApproval(command)) {
-    const restart = (deps.restartGateway ?? defaultRestartGateway)(sandboxName);
-    if (!restart.ok) exitCode = 1;
+  const googleChatApprovalCommitted =
+    completion.commandCode === 0 && isGoogleChatPairingApproval(command);
+  if (googleChatApprovalCommitted && completion.cleanupError) {
+    console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+  }
+  if (exitCode === 0 && googleChatApprovalCommitted) {
+    let recordedAgent: string | null;
+    try {
+      recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
+    } catch {
+      console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+      process.exit(1);
+    }
+    if (recordedAgent === "openclaw") {
+      let restartSucceeded = false;
+      try {
+        restartSucceeded = (deps.restartGateway ?? defaultRestartGateway)(sandboxName).ok;
+      } catch {
+        // The approval already committed inside OpenClaw. Convert restart
+        // exceptions into the same explicit partial-commit recovery contract.
+      }
+      if (!restartSucceeded) {
+        console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+        exitCode = 1;
+      }
+    }
   }
   process.exit(exitCode);
 }

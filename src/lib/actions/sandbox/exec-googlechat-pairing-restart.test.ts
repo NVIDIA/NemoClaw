@@ -27,6 +27,7 @@ function depsFor(status: number, restartGateway = vi.fn(() => ({ ok: true }))): 
     run: () => ({ status }),
     cleanupDeps: CLEANUP_SKIPPED,
     restartGateway,
+    resolveSandboxAgent: () => "openclaw",
     policyHint: {
       now: () => 1_000,
       probeLogs: () => "",
@@ -139,6 +140,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
   it("does not restart when post-command config cleanup fails", async () => {
     const restartGateway = vi.fn(() => ({ ok: true }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const deps = depsFor(0, restartGateway);
     deps.cleanupDeps = {
       getSandbox: () => {
@@ -155,10 +157,17 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(restartGateway).not.toHaveBeenCalled();
     expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("pairing approval committed for 'alpha'"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw alpha gateway restart"),
+    );
   });
 
   it("fails the public command when activation restart fails", async () => {
     const restartGateway = vi.fn(() => ({ ok: false }));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const exitCode = await runAndCaptureExit(
       ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
       depsFor(0, restartGateway),
@@ -166,6 +175,33 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(restartGateway).toHaveBeenCalledOnce();
     expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("pairing approval committed for 'alpha'"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw alpha gateway restart"),
+    );
+  });
+
+  it("reports a controlled partial commit when the activation restart throws", async () => {
+    const restartGateway = vi.fn(() => {
+      throw new Error("supervisor transport unavailable");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
+      depsFor(0, restartGateway),
+    );
+
+    expect(restartGateway).toHaveBeenCalledOnce();
+    expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("approval was not rolled back"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw alpha gateway restart"),
+    );
   });
 
   it("does not restart after a failed approval", async () => {
@@ -188,5 +224,56 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(restartGateway).not.toHaveBeenCalled();
     expect(exitCode).toBe(0);
+  });
+
+  it.each(["hermes", "custom-agent"])(
+    "does not restart a recorded non-OpenClaw %s sandbox",
+    async (agent) => {
+      const restartGateway = vi.fn(() => ({ ok: true }));
+      const deps = depsFor(0, restartGateway);
+      deps.resolveSandboxAgent = () => agent;
+
+      const exitCode = await runAndCaptureExit(
+        ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
+        deps,
+      );
+
+      expect(restartGateway).not.toHaveBeenCalled();
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not restart an unregistered sandbox", async () => {
+    const restartGateway = vi.fn(() => ({ ok: true }));
+    const deps = depsFor(0, restartGateway);
+    deps.resolveSandboxAgent = () => null;
+
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
+      deps,
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(exitCode).toBe(0);
+  });
+
+  it("fails closed when the recorded sandbox identity cannot be read", async () => {
+    const restartGateway = vi.fn(() => ({ ok: true }));
+    const deps = depsFor(0, restartGateway);
+    deps.resolveSandboxAgent = () => {
+      throw new Error("registry unavailable");
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
+      deps,
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(exitCode).toBe(1);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("pairing approval committed for 'alpha'"),
+    );
   });
 });
