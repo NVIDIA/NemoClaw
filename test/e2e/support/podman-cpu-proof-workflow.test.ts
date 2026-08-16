@@ -962,7 +962,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(enginesIndex).toBeGreaterThanOrEqual(0);
     expect(authorityIndex).toBeLessThan(enginesIndex);
     expect(scripts).not.toContain("podman create");
-    expect(scripts).toMatch(/startDockerDriverGateway[\s\S]*stopHostGatewayProcesses/u);
+    expect(scripts).toMatch(/onboard\.js"\)\)\.default[\s\S]*stopHostGatewayProcesses/u);
     expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
     expect(scripts).not.toContain("openshell.sandbox-name");
     expect(diagnostics.if).toBe("failure()");

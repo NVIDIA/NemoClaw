@@ -347,7 +347,7 @@ jobs:
             printf 'OPENSHELL_LOCAL_TLS_DIR=%s/tls\n' "$gateway_state"
           } >>"$GITHUB_ENV"
           node --input-type=module --eval '
-            const { startDockerDriverGateway } = await import("./dist/lib/onboard.js");
+            const { startDockerDriverGateway } = (await import("./dist/lib/onboard.js")).default;
             await startDockerDriverGateway({ skipSandboxBridgeReachability: true });
           '
 
