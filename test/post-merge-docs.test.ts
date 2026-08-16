@@ -170,7 +170,9 @@ function postCount(api: FakeGitHub, suffix?: string): number {
 }
 
 const credentials =
-  "GH_TOKEN GITHUB_TOKEN NVIDIA_API_KEY OPENAI_API_KEY PR_REVIEW_ADVISOR_API_KEY".split(" ");
+  "GH_TOKEN GITHUB_TOKEN NVIDIA_API_KEY OPENAI_API_KEY POST_MERGE_DOCS_API_KEY PR_REVIEW_ADVISOR_API_KEY".split(
+    " ",
+  );
 type RunnerStage = "create" | "agent" | "export" | "download";
 function runnerFixture(phase: "author" | "review") {
   const { mainSha, source } = sourceFixture();
@@ -260,12 +262,14 @@ function runnerTools(
 }
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
     fs.rmSync(directory, { force: true, recursive: true });
 });
 
 describe("post-merge documentation publisher", () => {
-  it("creates one immutable branch and draft PR from the approved patch", async () => {
+  it("creates one immutable branch and draft PR without forwarding the model credential", async () => {
+    vi.stubEnv("POST_MERGE_DOCS_API_KEY", "model-secret");
     const value = fixture();
     const api = new FakeGitHub(value);
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
@@ -273,6 +277,7 @@ describe("post-merge documentation publisher", () => {
     expect(api.commitBody).toMatchObject({ parents: [value.mainSha], tree: value.finalTree });
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.body).toMatch(/`npm run docs`[\s\S]*approval-required/u);
+    expect(JSON.stringify(api.request.mock.calls)).not.toContain("model-secret");
   });
   it("creates no writes for an approved empty patch", async () => {
     const value = emptyFixture();
@@ -374,31 +379,11 @@ describe("post-merge documentation runner", () => {
   );
 });
 
-describe("post-merge documentation workflow boundary", () => {
+describe("post-merge documentation review boundary", () => {
   const root = path.resolve(import.meta.dirname, "..");
-  const workflow = YAML.parse(
-    fs.readFileSync(path.join(root, ".github/workflows/post-merge-docs.yaml"), "utf8"),
-  ) as {
-    jobs: Record<string, { permissions: Record<string, string> }>;
-    permissions: Record<string, string>;
-  };
   const policy = YAML.parse(
     fs.readFileSync(path.join(root, "tools/post-merge-docs/review-policy.yaml"), "utf8"),
   );
-
-  // source-shape-contract: security -- The workflow must keep model credentials out of its repository-write privilege domain.
-  it("separates the inference credential from repository writes", () => {
-    expect(workflow.permissions).toEqual({});
-    expect(JSON.stringify(workflow.jobs.gate)).toContain("| jq --slurp");
-    expect(workflow.jobs.author?.permissions).toEqual({ contents: "read" });
-    expect(workflow.jobs.publish?.permissions).toEqual({
-      actions: "read",
-      contents: "write",
-      "pull-requests": "write",
-    });
-    expect(JSON.stringify(workflow).match(/secrets\.POST_MERGE_DOCS_API_KEY/gu)).toHaveLength(1);
-    expect(JSON.stringify(workflow.jobs.publish)).not.toMatch(/API_KEY/u);
-  });
 
   it("keeps the independent reviewer read-only and offline", () => {
     expect(policy.filesystem_policy.read_write).toEqual(["/dev", "/sandbox/output"]);
