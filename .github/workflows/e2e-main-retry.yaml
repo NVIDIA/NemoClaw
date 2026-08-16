@@ -66,3 +66,58 @@ jobs:
           path: ${{ runner.temp }}/e2e-main-retry-evidence.json
           if-no-files-found: warn
           retention-days: 14
+
+  report-same-commit-reliability:
+    needs: evaluate
+    if: >-
+      ${{
+      always() &&
+      github.run_attempt == 1 &&
+      github.repository == 'NVIDIA/NemoClaw' &&
+      github.event.workflow_run.status == 'completed' &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.path == '.github/workflows/e2e.yaml' &&
+      startsWith(github.event.workflow_run.display_title, 'E2E ') &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout trusted reliability reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Build advisory same-commit reliability report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/same-commit-reliability.mts \
+            >"${RUNNER_TEMP}/same-commit-reliability.json" \
+            2>"${RUNNER_TEMP}/same-commit-reliability.md"
+          cat "${RUNNER_TEMP}/same-commit-reliability.md"
+          cat "${RUNNER_TEMP}/same-commit-reliability.md" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload advisory reliability evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: same-commit-reliability-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          path: |
+            ${{ runner.temp }}/same-commit-reliability.json
+            ${{ runner.temp }}/same-commit-reliability.md
+          if-no-files-found: error
+          retention-days: 14

@@ -16,6 +16,10 @@ import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
 import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
+import {
+  captureDcodeBaseImageRuntimeEvidence,
+  loadDcodeBaseImagePublicationEvidence,
+} from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
@@ -76,6 +80,10 @@ for (const [targetIndex, target] of listTargets().entries()) {
       secrets,
       stateValidation,
     }) => {
+      const dcodeBaseContract = loadDcodeBaseImagePublicationEvidence(
+        target.id,
+        artifacts.pathFor("dcode-base-image.json"),
+      );
       for (const secret of target.requiredSecrets ?? []) {
         secrets.required(secret);
       }
@@ -162,11 +170,15 @@ for (const [targetIndex, target] of listTargets().entries()) {
       });
 
       progress.phase("record target completion evidence");
+      const dcodeBaseImage = dcodeBaseContract
+        ? captureDcodeBaseImageRuntimeEvidence(dcodeBaseContract, instance.sandboxName)
+        : undefined;
       await artifacts.target.complete({
         id: target.id,
         expectedStateId: validation.state.id,
         probes: validation.probes.map((probe) => probe.id),
         pendingRuntimeSuites: support.pendingRuntimeSuites,
+        dcodeBaseImage,
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }
           : undefined,

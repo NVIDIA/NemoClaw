@@ -119,7 +119,7 @@ afterEach(async () => {
 });
 
 describe("experimental voice gateway composed boundary", () => {
-  it("recovers an omitted OpenClaw delta before completing the pinned runtime turn (#8482)", async () => {
+  it("recovers an omitted delta when a final event repeats the last sequence (#9243)", async () => {
     let pinnedOpenClaw: PinnedOpenClawGateway | undefined;
     const diagnostics: object[] = [];
     const ids = ["voice-session", "agent-session", "turn", "response"];
@@ -156,7 +156,7 @@ describe("experimental voice gateway composed boundary", () => {
     const events = await runtime.commitTurn(session, "runtime-commit", "repository status");
     await runtime.closeSession(session);
 
-    expect(output).toEqual(["Hello world"]);
+    expect(output).toEqual(["Hello world!"]);
     expect(events.map((event) => (event as { type: string }).type)).toEqual([
       "response.started",
       "response.text.delta",

@@ -32,6 +32,7 @@ function ok(stdout = ""): RunResult {
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
   return runUninstallPlanBase(options, {
+    hasPortableRuntimeCleanup: () => false,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -289,7 +290,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       expect(runDocker).not.toHaveBeenCalled();
       expect(rmSync).not.toHaveBeenCalled();
       expect(errors.join("\n")).toContain(
-        "Managed distributed vLLM SSH binding exists without its ownership receipt",
+        "A managed distributed vLLM SSH binding exists without its ownership receipt",
       );
       expect(fs.existsSync(discoveryBindingPath)).toBe(true);
     } finally {
@@ -524,7 +525,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       expect(runDocker).not.toHaveBeenCalled();
       expect(rmSync).not.toHaveBeenCalled();
       expect(errors.join("\n")).toContain(
-        "Managed distributed vLLM SSH binding exists without its ownership receipt",
+        "A managed distributed vLLM SSH binding exists without its ownership receipt",
       );
       expect(fs.existsSync(bindingPath)).toBe(true);
     } finally {

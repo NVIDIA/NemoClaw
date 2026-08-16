@@ -619,7 +619,11 @@ describe("inference selection validation", () => {
         "https://compatible.example",
         "nvidia/nemotron-3-super-v3",
         "test-key",
-        { probeStreaming: true, pinnedAddresses: ["93.184.216.34"] },
+        {
+          probeStreaming: true,
+          requireStreamingToolCalling: true,
+          pinnedAddresses: ["93.184.216.34"],
+        },
       );
     } finally {
       log.mockRestore();
@@ -714,7 +718,11 @@ describe("inference selection validation", () => {
         "https://compatible.example",
         "reasoning-model",
         "test-key",
-        { probeStreaming: false, pinnedAddresses: ["93.184.216.34"] },
+        {
+          probeStreaming: false,
+          requireStreamingToolCalling: false,
+          pinnedAddresses: ["93.184.216.34"],
+        },
       );
     } finally {
       log.mockRestore();

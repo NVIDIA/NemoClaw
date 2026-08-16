@@ -407,6 +407,11 @@ runner.run = (command, options = {}) => {
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
   }
+  if (normalized.includes("sandbox get " + sandboxName)) {
+    return sandboxCreated
+      ? { status: 0, stdout: "Name: " + sandboxName + "\nId: sbx-managed-fixture\n", stderr: "" }
+      : { status: 1, stdout: "", stderr: "sandbox not found" };
+  }
   return { status: 0, stdout: "", stderr: "" };
 };
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
@@ -678,6 +683,20 @@ function assertManagedLaunch(
     expect(result.payload.runnerCommands.every((command) => !command.includes("/health"))).toBe(
       true,
     );
+    expect(
+      result.payload.runnerCommands.every((command) => !command.includes("sandbox exec --name")),
+    ).toBe(true);
+  } else {
+    expect(
+      result.payload.runnerCommands.some((command) =>
+        command.includes(`sandbox get ${bootstrapRequest?.sandboxName}`),
+      ),
+    ).toBe(true);
+    expect(
+      result.payload.runnerCommands.some((command) =>
+        command.includes(`sandbox exec --name ${bootstrapRequest?.sandboxName} -- true`),
+      ),
+    ).toBe(true);
   }
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_CORPORATE_CA_B64="))).toEqual([]);
   expect(profile.proxy).toMatchObject({

@@ -86,7 +86,15 @@ process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "opensh
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
 runner.run = (command, opts = {}) => {
-  commands.push({ type: "run", command: asText(command), env: opts.env || null });
+  const text = asText(command);
+  commands.push({ type: "run", command: text, env: opts.env || null });
+  if (text.includes("sandbox get") && text.includes("my-assistant")) {
+    return {
+      status: 0,
+      stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"),
+      stderr: Buffer.alloc(0),
+    };
+  }
   return { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -175,6 +183,16 @@ try {
         "my-assistant",
       ]);
       expect(dnsCommand.command).not.toContain("bash -c");
+      expect(
+        payload.commands.some((entry: { command: string }) =>
+          entry.command.includes("sandbox get my-assistant"),
+        ),
+      ).toBe(true);
+      expect(
+        payload.commands.some((entry: { command: string }) =>
+          entry.command.includes("sandbox exec --name my-assistant -- true"),
+        ),
+      ).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

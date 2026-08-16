@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { retryUntil } from "../../core/retry";
 import {
   buildCoreDnsPatchJson,
   dockerHostRuntime,
@@ -462,30 +463,33 @@ export function runSetupDnsProxy(
     dockerEnv,
   );
 
-  let dnsReady = false;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const probe = kctl(
-      runDocker,
-      cluster,
-      [
-        "exec",
-        "-n",
-        "openshell",
-        pod,
-        "--",
-        "python3",
-        "-c",
-        buildDnsReadyProbePython(vethGateway),
-      ],
-      dockerEnv,
+  const dnsReady = retryUntil(
+    () =>
+      kctl(
+        runDocker,
+        cluster,
+        [
+          "exec",
+          "-n",
+          "openshell",
+          pod,
+          "--",
+          "python3",
+          "-c",
+          buildDnsReadyProbePython(vethGateway),
+        ],
+        dockerEnv,
+      ).stdout.includes("ok"),
+    {
+      accept: Boolean,
+      retryDelaysMs: Array.from({ length: 9 }, () => 1_000),
+      sleep,
+    },
+  );
+  if (!dnsReady)
+    log(
+      "WARNING: DNS forwarder did not respond after 10 attempts. The following DNS checks can report failures.",
     );
-    if (probe.stdout.includes("ok")) {
-      dnsReady = true;
-      break;
-    }
-    sleep(1000);
-  }
-  if (!dnsReady) log("WARNING: DNS forwarder not responding after 10s — verification may fail");
 
   const sandboxNamespace = selectSandboxNamespace(
     commandOutput(
@@ -686,14 +690,17 @@ export function runSetupDnsProxy(
       verificationFail += 1;
     }
 
-    let dnsResult = "";
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      dnsResult = commandOutput(
-        sbExec(["getent", "hosts", "github.com"]) ?? { status: 1, stdout: "", stderr: "" },
-      ).trim();
-      if (dnsResult) break;
-      if (attempt < 3) sleep(2000);
-    }
+    const dnsResult = retryUntil(
+      () =>
+        commandOutput(
+          sbExec(["getent", "hosts", "github.com"]) ?? { status: 1, stdout: "", stderr: "" },
+        ).trim(),
+      {
+        accept: Boolean,
+        retryDelaysMs: [2_000, 2_000],
+        sleep,
+      },
+    );
     if (dnsResult) {
       log(`  [PASS] getent hosts github.com -> ${dnsResult}`);
       verificationPass += 1;
