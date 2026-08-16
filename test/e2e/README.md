@@ -639,9 +639,64 @@ graph as the live targets:
   pass/fail/skip counts, failure rate, pass/fail flips, current failure streak,
   and the most common failed phase. The failure-rate denominator and
   pass/fail-flip count exclude skips.
+
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
+
+### Weekly unit-test gap review
+
+Treat every automatic `main` E2E failure as a test-gap review input. Generate a
+report for the preceding 168 hours with GitHub CLI authentication already
+configured:
+
+```bash
+evidence_dir="$(mktemp -d)"
+chmod 700 "$evidence_dir"
+npm run e2e:unit-gaps -- \
+  --days 7 \
+  --output "$evidence_dir/unit-test-gaps.md" \
+  --json-output "$evidence_dir/unit-test-gaps.json"
+```
+
+The command reads push runs from `e2e.yaml` and `portable-profile-e2e.yaml` on
+`main`. It keeps failed logs in memory, applies the shared full secret redactor,
+removes volatile identifiers, paths, URLs, sandbox names, and durations from
+each selected cause candidate, and writes report files with mode `0600` in the
+mode-`0700` directory. Treat the reports as credential-bearing until a human
+reviews them; redaction reduces exposure but does not prove that a report is
+credential-free. The command exits nonzero when a selected run is unfinished or
+failed-run evidence is unavailable. Do not accept a partial report as the
+weekly ledger.
+
+Review one row per cause candidate instead of one row per failed job. Confirm
+the selected candidate against the first causal line and identify the owning
+component before changing code. Then apply the row's test action:
+
+- For a deterministic product failure, add a unit or package-contract
+  regression test that fails for the observed behavior before changing the
+  product code.
+- For a harness failure, add an `e2e-support` test for the decision, cleanup
+  path, or diagnostic.
+- For an external failure, test NemoClaw's retry and diagnostic response with
+  fault injection. Do not reproduce the provider, registry, network, or runner
+  outage in a unit test.
+- For a row that needs triage, name the missing contract only after confirming
+  the cause from the linked run.
+
+The Markdown and JSON reports start each row with review status `open` and no
+regression test. During review, record the test file and complete test title in
+the row and change the status only after the test fails without the fix and
+passes with it. A cause candidate is complete when that test evidence and a
+later passing run of the linked E2E target are both recorded. Delete the report
+directory after publishing only the reviewed, credential-free conclusions in
+the owning issue or pull request. Raw logs remain in process memory only until
+the command exits. Remove the named directory and confirm its absence:
+
+```bash
+rm -rf -- "$evidence_dir"
+test ! -e "$evidence_dir"
+```
 
 A manual run with `jobs=staging-brev-launchable` runs only `Publish staging Brev Launchable image`.
 Push runs do not select this job.
