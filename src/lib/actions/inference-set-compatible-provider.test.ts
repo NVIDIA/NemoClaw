@@ -745,6 +745,110 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
+  it("preserves redacted probe diagnostics when restoring the prior route fails", async () => {
+    const providerCapture = createCompatibleProviderCapture({
+      name: "compatible-anthropic-endpoint",
+      type: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "ANTHROPIC_BASE_URL",
+      initiallyPresent: false,
+    });
+    const inferenceSetResults = [
+      null,
+      {
+        status: 19,
+        output: "restore rejected",
+        stdout: "",
+        stderr: "restore rejected",
+      },
+    ];
+    let inferenceSetCalls = 0;
+    const captureOpenshell = vi.fn((args: string[]) => {
+      switch (`${args[0]}:${args[1]}`) {
+        case "inference:set":
+          return inferenceSetResults[inferenceSetCalls++] ?? providerCapture(args);
+        default:
+          return providerCapture(args);
+      }
+    });
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      captureOpenshell,
+      probeSandboxRoute: () => {
+        throw new Error("sandbox dial failed; NVIDIA_API_KEY=nvapi-secret-value");
+      },
+    });
+
+    let failure: unknown;
+    try {
+      await runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "http://host.openshell.internal:18767/",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    const failureMessage = (failure as Error).message;
+    expect(failureMessage).toContain(
+      "sandbox inference invocation probe was unavailable: sandbox dial failed",
+    );
+    expect(failureMessage).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(failureMessage).not.toContain("nvapi-secret-value");
+    expect(failureMessage).toMatch(
+      /Failed to restore the previous OpenShell inference selection.*status 19.*Re-run onboarding/s,
+    );
+    expect(
+      deps.calls.captureOpenshell.mock.calls
+        .filter(([args]) => args[0] === "inference" && args[1] === "set")
+        .map(([args]) => args),
+    ).toEqual([
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "compatible-anthropic-endpoint",
+        "--model",
+        "mock-anthropic-model",
+        "--no-verify",
+      ],
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ],
+    ]);
+    expect(
+      deps.calls.captureOpenshell.mock.calls.some(
+        ([args]) => args[0] === "provider" && args[1] === "delete",
+      ),
+    ).toBe(false);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   for (const provider of ["compatible-endpoint", "compatible-anthropic-endpoint"]) {
     it.each([
       ["loopback", "http://127.0.0.1:8000/v1", "93.184.216.34"],

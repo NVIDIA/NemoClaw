@@ -131,7 +131,7 @@ function launchOwnedOpenClawTuiProcessIds() {
     try {
       environment = fs.readFileSync(path.join("/proc", name, "environ"), "utf8").split("\0");
     } catch (error) {
-      if (error && ["ENOENT", "ESRCH"].includes(error.code)) continue;
+      if (error && ["EACCES", "ENOENT", "ESRCH"].includes(error.code)) continue;
       finish(2, "tui_environment_unavailable");
     }
     if (environment.includes("NEMOCLAW_LAUNCH_RUN_ID=" + runId)) pids.push(name);

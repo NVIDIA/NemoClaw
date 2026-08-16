@@ -1151,10 +1151,16 @@ async function runInferenceSetWithoutHostLock(
           model,
           preferredInferenceApi: preMutationInferenceApi,
         });
-      } catch {
+      } catch (probeError) {
+        const probeFailureDetail =
+          probeError instanceof Error && probeError.message
+            ? (onboardSession.redactSensitiveText(probeError.message)?.trim() ?? "")
+            : "";
         probe = {
           ok: false,
-          detail: "sandbox inference invocation probe was unavailable",
+          detail: probeFailureDetail
+            ? `sandbox inference invocation probe was unavailable: ${probeFailureDetail}`
+            : "sandbox inference invocation probe was unavailable",
           httpStatus: null,
         };
       }

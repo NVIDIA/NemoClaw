@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -153,8 +153,40 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const readerOrderMarker = join(fixtureRoot, "reader-after-submission");
   const runId = randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
+  let unrelatedScriptProcess: ReturnType<typeof spawn> | null = null;
   mkdirSync(sessionRoot);
   mkdirSync(tuiInputMarkerRoot);
+
+  const recordedTuiProcessIds = (): string[] =>
+    existsSync(tuiPidsPath)
+      ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
+      : [];
+  const processIsRunning = (pid: string): boolean => {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+    } catch {
+      return false;
+    }
+  };
+  const stopUnrelatedTui = (): void => {
+    const stopAndWait = (processIds: string[]): void => {
+      for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+        for (const pid of processIds) {
+          try {
+            process.kill(Number(pid), signal);
+          } catch {}
+        }
+        const exitDeadline = Date.now() + 1_000;
+        while (processIds.some(processIsRunning) && Date.now() < exitDeadline) {
+          Atomics.wait(PROCESS_EXIT_WAIT, 0, 0, 25);
+        }
+      }
+    };
+    stopAndWait(recordedTuiProcessIds());
+    stopAndWait(unrelatedScriptProcess?.pid ? [String(unrelatedScriptProcess.pid)] : []);
+    unrelatedScriptProcess = null;
+  };
 
   try {
     writeFileSync(
@@ -171,31 +203,8 @@ if (process.argv[2] !== "tui") {
       process.env.NEMOCLAW_FIXTURE_LAUNCH_TTY_MARKER,
       fs.realpathSync("/proc/self/fd/0"),
     );
-    const unrelated = childProcess.spawn(
-      "script",
-      [
-        "--quiet",
-        "--return",
-        "--command",
-        '"$NEMOCLAW_FIXTURE_NODE" "$NEMOCLAW_FIXTURE_SCRIPT" tui unrelated',
-        "/dev/null",
-      ],
-      {
-        env: {
-          ...process.env,
-          NEMOCLAW_LAUNCH_RUN_ID: "00000000000000000000000000000000",
-        },
-        stdio: "ignore",
-      },
-    );
-    const stopUnrelated = () => {
-      try { unrelated.kill("SIGTERM"); } catch {}
-      setTimeout(() => process.exit(0), 100);
-    };
-    for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
-      process.once(signal, stopUnrelated);
-    }
-    unrelated.once("exit", (status) => process.exit(status ?? 66));
+    process.stdin.resume();
+    process.stdin.once("end", () => process.exit(0));
   } else if (mode === "transient-tui-stdin") {
     const transient = childProcess.spawn(
       process.execPath,
@@ -382,55 +391,80 @@ exec env -u NEMOCLAW_LAUNCH_RUN_ID "$@"
     chmodSync(fakeLaunch, 0o755);
     chmodSync(fakeOpenshell, 0o755);
 
+    const fixtureEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      NEMOCLAW_FIXTURE_MODE: mode,
+      NEMOCLAW_FIXTURE_LAUNCH_TTY_MARKER: launchTtyMarker,
+      NEMOCLAW_FIXTURE_NODE: process.execPath,
+      NEMOCLAW_FIXTURE_READER_ORDER_MARKER: readerOrderMarker,
+      NEMOCLAW_FIXTURE_SCRIPT: fakeLaunch,
+      NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
+      NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
+      NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT: tuiInputMarkerRoot,
+      NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
+      NEMOCLAW_FIXTURE_TUI_STDIN_RETRY: tuiStdinRetryMarker,
+      NEMOCLAW_FIXTURE_TUI_STDIN_UNAVAILABLE: tuiStdinUnavailableMarker,
+      NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
+      NEMOCLAW_FIXTURE_UNRELATED_TTY_MARKER: unrelatedTtyMarker,
+      NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
+      NEMOCLAW_LAUNCH_ENTRYPOINT: "",
+      NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
+      NEMOCLAW_LAUNCH_FIRST_INPUT: "first input",
+      NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
+      NEMOCLAW_LAUNCH_RUN_ID: runId,
+      NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
+      NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
+        mode.endsWith("-timeout") || mode === "mismatched-tui-pty" ? "2" : "230",
+      NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
+      NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+      NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
+      NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
+      TERM: "xterm-256color",
+    };
+    const startUnrelatedTui = (): void => {
+      unrelatedScriptProcess = spawn(
+        "script",
+        [
+          "--quiet",
+          "--return",
+          "--command",
+          '"$NEMOCLAW_FIXTURE_NODE" "$NEMOCLAW_FIXTURE_SCRIPT" tui unrelated',
+          "/dev/null",
+        ],
+        {
+          env: {
+            ...fixtureEnv,
+            NEMOCLAW_LAUNCH_RUN_ID: "00000000000000000000000000000000",
+          },
+          stdio: "ignore",
+        },
+      );
+      const unrelatedReadyDeadline = Date.now() + 5_000;
+      while (
+        !existsSync(unrelatedTtyMarker) &&
+        unrelatedScriptProcess.pid &&
+        existsSync(`/proc/${unrelatedScriptProcess.pid}`) &&
+        Date.now() < unrelatedReadyDeadline
+      ) {
+        Atomics.wait(PROCESS_EXIT_WAIT, 0, 0, 25);
+      }
+      expect(existsSync(unrelatedTtyMarker), "unrelated TUI fixture PTY identity").toBe(true);
+    };
+    const setupFixture = mode === "mismatched-tui-pty" ? startUnrelatedTui : () => undefined;
+    setupFixture();
+
     const result = spawnSync("bash", ["-c", LAUNCH_TURN_SCRIPT], {
       encoding: "utf8",
       killSignal: "SIGKILL",
-      env: {
-        ...process.env,
-        NEMOCLAW_FIXTURE_MODE: mode,
-        NEMOCLAW_FIXTURE_LAUNCH_TTY_MARKER: launchTtyMarker,
-        NEMOCLAW_FIXTURE_NODE: process.execPath,
-        NEMOCLAW_FIXTURE_READER_ORDER_MARKER: readerOrderMarker,
-        NEMOCLAW_FIXTURE_SCRIPT: fakeLaunch,
-        NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
-        NEMOCLAW_FIXTURE_TERMINAL_COPY: terminalCopy,
-        NEMOCLAW_FIXTURE_TUI_INPUT_MARKER_ROOT: tuiInputMarkerRoot,
-        NEMOCLAW_FIXTURE_TUI_PIDS: tuiPidsPath,
-        NEMOCLAW_FIXTURE_TUI_STDIN_RETRY: tuiStdinRetryMarker,
-        NEMOCLAW_FIXTURE_TUI_STDIN_UNAVAILABLE: tuiStdinUnavailableMarker,
-        NEMOCLAW_FIXTURE_TTY_MARKER: ttyMarker,
-        NEMOCLAW_FIXTURE_UNRELATED_TTY_MARKER: unrelatedTtyMarker,
-        NEMOCLAW_LAUNCH_COMMAND: fakeLaunch,
-        NEMOCLAW_LAUNCH_ENTRYPOINT: "",
-        NEMOCLAW_LAUNCH_EXIT_COMMAND: "/exit",
-        NEMOCLAW_LAUNCH_FIRST_INPUT: "first input",
-        NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
-        NEMOCLAW_LAUNCH_RUN_ID: runId,
-        NEMOCLAW_LAUNCH_SANDBOX: "sandbox",
-        NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS:
-          mode.endsWith("-timeout") || mode === "mismatched-tui-pty" ? "2" : "230",
-        NEMOCLAW_LAUNCH_SECOND_INPUT: "second input",
-        NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
-        NEMOCLAW_LAUNCH_SESSION_ROOT: sessionRoot,
-        NEMOCLAW_OPENSHELL_COMMAND: fakeOpenshell,
-        TERM: "xterm-256color",
-      },
+      env: fixtureEnv,
       timeout: 15_000,
     });
 
-    const tuiProcessIds = existsSync(tuiPidsPath)
-      ? readFileSync(tuiPidsPath, "utf8").trim().split("\n").filter(Boolean)
-      : [];
-    const processExitDeadline = Date.now() + 1_000;
-    while (
-      tuiProcessIds.some((pid) => existsSync(`/proc/${pid}`)) &&
-      Date.now() < processExitDeadline
-    ) {
-      Atomics.wait(PROCESS_EXIT_WAIT, 0, 0, 25);
-    }
+    const tuiProcessIds = recordedTuiProcessIds();
+    stopUnrelatedTui();
     return {
       baselineRemoved: !existsSync(baselinePath),
-      orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
+      orphanedTuiProcessIds: tuiProcessIds.filter(processIsRunning),
       recordedTuiInputProcessIds: tuiProcessIds.filter((pid) =>
         existsSync(join(tuiInputMarkerRoot, pid)),
       ),
@@ -445,6 +479,7 @@ exec env -u NEMOCLAW_LAUNCH_RUN_ID "$@"
         : null,
     };
   } finally {
+    stopUnrelatedTui();
     rmSync(fixtureRoot, { force: true, recursive: true });
     rmSync(baselinePath, { force: true });
   }
@@ -754,7 +789,7 @@ it.runIf(process.platform === "linux")(
         calls.push({ command, args, env: options?.env });
         return { exitCode: 0, signal: null, stdout: "", stderr: "" };
       },
-      openshellCommandPath: "openshell",
+      openshellCommandPath: "/usr/bin/openshell",
     };
 
     await runOpenClawLaunchReadinessLeaseTurns({
@@ -787,8 +822,8 @@ it.runIf(process.platform === "linux")(
       "/exit",
     ]);
     expect(calls.slice(1).map((call) => call.env?.NEMOCLAW_OPENSHELL_COMMAND)).toEqual([
-      "openshell",
-      "openshell",
+      "/usr/bin/openshell",
+      "/usr/bin/openshell",
     ]);
     for (const call of calls.slice(1)) {
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_EXPECTED_REPLY");
