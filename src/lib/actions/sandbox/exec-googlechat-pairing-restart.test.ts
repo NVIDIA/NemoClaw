@@ -23,7 +23,7 @@ const CLEANUP_SKIPPED: SandboxExecCleanupDeps = {
 function depsFor(status: number, restartGateway = vi.fn(() => ({ ok: true }))): ExecSandboxDeps {
   return {
     resolveBinary: () => "openshell",
-    selectGateway: () => ({ outcome: "unregistered", gatewayName: null }),
+    selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
     run: () => ({ status }),
     cleanupDeps: CLEANUP_SKIPPED,
     restartGateway,
@@ -196,9 +196,7 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(restartGateway).toHaveBeenCalledOnce();
     expect(exitCode).toBe(1);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("approval was not rolled back"),
-    );
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("approval was not rolled back"));
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("nemoclaw alpha gateway restart"),
     );
@@ -255,6 +253,34 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(restartGateway).not.toHaveBeenCalled();
     expect(exitCode).toBe(0);
+  });
+
+  it("does not activate or claim managed recovery without an owning gateway", async () => {
+    const restartGateway = vi.fn(() => ({ ok: true }));
+    const deps = depsFor(0, restartGateway);
+    deps.selectGateway = () => ({ outcome: "unregistered", gatewayName: null });
+    deps.cleanupDeps = {
+      getSandbox: () => {
+        throw new Error("invalid registry JSON");
+      },
+      inspectMutableConfigPerms: CLEANUP_SKIPPED.inspectMutableConfigPerms,
+      repairMutableConfigPerms: CLEANUP_SKIPPED.repairMutableConfigPerms,
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const exitCode = await runAndCaptureExit(
+      ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
+      deps,
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(exitCode).toBe(1);
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("managed gateway activation failed"),
+    );
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("nemoclaw alpha gateway restart"),
+    );
   });
 
   it("fails closed when the recorded sandbox identity cannot be read", async () => {

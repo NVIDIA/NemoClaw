@@ -484,10 +484,12 @@ export async function execSandbox(
   let exitCode = completion.code;
   const googleChatApprovalCommitted =
     completion.commandCode === 0 && isGoogleChatPairingApproval(command);
-  if (googleChatApprovalCommitted && completion.cleanupError) {
+  const managedGoogleChatApproval =
+    googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
+  if (managedGoogleChatApproval && completion.cleanupError) {
     console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
   }
-  if (exitCode === 0 && googleChatApprovalCommitted) {
+  if (exitCode === 0 && managedGoogleChatApproval) {
     let recordedAgent: string | null;
     try {
       recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
