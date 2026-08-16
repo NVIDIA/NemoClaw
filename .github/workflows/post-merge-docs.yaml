@@ -26,7 +26,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          pending="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" --jq 'any(.[][]; (.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")')"
+          pending="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" | jq --slurp 'any(.[][]; (.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")')"
           [[ "$pending" == true || "$pending" == false ]]
           echo "pending=$pending" >> "$GITHUB_OUTPUT"
 

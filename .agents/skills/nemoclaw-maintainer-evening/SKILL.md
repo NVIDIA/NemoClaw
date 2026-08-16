@@ -51,8 +51,8 @@ documentation-only validation, writing, review, and PR guidance for any release-
 
 Merge that PR before loading `cut-release-tag`. Its merge starts `Docs / Post-Merge Catch-Up` for
 the resulting `main` commit. Wait for that run to succeed and confirm that no managed
-documentation PR remains open. If any intended PR merges afterward, repeat this step for the new
-`main` commit before cutting the tag.
+documentation PR or managed branch for that commit remains. If any intended PR merges afterward,
+repeat this step for the new `main` commit before cutting the tag.
 
 ## Step 4: Cut the Tag and Publish Release Notes
 

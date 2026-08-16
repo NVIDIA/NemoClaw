@@ -317,7 +317,7 @@ function client(token: string): Request {
       method,
       signal: AbortSignal.timeout(30_000),
     });
-    if (response.status === 404) return null;
+    if (method === "GET" && response.status === 404) return null;
     const value = (await response.json()) as { message?: string };
     if (!response.ok)
       fail(`GitHub API request failed: ${value.message ?? `HTTP ${response.status}`}`);

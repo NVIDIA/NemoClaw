@@ -263,6 +263,7 @@ describe("post-merge documentation workflow boundary", () => {
   // source-shape-contract: security -- The workflow must keep model credentials out of its repository-write privilege domain.
   it("separates the inference credential from repository writes", () => {
     expect(workflow.permissions).toEqual({});
+    expect(JSON.stringify(workflow.jobs.gate)).toContain("| jq --slurp");
     expect(workflow.jobs.author?.permissions).toEqual({ contents: "read" });
     expect(workflow.jobs.validate?.permissions).toEqual({ actions: "read", contents: "read" });
     expect(workflow.jobs.publish?.permissions).toEqual({

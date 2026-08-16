@@ -158,7 +158,7 @@ function applyPatch(repository: string, file: string): string[] {
   if (patch.length) {
     execFileSync(
       "git",
-      ["-C", repository, "apply", "--binary", "--index", "--whitespace=error-all", "-"],
+      ["-C", repository, "apply", "--binary", "--index", "--whitespace=nowarn", "-"],
       { env: GIT_ENV, input: patch, stdio: ["pipe", "inherit", "inherit"] },
     );
   }
@@ -306,6 +306,7 @@ function exportArtifact(env: NodeJS.ProcessEnv): void {
         `set -euo pipefail\ngit add -N -- docs fern\ngit diff --binary --full-index HEAD -- docs fern > /sandbox/output/${PATCH_FILE}`,
       ],
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      timeoutSeconds: 60,
       workdir: "/sandbox/repo",
     });
     const patch = download(env, PATCH_FILE);
