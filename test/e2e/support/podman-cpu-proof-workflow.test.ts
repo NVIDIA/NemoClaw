@@ -830,9 +830,22 @@ describe("native Podman CPU proof workflow", () => {
       .steps?.map((step) => step.run ?? "")
       .join("\n");
 
-    expect(proof.run).toBe(
-      "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
+    expect(proof.run).toContain(
+      "npx vitest run --project e2e-live \\\n  test/e2e/live/podman-cpu-lifecycle.test.ts \\",
     );
+    expect(proof.run).toContain("test/e2e/live/podman-portable-uninstall.test.ts");
+    const uninstallSource = readRepoText("test/e2e/live/podman-portable-uninstall.test.ts");
+    expect(uninstallSource).toContain('executableOnPath("nemoclaw")');
+    expect(uninstallSource).toContain("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR");
+    expect(uninstallSource).toContain("OPENSHELL_LOCAL_TLS_DIR");
+    expect(uninstallSource).toContain('["gateway", "info", "-g", "nemoclaw", "-o", "json"]');
+    expect(uninstallSource).toContain('gatewayName: "nemoclaw"');
+    expect(uninstallSource).toContain('"--all-gateway-ports"');
+    expect(uninstallSource).toContain('"--delete-models"');
+    expect(uninstallSource).toContain('"--destroy-user-data"');
+    expect(uninstallSource).toContain('"--yes"');
+    expect(uninstallSource).toContain("systemctl --user restart podman.socket");
+    expect(uninstallSource).toContain("prepare_portable_experimental_runtime_override");
     const liveSource = readRepoText("test/e2e/live/podman-cpu-lifecycle.test.ts");
     const authorityIndex = liveSource.indexOf("expect(candidateAuthority())");
     const enginesIndex = liveSource.indexOf("let runtimeEngines = engines()");
@@ -840,6 +853,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(enginesIndex).toBeGreaterThanOrEqual(0);
     expect(authorityIndex).toBeLessThan(enginesIndex);
     expect(scripts).not.toContain("podman create");
+    expect(scripts).toMatch(/onboard\.js"\)\)\.default[\s\S]*stopHostGatewayProcesses/u);
     expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
     expect(scripts).not.toContain("openshell.sandbox-name");
     expect(diagnostics.if).toBe("failure()");
@@ -859,5 +873,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain('podman --url "$endpoint" volume rm --force');
     expect(cleanup.run).toContain('podman --url "$endpoint" secret rm');
     expect(cleanup.run).toContain('podman --url "$endpoint" network rm openshell-docker');
+    const stopGateway = namedStep("Stop the exact portable-retirement proof gateway");
+    expect(stopGateway.env?.E2E_PORTABLE_GATEWAY_STOP_SCOPE).toBe("full");
   });
 });

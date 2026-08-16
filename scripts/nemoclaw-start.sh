@@ -3210,131 +3210,20 @@ export no_proxy="$_NO_PROXY_VAL"
 # #1828 OpenShell CA behavior stays intact) — and repoint the CA env vars at
 # the merged bundle so curl/python/git/node all trust both roots.
 _NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
-# Concise, secret-free warning when a baked corporate CA fails to merge at
-# runtime. Names the failed step + target path only (never certificate bytes)
-# so an operator can distinguish "no CA was baked" from "runtime merge failed".
-_nemoclaw_ca_merge_warn() {
-  echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
-}
-merge_corporate_proxy_ca() {
-  # Trust-anchor tampering (#8650): replacing the baked corporate CA file with a
-  # symlink makes the merge below read the link target instead, adding
-  # attacker-selected bytes to the trust bundle that curl, python, git, and node
-  # verify against. The image bakes this path as a root-owned 0444 regular file,
-  # so a symlink here is never a legitimate state. This is not the recoverable
-  # "merge failed" case below, which safely keeps OpenShell-only trust, so it
-  # fails closed instead of warning.
-  if [ -L "$_NEMOCLAW_CORPORATE_CA_FILE" ]; then
-    echo "[nemoclaw] refusing symlinked corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file (#8650)" >&2
-    exit 1
-  fi
-  [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
-  _base_bundle=""
-  if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
-    _base_bundle="$SSL_CERT_FILE"
-  elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
-    _base_bundle="/etc/ssl/certs/ca-certificates.crt"
-  fi
-  _merged="/tmp/nemoclaw-ca-bundle.pem"
-  # Trust-anchor path safety (#6210): in the normal container start this
-  # entrypoint runs as root (the step-down prefix wraps only the later agent
-  # commands, not this top-level merge), so the merged bundle is written
-  # root-owned 0444 — the non-root sandbox user that the agent later runs as
-  # inherits SSL_CERT_FILE but cannot rewrite it. The predictable /tmp path is
-  # still handled safely: it is built in a fresh mktemp sibling and atomically
-  # renamed into place; a pre-planted symlink at the target is dropped first
-  # (below); and rename(2) replaces the target link/file rather than writing
-  # through it, so a pre-planted symlink or file cannot redirect the write. On a
-  # non-root start the whole entrypoint (and the agent) is the same sandbox user,
-  # so there is no privilege boundary to cross.
-  # Build the bundle in a private temp file next to the target, verifying every
-  # write, then atomically rename into place. If any step fails we bail without
-  # exporting anything, leaving the OpenShell-only trust intact rather than
-  # pointing tools at a partial/empty bundle.
-  _tmp="$(mktemp "${_merged}.XXXXXX" 2>/dev/null)" || {
-    _nemoclaw_ca_merge_warn "create temp bundle (${_merged})"
-    return 0
-  }
-  if [ -n "$_base_bundle" ]; then
-    cat "$_base_bundle" >>"$_tmp" 2>/dev/null || {
-      rm -f "$_tmp"
-      _nemoclaw_ca_merge_warn "append OpenShell bundle"
-      return 0
-    }
-    printf '\n' >>"$_tmp" 2>/dev/null || {
-      rm -f "$_tmp"
-      _nemoclaw_ca_merge_warn "append OpenShell bundle"
-      return 0
-    }
-  fi
-  # Append through a descriptor opened with O_NOFOLLOW and verified as a regular
-  # file (#8650). The check above rejects a planted symlink; this rejects one
-  # swapped in afterwards, because the type check and the read share one
-  # descriptor and no path is resolved twice. Status 2 means the source was
-  # rejected as a trust anchor; any other non-zero status is an ordinary read
-  # failure that keeps the existing warn-and-continue behavior.
-  _ca_append_status=0
-  python3 -I - "$_NEMOCLAW_CORPORATE_CA_FILE" "$_tmp" <<'PY_APPEND_CORPORATE_CA' || _ca_append_status=$?
-import errno
-import os
-import stat
-import sys
-
-source, target = sys.argv[1], sys.argv[2]
-try:
-    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
-except OSError as error:
-    raise SystemExit(2 if error.errno == errno.ELOOP else 3)
-try:
-    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-        raise SystemExit(2)
-    with open(target, "ab") as merged:
-        while True:
-            chunk = os.read(descriptor, 65536)
-            if not chunk:
-                break
-            merged.write(chunk)
-finally:
-    os.close(descriptor)
-PY_APPEND_CORPORATE_CA
-  if [ "$_ca_append_status" -eq 2 ]; then
-    rm -f "$_tmp"
-    echo "[nemoclaw] refusing corporate CA at ${_NEMOCLAW_CORPORATE_CA_FILE}; expected a regular file, not a symlink (#8650)" >&2
-    exit 1
-  fi
-  if [ "$_ca_append_status" -ne 0 ]; then
-    rm -f "$_tmp"
-    _nemoclaw_ca_merge_warn "append corporate CA"
-    return 0
-  fi
-  chmod 0444 "$_tmp" 2>/dev/null || {
-    rm -f "$_tmp"
-    _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
-    return 0
-  }
-  # Defense-in-depth for the predictable /tmp path (#6210): if a co-tenant
-  # pre-planted a symlink at the target, drop it first so we rename into a fresh
-  # regular file we own rather than through an attacker-controlled link.
-  if [ -L "$_merged" ]; then
-    rm -f "$_merged" 2>/dev/null || true
-  fi
-  mv -f "$_tmp" "$_merged" 2>/dev/null || {
-    rm -f "$_tmp"
-    _nemoclaw_ca_merge_warn "install merged bundle (${_merged})"
-    return 0
-  }
-  export SSL_CERT_FILE="$_merged"
-  export CURL_CA_BUNDLE="$_merged"
-  export REQUESTS_CA_BUNDLE="$_merged"
-  export GIT_SSL_CAINFO="$_merged"
-  export NODE_EXTRA_CA_CERTS="$_merged"
-  export _NEMOCLAW_CORPORATE_CA_MERGED=1
-  echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
-}
+_NEMOCLAW_CORPORATE_CA_HELPER="/usr/local/lib/nemoclaw/corporate-ca-runtime.sh"
+if [ ! -f "$_NEMOCLAW_CORPORATE_CA_HELPER" ]; then
+  _NEMOCLAW_CORPORATE_CA_HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/corporate-ca-runtime.sh"
+fi
+if [ ! -f "$_NEMOCLAW_CORPORATE_CA_HELPER" ] || [ -L "$_NEMOCLAW_CORPORATE_CA_HELPER" ]; then
+  echo "[nemoclaw] required corporate CA runtime helper is missing or unsafe" >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/corporate-ca-runtime.sh
+source "$_NEMOCLAW_CORPORATE_CA_HELPER"
 if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then
   merge_corporate_proxy_ca
 fi
-
+unset _NEMOCLAW_CORPORATE_CA_HELPER
 # Git TLS CA bundle fix (NemoClaw#2270).
 # OpenShell's L7 proxy does MITM TLS termination and re-signs with its own CA.
 # OpenShell injects SSL_CERT_FILE and CURL_CA_BUNDLE pointing at the CA bundle,

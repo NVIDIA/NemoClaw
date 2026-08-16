@@ -6,7 +6,7 @@ import {
   allGatewayPortsRequested,
   runUninstallAllGatewayPorts,
 } from "../../../lib/actions/uninstall/all-gateway-ports";
-import { runUninstallPlan } from "../../../lib/actions/uninstall/run-plan";
+import { runUninstallPlanProduction } from "../../../lib/actions/uninstall/run-plan";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { GATEWAY_PORT } from "../../../lib/core/ports";
@@ -53,11 +53,11 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       keepOpenShell: flags["keep-openshell"] ?? false,
     };
     if (allGatewayPortsRequested(flags["all-gateway-ports"], process.env)) {
-      this.applyExitResult(runUninstallAllGatewayPorts(options));
+      this.applyExitResult(await runUninstallAllGatewayPorts(options));
       return;
     }
     this.applyExitResult(
-      runUninstallPlan(options, {
+      await runUninstallPlanProduction(options, {
         requireCompleteGatewayProcessCleanup: flags["all-gateway-ports-child"] ?? false,
       }),
     );
