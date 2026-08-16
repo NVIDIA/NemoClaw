@@ -1215,11 +1215,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo chown -R -h "$(id -u):$(id -g)" \
-            "$INSTALLER_RECEIPT_DIRECTORY" \
-            "$(dirname "$EXECUTION_RECEIPT_PATH")"
-          "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
+          sudo --preserve-env=EVIDENCE_DIRECTORY,EXECUTION_RECEIPT_PATH,INSTALLER_RECEIPT_DIRECTORY,QUALIFICATION_ROW \
+            "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
             .trusted-qualification/tools/e2e/native-runtime-qualification-producer-evidence.mts
+          sudo chown -R "$(id -u):$(id -g)" "$EVIDENCE_DIRECTORY"
 
       - name: Remove qualification resources
         if: always()

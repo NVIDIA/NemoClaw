@@ -150,8 +150,8 @@ describe("native runtime qualification producer workflow", () => {
       'PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
     );
     expect(validate.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
-    expect(validate.run).toContain('sudo chown -R -h "$(id -u):$(id -g)"');
-    expect(validate.run).not.toContain("sudo --preserve-env=");
+    expect(validate.run).not.toContain('chown -R -h "$(id -u):$(id -g)"');
+    expect(validate.run).toContain("sudo --preserve-env=");
     expect(validate.run).toContain('"$NODE_DIRECTORY/node"');
     expect(validate.run).toContain("native-runtime-qualification-producer-evidence.mts");
     expect(upload.with).toMatchObject({
