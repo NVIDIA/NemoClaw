@@ -131,8 +131,14 @@ describe("experimental voice gateway composed boundary", () => {
       fs.writeFileSync(deploymentPath, DEPLOYMENT_BEARER, { mode: 0o600 });
       fs.writeFileSync(openClawPath, OPENCLAW_CREDENTIAL, { mode: 0o600 });
       const credentials = readPrivateBearerDescriptors({
-        deployment: fs.openSync(openClawPath, fs.constants.O_RDONLY),
-        openClaw: fs.openSync(deploymentPath, fs.constants.O_RDONLY),
+        deployment: fs.openSync(
+          openClawPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        ),
+        openClaw: fs.openSync(
+          deploymentPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        ),
       });
       let clientsCreated = 0;
       const service = new VoiceSessionService({
@@ -169,7 +175,7 @@ describe("experimental voice gateway composed boundary", () => {
     }
   });
 
-  it("recovers an omitted OpenClaw delta before completing the pinned runtime turn (#8482)", async () => {
+  it("recovers an omitted delta when a final event repeats the last sequence (#9243)", async () => {
     let pinnedOpenClaw: PinnedOpenClawGateway | undefined;
     const diagnostics: object[] = [];
     const ids = ["voice-session", "agent-session", "turn", "response"];
@@ -206,7 +212,7 @@ describe("experimental voice gateway composed boundary", () => {
     const events = await runtime.commitTurn(session, "runtime-commit", "repository status");
     await runtime.closeSession(session);
 
-    expect(output).toEqual(["Hello world"]);
+    expect(output).toEqual(["Hello world!"]);
     expect(events.map((event) => (event as { type: string }).type)).toEqual([
       "response.started",
       "response.text.delta",

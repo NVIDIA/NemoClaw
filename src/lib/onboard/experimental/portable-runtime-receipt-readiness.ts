@@ -50,6 +50,10 @@ export function portableDemoReceiptPath(sandboxName: string, stateDir: string): 
   return path.join(stateDir, RECEIPT_DIRECTORY, fileName);
 }
 
+export function portableDemoReceiptDirectory(stateDir: string): string {
+  return path.join(stateDir, RECEIPT_DIRECTORY);
+}
+
 export function defaultPortableDemoStateDir(env: NodeJS.ProcessEnv): string {
   if (
     env.VITEST === "true" &&

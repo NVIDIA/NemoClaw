@@ -83,6 +83,14 @@
       ]
     },
     {
+      "live": "test/e2e/live/podman-portable-uninstall.test.ts",
+      "fast": [
+        "src/lib/actions/uninstall/portable-runtime-cleanup.test.ts",
+        "src/lib/actions/uninstall/run-plan-portable-runtime.test.ts",
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
@@ -177,9 +185,7 @@
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
-      "fast": [
-        "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
-      ]
+      "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
@@ -203,9 +209,7 @@
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
-      "fast": [
-        "test/e2e/support/workflow-plan.test.ts"
-      ]
+      "fast": ["test/e2e/support/workflow-plan.test.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
@@ -240,9 +244,7 @@
     },
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
-      "fast": [
-        "test/e2e/support/onboard-interactive-pty.test.ts"
-      ]
+      "fast": ["test/e2e/support/onboard-interactive-pty.test.ts"]
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
@@ -364,6 +366,8 @@
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -448,6 +452,8 @@
     {
       "live": "test/e2e/live/openclaw-inference-switch.test.ts",
       "fast": [
+        "src/lib/actions/inference-set-compatible-provider.test.ts",
+        "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
