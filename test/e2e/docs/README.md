@@ -294,9 +294,25 @@ test/e2e/
   administrator-only PR source-branch workflow dispatch for a same-repository
   PR. That path requires the first workflow attempt, the PR source branch as
   the workflow ref, and the same latest PR commit SHA for `checkout_sha` and
-  `workflow_sha`.
-  It executes candidate workflow code, not trusted `main` workflow code. Review
-  and authorize that exact candidate commit before dispatch.
+  `workflow_sha`. Candidate workflow code controls the administrator check
+  that the source-branch workflow runs. NemoClaw repository policy permits only
+  a repository administrator to dispatch this path. The administrator check is
+  defense in depth, not an independent authorization boundary. Before dispatch,
+  the administrator must review and authorize the exact commit, including the
+  workflow and every action or script that the commit loads.
+
+  The candidate workflow commit can access each repository secret granted to
+  the workflow. The runner-only privileged preparation step receives the
+  long-lived `NVIDIA_API_KEY` repository secret in its environment. It
+  uses the key to create runner-local registry authentication and pull pinned
+  GPU images. The step then deletes the registry authentication and unsets the
+  environment variable before it downloads public model files or runs candidate
+  code. These actions remove runner-local access but do not revoke the key. The
+  key remains valid in the issuing NVIDIA service until it expires or that
+  service revokes it. If exposure occurs or cleanup cannot be confirmed, revoke
+  or rotate the key in the issuing NVIDIA service. Verify that the old value is
+  invalid.
+
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
   E2E except `Publish staging Brev Launchable image`, every catalogue target in the

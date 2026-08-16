@@ -150,19 +150,32 @@ gh workflow run .github/workflows/e2e.yaml \
 The trusted `main` pre-checkout path requires current `maintain` or `admin`
 permission. The native runtime PR source-branch workflow path requires `admin`
 permission for the actor and, when different, the triggering actor. Both paths
-validate the actor, open PR, repository, head SHA, base SHA, workflow SHA, review
-reason, and allowed jobs, targets, and Launchable combination.
+validate the actor, open PR, repository, latest PR commit SHA, base SHA, workflow
+SHA, review reason, and allowed jobs, targets, and Launchable combination.
 A second validation after checkout rejects a changed PR identity before preparation.
 
 The native-runtime producer binds the open PR, candidate commit, base commit,
-executing workflow commit, and first workflow attempt. The administrator-only
-path executes candidate workflow code, so review and authorize that exact commit
-before dispatch. Runner-only privileged preparation receives `NVIDIA_API_KEY`
-only to pull pinned GPU images, then deletes its registry authentication file and
-unsets the key before downloading pinned public model files, installing candidate
-dependencies, or executing tests. The unprivileged installer and live-test
-processes run with `env -i`, receive no GitHub, model-provider, API, or messaging
-credential, and run with Docker unavailable. Configure
+executing workflow commit, and first workflow attempt. Candidate workflow code
+controls the administrator check that the source-branch workflow runs. NemoClaw
+repository policy permits only a repository administrator to dispatch this path.
+The administrator check is defense in depth, not an independent authorization
+boundary. Before dispatch, the administrator must review and authorize the exact
+commit, including the workflow and every action or script that the commit loads.
+
+The candidate workflow commit can access each repository secret granted to the
+workflow. The runner-only privileged preparation step receives the long-lived
+`NVIDIA_API_KEY` repository secret in its environment. It uses the key
+to create runner-local registry authentication and pull pinned GPU images. The
+step then deletes the registry authentication and unsets the environment
+variable before it downloads public model files or runs candidate code. These
+actions remove runner-local access but do not revoke the key. The key remains
+valid in the issuing NVIDIA service until it expires or that service revokes it.
+If exposure occurs or cleanup cannot be confirmed, revoke or rotate the key in
+the issuing NVIDIA service. Verify that the old value is invalid.
+
+The unprivileged installer and live-test processes run with `env -i`, receive
+no GitHub, model-provider, API, or messaging credential, and run with Docker
+unavailable. Configure
 `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU
 cases also require `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides
 no fallback runner. The qualification neither registers nor selects production
