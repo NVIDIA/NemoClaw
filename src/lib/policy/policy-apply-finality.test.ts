@@ -283,6 +283,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
   it("names the directory that still holds the composed policy when cleanup fails (#9206)", () => {
     const created: string[] = [];
     const realMkdtemp = fs.mkdtempSync;
+    const realRmSync = fs.rmSync;
     vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
       const dir = (realMkdtemp as (p: string) => string)(prefix);
       created.push(dir);
@@ -292,16 +293,22 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       throw new Error("EPERM: operation not permitted");
     });
 
-    const error = applyWeatherPreset();
+    try {
+      const error = applyWeatherPreset();
 
-    expect(created).toHaveLength(1);
-    expect((error as Error).message).toContain(created[0] as string);
-    expect((error as Error).message).toContain("EPERM: operation not permitted");
+      expect(created).toHaveLength(1);
+      expect((error as Error).message).toContain(created[0] as string);
+      expect((error as Error).message).toContain("EPERM: operation not permitted");
+    } finally {
+      vi.restoreAllMocks();
+      for (const dir of created) realRmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reports a residual directory that removal left behind without an error (#9206)", () => {
     const created: string[] = [];
     const realMkdtemp = fs.mkdtempSync;
+    const realRmSync = fs.rmSync;
     vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
       const dir = (realMkdtemp as (p: string) => string)(prefix);
       created.push(dir);
@@ -310,14 +317,27 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     // Removal reports success while the directory survives.
     vi.spyOn(fs, "rmSync").mockImplementation(() => undefined);
 
-    const error = applyWeatherPreset();
+    try {
+      const error = applyWeatherPreset();
 
-    expect(created).toHaveLength(1);
-    expect((error as Error).message).toContain(created[0] as string);
-    expect((error as Error).message).toContain("the path still exists");
+      expect(created).toHaveLength(1);
+      expect((error as Error).message).toContain(created[0] as string);
+      expect((error as Error).message).toContain("the path still exists");
+    } finally {
+      vi.restoreAllMocks();
+      for (const dir of created) realRmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reports retained policy material even when the submission itself failed (#9206)", () => {
+    const created: string[] = [];
+    const realMkdtemp = fs.mkdtempSync;
+    const realRmSync = fs.rmSync;
+    vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
+      const dir = (realMkdtemp as (p: string) => string)(prefix);
+      created.push(dir);
+      return dir;
+    }) as unknown as typeof fs.mkdtempSync);
     run.mockImplementation(() => {
       throw new Error("spawn failed before any result");
     });
@@ -325,8 +345,14 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       throw new Error("EPERM: operation not permitted");
     });
 
-    const error = applyWeatherPreset();
+    try {
+      const error = applyWeatherPreset();
 
-    expect((error as Error).message).toMatch(/still holds the composed sandbox policy/iu);
+      expect(created).toHaveLength(1);
+      expect((error as Error).message).toMatch(/still holds the composed sandbox policy/iu);
+    } finally {
+      vi.restoreAllMocks();
+      for (const dir of created) realRmSync(dir, { recursive: true, force: true });
+    }
   });
 });
