@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ChildProcess, type spawn } from "node:child_process";
+import { type ChildProcess, spawn, type SpawnOptions } from "node:child_process";
+import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { withLocalBuildHeartbeat } from "./local-build-heartbeat";
 
@@ -45,6 +46,46 @@ describe("local sandbox base-image build heartbeat", () => {
     expect(options).toEqual({ env: {}, stdio: ["ignore", "inherit", "inherit"] });
     expect(fixture.child.unref).toHaveBeenCalledOnce();
     expect(fixture.child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("emits pull activity from the spawned heartbeat and stops afterward", async () => {
+    let child: ChildProcess | undefined;
+    let output = "";
+    let killSpy: ReturnType<typeof vi.spyOn> | undefined;
+    const spawnImpl = vi.fn(
+      (executable: string, args: readonly string[], options: SpawnOptions): ChildProcess => {
+        child = spawn(executable, args, {
+          ...options,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        child.stdout?.setEncoding("utf8");
+        child.stdout?.on("data", (chunk: string) => {
+          output += chunk;
+        });
+        killSpy = vi.spyOn(child, "kill");
+        return child;
+      },
+    );
+
+    expect(
+      withLocalBuildHeartbeat(
+        () => {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
+          return "pulled";
+        },
+        {
+          activity: "pull",
+          intervalMs: 10,
+          spawnImpl: spawnImpl as unknown as typeof spawn,
+        },
+      ),
+    ).toBe("pulled");
+
+    expect(child).toBeDefined();
+    await once(child as ChildProcess, "close");
+    expect(output).toContain("Still working on sandbox base image pull");
+    expect(output).not.toContain("Still working on sandbox base image build");
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
   });
 
   it("stops the heartbeat when the synchronous build throws", () => {
