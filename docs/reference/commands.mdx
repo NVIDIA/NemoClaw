@@ -4532,8 +4532,9 @@ It intentionally inherits only credential descriptors `3` and `4` across this ex
 To rotate either credential, stop the command and restart it with newly opened descriptors.
 NemoClaw does not send the OpenClaw credential to the runtime.
 
-When it integrates this launcher, the Gabby scenario calls the internal `launchVoiceGateway()` entry point with trusted source paths and runtime fields.
-That launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
+The launcher is an internal library boundary for the external Gabby scenario, not another CLI command and not part of normal NemoClaw managed startup.
+Gabby calls `launchVoiceGateway()` with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that entry point and verifies descriptor cleanup and restart-based credential rotation.
+The launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
 Do not run this child command directly because it requires the launcher's descriptor mapping.
 
 ```text

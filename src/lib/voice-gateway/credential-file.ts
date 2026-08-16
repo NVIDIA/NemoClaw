@@ -20,6 +20,7 @@ export function validatePrivateCredentialDescriptor(stat: fs.Stats, label: strin
   }
 }
 
+/** Validate one bounded printable bearer value without including it in diagnostics. */
 function validateBearer(value: string, label: string): void {
   const bytes = Buffer.byteLength(value);
   if (
@@ -37,6 +38,7 @@ export interface PrivateBearerDescriptors {
   readonly openClaw: number;
 }
 
+/** Read one credential descriptor once and validate its complete contents. */
 function readBearer(descriptor: number, label: string): string {
   const buffer = Buffer.alloc(MAX_CREDENTIAL_BYTES + 2);
   const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
@@ -49,6 +51,7 @@ function readBearer(descriptor: number, label: string): string {
   return value;
 }
 
+/** Validate one inherited descriptor and return its identity-bearing metadata. */
 function validateDescriptor(descriptor: number, label: string): fs.Stats {
   if (!Number.isInteger(descriptor) || descriptor < 0) {
     throw new Error(`${label} descriptor is invalid.`);

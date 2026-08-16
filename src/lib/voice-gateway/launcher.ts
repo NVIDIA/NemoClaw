@@ -61,6 +61,7 @@ export function buildVoiceGatewayLaunchContract(
   };
 }
 
+/** Open and validate one trusted credential source without exposing its path downstream. */
 function openCredential(pathname: string, label: string): number {
   if (!path.isAbsolute(pathname)) throw new Error(`${label} path must be absolute.`);
   if (typeof fs.constants.O_NOFOLLOW !== "number") {
@@ -92,6 +93,7 @@ function openCredential(pathname: string, label: string): number {
   }
 }
 
+/** Close every owned descriptor while preserving the first cleanup failure. */
 function closeDescriptors(descriptors: readonly number[]): void {
   let cleanupError: unknown;
   for (const descriptor of descriptors) {
