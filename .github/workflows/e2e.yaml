@@ -1483,14 +1483,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          live_test="$CANDIDATE_DIRECTORY/test/e2e/live/native-runtime-qualification-case.test.ts"
-          [[ -f "$live_test" && ! -L "$live_test" ]] || {
+          live_test="test/e2e/live/native-runtime-qualification-case.test.ts"
+          [[ -f "$CANDIDATE_DIRECTORY/$live_test" && ! -L "$CANDIDATE_DIRECTORY/$live_test" ]] || {
             echo "::error::Candidate commit does not provide the native runtime qualification case executor" >&2
             exit 1
           }
           receipt_directory="${RUNNER_TEMP}/native-runtime-case"
           install -d -m 0700 "$receipt_directory"
           sudo chown "$ACCOUNT:$ACCOUNT" "$receipt_directory"
+          cd "$CANDIDATE_DIRECTORY"
           sudo -u "$ACCOUNT" env -i \
             CI=true \
             E2E_DEFAULT_ENABLED=0 \

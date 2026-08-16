@@ -204,6 +204,7 @@ describe("native runtime qualification producer workflow", () => {
     const cleanup = step(producer, "Remove qualification resources");
     const source = JSON.stringify(producer);
     const boundaryRun = boundary.run ?? "";
+    const executeRun = execute.run ?? "";
 
     expect(producer.name).toBe("${{ matrix.jobName }}");
     expect(producer.needs).toEqual([
@@ -275,6 +276,13 @@ describe("native runtime qualification producer workflow", () => {
     expect(installer.run).toContain('sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts"');
     expect(installer.run).toContain('sudo test ! -L "$INSTALLER_RECEIPT_PARENT/receipts"');
     expect(execute.run).toContain('sudo -u "$ACCOUNT" env -i');
+    expect(execute.run).toContain(
+      'live_test="test/e2e/live/native-runtime-qualification-case.test.ts"',
+    );
+    expect(execute.run).toContain('cd "$CANDIDATE_DIRECTORY"');
+    expect(executeRun.indexOf('cd "$CANDIDATE_DIRECTORY"')).toBeLessThan(
+      executeRun.indexOf('sudo -u "$ACCOUNT" env -i'),
+    );
     expect(execute.run).toContain("native-runtime-qualification-case.test.ts");
     expect(execute.run).not.toContain("GITHUB_TOKEN");
     expect(execute.run).not.toContain("GH_TOKEN");
