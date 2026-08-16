@@ -81,6 +81,10 @@ describe("native runtime qualification producer workflow", () => {
       producer,
       "Prepare the credential-free execution account and disable Docker",
     );
+    const dependencies = step(
+      producer,
+      "Install locked candidate test dependencies without scripts",
+    );
     const installer = step(producer, "Run the authenticated installer qualification");
     const execute = step(producer, "Execute the candidate qualification case without credentials");
     const validate = step(producer, "Validate receipts and emit bounded evidence");
@@ -88,7 +92,6 @@ describe("native runtime qualification producer workflow", () => {
     const cleanup = step(producer, "Remove qualification resources");
     const source = JSON.stringify(producer);
     const boundaryRun = boundary.run ?? "";
-    const installerRun = installer.run ?? "";
 
     expect(producer.name).toBe("${{ matrix.jobName }}");
     expect(producer["runs-on"]).toBe("${{ matrix.runner }}");
@@ -100,25 +103,72 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundaryRun.indexOf("printf 'account=%s")).toBeLessThan(
       boundaryRun.indexOf("useradd --create-home"),
     );
+    expect(dependencies.run).toContain('sudo -u "$ACCOUNT" env -i');
+    expect(dependencies.run).toContain("npm --prefix");
+    expect(dependencies.run).toContain("ci --ignore-scripts");
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(installer.run).toContain("run-native-runtime-installer-qualification.sh");
-    expect(installerRun.indexOf("pkill -KILL -u")).toBeLessThan(
-      installerRun.indexOf("chown -R -h root:root"),
-    );
+    expect(installer.run).not.toContain("chown -R");
     expect(installer.run).toContain('[[ -d "$INSTALLER_RECEIPT_PARENT/receipts" && ! -L');
     expect(execute.run).toContain('sudo -u "$ACCOUNT" env -i');
     expect(execute.run).toContain("native-runtime-qualification-case.test.ts");
     expect(execute.run).not.toContain("GITHUB_TOKEN");
     expect(execute.run).not.toContain("GH_TOKEN");
+    expect(execute.run).not.toContain("chown -R");
+    expect(execute.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
+    expect(execute.run).toContain(
+      'PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
+    );
+    expect(validate.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
+    expect(validate.run).toContain("sudo --preserve-env=");
+    expect(validate.run).toContain('"$NODE_DIRECTORY/node"');
     expect(validate.run).toContain("native-runtime-qualification-producer-evidence.mts");
     expect(upload.with).toMatchObject({
       name: "${{ matrix.artifactName }}",
-      path: "${{ runner.temp }}/native-runtime-evidence/evidence.json",
+      path: "${{ runner.temp }}/native-runtime-evidence/",
     });
     expect(cleanup.if).toBe("always()");
     expect(cleanup.run).toContain('account="${ACCOUNT:-nemoclawq}"');
     expect(cleanup.run).toContain("pkill -KILL -u");
     expect(cleanup.run).toContain("userdel --remove");
     expect(cleanup.run).toContain("Qualification account still exists after cleanup");
+  });
+
+  it("aggregates the exact successful 24-case cohort in a separate trusted job", () => {
+    const aggregate = job("native-runtime-qualification-producer-aggregate");
+    const download = step(aggregate, "Download the exact case evidence cohort");
+    const identity = step(aggregate, "Resolve this aggregate job identity");
+    const collect = step(aggregate, "Validate and aggregate all 24 case receipts");
+    const upload = step(aggregate, "Upload the immutable aggregate evidence");
+
+    expect(aggregate.name).toBe("Aggregate native runtime qualification evidence");
+    expect(aggregate.needs).toEqual([
+      "generate-matrix",
+      "native-runtime-qualification-producer-plan",
+      "native-runtime-qualification-producer",
+    ]);
+    expect(aggregate.if).toContain(
+      "needs.native-runtime-qualification-producer.result == 'success'",
+    );
+    expect(aggregate.permissions).toEqual({
+      actions: "read",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(download.with).toMatchObject({
+      pattern: "native-runtime-qualification-evidence-${{ inputs.checkout_sha }}-*",
+      "merge-multiple": false,
+    });
+    expect(identity.run).toContain('.status == "in_progress"');
+    expect(identity.run).toContain("select(length == 1)");
+    expect(collect.run).toContain("native-runtime-qualification-producer-aggregate.mts");
+    expect(collect.env?.QUALIFICATION_PLAN).toBe(
+      "${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}",
+    );
+    expect(upload.with).toMatchObject({
+      name: "native-runtime-qualification-${{ inputs.checkout_sha }}",
+      path: "${{ runner.temp }}/native-runtime-aggregate/",
+      "if-no-files-found": "error",
+    });
   });
 });

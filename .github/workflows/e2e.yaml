@@ -1009,10 +1009,6 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Install locked candidate test dependencies without scripts
-        working-directory: .candidate-runtime
-        run: npm ci --ignore-scripts
-
       - name: Prepare the credential-free execution account and disable Docker
         id: boundary
         env:
@@ -1020,7 +1016,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in git jq node pgrep podman sha256sum systemctl; do
+          for command in git jq node npm pgrep podman sha256sum systemctl; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
@@ -1046,6 +1042,11 @@ jobs:
           runtime_dir="/run/user/${uid}"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$runtime_dir"
           sudo chown -R "$uid:$uid" "$CANDIDATE_DIRECTORY"
+          node_directory="$(dirname "$(command -v node)")"
+          [[ "$node_directory" == /* && -x "$node_directory/node" && -x "$node_directory/npm" ]] || {
+            echo "::error::Pinned Node toolchain path is invalid" >&2
+            exit 1
+          }
           guard_dir="${RUNNER_TEMP}/native-runtime-docker-guard"
           install -d -m 0700 "$guard_dir"
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
@@ -1053,6 +1054,23 @@ jobs:
           printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
+          printf 'node_dir=%s\n' "$node_directory" >>"$GITHUB_OUTPUT"
+
+      - name: Install locked candidate test dependencies without scripts
+        env:
+          ACCOUNT: ${{ steps.boundary.outputs.account }}
+          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
+          QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            npm --prefix "$CANDIDATE_DIRECTORY" ci --ignore-scripts
 
       - name: Run the authenticated installer qualification
         env:
@@ -1084,13 +1102,13 @@ jobs:
             echo "::error::Installer receipt directory is missing or invalid" >&2
             exit 1
           }
-          sudo chown -R -h root:root "$INSTALLER_RECEIPT_PARENT/receipts"
 
       - name: Execute the candidate qualification case without credentials
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
         shell: bash
@@ -1113,14 +1131,13 @@ jobs:
             NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RECEIPT="$receipt_directory/execution.json" \
             NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_ROW="$QUALIFICATION_ROW" \
             NEMOCLAW_RUN_LIVE_E2E=1 \
-            PATH="$GUARD_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
             "$CANDIDATE_DIRECTORY/node_modules/.bin/vitest" run \
               --config "$CANDIDATE_DIRECTORY/vitest.config.ts" \
               --project e2e-live \
               "$live_test"
           sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
-          sudo chown -R root:root "$receipt_directory"
 
       - name: Verify Docker stayed unavailable
         shell: bash
@@ -1136,14 +1153,14 @@ jobs:
           EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-evidence
           EXECUTION_RECEIPT_PATH: ${{ runner.temp }}/native-runtime-case/execution.json
           INSTALLER_RECEIPT_DIRECTORY: ${{ runner.temp }}/native-runtime-installer/receipts
+          NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo chown -R "$(id -u):$(id -g)" \
-            "$INSTALLER_RECEIPT_DIRECTORY" \
-            "$(dirname "$EXECUTION_RECEIPT_PATH")"
-          node --experimental-strip-types --no-warnings \
+          sudo --preserve-env=EVIDENCE_DIRECTORY,EXECUTION_RECEIPT_PATH,INSTALLER_RECEIPT_DIRECTORY,QUALIFICATION_ROW \
+            "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
             .trusted-qualification/tools/e2e/native-runtime-qualification-producer-evidence.mts
+          sudo chown -R "$(id -u):$(id -g)" "$EVIDENCE_DIRECTORY"
 
       - name: Remove qualification resources
         if: always()
@@ -1163,11 +1180,101 @@ jobs:
           fi
 
       - name: Upload the qualification case evidence
-        if: always()
+        if: success()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: ${{ matrix.artifactName }}
-          path: ${{ runner.temp }}/native-runtime-evidence/evidence.json
+          path: ${{ runner.temp }}/native-runtime-evidence/
+
+  native-runtime-qualification-producer-aggregate:
+    name: Aggregate native runtime qualification evidence
+    needs:
+      [
+        generate-matrix,
+        native-runtime-qualification-producer-plan,
+        native-runtime-qualification-producer,
+      ]
+    if: ${{ always() && needs.native-runtime-qualification-producer-plan.result == 'success' && needs.native-runtime-qualification-producer.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the trusted qualification aggregator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .trusted-qualification-aggregate
+          persist-credentials: false
+          sparse-checkout: |
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
+            test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-producer-aggregate.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download the exact case evidence cohort
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-runtime-qualification-evidence-${{ inputs.checkout_sha }}-*
+          path: ${{ runner.temp }}/native-runtime-case-artifacts
+          merge-multiple: false
+
+      - name: Resolve this aggregate job identity
+        id: aggregate-job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PRODUCER_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}/attempts/${PRODUCER_RUN_ATTEMPT}/jobs" \
+            -f per_page=100)"
+          job_id="$(jq -er \
+            --arg name 'Aggregate native runtime qualification evidence' \
+            --argjson runId "$PRODUCER_RUN_ID" \
+            --argjson attempt "$PRODUCER_RUN_ATTEMPT" '
+              select(.total_count <= 100) |
+              [.jobs[] | select(
+                .name == $name and
+                .run_id == $runId and
+                .run_attempt == $attempt and
+                .status == "in_progress"
+              )] |
+              select(length == 1) |
+              .[0].id
+            ' <<<"$jobs")" || {
+              echo "::error::Could not resolve one in-progress aggregate job identity" >&2
+              exit 1
+            }
+          [[ "$job_id" =~ ^[1-9][0-9]{0,19}$ ]] || {
+            echo "::error::Aggregate job identity is invalid" >&2
+            exit 1
+          }
+          printf 'job_id=%s\n' "$job_id" >>"$GITHUB_OUTPUT"
+
+      - name: Validate and aggregate all 24 case receipts
+        working-directory: .trusted-qualification-aggregate
+        env:
+          AGGREGATE_JOB_ID: ${{ steps.aggregate-job.outputs.job_id }}
+          CASE_ARTIFACT_ROOT: ${{ runner.temp }}/native-runtime-case-artifacts
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-aggregate
+          QUALIFICATION_PLAN: ${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/native-runtime-qualification-producer-aggregate.mts
+
+      - name: Upload the immutable aggregate evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-runtime-qualification-${{ inputs.checkout_sha }}
+          path: ${{ runner.temp }}/native-runtime-aggregate/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
 
   retired-selector-compatibility:
     needs: generate-matrix
@@ -4147,6 +4254,7 @@ jobs:
         openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
         native-runtime-qualification-producer,
+        native-runtime-qualification-producer-aggregate,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:

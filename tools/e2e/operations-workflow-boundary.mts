@@ -57,6 +57,7 @@ const GH_API_WRITE_METHOD =
   /\bgh\s+api\b[\s\S]{0,160}?(?:(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b|graphql\b[\s\S]{0,160}?\bmutation\b)/iu;
 const NATIVE_RUNTIME_QUALIFICATION_READ_JOBS = new Set([
   "native-runtime-qualification-producer-plan",
+  "native-runtime-qualification-producer-aggregate",
 ]);
 const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
@@ -489,7 +490,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           (jobName === "native-runtime-qualification-producer" &&
             step.name === "Check out the candidate commit" &&
             step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
-            step.with?.ref === "${{ matrix.source.candidateSha }}"));
+            step.with?.ref === "${{ matrix.source.candidateSha }}") ||
+          (jobName === "native-runtime-qualification-producer-aggregate" &&
+            step.name === "Check out the trusted qualification aggregator" &&
+            step.with?.ref === "${{ github.workflow_sha }}"));
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||

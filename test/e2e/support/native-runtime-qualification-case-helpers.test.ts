@@ -1,0 +1,160 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import {
+  buildNativeRuntimeQualificationProducerPlan,
+  type NativeRuntimeQualificationProducerPlanInput,
+} from "../../../tools/e2e/native-runtime-qualification-producer-plan.mts";
+import {
+  assertCredentialFreeQualificationEnvironment,
+  digestFromImageReference,
+  nativeRuntimeQualificationAgentImage,
+  nativeRuntimeQualificationInferenceImage,
+  parseNativeRuntimeQualificationRow,
+  parseNativeRuntimeQualificationRunnerContract,
+} from "../live/native-runtime-qualification-case-helpers.ts";
+
+const SOURCE = {
+  repository: "NVIDIA/NemoClaw",
+  producerWorkflow: ".github/workflows/e2e.yaml",
+  pullRequestNumber: 9144,
+  candidateRepository: "NVIDIA/NemoClaw",
+  candidateSha: "a".repeat(40),
+  baseRef: "main",
+  baseSha: "b".repeat(40),
+  workflowSha: "b".repeat(40),
+  producerRunId: "123456",
+  producerRunAttempt: 1,
+  dispatchArtifact: {
+    id: "987654",
+    name: "e2e-dispatch-123456-1",
+    digest: `sha256:${"c".repeat(64)}`,
+    sizeInBytes: 4096,
+  },
+} as const;
+
+function row() {
+  return buildNativeRuntimeQualificationProducerPlan({
+    source: SOURCE,
+    installerSha256: "d".repeat(64),
+    arm64GpuRunner: "native-arm64-gpu",
+  } satisfies NativeRuntimeQualificationProducerPlanInput).include[0]!;
+}
+
+function runnerContract() {
+  return {
+    schemaVersion: 1,
+    kind: "nemoclaw-native-runtime-qualification-runner-v1",
+    architecture: "amd64",
+    gpuProbeImageRef: `nvcr.io/nvidia/cuda@sha256:${"3".repeat(64)}`,
+    nim: {
+      imageRef: `nvcr.io/nim/nvidia/model@sha256:${"1".repeat(64)}`,
+      model: "nvidia/model",
+      cachePath: "/var/lib/nemoclaw/native-runtime-qualification/nim/cache",
+    },
+    vllm: {
+      imageRef: `docker.io/vllm/vllm-openai@sha256:${"2".repeat(64)}`,
+      model: "qualification",
+      modelPath: "/var/lib/nemoclaw/native-runtime-qualification/vllm/model",
+    },
+  } as const;
+}
+
+describe("native runtime qualification case boundaries", () => {
+  it("accepts only an exact canonical trusted-plan row", () => {
+    const expected = row();
+    expect(parseNativeRuntimeQualificationRow(JSON.stringify(expected))).toEqual(expected);
+
+    const forged = JSON.parse(JSON.stringify(expected)) as Record<string, unknown>;
+    forged.rootModes = ["rootless", "rootful"];
+    expect(() => parseNativeRuntimeQualificationRow(JSON.stringify(forged))).toThrow(
+      "Root modes does not match",
+    );
+  });
+
+  it("rejects credential and alternate runtime authority environment names", () => {
+    expect(() =>
+      assertCredentialFreeQualificationEnvironment({
+        HOME: "/tmp/home",
+        PATH: "/usr/bin",
+      }),
+    ).not.toThrow();
+    for (const name of [
+      "GITHUB_TOKEN",
+      "NGC_API_KEY",
+      "HF_TOKEN",
+      "AWS_SECRET_ACCESS_KEY",
+      "SSH_AUTH_SOCK",
+      "DOCKER_CONFIG",
+      "DOCKER_HOST",
+      "CUSTOM_API_KEY",
+    ]) {
+      expect(() => assertCredentialFreeQualificationEnvironment({ [name]: "forbidden" })).toThrow(
+        name,
+      );
+    }
+  });
+
+  it("accepts only typed immutable GPU runner resources", () => {
+    const parsed = parseNativeRuntimeQualificationRunnerContract(runnerContract(), "amd64");
+    expect(parsed.nim.imageRef).toContain("@sha256:");
+    expect(parsed.vllm.modelPath).toMatch(/^\/var\/lib\/nemoclaw\/native-runtime-qualification\//u);
+
+    expect(() =>
+      parseNativeRuntimeQualificationRunnerContract(
+        {
+          ...runnerContract(),
+          nim: { ...runnerContract().nim, command: ["bash", "-c", "id"] },
+        },
+        "amd64",
+      ),
+    ).toThrow("NIM runner contract fields are invalid");
+    expect(() =>
+      parseNativeRuntimeQualificationRunnerContract(
+        {
+          ...runnerContract(),
+          vllm: { ...runnerContract().vllm, modelPath: "/tmp/model" },
+        },
+        "amd64",
+      ),
+    ).toThrow("vLLM runner contract is invalid");
+  });
+
+  it("pins every public case image to architecture-specific immutable digests", () => {
+    for (const architecture of ["amd64", "arm64"] as const) {
+      for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"] as const) {
+        expect(nativeRuntimeQualificationAgentImage(architecture, agent)).toMatch(
+          /@sha256:[a-f0-9]{64}$/u,
+        );
+      }
+      const ollama = nativeRuntimeQualificationInferenceImage({
+        architecture,
+        acceleration: "cpu",
+        inference: "ollama",
+      });
+      expect(ollama).toMatchObject({ model: "qwen3:0.6b" });
+      expect(digestFromImageReference(ollama.imageRef)).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    }
+  });
+
+  it("requires the root-owned typed contract for NIM and vLLM", () => {
+    expect(() =>
+      nativeRuntimeQualificationInferenceImage({
+        architecture: "amd64",
+        acceleration: "nvidia-gpu",
+        inference: "nim",
+      }),
+    ).toThrow("reviewed GPU runner contract");
+    const contract = parseNativeRuntimeQualificationRunnerContract(runnerContract(), "amd64");
+    expect(
+      nativeRuntimeQualificationInferenceImage({
+        architecture: "amd64",
+        acceleration: "nvidia-gpu",
+        inference: "vllm",
+        runnerContract: contract,
+      }),
+    ).toMatchObject({ model: "qualification" });
+  });
+});

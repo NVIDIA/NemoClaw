@@ -44,9 +44,11 @@ function fixture() {
     arm64GpuRunner: "reviewed-native-arm64-gpu-runner",
   }).include.find((entry) => entry.id === NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE)!;
   const installerDirectory = path.join(root, "installer");
-  const executionPath = path.join(root, "execution.json");
+  const executionDirectory = path.join(root, "candidate");
+  const executionPath = path.join(executionDirectory, "execution.json");
   const evidenceDirectory = path.join(root, "evidence");
   fs.mkdirSync(installerDirectory);
+  fs.mkdirSync(executionDirectory);
   fs.writeFileSync(path.join(installerDirectory, "installer.sh"), INSTALLER);
   fs.writeFileSync(
     path.join(installerDirectory, "invocation.json"),
@@ -121,6 +123,48 @@ function fixture() {
     result: "passed",
   };
   fs.writeFileSync(executionPath, JSON.stringify(execution));
+  const operationFile = (id: string) => `operation-${id.replaceAll(".", "-")}.json`;
+  fs.writeFileSync(
+    path.join(executionDirectory, "runtime-result.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: "nemoclaw-native-runtime-qualification-runtime-v1",
+      caseId: row.id,
+      result: "passed",
+      details: { endpointAuthority: `podman-sha256:${"f".repeat(64)}` },
+    }),
+  );
+  for (const id of row.case.obligations) {
+    fs.writeFileSync(
+      path.join(executionDirectory, operationFile(id)),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "nemoclaw-native-runtime-qualification-operation-v1",
+        caseId: row.id,
+        operationId: id,
+        result: "passed",
+        details: { proof: id },
+      }),
+    );
+  }
+  fs.writeFileSync(
+    path.join(executionDirectory, "case-evidence.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: "nemoclaw-native-runtime-qualification-case-details-v1",
+      caseId: row.id,
+      runtime: {
+        engineName: "Podman",
+        engineVersion: "5.6.2",
+        managedImages: [
+          { role: "agent", digest: `sha256:${"1".repeat(64)}` },
+          { role: "inference", digest: `sha256:${"2".repeat(64)}` },
+        ],
+        resultFile: "runtime-result.json",
+      },
+      operations: row.case.obligations.map((id) => ({ id, file: operationFile(id) })),
+    }),
+  );
   return { evidenceDirectory, execution, executionPath, installerDirectory, root, row };
 }
 
@@ -139,21 +183,44 @@ describe("native runtime qualification producer evidence", () => {
       value.evidenceDirectory,
     );
 
-    expect(fs.readdirSync(value.evidenceDirectory)).toEqual(["evidence.json"]);
+    expect(fs.readdirSync(value.evidenceDirectory).sort()).toEqual([
+      "case-fragment.json",
+      "receipts",
+    ]);
     expect(
-      JSON.parse(fs.readFileSync(path.join(value.evidenceDirectory, "evidence.json"), "utf8")),
-    ).toEqual({
+      JSON.parse(fs.readFileSync(path.join(value.evidenceDirectory, "case-fragment.json"), "utf8")),
+    ).toMatchObject({
       schemaVersion: 1,
-      kind: "nemoclaw-native-runtime-qualification-case-evidence-v1",
+      kind: "nemoclaw-native-runtime-qualification-case-fragment-v1",
       qualificationId: "podman-protected-host-local-inference",
       providerId: "podman",
       source: value.row.source,
       case: value.row.case,
-      result: "passed",
+      installer: {
+        architecture: "amd64",
+        dockerAvailability: "unavailable",
+        exitCode: 0,
+        providerId: "podman",
+      },
+      runtime: {
+        agent: "openclaw",
+        engineName: "Podman",
+        engineVersion: "5.6.2",
+        providerId: "podman",
+      },
     });
-    expect(fs.statSync(path.join(value.evidenceDirectory, "evidence.json")).mode & 0o777).toBe(
-      0o600,
-    );
+    expect(fs.statSync(path.join(value.evidenceDirectory, "case-fragment.json")).mode & 0o777).toBe(0o600);
+    expect(
+      fs.existsSync(
+        path.join(
+          value.evidenceDirectory,
+          "receipts",
+          value.row.id,
+          "installer",
+          "installer.sh",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it.each([
@@ -247,6 +314,20 @@ describe("native runtime qualification producer evidence", () => {
         value.executionPath,
         value.evidenceDirectory,
       ),
-    ).toThrow("receipt is missing or invalid");
+    ).toThrow("receipt file is invalid");
+  });
+
+  it("rejects an unexpected candidate-controlled receipt file", () => {
+    const value = fixture();
+    fs.writeFileSync(path.join(path.dirname(value.executionPath), "candidate.log"), "candidate output");
+
+    expect(() =>
+      writeNativeRuntimeQualificationProducerEvidence(
+        value.row,
+        value.installerDirectory,
+        value.executionPath,
+        value.evidenceDirectory,
+      ),
+    ).toThrow("receipt files are invalid");
   });
 });
