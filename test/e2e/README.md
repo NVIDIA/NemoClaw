@@ -472,17 +472,20 @@ Linux x64 archive and checksum file. It rejects release drift during download,
 then uploads the verified bytes under a content-addressed name with the shared
 14-day E2E retention policy.
 
-The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify
-that same artifact with the trusted workflow revision. An exact-argument and
-asset-allowlisted `gh` shim presents only those retained files to the unchanged
-trusted `scripts/install-openshell.sh` path. A separate `curl` shim blocks
-network fallback. The installer still checks the release checksums and archive
-structure before installation. A missing, replaced, or corrupt upstream asset
-fails the resolver as an infrastructure failure. The job error reports the
-failed identifier and source URL, and `resolution.json` records them when the
-artifact directory remains writable. The three product shards do not start in
-that case, so the run cannot report a product failure before reaching product
-assertions.
+The OpenClaw, Hermes, and LangChain Deep Agents Code shards restore and verify that same artifact with the trusted workflow revision.
+The `actions/setup-node` step selects Node.js 22 and disables automatic package manager caching before candidate checkout.
+An exact-argument and asset-allowlisted `gh` shim presents only the retained files to the unchanged trusted `scripts/install-openshell.sh` path.
+A separate `curl` shim blocks network fallback.
+The installer still checks the release checksums and archive structure before installation.
+Each product shard revokes Docker credentials, then installs OpenShell before candidate dependency preparation begins.
+Dependency preparation can read candidate project configuration and is the first candidate-controlled execution boundary.
+The candidate CLI artifact restore runs after dependency preparation.
+This ordering protects the bytes consumed by the trusted installer before candidate-controlled execution starts.
+It does not make the installed OpenShell files immutable after dependency preparation starts on the same runner.
+Subsequent product steps operate in candidate-controlled state.
+A missing, replaced, or corrupt upstream asset fails the resolver as an infrastructure failure.
+The job error reports the failed identifier and source URL, and `resolution.json` records them when the artifact directory remains writable.
+The three product shards do not start in that case, so the run cannot report a product failure before reaching product assertions.
 
 ## Larger-runner routing
 
@@ -583,6 +586,31 @@ graph as the live targets:
 
 - GitHub Actions run history is the authoritative record for push and
   manual E2E results.
+- `E2E / Main Retry` publishes an advisory same-commit reliability table for
+  trusted pushes to `main` and explicit manual qualification runs. It keeps
+  first-pass success, pass-after-retry, exhausted retries, and pass/fail flips
+  distinct,
+  and never treats retry records or runner-pressure classifications as proof
+  that a manual run reached a terminal result. Manual identity comes from the
+  run-bound dispatch receipt; its terminal result additionally requires at
+  least one canonical `nemoclaw-e2e-evidence-v1` manifest bound to the same run,
+  attempt, candidate SHA, trusted workflow repository, workflow SHA, and job
+  status. Outcomes from trusted pushes to `main` instead require the canonical
+  retry-controller artifact. Missing or malformed identity/outcome evidence
+  leaves a run unclassified. Retry and runner-pressure files contribute only
+  allowlisted failure classes: their complete, missing, or malformed state is
+  reported separately, so malformed classification data cannot erase an
+  otherwise authenticated outcome. Both evidence-state counts appear in the
+  grouped JSON and Markdown table. The table never changes a required check,
+  release conclusion, or rerun decision.
+- The `report-same-commit-reliability` job appends the Markdown table to its
+  GitHub Actions job summary and uploads the bounded, allowlisted
+  `same-commit-reliability.json` and `same-commit-reliability.md` files as
+  `same-commit-reliability-<source-run-id>-<attempt>` with 14-day retention.
+  Artifact ZIP entries are structurally validated before an allowlisted file is
+  read: ambiguous relative paths, links, encryption, split/ZIP64 archives,
+  duplicate names, unsupported compression, inconsistent headers, excess
+  entries, oversized contents, and CRC mismatches are rejected.
 - Automated issue routing and the workflow's `issues: write` capability are
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
@@ -1048,6 +1076,10 @@ After a failure, inspect the workflow artifacts and remove resources that target
 
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary, cohort-owned NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. Before starting NIM or vLLM, the live fixture rejects a pre-existing cohort container name. It records the full container ID, requested image, immutable image ID, cohort owner, and provider label, then removes only that exact container after revalidating every field. Missing, ambiguous, name-reused, drifted, or indeterminate cleanup evidence fails the test, as does any retained exact ID or name. A fail-closed refusal can leave the secret-bearing NIM container alive until runner teardown; inspect the redacted artifacts and remove only the verified container. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Revoke it, or rotate it and disable the old value, in the issuing NVIDIA service. Verify that the exposed key is no longer valid.
 
+For `native-runtime-qualification-producer`, use a same-repository open PR and the first workflow attempt. The trusted workflow binds the candidate commit, base commit, workflow commit, repository, PR, and plan from `main`. It passes no GitHub, model-provider, API, or messaging credentials to candidate code. Candidate execution uses `env -i` under a temporary unprivileged account on a reviewed ephemeral runner. Configure `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU case also requires `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides no fallback runner. The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts`. Until that executor and the required runner capacity exist, the producer fails closed instead of claiming qualification.
+
+Before candidate execution, the producer stops Docker, masks its service and socket, removes Docker sockets, and rejects a usable `docker` command. It uploads one evidence artifact for each planned case. Cleanup terminates processes owned by the candidate account and removes that account. If cleanup fails or the runner becomes unavailable, inspect the host and remove the ephemeral runner from service. Recover or replace the runner before dispatching a new run. Do not rerun the same workflow attempt; the producer rejects attempts after the first. Dispatch a new run after recovery.
+
 For a manual PR run, provide the current PR number, lowercase 40-character candidate commit SHA, PR source repository, lowercase 40-character base commit SHA, trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
@@ -1057,6 +1089,9 @@ To select the protected managed-image runtime qualification, set `jobs=managed-i
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+To select native-runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
+Leave `targets` empty and keep `include_staging_brev_launchable=false`.
+Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
 The trusted pre-checkout step requires current `maintain` or `admin` permission and validates the exact open PR and selected mode before candidate code runs.
 A second validation after checkout rejects a changed candidate commit, base commit, or PR source repository before preparation.
 

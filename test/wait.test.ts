@@ -4,6 +4,8 @@
 import assert from "node:assert";
 import { createServer, type AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { retryUntil, retryUntilAsync } from "../src/lib/core/retry.js";
+
 import {
   buildLoopbackProbeEnv,
   sleepMs,
@@ -46,6 +48,113 @@ describe("wait utility", () => {
     const duration = end - start;
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
   });
+
+  const throwWhenSelected = (selected: boolean, error: Error): void =>
+    selected ? (() => {
+      throw error;
+    })() : undefined;
+
+
+  const retryCases = [
+    { label: "accepts the first result", acceptAt: 1, delays: [10, 20], attempt: 1 },
+    { label: "accepts the third result", acceptAt: 3, delays: [10, 20, 30], attempt: 3 },
+    { label: "returns the exhausted result", acceptAt: 0, delays: [10, 20], attempt: 3 },
+    { label: "runs once without retries", acceptAt: 0, delays: [], attempt: 1 },
+  ] as const;
+
+  it.each(retryCases)("retryUntil $label (#9218)", ({ acceptAt, delays, attempt }) => {
+    const operation = vi.fn((currentAttempt: number) => `result-${currentAttempt}`);
+    const onRetry = vi.fn();
+    const sleep = vi.fn();
+
+    const result = retryUntil(operation, {
+      accept: (_value, currentAttempt) => currentAttempt === acceptAt,
+      retryDelaysMs: delays,
+      onRetry,
+      sleep,
+    });
+
+    expect(result).toBe(`result-${attempt}`);
+    expect(operation).toHaveBeenCalledTimes(attempt);
+    expect(sleep.mock.calls).toEqual(delays.slice(0, attempt - 1).map((delay) => [delay]));
+    expect(onRetry).toHaveBeenCalledTimes(attempt - 1);
+  });
+
+  it.each(["operation", "onRetry", "sleep"] as const)(
+    "retryUntil propagates an error from %s before the next attempt (#9218)",
+    (failure) => {
+      const error = new Error(`${failure} failed`);
+      const operation = vi.fn(() => {
+        throwWhenSelected(failure === "operation", error);
+        return "retry";
+      });
+      const onRetry = vi.fn(() => {
+        throwWhenSelected(failure === "onRetry", error);
+      });
+      const sleep = vi.fn(() => {
+        throwWhenSelected(failure === "sleep", error);
+      });
+
+      expect(() =>
+        retryUntil(operation, {
+          accept: () => false,
+          retryDelaysMs: [10],
+          onRetry,
+          sleep,
+        }),
+      ).toThrow(error);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledTimes(failure === "operation" ? 0 : 1);
+      expect(sleep).toHaveBeenCalledTimes(failure === "sleep" ? 1 : 0);
+    },
+  );
+
+  it.each(retryCases)("retryUntilAsync $label (#9218)", async ({ acceptAt, delays, attempt }) => {
+    const operation = vi.fn(async (currentAttempt: number) => `result-${currentAttempt}`);
+    const onRetry = vi.fn(async () => {});
+    const sleep = vi.fn(async () => {});
+
+    const result = await retryUntilAsync(operation, {
+      accept: (_value, currentAttempt) => currentAttempt === acceptAt,
+      retryDelaysMs: delays,
+      onRetry,
+      sleep,
+    });
+
+    expect(result).toBe(`result-${attempt}`);
+    expect(operation).toHaveBeenCalledTimes(attempt);
+    expect(sleep.mock.calls).toEqual(delays.slice(0, attempt - 1).map((delay) => [delay]));
+    expect(onRetry).toHaveBeenCalledTimes(attempt - 1);
+  });
+
+  it.each(["operation", "onRetry", "sleep"] as const)(
+    "retryUntilAsync propagates an error from %s before the next attempt (#9218)",
+    async (failure) => {
+      const error = new Error(`${failure} failed`);
+      const operation = vi.fn(async () => {
+        throwWhenSelected(failure === "operation", error);
+        return "retry";
+      });
+      const onRetry = vi.fn(async () => {
+        throwWhenSelected(failure === "onRetry", error);
+      });
+      const sleep = vi.fn(async () => {
+        throwWhenSelected(failure === "sleep", error);
+      });
+
+      await expect(
+        retryUntilAsync(operation, {
+          accept: () => false,
+          retryDelaysMs: [10],
+          onRetry,
+          sleep,
+        }),
+      ).rejects.toBe(error);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(onRetry).toHaveBeenCalledTimes(failure === "operation" ? 0 : 1);
+      expect(sleep).toHaveBeenCalledTimes(failure === "sleep" ? 1 : 0);
+    },
+  );
 
   it("waitUntil returns immediately when the condition is already true", () => {
     const sleeps: number[] = [];

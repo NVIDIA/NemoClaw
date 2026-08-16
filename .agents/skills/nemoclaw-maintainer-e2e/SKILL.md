@@ -73,16 +73,17 @@ Choose exactly one mode:
   The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
   It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
 - For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
+- For native-runtime qualification evidence, set `E2E_JOBS=native-runtime-qualification-producer`. Use a same-repository open PR and the first workflow attempt. The trusted workflow runs each case under a credential-free candidate account on a reviewed ephemeral runner. The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts` before the selector can pass.
 
 Leave `targets` empty and keep Launchable disabled:
 
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
 case "$E2E_JOBS" in
-  "" | managed-image-protected-runtime) ;;
+  "" | managed-image-protected-runtime | native-runtime-qualification-producer) ;;
   *) echo "Unsupported manual PR E2E job selector" >&2; exit 1 ;;
 esac
-REVIEW_REASON='Reviewed the PR head commit for credentialed E2E.'
+REVIEW_REASON='Reviewed the commit under review and selected E2E boundary.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 INFERENCE_MODE=mock
 ALLOW_JETSON_DISPATCH=false
@@ -108,6 +109,10 @@ gh workflow run .github/workflows/e2e.yaml \
 The trusted pre-checkout step requires current `maintain` or `admin` permission.
 It validates the actor, open PR, repository, head SHA, base SHA, workflow SHA, review reason, and allowed jobs, targets, and Launchable combination.
 A second validation after checkout rejects a changed PR identity before preparation.
+
+The native-runtime producer binds the open PR, candidate commit, base commit, trusted workflow commit, and first workflow attempt. It runs the trusted plan from `main` and passes no GitHub, model-provider, API, or messaging credentials to candidate code. Configure `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU case also requires `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides no fallback runner.
+
+The producer stops Docker, masks its service and socket, removes Docker sockets, and rejects a usable `docker` command before candidate execution. It runs the candidate case under a temporary unprivileged account and uploads one evidence artifact for each planned case. Cleanup terminates processes owned by the candidate account and removes that account. If cleanup fails or the runner becomes unavailable, inspect the host and remove the ephemeral runner from service. Recover or replace the runner before dispatching a new run. Do not rerun the same workflow attempt; the producer rejects attempts after the first.
 
 Find and verify the correlated run with bounded GitHub reads:
 

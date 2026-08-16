@@ -5894,6 +5894,29 @@ maybe_offer_express_install() {
   esac
 }
 
+# The qualification runner calls these phases without starting onboarding.
+# ---------------------------------------------------------------------------
+install_nemoclaw_before_onboarding() {
+  _INSTALL_START=$SECONDS
+  bash "${SCRIPT_DIR}/setup-jetson.sh"
+
+  step 1 "Node.js"
+  install_nodejs
+  ensure_supported_runtime
+  resolve_pending_express_wsl_provider
+  ensure_station_express_pair
+
+  step 2 "${_CLI_DISPLAY} CLI"
+  # Ollama and vLLM install/upgrade and model pulls are owned by
+  # `nemoclaw onboard` (the install-ollama / install-vllm branches).
+  # install.sh stays focused on dependency setup.
+  fix_npm_permissions
+  preinstall_backup_and_retire_legacy_gateway
+  install_nemoclaw
+  verify_nemoclaw
+  require_reportable_openshell_version
+}
+
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -6047,24 +6070,7 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
-  _INSTALL_START=$SECONDS
-  bash "${SCRIPT_DIR}/setup-jetson.sh"
-
-  step 1 "Node.js"
-  install_nodejs
-  ensure_supported_runtime
-  resolve_pending_express_wsl_provider
-  ensure_station_express_pair
-
-  step 2 "${_CLI_DISPLAY} CLI"
-  # Ollama and vLLM install/upgrade and model pulls are owned by
-  # `nemoclaw onboard` (the install-ollama / install-vllm branches).
-  # install.sh stays focused on dependency setup.
-  fix_npm_permissions
-  preinstall_backup_and_retire_legacy_gateway
-  install_nemoclaw
-  verify_nemoclaw
-  require_reportable_openshell_version
+  install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
   # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls

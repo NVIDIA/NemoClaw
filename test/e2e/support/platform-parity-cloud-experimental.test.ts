@@ -14,6 +14,7 @@ vi.mock("../../../src/lib/actions/sandbox/exec", () => ({
 }));
 
 import SandboxExecCommand from "../../../src/commands/sandbox/exec.ts";
+import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import {
@@ -96,6 +97,9 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(script).toContain("sha256sum /sandbox/.deepagents/config.toml");
     expect(script).toContain("config is baked into the sandbox image at build time");
     expect(script).toContain("re-onboard with the new selection");
+    expect(script).toContain(
+      'NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF="$NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF"',
+    );
   });
 
   it("preserves the repeated env-unset pairs from the failed observability invocation", async () => {
@@ -709,11 +713,13 @@ assert_status_mode disabled
   });
 
   it("builds a minimal cloud-experimental child environment", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
     const env = buildCloudExperimentalCommandEnv("deepagents-sandbox", "secret-key", {
       HOME: "/home/runner",
       PATH: "/usr/bin",
       AWS_SECRET_ACCESS_KEY: "do-not-copy",
       GITHUB_TOKEN: "do-not-copy",
+      [DCODE_BASE_IMAGE_ENV]: baseImageReference,
       NEMOCLAW_MODEL: "model-a",
       RANDOM_RUNNER_SECRET: "do-not-copy",
     });
@@ -726,7 +732,24 @@ assert_status_mode disabled
       OPENSHELL_GATEWAY: "nemoclaw",
     });
     expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
     expect(env.GITHUB_TOKEN).toBeUndefined();
     expect(env.RANDOM_RUNNER_SECRET).toBeUndefined();
+  });
+
+  it("forwards the immutable base reference only for the fresh Deep Agents Code re-onboard", () => {
+    const baseImageReference = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+    const env = buildCloudExperimentalCommandEnv(
+      "deepagents-sandbox",
+      "secret-key",
+      {
+        HOME: "/home/runner",
+        PATH: "/usr/bin",
+        [DCODE_BASE_IMAGE_ENV]: baseImageReference,
+      },
+      { forwardDcodeBaseImage: true },
+    );
+
+    expect(env[DCODE_BASE_IMAGE_ENV]).toBe(baseImageReference);
   });
 });

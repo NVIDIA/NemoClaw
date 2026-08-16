@@ -14,17 +14,21 @@ on:
       - "src/lib/adapters/podman/**"
       - "src/lib/onboard/docker-driver-gateway-*.ts"
       - "src/lib/onboard/managed-bootstrap/podman-*.ts"
+      - "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
+      - "src/lib/onboard/experimental/portable-host-preparation*.ts"
       - "src/lib/onboard/runtime-provider/podman*.ts"
       - "scripts/install-openshell.sh"
+      - "scripts/checks/run-portable-cpu-delegation-proof.mts"
       - "test/e2e/live/podman-cpu-lifecycle-artifacts.ts"
       - "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
       - "test/e2e/live/podman-cpu-lifecycle-policy.yaml"
       - "test/e2e/live/podman-cpu-lifecycle.test.ts"
       - "test/e2e/registry/native-runtime-qualification.ts"
       - "test/e2e/support/native-runtime-qualification.test.ts"
+      - "test/e2e/live/portable-cpu-delegation-proof.test.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.test.ts"
       - "test/e2e/support/podman-cpu-proof-workflow.test.ts"
 
@@ -36,6 +40,67 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  portable-cpu-delegation:
+    name: Portable CPU delegation admission on Ubuntu 22.04
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-cpu-delegation
+      E2E_CPU_DELEGATION_USER: nemoclaw-e2e
+      E2E_TARGET_ID: portable-cpu-delegation
+      E2E_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install locked test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build shared sandbox-name contract
+        run: npm run build:policy-boundary
+
+      - name: Prepare system and app slice CPU settings without service delegation
+        shell: bash
+        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts prepare
+
+      - name: Verify missing delegation blocks portable configuration and service activation
+        shell: bash
+        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts reject
+
+      - name: Apply administrator delegation and prove admission
+        shell: bash
+        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts admit
+
+      - name: Capture CPU delegation failure diagnostics
+        if: failure()
+        shell: bash
+        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts diagnostics
+
+      - name: Restore the user manager boundary
+        if: always()
+        shell: bash
+        run: node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts cleanup
+
+      - name: Upload CPU delegation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-cpu-delegation-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: e2e-artifacts/portable-cpu-delegation/
+          include-hidden-files: false
+          if-no-files-found: error
+          retention-days: 14
+
   podman-cpu-lifecycle:
     name: Rootless Podman CPU lifecycle with Docker disabled
     runs-on: ubuntu-26.04

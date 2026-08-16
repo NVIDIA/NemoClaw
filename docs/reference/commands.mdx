@@ -1869,7 +1869,9 @@ The route probe treats any final HTTP status from `200` through `499` as reachab
 The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
 When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
 During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
-Each run sends one 16-token request through the stored provider credential, so `status` waits up to 30 seconds for it and consumes provider tokens on a hosted route.
+An ordinary run sends one 16-token request through the stored provider credential, with a 30-second timeout, and consumes provider tokens on a hosted route.
+When the same `status` run recovers a managed gateway, it retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts.
+Each attempt can consume another 16 tokens on a hosted route.
 When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the route probe result as the `route reachability` hop, so a failing verdict still shows that the route itself answered.
 `inferenceHealth.failureLabel` reports why the inference request failed:
 
@@ -4098,6 +4100,11 @@ If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry ali
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
+When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
+Before it persists the route in the NemoClaw registry or agent config, the command sends one validation request from the target sandbox with a 16-token output limit.
+If that request fails, the command attempts to restore the previous OpenShell selection and remove a provider that this switch created.
+If the error reports that rollback could not complete, rerun onboarding before using the route or retrying the switch.
+Endpoint-shape and shared-gateway compatibility checks still apply.
 When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL and, except for the Hermes case below, `--inference-api` with its API family so NemoClaw can persist a complete route identity for rebuild and shared-gateway checks.
 For a Hermes `compatible-anthropic-endpoint` target, `--inference-api` may be omitted because NemoClaw deterministically selects `openai-completions`; an explicit different API family is rejected.
 NemoClaw rejects loopback, link-local, private, and internal endpoint addresses, including public hostnames that resolve to a private address.
@@ -5027,9 +5034,15 @@ Set the onboarding variables before running `$$nemoclaw onboard` if a slow conne
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
+
+<AgentOnly variant="openclaw,hermes">
+
+For newly created OpenClaw and Hermes sandboxes, `NEMOCLAW_SANDBOX_READY_TIMEOUT` also covers the durable sandbox ID and no-op command checks that follow the OpenShell `Ready` state.
+
+</AgentOnly>
 
 An unset, blank, invalid, or negative `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` value uses 30 seconds for OpenClaw gateway health and 90 seconds for Hermes gateway health.
 Recreated-sandbox OpenShell registration uses 120 seconds when the recovery path does not supply another budget.

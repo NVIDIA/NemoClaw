@@ -3432,12 +3432,9 @@ describe("provider placeholder refresh (#4251)", () => {
 describe("Telegram diagnostics (#2766)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const telegramDiagnosticsScript = startScriptHeredoc(src, "TELEGRAM_DIAGNOSTICS_EOF");
+  type EntryKind = "non-root" | "root";
 
-  function preGatewaySetupBlock(
-    kind: "non-root" | "root",
-    gatewayLog: string,
-    autoPairLog: string,
-  ) {
+  function preGatewaySetupBlock(kind: EntryKind, gatewayLog: string, autoPairLog: string) {
     const nonRootMarker = src.indexOf("# ── Non-root fallback");
     const start =
       kind === "non-root"
@@ -3458,7 +3455,7 @@ describe("Telegram diagnostics (#2766)", () => {
     return kind === "non-root" ? `${block}fi\n` : block;
   }
 
-  function runPreGatewaySetup(kind: "non-root" | "root") {
+  function runPreGatewaySetup(kind: EntryKind) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-telegram-${kind}-`));
     const configPath = path.join(tmpDir, "openclaw.json");
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
@@ -3524,8 +3521,11 @@ describe("Telegram diagnostics (#2766)", () => {
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `validate_nemoclaw_tmp_permissions() { validate_tmp_permissions ${JSON.stringify(preloadPath)}; }`,
         "NEMOCLAW_CMD=()",
-        '_nemoclaw_safe_create_tmp_file() { : > "$1"; chmod "$2" "$1"; }',
-        preGatewaySetupBlock(kind, gatewayLog, autoPairLog),
+        '_nemoclaw_safe_create_tmp_file() { if [ "$1" = /tmp/auto-pair.log ]; then return 97; fi; : > "$1"; chmod "$2" "$1"; }',
+        `${extractShellFunctionFromSource(src, "prepare_auto_pair_log").replaceAll(
+          "/tmp/auto-pair.log",
+          autoPairLog,
+        )}\n${preGatewaySetupBlock(kind, gatewayLog, autoPairLog)}`,
       ].join("\n"),
       { mode: 0o700 },
     );
