@@ -61,10 +61,6 @@ function fixtureSource(source: string): string {
       'resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
       'resource_directory="${FIXTURE_ROOT}/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     )
-    .replaceAll(
-      "/usr/lib/systemd/systemd-user-runtime-dir",
-      "${FIXTURE_ROOT}/bin/systemd-user-runtime-dir",
-    )
     .replaceAll('"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"');
 }
 
@@ -77,6 +73,7 @@ function createFixture(): {
   bin: string;
   calls: string;
   passwd: string;
+  group: string;
   subuid: string;
   subgid: string;
   home: string;
@@ -90,21 +87,31 @@ function createFixture(): {
   const home = path.join(root, "home", "nemoclawq");
   const calls = path.join(root, "calls.log");
   const passwd = path.join(etc, "passwd");
+  const group = path.join(etc, "group");
   const subuid = path.join(etc, "subuid");
   const subgid = path.join(etc, "subgid");
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(etc, { recursive: true });
   fs.mkdirSync(run, { recursive: true });
-  for (const file of [calls, passwd, subuid, subgid]) fs.writeFileSync(file, "");
+  for (const file of [calls, passwd, group, subuid, subgid]) fs.writeFileSync(file, "");
 
   writeExecutable(path.join(bin, "sudo"), `printf 'sudo:%s\\n' "$*" >>"$FIXTURE_CALLS"\nexec "$@"`);
   writeExecutable(
     path.join(bin, "getent"),
-    `[[ "$1" == passwd ]]\nawk -F: -v key="$2" '$1 == key || $3 == key { print; found = 1 } END { exit found ? 0 : 2 }' "$FIXTURE_ROOT/etc/passwd"`,
+    `case "$1" in
+  passwd) file="$FIXTURE_ROOT/etc/passwd" ;;
+  group) file="$FIXTURE_ROOT/etc/group" ;;
+  *) exit 2 ;;
+esac
+awk -F: -v key="$2" '$1 == key || $3 == key { print; found = 1 } END { exit found ? 0 : 2 }' "$file"`,
   );
   writeExecutable(
     path.join(bin, "id"),
-    `[[ "$1" == -u ]]\n[[ "\${FAIL_ID:-0}" != 1 ]] || exit 26\nawk -F: -v account="$2" '$1 == account { print $3; found = 1 } END { exit found ? 0 : 1 }' "$FIXTURE_ROOT/etc/passwd"`,
+    `[[ "$1" == -u || "$1" == -g ]]
+[[ "\${FAIL_ID:-0}" != 1 ]] || exit 26
+field=3
+[[ "$1" == -u ]] || field=4
+awk -F: -v account="$2" -v field="$field" '$1 == account { print $field; found = 1 } END { exit found ? 0 : 1 }' "$FIXTURE_ROOT/etc/passwd"`,
   );
   writeExecutable(
     path.join(bin, "useradd"),
@@ -112,7 +119,8 @@ function createFixture(): {
 [[ "\${FAIL_USERADD:-0}" != 1 ]] || exit 23
 account="\${!#}"
 mkdir -p "$FIXTURE_HOME"
-printf '%s:x:1002:1002::%s:/usr/sbin/nologin\\n' "$account" "$FIXTURE_HOME" >>"$FIXTURE_ROOT/etc/passwd"`,
+printf '%s:x:1002:1007::%s:/usr/sbin/nologin\\n' "$account" "$FIXTURE_HOME" >>"$FIXTURE_ROOT/etc/passwd"
+printf '%s:x:1007:\\n' "$account" >>"$FIXTURE_ROOT/etc/group"`,
   );
   writeExecutable(
     path.join(bin, "usermod"),
@@ -154,12 +162,21 @@ printf '%s:%s:%s\\n' "$3" "$start" "$((end - start + 1))" >>"$file"`,
   *) exit 25 ;;
 esac`,
   );
-  writeExecutable(
-    path.join(bin, "systemd-user-runtime-dir"),
-    `printf 'systemd-user-runtime-dir:%s\\n' "$*" >>"$FIXTURE_CALLS"
-[[ "$1" != stop ]] || /bin/rm -rf -- "$FIXTURE_ROOT/run/user/$2"`,
-  );
   writeExecutable(path.join(bin, "pkill"), `printf 'pkill:%s\\n' "$*" >>"$FIXTURE_CALLS"`);
+  writeExecutable(
+    path.join(bin, "systemctl"),
+    `printf 'systemctl:%s\\n' "$*" >>"$FIXTURE_CALLS"
+if [[ "$1" == stop ]]; then
+  shift
+  for unit in "$@"; do
+    if [[ "$unit" =~ ^user-runtime-dir@([0-9]+)\\.service$ ]]; then
+      /bin/rm -rf -- "$FIXTURE_ROOT/run/user/\${BASH_REMATCH[1]}"
+    fi
+  done
+elif [[ "$1" == is-active ]]; then
+  exit 3
+fi`,
+  );
   writeExecutable(
     path.join(bin, "apparmor_parser"),
     `printf 'apparmor:%s\\n' "$*" >>"$FIXTURE_CALLS"`,
@@ -174,12 +191,19 @@ for file in "$FIXTURE_ROOT/etc/passwd" "$FIXTURE_ROOT/etc/subuid" "$FIXTURE_ROOT
 done
 rmdir "$FIXTURE_HOME" 2>/dev/null || true`,
   );
+  writeExecutable(
+    path.join(bin, "groupdel"),
+    `printf 'groupdel:%s\\n' "$*" >>"$FIXTURE_CALLS"
+awk -F: -v account="$1" '$1 != account' "$FIXTURE_ROOT/etc/group" >"$FIXTURE_ROOT/etc/group.next"
+mv "$FIXTURE_ROOT/etc/group.next" "$FIXTURE_ROOT/etc/group"`,
+  );
 
   return {
     root,
     bin,
     calls,
     passwd,
+    group,
     subuid,
     subgid,
     home,
@@ -221,14 +245,16 @@ function provisionBlock(): string {
 
 describe("native runtime qualification account lifecycle", () => {
   it("rejects pre-existing accounts and stale subordinate-ID authorization before mutation", () => {
-    for (const state of ["passwd", "subuid", "subgid"] as const) {
+    for (const state of ["passwd", "group", "subuid", "subgid"] as const) {
       const fixture = createFixture();
       const file = fixture[state];
       fs.appendFileSync(
         file,
         state === "passwd"
-          ? `nemoclawq:x:1002:1002::${fixture.home}:/usr/sbin/nologin\n`
-          : "nemoclawq:200000:65536\n",
+          ? `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`
+          : state === "group"
+            ? "nemoclawq:x:1007:\n"
+            : "nemoclawq:200000:65536\n",
       );
       const result = runFixture(fixture, provisionBlock());
       expect(result.status, `${state}: ${result.stderr}`).not.toBe(0);
@@ -245,12 +271,23 @@ describe("native runtime qualification account lifecycle", () => {
     expect(fs.readFileSync(fixture.passwd, "utf8")).toBe("");
   });
 
+  it("records the exact private group when its numeric GID differs from the UID", () => {
+    const fixture = createFixture();
+    const result = runFixture(fixture, provisionBlock());
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(fixture.marker, "utf8")).toBe("nemoclawq:1002:1007\n");
+    expect(fs.readFileSync(fixture.calls, "utf8")).toContain(
+      "useradd:--create-home --shell /usr/sbin/nologin --user-group nemoclawq",
+    );
+  });
+
   it("rolls back an account when identity validation fails before marker publication", () => {
     const fixture = createFixture();
     const result = runFixture(fixture, provisionBlock(), { FAIL_ID: "1" });
     expect(result.status).not.toBe(0);
     expect(fs.readFileSync(fixture.calls, "utf8")).toContain("userdel:--remove nemoclawq");
     expect(fs.readFileSync(fixture.passwd, "utf8")).not.toContain("nemoclawq:");
+    expect(fs.readFileSync(fixture.group, "utf8")).not.toContain("nemoclawq:");
     expect(fs.existsSync(fixture.marker)).toBe(false);
   });
 
@@ -292,15 +329,17 @@ describe("native runtime qualification account lifecycle", () => {
   it("removes partial account setup and verifies subordinate-ID revocation", () => {
     const fixture = createFixture();
     fs.mkdirSync(fixture.home, { recursive: true });
-    fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1002::${fixture.home}:/usr/sbin/nologin\n`);
+    fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`);
+    fs.writeFileSync(fixture.group, "nemoclawq:x:1007:\n");
     fs.writeFileSync(fixture.subuid, "nemoclawq:200000:65536\n");
     fs.writeFileSync(fixture.subgid, "nemoclawq:300000:65536\n");
-    fs.writeFileSync(fixture.marker, "nemoclawq:1002\n", { mode: 0o400 });
+    fs.writeFileSync(fixture.marker, "nemoclawq:1002:1007\n", { mode: 0o400 });
 
     const result = runFixture(fixture, workflowScripts().cleanup);
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(fixture.calls, "utf8")).toContain("userdel:--remove nemoclawq");
     expect(fs.readFileSync(fixture.passwd, "utf8")).not.toContain("nemoclawq:");
+    expect(fs.readFileSync(fixture.group, "utf8")).not.toContain("nemoclawq:");
     expect(fs.readFileSync(fixture.subuid, "utf8")).not.toContain("nemoclawq:");
     expect(fs.readFileSync(fixture.subgid, "utf8")).not.toContain("nemoclawq:");
     expect(fs.existsSync(fixture.marker)).toBe(false);
@@ -346,15 +385,17 @@ describe("native runtime qualification account lifecycle", () => {
     }
     fs.chmodSync(model, 0o555);
     fs.chmodSync(resources, 0o555);
-    fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1002::${fixture.home}:/usr/sbin/nologin\n`);
+    fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`);
+    fs.writeFileSync(fixture.group, "nemoclawq:x:1007:\n");
     fs.writeFileSync(fixture.subuid, "nemoclawq:200000:65536\n");
     fs.writeFileSync(fixture.subgid, "nemoclawq:300000:65536\n");
-    fs.writeFileSync(fixture.marker, "nemoclawq:1002\n", { mode: 0o400 });
+    fs.writeFileSync(fixture.marker, "nemoclawq:1002:1007\n", { mode: 0o400 });
 
     const result = runFixture(fixture, workflowScripts().cleanup);
     expect(result.status, result.stderr).toBe(0);
     const calls = fs.readFileSync(fixture.calls, "utf8");
-    expect(calls).toContain("systemd-user-runtime-dir:stop 1002");
+    expect(calls).toContain("systemctl:stop user@1002.service user-runtime-dir@1002.service");
+    expect(calls).toContain("groupdel:nemoclawq");
     expect(calls).toContain("apparmor:-R");
     expect(fs.existsSync(path.join(fixture.root, "run", "user", "1002"))).toBe(false);
     expect(fs.existsSync(storage)).toBe(false);
@@ -369,6 +410,21 @@ describe("native runtime qualification account lifecycle", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("output exists without its ownership marker");
     const calls = fs.readFileSync(fixture.calls, "utf8");
-    expect(calls).not.toMatch(/pkill:|systemd-user-runtime-dir:|userdel:|apparmor:/u);
+    expect(calls).not.toMatch(/pkill:|systemctl:|userdel:|groupdel:|apparmor:/u);
+  });
+
+  it("fails closed before destructive cleanup when the private group identity changes", () => {
+    const fixture = createFixture();
+    fs.mkdirSync(fixture.home, { recursive: true });
+    fs.writeFileSync(fixture.passwd, `nemoclawq:x:1002:1007::${fixture.home}:/usr/sbin/nologin\n`);
+    fs.writeFileSync(fixture.group, "nemoclawq:x:1008:\n");
+    fs.writeFileSync(fixture.marker, "nemoclawq:1002:1007\n", { mode: 0o400 });
+
+    const result = runFixture(fixture, workflowScripts().cleanup);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("private group identity changed before cleanup");
+    expect(fs.readFileSync(fixture.calls, "utf8")).not.toMatch(
+      /pkill:|systemctl:|userdel:|groupdel:|apparmor:/u,
+    );
   });
 });

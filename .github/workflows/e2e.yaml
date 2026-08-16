@@ -1363,7 +1363,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in apparmor_parser awk cat curl getent git grep id jq node npm pgrep podman setfacl sha256sum stat systemctl tee unlink useradd userdel usermod; do
+          for command in apparmor_parser awk cat curl getent git grep groupdel id jq node npm pgrep podman setfacl sha256sum stat systemctl tee unlink useradd userdel usermod; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
@@ -1383,8 +1383,8 @@ jobs:
           [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
           account="nemoclawq"
           ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if getent passwd "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
-            echo "::error::Qualification account identity or subordinate-ID authorization already exists" >&2
+          if getent passwd "$account" >/dev/null || getent group "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
+            echo "::error::Qualification account, group, or subordinate-ID authorization already exists" >&2
             exit 1
           fi
           [[ ! -e "$ownership_marker" && ! -L "$ownership_marker" ]] || {
@@ -1397,8 +1397,9 @@ jobs:
             trap - EXIT
             if ((result != 0 && account_created_without_marker == 1)); then
               sudo userdel --remove "$account" 2>/dev/null || true
+              sudo groupdel "$account" 2>/dev/null || true
               sudo rm -f -- "$ownership_marker"
-              if getent passwd "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
+              if getent passwd "$account" >/dev/null || getent group "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
                 echo "::error::Partially created qualification account could not be rolled back" >&2
                 exit 1
               fi
@@ -1406,15 +1407,21 @@ jobs:
             exit "$result"
           }
           trap rollback_unmarked_account EXIT
-          sudo useradd --create-home --shell /usr/sbin/nologin "$account"
+          sudo useradd --create-home --shell /usr/sbin/nologin --user-group "$account"
           account_created_without_marker=1
           uid="$(id -u "$account")"
+          gid="$(id -g "$account")"
           home="$(getent passwd "$account" | cut -d: -f6)"
-          [[ "$uid" =~ ^[0-9]+$ && "$home" == "/home/${account}" && -d "$home" && ! -L "$home" ]] || {
+          group_entry="$(getent group "$account")"
+          [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ && "$home" == "/home/${account}" && -d "$home" && ! -L "$home" ]] || {
             echo "::error::Qualification account identity is missing or invalid" >&2
             exit 1
           }
-          printf '%s:%s\n' "$account" "$uid" | sudo tee "$ownership_marker" >/dev/null
+          [[ "$group_entry" == "${account}:x:${gid}:" ]] || {
+            echo "::error::Qualification private group identity is missing or invalid" >&2
+            exit 1
+          }
+          printf '%s:%s:%s\n' "$account" "$uid" "$gid" | sudo tee "$ownership_marker" >/dev/null
           sudo chown root:root "$ownership_marker"
           sudo chmod 0400 "$ownership_marker"
           [[ -f "$ownership_marker" && ! -L "$ownership_marker" && "$(stat -c '%u:%g:%a' "$ownership_marker")" == "0:0:400" ]] || {
@@ -1469,14 +1476,26 @@ jobs:
           ensure_subordinate_range /etc/subgid --add-subgids
           printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
           printf 'account_created=true\n' >>"$GITHUB_OUTPUT"
+          printf 'uid=%s\n' "$uid" >>"$GITHUB_OUTPUT"
+          printf 'gid=%s\n' "$gid" >>"$GITHUB_OUTPUT"
           runtime_dir="/run/user/${uid}"
-          [[ -x /usr/lib/systemd/systemd-user-runtime-dir ]] || {
-            echo "::error::Protected runner is missing the signed systemd user-runtime helper" >&2
+          runtime_directory_unit="user-runtime-dir@${uid}.service"
+          user_manager_unit="user@${uid}.service"
+          sudo systemctl start "$user_manager_unit"
+          systemctl is-active --quiet "$runtime_directory_unit" || {
+            echo "::error::Qualification systemd runtime-directory unit is not active" >&2
             exit 1
           }
-          sudo /usr/lib/systemd/systemd-user-runtime-dir start "$uid"
-          [[ -d "$runtime_dir" && ! -L "$runtime_dir" && "$(stat -c '%u:%g:%a' "$runtime_dir")" == "${uid}:${uid}:700" ]] || {
+          [[ -d "$runtime_dir" && ! -L "$runtime_dir" && "$(stat -c '%u:%g:%a' "$runtime_dir")" == "${uid}:${gid}:700" ]] || {
             echo "::error::Qualification runtime directory is missing or invalid" >&2
+            exit 1
+          }
+          systemctl is-active --quiet "$user_manager_unit" || {
+            echo "::error::Qualification systemd user manager is not active" >&2
+            exit 1
+          }
+          [[ -S "$runtime_dir/bus" && ! -L "$runtime_dir/bus" && "$(stat -c '%u:%g' "$runtime_dir/bus")" == "${uid}:${gid}" ]] || {
+            echo "::error::Qualification systemd user bus is missing or invalid" >&2
             exit 1
           }
           storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
@@ -1598,7 +1617,7 @@ jobs:
             sudo setfacl --modify "u:${account}:--x" "$ancestor"
             ancestor="$(dirname "$ancestor")"
           done
-          sudo chown -R "$uid:$uid" "$CANDIDATE_DIRECTORY"
+          sudo chown -R "$uid:$gid" "$CANDIDATE_DIRECTORY"
           node_directory="$(dirname "$(command -v node)")"
           [[ "$node_directory" == /* && -x "$node_directory/node" && -x "$node_directory/npm" ]] || {
             echo "::error::Pinned Node toolchain path is invalid" >&2
@@ -1634,12 +1653,16 @@ jobs:
           printf 'node_dir=%s\n' "$node_directory" >>"$GITHUB_OUTPUT"
           printf 'podman_executable=%s\n' "$podman_executable" >>"$GITHUB_OUTPUT"
           printf 'containers_config=%s\n' "$containers_config" >>"$GITHUB_OUTPUT"
+          printf 'runtime_directory_unit=%s\n' "$runtime_directory_unit" >>"$GITHUB_OUTPUT"
           printf 'storage_config=%s\n' "$storage_config" >>"$GITHUB_OUTPUT"
+          printf 'user_manager_unit=%s\n' "$user_manager_unit" >>"$GITHUB_OUTPUT"
 
       - name: Materialize exact credential-free GPU resources
         id: gpu_resources
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
           ARCHITECTURE: ${{ matrix.case.architecture }}
           CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
@@ -1663,6 +1686,11 @@ jobs:
             exit 1
           }
           uid="$(id -u "$ACCOUNT")"
+          gid="$(id -g "$ACCOUNT")"
+          [[ "$uid" == "$ACCOUNT_UID" && "$gid" == "$ACCOUNT_GID" ]] || {
+            echo "::error::Qualification account identity changed before GPU resource preparation" >&2
+            exit 1
+          }
           storage_config_directory="$(dirname "$STORAGE_CONFIG")"
           runner_contract="${storage_config_directory}/runner-contract.json"
           registry_auth_directory="${storage_config_directory}/registry-auth"
@@ -1695,12 +1723,12 @@ jobs:
             echo "::error::Run-owned registry authentication directory already exists" >&2
             exit 1
           }
-          sudo install -d --owner="$uid" --group="$uid" --mode=0700 "$registry_auth_directory"
+          sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$registry_auth_directory"
           cleanup_registry_auth() {
             local result="$?"
             trap - EXIT
             if [[ -e "$registry_auth_file" || -L "$registry_auth_file" ]]; then
-              [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${uid}:600:1" ]] || {
+              [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
                 echo "::error::Run-owned registry authentication file cleanup target is invalid" >&2
                 return 1
               }
@@ -1722,7 +1750,7 @@ jobs:
             REGISTRY_AUTH_FILE="$registry_auth_file" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
             "$PODMAN_EXECUTABLE" login nvcr.io --username '$oauthtoken' --password-stdin >/dev/null
-          [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${uid}:600:1" ]] || {
+          [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
             echo "::error::Run-owned registry authentication file is invalid" >&2
             exit 1
           }
@@ -1755,7 +1783,7 @@ jobs:
               exit 1
             }
             sudo install -d --owner=root --group=root --mode=0711 "$resource_directory"
-            sudo install -d --owner="$uid" --group="$uid" --mode=0700 "$model_directory"
+            sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$model_directory"
             download_model_file() {
               local file="$1"
               local size="$2"
@@ -1769,7 +1797,7 @@ jobs:
                   --fail --location --proto '=https' --retry 3 --show-error --silent --tlsv1.2 \
                   --output "$target" \
                   "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/resolve/${model_revision}/${file}?download=true"
-              [[ -f "$target" && ! -L "$target" && "$(stat -c '%u:%g:%a:%h:%s' "$target")" == "${uid}:${uid}:600:1:${size}" ]] || {
+              [[ -f "$target" && ! -L "$target" && "$(stat -c '%u:%g:%a:%h:%s' "$target")" == "${uid}:${gid}:600:1:${size}" ]] || {
                 echo "::error::Downloaded GPU model file metadata is invalid: $file" >&2
                 exit 1
               }
@@ -1863,6 +1891,8 @@ jobs:
       - name: Run the authenticated installer qualification
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
           ARCHITECTURE: ${{ matrix.case.architecture }}
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
           CANDIDATE_SHA: ${{ matrix.source.candidateSha }}
@@ -1873,12 +1903,14 @@ jobs:
           INSTALLER_SHA256: ${{ matrix.installerSha256 }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          RUNTIME_DIRECTORY_UNIT: ${{ steps.boundary.outputs.runtime_directory_unit }}
           STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
+          USER_MANAGER_UNIT: ${{ steps.boundary.outputs.user_manager_unit }}
         shell: bash
         run: |
           set -euo pipefail
           install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
-          sudo chown "$ACCOUNT:$ACCOUNT" "$INSTALLER_RECEIPT_PARENT"
+          sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$INSTALLER_RECEIPT_PARENT"
           sudo -u "$ACCOUNT" env -i \
             CONTAINERS_CONF="$CONTAINERS_CONFIG" \
             CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
@@ -1892,7 +1924,21 @@ jobs:
               --installer-sha256 "$INSTALLER_SHA256" \
               --architecture "$ARCHITECTURE" \
               --artifact-dir "$INSTALLER_RECEIPT_PARENT/receipts"
-          sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
+          sudo systemctl stop "$USER_MANAGER_UNIT" "$RUNTIME_DIRECTORY_UNIT"
+          ! systemctl is-active --quiet "$USER_MANAGER_UNIT" && ! systemctl is-active --quiet "$RUNTIME_DIRECTORY_UNIT" || {
+            echo "::error::Qualification systemd user lifecycle remained active after installer isolation" >&2
+            exit 1
+          }
+          sudo pkill -KILL -u "$ACCOUNT_UID" 2>/dev/null || true
+          sudo systemctl start "$USER_MANAGER_UNIT"
+          systemctl is-active --quiet "$USER_MANAGER_UNIT" && systemctl is-active --quiet "$RUNTIME_DIRECTORY_UNIT" || {
+            echo "::error::Qualification systemd user lifecycle did not restart after installer isolation" >&2
+            exit 1
+          }
+          [[ -S "$RUNTIME_DIRECTORY/bus" && ! -L "$RUNTIME_DIRECTORY/bus" && "$(stat -c '%u:%g' "$RUNTIME_DIRECTORY/bus")" == "${ACCOUNT_UID}:${ACCOUNT_GID}" ]] || {
+            echo "::error::Qualification systemd user bus did not restart after installer isolation" >&2
+            exit 1
+          }
           sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts" || {
             echo "::error::Installer receipt directory is missing or invalid" >&2
             exit 1
@@ -1905,6 +1951,8 @@ jobs:
       - name: Execute the candidate qualification case without credentials
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
           CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
@@ -1914,7 +1962,9 @@ jobs:
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
           RUNNER_CONTRACT: ${{ steps.gpu_resources.outputs.runner_contract }}
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          RUNTIME_DIRECTORY_UNIT: ${{ steps.boundary.outputs.runtime_directory_unit }}
           STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
+          USER_MANAGER_UNIT: ${{ steps.boundary.outputs.user_manager_unit }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1925,7 +1975,7 @@ jobs:
           }
           receipt_directory="${RUNNER_TEMP}/native-runtime-case"
           install -d -m 0700 "$receipt_directory"
-          sudo chown "$ACCOUNT:$ACCOUNT" "$receipt_directory"
+          sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$receipt_directory"
           cd "$CANDIDATE_DIRECTORY"
           sudo -u "$ACCOUNT" env -i \
             CI=true \
@@ -1946,7 +1996,12 @@ jobs:
               --config "$CANDIDATE_DIRECTORY/vitest.config.ts" \
               --project e2e-live \
               "$live_test"
-          sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
+          sudo systemctl stop "$USER_MANAGER_UNIT" "$RUNTIME_DIRECTORY_UNIT"
+          ! systemctl is-active --quiet "$USER_MANAGER_UNIT" && ! systemctl is-active --quiet "$RUNTIME_DIRECTORY_UNIT" || {
+            echo "::error::Qualification systemd user lifecycle remained active after candidate execution" >&2
+            exit 1
+          }
+          sudo pkill -KILL -u "$ACCOUNT_UID" 2>/dev/null || true
 
       - name: Verify Docker stayed unavailable
         shell: bash
@@ -1984,18 +2039,20 @@ jobs:
           ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           account=""
           uid=""
+          gid=""
           if [[ -e "$ownership_marker" || -L "$ownership_marker" ]]; then
             [[ -f "$ownership_marker" && ! -L "$ownership_marker" && "$(stat -c '%u:%g:%a' "$ownership_marker")" == "0:0:400" ]] || {
               echo "::error::Qualification account ownership marker cleanup target is invalid" >&2
               exit 1
             }
             ownership="$(sudo cat "$ownership_marker")"
-            [[ "$ownership" =~ ^nemoclawq:([0-9]+)$ ]] || {
+            [[ "$ownership" =~ ^nemoclawq:([0-9]+):([0-9]+)$ ]] || {
               echo "::error::Qualification account ownership marker content is invalid" >&2
               exit 1
             }
             account="nemoclawq"
             uid="${BASH_REMATCH[1]}"
+            gid="${BASH_REMATCH[2]}"
             [[ -z "$reported_account" || "$reported_account" == "$account" ]] || {
               echo "::error::Qualification account output does not match its ownership marker" >&2
               exit 1
@@ -2005,12 +2062,23 @@ jobs:
               exit 1
             fi
             if getent passwd "$account" >/dev/null; then
-              [[ "$(id -u "$account")" == "$uid" ]] || {
-                echo "::error::Qualification account UID changed before cleanup" >&2
+              [[ "$(id -u "$account")" == "$uid" && "$(id -g "$account")" == "$gid" ]] || {
+                echo "::error::Qualification account identity changed before cleanup" >&2
                 exit 1
               }
             fi
+            if getent group "$account" >/dev/null; then
+              [[ "$(getent group "$account")" == "${account}:x:${gid}:" ]] || {
+                echo "::error::Qualification private group identity changed before cleanup" >&2
+                exit 1
+              }
+            elif getent passwd "$account" >/dev/null; then
+              echo "::error::Qualification private group disappeared before cleanup" >&2
+              exit 1
+            fi
             runtime_dir="/run/user/${uid}"
+            runtime_directory_unit="user-runtime-dir@${uid}.service"
+            user_manager_unit="user@${uid}.service"
             storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             apparmor_profile="${storage_config_directory}/podman.apparmor"
@@ -2022,10 +2090,14 @@ jobs:
             runner_contract="${storage_config_directory}/runner-contract.json"
             resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             model_directory="${resource_directory}/model"
+            sudo systemctl stop "$user_manager_unit" "$runtime_directory_unit" 2>/dev/null || true
+            ! systemctl is-active --quiet "$user_manager_unit" && ! systemctl is-active --quiet "$runtime_directory_unit" || {
+              echo "::error::Qualification systemd user lifecycle remained active during cleanup" >&2
+              exit 1
+            }
             if getent passwd "$account" >/dev/null; then
               sudo pkill -KILL -u "$uid" 2>/dev/null || true
             fi
-            sudo /usr/lib/systemd/systemd-user-runtime-dir stop "$uid"
             if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
               [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
                 echo "::error::Qualification storage configuration cleanup target is invalid" >&2
@@ -2048,12 +2120,12 @@ jobs:
                 sudo rm -f -- "$pasta_apparmor_profile"
               fi
               if [[ -e "$registry_auth_directory" || -L "$registry_auth_directory" ]]; then
-                [[ -d "$registry_auth_directory" && ! -L "$registry_auth_directory" && "$(stat -c '%u:%g:%a' "$registry_auth_directory")" == "${uid}:${uid}:700" ]] || {
+                [[ -d "$registry_auth_directory" && ! -L "$registry_auth_directory" && "$(stat -c '%u:%g:%a' "$registry_auth_directory")" == "${uid}:${gid}:700" ]] || {
                   echo "::error::Qualification registry authentication directory cleanup target is invalid" >&2
                   exit 1
                 }
                 if [[ -e "$registry_auth_file" || -L "$registry_auth_file" ]]; then
-                  [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${uid}:600:1" ]] || {
+                  [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
                     echo "::error::Qualification registry authentication file cleanup target is invalid" >&2
                     exit 1
                   }
@@ -2085,7 +2157,7 @@ jobs:
               }
               if [[ -e "$model_directory" || -L "$model_directory" ]]; then
                 model_mode="$(stat -c '%u:%g:%a' "$model_directory")"
-                [[ -d "$model_directory" && ! -L "$model_directory" && ("$model_mode" == "${uid}:${uid}:700" || "$model_mode" == "0:0:555") ]] || {
+                [[ -d "$model_directory" && ! -L "$model_directory" && ("$model_mode" == "${uid}:${gid}:700" || "$model_mode" == "0:0:555") ]] || {
                   echo "::error::Qualification GPU model directory cleanup target is invalid" >&2
                   exit 1
                 }
@@ -2093,7 +2165,7 @@ jobs:
                   target="${model_directory}/${file}"
                   if [[ -e "$target" || -L "$target" ]]; then
                     file_mode="$(stat -c '%u:%g:%a:%h' "$target")"
-                    [[ -f "$target" && ! -L "$target" && ("$file_mode" == "${uid}:${uid}:600:1" || "$file_mode" == "0:0:444:1") ]] || {
+                    [[ -f "$target" && ! -L "$target" && ("$file_mode" == "${uid}:${gid}:600:1" || "$file_mode" == "0:0:444:1") ]] || {
                       echo "::error::Qualification GPU model file cleanup target is invalid: $file" >&2
                       exit 1
                     }
@@ -2136,8 +2208,15 @@ jobs:
             if getent passwd "$account" >/dev/null; then
               sudo userdel --remove "$account"
             fi
+            if getent group "$account" >/dev/null; then
+              sudo groupdel "$account"
+            fi
             if getent passwd "$account" >/dev/null; then
               echo "::error::Qualification account still exists after cleanup" >&2
+              exit 1
+            fi
+            if getent group "$account" >/dev/null; then
+              echo "::error::Qualification private group still exists after cleanup" >&2
               exit 1
             fi
             if grep -q "^${account}:" /etc/subuid /etc/subgid; then

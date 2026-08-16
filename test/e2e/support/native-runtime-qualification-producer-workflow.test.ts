@@ -235,7 +235,9 @@ describe("native runtime qualification producer workflow", () => {
     expect(gpuResources.run).toContain("login nvcr.io --username '$oauthtoken' --password-stdin");
     expect(gpuResources.run).not.toContain("logout --all");
     expect(gpuResources.run).toContain('sudo unlink "$registry_auth_file"');
-    expect(gpuResources.run).toContain("${uid}:${uid}:600:1");
+    expect(gpuResources.env?.ACCOUNT_GID).toBe("${{ steps.boundary.outputs.gid }}");
+    expect(gpuResources.env?.ACCOUNT_UID).toBe("${{ steps.boundary.outputs.uid }}");
+    expect(gpuResources.run).toContain("${uid}:${gid}:600:1");
     expect(gpuResources.run).toContain("unset NVIDIA_API_KEY");
     expect(gpuResources.run).toContain("7ae557604adf67be50417f59c2c2f167def9a775");
     expect(gpuResources.run).toContain("git hash-object --no-filters");
@@ -281,11 +283,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(podman.run).toContain('[[ "$version" == "podman version 6.1.0" ]]');
     expect(podman.run).not.toContain("CANDIDATE_DIRECTORY");
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
-    expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
+    expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin --user-group");
     expect(boundary.run).toContain('getent passwd "$account"');
+    expect(boundary.run).toContain('getent group "$account"');
     expect(boundary.run).toContain('grep -q "^${account}:" /etc/subuid /etc/subgid');
     expect(boundary.run).toContain(
-      "Qualification account identity or subordinate-ID authorization already exists",
+      "Qualification account, group, or subordinate-ID authorization already exists",
     );
     expect(boundary.run).toContain('ownership_marker="/run/nemoclaw-native-runtime-owner-');
     expect(boundary.run).toContain("0:0:400");
@@ -297,9 +300,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subuid --add-subuids");
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subgid --add-subgids");
     expect(boundary.run).toContain("has no free subordinate-ID range for rootless Podman");
-    expect(boundary.run).toContain("/usr/lib/systemd/systemd-user-runtime-dir");
-    expect(boundary.run).toContain('systemd-user-runtime-dir start "$uid"');
+    expect(boundary.run).toContain('runtime_directory_unit="user-runtime-dir@${uid}.service"');
     expect(boundary.run).toContain("Qualification runtime directory is missing or invalid");
+    expect(boundary.run).toContain('user_manager_unit="user@${uid}.service"');
+    expect(boundary.run).toContain('systemctl start "$user_manager_unit"');
+    expect(boundary.run).toContain("stat -c '%u:%g' \"$runtime_dir/bus\"");
+    expect(boundary.run).toContain("Qualification systemd user bus is missing or invalid");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
     expect(boundary.run).toContain('CONTAINERS_CONF="$containers_config"');
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
@@ -358,6 +364,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(dependencies.run).toContain("npm --prefix");
     expect(dependencies.run).toContain("ci --ignore-scripts");
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
+    expect(installer.env?.ACCOUNT_GID).toBe("${{ steps.boundary.outputs.gid }}");
+    expect(installer.env?.ACCOUNT_UID).toBe("${{ steps.boundary.outputs.uid }}");
+    expect(installer.env?.RUNTIME_DIRECTORY_UNIT).toBe(
+      "${{ steps.boundary.outputs.runtime_directory_unit }}",
+    );
+    expect(installer.run).toContain('sudo chown "$ACCOUNT_UID:$ACCOUNT_GID"');
     expect(installer.env?.CONTAINERS_CONFIG).toBe(
       "${{ steps.boundary.outputs.containers_config }}",
     );
@@ -369,6 +381,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(installer.run).toContain('sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts"');
     expect(installer.run).toContain('sudo test ! -L "$INSTALLER_RECEIPT_PARENT/receipts"');
     expect(execute.run).toContain('sudo -u "$ACCOUNT" env -i');
+    expect(execute.env?.ACCOUNT_GID).toBe("${{ steps.boundary.outputs.gid }}");
+    expect(execute.env?.ACCOUNT_UID).toBe("${{ steps.boundary.outputs.uid }}");
+    expect(execute.env?.RUNTIME_DIRECTORY_UNIT).toBe(
+      "${{ steps.boundary.outputs.runtime_directory_unit }}",
+    );
+    expect(execute.run).toContain('sudo chown "$ACCOUNT_UID:$ACCOUNT_GID"');
     expect(execute.run).toContain(
       'live_test="test/e2e/live/native-runtime-qualification-case.test.ts"',
     );
@@ -413,7 +431,10 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain("pkill -KILL -u");
     expect(cleanup.run).not.toContain("rm -rf");
     expect(cleanup.run).not.toContain("find ");
-    expect(cleanup.run).toContain('systemd-user-runtime-dir stop "$uid"');
+    expect(cleanup.run).toContain('systemctl stop "$user_manager_unit" "$runtime_directory_unit"');
+    expect(cleanup.run).toContain(
+      "Qualification systemd user lifecycle remained active during cleanup",
+    );
     expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
     expect(cleanup.run).toContain('apparmor_parser -R "$pasta_apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
@@ -428,6 +449,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain("Qualification storage configuration remains after cleanup");
     expect(cleanup.run).toContain("userdel --remove");
     expect(cleanup.run).toContain("Qualification account still exists after cleanup");
+    expect(cleanup.run).toContain("Qualification private group still exists after cleanup");
     expect(cleanup.run).toContain(
       "Qualification subordinate-ID authorization remains after cleanup",
     );
@@ -435,6 +457,16 @@ describe("native runtime qualification producer workflow", () => {
       "Qualification account output exists without its ownership marker",
     );
     expect(cleanup.run).toContain('sudo rm -f -- "$ownership_marker"');
+    const accountOwnershipSource = [
+      boundary.run,
+      gpuResources.run,
+      installer.run,
+      execute.run,
+      cleanup.run,
+    ].join("\n");
+    expect(accountOwnershipSource).not.toContain("${uid}:${uid}");
+    expect(accountOwnershipSource).not.toContain("$uid:$uid");
+    expect(accountOwnershipSource).not.toContain("$ACCOUNT:$ACCOUNT");
   });
 
   it("aggregates the exact successful 24-case cohort in a separate trusted job", () => {
