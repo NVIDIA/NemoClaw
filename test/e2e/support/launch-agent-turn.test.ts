@@ -32,6 +32,7 @@ import {
   OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
   OPENCLAW_PTY_RECORD_WRITER_SCRIPT,
   OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+  runOpenClawLaunchSession,
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
 
@@ -986,6 +987,32 @@ it.runIf(process.platform === "linux")(
     expect(ptyRecordRemoved).toBe(false);
     expect(result.signal).toBeNull();
     expect(result.status).toBe(23);
+  },
+);
+
+it.runIf(process.platform === "linux")(
+  "rejects a relative OpenShell command before launching a host command (#9160)",
+  async () => {
+    let commandCallCount = 0;
+    const host = {
+      command: async () => {
+        commandCallCount += 1;
+        return { exitCode: 0, signal: null, stderr: "", stdout: "" };
+      },
+      openshellCommandPath: "openshell",
+    };
+
+    await expect(
+      runOpenClawLaunchSession({
+        artifactName: "relative-openshell-command",
+        cliCommand: "node",
+        env: {},
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      }),
+    ).rejects.toThrow("launch session coverage requires an absolute OpenShell command path");
+    expect(commandCallCount).toBe(0);
   },
 );
 
