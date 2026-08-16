@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff, including the pre-tag dated changelog PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
+description: Runs the end-of-day NemoClaw release handoff, including the documentation PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
 user_invocable: true
 ---
 
@@ -42,11 +42,17 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 
 ## Pre-Tag Docs
 
-Run `/nemoclaw-contributor-update-docs for <version>` before loading `cut-release-tag`.
-Confirm that the release-prep docs PR creates or updates one direct child of `docs/changelog/` for the planned date and contains the exact `## <version>` heading, a parser-safe MDX SPDX comment, the summary, and the detailed release bullets.
-An ordinary docs refresh or a post-tag Discussion draft does not satisfy this step.
-The release-prep docs PR, including the dated changelog entry, must be merged, or explicitly waived with a reason that names the missing changelog entry, before `release:plan` captures the release commit.
-If a docs PR or any other intended PR merges after `release:plan`, regenerate the plan before cutting the tag.
+Continue the PR whose head starts with `automation/post-merge-docs-` when one exists. If no managed
+documentation PR exists, create a feature branch from the current `main` commit and open a direct
+documentation-only PR for the release entry. Ensure that the documentation PR creates or updates
+one direct child of `docs/changelog/` for the planned date and contains the exact `## <version>`
+heading, parser-safe MDX SPDX comment, summary, and detailed release bullets. Follow the
+documentation-only validation, writing, review, and PR guidance for any release-entry edit.
+
+Merge that PR before loading `cut-release-tag`. Its merge starts `Docs / Post-Merge Catch-Up` for
+the resulting `main` commit. Wait for that run to succeed and confirm that no managed
+documentation PR remains open. If any intended PR merges afterward, repeat this step for the new
+`main` commit before cutting the tag.
 
 ## Step 4: Cut the Tag and Publish Release Notes
 

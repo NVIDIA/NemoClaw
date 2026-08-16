@@ -8,11 +8,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { isCanonicalNemoClawRemote } from "../scripts/release/remote.mts";
-import {
-  DOCUMENTATION_READINESS_JOB_NAME,
-  DOCUMENTATION_READINESS_WORKFLOW_NAME,
-  DOCUMENTATION_READINESS_WORKFLOW_PATH,
-} from "../scripts/release/verify-documentation-readiness.mts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");
@@ -211,29 +206,9 @@ function readJson(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function documentationReadinessReceipt(candidateSha: string): Record<string, unknown> {
-  return {
-    schemaVersion: 1,
-    kind: "nemoclaw-documentation-readiness-v1",
-    candidateSha,
-    workflowPath: DOCUMENTATION_READINESS_WORKFLOW_PATH,
-    workflowName: DOCUMENTATION_READINESS_WORKFLOW_NAME,
-    workflowRunId: 321,
-    workflowRunAttempt: 1,
-    workflowUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/321",
-    jobName: DOCUMENTATION_READINESS_JOB_NAME,
-    jobId: 654,
-    jobUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/321/job/654",
-  };
-}
-
 function rewritePlanOrigin(planPath: string, originRemote: string): void {
   const { planHash: _planHash, ...plan } = readJson(planPath);
-  const updated = {
-    ...plan,
-    originRemote,
-    documentationReadiness: documentationReadinessReceipt(plan.originMainCommit),
-  };
+  const updated = { ...plan, originRemote };
   const nextPlan = {
     ...updated,
     planHash: createHash("sha256")
@@ -243,30 +218,11 @@ function rewritePlanOrigin(planPath: string, originRemote: string): void {
   fs.writeFileSync(planPath, `${JSON.stringify(nextPlan, null, 2)}\n`, "utf8");
 }
 
-type DocumentationReadinessState =
-  | "ambiguous"
-  | "changed-attempt"
-  | "clean-branch"
-  | "duplicate"
-  | "duplicate-job"
-  | "failed"
-  | "failed-job"
-  | "dirty-branch"
-  | "missing"
-  | "non-push"
-  | "open-pr"
-  | "skipped"
-  | "skipped-job"
-  | "stale-main"
-  | "stale"
-  | "success";
-
 function installReleaseGateStubs(
   fixture: Fixture,
   qualification: "failed-unwaived" | "missing" | "success" | "waived" | "waived-invalid",
   originRemote: string,
   waiverEvidenceJson?: string,
-  documentationReadiness: DocumentationReadinessState = "success",
 ): string {
   const binDir = path.join(fixture.root, `release-gate-bin-${qualification}`);
   fs.mkdirSync(binDir);
@@ -298,106 +254,11 @@ JSON`
         : `destination="\${!#}"
 printf '%s\n' ${shellQuote(waiverEvidenceJson)} >"\${destination}/waiver.json"`
       : "exit 1";
-  const candidateSha = run(fixture.work, ["git", "rev-parse", "origin/main"]).trim();
-  const validRun = {
-    id: 321,
-    name: DOCUMENTATION_READINESS_WORKFLOW_NAME,
-    path: DOCUMENTATION_READINESS_WORKFLOW_PATH,
-    head_sha: candidateSha,
-    head_branch: "main",
-    event: "push",
-    status: "completed",
-    conclusion: "success",
-    run_attempt: 1,
-    html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/321",
-  };
-  const documentationRuns = (() => {
-    switch (documentationReadiness) {
-      case "missing":
-        return [];
-      case "duplicate":
-        return [validRun, { ...validRun, id: 322 }];
-      case "stale":
-        return [{ ...validRun, head_sha: "0".repeat(40) }];
-      case "skipped":
-        return [{ ...validRun, conclusion: "skipped" }];
-      case "failed":
-        return [{ ...validRun, conclusion: "failure" }];
-      case "ambiguous":
-        return [{ ...validRun, path: ".github/workflows/another.yaml" }];
-      case "non-push":
-        return [{ ...validRun, event: "workflow_dispatch" }];
-      case "changed-attempt":
-        return [{ ...validRun, run_attempt: 2 }];
-      default:
-        return [validRun];
-    }
-  })();
-  const validJob = {
-    id: 654,
-    run_id: 321,
-    run_attempt: 1,
-    name: DOCUMENTATION_READINESS_JOB_NAME,
-    status: "completed",
-    conclusion: "success",
-    html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/321/job/654",
-  };
-  const documentationJobs = (() => {
-    switch (documentationReadiness) {
-      case "duplicate-job":
-        return [validJob, { ...validJob, id: 655 }];
-      case "failed-job":
-        return [{ ...validJob, conclusion: "failure" }];
-      case "skipped-job":
-        return [{ ...validJob, conclusion: "skipped" }];
-      case "changed-attempt":
-        return [{ ...validJob, run_attempt: 2 }];
-      default:
-        return [validJob];
-    }
-  })();
-  const rollingSha = "d".repeat(40);
-  const mainTreeSha = "a".repeat(40);
-  const rollingTreeSha = documentationReadiness === "clean-branch" ? mainTreeSha : "b".repeat(40);
-  const liveMainSha = documentationReadiness === "stale-main" ? "e".repeat(40) : candidateSha;
-  const openDocumentationPulls = documentationReadiness === "open-pr" ? [[{ number: 99 }]] : [[]];
-  const rollingRefs =
-    documentationReadiness === "dirty-branch" || documentationReadiness === "clean-branch"
-      ? [
-          [
-            {
-              ref: "refs/heads/automation/post-merge-docs",
-              object: { type: "commit", sha: rollingSha },
-            },
-          ],
-        ]
-      : [[]];
   fs.writeFileSync(
     path.join(binDir, "gh"),
     `#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  *'/actions/workflows/.github%2Fworkflows%2Fpost-merge-docs.yaml/runs?'*)
-    printf '%s\n' ${shellQuote(JSON.stringify([{ workflow_runs: documentationRuns }]))}
-    ;;
-  *'/actions/runs/321/jobs?'*)
-    printf '%s\n' ${shellQuote(JSON.stringify([{ jobs: documentationJobs }]))}
-    ;;
-  *'/git/ref/heads/main'*)
-    printf '%s\n' ${shellQuote(JSON.stringify([{ ref: "refs/heads/main", object: { type: "commit", sha: liveMainSha } }]))}
-    ;;
-  *'/pulls?state=open&base=main&head=NVIDIA%3Aautomation%2Fpost-merge-docs&per_page=100'*)
-    printf '%s\n' ${shellQuote(JSON.stringify(openDocumentationPulls))}
-    ;;
-  *'/git/matching-refs/heads/automation/post-merge-docs'*)
-    printf '%s\n' ${shellQuote(JSON.stringify(rollingRefs))}
-    ;;
-  *'/git/commits/${candidateSha}'*)
-    printf '%s\n' ${shellQuote(JSON.stringify([{ sha: candidateSha, tree: { sha: mainTreeSha } }]))}
-    ;;
-  *'/git/commits/${rollingSha}'*)
-    printf '%s\n' ${shellQuote(JSON.stringify([{ sha: rollingSha, tree: { sha: rollingTreeSha } }]))}
-    ;;
   *'/actions/workflows/e2e.yaml/runs?'*)
     ${qualification === "missing" ? ":" : `printf '%s\\t%s\\t%s\\t%s\\n' 123 https://github.com/NVIDIA/NemoClaw/actions/runs/123 ${qualification.startsWith("waived") || qualification === "failed-unwaived" ? "failure" : "success"} 1`}
     ;;
@@ -462,7 +323,10 @@ const INVALID_WAIVER_EVIDENCE_CASES: Array<
       jobs: [evidence.jobs[0], { ...evidence.jobs[0], result: "success" }],
     }),
   ],
-  ["job ID", (evidence) => ({ ...evidence, jobs: [{ id: "Invalid Job", result: "failure" }] })],
+  [
+    "job ID",
+    (evidence) => ({ ...evidence, jobs: [{ id: "Invalid Job", result: "failure" }] }),
+  ],
   [
     "job result",
     (evidence) => ({
@@ -490,12 +354,11 @@ function createPlan(
     { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
   );
 
-  expect(result.status, String(result.stderr)).toBe(0);
+  expect(result.status).toBe(0);
   const plan = readJson(planPath);
   expect(plan.previousTag).toBe("v0.0.1");
   expect(plan.nextTag).toBe("v0.0.2");
   expect(plan.originMainCommit).toBe(releaseCommit);
-  expect(plan.documentationReadiness).toBeNull();
   expect(plan.operations).toContain(`create signed annotated v0.0.2 tag at ${releaseCommit}`);
   const carryForward = "have release-latest-tag workflow carry open v0.0.2 items forward to v0.0.3";
   const deleteReleased =
@@ -804,54 +667,6 @@ describe("release-latest-tag.sh", () => {
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
-  }, 30_000);
-
-  it("records exact-commit Documentation readiness evidence in a canonical release plan", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const originRemote = "https://github.com/NVIDIA/NemoClaw.git";
-    const binDir = installReleaseGateStubs(
-      fixture,
-      "success",
-      originRemote,
-      undefined,
-      "clean-branch",
-    );
-
-    const result = runScript(
-      fixture.work,
-      [tsxPath, planScriptPath, "--bump", "patch", "--output", planPath],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status, String(result.stderr)).toBe(0);
-    expect(readJson(planPath).documentationReadiness).toEqual(
-      documentationReadinessReceipt(releaseCommit),
-    );
-    expect(result.stdout).toContain(
-      "Documentation readiness: https://github.com/NVIDIA/NemoClaw/actions/runs/321/job/654",
-    );
-  });
-
-  it("does not generate a canonical release plan without Documentation readiness", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const originRemote = "https://github.com/NVIDIA/NemoClaw.git";
-    const binDir = installReleaseGateStubs(fixture, "success", originRemote, undefined, "missing");
-
-    const result = runScript(
-      fixture.work,
-      [tsxPath, planScriptPath, "--bump", "patch", "--output", planPath],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Expected exactly one Docs / Post-Merge Catch-Up push run");
-    expect(fs.existsSync(planPath)).toBe(false);
   });
 
   it("rejects signing preflight when the configured signer is unavailable", () => {
@@ -900,105 +715,6 @@ describe("release-latest-tag.sh", () => {
     expect(result.stdout).toContain(
       "qualification evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456",
     );
-    expect(result.stdout).toContain(`verified Documentation readiness for ${releaseCommit}`);
-    expect(result.stdout).toContain(
-      "documentation evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/321/job/654",
-    );
-  });
-
-  it.each([
-    ["absent", "missing", "Expected exactly one Docs / Post-Merge Catch-Up push run"],
-    ["duplicate", "duplicate", "Expected exactly one Docs / Post-Merge Catch-Up push run"],
-    ["stale", "stale", "is not one completed successful canonical run"],
-    ["skipped", "skipped", "is not one completed successful canonical run"],
-    ["failed", "failed", "is not one completed successful canonical run"],
-    ["ambiguous", "ambiguous", "is not one completed successful canonical run"],
-    ["non-push", "non-push", "is not one completed successful canonical run"],
-    ["duplicate job", "duplicate-job", "Expected exactly one Documentation readiness job"],
-    ["skipped job", "skipped-job", "is not one completed successful canonical job"],
-    ["failed job", "failed-job", "is not one completed successful canonical job"],
-    ["open rolling PR", "open-pr", "rolling documentation PR must be closed"],
-    ["dirty rolling branch", "dirty-branch", "contains unmerged changes"],
-    ["advanced live main", "stale-main", "live main branch no longer matches"],
-  ] as const)("rejects %s Documentation readiness evidence", (_label, state, message) => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(fixture, "success", originRemote, undefined, state);
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(message);
-    expect(result.stderr).toContain(
-      `Documentation readiness verification failed for candidate commit ${releaseCommit}`,
-    );
-    expect(result.stdout).not.toContain("verified Release qualification");
-  });
-
-  it("rejects Documentation readiness evidence that changed after release planning", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(
-      fixture,
-      "success",
-      originRemote,
-      undefined,
-      "changed-attempt",
-    );
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      `Documentation readiness evidence changed after release planning for candidate commit ${releaseCommit}`,
-    );
-  });
-
-  it("revalidates Documentation readiness before the tag push", () => {
-    const fixture = createFixture();
-    pushTag(fixture, "v0.0.1", fixture.firstCommit);
-    const releaseCommit = commit(fixture, "planned release commit");
-    const planPath = path.join(fixture.root, "release", "plan.json");
-    const { plan } = createPlan(fixture, planPath, releaseCommit);
-    const originRemote = "git@github.com:NVIDIA/NemoClaw";
-    rewritePlanOrigin(planPath, originRemote);
-    const binDir = installReleaseGateStubs(
-      fixture,
-      "success",
-      originRemote,
-      undefined,
-      "changed-attempt",
-    );
-
-    const result = runScript(
-      fixture.work,
-      ["bash", cutScriptPath, "--plan", planPath, "--confirm", plan.confirmationPhrase],
-      { PATH: `${binDir}:${process.env.PATH ?? ""}` },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      `Documentation readiness evidence changed after release planning for candidate commit ${releaseCommit}`,
-    );
-    expect(localTagObject(fixture, "v0.0.2")).toBe("");
   });
 
   it("accepts a failed workflow with successful qualification and trusted failed-job waiver evidence", () => {

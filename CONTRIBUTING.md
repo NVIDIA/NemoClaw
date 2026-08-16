@@ -468,64 +468,13 @@ Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 
 ## Documentation
 
-If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
-
 The [documentation contributor guide](docs/CONTRIBUTING.md) owns public-facing documentation
 procedure and rules.
 
-If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
-
-### Documentation Writer Review Receipt
-
-After you complete a code or documentation change, a documentation writer subagent must review the completed changes.
-For a documentation-only change, the subagent must verify the changed pages against [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [WRITING.md](WRITING.md).
-The review must cover terminology, structure, voice, and code-sample presentation.
-Complete the Documentation Writer Review section in the PR description after that review.
-Keep one review completion checkbox and one instance of each visible or hidden field.
-
-Record one result:
-
-- `docs-updated` when the reviewed pull request changes documentation.
-  List the changed documentation paths as evidence.
-  For a documentation-only change, state that the subagent reviewed the writing rules and documentation style.
-- `no-docs-needed` when a code change does not require documentation and the evidence explains why.
-- `blocked` when a named decision, dependency, access problem, or input prevents the review.
-
-Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
-Use the same name for the same surface across PRs so the report groups its data correctly.
-
-Commit all changes from the final review.
-Then run these commands and put their values in the receipt's hidden HTML metadata comments:
-
-```bash
-git rev-parse --short HEAD
-git rev-parse --short HEAD:AGENTS.md
-```
-
-GitHub supplies the pull-request identity to the workflow and report.
-The hidden head SHA identifies the pull-request revision that the review covered.
-Rerun the review after any new commit changes the pull-request head.
-Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
-The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
-The check compares the hidden head SHA with the current PR head and the hidden `AGENTS.md` blob SHA with the current PR's file.
-
-Maintainers can export receipt data from PR descriptions:
-
-```bash
-npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-docs-review.csv
-```
-
-The report uses the authenticated GitHub CLI session and returns JSON by default.
-It measures receipt coverage, head-revision freshness, review results, and agent-surface counts.
-The `eligiblePrs` JSON metric reports the total eligible pull requests.
-The `eligibleCodePrs` and `eligibleDocsOnlyPrs` metrics report the code and documentation-only counts.
-It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.
-It does not prove that an agent loaded `AGENTS.md`; it records observable workflow compliance.
-The retrospective report classifies code and documentation changes from the checked Type of Change field.
-It reports a PR as unclassified when that field is incomplete or contradictory.
-Use `--format summary` to print only aggregate metrics.
-Use `--until YYYY-MM-DD` to set the end of the reporting period.
+Ordinary code PRs do not need to include documentation updates. A push to `main` delegates the
+documentation impact review and resulting changes to the post-merge workflow described below.
+Direct documentation PRs still follow [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), run the
+applicable documentation validation, and receive an independent documentation writer review.
 
 ### Post-Merge Documentation Workflow
 
@@ -533,27 +482,20 @@ A push to `main` starts the `Docs / Post-Merge Catch-Up` workflow. The workflow 
 the latest reachable semver tag through the pushed commit. It uses merged source, tests, and
 documentation from `main` as its behavior authority.
 
-When documentation work remains, the workflow creates or updates one draft documentation PR on
-`automation/post-merge-docs`. Its automation commit is GitHub-verified and includes the bot DCO
-declaration. The `Documentation readiness` job remains unsuccessful while that work is open.
-Merging the documentation PR starts a new review for the resulting `main` commit. Release
-preparation can add the dated release entry to the same draft PR.
+The workflow analyzes merged changes, authors documentation in an isolated environment, validates
+the result, and runs an independent review. When work remains, it opens one draft PR on an
+`automation/post-merge-docs-*` branch. It does not merge that PR.
 
-Pull-request checks created by the built-in workflow token start in an approval-required state. A
-maintainer must approve those runs. The workflow does not approve checks or merge the draft PR.
+Repository administrators store the required inference credential in the
+`POST_MERGE_DOCS_API_KEY` Actions secret. The workflow exposes it only while configuring the
+OpenShell inference gateway. The sandboxes, validation, artifacts, and publisher do not receive
+the credential. GitHub stores the secret until an administrator rotates or deletes it. The hosted
+runner and its inference gateway end when the author job completes.
 
-The `Documentation readiness` job succeeds when the exact `main` commit has no remaining
-documentation work. The release workflow rejects a missing or unsuccessful result. It also rejects
-a result from another commit, an open rolling documentation PR, or a retained rolling branch whose
-tree differs from that commit. This requirement has no waiver. If another PR merges, release
-preparation must use the new `main` commit and its result.
-
-The post-merge workflow is in a canary period. It does not replace these contributor requirements:
-
-- Include documentation for a user-visible change in the same code-changing PR.
-- Run the applicable docs build.
-- Complete the independent documentation writer review.
-- Record the Documentation Writer Review receipt in the PR description.
+Before a release tag, the evening maintainer flow continues the managed documentation PR when one exists.
+Otherwise, it opens a direct documentation-only PR for the dated release entry. The flow merges
+the documentation PR. The tag flow then requires the exact `origin/main` run's publisher job to
+succeed, with no open managed documentation PR or branch for that commit.
 
 To build and preview docs locally:
 

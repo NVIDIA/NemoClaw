@@ -6,11 +6,13 @@
 # Contributing to NemoClaw Documentation
 
 This guide owns the public-facing documentation procedure and rules for NemoClaw.
-If you change code that affects user-facing behavior, update the relevant docs in the same PR.
+After a code-changing pull request (PR) merges, `Docs / Post-Merge Catch-Up` reviews its documentation impact.
+Code-changing PRs are not required to include documentation updates.
+If a managed documentation PR is open, later merged changes wait for its merge-triggered cumulative review.
 
 ## When to Update Docs
 
-Update documentation when your change:
+The post-merge workflow updates documentation when a merged change:
 
 - Adds, removes, or renames a CLI command or flag.
 - Changes default behavior or configuration.
@@ -84,7 +86,11 @@ Fern publishes Markdown routes for AI agents from the same source pages.
 
 The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
-Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
+The end-of-day maintainer workflow continues the managed documentation PR when one exists.
+Otherwise, it opens a direct documentation-only PR for the planned release entry.
+It merges the documentation PR before loading `nemoclaw-maintainer-cut-release-tag`.
+The `nemoclaw-maintainer-cut-release-tag` skill requires the exact `origin/main` run's publisher job to succeed, with no managed documentation PR or branch for that commit.
+It does not author, validate, or review documentation.
 
 For each release:
 
@@ -98,8 +104,7 @@ For each release:
 - Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
 - Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
 
-Run `npx vitest run test/changelog-docs.test.ts` and `npm run docs` before opening the pre-tag
-release-note docs PR.
+Follow [Doc-Only PR Verification](#doc-only-pr-verification) after adding or changing the release entry.
 
 ## Publishing Docs
 
@@ -373,16 +378,11 @@ Remove them during review.
 1. Create a branch following the project convention.
 2. Make your changes.
 3. Build locally with `npm run docs` and verify the output.
-4. Open a PR with `docs:` as the conventional commit type.
+4. Have a separate documentation writer review the completed diff against this guide and `WRITING.md`.
+5. Open a PR with `docs:` as the conventional commit type.
 
 ```text
 docs: update quickstart for new onboard wizard
-```
-
-If your doc change accompanies a code change, include both in the same PR and use the code change's commit type:
-
-```text
-feat(cli): add policy-add command
 ```
 
 ## Reviewing Doc PRs

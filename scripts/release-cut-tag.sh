@@ -29,7 +29,7 @@ Usage:
   scripts/release-cut-tag.sh --plan PATH --preflight-only
   scripts/release-cut-tag.sh --plan PATH --confirm "CONFIRM RELEASE vX.Y.Z <sha>"
 
-Preflight mode verifies exact-commit documentation readiness, release qualification, and the configured Git signer.
+Preflight mode verifies exact-commit release qualification and the configured Git signer.
 Cut mode creates and pushes only the signed annotated semver tag described by a release plan.
 USAGE
       exit 0
@@ -91,25 +91,6 @@ current_origin_main="$(git rev-parse origin/main)"
 
 git cat-file -e "${target}^{commit}" || fail "Target commit does not exist: $target"
 git merge-base --is-ancestor "$target" origin/main || fail "Target commit is not reachable from origin/main: $target"
-
-verify_documentation_readiness() {
-  local remote_kind receipt
-  remote_kind="$(node "$SCRIPT_DIR/release/remote.mts" "$origin_remote")" || fail "Could not validate origin remote"
-  if [[ "$remote_kind" == "noncanonical" && "${NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL:-}" == "1" ]]; then
-    printf 'release-cut-tag: skipped documentation readiness for an explicitly allowed noncanonical test remote %s\n' "$origin_remote"
-    return
-  fi
-  [[ "$remote_kind" == "canonical" ]] || fail "Unexpected origin remote: $origin_remote"
-
-  command -v gh >/dev/null 2>&1 || fail "GitHub CLI is required to verify Documentation readiness"
-  if ! receipt="$(node "$SCRIPT_DIR/release/verify-documentation-readiness.mts" \
-    --commit "$target" \
-    --plan "$PLAN_PATH")"; then
-    fail "Documentation readiness verification failed for candidate commit $target"
-  fi
-  printf 'release-cut-tag: verified Documentation readiness for %s\n' "$target"
-  printf 'release-cut-tag: documentation evidence: %s\n' "$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.jobUrl);' "$receipt")"
-}
 
 verify_release_qualification() {
   local remote_kind
@@ -191,7 +172,6 @@ verify_release_qualification() {
   fail "No completed successful Release qualification check exists for candidate commit $target"
 }
 
-verify_documentation_readiness
 verify_release_qualification
 
 if git show-ref --verify --quiet "refs/tags/$tag"; then
@@ -224,7 +204,6 @@ fi
 
 # Release tags are immutable once pushed. Sign the tag on the release
 # operator's workstation so the private signing key never enters CI.
-verify_documentation_readiness
 git tag -s "$tag" "$target" -m "$tag"
 git push origin "refs/tags/$tag"
 

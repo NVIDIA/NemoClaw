@@ -284,33 +284,17 @@ If the command trace contains no reviewer-request write, report the event as an 
 - Treat `docs/` as the source of truth for public-facing documentation.
   Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow,
   including DORI routing.
-- Before completing a code change, determine whether it changes a user-visible surface.
-  This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
-- When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
-  Direct it to read `docs/AGENTS.md`, update the affected docs, and run validation.
-  Give it the changed sources and user-visible impact.
-- Reconcile the authoring subagent's documentation changes and validation evidence before completing the implementation.
-  Include the required documentation in the same change.
-- If the host cannot run subagents, read `docs/AGENTS.md` in the primary task, complete the documentation work, and run its documented validation.
-  Do not omit required documentation because parallel execution is unavailable.
-- Before final handoff, a documentation writer subagent must independently review every completed code or documentation change.
-  Give it the changed files, change summary, and test or docs-build evidence.
-  For a documentation-only change, require review of the writing rules and documentation style.
-- If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
-  If no capable host is available, record the review as `blocked` and do not complete final handoff.
-- After the review, follow the
-  [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
-  procedure.
-- During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
-- A push to `main` starts `Docs / Post-Merge Catch-Up`. The workflow reviews changes from the latest
-  reachable semver tag through the pushed commit. It creates or updates one draft documentation PR
-  with a GitHub-verified commit and bot DCO declaration when documentation work remains. Release
-  preparation can add the dated release entry to that draft PR.
-- Require the `Documentation readiness` result to succeed for the exact release candidate commit
-  before cutting a release tag. The result has no waiver. A later merge changes the candidate and
-  requires a new result.
-- During the post-merge workflow canary, continue to include user-visible documentation in the
-  code-changing PR. Continue to complete the independent documentation writer review and receipt.
+- Ordinary code PRs do not need to include their documentation updates. A push to `main` starts
+  `Docs / Post-Merge Catch-Up`, which analyzes merged changes, authors and validates documentation,
+  runs an independent review, and opens one draft PR on an `automation/post-merge-docs-*` branch.
+- Direct documentation-only changes must receive an independent documentation writer review and follow
+  `docs/AGENTS.md`, the shared
+  [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md)
+  contract, and the documented validation.
+- Before tagging, `nemoclaw-maintainer-evening` ensures that a documentation PR contains the dated
+  release entry and is merged. `nemoclaw-maintainer-cut-release-tag` only
+  checks that the exact `origin/main` run published successfully, with no managed PR or branch
+  remaining for that commit.
 
 ## PR Requirements
 

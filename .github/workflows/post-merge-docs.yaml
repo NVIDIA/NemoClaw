@@ -5,383 +5,179 @@ name: Docs / Post-Merge Catch-Up
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions: {}
-
-# Keep the active run intact so cancellation cannot interrupt a branch write.
-# GitHub retains the newest pending run, which then reviews the cumulative range.
 concurrency:
   group: post-merge-docs-main
   cancel-in-progress: false
 
 jobs:
-  discover:
-    name: Discover documentation state
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+  gate:
+    name: Check for an active documentation PR
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
-      contents: read
       pull-requests: read
     outputs:
-      range_start_tag: ${{ steps.discover.outputs.range_start_tag }}
-      range_start_sha: ${{ steps.discover.outputs.range_start_sha }}
-      rolling_head_sha: ${{ steps.discover.outputs.rolling_head_sha }}
-      rolling_pr_number: ${{ steps.discover.outputs.rolling_pr_number }}
+      pending: ${{ steps.scan.outputs.pending }}
     steps:
-      - name: Checkout exact main state
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          lfs: false
-          path: trusted
-          persist-credentials: false
-          ref: ${{ github.sha }}
-          submodules: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - id: discover
-        name: Bind the tag range and rolling PR
+      - id: scan
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/discover.mts"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pending="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" --jq 'any(.[][]; (.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")')"
+          [[ "$pending" == true || "$pending" == false ]]
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
 
-  analyze:
-    name: Author documentation catch-up
-    needs: discover
-    if: ${{ needs.discover.result == 'success' }}
+  author:
+    name: Author and review documentation catch-up
+    needs: gate
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 70
     permissions:
       contents: read
     outputs:
-      candidate_artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     env:
-      GITHUB_SHA: ${{ github.sha }}
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
       PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/analysis-artifact
       POST_MERGE_DOCS_CONFIG_DIR: ${{ github.workspace }}/config
-      POST_MERGE_DOCS_PHASE: analyze
-      POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/analysis-workdir
-      RANGE_START_SHA: ${{ needs.discover.outputs.range_start_sha }}
-      RANGE_START_TAG: ${{ needs.discover.outputs.range_start_tag }}
-      ROLLING_HEAD_SHA: ${{ needs.discover.outputs.rolling_head_sha }}
-      ROLLING_PR_NUMBER: ${{ needs.discover.outputs.rolling_pr_number }}
-      SANDBOX_NAME: docs-main-author
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
-      - name: Checkout trusted authoring code
+      - name: Checkout exact main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          lfs: false
           path: trusted
           persist-credentials: false
           ref: ${{ github.sha }}
-          submodules: false
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
 
-      - id: prepare
-        name: Prepare the combined documentation state
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" prepare
+      - name: Find the documentation range
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          while IFS= read -r candidate; do
+            [[ "$candidate" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] || continue
+            tag="$candidate"
+            break
+          done < <(git tag --merged "$GITHUB_SHA" --list 'v*' --sort=-version:refname)
+          [[ -n "${tag:-}" ]]
+          sha="$(git rev-list -n 1 "$tag")"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "RANGE_START_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RANGE_START_SHA=$sha" >> "$GITHUB_ENV"
 
       - name: Install OpenShell
-        run: |
-          env -u GITHUB_TOKEN -u GH_TOKEN -u OPENAI_API_KEY -u PR_REVIEW_ADVISOR_API_KEY \
-            NEMOCLAW_NON_INTERACTIVE=1 \
-            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+        run: env -u GITHUB_TOKEN -u GH_TOKEN -u OPENAI_API_KEY -u POST_MERGE_DOCS_API_KEY NEMOCLAW_NON_INTERACTIVE=1 bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
 
       - name: Configure isolated inference
         env:
-          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" configure
+          OPENAI_API_KEY: ${{ secrets.POST_MERGE_DOCS_API_KEY }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure
 
-      - name: Create the authoring sandbox
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" create
-
-      - name: Author the documentation result
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" run
-
-      - id: export
-        name: Export the bounded candidate artifact
+      - name: Author the documentation
         env:
-          POST_MERGE_DOCS_BASE_TREE_SHA: ${{ steps.prepare.outputs.base_tree_sha }}
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" export
+          POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/candidate
+          POST_MERGE_DOCS_PHASE: author
+          POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/author
+          SANDBOX_NAME: docs-main-author
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
-      - name: Delete the authoring sandbox
-        if: always()
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" delete
+      - name: Independently review the candidate
+        env:
+          POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/approved
+          POST_MERGE_DOCS_CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          POST_MERGE_DOCS_PHASE: review
+          POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/review
+          SANDBOX_NAME: docs-main-review
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
       - id: upload
-        name: Upload the candidate artifact
-        if: ${{ steps.export.outcome == 'success' }}
+        name: Upload the approved patch
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           if-no-files-found: error
-          name: post-merge-docs-candidate
+          name: post-merge-docs-approved
           overwrite: true
-          path: ${{ env.POST_MERGE_DOCS_ARTIFACT_DIR }}/
+          path: ${{ github.workspace }}/approved/
           retention-days: 3
 
   validate:
     name: Validate documentation catch-up
-    needs:
-      - discover
-      - analyze
-    if: ${{ needs.discover.result == 'success' && needs.analyze.result == 'success' }}
+    needs: author
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       actions: read
       contents: read
     env:
-      GITHUB_SHA: ${{ github.sha }}
-      POST_MERGE_DOCS_CANDIDATE_DIR: ${{ github.workspace }}/candidate-artifact
-      POST_MERGE_DOCS_CONFIG_DIR: ${{ github.workspace }}/validation-config
-      POST_MERGE_DOCS_PHASE: review
-      POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/validation-workdir
-      RANGE_START_SHA: ${{ needs.discover.outputs.range_start_sha }}
-      RANGE_START_TAG: ${{ needs.discover.outputs.range_start_tag }}
-      ROLLING_HEAD_SHA: ${{ needs.discover.outputs.rolling_head_sha }}
-      ROLLING_PR_NUMBER: ${{ needs.discover.outputs.rolling_pr_number }}
+      POST_MERGE_DOCS_CANDIDATE_DIR: ${{ github.workspace }}/candidate
+      POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/validation
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
-      - name: Checkout trusted validation code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-          lfs: false
           path: trusted
           persist-credentials: false
           ref: ${{ github.sha }}
-          submodules: false
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           cache: npm
           cache-dependency-path: trusted/package-lock.json
           node-version: "22"
 
-      - name: Download the same-run candidate artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.analyze.outputs.candidate_artifact_id }}
-          path: candidate-artifact
+          artifact-ids: ${{ needs.author.outputs.artifact_id }}
+          path: candidate
 
-      - id: prepare
-        name: Prepare the candidate for docs validation
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" prepare
+      - name: Materialize the candidate
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" materialize
 
-      - name: Install docs validation dependencies
-        working-directory: validation-workdir/repo
+      - name: Install documentation dependencies
+        working-directory: validation/repo
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Build the complete candidate documentation
-        working-directory: validation-workdir/repo
+      - name: Validate the documentation
+        working-directory: validation/repo
         run: npm run docs:validate
 
-  review:
-    name: Review documentation catch-up
-    needs:
-      - discover
-      - analyze
-    if: ${{ needs.discover.result == 'success' && needs.analyze.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      approved_artifact_id: ${{ steps.upload.outputs.artifact-id }}
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
-      POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/reviewed-artifact
-      POST_MERGE_DOCS_CANDIDATE_DIR: ${{ github.workspace }}/candidate-artifact
-      POST_MERGE_DOCS_CONFIG_DIR: ${{ github.workspace }}/config
-      POST_MERGE_DOCS_PHASE: review
-      POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/review-workdir
-      RANGE_START_SHA: ${{ needs.discover.outputs.range_start_sha }}
-      RANGE_START_TAG: ${{ needs.discover.outputs.range_start_tag }}
-      ROLLING_HEAD_SHA: ${{ needs.discover.outputs.rolling_head_sha }}
-      ROLLING_PR_NUMBER: ${{ needs.discover.outputs.rolling_pr_number }}
-      SANDBOX_NAME: docs-main-review
-      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
-    steps:
-      - name: Checkout trusted review code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          lfs: false
-          path: trusted
-          persist-credentials: false
-          ref: ${{ github.sha }}
-          submodules: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Download the same-run candidate artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          artifact-ids: ${{ needs.analyze.outputs.candidate_artifact_id }}
-          path: candidate-artifact
-
-      - id: prepare
-        name: Prepare the reviewed candidate
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" prepare
-
-      - name: Install OpenShell
-        run: |
-          env -u GITHUB_TOKEN -u GH_TOKEN -u OPENAI_API_KEY -u PR_REVIEW_ADVISOR_API_KEY \
-            NEMOCLAW_NON_INTERACTIVE=1 \
-            bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
-
-      - name: Configure isolated inference
-        env:
-          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" configure
-
-      - name: Create the read-only review sandbox
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" create
-
-      - name: Independently review the complete result
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" run
-
-      - id: export
-        name: Export the approved artifact
-        env:
-          POST_MERGE_DOCS_BASE_TREE_SHA: ${{ steps.prepare.outputs.base_tree_sha }}
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" export
-
-      - name: Delete the review sandbox
-        if: always()
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/model.mts" delete
-
-      - id: upload
-        name: Upload the approved artifact
-        if: ${{ steps.export.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          if-no-files-found: error
-          name: post-merge-docs-approved
-          overwrite: true
-          path: ${{ env.POST_MERGE_DOCS_ARTIFACT_DIR }}/
-          retention-days: 3
-
   publish:
-    name: Publish documentation state
-    needs:
-      - discover
-      - analyze
-      - validate
-      - review
-    if: ${{ needs.discover.result == 'success' && needs.analyze.result == 'success' && needs.validate.result == 'success' && needs.review.result == 'success' }}
+    name: Open the documentation pull request
+    needs: [author, validate]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       actions: read
       contents: write
       pull-requests: write
-    outputs:
-      covered_sha: ${{ steps.publish.outputs.covered_sha }}
-      pr_number: ${{ steps.publish.outputs.pr_number }}
-      pr_url: ${{ steps.publish.outputs.pr_url }}
-      status: ${{ steps.publish.outputs.status }}
     env:
-      GITHUB_SHA: ${{ github.sha }}
-      POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/approved-artifact
-      RANGE_START_SHA: ${{ needs.discover.outputs.range_start_sha }}
-      RANGE_START_TAG: ${{ needs.discover.outputs.range_start_tag }}
-      ROLLING_HEAD_SHA: ${{ needs.discover.outputs.rolling_head_sha }}
-      ROLLING_PR_NUMBER: ${{ needs.discover.outputs.rolling_pr_number }}
+      POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/approved
       TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
     steps:
-      - name: Checkout the trusted publisher
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
-          lfs: false
           path: trusted
           persist-credentials: false
           ref: ${{ github.sha }}
-          submodules: false
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
 
-      - name: Download the same-run approved artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ needs.review.outputs.approved_artifact_id }}
-          path: approved-artifact
+          artifact-ids: ${{ needs.author.outputs.artifact_id }}
+          path: approved
 
-      - id: publish
-        name: Validate and publish the documentation state
+      - name: Publish the reviewed patch
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"
-
-  readiness:
-    name: Documentation readiness
-    needs:
-      - discover
-      - analyze
-      - validate
-      - review
-      - publish
-    if: ${{ !cancelled() && github.repository == 'NVIDIA/NemoClaw' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions: {}
-    steps:
-      - name: Accept the exact main commit
-        if: ${{ needs.publish.result == 'success' && needs.publish.outputs.status == 'no_changes' && needs.publish.outputs.covered_sha == github.sha }}
-        run: echo "Documentation is current for $GITHUB_SHA."
-
-      - name: Reject incomplete documentation state
-        if: ${{ !(needs.publish.result == 'success' && needs.publish.outputs.status == 'no_changes' && needs.publish.outputs.covered_sha == github.sha) }}
-        env:
-          COVERED_SHA: ${{ needs.publish.outputs.covered_sha }}
-          PR_NUMBER: ${{ needs.publish.outputs.pr_number }}
-          STATUS: ${{ needs.publish.outputs.status }}
-        run: |
-          if [[ "$STATUS" == "pr_pending" && "$COVERED_SHA" == "$GITHUB_SHA" ]]; then
-            echo "::error::Documentation work remains in rolling documentation PR #${PR_NUMBER:-unknown}."
-          else
-            echo "::error::The exact main commit does not have a completed approved documentation result."
-          fi
-          exit 1
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"

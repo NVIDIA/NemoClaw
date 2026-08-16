@@ -44,8 +44,8 @@ Follow the skill or workflow that DORI returns.
 
 ## Choose a Repository Skill
 
-- Use `nemoclaw-contributor-update-docs` to find documentation impact, update current pages, or
-  prepare pre-tag release documentation.
+- Use `nemoclaw-contributor-update-docs` to find documentation impact or complete post-merge and
+  direct documentation catch-up.
 - Use `nemoclaw-maintainer-refactor-docs` for maintainer-owned information architecture, page
   splits, navigation changes, or content ownership changes.
 
@@ -68,3 +68,5 @@ Follow the skill or workflow that DORI returns.
    [writing convention](CONTRIBUTING.md#writing-conventions) rules.
 2. Run the commands required by
    [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface.
+3. For a direct documentation-only change, obtain an independent documentation writer review
+   before handoff.

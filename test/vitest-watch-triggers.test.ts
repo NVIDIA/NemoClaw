@@ -73,7 +73,6 @@ const OPAQUE_INPUTS = [
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
-  "tools/post-merge-docs/analyze-policy.yaml",
   "tools/post-merge-docs/review-policy.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
@@ -195,13 +194,12 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);
-    for (const postMergeDocsPath of [
-      ".github/workflows/post-merge-docs.yaml",
-      "tools/post-merge-docs/analyze-policy.yaml",
-      "tools/post-merge-docs/review-policy.yaml",
-    ]) {
-      expect(triggeredBy(postMergeDocsPath)).toEqual(["test/post-merge-docs.test.ts"]);
-    }
+    expect(triggeredBy(".github/workflows/post-merge-docs.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",
       "test/pr-review-advisor-openshell-workflow-boundary.test.ts",

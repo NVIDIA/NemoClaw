@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main after verifying the pre-tag dated changelog entry, handles release housekeeping, drafts announcement release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
+description: Creates deterministic NemoClaw semver release tags on origin/main after verifying post-merge documentation workflow state, handles release housekeeping, drafts announcement release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
 user_invocable: true
 ---
 
@@ -36,15 +36,9 @@ The downstream scheduled reconciliation remains available if the event-driven di
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
-- Do not generate the release plan until the release-prep docs PR containing `docs/changelog/YYYY-MM-DD.mdx` and the exact planned `## vX.Y.Z` heading is merged or explicitly waived.
-- Require exactly one completed, successful `Docs / Post-Merge Catch-Up` push run with exactly one
-  completed, successful `Documentation readiness` job. The run must use the exact `origin/main`
-  commit captured by the release plan. The requirement has no waiver. A result for another commit
-  is not release evidence.
-- At plan generation, preflight, and cut, require no open `automation/post-merge-docs` PR. If its
-  branch remains, its tree must equal the exact release candidate tree. This live check prevents
-  later branch or PR changes from reusing older readiness evidence.
-- Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
+- At plan generation and immediately before cutting, require a successful
+  `Docs / Post-Merge Catch-Up` publish job for the exact candidate, no open
+  `automation/post-merge-docs-*` PR, and no branch for that candidate.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
 - Use a passing `Release qualification` check from a full pre-tag run, with or without an administrator-authorized job waiver.
@@ -80,31 +74,26 @@ Release Progress:
 Start with one read-only pass that checks these prerequisites together:
 
 - refresh `origin/main` and resolve its full SHA;
-- check the target changelog heading and release-prep docs state;
-- check documentation readiness for the same full SHA; and
+- verify post-merge documentation state for that SHA; and
 - inventory existing E2E runs for the same SHA before deciding what to dispatch.
 
 Do not wait for merges to stop. The plan captures one candidate SHA for evidence; a late drift check advances it when `origin/main` moves.
 Do not dispatch or poll a workflow during this pass.
 
-Before this step, confirm release-prep docs are merged or explicitly waived.
-Return to `nemoclaw-maintainer-evening` if docs are still pending.
-
-Require the release script to accept the `Documentation readiness` result for the candidate SHA.
-If the result is missing or does not succeed, inspect `Docs / Post-Merge Catch-Up`. When that
-workflow has an open draft documentation PR, complete and merge it before generating the plan.
-The merge starts a new workflow run for the resulting `main` commit.
-
-For the planned version, inspect `origin/main` before generating the plan:
+Use GitHub's observed workflow and PR state:
 
 ```bash
-git grep -n '^## vX\.Y\.Z$' origin/main -- 'docs/changelog/*.mdx'
+gh run list --repo NVIDIA/NemoClaw --workflow post-merge-docs.yaml --event push \
+  --branch main --status success --limit 1 --json databaseId,headSha,status,conclusion,url
+gh pr list --repo NVIDIA/NemoClaw --state open --limit 100 \
+  --json number,headRefName,url
 ```
 
-Require exactly one match in a dated file directly under `docs/changelog/`.
-Confirm that a newly created file begins with the parser-safe MDX SPDX comment and that the entry contains its summary and detailed bullets.
-If the entry is missing or malformed, return to `nemoclaw-contributor-update-docs`; do not substitute the post-tag announcement workflow.
-If the maintainer explicitly waives the entry, preserve the reason in the release-plan presentation and confirmation handoff.
+Use `gh run view <databaseId> --json jobs` and require exactly one successful job named
+`Open the documentation pull request`; a skipped job is not readiness. Filter the PR result by the
+`automation/post-merge-docs-` head prefix, and require `git ls-remote --heads origin
+"automation/post-merge-docs-${CANDIDATE_SHA:0:12}"` to be empty. Stop on any mismatch and return
+documentation work to `nemoclaw-maintainer-evening`.
 
 Run one of:
 
@@ -129,14 +118,11 @@ Read the generated `plan.json` and show the maintainer:
 - previous tag,
 - next tag,
 - target `origin/main` commit and headline,
-- `Documentation readiness` workflow and job URLs,
+- `Docs / Post-Merge Catch-Up` workflow URL,
 - plan hash,
 - forbidden operations,
 - confirmation phrase,
 - open issue/PR housekeeping plan for the release label, including deletion of the released label after carry-forward succeeds.
-
-Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
-When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
 
 For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from a pre-tag `.github/workflows/e2e.yaml` run.
 The workflow planner derives the required jobs from the workflow's E2E metadata.
@@ -188,11 +174,6 @@ Run the release script's signing preflight before asking for confirmation:
 npm run release:cut -- --plan <plan.json> --preflight-only
 ```
 
-The preflight queries GitHub again. It requires the observed documentation readiness receipt to
-match the workflow run, attempt, job, URLs, and candidate SHA recorded in the plan. Regenerate the
-plan when this evidence changes. It also rejects a reopened rolling documentation PR or a retained
-rolling branch whose tree differs from the candidate.
-
 For the canonical `NVIDIA/NemoClaw` remote, the script first searches completed manual `.github/workflows/e2e.yaml` runs with conclusion `success` or `failure` at the exact planned commit.
 It accepts the first successful run with exactly one completed, successful `Release qualification` job.
 For a failed run, it also requires a valid exact-run waiver artifact with at least one canonical waived job failure.
@@ -216,6 +197,8 @@ CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
 Do not proceed on a generic "yes" at this step.
 
 ### Step 3: Cut the Semver Tag
+
+Repeat the Step 1 documentation workflow and open-PR queries for the planned SHA.
 
 Run the cut script with the plan and the maintainer's phrase:
 
@@ -310,7 +293,6 @@ Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the 
 Before continuing to Step 7, verify the draft has three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
 
 Do not create or update a GitHub Discussion.
-Do not edit `docs/changelog/` in this post-tag step; the canonical entry must already be present in the tagged commit.
 
 ### Step 7: Wait for Maintainer-Published Announcement
 
@@ -340,10 +322,8 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 ## Recovery
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
-- Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
-- `Documentation readiness` is missing, duplicated, incomplete, or unsuccessful for the candidate
-  SHA: inspect `Docs / Post-Merge Catch-Up`. Complete its draft documentation PR when one exists,
-  then require one successful result for the resulting `main` commit. Do not waive the result.
+- Documentation workflow state is incomplete: return to `nemoclaw-maintainer-evening`, then repeat
+  Step 1 after the documentation PR merges.
 - Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
 - No qualifying `Release qualification` exists: inspect the GitHub result and run pre-tag E2E for the planned SHA only when no qualifying run already exists. Use a job waiver only with explicit repository administrator authorization. Do not release until the release script accepts the canonical check.
