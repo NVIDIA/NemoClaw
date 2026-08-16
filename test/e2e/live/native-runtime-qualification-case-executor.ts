@@ -44,6 +44,7 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
 const COMMAND_TIMEOUT = 60_000;
 const INFERENCE_TIMEOUT = 900_000;
 const QUALIFICATION_LABEL = "ai.nvidia.nemoclaw.qualification";
+const NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE = "/usr/local/bin/podman";
 export const NATIVE_RUNTIME_QUALIFICATION_E2E_PHASES = [
   "validate credential-free Docker-unavailable isolation",
   "bind the rootless Podman engine",
@@ -215,7 +216,7 @@ function startPodmanQualificationService(
 ): PodmanQualificationService {
   let diagnostic = "";
   const child = spawnObservedChild(
-    "podman",
+    NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
     ["system", "service", "--time=0", `unix://${socket}`],
     {
       activityLabel: "command: rootless Podman qualification service",
@@ -571,14 +572,17 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     await waitForSocket(socket, service);
     const socketAuthority = capturePodmanSocketAuthority(socket);
     hostEngine = createPodmanContainerEngine({
+      executable: NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
       operation: "host-doctor",
       socketAuthority,
     });
     inferenceEngine = createPodmanContainerEngine({
+      executable: NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
       operation: "host-local-inference",
       socketAuthority,
     });
     lifecycleEngine = createPodmanContainerEngine({
+      executable: NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE,
       operation: "sandbox-lifecycle",
       socketAuthority,
     });
