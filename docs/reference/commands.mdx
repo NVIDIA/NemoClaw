@@ -4518,7 +4518,7 @@ The command requires the exact feature gate `NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY
 Any other value stops the command before argument parsing, credential reads, or listener creation.
 Other experimental feature gates do not enable this command.
 
-Before starting the adapter, a trusted launcher must open two owner-only regular files and map only these descriptors into the child process:
+Before starting the adapter, the bounded VoiceClaw launcher opens two owner-only regular files without following symbolic links and maps only these credential descriptors into the child process:
 
 - Descriptor `3` supplies the deployment credential used during session admission.
 - Descriptor `4` supplies the OpenClaw credential with `operator.read` and `operator.write` scopes.
@@ -4527,14 +4527,16 @@ The descriptor numbers are fixed and are not configurable flags.
 The command rejects missing, duplicate, non-regular, wrong-owner, group-accessible, malformed, and oversized inputs.
 It reads each descriptor once and closes both before accepting traffic.
 Both credential values remain in process memory until the voice-gateway process stops.
-The trusted launcher must not place credential source paths or values in arguments or environment variables.
-It must open source files without following symbolic links and must intentionally inherit only credential descriptors `3` and `4` across this exec.
+The launcher does not place credential source paths or values in arguments or environment variables.
+It intentionally inherits only credential descriptors `3` and `4` across this exec, then closes its parent copies.
 To rotate either credential, stop the command and restart it with newly opened descriptors.
 NemoClaw does not send the OpenClaw credential to the runtime.
 
-After the trusted launcher has validated and mapped both descriptors, it execs this command with no credential paths or values in its arguments or environment:
+When it integrates this launcher, the Gabby scenario calls the internal `launchVoiceGateway()` entry point with trusted source paths and runtime fields.
+That launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
+Do not run this child command directly because it requires the launcher's descriptor mapping.
 
-```bash
+```text
 NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY=1 $$nemoclaw internal voice-gateway serve \
   --gateway-url ws://127.0.0.1:18789/ws \
   --runtime-identity <deployment-identity> \

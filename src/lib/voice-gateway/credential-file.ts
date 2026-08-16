@@ -6,7 +6,8 @@ import fs from "node:fs";
 const MAX_CREDENTIAL_BYTES = 4096;
 const MIN_CREDENTIAL_BYTES = 32;
 
-function validatePrivateRegularFile(stat: fs.Stats, label: string): void {
+/** Validate the ownership, mode, type, and size of one credential descriptor. */
+export function validatePrivateCredentialDescriptor(stat: fs.Stats, label: string): void {
   if (!stat.isFile()) throw new Error(`${label} descriptor is not a regular file.`);
   if ((stat.mode & 0o077) !== 0) {
     throw new Error(`${label} descriptor must not be accessible by group or others.`);
@@ -54,7 +55,7 @@ function validateDescriptor(descriptor: number, label: string): fs.Stats {
   }
   try {
     const stat = fs.fstatSync(descriptor);
-    validatePrivateRegularFile(stat, label);
+    validatePrivateCredentialDescriptor(stat, label);
     return stat;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EBADF") {

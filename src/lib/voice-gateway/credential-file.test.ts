@@ -83,6 +83,20 @@ describe("voice gateway credential descriptors", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it.each(["device", "socket", "pipe"])(
+    "rejects a representative %s descriptor before reading credentials (#9235)",
+    () => {
+      const deployment = credentialDescriptor(DEPLOYMENT_CREDENTIAL);
+      const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
+      const fstatSync = fs.fstatSync;
+      vi.spyOn(fs, "fstatSync")
+        .mockReturnValueOnce({ isFile: () => false } as fs.Stats)
+        .mockImplementation(fstatSync);
+
+      expect(() => readPair(deployment, openClaw)).toThrow("not a regular file");
+    },
+  );
+
   it("rejects a descriptor not owned by the current user (#9235)", () => {
     const deployment = credentialDescriptor(DEPLOYMENT_CREDENTIAL);
     const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
@@ -118,10 +132,12 @@ describe("voice gateway credential descriptors", () => {
     const deployment = credentialDescriptor("short");
     const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
     const closeSync = fs.closeSync;
-    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
-      closeSync(descriptor);
-      if (descriptor === deployment) throw new Error("cleanup failed");
-    });
+    vi.spyOn(fs, "closeSync")
+      .mockImplementationOnce((descriptor) => {
+        closeSync(descriptor);
+        throw new Error("cleanup failed");
+      })
+      .mockImplementationOnce(closeSync);
 
     expect(() => readPair(deployment, openClaw)).toThrow("invalid size");
     expect(() => fs.fstatSync(openClaw)).toThrow();
@@ -131,10 +147,12 @@ describe("voice gateway credential descriptors", () => {
     const deployment = credentialDescriptor(DEPLOYMENT_CREDENTIAL);
     const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
     const closeSync = fs.closeSync;
-    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
-      closeSync(descriptor);
-      if (descriptor === deployment) throw new Error("cleanup failed");
-    });
+    vi.spyOn(fs, "closeSync")
+      .mockImplementationOnce((descriptor) => {
+        closeSync(descriptor);
+        throw new Error("cleanup failed");
+      })
+      .mockImplementationOnce(closeSync);
 
     expect(() => readPair(deployment, openClaw)).toThrow("cleanup failed");
     expect(() => fs.fstatSync(openClaw)).toThrow();
