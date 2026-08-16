@@ -95,7 +95,6 @@ describe("E2E artifact uploads", () => {
     expect(policyErrors).toContain(
       "upload-e2e-artifacts must preserve artifact defaults, hidden-file policy, missing-file behavior, and retention",
     );
-
   });
 
   it("uploads artifacts even when an earlier step fails", () => {

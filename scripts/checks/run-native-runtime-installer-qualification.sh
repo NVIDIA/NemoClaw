@@ -197,7 +197,7 @@ assert_docker_unavailable() {
     '{"dockerCommandGuarded":true,"dockerEnvironmentVariablesUnset":true,"dockerServiceInactive":true,"dockerSocketUnitInactive":true,"dockerdProcessNameAbsent":true,"defaultSocketPathsAbsent":true}'
 }
 
-run_native_runtime_installer_qualification() {
+run_native_runtime_installer_qualification() (
   local candidate_checkout=""
   local candidate_sha=""
   local expected_installer_sha256=""
@@ -447,7 +447,7 @@ run_native_runtime_installer_qualification() {
   cleanup
   trap - EXIT
   unset -f cleanup
-}
+)
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
   run_native_runtime_installer_qualification "$@"

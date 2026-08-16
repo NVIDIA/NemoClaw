@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildNativeRuntimeQualificationProducerPlan,
+  nativeRuntimeQualificationOperationFile,
   NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE,
   NATIVE_RUNTIME_QUALIFICATION_FOCUSED_OPERATIONS,
   type NativeRuntimeQualificationProducerPlanInput,
@@ -51,6 +52,9 @@ describe("native runtime qualification producer plan", () => {
       expect(entry.source.candidateSha).toBe(CANDIDATE_SHA);
       expect(entry.source.baseSha).toBe(entry.source.workflowSha);
       expect(entry.case.id).toBe(entry.id);
+      expect(
+        new Set(entry.case.obligations.map(nativeRuntimeQualificationOperationFile)).size,
+      ).toBe(entry.case.obligations.length);
       expect(Object.isFrozen(entry)).toBe(true);
     }
     expect(

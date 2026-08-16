@@ -16,14 +16,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  compileNativeRuntimeQualification,
   consumeNativeRuntimeQualificationEvidence,
-  nativeRuntimeQualificationDefinition,
+  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION,
   type NativeRuntimeQualificationEvidenceEnvelope,
   type NativeRuntimeQualificationExpectedSource,
 } from "../../test/e2e/registry/native-runtime-qualification.ts";
 import type { NativeRuntimeQualificationCaseFragment } from "./native-runtime-qualification-producer-evidence.mts";
-import type { NativeRuntimeQualificationProducerPlan } from "./native-runtime-qualification-producer-plan.mts";
+import {
+  nativeRuntimeQualificationOperationFile,
+  type NativeRuntimeQualificationProducerPlan,
+} from "./native-runtime-qualification-producer-plan.mts";
 
 export const NATIVE_RUNTIME_QUALIFICATION_AGGREGATE_JOB_NAME =
   "Aggregate native runtime qualification evidence";
@@ -34,7 +36,6 @@ const MAX_FRAGMENT_BYTES = 256 * 1024;
 const MAX_RECEIPT_BYTES = 524_288;
 const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const POSITIVE_INTEGER = /^[1-9][0-9]{0,19}$/u;
-const SHA256 = /^[a-f0-9]{64}$/u;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -133,18 +134,13 @@ function walkRegularFiles(root: string): readonly string[] {
   return Object.freeze(files);
 }
 
-function expectedReceiptFiles(caseId: string, gpu: boolean): readonly string[] {
-  const operations = [
-    "installer-install",
-    "runtime-docker-unavailable",
-    "agent-onboard",
-    "agent-turn",
-    "sandbox-stop-start",
-    "sandbox-snapshot-restore",
-    "sandbox-rebuild",
-    "runtime-restart-reconcile",
-    "cleanup-exact",
-  ].map((id) => `receipts/${caseId}/operations/operation-${id}.json`);
+function expectedReceiptFiles(
+  row: NativeRuntimeQualificationProducerPlan["include"][number],
+): readonly string[] {
+  const caseId = row.id;
+  const operations = row.case.obligations.map(
+    (id) => `receipts/${caseId}/operations/${nativeRuntimeQualificationOperationFile(id)}`,
+  );
   return Object.freeze([
     "case-fragment.json",
     `receipts/${caseId}/installer/architecture.json`,
@@ -155,7 +151,9 @@ function expectedReceiptFiles(caseId: string, gpu: boolean): readonly string[] {
     `receipts/${caseId}/installer/invocation.json`,
     `receipts/${caseId}/runtime/runtime-result.json`,
     ...operations,
-    ...(gpu ? [`receipts/${caseId}/runtime/nvidia-cdi.json`] : []),
+    ...(row.case.acceleration === "nvidia-gpu"
+      ? [`receipts/${caseId}/runtime/nvidia-cdi.json`]
+      : []),
   ]);
 }
 
@@ -255,7 +253,11 @@ export function aggregateNativeRuntimeQualificationProducerEvidence(input: {
   readonly aggregateJobId: number;
 }): NativeRuntimeQualificationEvidenceEnvelope {
   const { plan } = input;
-  if (plan.include.length !== 24 || new Set(plan.include.map((row) => row.id)).size !== 24) {
+  const expectedCaseCount = PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION.cases.length;
+  if (
+    plan.include.length !== expectedCaseCount ||
+    new Set(plan.include.map((row) => row.id)).size !== expectedCaseCount
+  ) {
     throw new Error("Native runtime qualification aggregate requires the exact 24-case plan");
   }
   const first = plan.include[0]!;
@@ -288,9 +290,7 @@ export function aggregateNativeRuntimeQualificationProducerEvidence(input: {
     const artifactDirectory = path.join(input.caseArtifactRoot, row.artifactName);
     assertDirectory(artifactDirectory, `case artifact '${row.artifactName}'`);
     const actualFiles = walkRegularFiles(artifactDirectory);
-    const expectedFiles = [
-      ...expectedReceiptFiles(row.id, row.case.acceleration === "nvidia-gpu"),
-    ].sort();
+    const expectedFiles = [...expectedReceiptFiles(row)].sort();
     if (JSON.stringify([...actualFiles].sort()) !== JSON.stringify(expectedFiles)) {
       throw new Error(`Native runtime qualification case artifact '${row.id}' has invalid files`);
     }
@@ -320,9 +320,7 @@ export function aggregateNativeRuntimeQualificationProducerEvidence(input: {
     providerId: "podman",
     cases: Object.freeze(cases),
   });
-  const definition = compileNativeRuntimeQualification(
-    nativeRuntimeQualificationDefinition("podman"),
-  );
+  const definition = PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION;
   consumeNativeRuntimeQualificationEvidence(definition, envelope, source, (receiptPath) => {
     try {
       return readBoundedBytes(path.join(input.evidenceDirectory, receiptPath), MAX_RECEIPT_BYTES);

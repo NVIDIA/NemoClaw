@@ -29,6 +29,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import type { NativeRuntimeQualificationObligation } from "../registry/native-runtime-qualification.ts";
+import { nativeRuntimeQualificationOperationFile } from "../../../tools/e2e/native-runtime-qualification-producer-plan.mts";
 import {
   assertCredentialFreeQualificationEnvironment,
   digestFromImageReference,
@@ -147,10 +148,6 @@ function writeJson(directory: string, file: string, value: unknown): void {
     mode: 0o600,
   });
   fs.renameSync(temporary, target);
-}
-
-function operationFile(id: NativeRuntimeQualificationObligation): string {
-  return `operation-${id.replaceAll(".", "-")}.json`;
 }
 
 function assertDockerUnavailable(): Record<string, true> {
@@ -535,7 +532,7 @@ test.skipIf(!ENABLED)(
     const ownedContainers = new Set<string>();
     const ownedVolumes = new Set<string>();
     const ownedNetworks = new Set<string>();
-    let inferenceContainerId: string | null = null;
+    let inferenceContainerId: string;
     let gpuDevices: readonly string[] = [];
     let gpuComputeProcesses: readonly GpuComputeProcess[] = [];
     let completed = false;
@@ -593,8 +590,11 @@ test.skipIf(!ENABLED)(
       pullPublicImage(inferenceEngine, agentImage);
       if (row.case.inference === "ollama") pullPublicImage(inferenceEngine, inference.imageRef);
       else {
+        if (!inference.cachePath || !path.isAbsolute(inference.cachePath)) {
+          throw new Error("Native runtime qualification GPU cache path must be absolute");
+        }
         requirePreloadedImage(inferenceEngine, inference.imageRef);
-        rootOwnedReadOnlyDirectory(inference.cachePath ?? "");
+        rootOwnedReadOnlyDirectory(inference.cachePath);
       }
       if (runnerContract) {
         requirePreloadedImage(inferenceEngine, runnerContract.gpuProbeImageRef);
@@ -914,14 +914,12 @@ test.skipIf(!ENABLED)(
         capture(lifecycleEngine, ["volume", "rm", volume], "qualification volume cleanup");
         ownedVolumes.delete(volume);
       }
-      if (inferenceContainerId) {
-        capture(
-          inferenceEngine,
-          ["rm", "--force", inferenceContainerId],
-          "inference runtime cleanup",
-        );
-        ownedContainers.delete(inferenceContainerId);
-      }
+      capture(
+        inferenceEngine,
+        ["rm", "--force", inferenceContainerId],
+        "inference runtime cleanup",
+      );
+      ownedContainers.delete(inferenceContainerId);
       capture(inferenceEngine, ["network", "rm", network.id], "provider network cleanup");
       ownedNetworks.delete(network.id);
       fs.rmSync(snapshot, { force: true });
@@ -985,7 +983,7 @@ test.skipIf(!ENABLED)(
       for (const obligation of row.case.obligations) {
         const details = operationDetails.get(obligation);
         if (!details) throw new Error(`Qualification operation '${obligation}' was not executed`);
-        writeJson(receiptDirectory, operationFile(obligation), {
+        writeJson(receiptDirectory, nativeRuntimeQualificationOperationFile(obligation), {
           schemaVersion: 1,
           kind: "nemoclaw-native-runtime-qualification-operation-v1",
           caseId: row.id,
@@ -1020,7 +1018,7 @@ test.skipIf(!ENABLED)(
         },
         operations: row.case.obligations.map((id) => ({
           id,
-          file: operationFile(id),
+          file: nativeRuntimeQualificationOperationFile(id),
         })),
         ...(row.case.acceleration === "nvidia-gpu"
           ? {

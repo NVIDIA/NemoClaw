@@ -93,13 +93,12 @@ describe("native runtime qualification producer workflow", () => {
       '"$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA"',
     );
     expect(source).toContain('"$WORKFLOW_REF" == "refs/heads/${head_ref}"');
-    expect(source).toContain(
-      '"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"',
-    );
+    expect(source).toContain('"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"');
   });
 
   it("runs each candidate case in an isolated account and emits one trusted artifact", () => {
     const producer = job("native-runtime-qualification-producer");
+    const harness = step(producer, "Check out the trusted qualification harness");
     const boundary = step(
       producer,
       "Prepare the credential-free execution account and disable Docker",
@@ -120,9 +119,17 @@ describe("native runtime qualification producer workflow", () => {
     expect(producer["runs-on"]).toBe("${{ matrix.runner }}");
     expect(producer.permissions).toEqual({ contents: "read" });
     expect(producer.strategy).toMatchObject({ "fail-fast": false });
+    expect(harness.with?.["sparse-checkout"]).toContain(
+      "tools/e2e/native-runtime-qualification-producer-plan.mts",
+    );
+    expect(harness.with?.["sparse-checkout"]).toContain(
+      "test/e2e/registry/native-runtime-qualification.ts",
+    );
     expect(source).not.toMatch(/NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u);
     expect(boundary.run).toContain("mask --runtime docker.service docker.socket");
     expect(boundary.run).toContain("useradd --create-home --shell /usr/sbin/nologin");
+    expect(boundary.run).toContain('install -d -m 0755 "$guard_dir"');
+    expect(boundary.run).toContain('chmod 0555 "$guard_dir/docker"');
     expect(boundaryRun.indexOf("printf 'account=%s")).toBeLessThan(
       boundaryRun.indexOf("useradd --create-home"),
     );
@@ -143,7 +150,8 @@ describe("native runtime qualification producer workflow", () => {
       'PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
     );
     expect(validate.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
-    expect(validate.run).toContain("sudo --preserve-env=");
+    expect(validate.run).toContain('sudo chown -R -h "$(id -u):$(id -g)"');
+    expect(validate.run).not.toContain("sudo --preserve-env=");
     expect(validate.run).toContain('"$NODE_DIRECTORY/node"');
     expect(validate.run).toContain("native-runtime-qualification-producer-evidence.mts");
     expect(upload.with).toMatchObject({
@@ -161,8 +169,10 @@ describe("native runtime qualification producer workflow", () => {
     const aggregate = job("native-runtime-qualification-producer-aggregate");
     const download = step(aggregate, "Download the exact case evidence cohort");
     const identity = step(aggregate, "Resolve this aggregate job identity");
+    const setupNode = step(aggregate, "Set up Node for qualification aggregation");
     const collect = step(aggregate, "Validate and aggregate all 24 case receipts");
     const upload = step(aggregate, "Upload the immutable aggregate evidence");
+    const aggregateCheckout = step(aggregate, "Check out the trusted qualification aggregator");
 
     expect(aggregate.name).toBe("Aggregate native runtime qualification evidence");
     expect(aggregate.needs).toEqual([
@@ -178,12 +188,15 @@ describe("native runtime qualification producer workflow", () => {
       contents: "read",
       "pull-requests": "read",
     });
+    expect(aggregateCheckout.with?.repository).toBe("${{ github.repository }}");
     expect(download.with).toMatchObject({
       pattern: "native-runtime-qualification-evidence-${{ inputs.checkout_sha }}-*",
       "merge-multiple": false,
     });
     expect(identity.run).toContain('.status == "in_progress"');
     expect(identity.run).toContain("select(length == 1)");
+    expect(identity.run).toContain("Aggregate job lookup exceeds the bounded 100-job page");
+    expect(setupNode.with?.["node-version"]).toBe("22.19.0");
     expect(collect.run).toContain("native-runtime-qualification-producer-aggregate.mts");
     expect(collect.env?.QUALIFICATION_PLAN).toBe(
       "${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}",

@@ -31,6 +31,15 @@ export const NATIVE_RUNTIME_QUALIFICATION_FOCUSED_OPERATIONS = [
   "cleanup",
 ] as const;
 
+export const NATIVE_RUNTIME_QUALIFICATION_ID =
+  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION.id;
+export const NATIVE_RUNTIME_QUALIFICATION_PROVIDER_ID =
+  PODMAN_PROTECTED_HOST_LOCAL_INFERENCE_QUALIFICATION.providerId;
+
+export function nativeRuntimeQualificationOperationFile(id: string): string {
+  return `operation-${id.replaceAll(".", "-")}.json`;
+}
+
 export interface NativeRuntimeQualificationDispatchArtifact {
   readonly id: string;
   readonly name: string;
@@ -132,6 +141,12 @@ function runnerForCase(entry: NativeRuntimeQualificationCase, arm64GpuRunner: st
 }
 
 function immutableCase(value: NativeRuntimeQualificationCase): NativeRuntimeQualificationCase {
+  const operationFiles = value.obligations.map(nativeRuntimeQualificationOperationFile);
+  if (new Set(operationFiles).size !== operationFiles.length) {
+    throw new Error(
+      `Native runtime qualification case '${value.id}' has colliding operation files`,
+    );
+  }
   return Object.freeze({
     ...value,
     capabilities: Object.freeze([...value.capabilities]),

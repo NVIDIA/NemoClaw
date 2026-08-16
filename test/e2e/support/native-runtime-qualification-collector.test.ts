@@ -137,7 +137,7 @@ function githubFixture(
     [`repos/${REPOSITORY}/pulls/9143`, pull],
     [`repos/${REPOSITORY}/commits/main`, { sha: NATIVE_QUALIFICATION_BASE_SHA }],
     [
-      `repos/${REPOSITORY}/actions/workflows/e2e.yaml`,
+      `repos/${REPOSITORY}/actions/workflows/${WORKFLOW.split("/").at(-1)!}`,
       { id: 101, path: WORKFLOW, state: "active" },
     ],
     [`repos/${REPOSITORY}/actions/runs/7001`, run],

@@ -19,7 +19,12 @@ import type {
   NativeRuntimeQualificationObligation,
   NativeRuntimeQualificationArtifactReceipt,
 } from "../../test/e2e/registry/native-runtime-qualification.ts";
-import type { NativeRuntimeQualificationProducerPlanRow } from "./native-runtime-qualification-producer-plan.mts";
+import {
+  nativeRuntimeQualificationOperationFile,
+  NATIVE_RUNTIME_QUALIFICATION_ID,
+  NATIVE_RUNTIME_QUALIFICATION_PROVIDER_ID,
+  type NativeRuntimeQualificationProducerPlanRow,
+} from "./native-runtime-qualification-producer-plan.mts";
 
 const MAX_RECEIPT_BYTES = 65_536;
 const MAX_INSTALLER_BYTES = 524_288;
@@ -36,7 +41,6 @@ const DETAIL_FILE = "case-evidence.json";
 const EXECUTION_FILE = "execution.json";
 const RUNTIME_FILE = "runtime-result.json";
 const CDI_FILE = "nvidia-cdi.json";
-const SHA256 = /^[a-f0-9]{64}$/u;
 const IMAGE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const SAFE_ENGINE = /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,127}$/u;
 const FORBIDDEN_RECEIPT_TEXT =
@@ -140,11 +144,7 @@ function record(value: unknown, label: string): UnknownRecord {
   return value as UnknownRecord;
 }
 
-function exactKeys(
-  value: UnknownRecord,
-  keys: readonly string[],
-  label: string,
-): void {
+function exactKeys(value: UnknownRecord, keys: readonly string[], label: string): void {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -152,11 +152,7 @@ function exactKeys(
   }
 }
 
-function exactStrings(
-  actual: unknown,
-  expected: readonly string[],
-  label: string,
-): void {
+function exactStrings(actual: unknown, expected: readonly string[], label: string): void {
   if (
     !Array.isArray(actual) ||
     actual.some((entry) => typeof entry !== "string") ||
@@ -172,27 +168,18 @@ function readBoundedBytes(file: string, maximum = MAX_RECEIPT_BYTES): Buffer {
     descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
     const status = fstatSync(descriptor);
     if (!status.isFile() || status.size < 1 || status.size > maximum) {
-      throw new Error(
-        `Native runtime qualification receipt is missing or invalid: ${file}`,
-      );
+      throw new Error(`Native runtime qualification receipt is missing or invalid: ${file}`);
     }
     const bytes = readFileSync(descriptor);
     if (FORBIDDEN_RECEIPT_TEXT.test(bytes.toString("utf8"))) {
-      throw new Error(
-        `Native runtime qualification receipt contains credential material: ${file}`,
-      );
+      throw new Error(`Native runtime qualification receipt contains credential material: ${file}`);
     }
     return bytes;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.startsWith("Native runtime qualification")
-    ) {
+    if (error instanceof Error && error.message.startsWith("Native runtime qualification")) {
       throw error;
     }
-    throw new Error(
-      `Native runtime qualification receipt is missing or invalid: ${file}`,
-    );
+    throw new Error(`Native runtime qualification receipt is missing or invalid: ${file}`);
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
@@ -203,49 +190,32 @@ function parseJsonBytes(bytes: Buffer, file: string): unknown {
     return JSON.parse(bytes.toString("utf8")) as unknown;
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error(
-        `Native runtime qualification receipt is not valid JSON: ${file}`,
-      );
+      throw new Error(`Native runtime qualification receipt is not valid JSON: ${file}`);
     }
     throw error;
   }
 }
 
-function validateDirectory(
-  directory: string,
-  expectedFiles: readonly string[],
-): void {
+function validateDirectory(directory: string, expectedFiles: readonly string[]): void {
   const status = lstatSync(directory, { throwIfNoEntry: false });
   if (!status?.isDirectory() || status.isSymbolicLink()) {
-    throw new Error(
-      `Native runtime qualification receipt directory is invalid: ${directory}`,
-    );
+    throw new Error(`Native runtime qualification receipt directory is invalid: ${directory}`);
   }
   const files = readdirSync(directory).sort();
   if (JSON.stringify(files) !== JSON.stringify([...expectedFiles].sort())) {
-    throw new Error(
-      `Native runtime qualification receipt files are invalid: ${directory}`,
-    );
+    throw new Error(`Native runtime qualification receipt files are invalid: ${directory}`);
   }
   let total = 0;
   for (const file of files) {
     const child = path.join(directory, file);
     const childStatus = lstatSync(child);
-    if (
-      !childStatus.isFile() ||
-      childStatus.isSymbolicLink() ||
-      childStatus.size < 1
-    ) {
-      throw new Error(
-        `Native runtime qualification receipt file is invalid: ${child}`,
-      );
+    if (!childStatus.isFile() || childStatus.isSymbolicLink() || childStatus.size < 1) {
+      throw new Error(`Native runtime qualification receipt file is invalid: ${child}`);
     }
     total += childStatus.size;
   }
   if (total > MAX_RECEIPT_DIRECTORY_BYTES) {
-    throw new Error(
-      `Native runtime qualification receipts exceed their size limit: ${directory}`,
-    );
+    throw new Error(`Native runtime qualification receipts exceed their size limit: ${directory}`);
   }
 }
 
@@ -269,13 +239,7 @@ function validateInstallerReceipts(
   );
   exactKeys(
     invocation,
-    [
-      "receiptVersion",
-      "script",
-      "scriptSha256",
-      "candidateSha",
-      "architecture",
-    ],
+    ["receiptVersion", "script", "scriptSha256", "candidateSha", "architecture"],
     "Installer invocation",
   );
   if (
@@ -285,27 +249,19 @@ function validateInstallerReceipts(
     invocation.candidateSha !== row.source.candidateSha ||
     invocation.architecture !== row.case.architecture
   ) {
-    throw new Error(
-      "Native runtime qualification installer invocation is invalid",
-    );
+    throw new Error("Native runtime qualification installer invocation is invalid");
   }
   const architecture = record(
     parseJsonBytes(receipts["architecture.json"], "architecture.json"),
     "Installer architecture",
   );
-  exactKeys(
-    architecture,
-    ["receiptVersion", "requested", "runner"],
-    "Installer architecture",
-  );
+  exactKeys(architecture, ["receiptVersion", "requested", "runner"], "Installer architecture");
   if (
     architecture.receiptVersion !== 1 ||
     architecture.requested !== row.case.architecture ||
     architecture.runner !== row.case.architecture
   ) {
-    throw new Error(
-      "Native runtime qualification installer architecture is invalid",
-    );
+    throw new Error("Native runtime qualification installer architecture is invalid");
   }
   const candidate = record(
     parseJsonBytes(receipts["candidate-source.json"], "candidate-source.json"),
@@ -345,9 +301,7 @@ function validateInstallerReceipts(
     installed.installMode !== "managed" ||
     installed.installerSha256 !== row.installerSha256
   ) {
-    throw new Error(
-      "Native runtime qualification installer source identity is invalid",
-    );
+    throw new Error("Native runtime qualification installer source identity is invalid");
   }
   const docker = record(
     parseJsonBytes(receipts["docker-absence.json"], "docker-absence.json"),
@@ -370,24 +324,18 @@ function validateInstallerReceipts(
     const value = record(docker[phase], `Installer Docker absence ${phase}`);
     exactKeys(value, requiredDockerKeys, `Installer Docker absence ${phase}`);
     if (requiredDockerKeys.some((key) => value[key] !== true)) {
-      throw new Error(
-        "Native runtime qualification installer Docker absence is invalid",
-      );
+      throw new Error("Native runtime qualification installer Docker absence is invalid");
     }
   }
   if (docker.receiptVersion !== 1) {
-    throw new Error(
-      "Native runtime qualification installer Docker absence is invalid",
-    );
+    throw new Error("Native runtime qualification installer Docker absence is invalid");
   }
   const installer = receipts["installer.sh"];
   if (
     !installer.toString("utf8").startsWith("#!/") ||
     createHash("sha256").update(installer).digest("hex") !== row.installerSha256
   ) {
-    throw new Error(
-      "Native runtime qualification installer receipt is invalid",
-    );
+    throw new Error("Native runtime qualification installer receipt is invalid");
   }
   return Object.freeze(receipts);
 }
@@ -396,10 +344,7 @@ function validateCaseExecution(
   row: NativeRuntimeQualificationProducerPlanRow,
   value: unknown,
 ): CaseExecutionReceipt {
-  const receipt = record(
-    value,
-    "Native runtime qualification execution receipt",
-  );
+  const receipt = record(value, "Native runtime qualification execution receipt");
   exactKeys(
     receipt,
     [
@@ -422,29 +367,15 @@ function validateCaseExecution(
     ],
     "Native runtime qualification execution receipt",
   );
-  const docker = record(
-    receipt.dockerUnavailable,
-    "Docker-unavailable execution receipt",
-  );
-  const credentials = record(
-    receipt.credentialBoundary,
-    "Credential-boundary execution receipt",
-  );
-  exactKeys(
-    docker,
-    ["beforeCandidate", "afterCandidate"],
-    "Docker-unavailable execution receipt",
-  );
+  const docker = record(receipt.dockerUnavailable, "Docker-unavailable execution receipt");
+  const credentials = record(receipt.credentialBoundary, "Credential-boundary execution receipt");
+  exactKeys(docker, ["beforeCandidate", "afterCandidate"], "Docker-unavailable execution receipt");
   exactKeys(
     credentials,
     ["githubCredentialsAbsent", "modelCredentialsAbsent", "isolatedUid"],
     "Credential-boundary execution receipt",
   );
-  exactStrings(
-    receipt.rootModes,
-    row.rootModes,
-    "Native runtime qualification root modes",
-  );
+  exactStrings(receipt.rootModes, row.rootModes, "Native runtime qualification root modes");
   exactStrings(
     receipt.obligations,
     row.case.obligations,
@@ -477,25 +408,17 @@ function validateCaseExecution(
     credentials.isolatedUid !== true ||
     receipt.result !== "passed"
   ) {
-    throw new Error(
-      "Native runtime qualification execution receipt identity is invalid",
-    );
+    throw new Error("Native runtime qualification execution receipt identity is invalid");
   }
   return receipt as unknown as CaseExecutionReceipt;
 }
 
-function operationFile(id: string): string {
-  return `operation-${id.replaceAll(".", "-")}.json`;
-}
-
-function expectedCaseFiles(
-  row: NativeRuntimeQualificationProducerPlanRow,
-): string[] {
+function expectedCaseFiles(row: NativeRuntimeQualificationProducerPlanRow): string[] {
   return [
     DETAIL_FILE,
     EXECUTION_FILE,
     RUNTIME_FILE,
-    ...row.case.obligations.map(operationFile),
+    ...row.case.obligations.map(nativeRuntimeQualificationOperationFile),
     ...(row.case.acceleration === "nvidia-gpu" ? [CDI_FILE] : []),
   ];
 }
@@ -509,10 +432,7 @@ function validateEvidencePayload(
     readonly operationId?: string;
   },
 ): void {
-  const value = record(
-    parseJsonBytes(bytes, file),
-    `Candidate evidence '${path.basename(file)}'`,
-  );
+  const value = record(parseJsonBytes(bytes, file), `Candidate evidence '${path.basename(file)}'`);
   exactKeys(
     value,
     [
@@ -531,12 +451,9 @@ function validateEvidencePayload(
     value.kind !== expected.kind ||
     value.caseId !== expected.caseId ||
     value.result !== "passed" ||
-    (expected.operationId !== undefined &&
-      value.operationId !== expected.operationId)
+    (expected.operationId !== undefined && value.operationId !== expected.operationId)
   ) {
-    throw new Error(
-      `Native runtime qualification candidate evidence is invalid: ${file}`,
-    );
+    throw new Error(`Native runtime qualification candidate evidence is invalid: ${file}`);
   }
 }
 
@@ -550,10 +467,7 @@ function validateCandidateDetails(
   const expectedFiles = expectedCaseFiles(row);
   validateDirectory(directory, expectedFiles);
   const receipts = Object.fromEntries(
-    expectedFiles.map((file) => [
-      file,
-      readBoundedBytes(path.join(directory, file)),
-    ]),
+    expectedFiles.map((file) => [file, readBoundedBytes(path.join(directory, file))]),
   ) as Record<string, Buffer>;
   const details = record(
     parseJsonBytes(receipts[DETAIL_FILE]!, DETAIL_FILE),
@@ -590,9 +504,7 @@ function validateCandidateDetails(
     runtime.managedImages.length < 2 ||
     runtime.managedImages.length > 8
   ) {
-    throw new Error(
-      "Native runtime qualification candidate runtime details are invalid",
-    );
+    throw new Error("Native runtime qualification candidate runtime details are invalid");
   }
   const roles = new Set<string>();
   for (const entry of runtime.managedImages) {
@@ -605,9 +517,7 @@ function validateCandidateDetails(
       typeof image.digest !== "string" ||
       !IMAGE_DIGEST.test(image.digest)
     ) {
-      throw new Error(
-        "Native runtime qualification candidate managed image is invalid",
-      );
+      throw new Error("Native runtime qualification candidate managed image is invalid");
     }
     roles.add(image.role);
   }
@@ -615,13 +525,11 @@ function validateCandidateDetails(
     !Array.isArray(details.operations) ||
     details.operations.length !== row.case.obligations.length
   ) {
-    throw new Error(
-      "Native runtime qualification candidate operations are incomplete",
-    );
+    throw new Error("Native runtime qualification candidate operations are incomplete");
   }
   const expectedOperations = row.case.obligations.map((id) => ({
     id,
-    file: operationFile(id),
+    file: nativeRuntimeQualificationOperationFile(id),
   }));
   for (const [index, entry] of details.operations.entries()) {
     const operation = record(entry, "Candidate operation detail");
@@ -649,9 +557,7 @@ function validateCandidateDetails(
     const cdi = record(details.nvidiaCdi, "Candidate NVIDIA CDI details");
     exactKeys(cdi, ["device", "file"], "Candidate NVIDIA CDI details");
     if (cdi.device !== "nvidia.com/gpu=all" || cdi.file !== CDI_FILE) {
-      throw new Error(
-        "Native runtime qualification candidate NVIDIA CDI details are invalid",
-      );
+      throw new Error("Native runtime qualification candidate NVIDIA CDI details are invalid");
     }
     validateEvidencePayload(receipts[CDI_FILE]!, CDI_FILE, {
       caseId: row.id,
@@ -689,26 +595,16 @@ export function writeNativeRuntimeQualificationProducerEvidence(
   executionReceiptPath: string,
   evidenceDirectory: string,
 ): void {
-  const installerBytes = validateInstallerReceipts(
-    row,
-    installerReceiptDirectory,
-  );
+  const installerBytes = validateInstallerReceipts(row, installerReceiptDirectory);
   const executionDirectory = path.dirname(executionReceiptPath);
   if (path.basename(executionReceiptPath) !== EXECUTION_FILE) {
-    throw new Error(
-      "Native runtime qualification execution receipt path is invalid",
-    );
+    throw new Error("Native runtime qualification execution receipt path is invalid");
   }
   const candidate = validateCandidateDetails(row, executionDirectory);
-  validateCaseExecution(
-    row,
-    parseJsonBytes(candidate.receipts[EXECUTION_FILE]!, EXECUTION_FILE),
-  );
+  validateCaseExecution(row, parseJsonBytes(candidate.receipts[EXECUTION_FILE]!, EXECUTION_FILE));
   const { details } = candidate;
   if (lstatSync(evidenceDirectory, { throwIfNoEntry: false })) {
-    throw new Error(
-      "Native runtime qualification evidence directory must not already exist",
-    );
+    throw new Error("Native runtime qualification evidence directory must not already exist");
   }
   const parent = path.dirname(evidenceDirectory);
   const parentStatus = lstatSync(parent, { throwIfNoEntry: false });
@@ -724,23 +620,16 @@ export function writeNativeRuntimeQualificationProducerEvidence(
   const installerReceipts = Object.fromEntries(
     EXPECTED_INSTALLER_FILES.map((file) => [
       file,
-      copyReceipt(
-        installerBytes[file],
-        evidenceDirectory,
-        receiptPath(row.id, "installer", file),
-      ),
+      copyReceipt(installerBytes[file], evidenceDirectory, receiptPath(row.id, "installer", file)),
     ]),
-  ) as Record<
-    (typeof EXPECTED_INSTALLER_FILES)[number],
-    NativeRuntimeQualificationArtifactReceipt
-  >;
+  ) as Record<(typeof EXPECTED_INSTALLER_FILES)[number], NativeRuntimeQualificationArtifactReceipt>;
   const runtimeReceipt = copyReceipt(
     candidate.receipts[RUNTIME_FILE]!,
     evidenceDirectory,
     receiptPath(row.id, "runtime", RUNTIME_FILE),
   );
   const operations = row.case.obligations.map((id) => {
-    const file = operationFile(id);
+    const file = nativeRuntimeQualificationOperationFile(id);
     return Object.freeze({
       id,
       artifact: copyReceipt(
@@ -758,11 +647,11 @@ export function writeNativeRuntimeQualificationProducerEvidence(
           receiptPath(row.id, "runtime", CDI_FILE),
         )
       : undefined;
-  const providerId = row.case.id.slice(0, row.case.id.indexOf("-"));
+  const providerId = NATIVE_RUNTIME_QUALIFICATION_PROVIDER_ID;
   const fragment: NativeRuntimeQualificationCaseFragment = Object.freeze({
     schemaVersion: 1,
     kind: "nemoclaw-native-runtime-qualification-case-fragment-v1",
-    qualificationId: `${providerId}-protected-host-local-inference`,
+    qualificationId: NATIVE_RUNTIME_QUALIFICATION_ID,
     providerId,
     source: row.source,
     case: row.case,
@@ -784,9 +673,7 @@ export function writeNativeRuntimeQualificationProducerEvidence(
       engineName: details.runtime.engineName,
       engineVersion: details.runtime.engineVersion,
       managedImages: Object.freeze(
-        details.runtime.managedImages.map((entry) =>
-          Object.freeze({ ...entry }),
-        ),
+        details.runtime.managedImages.map((entry) => Object.freeze({ ...entry })),
       ),
       result: runtimeReceipt,
     }),
@@ -810,16 +697,10 @@ export function writeNativeRuntimeQualificationProducerEvidence(
   );
 }
 
-if (
-  process.argv[1]?.endsWith(
-    "native-runtime-qualification-producer-evidence.mts",
-  )
-) {
+if (process.argv[1]?.endsWith("native-runtime-qualification-producer-evidence.mts")) {
   try {
     if (process.argv.length !== 2) {
-      throw new Error(
-        "Usage: native-runtime-qualification-producer-evidence.mts",
-      );
+      throw new Error("Usage: native-runtime-qualification-producer-evidence.mts");
     }
     const row = JSON.parse(
       process.env.QUALIFICATION_ROW ?? "null",
@@ -831,9 +712,7 @@ if (
       process.env.EVIDENCE_DIRECTORY ?? "",
     );
   } catch (error) {
-    console.error(
-      `::error::${error instanceof Error ? error.message : String(error)}`,
-    );
+    console.error(`::error::${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   }
 }

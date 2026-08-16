@@ -36,11 +36,12 @@ const SOURCE = {
 } as const;
 
 function row() {
-  return buildNativeRuntimeQualificationProducerPlan({
+  const plan = buildNativeRuntimeQualificationProducerPlan({
     source: SOURCE,
     installerSha256: "d".repeat(64),
     arm64GpuRunner: "native-arm64-gpu",
-  } satisfies NativeRuntimeQualificationProducerPlanInput).include[0]!;
+  } satisfies NativeRuntimeQualificationProducerPlanInput);
+  return plan.include.find((entry) => entry.id === "podman-hermes-linux-amd64-cpu-ollama")!;
 }
 
 function runnerContract() {

@@ -8,9 +8,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW } from "../../../src/lib/onboard/runtime-provider/native-qualification-authority.ts";
 import { writeNativeRuntimeQualificationProducerEvidence } from "../../../tools/e2e/native-runtime-qualification-producer-evidence.mts";
 import {
   buildNativeRuntimeQualificationProducerPlan,
+  nativeRuntimeQualificationOperationFile,
   NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE,
 } from "../../../tools/e2e/native-runtime-qualification-producer-plan.mts";
 
@@ -18,13 +20,13 @@ const roots: string[] = [];
 const INSTALLER = "#!/usr/bin/env bash\nexit 0\n";
 const INSTALLER_SHA256 = createHash("sha256").update(INSTALLER).digest("hex");
 
-function fixture() {
+function fixture(options: { readonly gpu?: boolean } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-runtime-producer-evidence-"));
   roots.push(root);
-  const row = buildNativeRuntimeQualificationProducerPlan({
+  const plan = buildNativeRuntimeQualificationProducerPlan({
     source: {
       repository: "NVIDIA/NemoClaw",
-      producerWorkflow: ".github/workflows/e2e.yaml",
+      producerWorkflow: NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
       pullRequestNumber: 8064,
       candidateRepository: "NVIDIA/NemoClaw",
       candidateSha: "a".repeat(40),
@@ -42,7 +44,12 @@ function fixture() {
     },
     installerSha256: INSTALLER_SHA256,
     arm64GpuRunner: "reviewed-native-arm64-gpu-runner",
-  }).include.find((entry) => entry.id === NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE)!;
+  });
+  const row = options.gpu
+    ? plan.include.find(
+        (entry) => entry.case.architecture === "amd64" && entry.case.acceleration === "nvidia-gpu",
+      )!
+    : plan.include.find((entry) => entry.id === NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE)!;
   const installerDirectory = path.join(root, "installer");
   const executionDirectory = path.join(root, "candidate");
   const executionPath = path.join(executionDirectory, "execution.json");
@@ -82,7 +89,11 @@ function fixture() {
   );
   fs.writeFileSync(
     path.join(installerDirectory, "architecture.json"),
-    JSON.stringify({ receiptVersion: 1, requested: "amd64", runner: "amd64" }),
+    JSON.stringify({
+      receiptVersion: 1,
+      requested: row.case.architecture,
+      runner: row.case.architecture,
+    }),
   );
   const dockerPosture = {
     dockerCommandGuarded: true,
@@ -123,7 +134,6 @@ function fixture() {
     result: "passed",
   };
   fs.writeFileSync(executionPath, JSON.stringify(execution));
-  const operationFile = (id: string) => `operation-${id.replaceAll(".", "-")}.json`;
   fs.writeFileSync(
     path.join(executionDirectory, "runtime-result.json"),
     JSON.stringify({
@@ -136,7 +146,7 @@ function fixture() {
   );
   for (const id of row.case.obligations) {
     fs.writeFileSync(
-      path.join(executionDirectory, operationFile(id)),
+      path.join(executionDirectory, nativeRuntimeQualificationOperationFile(id)),
       JSON.stringify({
         schemaVersion: 1,
         kind: "nemoclaw-native-runtime-qualification-operation-v1",
@@ -144,6 +154,18 @@ function fixture() {
         operationId: id,
         result: "passed",
         details: { proof: id },
+      }),
+    );
+  }
+  if (row.case.acceleration === "nvidia-gpu") {
+    fs.writeFileSync(
+      path.join(executionDirectory, "nvidia-cdi.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: "nemoclaw-native-runtime-qualification-nvidia-cdi-v1",
+        caseId: row.id,
+        result: "passed",
+        details: { device: "nvidia.com/gpu=all" },
       }),
     );
   }
@@ -162,7 +184,13 @@ function fixture() {
         ],
         resultFile: "runtime-result.json",
       },
-      operations: row.case.obligations.map((id) => ({ id, file: operationFile(id) })),
+      operations: row.case.obligations.map((id) => ({
+        id,
+        file: nativeRuntimeQualificationOperationFile(id),
+      })),
+      ...(row.case.acceleration === "nvidia-gpu"
+        ? { nvidiaCdi: { device: "nvidia.com/gpu=all", file: "nvidia-cdi.json" } }
+        : {}),
     }),
   );
   return { evidenceDirectory, execution, executionPath, installerDirectory, root, row };
@@ -209,18 +237,45 @@ describe("native runtime qualification producer evidence", () => {
         providerId: "podman",
       },
     });
-    expect(fs.statSync(path.join(value.evidenceDirectory, "case-fragment.json")).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.join(value.evidenceDirectory, "case-fragment.json")).mode & 0o777).toBe(
+      0o600,
+    );
     expect(
       fs.existsSync(
-        path.join(
-          value.evidenceDirectory,
-          "receipts",
-          value.row.id,
-          "installer",
-          "installer.sh",
-        ),
+        path.join(value.evidenceDirectory, "receipts", value.row.id, "installer", "installer.sh"),
       ),
     ).toBe(true);
+    const fragment = JSON.parse(
+      fs.readFileSync(path.join(value.evidenceDirectory, "case-fragment.json"), "utf8"),
+    ) as { installer: { script: { path: string; sha256: string } } };
+    const copied = fs.readFileSync(
+      path.join(value.evidenceDirectory, fragment.installer.script.path),
+    );
+    expect(createHash("sha256").update(copied).digest("hex")).toBe(
+      fragment.installer.script.sha256,
+    );
+  });
+
+  it("emits the NVIDIA CDI receipt for a GPU case", () => {
+    const value = fixture({ gpu: true });
+
+    writeNativeRuntimeQualificationProducerEvidence(
+      value.row,
+      value.installerDirectory,
+      value.executionPath,
+      value.evidenceDirectory,
+    );
+
+    const fragment = JSON.parse(
+      fs.readFileSync(path.join(value.evidenceDirectory, "case-fragment.json"), "utf8"),
+    ) as { nvidiaCdi: { artifact: { path: string; sha256: string } } };
+    const copied = fs.readFileSync(
+      path.join(value.evidenceDirectory, fragment.nvidiaCdi.artifact.path),
+    );
+    expect(fragment.nvidiaCdi.artifact.path).toContain("/runtime/nvidia-cdi.json");
+    expect(createHash("sha256").update(copied).digest("hex")).toBe(
+      fragment.nvidiaCdi.artifact.sha256,
+    );
   });
 
   it.each([
@@ -319,7 +374,10 @@ describe("native runtime qualification producer evidence", () => {
 
   it("rejects an unexpected candidate-controlled receipt file", () => {
     const value = fixture();
-    fs.writeFileSync(path.join(path.dirname(value.executionPath), "candidate.log"), "candidate output");
+    fs.writeFileSync(
+      path.join(path.dirname(value.executionPath), "candidate.log"),
+      "candidate output",
+    );
 
     expect(() =>
       writeNativeRuntimeQualificationProducerEvidence(

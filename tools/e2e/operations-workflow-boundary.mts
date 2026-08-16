@@ -393,8 +393,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
-    matrixJob.outputs?.e2e_credentials_allowed !==
-      "${{ steps.e2e_credentials.outputs.allowed }}" ||
+    matrixJob.outputs?.e2e_credentials_allowed !== "${{ steps.e2e_credentials.outputs.allowed }}" ||
     credentialAuthorization.id !== "e2e_credentials" ||
     credentialAuthorization.if !==
       "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
@@ -411,12 +410,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     WORKFLOW_REPOSITORY: "${{ github.repository }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
-  if (
-    !isDeepStrictEqual(
-      credentialAuthorization.env,
-      expectedCredentialAuthorizationEnvironment,
-    )
-  ) {
+  if (!isDeepStrictEqual(credentialAuthorization.env, expectedCredentialAuthorizationEnvironment)) {
     errors.push(
       "Manual PR credential authorization must bind the workflow and checkout identities",
     );
@@ -495,19 +489,20 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
       const trustedNativeRuntimeCheckout =
-        ((jobName === "native-runtime-qualification-producer-plan" &&
+        (jobName === "native-runtime-qualification-producer-plan" &&
           step.name === "Check out the trusted qualification producer" &&
           step.with?.ref === "${{ github.workflow_sha }}") ||
-          (jobName === "native-runtime-qualification-producer" &&
-            step.name === "Check out the trusted qualification harness" &&
-            step.with?.ref === "${{ matrix.source.workflowSha }}") ||
-          (jobName === "native-runtime-qualification-producer" &&
-            step.name === "Check out the candidate commit" &&
-            step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
-            step.with?.ref === "${{ matrix.source.candidateSha }}") ||
-          (jobName === "native-runtime-qualification-producer-aggregate" &&
-            step.name === "Check out the trusted qualification aggregator" &&
-            step.with?.ref === "${{ github.workflow_sha }}"));
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the trusted qualification harness" &&
+          step.with?.ref === "${{ matrix.source.workflowSha }}") ||
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the candidate commit" &&
+          step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
+          step.with?.ref === "${{ matrix.source.candidateSha }}") ||
+        (jobName === "native-runtime-qualification-producer-aggregate" &&
+          step.name === "Check out the trusted qualification aggregator" &&
+          step.with?.repository === "${{ github.repository }}" &&
+          step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||

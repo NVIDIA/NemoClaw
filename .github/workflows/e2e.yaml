@@ -1046,7 +1046,10 @@ jobs:
           path: .trusted-qualification
           persist-credentials: false
           sparse-checkout: |
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
             scripts/checks/run-native-runtime-installer-qualification.sh
+            test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-producer-plan.mts
             tools/e2e/native-runtime-qualification-producer-evidence.mts
           sparse-checkout-cone-mode: false
 
@@ -1103,9 +1106,9 @@ jobs:
             exit 1
           }
           guard_dir="${RUNNER_TEMP}/native-runtime-docker-guard"
-          install -d -m 0700 "$guard_dir"
+          install -d -m 0755 "$guard_dir"
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
-          chmod 0500 "$guard_dir/docker"
+          chmod 0555 "$guard_dir/docker"
           printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
@@ -1212,10 +1215,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo --preserve-env=EVIDENCE_DIRECTORY,EXECUTION_RECEIPT_PATH,INSTALLER_RECEIPT_DIRECTORY,QUALIFICATION_ROW \
-            "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
+          sudo chown -R -h "$(id -u):$(id -g)" \
+            "$INSTALLER_RECEIPT_DIRECTORY" \
+            "$(dirname "$EXECUTION_RECEIPT_PATH")"
+          "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
             .trusted-qualification/tools/e2e/native-runtime-qualification-producer-evidence.mts
-          sudo chown -R "$(id -u):$(id -g)" "$EVIDENCE_DIRECTORY"
 
       - name: Remove qualification resources
         if: always()
@@ -1260,12 +1264,14 @@ jobs:
       - name: Check out the trusted qualification aggregator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.repository }}
           ref: ${{ github.workflow_sha }}
           path: .trusted-qualification-aggregate
           persist-credentials: false
           sparse-checkout: |
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-producer-plan.mts
             tools/e2e/native-runtime-qualification-producer-aggregate.mts
           sparse-checkout-cone-mode: false
 
@@ -1288,11 +1294,18 @@ jobs:
           jobs="$(gh api --method GET \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}/attempts/${PRODUCER_RUN_ATTEMPT}/jobs" \
             -f per_page=100)"
+          total_count="$(jq -er '.total_count | select(type == "number" and . >= 1)' <<<"$jobs")" || {
+            echo "::error::Aggregate job lookup returned an invalid job count" >&2
+            exit 1
+          }
+          (( total_count <= 100 )) || {
+            echo "::error::Aggregate job lookup exceeds the bounded 100-job page" >&2
+            exit 1
+          }
           job_id="$(jq -er \
             --arg name 'Aggregate native runtime qualification evidence' \
             --argjson runId "$PRODUCER_RUN_ID" \
             --argjson attempt "$PRODUCER_RUN_ATTEMPT" '
-              select(.total_count <= 100) |
               [.jobs[] | select(
                 .name == $name and
                 .run_id == $runId and
@@ -1310,6 +1323,11 @@ jobs:
             exit 1
           }
           printf 'job_id=%s\n' "$job_id" >>"$GITHUB_OUTPUT"
+
+      - name: Set up Node for qualification aggregation
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
 
       - name: Validate and aggregate all 24 case receipts
         working-directory: .trusted-qualification-aggregate

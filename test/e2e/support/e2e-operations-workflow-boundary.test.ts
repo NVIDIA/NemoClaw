@@ -350,15 +350,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         writeFileSync(output, "");
         const result = spawnSync(
           "bash",
-          [
-            "--noprofile",
-            "--norc",
-            "-e",
-            "-o",
-            "pipefail",
-            "-c",
-            credentialAuthorization.run!,
-          ],
+          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", credentialAuthorization.run!],
           {
             encoding: "utf8",
             env: {
@@ -376,7 +368,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(`allowed=${expectedAllowed ? "true" : "false"}\n`);
+        expect(readFileSync(output, "utf8")).toBe(
+          `allowed=${expectedAllowed ? "true" : "false"}\n`,
+        );
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -500,12 +494,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
   it.each([
     ["admin", "refs/heads/feat/native", 0, ""],
-    [
-      "maintain",
-      "refs/heads/feat/native",
-      1,
-      "requires a repository administrator",
-    ],
+    ["maintain", "refs/heads/feat/native", 1, "requires a repository administrator"],
     ["admin", "refs/heads/feat/other", 1, "must match the exact PR head branch"],
   ])(
     "requires admin-bound exact-head candidate workflow execution for %s on %s",

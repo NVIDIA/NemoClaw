@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW } from "../../../src/lib/onboard/runtime-provider/native-qualification-authority.ts";
 import {
   aggregateNativeRuntimeQualificationProducerEvidence,
   NATIVE_RUNTIME_QUALIFICATION_AGGREGATE_EVIDENCE_FILE,
@@ -15,6 +16,7 @@ import {
 import { writeNativeRuntimeQualificationProducerEvidence } from "../../../tools/e2e/native-runtime-qualification-producer-evidence.mts";
 import {
   buildNativeRuntimeQualificationProducerPlan,
+  nativeRuntimeQualificationOperationFile,
   type NativeRuntimeQualificationProducerPlanRow,
 } from "../../../tools/e2e/native-runtime-qualification-producer-plan.mts";
 
@@ -25,10 +27,6 @@ const AGGREGATE_TEST_OPTIONS = { timeout: 15_000 } as const;
 
 function writeJson(file: string, value: unknown): void {
   fs.writeFileSync(file, `${JSON.stringify(value)}\n`);
-}
-
-function operationFile(id: string): string {
-  return `operation-${id.replaceAll(".", "-")}.json`;
 }
 
 function installerReceipts(
@@ -114,7 +112,7 @@ function candidateReceipts(
     details: { engineAuthority: `podman-sha256:${"9".repeat(64)}` },
   });
   for (const id of row.case.obligations) {
-    writeJson(path.join(directory, operationFile(id)), {
+    writeJson(path.join(directory, nativeRuntimeQualificationOperationFile(id)), {
       schemaVersion: 1,
       kind: "nemoclaw-native-runtime-qualification-operation-v1",
       caseId: row.id,
@@ -147,7 +145,7 @@ function candidateReceipts(
     },
     operations: row.case.obligations.map((id) => ({
       id,
-      file: operationFile(id),
+      file: nativeRuntimeQualificationOperationFile(id),
     })),
     ...(row.case.acceleration === "nvidia-gpu"
       ? { nvidiaCdi: { device: "nvidia.com/gpu=all", file: "nvidia-cdi.json" } }
@@ -162,7 +160,7 @@ function fixture() {
   const plan = buildNativeRuntimeQualificationProducerPlan({
     source: {
       repository: "NVIDIA/NemoClaw",
-      producerWorkflow: ".github/workflows/e2e.yaml",
+      producerWorkflow: NATIVE_RUNTIME_QUALIFICATION_PRODUCER_WORKFLOW,
       pullRequestNumber: 9144,
       candidateRepository: "NVIDIA/NemoClaw",
       candidateSha: "a".repeat(40),

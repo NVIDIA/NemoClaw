@@ -112,10 +112,7 @@ function isExactManagedImageBuildCacheUpload(jobName: string, step: WorkflowStep
   );
 }
 
-function isExactReleaseQualificationWaiverUpload(
-  jobName: string,
-  step: WorkflowStep,
-): boolean {
+function isExactReleaseQualificationWaiverUpload(jobName: string, step: WorkflowStep): boolean {
   return (
     jobName === "release-qualification" &&
     isDeepStrictEqual(step, RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT)
