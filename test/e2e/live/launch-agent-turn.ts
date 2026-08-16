@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -979,7 +980,7 @@ export async function runOpenClawLaunchSession(
       NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
       NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
       NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
-      NEMOCLAW_LAUNCH_HOST_TMP_ROOT: options.env.TMPDIR ?? "/tmp",
+      NEMOCLAW_LAUNCH_HOST_TMP_ROOT: resolve(options.env.TMPDIR || "/tmp"),
       NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",

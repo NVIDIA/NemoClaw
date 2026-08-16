@@ -23,9 +23,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   LAUNCH_TURN_SCRIPT,
   OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
@@ -1015,6 +1015,35 @@ it.runIf(process.platform === "linux")(
     expect(commandCallCount).toBe(0);
   },
 );
+
+it("passes an absolute host temporary root for empty, relative, or absolute TMPDIR input (#9160)", async () => {
+  const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+  const roots: Array<string | undefined> = [];
+  const host = {
+    command: async (_command: string, _args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+      roots.push(options?.env?.NEMOCLAW_LAUNCH_HOST_TMP_ROOT);
+      return { exitCode: 0, signal: null, stdout: "", stderr: "" };
+    },
+    openshellCommandPath: "/usr/bin/openshell",
+  };
+
+  try {
+    for (const root of ["", "relative-tmp", "/tmp/absolute-tmp"]) {
+      await runOpenClawLaunchSession({
+        artifactName: "host-temporary-root",
+        cliCommand: "node",
+        env: { TMPDIR: root },
+        host: host as never,
+        redactionValues: [],
+        sandboxName: "alpha",
+      });
+    }
+
+    expect(roots).toEqual([resolve("/tmp"), resolve("relative-tmp"), "/tmp/absolute-tmp"]);
+  } finally {
+    platform.mockRestore();
+  }
+});
 
 it.runIf(process.platform === "linux")(
   "runs the producer then two PTY launch sessions under one lease (#8942, #9023, #9160)",
