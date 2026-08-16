@@ -137,15 +137,17 @@ function replacementReentryState(profile: "default" | "portable", phase: string)
   });
   fs.mkdirSync(path.dirname(sessionFile), { mode: 0o700, recursive: true });
   fs.writeFileSync(sessionFile, `${JSON.stringify(stored)}\n`, { mode: 0o600 });
-  if (profile === "portable") {
-    fs.mkdirSync(configDir, { mode: 0o700, recursive: true });
-    fs.writeFileSync(configFile, "[engine]\nreplacement=true\n", { mode: 0o600 });
-    if (phase !== "config") {
-      fs.mkdirSync(receiptDir, { mode: 0o700, recursive: true });
-      fs.writeFileSync(path.join(receiptDir, receiptName), "{}\n", { mode: 0o600 });
-    }
-  }
-  if (phase === "registry" || phase === "pre-complete")
+  profile === "portable" &&
+    (() => {
+      fs.mkdirSync(configDir, { mode: 0o700, recursive: true });
+      fs.writeFileSync(configFile, "[engine]\nreplacement=true\n", { mode: 0o600 });
+      phase !== "config" &&
+        (() => {
+          fs.mkdirSync(receiptDir, { mode: 0o700, recursive: true });
+          fs.writeFileSync(path.join(receiptDir, receiptName), "{}\n", { mode: 0o600 });
+        })();
+    })();
+  (phase === "registry" || phase === "pre-complete") &&
     fs.writeFileSync(registryFile, "{}\n", { mode: 0o600 });
   const record = path.join(stateDir, "portable-uninstall-retirement.json");
   return {

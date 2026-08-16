@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createSession } from "../../state/onboard-session";
@@ -352,8 +352,8 @@ function stageRetirementTarget(
   }[role];
   const unlink = fs.unlinkSync.bind(fs);
   vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-    if (String(target).includes(`.${basename}.portable-uninstall-`))
-      throw new Error(`injected ${role} retirement crash`);
+    String(target).includes(`.${basename}.portable-uninstall-`) &&
+      assert.fail(`injected ${role} retirement crash`);
     unlink(target);
   });
   expect(() =>
@@ -500,10 +500,12 @@ function resumableReplacementAuthority(
     session.machine.state = state;
     session.checkpoint.machineState = state;
   });
-  if (portable && phase === "config") {
-    fs.rmSync(path.join(test.stateDir, "portable-demo-lifecycle"), { recursive: true });
-  }
-  if (phase === "config" || phase === "receipt") fs.unlinkSync(test.registryFile);
+  portable &&
+    phase === "config" &&
+    (() => {
+      fs.rmSync(path.join(test.stateDir, "portable-demo-lifecycle"), { recursive: true });
+    })();
+  (phase === "config" || phase === "receipt") && fs.unlinkSync(test.registryFile);
   return authority;
 }
 
@@ -607,11 +609,9 @@ describe("portable runtime uninstall cleanup", () => {
     );
     expect(resumed).toBe(true);
     expect(fs.existsSync(record)).toBe(true);
-    if (!portable && (phase === "config" || phase === "receipt")) {
-      expect(hasPortableRuntimeCleanup(test.stateDir)).toBe(true);
-    } else {
-      expect(() => hasPortableRuntimeCleanup(test.stateDir)).toThrow();
-    }
+    !portable && (phase === "config" || phase === "receipt")
+      ? expect(hasPortableRuntimeCleanup(test.stateDir)).toBe(true)
+      : expect(() => hasPortableRuntimeCleanup(test.stateDir)).toThrow();
     completedOnboardAuthority(test, portable);
     await withPortableOnboardRetirementBoundary(authority.boundary, () => {}, authority.deps);
     expect(fs.existsSync(record)).toBe(false);
@@ -663,9 +663,9 @@ describe("portable runtime uninstall cleanup", () => {
         ".portable-uninstall-retirement.superseded.cleanup",
       );
       fs.linkSync(record, superseded);
-      if (fixedState === "RC+S") fs.renameSync(record, canonicalCleanup);
-      if (fixedState === "S" || fixedState === "SC") fs.unlinkSync(record);
-      if (fixedState === "SC") fs.renameSync(superseded, supersededCleanup);
+      fixedState === "RC+S" && fs.renameSync(record, canonicalCleanup);
+      (fixedState === "S" || fixedState === "SC") && fs.unlinkSync(record);
+      fixedState === "SC" && fs.renameSync(superseded, supersededCleanup);
 
       await supersedeCompleted(authority);
 

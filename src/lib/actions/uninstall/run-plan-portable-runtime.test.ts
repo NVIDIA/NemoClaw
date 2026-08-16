@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 import {
   withProvenManagedGatewayProcess,
   writeManagedGatewayRuntimeProof,
@@ -852,12 +852,9 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
       fs.writeFileSync(config, "[engine]\n", { mode: 0o600 });
       const unlink = fs.unlinkSync.bind(fs);
       vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-        if (
-          String(target).includes(
-            `.${crashTarget === "config" ? "containers.conf" : "sandboxes.json"}.portable-uninstall-`,
-          )
-        )
-          throw new Error("injected registry retirement crash");
+        String(target).includes(
+          `.${crashTarget === "config" ? "containers.conf" : "sandboxes.json"}.portable-uninstall-`,
+        ) && assert.fail("injected registry retirement crash");
         unlink(target);
       });
       expect(() =>
@@ -894,7 +891,7 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
         runPortableRuntimeCleanupTransaction: (input, continueAfterSandboxRemoval) =>
           runPortableRuntimeCleanupTransaction(input, continueAfterSandboxRemoval, {
             withRegistryLock: (_registryFile, operation) => {
-              if (!stagedObserved) expect(fs.existsSync(stage)).toBe(true);
+              !stagedObserved && expect(fs.existsSync(stage)).toBe(true);
               stagedObserved = true;
               return operation();
             },

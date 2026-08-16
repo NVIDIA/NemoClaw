@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import {
   hasPortableRetirementRecord,
@@ -224,7 +224,7 @@ describe("portable uninstall retirement state", () => {
     const test = fixture();
     const rename = fs.renameSync.bind(fs);
     vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-      if (String(source) === test.config) throw new Error("pause before target retirement");
+      String(source) === test.config && assert.fail("pause before target retirement");
       rename(source, destination);
     });
     expect(() => publishAndRetirePortableEvidence(prepareFixture(test))).toThrow(/pause/);
@@ -245,8 +245,8 @@ describe("portable uninstall retirement state", () => {
     const staged = fixture();
     const unlink = fs.unlinkSync.bind(fs);
     vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-      if (String(target).includes(`.${RECEIPT_BASENAME}.portable-uninstall-`))
-        throw new Error("injected staged receipt crash");
+      String(target).includes(`.${RECEIPT_BASENAME}.portable-uninstall-`) &&
+        assert.fail("injected staged receipt crash");
       unlink(target);
     });
     expect(() => publishAndRetirePortableEvidence(prepareFixture(staged))).toThrow(/injected/);
@@ -348,7 +348,7 @@ describe("portable uninstall retirement state", () => {
     fs.linkSync(temporary, record);
     const unlink = fs.unlinkSync.bind(fs);
     vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-      if (String(target).endsWith(".tmp.cleanup"))
+      String(target).endsWith(".tmp.cleanup") &&
         fs.linkSync(record, path.join(test.stateDir, "unexpected-survivor-link"));
       unlink(target);
     });
@@ -360,7 +360,7 @@ describe("portable uninstall retirement state", () => {
     const superseded = path.join(scope.test.stateDir, ".portable-uninstall-retirement.superseded");
     const unlink = fs.unlinkSync.bind(fs);
     vi.spyOn(fs, "unlinkSync").mockImplementation((target) => {
-      if (String(target).endsWith(".canonical.cleanup"))
+      String(target).endsWith(".canonical.cleanup") &&
         fs.linkSync(superseded, path.join(scope.test.stateDir, "unexpected-survivor-link"));
       unlink(target);
     });
