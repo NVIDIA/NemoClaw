@@ -21,6 +21,8 @@ export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 export const CLI_ARTIFACT_PRODUCER_JOB = E2E_JOB_POLICY.cliArtifactProducer;
 const PREINSTALLED_E2E_JOBS = new Set(["staging-brev-launchable"]);
+const NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION =
+  "${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 
 export const PREPARE_E2E_NO_BUILD_JOBS = new Set<string>(E2E_JOB_POLICY.prepareNoBuild);
@@ -155,7 +157,19 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
     if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
       errors.push(`${jobName} prepare-e2e must set build-cli to false`);
     }
-    const allowedKeys = shouldBuild ? ["name", "uses"] : ["name", "uses", "with"];
+    if (
+      jobName === "generate-matrix" &&
+      prepare.if !== NATIVE_RUNTIME_QUALIFICATION_PRODUCER_PREPARE_CONDITION
+    ) {
+      errors.push(
+        "generate-matrix prepare-e2e must skip native runtime qualification producer dispatches",
+      );
+    }
+    const allowedKeys = shouldBuild
+      ? jobName === "generate-matrix"
+        ? ["if", "name", "uses"]
+        : ["name", "uses"]
+      : ["name", "uses", "with"];
     if (!isDeepStrictEqual(Object.keys(prepare).sort(), allowedKeys.sort())) {
       errors.push(`${jobName} prepare-e2e invocation must not override its canonical contract`);
     }
