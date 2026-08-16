@@ -720,6 +720,101 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.updateSandbox).toHaveBeenCalled();
   });
 
+  it("restores the prior route after changed-family convergence retries are exhausted", async () => {
+    const captureOpenshell = createCompatibleProviderCapture({
+      name: "compatible-anthropic-endpoint",
+      type: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "ANTHROPIC_BASE_URL",
+      initiallyPresent: false,
+    });
+    const probeSandboxRoute = vi
+      .fn()
+      .mockReturnValueOnce({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 400",
+        httpStatus: 400,
+      })
+      .mockReturnValueOnce({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 404",
+        httpStatus: 404,
+      })
+      .mockReturnValueOnce({
+        ok: false,
+        detail: "sandbox inference invocation probe returned HTTP 400",
+        httpStatus: 400,
+      });
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      captureOpenshell,
+      probeSandboxRoute,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "http://host.openshell.internal:18767/",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
+    );
+
+    expect(probeSandboxRoute).toHaveBeenCalledTimes(3);
+    expect(deps.calls.sleep.mock.calls).toEqual([[1_000], [2_000]]);
+    expect(
+      captureOpenshell.mock.calls
+        .filter(([args]) => args[0] === "inference" && args[1] === "set")
+        .map(([args]) => args),
+    ).toEqual([
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "compatible-anthropic-endpoint",
+        "--model",
+        "mock-anthropic-model",
+        "--no-verify",
+      ],
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ],
+    ]);
+    expect(
+      captureOpenshell.mock.calls.some(
+        ([args]) => args[0] === "provider" && args[1] === "delete",
+      ),
+    ).toBe(true);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   it("does not retry a target rejection when the API family did not change", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",

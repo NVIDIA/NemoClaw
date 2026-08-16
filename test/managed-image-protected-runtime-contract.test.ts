@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
@@ -20,6 +20,7 @@ import {
 import {
   assertExactSandboxImage,
   assertFailedBootstrapOwnerCleanupRetention,
+  assertFailedSandboxOwnerCleanupRetention,
   createProtectedManagedImageBootstrapInput,
   failureInjectingAdapter,
   MANAGED_IMAGE_OPENSHELL_SUPERVISOR_ARGV,
@@ -282,6 +283,44 @@ describe("protected managed-image runtime contract", () => {
       ).toThrow(message);
     },
   );
+
+  it.each([
+    ["exact", `NAME STATUS\n${VALID_SANDBOX} Ready\n`, false],
+    ["containing", `NAME STATUS\n${VALID_SANDBOX}-other Ready\n`, true],
+  ] as const)("%s-match checks the retained OpenShell sandbox name exactly", (_case, output, rejects) => {
+    const expectedSandboxId = "sandbox-id-123";
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const runOpenshell = vi.fn((argv: readonly string[]) =>
+      argv[1] === "get"
+        ? { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" }
+        : { status: 0, stdout: output, stderr: `diagnostic mentions ${VALID_SANDBOX}` },
+    );
+    const assertion = () =>
+      assertFailedSandboxOwnerCleanupRetention(
+        { runOpenshell } as never,
+        input,
+        expectedSandboxId,
+        {},
+      );
+
+    if (rejects) {
+      expect(assertion).toThrow("exact OpenShell owner-cleanup state");
+    } else {
+      expect(assertion).not.toThrow();
+    }
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "list"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
 
   it("assigns every protected agent and route a unique OpenShell-compatible sandbox name (#8497)", () => {
     const routeKinds = [...MANAGED_IMAGE_LOCAL_INFERENCE_KINDS, "rollback"] as const;

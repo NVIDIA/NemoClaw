@@ -38,6 +38,7 @@ import type {
   RuntimeProviderBundle,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
+import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
 import {
   OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
@@ -828,7 +829,7 @@ export function assertFailedBootstrapOwnerCleanupRetention(
   }
 }
 
-function assertFailedSandboxOwnerCleanupRetention(
+export function assertFailedSandboxOwnerCleanupRetention(
   onboard: OnboardModule,
   input: Inputs,
   expectedSandboxId: string,
@@ -848,7 +849,7 @@ function assertFailedSandboxOwnerCleanupRetention(
     get.status !== 0 ||
     parseOpenShellSandboxId(String(get.stdout ?? "")) !== expectedSandboxId ||
     list.status !== 0 ||
-    !`${list.stdout ?? ""}\n${list.stderr ?? ""}`.includes(input.sandbox)
+    !parseLiveSandboxNames(String(list.stdout ?? "")).has(input.sandbox)
   ) {
     throw new Error(
       `managed-bootstrap rollback did not retain its exact OpenShell owner-cleanup state: get=${commandDetail(get)} list=${commandDetail(list)}`,

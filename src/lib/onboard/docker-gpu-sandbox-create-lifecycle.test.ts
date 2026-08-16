@@ -95,6 +95,66 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
+  it("accepts a backup that the patch helper already finalized after reconnect", async () => {
+    const deps = makeDeps();
+    const result = { ...deferredCreateResult(), backupRemoved: true };
+    const waitForSupervisor = vi.fn(() => true);
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: true,
+      rolledBack: false,
+    }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor,
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await expect(patch.commitAfterReady()).resolves.toBeUndefined();
+
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
+    expect(waitForSupervisor).toHaveBeenCalledTimes(1);
+    expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit replacement restart failure after backup removal", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: true,
+          rolledBack: false,
+          replacementRestarted: false,
+        })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
+  });
+
   it("reports a failed post-Ready rollback instead of treating it as restored", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();

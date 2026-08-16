@@ -470,6 +470,12 @@ export function createDockerGpuSandboxCreatePatch(
           : null;
         cutoverFinalized = true;
         if (!finalizeOutcome) return;
+        if (
+          finalizeOutcome.backupRemoved &&
+          finalizeOutcome.replacementRestarted === undefined
+        ) {
+          return;
+        }
         if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted) {
           const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
             options.timeoutSecs,
