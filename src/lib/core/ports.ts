@@ -111,9 +111,9 @@ interface ServicePortDefinition {
 }
 
 /**
- * Services that participate in host-port collision validation. Dashboard and
- * gateway defaults remain reusable; inference and adapter defaults are
- * reserved even when their corresponding service is reconfigured.
+ * Services that participate in host-port collision validation. The gateway
+ * default is reusable after the gateway is reconfigured, while the dashboard
+ * allocation range and inference and adapter defaults remain reserved.
  */
 const SERVICE_PORT_CATALOG: readonly ServicePortDefinition[] = [
   {
