@@ -122,6 +122,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/same-commit-reliability.test.ts",
+      "test": "locks the reporter to canonical source and trusted controller identities (#9168)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
       "test": "compiles absence probes for every preflight failure contract",
       "category": "security"

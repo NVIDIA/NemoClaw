@@ -11,10 +11,15 @@ import {
   readValidatedArtifactZipEntry,
 } from "../../scripts/scorecard/read-artifact-zip.mts";
 import type { RetryEvidence, RetryFailureClass } from "../../test/e2e/fixtures/retry-policy.ts";
-import { parseClassificationLine, type TerminalClassification } from "./runner-pressure-core.mts";
+import {
+  parseClassificationLine,
+  TERMINAL_CLASSIFICATIONS,
+  type TerminalClassification,
+} from "./runner-pressure-core.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const WORKFLOW_PATH = ".github/workflows/e2e.yaml";
+const CONTROLLER_WORKFLOW_PATH = ".github/workflows/e2e-main-retry.yaml";
 const DISPLAY_TITLE_PREFIX = "E2E ";
 const SHA = /^[a-f0-9]{40}$/u;
 const MAX_RUNS = 50;
@@ -31,6 +36,11 @@ const RETRY_FAILURE_CLASSES: readonly RetryFailureClass[] = [
   "transient-external",
   "ambiguous-mutation",
 ];
+const RELIABILITY_FAILURE_CLASSES = new Set<string>([
+  ...RETRY_FAILURE_CLASSES,
+  ...TERMINAL_CLASSIFICATIONS,
+  "unclassified",
+]);
 
 export type ReliabilitySource = "manual-qualification" | "trusted-main";
 export type ReliabilityOutcome =
@@ -92,6 +102,18 @@ type Artifact = {
   workflow_run?: { id?: number };
 };
 
+type ControllerRun = {
+  id: number;
+  status: string;
+  event: string;
+  path: string;
+  head_branch: string;
+  head_sha: string;
+  html_url: string;
+  repository: { full_name?: string };
+  head_repository: { full_name?: string } | null;
+};
+
 type JsonRequest = (path: string) => Promise<unknown>;
 type ArchiveRequest = (artifactId: number, maxBytes: number) => Promise<Buffer>;
 
@@ -133,6 +155,28 @@ function validateRun(value: unknown): WorkflowRun | null {
     return null;
   }
   return run as unknown as WorkflowRun;
+}
+
+function validateControllerRun(value: unknown, expectedId: number): ControllerRun | null {
+  const run = record(value);
+  const repository = record(run?.repository);
+  const headRepository = record(run?.head_repository);
+  if (
+    !run ||
+    run.id !== expectedId ||
+    (run.status !== "in_progress" && run.status !== "completed") ||
+    run.event !== "workflow_run" ||
+    run.path !== CONTROLLER_WORKFLOW_PATH ||
+    run.head_branch !== "main" ||
+    typeof run.head_sha !== "string" ||
+    !SHA.test(run.head_sha) ||
+    repository?.full_name !== REPOSITORY ||
+    headRepository?.full_name !== REPOSITORY ||
+    run.html_url !== `https://github.com/${REPOSITORY}/actions/runs/${run.id}`
+  ) {
+    return null;
+  }
+  return run as unknown as ControllerRun;
 }
 
 function validateArtifacts(value: unknown): Artifact[] | null {
@@ -283,9 +327,10 @@ async function identifyCandidateSha(
 async function collectFailureClasses(
   artifacts: Artifact[],
   requestArchive: ArchiveRequest,
-): Promise<{ classes: ReliabilityFailureClass[]; malformed: boolean }> {
+): Promise<{ classes: ReliabilityFailureClass[]; malformed: boolean; records: number }> {
   const classes = new Set<ReliabilityFailureClass>();
   let malformed = false;
+  let records = 0;
   let bytes = 0;
   for (const artifact of artifacts.filter((item) => item.name.startsWith("e2e-"))) {
     if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES) continue;
@@ -314,12 +359,14 @@ async function collectFailureClasses(
       try {
         if (entry.endsWith("/runner-pressure-classification.jsonl")) {
           classes.add(parseClassificationLine(text).classification);
+          records += 1;
         } else {
           const evidence = parseRetryEvidence(JSON.parse(text));
           if (evidence === null) {
             malformed = true;
             continue;
           }
+          records += 1;
           for (const attempt of evidence.attempts) {
             if (attempt.failureClass) classes.add(attempt.failureClass);
           }
@@ -329,7 +376,30 @@ async function collectFailureClasses(
       }
     }
   }
-  return { classes: [...classes].sort(), malformed };
+  return { classes: [...classes].sort(), malformed, records };
+}
+
+async function trustedMainRetryArtifact(
+  artifacts: Artifact[] | null,
+  expectedName: string,
+  requestJson: JsonRequest,
+): Promise<{ artifact: Artifact | null; evidence: "complete" | "malformed" | "missing" }> {
+  if (artifacts === null) return { artifact: null, evidence: "malformed" };
+  const matches = artifacts.filter((artifact) => artifact.name === expectedName);
+  if (matches.length === 0) return { artifact: null, evidence: "missing" };
+  if (matches.length !== 1) return { artifact: null, evidence: "malformed" };
+  const artifact = matches[0]!;
+  const controllerId = record(artifact.workflow_run)?.id;
+  if (!positiveInteger(controllerId)) return { artifact: null, evidence: "malformed" };
+  try {
+    const controller = await requestJson(`repos/${REPOSITORY}/actions/runs/${controllerId}`);
+    if (validateControllerRun(controller, controllerId) === null) {
+      return { artifact: null, evidence: "malformed" };
+    }
+  } catch {
+    return { artifact: null, evidence: "malformed" };
+  }
+  return { artifact, evidence: "complete" };
 }
 
 function deriveOutcome(run: WorkflowRun): ReliabilityOutcome {
@@ -385,15 +455,17 @@ export async function normalizeReliabilityRun(
       ),
     );
     const retryArtifacts = validateArtifacts(response);
-    const retryArtifact = retryArtifacts?.find(
-      (artifact) => artifact.name === `e2e-main-retry-${run.id}-${run.run_attempt}`,
+    const selected = await trustedMainRetryArtifact(
+      retryArtifacts,
+      `e2e-main-retry-${run.id}-${run.run_attempt}`,
+      services.requestJson,
     );
-    if (!retryArtifact) {
-      evidence = "missing";
+    if (!selected.artifact) {
+      evidence = selected.evidence;
       outcome = "unclassified";
     } else {
       const text = await readArtifactEntry(
-        retryArtifact,
+        selected.artifact,
         "e2e-main-retry-evidence.json",
         services.requestArchive,
       );
@@ -412,6 +484,10 @@ export async function normalizeReliabilityRun(
   }
   const classified = await collectFailureClasses(artifacts, services.requestArchive);
   if (classified.malformed) evidence = "malformed";
+  if (run.event === "workflow_dispatch" && candidateSha !== null && classified.records === 0) {
+    evidence = classified.malformed ? "malformed" : "missing";
+    outcome = "unclassified";
+  }
   const failed = outcome === "exhausted" || outcome === "failed-first-attempt";
   return {
     runId: run.id,
@@ -458,6 +534,7 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
       const classes: Record<string, number> = {};
       for (const sample of ordered) {
         for (const failureClass of sample.failureClasses) {
+          if (!RELIABILITY_FAILURE_CLASSES.has(failureClass)) continue;
           classes[failureClass] = (classes[failureClass] ?? 0) + 1;
         }
       }

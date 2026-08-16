@@ -10,10 +10,12 @@ import {
   summarizeReliability,
 } from "../../../tools/e2e/same-commit-reliability.mts";
 import { artifactZip } from "../../helpers/artifact-zip";
+import { readYaml, type WorkflowJob, type WorkflowStep } from "../../helpers/e2e-workflow-contract";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
 const REPOSITORY = "NVIDIA/NemoClaw";
+const RETRY_WORKFLOW_PATH = ".github/workflows/e2e-main-retry.yaml";
 
 function sample(
   runId: number,
@@ -52,6 +54,43 @@ function workflowRun(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function controllerRun(id: number, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    status: "in_progress",
+    event: "workflow_run",
+    path: RETRY_WORKFLOW_PATH,
+    head_branch: "main",
+    head_sha: SHA_A,
+    html_url: `https://github.com/${REPOSITORY}/actions/runs/${id}`,
+    repository: { full_name: REPOSITORY },
+    head_repository: { full_name: REPOSITORY },
+    ...overrides,
+  };
+}
+
+function retryEvidence(runId: number, sourceSha: string): Buffer {
+  return artifactZip([
+    {
+      name: "e2e-main-retry-evidence.json",
+      contents: JSON.stringify({
+        schemaVersion: 1,
+        sourceRunId: runId,
+        sourceSha,
+        sourceAttempt: 1,
+        action: "passed-first-attempt",
+        reason: "source run passed",
+      }),
+    },
+  ]);
+}
+
+function workflowStep(job: WorkflowJob, name: string): WorkflowStep {
+  const found = job.steps?.find((step) => step.name === name);
+  expect(found, `missing workflow step ${name}`).toBeDefined();
+  return found!;
+}
+
 describe("same-commit E2E reliability", () => {
   it("keeps commits and run sources separate while reporting recovery and flips", () => {
     const groups = summarizeReliability([
@@ -85,13 +124,36 @@ describe("same-commit E2E reliability", () => {
     const secret = "ghp_should-never-appear";
     const report = formatReliabilityReport([
       ...summarizeReliability([
-        sample(1, SHA_A, "trusted-main", "failed-first-attempt", ["authentication"]),
+        sample(1, SHA_A, "trusted-main", "failed-first-attempt", [
+          "authentication",
+          secret as ReliabilitySample["failureClasses"][number],
+        ]),
       ]),
     ]);
 
     expect(report).toContain("authentication: 1");
     expect(report).toContain(SHA_A.slice(0, 12));
     expect(report).not.toContain(secret);
+  });
+
+  // source-shape-contract: security -- The reliability reporter must execute only from the trusted default-branch controller while authenticating the canonical E2E source repository and branch
+  it("locks the reporter to canonical source and trusted controller identities (#9168)", () => {
+    type RetryWorkflow = { jobs: { "report-same-commit-reliability": WorkflowJob } };
+    const reporter =
+      readYaml<RetryWorkflow>(RETRY_WORKFLOW_PATH).jobs["report-same-commit-reliability"];
+    const guard = reporter.if ?? "";
+    for (const fragment of [
+      "github.repository == 'NVIDIA/NemoClaw'",
+      "github.event.workflow_run.path == '.github/workflows/e2e.yaml'",
+      "github.event.workflow_run.head_branch == 'main'",
+      "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
+    ]) {
+      expect(guard).toContain(fragment);
+    }
+    expect(workflowStep(reporter, "Checkout trusted reliability reporter").with).toEqual({
+      ref: "${{ github.workflow_sha }}",
+      "persist-credentials": false,
+    });
   });
 
   it("consumes dispatch, retry, and runner classifications without retaining payload text", async () => {
@@ -209,6 +271,163 @@ describe("same-commit E2E reliability", () => {
     });
     expect(malformed).toMatchObject({
       candidateSha: null,
+      outcome: "unclassified",
+      evidence: "malformed",
+    });
+  });
+
+  it("requires terminal evidence after authenticating a manual dispatch", async () => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const result = await normalizeReliabilityRun(workflowRun({ conclusion: "success" }), {
+      requestJson: async () => ({
+        total_count: 1,
+        artifacts: [
+          {
+            id: 1,
+            name: "e2e-dispatch-101-1",
+            size_in_bytes: dispatch.length,
+            expired: false,
+          },
+        ],
+      }),
+      requestArchive: async () => dispatch,
+    });
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_A,
+      source: "manual-qualification",
+      outcome: "unclassified",
+      evidence: "missing",
+    });
+    expect(summarizeReliability([result!])[0]).toMatchObject({
+      passedFirstAttempt: 0,
+      unclassified: 1,
+    });
+  });
+
+  it("accepts trusted-main evidence only from the canonical retry controller", async () => {
+    const archive = retryEvidence(101, SHA_B);
+    const name = "e2e-main-retry-101-1";
+    const result = await normalizeReliabilityRun(
+      workflowRun({ event: "push", conclusion: "success", display_title: "E2E main" }),
+      {
+        requestJson: async (path) => {
+          if (path.includes("actions/runs/101/artifacts")) {
+            return { total_count: 0, artifacts: [] };
+          }
+          if (path.includes("actions/artifacts?")) {
+            return {
+              total_count: 1,
+              artifacts: [
+                {
+                  id: 7,
+                  name,
+                  size_in_bytes: archive.length,
+                  expired: false,
+                  workflow_run: { id: 202 },
+                },
+              ],
+            };
+          }
+          if (path.endsWith("actions/runs/202")) return controllerRun(202);
+          throw new Error(`unexpected path ${path}`);
+        },
+        requestArchive: async () => archive,
+      },
+    );
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_B,
+      source: "trusted-main",
+      outcome: "passed-first-attempt",
+      evidence: "complete",
+    });
+  });
+
+  it("rejects trusted-main evidence from an untrusted workflow", async () => {
+    const archive = retryEvidence(101, SHA_B);
+    const name = "e2e-main-retry-101-1";
+    const result = await normalizeReliabilityRun(
+      workflowRun({ event: "push", conclusion: "success", display_title: "E2E main" }),
+      {
+        requestJson: async (path) => {
+          if (path.includes("actions/runs/101/artifacts")) {
+            return { total_count: 0, artifacts: [] };
+          }
+          if (path.includes("actions/artifacts?")) {
+            return {
+              total_count: 1,
+              artifacts: [
+                {
+                  id: 8,
+                  name,
+                  size_in_bytes: archive.length,
+                  expired: false,
+                  workflow_run: { id: 203 },
+                },
+              ],
+            };
+          }
+          if (path.endsWith("actions/runs/203")) {
+            return controllerRun(203, { path: ".github/workflows/other.yaml" });
+          }
+          throw new Error(`unexpected path ${path}`);
+        },
+        requestArchive: async () => archive,
+      },
+    );
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_B,
+      source: "trusted-main",
+      outcome: "unclassified",
+      evidence: "malformed",
+    });
+  });
+
+  it("fails closed when trusted-main artifact names collide", async () => {
+    const archive = retryEvidence(101, SHA_B);
+    const name = "e2e-main-retry-101-1";
+    const result = await normalizeReliabilityRun(
+      workflowRun({ event: "push", conclusion: "success", display_title: "E2E main" }),
+      {
+        requestJson: async (path) => {
+          if (path.includes("actions/runs/101/artifacts")) {
+            return { total_count: 0, artifacts: [] };
+          }
+          if (path.includes("actions/artifacts?")) {
+            return {
+              total_count: 2,
+              artifacts: [202, 203].map((controllerId) => ({
+                id: controllerId,
+                name,
+                size_in_bytes: archive.length,
+                expired: false,
+                workflow_run: { id: controllerId },
+              })),
+            };
+          }
+          throw new Error(`artifact collision must fail before controller lookup: ${path}`);
+        },
+        requestArchive: async () => archive,
+      },
+    );
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_B,
+      source: "trusted-main",
       outcome: "unclassified",
       evidence: "malformed",
     });
