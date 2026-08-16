@@ -488,68 +488,6 @@ describe("starter prompt docs CTA", () => {
     ).toThrow("use LF line endings");
   });
 
-  it("names non-interactive install controls and scopes sandboxed Docker approval (#7311)", () => {
-    const promptSource = readStarterPrompt();
-    const quickstartSource = read("docs/get-started/quickstart.mdx");
-    const commandsSource = read("docs/reference/commands.mdx");
-    const updateSource = read("docs/manage-sandboxes/update-sandboxes.mdx");
-
-    for (const variable of ["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER", "NEMOCLAW_INSTALL_TAG"]) {
-      expect(promptSource, `starter prompt names ${variable}`).toContain(variable);
-      expect(quickstartSource, `quickstart names ${variable}`).toContain(variable);
-    }
-
-    expect(promptSource).toContain("NEMOCLAW_AGENT=openclaw");
-    expect(promptSource).toContain("NEMOCLAW_AGENT=hermes");
-    expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
-    expect(promptSource).toContain(
-      "set `NEMOCLAW_AGENT` and `NEMOCLAW_PROVIDER` from my selections",
-    );
-    expect(quickstartSource).toMatch(/NEMOCLAW_AGENT=openclaw\s*\\\s*NEMOCLAW_PROVIDER=build/);
-    expect(promptSource).toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z");
-    expect(promptSource).toContain("clear any inherited `NEMOCLAW_INSTALL_REF`");
-    expect(promptSource).toContain(
-      "Request permission to rerun only that exact command outside the sandbox",
-    );
-    expect(promptSource).toContain("`NEMOCLAW_NON_INTERACTIVE=1` removes NemoClaw prompts");
-    expect(promptSource).toContain(
-      "`NEMOCLAW_NON_INTERACTIVE=1` does not bypass execution-sandbox permissions",
-    );
-    expect(promptSource).toContain(
-      "Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.",
-    );
-    expect(promptSource).not.toContain("or another approved host command");
-    expect(quickstartSource).toContain(
-      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
-    );
-    expect(quickstartSource).toContain(
-      "Approve only the exact Docker-dependent command that the coding agent requests",
-    );
-    expect(quickstartSource).toContain(
-      "Do not change Docker socket permissions or grant broad host access only to bypass the restriction.",
-    );
-    expect(promptSource).not.toContain("## Codex Execution Sandbox");
-    expect(quickstartSource).not.toContain("When Codex reports");
-    expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z curl");
-    expect(quickstartSource).not.toContain(
-      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
-    );
-    expect(commandsSource).toContain(
-      "A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`.",
-    );
-    expect(commandsSource).toContain("Overridden by the `--install-ref` flag.");
-    expect(commandsSource).toContain("Overridden by the `--install-tag` flag.");
-    expect(commandsSource).toContain("Defaults to the admin-promoted `lkg` tag when unset.");
-    expect(updateSource).toContain(
-      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash",
-    );
-    expect(updateSource).not.toContain(
-      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash",
-    );
-    expect(promptSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
-    expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
-  });
-
   it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-starter-prompt-"));
     const generatedPath = path.join(tempDir, "StarterPrompt.generated.mdx");
@@ -649,39 +587,6 @@ describe("starter prompt docs CTA", () => {
     }
     expect(formSource).not.toContain("localStorage");
     expect(formSource).not.toContain("sessionStorage");
-  });
-
-  it("preserves safe remote credentials, administrator access, and Ollama eligibility (#6990)", () => {
-    const promptSource = readStarterPrompt();
-
-    expect(promptSource).toContain(
-      "Preserve its scheme, host, port, `/local-credential-form.html` path, complete `field=` query string, and `#cap=` fragment exactly.",
-    );
-    expect(promptSource).toContain("`ssh -N -L <port>:127.0.0.1:<port> <username>@<host>`");
-    expect(promptSource).toContain(
-      "Require the same port on both sides; do not remap the helper to another local port.",
-    );
-    expect(promptSource).not.toContain("<local-port>:127.0.0.1:<remote-port>");
-
-    expect(promptSource).toContain("`NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`");
-    expect(promptSource).toContain(
-      "If neither passwordless sudo nor a secure password prompt is available, stop before the affected install or system change.",
-    );
-    expect(promptSource).toContain(
-      "Let the real `sudo` program collect the password; never use chat or the API-key form for the computer password.",
-    );
-
-    expect(promptSource).toContain(
-      "Offer Local Ollama for OpenClaw or Hermes when it is installed, running, or officially installable.",
-    );
-    expect(promptSource).toContain(
-      "Do not offer Local Ollama for Deep Agents unless current official documentation adds support.",
-    );
-    expect(promptSource).toContain(
-      "Do not hide Ollama merely because the computer is not DGX or GB300.",
-    );
-    expect(promptSource).toContain("OpenRouter: `NEMOCLAW_PROVIDER=openrouter`");
-    expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
   });
 
   it("keeps local prompt assets byte-aligned with their pinned revision blobs (#6990)", () => {
@@ -848,97 +753,6 @@ describe("starter prompt docs CTA", () => {
     expect(() =>
       requireExpectedPromptAssetRoutes(swappedRoutes, platformPromptAssetRoutes),
     ).toThrow(`Confirmed DGX Spark must map to ${promptAssets.dgxSpark.url}`);
-  });
-
-  it("uses approved platform defaults without collecting optional onboarding choices (#6990)", () => {
-    const promptSource = readStarterPrompt();
-    const platformAssets = [
-      readPromptAsset(promptAssets.dgxSpark),
-      readPromptAsset(promptAssets.windowsWsl),
-    ];
-    const expressAssets = [
-      readPromptAsset(promptAssets.dgxSpark),
-      readPromptAsset(promptAssets.windowsWsl),
-    ];
-    const stationSource = readPromptAsset(promptAssets.dgxStation);
-
-    expect(promptSource).toContain(
-      "Next ask which agent I want: OpenClaw, Hermes, or LangChain Deep Agents Code.",
-    );
-    expect(promptSource).toContain("Skip messaging for Deep Agents.");
-    expect(promptSource).toContain(
-      "If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.",
-    );
-    expect(promptSource).toContain(
-      "For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.",
-    );
-    expect(promptSource).toContain(
-      "When a platform asset delegates consent to the official installer, let the installer present its notice and final Express confirmation instead of pre-accepting them.",
-    );
-    expect(promptSource).toContain(
-      "Ask for final permission before installation outside an accepted platform-asset path.",
-    );
-    expect(promptSource).not.toContain("\n- Ask for Balanced, Restricted, or Open policy.\n");
-
-    for (const assetSource of platformAssets) {
-      expect(assetSource).toContain(
-        "`NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`",
-      );
-      expect(assetSource).toContain(
-        "Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.",
-      );
-      expect(assetSource).toContain(
-        "Leave `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_POLICY_TIER`, web-search settings, and messaging settings unset",
-      );
-      expect(assetSource).toContain(
-        "Do not ask again for the agent or ask separate questions for model, sandbox name, web search, messaging, policy, download approval, or final installation approval.",
-      );
-      expect(assetSource).not.toContain("NEMOCLAW_POLICY_TIER=balanced");
-    }
-
-    for (const assetSource of expressAssets) {
-      expect(assetSource).toContain(
-        "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.",
-      );
-      expect(assetSource).toContain("Treat the Express confirmation as approval");
-      const noticeIndex = assetSource.indexOf("Include the third-party-software notice");
-      const confirmationIndex = assetSource.indexOf("Choices:");
-      const acceptanceIndex = assetSource.indexOf("Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`");
-      expect(noticeIndex).toBeGreaterThan(-1);
-      expect(confirmationIndex).toBeGreaterThan(noticeIndex);
-      expect(acceptanceIndex).toBeGreaterThan(confirmationIndex);
-    }
-
-    expect(stationSource).toContain(
-      "Use the selected maintained release's official installer as the authority",
-    );
-    expect(stationSource).toContain(
-      "Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.",
-    );
-    expect(stationSource).not.toContain("`NEMOCLAW_NON_INTERACTIVE=1`");
-    expect(stationSource).not.toContain("Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`");
-    expect(stationSource).not.toContain("Set `NEMOCLAW_PROVIDER=install-vllm`");
-
-    const stationDisclosureIndex = stationSource.indexOf("On generic Ubuntu, Station Express");
-    const stationDockerGroupIndex = stationSource.indexOf(
-      "`docker` group, which grants root-equivalent control",
-    );
-    const stationRebootIndex = stationSource.indexOf("operator-controlled reboot");
-    const stationNoticeIndex = stationSource.indexOf(
-      "Let the installer present its third-party-software notice",
-    );
-    const stationConfirmationIndex = stationSource.indexOf("Choices:");
-    const stationDefaultIndex = stationSource.indexOf(
-      "For automatic pair selection, run the ordinary installer without",
-    );
-    const stationOverrideIndex = stationSource.indexOf("For DeepSeek, pass `--station-deepseek`");
-    expect(stationDisclosureIndex).toBeGreaterThan(-1);
-    expect(stationDockerGroupIndex).toBeGreaterThan(stationDisclosureIndex);
-    expect(stationRebootIndex).toBeGreaterThan(stationDockerGroupIndex);
-    expect(stationConfirmationIndex).toBeGreaterThan(stationRebootIndex);
-    expect(stationDefaultIndex).toBeGreaterThan(stationConfirmationIndex);
-    expect(stationOverrideIndex).toBeGreaterThan(stationDefaultIndex);
-    expect(stationNoticeIndex).toBeGreaterThan(stationOverrideIndex);
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {

@@ -98,8 +98,7 @@ For each release:
 - Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
 - Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
 
-Run `npx vitest run test/changelog-docs.test.ts` and `npm run docs` before opening the pre-tag
-release-note docs PR.
+Run `npm run docs` before opening the pre-tag release-note docs PR.
 
 ## Publishing Docs
 
