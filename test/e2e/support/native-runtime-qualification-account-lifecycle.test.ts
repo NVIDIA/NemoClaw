@@ -20,8 +20,8 @@ function workflowScripts(): { boundary: string; cleanup: string } {
   const steps = workflow.jobs["native-runtime-qualification-producer"]?.steps ?? [];
   const run = (name: string): string => {
     const source = steps.find((entry) => entry.name === name)?.run;
-    if (!source) throw new Error(`Missing workflow step ${name}`);
-    return source;
+    expect(source, `Missing workflow step ${name}`).toBeTruthy();
+    return source!;
   };
   return {
     boundary: run("Prepare the credential-free execution account and disable Docker"),
@@ -31,8 +31,8 @@ function workflowScripts(): { boundary: string; cleanup: string } {
 
 function extractFunction(source: string, name: string): string {
   const match = source.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) throw new Error(`Missing shell function ${name}`);
-  return `${name}() {${match[1]}\n}`;
+  expect(match, `Missing shell function ${name}`).toBeTruthy();
+  return `${name}() {${match![1]}\n}`;
 }
 
 function fixtureSource(source: string): string {
@@ -182,7 +182,8 @@ function provisionBlock(): string {
   const source = workflowScripts().boundary;
   const start = source.indexOf('account="nemoclawq"');
   const end = source.indexOf("ensure_subordinate_range()", start);
-  if (start < 0 || end < 0) throw new Error("Missing qualification account provision block");
+  expect(start, "Missing qualification account provision start").toBeGreaterThanOrEqual(0);
+  expect(end, "Missing qualification account provision end").toBeGreaterThan(start);
   return `set -euo pipefail\n${source.slice(start, end)}`;
 }
 
