@@ -1481,6 +1481,7 @@ jobs:
           }
           storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           storage_config="${storage_config_directory}/storage.conf"
+          containers_config="${storage_config_directory}/containers.conf"
           podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           apparmor_profile="${storage_config_directory}/podman.apparmor"
           apparmor_profile_name="nemoclaw-native-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
@@ -1545,6 +1546,15 @@ jobs:
             echo "::error::Qualification storage configuration is not root-owned and read-only" >&2
             exit 1
           }
+          printf '%s\n' \
+            '[network]' \
+            'firewall_driver = "nftables"' | sudo tee "$containers_config" >/dev/null
+          sudo chown root:root "$containers_config"
+          sudo chmod 0444 "$containers_config"
+          [[ -f "$containers_config" && ! -L "$containers_config" && "$(stat -c '%u:%g:%a' "$containers_config")" == "0:0:444" ]] || {
+            echo "::error::Qualification containers configuration is not root-owned and read-only" >&2
+            exit 1
+          }
           if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
             printf '%s\n' \
               '# This ephemeral profile grants user namespaces only to the pinned qualification Podman binary.' \
@@ -1599,6 +1609,7 @@ jobs:
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
           chmod 0555 "$guard_dir/docker"
           podman_info="$(sudo -u "$account" env -i \
+            CONTAINERS_CONF="$containers_config" \
             CONTAINERS_STORAGE_CONF="$storage_config" \
             HOME="$home" \
             LANG=C.UTF-8 \
@@ -1622,6 +1633,7 @@ jobs:
           printf 'helper_dir=%s\n' "$helper_directory" >>"$GITHUB_OUTPUT"
           printf 'node_dir=%s\n' "$node_directory" >>"$GITHUB_OUTPUT"
           printf 'podman_executable=%s\n' "$podman_executable" >>"$GITHUB_OUTPUT"
+          printf 'containers_config=%s\n' "$containers_config" >>"$GITHUB_OUTPUT"
           printf 'storage_config=%s\n' "$storage_config" >>"$GITHUB_OUTPUT"
 
       - name: Materialize exact credential-free GPU resources
@@ -1629,6 +1641,7 @@ jobs:
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
           ARCHITECTURE: ${{ matrix.case.architecture }}
+          CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
           HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
           INFERENCE: ${{ matrix.case.inference }}
@@ -1686,16 +1699,8 @@ jobs:
           cleanup_registry_auth() {
             local result="$?"
             trap - EXIT
-            sudo -u "$ACCOUNT" env -i \
-              CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
-              HOME="$QUALIFICATION_HOME" \
-              LANG=C.UTF-8 \
-              PATH="$HELPER_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
-              REGISTRY_AUTH_FILE="$registry_auth_file" \
-              XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
-              "$PODMAN_EXECUTABLE" logout --all >/dev/null 2>&1 || true
             if [[ -e "$registry_auth_file" || -L "$registry_auth_file" ]]; then
-              [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a' "$registry_auth_file")" == "${uid}:${uid}:600" ]] || {
+              [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${uid}:600:1" ]] || {
                 echo "::error::Run-owned registry authentication file cleanup target is invalid" >&2
                 return 1
               }
@@ -1709,6 +1714,7 @@ jobs:
           }
           trap cleanup_registry_auth EXIT
           printf '%s' "$NVIDIA_API_KEY" | sudo -u "$ACCOUNT" env -i \
+            CONTAINERS_CONF="$CONTAINERS_CONFIG" \
             CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             HOME="$QUALIFICATION_HOME" \
             LANG=C.UTF-8 \
@@ -1716,14 +1722,21 @@ jobs:
             REGISTRY_AUTH_FILE="$registry_auth_file" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
             "$PODMAN_EXECUTABLE" login nvcr.io --username '$oauthtoken' --password-stdin >/dev/null
+          [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${uid}:600:1" ]] || {
+            echo "::error::Run-owned registry authentication file is invalid" >&2
+            exit 1
+          }
           image_to_pull="$probe_image"
           if [[ "$INFERENCE" == "nim" ]]; then
             image_to_pull="$nim_image"
           elif [[ "$INFERENCE" == "vllm" ]]; then
             image_to_pull="$vllm_image"
           fi
-          for image in "$probe_image" "$image_to_pull"; do
+          images=("$probe_image")
+          [[ "$image_to_pull" == "$probe_image" ]] || images+=("$image_to_pull")
+          for image in "${images[@]}"; do
             sudo -u "$ACCOUNT" env -i \
+              CONTAINERS_CONF="$CONTAINERS_CONFIG" \
               CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
               HOME="$QUALIFICATION_HOME" \
               LANG=C.UTF-8 \
@@ -1853,20 +1866,26 @@ jobs:
           ARCHITECTURE: ${{ matrix.case.architecture }}
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
           CANDIDATE_SHA: ${{ matrix.source.candidateSha }}
+          CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
           HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
           INSTALLER_RECEIPT_PARENT: ${{ runner.temp }}/native-runtime-installer
           INSTALLER_SHA256: ${{ matrix.installerSha256 }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+          RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
         shell: bash
         run: |
           set -euo pipefail
           install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
           sudo chown "$ACCOUNT:$ACCOUNT" "$INSTALLER_RECEIPT_PARENT"
           sudo -u "$ACCOUNT" env -i \
+            CONTAINERS_CONF="$CONTAINERS_CONFIG" \
+            CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             HOME="$QUALIFICATION_HOME" \
             LANG=C.UTF-8 \
             PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
             bash .trusted-qualification/scripts/checks/run-native-runtime-installer-qualification.sh \
               --candidate-checkout "$CANDIDATE_DIRECTORY" \
               --candidate-sha "$CANDIDATE_SHA" \
@@ -1887,6 +1906,7 @@ jobs:
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
           HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
           NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
@@ -1909,6 +1929,7 @@ jobs:
           cd "$CANDIDATE_DIRECTORY"
           sudo -u "$ACCOUNT" env -i \
             CI=true \
+            CONTAINERS_CONF="$CONTAINERS_CONFIG" \
             CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             E2E_DEFAULT_ENABLED=0 \
             E2E_JOB=1 \
@@ -2032,7 +2053,7 @@ jobs:
                   exit 1
                 }
                 if [[ -e "$registry_auth_file" || -L "$registry_auth_file" ]]; then
-                  [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a' "$registry_auth_file")" == "${uid}:${uid}:600" ]] || {
+                  [[ -f "$registry_auth_file" && ! -L "$registry_auth_file" && "$(stat -c '%u:%g:%a:%h' "$registry_auth_file")" == "${uid}:${uid}:600:1" ]] || {
                     echo "::error::Qualification registry authentication file cleanup target is invalid" >&2
                     exit 1
                   }
@@ -2046,6 +2067,13 @@ jobs:
                   exit 1
                 }
                 sudo unlink "$runner_contract"
+              fi
+              if [[ -e "$storage_config_directory/containers.conf" || -L "$storage_config_directory/containers.conf" ]]; then
+                [[ -f "$storage_config_directory/containers.conf" && ! -L "$storage_config_directory/containers.conf" && "$(stat -c '%u:%g:%a' "$storage_config_directory/containers.conf")" == "0:0:444" ]] || {
+                  echo "::error::Qualification containers configuration cleanup target is invalid" >&2
+                  exit 1
+                }
+                sudo unlink "$storage_config_directory/containers.conf"
               fi
               sudo rm -f -- "$storage_config_directory/storage.conf"
               sudo rmdir "$storage_config_directory"

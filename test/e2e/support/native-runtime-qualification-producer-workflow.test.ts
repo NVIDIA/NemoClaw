@@ -233,7 +233,9 @@ describe("native runtime qualification producer workflow", () => {
     expect(gpuResources.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
     expect(gpuResources.run).toContain("existing NVIDIA registry credential");
     expect(gpuResources.run).toContain("login nvcr.io --username '$oauthtoken' --password-stdin");
-    expect(gpuResources.run).toContain("logout --all");
+    expect(gpuResources.run).not.toContain("logout --all");
+    expect(gpuResources.run).toContain('sudo unlink "$registry_auth_file"');
+    expect(gpuResources.run).toContain("${uid}:${uid}:600:1");
     expect(gpuResources.run).toContain("unset NVIDIA_API_KEY");
     expect(gpuResources.run).toContain("7ae557604adf67be50417f59c2c2f167def9a775");
     expect(gpuResources.run).toContain("git hash-object --no-filters");
@@ -299,7 +301,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain('systemd-user-runtime-dir start "$uid"');
     expect(boundary.run).toContain("Qualification runtime directory is missing or invalid");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
+    expect(boundary.run).toContain('CONTAINERS_CONF="$containers_config"');
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
+    expect(boundary.run).toContain('firewall_driver = "nftables"');
+    expect(boundary.run).toContain(
+      "Qualification containers configuration is not root-owned and read-only",
+    );
     expect(boundary.run).toContain("rootless_storage_path");
     expect(boundary.run).toContain("${home}/.local/share/containers/storage");
     expect(boundary.run).not.toContain('mount_program = "/usr/bin/fuse-overlayfs"');
@@ -351,6 +358,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(dependencies.run).toContain("npm --prefix");
     expect(dependencies.run).toContain("ci --ignore-scripts");
     expect(installer.run).toContain('sudo -u "$ACCOUNT" env -i');
+    expect(installer.env?.CONTAINERS_CONFIG).toBe(
+      "${{ steps.boundary.outputs.containers_config }}",
+    );
+    expect(installer.run).toContain('CONTAINERS_CONF="$CONTAINERS_CONFIG"');
+    expect(installer.run).toContain('CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG"');
+    expect(installer.run).toContain('XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY"');
     expect(installer.run).toContain("run-native-runtime-installer-qualification.sh");
     expect(installer.run).not.toContain("chown -R");
     expect(installer.run).toContain('sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts"');
@@ -368,10 +381,12 @@ describe("native runtime qualification producer workflow", () => {
     expect(execute.run).not.toContain("GH_TOKEN");
     expect(execute.run).not.toContain("chown -R");
     expect(execute.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
+    expect(execute.env?.CONTAINERS_CONFIG).toBe("${{ steps.boundary.outputs.containers_config }}");
     expect(execute.env?.PODMAN_EXECUTABLE).toBe("${{ steps.boundary.outputs.podman_executable }}");
     expect(execute.env?.STORAGE_CONFIG).toBe("${{ steps.boundary.outputs.storage_config }}");
     expect(execute.env?.RUNNER_CONTRACT).toBe("${{ steps.gpu_resources.outputs.runner_contract }}");
     expect(execute.run).toContain('CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG"');
+    expect(execute.run).toContain('CONTAINERS_CONF="$CONTAINERS_CONFIG"');
     expect(execute.run).toContain(
       'NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE="$PODMAN_EXECUTABLE"',
     );
@@ -402,6 +417,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
     expect(cleanup.run).toContain('apparmor_parser -R "$pasta_apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
+    expect(cleanup.run).toContain('sudo unlink "$storage_config_directory/containers.conf"');
     expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
     expect(cleanup.run).toContain('sudo rm -f -- "$podman_executable"');
     expect(cleanup.run).toContain("Qualification Podman executable remains after cleanup");

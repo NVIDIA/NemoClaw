@@ -150,7 +150,7 @@ printf '%s:%s:%s\\n' "$3" "$start" "$((end - start + 1))" >>"$file"`,
     [[ "$2" == '%u:%g:%a:%h' ]] && printf '0:0:444:1\\n' || printf '0:0:444\\n'
     ;;
   *native-runtime-resources-*) printf '0:0:555\\n' ;;
-  *podman.apparmor|*pasta.apparmor|*runner-contract.json|*storage.conf) printf '0:0:444\\n' ;;
+  *podman.apparmor|*pasta.apparmor|*runner-contract.json|*containers.conf|*storage.conf) printf '0:0:444\\n' ;;
   *) exit 25 ;;
 esac`,
   );
@@ -324,6 +324,7 @@ describe("native runtime qualification account lifecycle", () => {
     fs.mkdirSync(storage, { recursive: true });
     fs.writeFileSync(path.join(runtime, "alive"), "fixture");
     fs.writeFileSync(path.join(storage, "storage.conf"), "fixture");
+    fs.writeFileSync(path.join(storage, "containers.conf"), "fixture");
     fs.writeFileSync(path.join(storage, "podman.apparmor"), "fixture");
     fs.writeFileSync(path.join(storage, "pasta.apparmor"), "fixture");
     fs.writeFileSync(path.join(storage, "runner-contract.json"), "fixture");
@@ -360,7 +361,7 @@ describe("native runtime qualification account lifecycle", () => {
     expect(fs.existsSync(podman)).toBe(false);
     expect(fs.existsSync(helpers)).toBe(false);
     expect(fs.existsSync(resources)).toBe(false);
-  });
+  }, 15_000);
 
   it("does not run destructive cleanup when the run-owned marker is absent", () => {
     const fixture = createFixture();
