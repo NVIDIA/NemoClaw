@@ -476,7 +476,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             INCLUDE_LAUNCHABLE: "false",
             JOBS: jobs,
             PR_NUMBER: "42",
-            REVIEW_REASON: "Reviewed PR head revision",
+            REVIEW_REASON: "Reviewed latest PR commit",
             RUN_ATTEMPT: "1",
             TARGETS: targets,
             TRIGGERING_ACTOR: "maintainer",
@@ -495,9 +495,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
   it.each([
     ["admin", "refs/heads/feat/native", 0, ""],
     ["maintain", "refs/heads/feat/native", 1, "requires a repository administrator"],
-    ["admin", "refs/heads/feat/other", 1, "must match the exact PR head branch"],
+    ["admin", "refs/heads/feat/other", 1, "must match the PR source branch"],
   ])(
-    "requires admin-bound exact-head candidate workflow execution for %s on %s",
+    "requires the latest commit on an admin-controlled PR source branch for %s on %s",
     (role, workflowRef, expectedStatus, expectedStderr) => {
       const workflow = readE2eOperationsWorkflow();
       const authentication = workflow.jobs["generate-matrix"].steps!.find(

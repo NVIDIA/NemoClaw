@@ -64,12 +64,12 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Optional lowercase PR head SHA for manual exact-revision E2E.
+        description: Optional lowercase latest PR commit SHA for manual exact-revision E2E.
         required: false
         default: ""
         type: string
       checkout_repository:
-        description: Optional PR head repository for manual exact-revision E2E.
+        description: Optional PR source repository for manual exact-revision E2E.
         required: false
         default: ""
         type: string
@@ -363,8 +363,8 @@ jobs:
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
           candidate_workflow=false
           if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
@@ -374,12 +374,12 @@ jobs:
               exit 1
             }
             [[ "$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA" ]] || {
-              echo "::error::Candidate-workflow native runtime qualification must execute the exact same-repository PR head" >&2
+              echo "::error::Candidate-workflow native runtime qualification must execute the latest commit on the same-repository PR source branch" >&2
               exit 1
             }
-            head_ref="$(jq -r '.head.ref // ""' <<< "$pull_json")"
-            [[ -n "$head_ref" && "$WORKFLOW_REF" == "refs/heads/${head_ref}" ]] || {
-              echo "::error::Candidate-workflow ref must match the exact PR head branch" >&2
+            pr_source_ref="$(jq -r '.head.ref // ""' <<< "$pull_json")"
+            [[ -n "$pr_source_ref" && "$WORKFLOW_REF" == "refs/heads/${pr_source_ref}" ]] || {
+              echo "::error::Candidate-workflow ref must match the PR source branch" >&2
               exit 1
             }
           fi

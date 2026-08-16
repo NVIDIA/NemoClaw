@@ -358,7 +358,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "Candidate-workflow native runtime qualification requires a repository administrator",
     '"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"',
     '"$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA"',
-    '"$WORKFLOW_REF" == "refs/heads/${head_ref}"',
+    '"$WORKFLOW_REF" == "refs/heads/${pr_source_ref}"',
     `${acceptedJobCases}) ;;`,
     `Manual PR E2E accepts only empty selectors, ${acceptedJobNames}`,
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",

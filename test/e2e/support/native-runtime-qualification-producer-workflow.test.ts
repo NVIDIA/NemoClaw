@@ -81,7 +81,7 @@ describe("native runtime qualification producer workflow", () => {
     );
   });
 
-  it("limits candidate-workflow protected execution to the exact PR head and administrators", () => {
+  it("limits candidate-workflow protected execution to the latest commit on an administrator-controlled PR source branch", () => {
     const generate = job("generate-matrix");
     const authenticate = step(generate, "Authenticate manual PR dispatch");
     const source = authenticate.run ?? "";
@@ -92,7 +92,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(source).toContain(
       '"$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA"',
     );
-    expect(source).toContain('"$WORKFLOW_REF" == "refs/heads/${head_ref}"');
+    expect(source).toContain('"$WORKFLOW_REF" == "refs/heads/${pr_source_ref}"');
     expect(source).toContain('"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"');
   });
 
