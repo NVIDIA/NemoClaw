@@ -1159,7 +1159,11 @@ jobs:
             "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf"
 
           [[ "$("$TOOLCHAIN_DIRECTORY/bin/podman" --version)" == "podman version 6.1.0" ]]
-          [[ "$("$TOOLCHAIN_DIRECTORY/bin/pasta" --version)" == "pasta $PASTA_VERSION" ]]
+          pasta_version_output="$("$TOOLCHAIN_DIRECTORY/bin/pasta" --version)"
+          [[ "${pasta_version_output%%$'\n'*}" == "pasta $PASTA_VERSION" ]] || {
+            echo "::error::Pinned qualification pasta version is invalid" >&2
+            exit 1
+          }
           [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/netavark" --version)" == "netavark 2.1.0" ]]
           [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/aardvark-dns" --version)" == "aardvark-dns 2.1.0" ]]
           jq -n \

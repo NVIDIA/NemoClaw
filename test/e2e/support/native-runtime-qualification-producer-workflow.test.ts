@@ -182,7 +182,10 @@ describe("native runtime qualification producer workflow", () => {
     expect(build.run).toContain(
       'install -D -m 0755 .passt-source/passt "$TOOLCHAIN_DIRECTORY/bin/pasta"',
     );
+    expect(build.run).toContain("pasta_version_output=");
+    expect(build.run).toContain("pasta_version_output%%$'\\n'*");
     expect(build.run).toContain('"pasta $PASTA_VERSION"');
+    expect(build.run).toContain("Pinned qualification pasta version is invalid");
     expect(build.run).toMatch(/sha256sum[\s\S]+bin\/pasta[\s\S]+manifest\.json/u);
     expect(build.run).toContain("sha256sum");
     expect(build.run).toContain("Pinned Podman build has an unresolved runtime dependency");
