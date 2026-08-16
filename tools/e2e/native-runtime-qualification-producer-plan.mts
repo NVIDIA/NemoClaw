@@ -105,7 +105,7 @@ function validateSource(
     !COMMIT_SHA.test(value.baseSha) ||
     !COMMIT_SHA.test(value.workflowSha) ||
     value.candidateSha === value.baseSha ||
-    value.baseSha !== value.workflowSha ||
+    (value.workflowSha !== value.baseSha && value.workflowSha !== value.candidateSha) ||
     !RUN_ID.test(value.producerRunId) ||
     value.producerRunAttempt !== 1
   ) {

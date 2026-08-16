@@ -62,7 +62,9 @@ describe("native runtime qualification producer workflow", () => {
       "pull-requests": "read",
     });
     expect(authenticate.run).toContain('"$CANDIDATE_REPOSITORY" == "NVIDIA/NemoClaw"');
-    expect(authenticate.run).toContain('"$BASE_SHA" == "$WORKFLOW_SHA"');
+    expect(authenticate.run).toContain('"$WORKFLOW_SHA" == "$BASE_SHA"');
+    expect(authenticate.run).toContain('"$WORKFLOW_SHA" == "$CANDIDATE_SHA"');
+    expect(authenticate.env?.DISPATCH_WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
     expect(authenticate.run).toContain(".head.sha == $candidateSha");
     expect(authenticate.run).toContain(".base.sha == $baseSha");
     expect(authenticate.run).toContain(".total_count == 1");
@@ -73,6 +75,27 @@ describe("native runtime qualification producer workflow", () => {
     );
     expect(compile.run).toContain("native-runtime-qualification-producer-plan.mts --ci-output");
     expect(JSON.stringify(plan)).not.toContain("linux-arm64-gpu-dgx-spark-gb10-protected-1");
+    const trustedCheckout = step(plan, "Check out the trusted qualification producer");
+    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
+      "src/lib/onboard/runtime-provider/native-qualification-authority.ts",
+    );
+  });
+
+  it("limits candidate-workflow protected execution to the exact PR head and administrators", () => {
+    const generate = job("generate-matrix");
+    const authenticate = step(generate, "Authenticate manual PR dispatch");
+    const source = authenticate.run ?? "";
+
+    expect(source).toContain(
+      "Candidate-workflow native runtime qualification requires a repository administrator",
+    );
+    expect(source).toContain(
+      '"$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA"',
+    );
+    expect(source).toContain('"$WORKFLOW_REF" == "refs/heads/${head_ref}"');
+    expect(source).toContain(
+      '"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"',
+    );
   });
 
   it("runs each candidate case in an isolated account and emits one trusted artifact", () => {

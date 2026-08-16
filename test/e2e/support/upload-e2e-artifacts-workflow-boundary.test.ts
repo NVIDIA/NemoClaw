@@ -151,6 +151,19 @@ describe("E2E artifact uploads", () => {
     );
   });
 
+  it("allows only the exact 30-day native runtime aggregate upload", () => {
+    const workflow = mutableWorkflow();
+    const upload = workflow.jobs["native-runtime-qualification-producer-aggregate"].steps?.find(
+      (step) => step.name === "Upload the immutable aggregate evidence",
+    );
+    expect(upload).toBeDefined();
+    upload!.with!["retention-days"] = 14;
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "native-runtime-qualification-producer-aggregate must not invoke actions/upload-artifact directly",
+    );
+  });
+
   it.each([
     ["name", "another-cache-artifact"],
     ["path", "another-cache-path/"],

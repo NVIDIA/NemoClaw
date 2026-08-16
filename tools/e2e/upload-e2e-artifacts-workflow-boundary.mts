@@ -52,6 +52,17 @@ const RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT: WorkflowStep = {
     "retention-days": 30,
   },
 };
+const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
+  name: "Upload the immutable aggregate evidence",
+  uses: UPLOAD_ARTIFACT_ACTION,
+  with: {
+    name: "native-runtime-qualification-${{ inputs.checkout_sha }}",
+    path: "${{ runner.temp }}/native-runtime-aggregate/",
+    "if-no-files-found": "error",
+    "retention-days": 30,
+    "compression-level": 9,
+  },
+};
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -108,6 +119,13 @@ function isExactReleaseQualificationWaiverUpload(
   return (
     jobName === "release-qualification" &&
     isDeepStrictEqual(step, RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT)
+  );
+}
+
+function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep): boolean {
+  return (
+    jobName === "native-runtime-qualification-producer-aggregate" &&
+    isDeepStrictEqual(step, NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT)
   );
 }
 
@@ -186,7 +204,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     "native-runtime-qualification-producer",
     {
       name: "${{ matrix.artifactName }}",
-      path: "${{ runner.temp }}/native-runtime-evidence/evidence.json",
+      path: "${{ runner.temp }}/native-runtime-evidence/",
     },
   ],
   [
@@ -242,6 +260,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["generate-matrix", "${{ github.event_name == 'workflow_dispatch' }}"],
+  ["native-runtime-qualification-producer", "success()"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
@@ -441,7 +460,8 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
-        !isExactReleaseQualificationWaiverUpload(jobName, step)
+        !isExactReleaseQualificationWaiverUpload(jobName, step) &&
+        !isExactNativeRuntimeAggregateUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }

@@ -74,6 +74,17 @@ describe("native runtime qualification case boundaries", () => {
     );
   });
 
+  it("accepts an exact administrator-authorized candidate workflow row", () => {
+    const candidateSource = { ...SOURCE, workflowSha: SOURCE.candidateSha };
+    const candidateRow = buildNativeRuntimeQualificationProducerPlan({
+      source: candidateSource,
+      installerSha256: "d".repeat(64),
+      arm64GpuRunner: "native-arm64-gpu",
+    } satisfies NativeRuntimeQualificationProducerPlanInput).include[0]!;
+
+    expect(parseNativeRuntimeQualificationRow(JSON.stringify(candidateRow))).toEqual(candidateRow);
+  });
+
   it("rejects credential and alternate runtime authority environment names", () => {
     expect(() =>
       assertCredentialFreeQualificationEnvironment({

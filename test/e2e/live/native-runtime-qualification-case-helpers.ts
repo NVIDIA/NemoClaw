@@ -157,7 +157,7 @@ export function parseNativeRuntimeQualificationRow(
     typeof source.baseSha !== "string" ||
     !SHA.test(source.baseSha) ||
     source.candidateSha === source.baseSha ||
-    source.workflowSha !== source.baseSha ||
+    (source.workflowSha !== source.baseSha && source.workflowSha !== source.candidateSha) ||
     !/^[1-9][0-9]{0,19}$/u.test(String(source.producerRunId)) ||
     source.producerRunAttempt !== 1
   ) {

@@ -94,10 +94,22 @@ describe("native runtime qualification producer plan", () => {
     ).toBe(true);
   });
 
+  it("accepts an exact candidate workflow SHA for administrator-authorized execution", () => {
+    const baseInput = input();
+    const candidateWorkflow = {
+      ...baseInput,
+      source: { ...baseInput.source, workflowSha: CANDIDATE_SHA },
+    } satisfies NativeRuntimeQualificationProducerPlanInput;
+    const plan = buildNativeRuntimeQualificationProducerPlan(candidateWorkflow);
+
+    expect(plan.include).toHaveLength(24);
+    expect(plan.include.every((entry) => entry.source.workflowSha === CANDIDATE_SHA)).toBe(true);
+  });
+
   it.each([
     ["fork candidate", { source: { ...input().source, candidateRepository: "fork/NemoClaw" } }],
     ["candidate commit", { source: { ...input().source, candidateSha: "A".repeat(40) } }],
-    ["base authority", { source: { ...input().source, workflowSha: "e".repeat(40) } }],
+    ["unbound workflow", { source: { ...input().source, workflowSha: "e".repeat(40) } }],
     ["run attempt", { source: { ...input().source, producerRunAttempt: 2 } }],
     ["installer digest", { installerSha256: "short" }],
     ["ARM64 GPU runner", { arm64GpuRunner: "" }],

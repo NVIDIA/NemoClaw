@@ -84,7 +84,7 @@ on:
         default: ""
         type: string
       workflow_sha:
-        description: Optional trusted main workflow SHA for manual exact-revision E2E.
+        description: Optional exact workflow SHA for manual exact-revision E2E. Candidate-ref native runtime qualification requires an administrator and must equal checkout_sha.
         required: false
         default: ""
         type: string
@@ -125,11 +125,23 @@ jobs:
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           EVENT_NAME: ${{ github.event_name }}
+          JOBS: ${{ inputs.jobs }}
           REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$REPOSITORY" == "NVIDIA/NemoClaw" &&
+                "$REF" != "refs/heads/main" &&
+                "$EVENT_NAME" == "workflow_dispatch" &&
+                "$JOBS" == "native-runtime-qualification-producer" &&
+                -n "$CHECKOUT_SHA" &&
+                "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]]; then
+            required=0
+            printf 'required=%s\n' "${required}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in
             NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)
               required=1
@@ -306,8 +318,26 @@ jobs:
             esac
           }
 
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || {
-            echo "::error::Manual PR E2E must be dispatched from main" >&2
+          require_admin() {
+            local administrator="$1"
+            [[ "$administrator" =~ ^[A-Za-z0-9-]{1,39}$ && "$administrator" != -* && "$administrator" != *- ]] || {
+              echo "::error::Candidate-workflow native runtime qualification actor is invalid" >&2
+              exit 1
+            }
+            local permission_json
+            permission_json="$(curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${administrator}/permission")"
+            [[ "$(jq -r '.role_name // ""' <<< "$permission_json")" == "admin" ]] || {
+              echo "::error::Candidate-workflow native runtime qualification requires a repository administrator" >&2
+              exit 1
+            }
+          }
+
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" ]] || {
+            echo "::error::Manual PR E2E must use workflow_dispatch" >&2
             exit 1
           }
           [[ "$RUN_ATTEMPT" == "1" ]] || { echo "::error::Manual PR E2E cannot be rerun" >&2; exit 1; }
@@ -325,13 +355,7 @@ jobs:
           [[ "$REVIEW_REASON" =~ ^[[:print:]]+$ ]] &&
             (( ${#REVIEW_REASON} >= 10 && ${#REVIEW_REASON} <= 500 )) ||
             { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
-          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
-
-
-          require_maintainer "$ACTOR"
-          if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
-            require_maintainer "$TRIGGERING_ACTOR"
-          fi
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the executing workflow SHA" >&2; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -342,6 +366,35 @@ jobs:
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository" >&2; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
+          candidate_workflow=false
+          if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
+            candidate_workflow=true
+            [[ "$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS" ]] || {
+              echo "::error::Candidate-workflow dispatch accepts only native-runtime-qualification-producer" >&2
+              exit 1
+            }
+            [[ "$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA" ]] || {
+              echo "::error::Candidate-workflow native runtime qualification must execute the exact same-repository PR head" >&2
+              exit 1
+            }
+            head_ref="$(jq -r '.head.ref // ""' <<< "$pull_json")"
+            [[ -n "$head_ref" && "$WORKFLOW_REF" == "refs/heads/${head_ref}" ]] || {
+              echo "::error::Candidate-workflow ref must match the exact PR head branch" >&2
+              exit 1
+            }
+          fi
+
+          if [[ "$candidate_workflow" == "true" ]]; then
+            require_admin "$ACTOR"
+            if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
+              require_admin "$TRIGGERING_ACTOR"
+            fi
+          else
+            require_maintainer "$ACTOR"
+            if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
+              require_maintainer "$TRIGGERING_ACTOR"
+            fi
+          fi
 
       - name: Authorize release qualification waiver
         if: ${{ github.event_name == 'workflow_dispatch' && (inputs.release_qualification_waived_jobs != '' || inputs.release_qualification_waiver_reason != '') }}
@@ -828,7 +881,7 @@ jobs:
 
   native-runtime-qualification-producer-plan:
     needs: generate-matrix
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && (github.ref == 'refs/heads/main' || github.workflow_sha == inputs.checkout_sha) && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -844,6 +897,7 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
           sparse-checkout-cone-mode: false
@@ -868,6 +922,7 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_WORKFLOW_SHA: ${{ github.workflow_sha }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PRODUCER_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -884,8 +939,8 @@ jobs:
             echo "::error::Native runtime qualification producer runs cannot be rerun" >&2
             exit 1
           }
-          [[ "$BASE_SHA" == "$WORKFLOW_SHA" && "$CANDIDATE_SHA" != "$WORKFLOW_SHA" ]] || {
-            echo "::error::Native runtime qualification requires base_sha to equal workflow_sha and checkout_sha to name a different commit" >&2
+          [[ "$CANDIDATE_SHA" != "$BASE_SHA" && ( "$WORKFLOW_SHA" == "$BASE_SHA" || "$WORKFLOW_SHA" == "$CANDIDATE_SHA" ) ]] || {
+            echo "::error::Native runtime qualification requires workflow_sha to equal the exact base or candidate commit" >&2
             exit 1
           }
           [[ "$(git -C .candidate-source rev-parse --verify 'HEAD^{commit}')" == "$CANDIDATE_SHA" ]] || {
@@ -915,7 +970,7 @@ jobs:
           artifact="$(jq -ce \
             --arg name "$artifact_name" \
             --arg runId "$PRODUCER_RUN_ID" \
-            --arg workflowSha "$WORKFLOW_SHA" '
+            --arg workflowSha "$DISPATCH_WORKFLOW_SHA" '
               select(.total_count == 1 and (.artifacts | length) == 1) |
               .artifacts[0] |
               select(.name == $name and .expired == false) |
