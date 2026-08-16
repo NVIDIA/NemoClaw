@@ -1481,6 +1481,49 @@ jobs:
           runtime_dir="/run/user/${uid}"
           runtime_directory_unit="user-runtime-dir@${uid}.service"
           user_manager_unit="user@${uid}.service"
+          user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
+          user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
+          trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"
+          [[ ! -e "$user_manager_dropin_directory" && ! -L "$user_manager_dropin_directory" ]] || {
+            echo "::error::Qualification systemd user-manager drop-in directory already exists" >&2
+            exit 1
+          }
+          sudo install -d --owner=root --group=root --mode=0755 "$user_manager_dropin_directory"
+          printf '[Service]\nEnvironment="SYSTEMD_UNIT_PATH=%s"\n' "$trusted_user_unit_path" |
+            sudo tee "$user_manager_dropin" >/dev/null
+          sudo chown root:root "$user_manager_dropin"
+          sudo chmod 0444 "$user_manager_dropin"
+          [[ -f "$user_manager_dropin" && ! -L "$user_manager_dropin" && "$(stat -c '%u:%g:%a:%h' "$user_manager_dropin")" == "0:0:444:1" ]] || {
+            echo "::error::Qualification systemd user-manager drop-in is invalid" >&2
+            exit 1
+          }
+          sudo systemctl daemon-reload
+          verify_user_manager_unit_path() {
+            local environment
+            environment="$(sudo -u "$1" env -i \
+              HOME="$2" \
+              LANG=C.UTF-8 \
+              PATH=/usr/bin:/bin \
+              XDG_RUNTIME_DIR="$3" \
+              /usr/bin/systemctl --user show-environment)"
+            tr ' ' '\n' <<<"$environment" | grep -Fx -- "SYSTEMD_UNIT_PATH=$trusted_user_unit_path" >/dev/null || {
+              echo "::error::Qualification systemd user manager did not inherit the trusted unit path" >&2
+              return 1
+            }
+          }
+          verify_user_bus() {
+            local execution_account="$1"
+            local expected_uid="$2"
+            local bus="$3"
+            local context="$4"
+            sudo /usr/bin/test -S "$bus" &&
+              sudo /usr/bin/test ! -L "$bus" &&
+              [[ "$(sudo stat -c '%u' -- "$bus")" == "$expected_uid" ]] &&
+              sudo -u "$execution_account" /usr/bin/test -S "$bus" || {
+              echo "::error::Qualification systemd user bus $context" >&2
+              return 1
+            }
+          }
           sudo systemctl start "$user_manager_unit"
           systemctl is-active --quiet "$runtime_directory_unit" || {
             echo "::error::Qualification systemd runtime-directory unit is not active" >&2
@@ -1509,10 +1552,9 @@ jobs:
               echo "::error::Qualification systemd user bus socket unit is not active" >&2
               exit 1
             }
-          sudo -u "$account" /usr/bin/test -S "$runtime_dir/bus" || {
-            echo "::error::Qualification systemd user bus is not accessible to the execution account" >&2
-            exit 1
-          }
+          verify_user_bus "$account" "$uid" "$runtime_dir/bus" \
+            "is invalid or inaccessible to the execution account"
+          verify_user_manager_unit_path "$account" "$home" "$runtime_dir"
           storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
           storage_config="${storage_config_directory}/storage.conf"
           containers_config="${storage_config_directory}/containers.conf"
@@ -1929,6 +1971,7 @@ jobs:
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
           RUNTIME_DIRECTORY_UNIT: ${{ steps.boundary.outputs.runtime_directory_unit }}
           STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
+          TRUSTED_USER_UNIT_PATH: /usr/lib/systemd/user:/lib/systemd/user
           USER_MANAGER_UNIT: ${{ steps.boundary.outputs.user_manager_unit }}
         shell: bash
         run: |
@@ -1974,8 +2017,21 @@ jobs:
               echo "::error::Qualification systemd user bus socket unit did not restart after installer isolation" >&2
               exit 1
             }
-          sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus" || {
-            echo "::error::Qualification systemd user bus is not accessible after installer isolation" >&2
+          sudo /usr/bin/test -S "$RUNTIME_DIRECTORY/bus" &&
+            sudo /usr/bin/test ! -L "$RUNTIME_DIRECTORY/bus" &&
+            [[ "$(sudo stat -c '%u' -- "$RUNTIME_DIRECTORY/bus")" == "$ACCOUNT_UID" ]] &&
+            sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus" || {
+            echo "::error::Qualification systemd user bus is invalid or inaccessible after installer isolation" >&2
+            exit 1
+          }
+          manager_environment="$(sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            /usr/bin/systemctl --user show-environment)"
+          tr ' ' '\n' <<<"$manager_environment" | grep -Fx -- "SYSTEMD_UNIT_PATH=$TRUSTED_USER_UNIT_PATH" >/dev/null || {
+            echo "::error::Qualification systemd user manager lost the trusted unit path after installer isolation" >&2
             exit 1
           }
           sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts" || {
@@ -2118,6 +2174,9 @@ jobs:
             runtime_dir="/run/user/${uid}"
             runtime_directory_unit="user-runtime-dir@${uid}.service"
             user_manager_unit="user@${uid}.service"
+            user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
+            user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
+            trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"
             storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
             apparmor_profile="${storage_config_directory}/podman.apparmor"
@@ -2136,6 +2195,24 @@ jobs:
             }
             if getent passwd "$account" >/dev/null; then
               sudo pkill -KILL -u "$uid" 2>/dev/null || true
+            fi
+            if [[ -e "$user_manager_dropin_directory" || -L "$user_manager_dropin_directory" ]]; then
+              [[ -d "$user_manager_dropin_directory" && ! -L "$user_manager_dropin_directory" && "$(stat -c '%u:%g:%a' "$user_manager_dropin_directory")" == "0:0:755" ]] || {
+                echo "::error::Qualification systemd user-manager drop-in directory cleanup target is invalid" >&2
+                exit 1
+              }
+              [[ -f "$user_manager_dropin" && ! -L "$user_manager_dropin" && "$(stat -c '%u:%g:%a:%h' "$user_manager_dropin")" == "0:0:444:1" ]] || {
+                echo "::error::Qualification systemd user-manager drop-in cleanup target is invalid" >&2
+                exit 1
+              }
+              expected_user_manager_dropin="$(printf '[Service]\nEnvironment="SYSTEMD_UNIT_PATH=%s"' "$trusted_user_unit_path")"
+              [[ "$(cat "$user_manager_dropin")" == "$expected_user_manager_dropin" ]] || {
+                echo "::error::Qualification systemd user-manager drop-in content changed before cleanup" >&2
+                exit 1
+              }
+              sudo unlink "$user_manager_dropin"
+              sudo rmdir "$user_manager_dropin_directory"
+              sudo systemctl daemon-reload
             fi
             if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
               [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import type { PodmanBoundContainerEngine } from "../../../src/lib/adapters/podman/index.ts";
@@ -158,5 +162,24 @@ describe("native runtime provider-network authority", () => {
       ["network", "rm", "--force", NETWORK_NAME],
       ["network", "exists", NETWORK_NAME],
     ]);
+  });
+
+  it("removes an exported snapshot without replacing the case failure", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "native-runtime-snapshot-cleanup-"));
+    const snapshot = path.join(root, "nemoclaw-q-fixture.tar");
+    const original = new Error("failure after export");
+    fs.writeFileSync(snapshot, "snapshot");
+
+    const failAfterExport = () => {
+      try {
+        throw original;
+      } finally {
+        nativeRuntimeQualificationCaseInternals.removeQualificationSnapshot(snapshot);
+      }
+    };
+
+    expect(failAfterExport).toThrow(original);
+    expect(fs.existsSync(snapshot)).toBe(false);
+    fs.rmSync(root, { force: true, recursive: true });
   });
 });

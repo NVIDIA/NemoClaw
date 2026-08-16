@@ -318,11 +318,19 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("/usr/bin/systemctl --user start dbus.socket");
     expect(boundary.run).toContain("/usr/bin/systemctl --user is-active --quiet dbus.socket");
     expect(boundary.run).toContain("Qualification systemd user bus socket unit is not active");
-    expect(boundary.run).toContain('sudo -u "$account" /usr/bin/test -S "$runtime_dir/bus"');
-    expect(boundary.run).not.toContain("stat -c '%u' \"$runtime_dir/bus\"");
     expect(boundary.run).toContain(
-      "Qualification systemd user bus is not accessible to the execution account",
+      'sudo -u "$execution_account" /usr/bin/test -S "$bus"',
     );
+    expect(boundary.run).toContain('sudo /usr/bin/test ! -L "$bus"');
+    expect(boundary.run).toContain("sudo stat -c '%u' -- \"$bus\"");
+    expect(boundary.run).toContain(
+      "Qualification systemd user bus $context",
+    );
+    expect(boundary.run).toContain(
+      'trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"',
+    );
+    expect(boundary.run).toContain('Environment="SYSTEMD_UNIT_PATH=%s"');
+    expect(boundary.run).toContain("/usr/bin/systemctl --user show-environment");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
     expect(boundary.run).toContain('CONTAINERS_CONF="$containers_config"');
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
@@ -392,9 +400,16 @@ describe("native runtime qualification producer workflow", () => {
     expect(installer.run).toContain(
       'sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus"',
     );
-    expect(installer.run).not.toContain("stat -c '%u' \"$RUNTIME_DIRECTORY/bus\"");
+    expect(installer.run).toContain('sudo /usr/bin/test ! -L "$RUNTIME_DIRECTORY/bus"');
+    expect(installer.run).toContain("sudo stat -c '%u' -- \"$RUNTIME_DIRECTORY/bus\"");
     expect(installer.run).toContain(
-      "Qualification systemd user bus is not accessible after installer isolation",
+      "Qualification systemd user bus is invalid or inaccessible after installer isolation",
+    );
+    expect(installer.env?.TRUSTED_USER_UNIT_PATH).toBe(
+      "/usr/lib/systemd/user:/lib/systemd/user",
+    );
+    expect(installer.run).toContain(
+      "/usr/bin/systemctl --user show-environment",
     );
     expect(installer.env?.CONTAINERS_CONFIG).toBe(
       "${{ steps.boundary.outputs.containers_config }}",
@@ -458,6 +473,9 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).not.toContain("rm -rf");
     expect(cleanup.run).not.toContain("find ");
     expect(cleanup.run).toContain('systemctl stop "$user_manager_unit" "$runtime_directory_unit"');
+    expect(cleanup.run).toContain('sudo unlink "$user_manager_dropin"');
+    expect(cleanup.run).toContain('sudo rmdir "$user_manager_dropin_directory"');
+    expect(cleanup.run).toContain("sudo systemctl daemon-reload");
     expect(cleanup.run).toContain(
       "Qualification systemd user lifecycle remained active during cleanup",
     );

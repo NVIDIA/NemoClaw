@@ -143,6 +143,10 @@ function exactDirectory(directory: string): void {
   }
 }
 
+function removeQualificationSnapshot(snapshot: string | null): void {
+  if (snapshot !== null) fs.rmSync(snapshot, { force: true });
+}
+
 function writeJson(directory: string, file: string, value: unknown): void {
   const target = path.join(directory, file);
   const temporary = `${target}.tmp`;
@@ -318,30 +322,33 @@ function createProviderNetwork(
     return Object.freeze({ id, name, gateway });
   } catch (error) {
     if (created) {
-      let removalOutcome = "not attempted";
-      try {
-        const removal = engine.capture(["network", "rm", "--force", name], COMMAND_TIMEOUT);
-        removalOutcome = `exit ${String(removal.status)}`;
-      } catch (cleanupError) {
-        removalOutcome = `threw ${bounded(
-          cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        )}`;
-      }
-      let existenceOutcome = "not attempted";
-      let removalProven = false;
-      try {
-        const existence = engine.capture(["network", "exists", name], COMMAND_TIMEOUT);
-        existenceOutcome = `exit ${String(existence.status)}`;
-        removalProven = existence.status === 1;
-      } catch (cleanupError) {
-        existenceOutcome = `threw ${bounded(
-          cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        )}`;
-      }
-      if (!removalProven) {
+      const removalOutcome = (() => {
+        try {
+          const removal = engine.capture(["network", "rm", "--force", name], COMMAND_TIMEOUT);
+          return `exit ${String(removal.status)}`;
+        } catch (cleanupError) {
+          return `threw ${bounded(
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          )}`;
+        }
+      })();
+      const existence = (() => {
+        try {
+          const result = engine.capture(["network", "exists", name], COMMAND_TIMEOUT);
+          return { outcome: `exit ${String(result.status)}`, removalProven: result.status === 1 };
+        } catch (cleanupError) {
+          return {
+            outcome: `threw ${bounded(
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            )}`,
+            removalProven: false,
+          };
+        }
+      })();
+      if (!existence.removalProven) {
         const validationFailure = bounded(error instanceof Error ? error.message : String(error));
         throw new Error(
-          `${validationFailure}; provider network cleanup could not prove removal (remove ${removalOutcome}; exists ${existenceOutcome})`,
+          `${validationFailure}; provider network cleanup could not prove removal (remove ${removalOutcome}; exists ${existence.outcome})`,
         );
       }
     }
@@ -607,6 +614,8 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
   let gpuDevices: readonly string[] = [];
   let gpuComputeProcesses: readonly GpuComputeProcess[] = [];
   let completed = false;
+  let qualificationFailure: unknown;
+  let snapshot: string | null = null;
   const operationDetails = new Map<NativeRuntimeQualificationObligation, Record<string, unknown>>();
 
   try {
@@ -813,7 +822,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       stoppedAndStarted: true,
     });
 
-    const snapshot = path.join(os.tmpdir(), `nemoclaw-q-${caseSuffix}.tar`);
+    snapshot = path.join(os.tmpdir(), `nemoclaw-q-${caseSuffix}.tar`);
     expect(lifecycle.stop(input, { beforeStop: () => undefined })).toMatchObject({ exitCode: 0 });
     capture(
       lifecycleEngine,
@@ -995,7 +1004,8 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     ownedContainers.delete(inferenceContainerId);
     capture(inferenceEngine, ["network", "rm", network.id], "provider network cleanup");
     ownedNetworks.delete(network.id);
-    fs.rmSync(snapshot, { force: true });
+    removeQualificationSnapshot(snapshot);
+    snapshot = null;
     assertNoQualificationResidue(lifecycleEngine, row.id);
     operationDetails.set("cleanup.exact", {
       containersRemaining: 0,
@@ -1126,7 +1136,16 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       result: "passed",
     });
     completed = true;
+  } catch (error) {
+    qualificationFailure = error;
+    throw error;
   } finally {
+    const cleanupFailures: unknown[] = [];
+    try {
+      removeQualificationSnapshot(snapshot);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
     if (!completed) {
       if (lifecycleEngine) {
         for (const containerId of ownedContainers) {
@@ -1142,11 +1161,24 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
         }
       }
     }
-    await stopService(service?.child ?? null, socket);
+    try {
+      await stopService(service?.child ?? null, socket);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
     service = null;
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        qualificationFailure === undefined
+          ? cleanupFailures
+          : [qualificationFailure, ...cleanupFailures],
+        "Native runtime qualification cleanup failed",
+      );
+    }
   }
 }
 
 export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   createProviderNetwork,
+  removeQualificationSnapshot,
 });
