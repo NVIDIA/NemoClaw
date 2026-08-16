@@ -584,6 +584,31 @@ graph as the live targets:
 
 - GitHub Actions run history is the authoritative record for push and
   manual E2E results.
+- `E2E / Main Retry` publishes an advisory same-commit reliability table for
+  trusted pushes to `main` and explicit manual qualification runs. It keeps
+  first-pass success, pass-after-retry, exhausted retries, and pass/fail flips
+  distinct,
+  and never treats retry records or runner-pressure classifications as proof
+  that a manual run reached a terminal result. Manual identity comes from the
+  run-bound dispatch receipt; its terminal result additionally requires at
+  least one canonical `nemoclaw-e2e-evidence-v1` manifest bound to the same run,
+  attempt, candidate SHA, trusted workflow repository, workflow SHA, and job
+  status. Outcomes from trusted pushes to `main` instead require the canonical
+  retry-controller artifact. Missing or malformed identity/outcome evidence
+  leaves a run unclassified. Retry and runner-pressure files contribute only
+  allowlisted failure classes: their complete, missing, or malformed state is
+  reported separately, so malformed classification data cannot erase an
+  otherwise authenticated outcome. Both evidence-state counts appear in the
+  grouped JSON and Markdown table. The table never changes a required check,
+  release conclusion, or rerun decision.
+- The `report-same-commit-reliability` job appends the Markdown table to its
+  GitHub Actions job summary and uploads the bounded, allowlisted
+  `same-commit-reliability.json` and `same-commit-reliability.md` files as
+  `same-commit-reliability-<source-run-id>-<attempt>` with 14-day retention.
+  Artifact ZIP entries are structurally validated before an allowlisted file is
+  read: ambiguous relative paths, links, encryption, split/ZIP64 archives,
+  duplicate names, unsupported compression, inconsistent headers, excess
+  entries, oversized contents, and CRC mismatches are rejected.
 - Automated issue routing and the workflow's `issues: write` capability are
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
