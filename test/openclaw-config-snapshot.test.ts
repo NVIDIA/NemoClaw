@@ -40,6 +40,7 @@ function writeFakeSandboxBins(
   fakeRoot: string,
   options: { denyConfigSshRead?: boolean } = {},
 ): void {
+  const configReadDenial = options.denyConfigSshRead === true ? "process.exit(1);" : "";
   writeExecutable(
     path.join(binDir, "openshell"),
     `#!/bin/sh
@@ -75,7 +76,7 @@ function readStdin() {
 }
 if (cmd.includes("[ -d ")) { process.exit(0); }
 if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  if (${JSON.stringify(options.denyConfigSshRead === true)}) process.exit(1);
+  ${configReadDenial}
   process.stdout.write(fs.readFileSync(path.join(dir, "openclaw.json")));
   process.exit(0);
 }
@@ -156,11 +157,9 @@ describe("OpenClaw durable config file (#5027)", () => {
       expect(stored.models.default).toBe("nvidia/test");
       expect(stored.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
     } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
+      void (oldOpenshell === undefined
+        ? Reflect.deleteProperty(process.env, "NEMOCLAW_OPENSHELL_BIN")
+        : Reflect.set(process.env, "NEMOCLAW_OPENSHELL_BIN", oldOpenshell));
       process.env.PATH = oldPath;
       fs.rmSync(fixture, { recursive: true, force: true });
     }

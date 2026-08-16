@@ -229,6 +229,93 @@ describe("managed snapshot backup authority", () => {
     );
   });
 
+  it("recognizes only the fixed missing-file failure protocol", () => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 2,
+      signal: null,
+      error: undefined,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("nemoclaw-openclaw-config-capture:missing\n"),
+    } as never);
+
+    const result = captureOpenClawStateFile("alpha", {
+      sandboxName: "alpha",
+      dir: "/sandbox/.openclaw",
+      spec: { path: "openclaw.json", strategy: "copy" },
+    });
+
+    expect(result).toEqual({ outcome: "missing" });
+  });
+
+  it("fails closed with a fixed privileged safety reason", () => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 11,
+      signal: null,
+      error: undefined,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("nemoclaw-openclaw-config-capture:unsafe-file-metadata\n"),
+    } as never);
+
+    const result = captureOpenClawStateFile("alpha", {
+      sandboxName: "alpha",
+      dir: "/sandbox/.openclaw",
+      spec: { path: "openclaw.json", strategy: "copy" },
+    });
+
+    expect(result).toEqual({
+      outcome: "failed",
+      error: "privileged config capture failed: exit 11; reason unsafe-file-metadata",
+    });
+  });
+
+  it("bounds and redacts untrusted privileged stderr", () => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 10,
+      signal: null,
+      error: undefined,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from(`permission denied apiKey=secret-value\u0000${"x".repeat(2048)}`),
+    } as never);
+
+    const result = captureOpenClawStateFile("alpha", {
+      sandboxName: "alpha",
+      dir: "/sandbox/.openclaw",
+      spec: { path: "openclaw.json", strategy: "copy" },
+    });
+
+    expect(result).toMatchObject({ outcome: "failed" });
+    const failedResult = result as Extract<
+      NonNullable<typeof result>,
+      { outcome: "failed" }
+    >;
+    const error = failedResult.error ?? "";
+    expect(error).toContain("permission denied apiKey=<REDACTED>");
+    expect(error).not.toContain("secret-value");
+    expect(error).not.toContain("\u0000");
+    expect(error.length).toBeLessThan(320);
+  });
+
+  it("does not confuse an unrecognized exit 2 with a missing config", () => {
+    privilegedCaptureMocks.dockerSpawnSync.mockReturnValue({
+      status: 2,
+      signal: null,
+      error: undefined,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("docker exec usage error"),
+    } as never);
+
+    const result = captureOpenClawStateFile("alpha", {
+      sandboxName: "alpha",
+      dir: "/sandbox/.openclaw",
+      spec: { path: "openclaw.json", strategy: "copy" },
+    });
+
+    expect(result).toEqual({
+      outcome: "failed",
+      error: "privileged config capture failed: exit 2; docker exec usage error",
+    });
+  });
+
   it("does not grant privileged capture to undeclared paths or strategies", () => {
     const requests: StateFileCaptureRequest[] = [
       {

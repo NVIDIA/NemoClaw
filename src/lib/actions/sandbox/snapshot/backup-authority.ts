@@ -17,6 +17,7 @@ import {
   privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease,
 } from "../../../sandbox/privileged-exec";
+import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
 import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
 
@@ -42,27 +43,36 @@ interface SnapshotBackupAuthorityDependencies {
 const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
 const OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER = MAX_OPENCLAW_CONFIG_BYTES + 1024 * 1024;
 const OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS = 30_000;
+const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
+const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES = 128;
+const OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES = 1024;
 const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
 directory = "/sandbox/.openclaw"
 name = "openclaw.json"
+protocol = "${OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX}"
+def fail(status, reason):
+    print(protocol + reason, file=sys.stderr)
+    raise SystemExit(status)
 directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
 file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
 try:
     directory_fd = os.open(directory, directory_flags)
 except OSError:
-    raise SystemExit(10)
+    fail(10, "directory-unavailable")
 try:
     try:
         file_fd = os.open(name, file_flags, dir_fd=directory_fd)
     except FileNotFoundError:
-        raise SystemExit(2)
+        fail(2, "missing")
     except OSError:
-        raise SystemExit(10)
+        fail(10, "file-unavailable")
     try:
         before = os.fstat(file_fd)
-        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > maximum:
-            raise SystemExit(11)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            fail(11, "unsafe-file-metadata")
+        if before.st_size > maximum:
+            fail(12, "size-limit-exceeded")
         chunks = []
         total = 0
         while True:
@@ -72,18 +82,69 @@ try:
             chunks.append(chunk)
             total += len(chunk)
             if total > maximum:
-                raise SystemExit(12)
+                fail(12, "size-limit-exceeded")
         after = os.fstat(file_fd)
         current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
         if identity(before) != identity(after) or identity(before) != identity(current) or not stat.S_ISREG(current.st_mode):
-            raise SystemExit(13)
+            fail(13, "file-changed-during-read")
         sys.stdout.buffer.write(b"".join(chunks))
     finally:
         os.close(file_fd)
 finally:
     os.close(directory_fd)
 `;
+
+type OpenClawConfigCaptureFailure =
+  | "missing"
+  | "directory-unavailable"
+  | "file-unavailable"
+  | "unsafe-file-metadata"
+  | "size-limit-exceeded"
+  | "file-changed-during-read";
+
+function captureFailureProtocol(stderr: unknown): OpenClawConfigCaptureFailure | null {
+  if (
+    (Buffer.isBuffer(stderr) && stderr.length > OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES) ||
+    (typeof stderr === "string" &&
+      Buffer.byteLength(stderr) > OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES)
+  ) {
+    return null;
+  }
+  const value = Buffer.isBuffer(stderr)
+    ? stderr.toString("utf8")
+    : typeof stderr === "string"
+      ? stderr
+      : "";
+  const line = value.endsWith("\n") ? value.slice(0, -1) : value;
+  if (!line.startsWith(OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX) || /[\r\n]/.test(line)) {
+    return null;
+  }
+  const reason = line.slice(OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX.length);
+  switch (reason) {
+    case "missing":
+    case "directory-unavailable":
+    case "file-unavailable":
+    case "unsafe-file-metadata":
+    case "size-limit-exceeded":
+    case "file-changed-during-read":
+      return reason;
+    default:
+      return null;
+  }
+}
+
+function captureFailureDiagnostic(stderr: unknown): string | null {
+  const value = Buffer.isBuffer(stderr)
+    ? stderr.subarray(0, OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES).toString("utf8")
+    : typeof stderr === "string"
+      ? Buffer.from(stderr)
+          .subarray(0, OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES)
+          .toString("utf8")
+      : "";
+  const sanitized = sanitizeReadinessText(value, 240).replace(/\s+/g, " ").trim();
+  return sanitized || null;
+}
 
 export function captureOpenClawStateFile(
   sandboxName: string,
@@ -113,7 +174,13 @@ export function captureOpenClawStateFile(
           timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
           maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
         });
-        if (result.status === 2 && result.signal === null && !result.error) {
+        const protocolFailure = captureFailureProtocol(result.stderr);
+        if (
+          result.status === 2 &&
+          result.signal === null &&
+          !result.error &&
+          protocolFailure === "missing"
+        ) {
           return { outcome: "missing" };
         }
         if (
@@ -122,9 +189,13 @@ export function captureOpenClawStateFile(
           result.error ||
           !Buffer.isBuffer(result.stdout)
         ) {
-          const detail =
+          const primaryDetail =
             result.error?.message ??
             (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+          const stderrDetail = protocolFailure
+            ? `reason ${protocolFailure}`
+            : captureFailureDiagnostic(result.stderr);
+          const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
           return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
         }
         return { outcome: "backed_up", data: result.stdout };
