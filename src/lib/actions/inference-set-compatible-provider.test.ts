@@ -807,10 +807,18 @@ describe("runInferenceSet compatible providers", () => {
       ],
     ]);
     expect(
-      captureOpenshell.mock.calls.some(
-        ([args]) => args[0] === "provider" && args[1] === "delete",
-      ),
-    ).toBe(true);
+      captureOpenshell.mock.calls
+        .filter(([args]) => args[0] === "provider" && args[1] === "delete")
+        .map(([args]) => args),
+    ).toEqual([
+      [
+        "provider",
+        "delete",
+        "-g",
+        "nemoclaw",
+        "compatible-anthropic-endpoint",
+      ],
+    ]);
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
