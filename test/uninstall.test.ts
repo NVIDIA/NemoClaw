@@ -278,6 +278,7 @@ exit 0
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 case "$*" in
+  "status -g nemoclaw") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
   "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
   "sandbox delete -g nemoclaw my-assistant")
     printf "Error: status: NotFound, sandbox 'my-assistant' not found\\n" >&2

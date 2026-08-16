@@ -12,7 +12,7 @@ import {
   type LifecycleProfile,
   readRegistrySandboxEntry,
 } from "../fixtures/phases/index.ts";
-import { listTargets } from "../registry/registry.ts";
+import { listTargets, requireTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
 import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
@@ -37,11 +37,22 @@ const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
 );
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-// The workflow filters by exact target id via `-t "^${TARGET_ID}$"`.
+// The workflow filters by target ID via `-t "^${TARGET_ID}$"`.
 // When that env is set, surface the structured `[not wired]` reason for the
 // targeted unsupported target at module load so the job log/summary
-// captures it before vitest reports the skipped test by id.
+// captures it before Vitest reports the skipped test by ID.
 const SELECTED_TARGET_ID = process.env.TARGET_ID;
+// That selector matches nothing when the ID names no registered target, and an
+// empty ID builds the selector `-t "^$"`, which also matches nothing. Vitest
+// then filters every test out and the run exits 0, reporting success for a run
+// that executed no target. `generate-matrix` already rejects an unknown ID
+// before the dispatch reaches here, so this is the last-mile check for a run
+// that sets TARGET_ID some other way. Resolve the ID through the registry and
+// let it name the registered choices (#8286).
+const SELECTED_TARGET_IDS = [SELECTED_TARGET_ID].filter(
+  (targetId): targetId is string => targetId !== undefined,
+);
+requireTargets(SELECTED_TARGET_IDS);
 const REGISTRY_TARGET_PHASES = [
   "resolve the target contract and run plan",
   "confirm the target environment is ready",

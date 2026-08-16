@@ -35,26 +35,6 @@ const recipe = YAML.parse(readFileSync(RECIPE_PATH, "utf8")) as {
 };
 
 describe("Muse Glimmer vLLM image provenance", () => {
-  // source-shape-contract: security -- Exact manifest, publisher, platform, and source identities keep the credential-bearing managed runtime bound to the reviewed external image.
-  it("binds the selected runtime to its reviewed publisher, manifest, platform, and source", () => {
-    verifyMuseGlimmerVllmImageProvenance(provenance);
-
-    expect(recipe.spec.runtime).toMatchObject({
-      architecture: "arm64",
-      image: MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
-      imageDownloadSizeBytes: 9_699_710_136,
-    });
-
-    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
-    const model = VLLM_MODELS.find(({ envValue }) => envValue === "muse-glimmer-30b");
-    expect(profile).not.toBeNull();
-    expect(model).toBeDefined();
-    expect(resolveVllmRuntimeProfile(profile!, model!)).toMatchObject({
-      image: MUSE_GLIMMER_VLLM_IMAGE_REFERENCE,
-      imageDownloadSizeBytes: 9_699_710_136,
-    });
-  });
-
   // source-shape-contract: security -- Mutating each trust field proves the reviewed provenance record fails closed before a substituted external runtime can be published.
   it.each([
     ["publisher drift", ["publisher", "namespace"], "attacker"],

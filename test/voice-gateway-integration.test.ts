@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import http, { type Server } from "node:http";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createVoiceGatewayServer } from "../src/lib/adapters/http/voice-gateway-server";
 import type { AgentTurnClient, AgentTurnEvent } from "../src/lib/voice-gateway/contracts";
+import { readPrivateBearerDescriptors } from "../src/lib/voice-gateway/credential-file";
 import { OpenClawVoiceClient } from "../src/lib/voice-gateway/openclaw-client";
 import { VoiceSessionService } from "../src/lib/voice-gateway/session-service";
 import { PinnedOpenClawGateway } from "./fixtures/voice-gateway/pinned-openclaw-gateway";
@@ -119,6 +123,58 @@ afterEach(async () => {
 });
 
 describe("experimental voice gateway composed boundary", () => {
+  it("fails closed when the launcher swaps the fixed credential roles (#9235)", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-voice-swapped-"));
+    try {
+      const deploymentPath = path.join(directory, "deployment");
+      const openClawPath = path.join(directory, "openclaw");
+      fs.writeFileSync(deploymentPath, DEPLOYMENT_BEARER, { mode: 0o600 });
+      fs.writeFileSync(openClawPath, OPENCLAW_CREDENTIAL, { mode: 0o600 });
+      const credentials = readPrivateBearerDescriptors({
+        deployment: fs.openSync(
+          openClawPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        ),
+        openClaw: fs.openSync(
+          deploymentPath,
+          fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+        ),
+      });
+      let clientsCreated = 0;
+      const service = new VoiceSessionService({
+        runtimeIdentity: "voiceclaw-local",
+        runtimeProfile: "voiceclaw-pinned",
+        sandbox: "repository-fixture",
+        agent: "main",
+        createClient: () => {
+          clientsCreated += 1;
+          return new FakeOpenClawGatewayClient(credentials.openClawCredential);
+        },
+      });
+      const port = await listen(
+        createVoiceGatewayServer({
+          deploymentCredential: credentials.deploymentCredential,
+          service,
+        }),
+      );
+
+      const response = await requestJson({
+        port,
+        method: "POST",
+        path: "/v1/voice/sessions",
+        bearer: DEPLOYMENT_BEARER,
+        body: { runtimeConversationId: "runtime-conversation" },
+      });
+
+      expect(response).toEqual({ status: 401, body: '{"error":"authentication_failed"}' });
+      expect(clientsCreated).toBe(0);
+      expect(JSON.stringify(response)).not.toContain(DEPLOYMENT_BEARER);
+      expect(JSON.stringify(response)).not.toContain(OPENCLAW_CREDENTIAL);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("recovers an omitted delta when a final event repeats the last sequence (#9243)", async () => {
     let pinnedOpenClaw: PinnedOpenClawGateway | undefined;
     const diagnostics: object[] = [];

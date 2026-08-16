@@ -13,8 +13,6 @@ import {
 } from "./serve";
 
 const OPTIONS = {
-  deploymentCredentialFile: "/run/voice/deployment",
-  openClawCredentialFile: "/run/voice/openclaw",
   gatewayUrl: "ws://127.0.0.1:18789/ws",
   runtimeIdentity: "voiceclaw-local",
   runtimeProfile: "voiceclaw-pinned",
@@ -32,7 +30,7 @@ describe("experimental voice gateway service gate", () => {
   });
 
   it("checks the exact feature gate before reading either credential (#8378)", async () => {
-    const readBearerFile = vi.fn();
+    const readBearerDescriptors = vi.fn();
     const createServer = vi.fn();
 
     await expect(
@@ -41,11 +39,11 @@ describe("experimental voice gateway service gate", () => {
           NEMOCLAW_EXPERIMENTAL_OTHER_CAPABILITY: "1",
           NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY: "0",
         },
-        readBearerFile,
+        readBearerDescriptors,
         createServer,
       }),
     ).rejects.toThrow("disabled");
-    expect(readBearerFile).not.toHaveBeenCalled();
+    expect(readBearerDescriptors).not.toHaveBeenCalled();
     expect(createServer).not.toHaveBeenCalled();
   });
 });
@@ -92,21 +90,22 @@ describe("voice gateway listener lifetime", () => {
     const server = new FakeServer();
     const processEvents = new EventEmitter();
     const log = vi.fn();
-    const readBearerFile = vi
-      .fn()
-      .mockReturnValueOnce("deployment-secret")
-      .mockReturnValueOnce("openclaw-secret");
+    const readBearerDescriptors = vi.fn(() => ({
+      deploymentCredential: "deployment-secret",
+      openClawCredential: "openclaw-secret",
+    }));
     const createServer = vi.fn(() => server as unknown as Server);
 
     const running = runVoiceGatewayServe(OPTIONS, {
       env: { NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY: "1" },
-      readBearerFile,
+      readBearerDescriptors,
       createServer,
       processEvents,
       log,
     });
     await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(1));
 
+    expect(readBearerDescriptors).toHaveBeenCalledWith({ deployment: 3, openClaw: 4 });
     expect(server.listenArgs).toEqual([18800, "127.0.0.1"]);
     expect(createServer).toHaveBeenCalledWith({
       deploymentCredential: "deployment-secret",

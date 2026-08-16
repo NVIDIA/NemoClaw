@@ -15,19 +15,11 @@ export default class InternalVoiceGatewayServeCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Internal: serve the experimental voice gateway";
   static description =
-    "Serve one authenticated runtime session through a private loopback HTTP and NDJSON adapter.";
+    "Serve one authenticated runtime session through a private loopback HTTP and NDJSON adapter. Reads the deployment credential from descriptor 3 and the OpenClaw credential from descriptor 4.";
   static usage = [
-    "internal voice-gateway serve --deployment-credential-file <path> --openclaw-credential-file <path> --gateway-url <url> --runtime-identity <id> --runtime-profile <id> --sandbox <name> --agent <id> [--listen-port <port>]",
+    "internal voice-gateway serve --gateway-url <url> --runtime-identity <id> --runtime-profile <id> --sandbox <name> --agent <id> [--listen-port <port>]",
   ];
   static flags = {
-    "deployment-credential-file": Flags.string({
-      description: "Absolute path to the owner-only deployment bearer file",
-      required: true,
-    }),
-    "openclaw-credential-file": Flags.string({
-      description: "Absolute path to the owner-only OpenClaw credential file",
-      required: true,
-    }),
     "gateway-url": Flags.string({
       description: "Fixed loopback OpenClaw WebSocket URL",
       required: true,
@@ -60,8 +52,6 @@ export default class InternalVoiceGatewayServeCommand extends NemoClawCommand {
     assertVoiceGatewayEnabled();
     const { flags } = await this.parse(InternalVoiceGatewayServeCommand);
     await runVoiceGatewayServe({
-      deploymentCredentialFile: flags["deployment-credential-file"],
-      openClawCredentialFile: flags["openclaw-credential-file"],
       gatewayUrl: flags["gateway-url"],
       runtimeIdentity: flags["runtime-identity"],
       runtimeProfile: flags["runtime-profile"],

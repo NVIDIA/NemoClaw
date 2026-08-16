@@ -69,6 +69,35 @@ harness or runner. Vitest remains the only test harness.
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
 
+## Selecting One Target
+
+`.github/workflows/e2e.yaml` runs one matrix target by passing its id through
+`TARGET_ID` and selecting the matching test with `-t "^${TARGET_ID}$"`. The
+selector performs the restriction; `TARGET_ID` alone does not limit which
+targets run.
+
+The `generate-matrix` job resolves dispatch input through `requireTargets`, so
+an unknown id fails there before any target job starts.
+
+`test/e2e/live/registry-targets.test.ts` resolves `TARGET_ID` through the same
+registry at module load, which covers a run that sets it another way. An ID no
+target declares fails collection with `Unknown target '<id>'. Available
+targets: ...`, and an empty ID fails with `Selected target ID '' is not safe
+...`. Without those checks, either ID would build a selector that matches
+nothing and can exit 0 without executing a target. An unsafe ID also fails with
+`Selected target ID '<id>' is not safe ...`; regex-shaped IDs can otherwise
+broaden the selector and run unintended live targets. This module-load guard
+protects the registry-target catalogue when collection includes
+`registry-targets.test.ts`. Both `npm run test:live-e2e` and
+`npm run test:e2e-phases:check` include that file, but a collection command that
+omits it does not run this guard.
+
+A declared target that is not wired for live fixtures still collects. The
+typed-registry matrix reports it as skipped with its `[not wired]` reason and
+exits 0. That exit-0 skip is specific to the typed-registry matrix; the
+catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
+when its selection runs no tests.
+
 ## How To Run
 
 ```bash

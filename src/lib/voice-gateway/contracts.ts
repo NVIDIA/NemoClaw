@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const VOICE_GATEWAY_FEATURE_ENV = "NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY";
+/** Fixed inherited descriptor for the runtime deployment bearer. */
+export const VOICE_GATEWAY_DEPLOYMENT_CREDENTIAL_FD = 3;
+/** Fixed inherited descriptor for the OpenClaw gateway bearer. */
+export const VOICE_GATEWAY_OPENCLAW_CREDENTIAL_FD = 4;
 export const VOICE_GATEWAY_LISTEN_ADDRESS = "127.0.0.1";
 export const DEFAULT_VOICE_GATEWAY_LISTEN_PORT = 18_800;
 export const VOICE_GATEWAY_SESSION_LIFETIME_MS = 5 * 60_000;
