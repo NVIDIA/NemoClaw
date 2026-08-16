@@ -31,6 +31,19 @@ export interface VoiceGatewayLaunchContract {
   readonly env: Readonly<Record<string, string>>;
 }
 
+/** Cleanup failure that retains the only handle to a child whose exit was not observed. */
+export class VoiceGatewayTerminationUnconfirmedError extends Error {
+  readonly child: ChildProcess;
+
+  constructor(cause: unknown, child: ChildProcess) {
+    super("Voice gateway termination could not be confirmed after credential cleanup failed.", {
+      cause,
+    });
+    this.name = "VoiceGatewayTerminationUnconfirmedError";
+    this.child = child;
+  }
+}
+
 const CLI = path.resolve(__dirname, "../../../bin/nemoclaw.js");
 
 /** Build the path- and value-free child process contract for the voice gateway. */
@@ -123,31 +136,32 @@ function closeDescriptors(descriptors: readonly number[]): void {
   if (cleanupError !== undefined) throw cleanupError;
 }
 
-/** Terminate and reap a spawned gateway that cannot be returned to its caller. */
-async function terminateChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise<void>((resolve) => {
+/** Attempt bounded termination and report whether child exit was observed. */
+async function terminateChild(child: ChildProcess): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise<boolean>((resolve) => {
     let forceTimer: NodeJS.Timeout | undefined;
     let terminalTimer: NodeJS.Timeout | undefined;
-    const settled = () => {
+    const settled = (exitObserved: boolean) => {
       if (forceTimer !== undefined) clearTimeout(forceTimer);
       if (terminalTimer !== undefined) clearTimeout(terminalTimer);
-      child.off("error", settled);
-      child.off("exit", settled);
-      resolve();
+      child.off("error", confirmed);
+      child.off("exit", confirmed);
+      resolve(exitObserved);
     };
+    const confirmed = () => settled(true);
     forceTimer = setTimeout(() => {
       if (!child.kill("SIGKILL")) {
-        settled();
+        settled(false);
         return;
       }
-      terminalTimer = setTimeout(settled, 5_000);
+      terminalTimer = setTimeout(() => settled(false), 5_000);
       terminalTimer.unref();
     }, 5_000);
     forceTimer.unref();
-    child.once("error", settled);
-    child.once("exit", settled);
-    if (!child.kill("SIGTERM")) settled();
+    child.once("error", confirmed);
+    child.once("exit", confirmed);
+    if (!child.kill("SIGTERM")) settled(false);
   });
 }
 
@@ -195,7 +209,9 @@ export async function launchVoiceGateway(
   }
   if (operationError !== undefined) throw operationError.value;
   if (cleanupError !== undefined) {
-    await terminateChild(child!);
+    if (!(await terminateChild(child!))) {
+      throw new VoiceGatewayTerminationUnconfirmedError(cleanupError, child!);
+    }
     throw cleanupError;
   }
   return child!;

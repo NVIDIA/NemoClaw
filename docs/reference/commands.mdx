@@ -4531,12 +4531,12 @@ The launcher does not place credential source paths or values in arguments or en
 It intentionally inherits only credential descriptors `3` and `4` across this exec, then closes its parent copies.
 To rotate either credential, stop the command and restart it with newly opened descriptors.
 NemoClaw does not send the OpenClaw credential to the runtime.
-The external Gabby integration selects each trusted source path and invokes the launcher.
-The identity lifecycle from #8403 owns source-file creation, replacement, removal, and credential revocation, while the launcher owns each descriptor from opening through parent and child closure.
-Closing the descriptors or stopping the gateway does not remove a source file or revoke its credential; rotation and removal must replace or delete the source and revoke the old value through that lifecycle owner.
+The trusted caller selects each credential source path and invokes the launcher.
+That caller must create, replace, and remove each source file and revoke old credential values, while the launcher owns each descriptor from opening through parent and child closure.
+Closing the descriptors or stopping the gateway does not remove a source file or revoke its credential.
 
-The launcher is an internal library boundary for the external Gabby scenario, not another CLI command and not part of normal NemoClaw managed startup.
-Gabby calls the shipped `runVoiceGatewayLaunch()` action with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that production entry point and verifies descriptor cleanup and restart-based credential rotation.
+The launcher is an internal library boundary for trusted external integrations, not another CLI command and not part of normal NemoClaw managed startup.
+Callers use the shipped `runVoiceGatewayLaunch()` action with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that production entry point and verifies descriptor cleanup and restart-based credential rotation.
 The launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
 Do not run this child command directly because it requires the launcher's descriptor mapping.
 

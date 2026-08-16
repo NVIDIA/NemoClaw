@@ -16,7 +16,11 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 import { spawn } from "node:child_process";
 
-import { buildVoiceGatewayLaunchContract, launchVoiceGateway } from "./launcher";
+import {
+  buildVoiceGatewayLaunchContract,
+  launchVoiceGateway,
+  VoiceGatewayTerminationUnconfirmedError,
+} from "./launcher";
 
 const directories: string[] = [];
 
@@ -114,7 +118,7 @@ describe("voice gateway launcher", () => {
     expect(child.listenerCount("exit")).toBe(0);
   });
 
-  it("bounds forced child termination and removes terminal listeners (#9235)", async () => {
+  it("returns the child handle when bounded termination is unconfirmed (#9235)", async () => {
     vi.useFakeTimers();
     const launchOptions = options();
     fs.writeFileSync(
@@ -141,10 +145,15 @@ describe("voice gateway launcher", () => {
       })
       .mockImplementation(close);
 
-    const launch = expect(launchVoiceGateway(launchOptions)).rejects.toThrow("close failed");
+    const launch = launchVoiceGateway(launchOptions).catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(10_000);
 
-    await launch;
+    const error = await launch;
+    expect(error).toBeInstanceOf(VoiceGatewayTerminationUnconfirmedError);
+    expect(error).toMatchObject({
+      child,
+      cause: expect.objectContaining({ message: "close failed" }),
+    });
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
     expect(child.listenerCount("error")).toBe(0);
