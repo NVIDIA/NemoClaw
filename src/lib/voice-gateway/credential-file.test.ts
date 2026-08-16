@@ -113,4 +113,30 @@ describe("voice gateway credential descriptors", () => {
       expect.objectContaining({ message: expect.not.stringContaining(deploymentSecret) }),
     );
   });
+
+  it("preserves a credential error when descriptor cleanup also fails (#9235)", () => {
+    const deployment = credentialDescriptor("short");
+    const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
+    const closeSync = fs.closeSync;
+    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
+      closeSync(descriptor);
+      if (descriptor === deployment) throw new Error("cleanup failed");
+    });
+
+    expect(() => readPair(deployment, openClaw)).toThrow("invalid size");
+    expect(() => fs.fstatSync(openClaw)).toThrow();
+  });
+
+  it("reports a cleanup error after successful credential reads (#9235)", () => {
+    const deployment = credentialDescriptor(DEPLOYMENT_CREDENTIAL);
+    const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
+    const closeSync = fs.closeSync;
+    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
+      closeSync(descriptor);
+      if (descriptor === deployment) throw new Error("cleanup failed");
+    });
+
+    expect(() => readPair(deployment, openClaw)).toThrow("cleanup failed");
+    expect(() => fs.fstatSync(openClaw)).toThrow();
+  });
 });

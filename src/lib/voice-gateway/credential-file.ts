@@ -70,6 +70,8 @@ export function readPrivateBearerDescriptors(descriptors: PrivateBearerDescripto
   openClawCredential: string;
 } {
   const uniqueDescriptors = [...new Set([descriptors.deployment, descriptors.openClaw])];
+  let result: { deploymentCredential: string; openClawCredential: string } | undefined;
+  let operationError: { readonly value: unknown } | undefined;
   try {
     const deploymentStat = validateDescriptor(
       descriptors.deployment,
@@ -85,20 +87,29 @@ export function readPrivateBearerDescriptors(descriptors: PrivateBearerDescripto
     ) {
       throw new Error("Voice gateway credential descriptors must refer to different files.");
     }
-    return {
+    result = {
       deploymentCredential: readBearer(
         descriptors.deployment,
         "Voice gateway deployment credential",
       ),
       openClawCredential: readBearer(descriptors.openClaw, "Voice gateway OpenClaw credential"),
     };
-  } finally {
-    for (const descriptor of uniqueDescriptors) {
-      try {
-        fs.closeSync(descriptor);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EBADF") throw error;
+  } catch (error) {
+    operationError = { value: error };
+  }
+
+  let cleanupError: unknown;
+  for (const descriptor of uniqueDescriptors) {
+    try {
+      fs.closeSync(descriptor);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EBADF" && cleanupError === undefined) {
+        cleanupError = error;
       }
     }
   }
+
+  if (operationError !== undefined) throw operationError.value;
+  if (cleanupError !== undefined) throw cleanupError;
+  return result!;
 }

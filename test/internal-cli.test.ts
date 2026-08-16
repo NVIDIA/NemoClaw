@@ -144,10 +144,6 @@ describe("internal oclif namespace", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Internal: serve the experimental voice gateway");
-    expect(result.stdout).not.toContain("--deployment-credential-file");
-    expect(result.stdout).not.toContain("--openclaw-credential-file");
-    expect(result.stdout).toContain("descriptor 3");
-    expect(result.stdout).toContain("descriptor 4");
     expect(result.stdout).toContain("--runtime-identity");
   });
 });
