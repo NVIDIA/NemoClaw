@@ -135,27 +135,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const argv = process.argv.slice(2);
-// Direct CLI exec paths can inherit source names that filtered helpers omit.
-const authorityNames = [
-  "NEMOCLAW_OPENSHELL_COMMAND",
-  "NEMOCLAW_LAUNCH_SANDBOX",
-  "NEMOCLAW_LAUNCH_RUN_ID",
-  "NEMOCLAW_LAUNCH_INTERCEPT_PATH",
-  "NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
-  "NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
-  "OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND",
-  "OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX",
-  "OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID",
-  "OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH",
-  "OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
-  "OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
-];
 const realOpenShell = process.env.OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND;
 const sandboxName = process.env.OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX;
 const runId = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID;
 const interceptPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH;
 const writerScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT;
 const runtimeEnvScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
+
+function isLaunchAuthorityName(name) {
+  return (
+    name === "NEMOCLAW_OPENSHELL_BIN" ||
+    name === "NEMOCLAW_OPENSHELL_COMMAND" ||
+    name.startsWith("NEMOCLAW_LAUNCH_") ||
+    name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_")
+  );
+}
 
 function fail(reason) {
   process.stderr.write(JSON.stringify({ reason }) + "\n");
@@ -168,7 +162,9 @@ function arraysEqual(left, right) {
 
 function runRealOpenShell(nextArgv) {
   const env = { ...process.env };
-  for (const name of authorityNames) delete env[name];
+  for (const name of Object.keys(env)) {
+    if (isLaunchAuthorityName(name)) delete env[name];
+  }
   const result = childProcess.spawnSync(realOpenShell, nextArgv, {
     env,
     stdio: "inherit",
@@ -804,6 +800,12 @@ session_evidence() {
   local mode="$1"
   local expected_turns=""
   local command_timeout=10
+  local openshell_command="$NEMOCLAW_OPENSHELL_COMMAND"
+  local sandbox_name="$NEMOCLAW_LAUNCH_SANDBOX"
+  local evidence_script="$NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT"
+  local session_root="$NEMOCLAW_LAUNCH_SESSION_ROOT"
+  local run_id="$NEMOCLAW_LAUNCH_RUN_ID"
+  local name
   if [[ "$#" -gt 1 ]]; then
     expected_turns="$2"
   fi
@@ -816,16 +818,26 @@ session_evidence() {
       command_timeout="$remaining"
     fi
   fi
-  timeout --kill-after=1s "$command_timeout"s \
-    "$NEMOCLAW_OPENSHELL_COMMAND" sandbox exec \
-    --name "$NEMOCLAW_LAUNCH_SANDBOX" -- \
-    node -e "$NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT" \
-    "$mode" \
-    "$NEMOCLAW_LAUNCH_SESSION_ROOT" \
-    "$baseline_path" \
-    "$expected_turns" \
-    "$pty_record_root" \
-    "$NEMOCLAW_LAUNCH_RUN_ID"
+  (
+    set -- env
+    while IFS= read -r name; do
+      case "$name" in
+        NEMOCLAW_OPENSHELL_BIN|NEMOCLAW_OPENSHELL_COMMAND|NEMOCLAW_LAUNCH_*|OPENSHELL_NEMOCLAW_LAUNCH_*)
+          set -- "$@" -u "$name"
+          ;;
+      esac
+    done < <(compgen -e)
+    exec "$@" timeout --kill-after=1s "$command_timeout"s \
+      "$openshell_command" sandbox exec \
+      --name "$sandbox_name" -- \
+      node -e "$evidence_script" \
+      "$mode" \
+      "$session_root" \
+      "$baseline_path" \
+      "$expected_turns" \
+      "$pty_record_root" \
+      "$run_id"
+  )
 }
 
 wait_for_turn_count() {
