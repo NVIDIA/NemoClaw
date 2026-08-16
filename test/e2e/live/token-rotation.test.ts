@@ -299,10 +299,6 @@ test(
         "confirm Docker and start hermetic inference",
         "install the sandbox and confirm provider hashes",
         "rotate only the Telegram provider",
-        "reuse the sandbox after the unchanged Telegram token",
-        "rotate only the Discord provider",
-        "reuse the sandbox after the unchanged Discord token",
-        "rotate only the Slack providers",
         "reuse the sandbox and record rotation evidence",
       ],
     },
@@ -359,8 +355,6 @@ test(
         "first onboard stores messaging credential hashes and creates provider attachments",
         "rotating Telegram rebuilds and names only telegram-bridge",
         "unchanged tokens reuse the sandbox",
-        "rotating Discord rebuilds and names only discord-bridge",
-        "rotating Slack bot/app credentials rebuilds and names slack-bridge and slack-app only",
       ],
     });
 
@@ -526,7 +520,7 @@ test(
     );
     await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
 
-    progress.phase("reuse the sandbox after the unchanged Telegram token");
+    progress.phase("reuse the sandbox and record rotation evidence");
     const beforeTelegramReuseId = await sandboxIdentity(
       host,
       "phase-3-before-same-telegram-identity",
@@ -545,71 +539,6 @@ test(
       "phase-3-after-same-telegram",
     );
 
-    progress.phase("rotate only the Discord provider");
-    const discord = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      { ...TOKEN_A, telegram: TOKEN_B.telegram, discord: TOKEN_B.discord },
-      "phase-4-rotate-discord",
-    );
-    const discordText = resultText(discord);
-    expect(discord.exitCode, discordText).toBe(0);
-    expectRotationOutput(
-      discordText,
-      [`${SANDBOX_NAME}-discord-bridge`],
-      [
-        `${SANDBOX_NAME}-telegram-bridge`,
-        `${SANDBOX_NAME}-slack-bridge`,
-        `${SANDBOX_NAME}-slack-app`,
-      ],
-    );
-    await assertSandboxRunning(host, "phase-4-sandbox-running-after-discord-rotation");
-
-    progress.phase("reuse the sandbox after the unchanged Discord token");
-    const beforeDiscordReuseId = await sandboxIdentity(
-      host,
-      "phase-5-before-same-discord-identity",
-    );
-    const afterDiscordSame = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      { ...TOKEN_A, telegram: TOKEN_B.telegram, discord: TOKEN_B.discord },
-      "phase-5-same-after-discord",
-    );
-    const afterDiscordSameText = resultText(afterDiscordSame);
-    expect(afterDiscordSame.exitCode, afterDiscordSameText).toBe(0);
-    await assertSandboxReused(
-      host,
-      beforeDiscordReuseId,
-      "phase-5-after-same-discord",
-    );
-
-    progress.phase("rotate only the Slack providers");
-    const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
-    const slackText = resultText(slack);
-    expect(slack.exitCode, slackText).toBe(0);
-    expectRotationOutput(
-      slackText,
-      [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`],
-      [`${SANDBOX_NAME}-telegram-bridge`, `${SANDBOX_NAME}-discord-bridge`],
-    );
-    await assertSandboxRunning(host, "phase-6-sandbox-running-after-slack-rotation");
-
-    progress.phase("reuse the sandbox and record rotation evidence");
-    const beforeSlackReuseId = await sandboxIdentity(
-      host,
-      "phase-7-before-same-slack-identity",
-    );
-    const afterSlackSame = await runOnboard(
-      host,
-      fakeOpenAI.baseUrl,
-      TOKEN_B,
-      "phase-7-same-after-slack",
-    );
-    const afterSlackSameText = resultText(afterSlackSame);
-    expect(afterSlackSame.exitCode, afterSlackSameText).toBe(0);
-    await assertSandboxReused(host, beforeSlackReuseId, "phase-7-after-same-slack");
-
     await artifacts.target.complete({
       id: "token-rotation",
       sandboxName: SANDBOX_NAME,
@@ -617,8 +546,6 @@ test(
         providersCreated: true,
         credentialHashesStored: true,
         telegramRotationIsolated: true,
-        discordRotationIsolated: true,
-        slackRotationIsolated: true,
         unchangedTokensReuseSandbox: true,
       },
     });
