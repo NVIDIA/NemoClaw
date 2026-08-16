@@ -243,6 +243,7 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const sessionRoot = join(fixtureRoot, "sessions");
   const tuiPidsPath = join(fixtureRoot, "tui-pids");
   const ttyMarker = join(fixtureRoot, "tty-observed");
+  const openshellCallsPath = join(fixtureRoot, "openshell-calls.jsonl");
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyRecordReceiptPath = join(fixtureRoot, "pty-record-receipt.json");
   const runId = randomUUID().replaceAll("-", "");
@@ -404,6 +405,22 @@ if (process.argv[2] !== "tui") {
       fakeOpenshell,
       String.raw`#!/usr/bin/env bash
 set -euo pipefail
+node -e '
+const fs = require("node:fs");
+const authorityNames = Object.keys(process.env)
+  .filter(
+    (name) =>
+      name === "NEMOCLAW_OPENSHELL_BIN" ||
+      name === "NEMOCLAW_OPENSHELL_COMMAND" ||
+      name.startsWith("NEMOCLAW_LAUNCH_") ||
+      name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
+  )
+  .sort();
+fs.appendFileSync(
+  process.env.NEMOCLAW_FIXTURE_OPENSHELL_CALLS,
+  JSON.stringify({ argv: process.argv.slice(1), authorityNames }) + "\\n",
+);
+' "$@"
 while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
 [[ "$#" -gt 0 ]]
 shift
@@ -439,6 +456,7 @@ exec "$@"
         HOME: fixtureRoot,
         NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
         NEMOCLAW_FIXTURE_MODE: mode,
+        NEMOCLAW_FIXTURE_OPENSHELL_CALLS: openshellCallsPath,
         NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER: pendingQualificationMarker,
         NEMOCLAW_FIXTURE_PTY_RECORD_ROOT: ptyRecordRoot,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
@@ -484,6 +502,13 @@ exec "$@"
         name.startsWith("nemoclaw-launch-host."),
       ),
       orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
+      openshellCalls: existsSync(openshellCallsPath)
+        ? readFileSync(openshellCallsPath, "utf8")
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as { argv: string[]; authorityNames: string[] })
+        : [],
       pendingQualificationObserved: existsSync(pendingQualificationMarker),
       ptyRecordRemoved: !existsSync(ptyRecordRoot),
       ptyRecordReceipt: existsSync(ptyRecordReceiptPath)
@@ -539,14 +564,6 @@ function runOpenShellShimFixture(gatewayArgs: string[]) {
   writeFileSync(
     realOpenShell,
     String.raw`#!/usr/bin/env node
-const authorityNames = new Set([
-  "NEMOCLAW_OPENSHELL_COMMAND",
-  "NEMOCLAW_LAUNCH_SANDBOX",
-  "NEMOCLAW_LAUNCH_RUN_ID",
-  "NEMOCLAW_LAUNCH_INTERCEPT_PATH",
-  "NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
-  "NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
-]);
 require("node:fs").appendFileSync(
   ${JSON.stringify(callsPath)},
   JSON.stringify({
@@ -554,7 +571,10 @@ require("node:fs").appendFileSync(
     authorityNames: Object.keys(process.env)
       .filter(
         (name) =>
-          authorityNames.has(name) || name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
+          name === "NEMOCLAW_OPENSHELL_BIN" ||
+          name === "NEMOCLAW_OPENSHELL_COMMAND" ||
+          name.startsWith("NEMOCLAW_LAUNCH_") ||
+          name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
       )
       .sort(),
   }) + "\n",
@@ -566,11 +586,15 @@ require("node:fs").appendFileSync(
   chmodSync(shim, 0o755);
   const hostEnv = {
     ...process.env,
+    NEMOCLAW_LAUNCH_COMMAND: "nemoclaw",
+    NEMOCLAW_LAUNCH_FIRST_INPUT: "fixture input",
     NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
     NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT: OPENCLAW_PTY_RECORD_WRITER_SCRIPT,
     NEMOCLAW_LAUNCH_RUN_ID: runId,
     NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT: OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT,
     NEMOCLAW_LAUNCH_SANDBOX: sandboxName,
+    NEMOCLAW_LAUNCH_SESSION_EVIDENCE_SCRIPT: OPENCLAW_SESSION_EVIDENCE_SCRIPT,
+    NEMOCLAW_OPENSHELL_BIN: shim,
     NEMOCLAW_OPENSHELL_COMMAND: realOpenShell,
     OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH: interceptPath,
     OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT: OPENCLAW_PTY_RECORD_WRITER_SCRIPT,
@@ -783,12 +807,13 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux")(
-  "sends two inputs and exit through a real PTY without using terminal copy as evidence (#9160)",
+  "sends two inputs and /exit through a real PTY, strips launch authority from OpenShell calls, and ignores terminal copy evidence (#9160)",
   () => {
     for (const terminalCopy of ["absent", "ansi", "reordered"] as const) {
       const {
         baselineRemoved,
         hostSessionResidue,
+        openshellCalls,
         orphanedTuiProcessIds,
         ptyRecordReceipt,
         ptyRecordRemoved,
@@ -801,6 +826,12 @@ it.runIf(process.platform === "linux")(
       expect(baselineRemoved).toBe(true);
       expect(ptyRecordRemoved).toBe(true);
       expect(hostSessionResidue).toEqual([]);
+      expect(openshellCalls.length).toBeGreaterThan(3);
+      expect(openshellCalls.every((call) => call.authorityNames.length === 0)).toBe(true);
+      expect(openshellCalls.some((call) => call.argv.includes("baseline"))).toBe(true);
+      expect(
+        openshellCalls.some((call) => call.argv.includes(OPENCLAW_PTY_RECORD_WRITER_SCRIPT)),
+      ).toBe(true);
       expect(tuiProcessIds).toHaveLength(1);
       expect(orphanedTuiProcessIds).toEqual([]);
       expect(ptyRecordReceipt).toMatchObject({
