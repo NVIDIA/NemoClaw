@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
+
 import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
+import { retryUntilAsync } from "../../core/retry";
+
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { CuaAppliedPolicyIdentity } from "../../cua/contract";
 import {
@@ -578,21 +581,6 @@ export async function collectSandboxStatusSnapshot(
   // providers without a registered host-side health probe (#6192).
   if (!suppressInferenceProbe && lookup.state === "present") {
     let gatewayChain: Awaited<ReturnType<ProbeSandboxInferenceGatewayHealth>> = null;
-    try {
-      const probe =
-        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
-      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
-      for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        gatewayChain = await probe(sandboxName);
-        if (gatewayChain?.ok || attempt === attempts) break;
-        await (opts.deps?.delayInferenceRecoveryProbe ?? sleep)(RECOVERED_INFERENCE_PROBE_DELAY_MS);
-      }
-    } catch (error) {
-      // This is a permanent fail-closed runtime boundary, but unexpected
-      // OpenShell/transport exceptions must remain observable for diagnosis.
-      reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
-      gatewayChain = null;
-    }
     // Take the provider and model as one pair. Falling back per field can pair
     // a live model with a recorded provider and request a route neither one
     // describes.
@@ -614,23 +602,51 @@ export async function collectSandboxStatusSnapshot(
           };
     const invocationModel = (invocationRoute.model || "").trim();
     const invocationProvider = (invocationRoute.provider || "").trim();
-    const invocation =
-      gatewayChain?.ok && invocationModel && invocationProvider
-        ? runSandboxInferenceInvocationProbe(
-            {
-              sandboxName,
-              provider: invocationProvider,
-              model: invocationModel,
-              preferredInferenceApi: invocationRoute.preferredInferenceApi,
-            },
-            opts.deps?.probeSandboxInferenceInvocationImpl,
-            (error) =>
-              reportInferenceProbeError(
-                error,
-                opts.deps?.reportInferenceProbeError ?? console.error,
-              ),
-          )
-        : null;
+    const canProbeInvocation = Boolean(invocationModel && invocationProvider);
+    let invocation: ReturnType<typeof runSandboxInferenceInvocationProbe> | null = null;
+    try {
+      const probe =
+        opts.deps?.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
+      const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
+      await retryUntilAsync(
+        async () => {
+          gatewayChain = await probe(sandboxName);
+          invocation =
+            gatewayChain?.ok && canProbeInvocation
+              ? runSandboxInferenceInvocationProbe(
+                  {
+                    sandboxName,
+                    provider: invocationProvider,
+                    model: invocationModel,
+                    preferredInferenceApi: invocationRoute.preferredInferenceApi,
+                  },
+                  opts.deps?.probeSandboxInferenceInvocationImpl,
+                  (error) =>
+                    reportInferenceProbeError(
+                      error,
+                      opts.deps?.reportInferenceProbeError ?? console.error,
+                    ),
+                )
+              : null;
+          return { gatewayChain, invocation };
+        },
+        {
+          accept: ({ gatewayChain: chain, invocation: result }) =>
+            Boolean(chain?.ok && (!canProbeInvocation || result?.ok)),
+          retryDelaysMs: Array.from(
+            { length: attempts - 1 },
+            () => RECOVERED_INFERENCE_PROBE_DELAY_MS,
+          ),
+          sleep: opts.deps?.delayInferenceRecoveryProbe ?? sleep,
+        },
+      );
+    } catch (error) {
+      // This is a permanent fail-closed runtime boundary, but unexpected
+      // OpenShell/transport exceptions must remain observable for diagnosis.
+      reportInferenceProbeError(error, opts.deps?.reportInferenceProbeError ?? console.error);
+      gatewayChain = null;
+      invocation = null;
+    }
     inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");

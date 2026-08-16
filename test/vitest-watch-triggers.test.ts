@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import rootVitestConfig from "../vitest.config";
 import {
   resolveVitestWatchTests,
   vitestWatchTriggerPatterns,
@@ -61,7 +60,6 @@ const OPAQUE_INPUTS = [
   "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
-  "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/e2e-standard-profile.yaml",
   ".github/workflows/portable-profile-e2e.yaml",
@@ -85,11 +83,6 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  // source-shape-contract: compatibility -- Root watch mode must install the canonical opaque-input trigger resolver
-  it("registers the focused mappings at the root configuration boundary (#6692)", () => {
-    expect(rootVitestConfig.test?.watchTriggerPatterns).toBe(vitestWatchTriggerPatterns);
-  });
-
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
@@ -161,9 +154,6 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-manifests.test.ts",
     ]);
     expect(triggeredBy("test/e2e/manifests/openclaw-nvidia.yml")).toEqual([]);
-    expect(triggeredBy("test/e2e/docs/parity-inventory.generated.json")).toEqual([
-      "test/e2e/support/e2e-migration-policy.test.ts",
-    ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",

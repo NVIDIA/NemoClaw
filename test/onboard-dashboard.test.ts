@@ -215,6 +215,59 @@ describe("onboard dashboard helpers", () => {
     ).toBe(false);
   });
 
+  it("waits for a stopped same-sandbox listener before reusing a fixed agent port", () => {
+    const sandboxName = "my-sandbox";
+    const targetPort = 8642;
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const forwardRow = `${sandboxName} 127.0.0.1 ${targetPort} 42001 running`;
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(`SANDBOX BIND PORT PID STATUS\n${forwardRow}`)
+      .mockReturnValueOnce(`SANDBOX BIND PORT PID STATUS\n${forwardRow}`)
+      .mockReturnValueOnce("")
+      .mockReturnValue(`SANDBOX BIND PORT PID STATUS\n${forwardRow}`);
+    const isPortBoundOnHost = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const sleep = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell,
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep,
+      isPortBoundOnHost,
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    expect(
+      helpers.ensureDashboardForward(sandboxName, `http://127.0.0.1:${targetPort}`, {
+        allowPortReallocation: false,
+      }),
+    ).toBe(targetPort);
+
+    expect(isPortBoundOnHost).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(0.25);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(1, ["forward", "list"], {
+      ignoreError: true,
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(2, ["forward", "list"], {
+      timeout: 15_000,
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(3, ["forward", "list"], {
+      ignoreError: true,
+    });
+    expect(runCaptureOpenshell).toHaveBeenNthCalledWith(4, ["forward", "list"], {
+      timeout: 15_000,
+    });
+  });
+
   it("uses the default dashboard URL when an empty environment override is passed", () => {
     const forwardList =
       "SANDBOX BIND PORT PID STATUS\n" + "my-sandbox 127.0.0.1 18789 12345 running";

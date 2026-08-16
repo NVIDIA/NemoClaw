@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
+import { listTargets } from "../registry/registry.ts";
+import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const SPECIAL_GATE_ENV = ["NEMOCLAW_ISSUE_4434_LIVE", "NEMOCLAW_MCP_BRIDGE_AGENT"] as const;
@@ -60,6 +62,21 @@ function listLiveTests(options: {
 
 function linesForFile(lines: readonly string[], file: string): string[] {
   return lines.filter((line) => line.startsWith(`[e2e-live] test/e2e/live/${file} >`));
+}
+
+/**
+ * A registered target ID. `wired: true` selects one the live fixtures support;
+ * `wired: false` selects a declared placeholder the live matrix skips.
+ */
+function declaredTargetId({ wired }: { wired: boolean }): string {
+  const match = listTargets().find(
+    (registered) => liveTargetSupport(registered).supported === wired,
+  );
+  return match?.id ?? missingDeclaredTarget(wired);
+}
+
+function missingDeclaredTarget(wired: boolean): never {
+  throw new Error(`registry declares no ${wired ? "wired" : "not wired"} target`);
 }
 
 describe("live E2E target gating", () => {
@@ -166,6 +183,63 @@ describe("live E2E target gating", () => {
     expect(invalid.status).not.toBe(0);
     expect(invalid.stderr).toContain("Unsupported NEMOCLAW_MCP_BRIDGE_AGENT: all");
   });
+
+  it(
+    "rejects a TARGET_ID no registry target declares (#8286)",
+    testTimeoutOptions(30_000),
+    () => {
+      const file = "registry-targets.test.ts";
+
+      // The workflow selects one target with `-t "^${TARGET_ID}$"`. An id no
+      // target declares matches nothing, and an empty id builds `-t "^$"`,
+      // which also matches nothing, so the run would collect no test and
+      // exit 0 having executed no target.
+      const unknown = listLiveTests({
+        enabled: true,
+        env: { TARGET_ID: "does-not-exist" },
+        files: [file],
+      });
+
+      expect(unknown.status, unknown.stdout).not.toBe(0);
+      expect(`${unknown.stdout}${unknown.stderr}`).toContain("Unknown target 'does-not-exist'");
+
+      const empty = listLiveTests({ enabled: true, env: { TARGET_ID: "" }, files: [file] });
+
+      expect(empty.status, empty.stdout).not.toBe(0);
+      expect(`${empty.stdout}${empty.stderr}`).toContain("Selected target ID ''");
+
+      const unsafe = listLiveTests({
+        enabled: true,
+        env: { TARGET_ID: "unsafe/id" },
+        files: [file],
+      });
+
+      expect(unsafe.status, unsafe.stdout).not.toBe(0);
+      expect(`${unsafe.stdout}${unsafe.stderr}`).toContain("Selected target ID 'unsafe/id'");
+    },
+  );
+
+  it(
+    "collects registry targets for any declared TARGET_ID (#8286)",
+    testTimeoutOptions(30_000),
+    () => {
+      const file = "registry-targets.test.ts";
+
+      // The check rejects only ids the registry does not declare, so a wired id
+      // and a declared placeholder both still collect. Collecting at least one
+      // test proves the file was evaluated rather than skipped outright.
+      for (const wired of [true, false]) {
+        const result = listLiveTests({
+          enabled: true,
+          env: { TARGET_ID: declaredTargetId({ wired }) },
+          files: [file],
+        });
+
+        expect(result.status, result.stderr || result.stdout).toBe(0);
+        expect(linesForFile(result.lines, file).length).toBeGreaterThan(0);
+      }
+    },
+  );
 
   it("applies Linux gates at real Vitest collection", () => {
     const linuxTests = [

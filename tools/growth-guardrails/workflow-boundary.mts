@@ -22,6 +22,7 @@ export const TRUSTED_BASE_REF = "${{ github.event.pull_request.base.sha }}";
 export const REQUIRED_TOOL_INVOCATIONS = [
   "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
   "node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts",
+  "node --experimental-strip-types tools/growth-guardrails/test-loops.mts",
 ] as const;
 
 const HEAD_REF_MARKERS = [
@@ -64,6 +65,10 @@ const APPROVED_STEP_SHAPES = [
   {
     name: "Require changed test files not to add if statements",
     sha256: "991a7036d27aeb45fde2f3178936fba6ac87b90200b79c933015f9d63525d3cf",
+  },
+  {
+    name: "Require changed test files not to add table-test candidate loops",
+    sha256: "6432b36d3c5ed34c648d782e5fc2302c15e76aea88b0ed319dca080ef6ef9431",
   },
 ] as const;
 

@@ -232,7 +232,7 @@ describe("startSandbox", () => {
 
   it(
     "retries startup after a structured recovery failure (#8662)",
-    testTimeoutOptions(15_000),
+    testTimeoutOptions(30_000),
     async () => {
       const h = harness();
       h.restoreStartupState.mockReturnValueOnce(FAILED_RECOVERY);

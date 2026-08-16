@@ -14,6 +14,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpointOptimized } =
       apiKey: string | null | undefined,
       options?: {
         probeStreaming?: boolean;
+        requireStreamingToolCalling?: boolean;
         pinnedAddresses?: readonly string[];
         trustedPrivateCapability?: TrustedPrivateEndpointCapability;
       },
@@ -463,7 +464,8 @@ export function createInferenceSelectionValidationHelpers(
     // Validate the protocol surface that the selected agent will actually use.
     // Hermes routes custom Anthropic providers through the managed OpenAI
     // frontend, while native Anthropic consumers require strict SSE validation
-    // for duplicate/missing/out-of-order events (#6289).
+    // for duplicate/missing/out-of-order events (#6289) and a native tool_use
+    // result rather than JSON-shaped assistant text (#7967).
     const probe =
       intendedApi === "openai-completions"
         ? await runOpenAiLikeProbe(
@@ -481,6 +483,7 @@ export function createInferenceSelectionValidationHelpers(
             // Reasoning-only compatible endpoints often reject streaming probes,
             // so mirror the custom OpenAI-compatible path and skip streaming.
             probeStreaming: !reasoningEnabled,
+            requireStreamingToolCalling: !reasoningEnabled,
             pinnedAddresses,
             trustedPrivateCapability,
           });

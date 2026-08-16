@@ -1321,6 +1321,11 @@ When cleanup succeeds, `exec` returns the remote command's exit code.
 If cleanup cannot inspect, restore, or verify that contract, it fails closed and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
 In that case, `exec` returns the cleanup failure instead of the remote command's status.
 
+For a registered OpenClaw sandbox with a selected owning managed gateway, a successful direct `openclaw pairing approve googlechat <code>` command also restarts that gateway after cleanup so the new sender allowlist applies to the next message.
+If cleanup or restart fails after the approval commits, `exec` exits with status `1` and reports that the approval was not rolled back.
+When an owning gateway was selected, correct any reported cleanup problem, then run `$$nemoclaw <name> gateway restart` before testing the next message.
+Without an owning managed gateway, NemoClaw does not attempt activation or print a managed restart command; unregistered and non-OpenClaw sandboxes also do not receive the automatic restart.
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 
@@ -1869,7 +1874,9 @@ The route probe treats any final HTTP status from `200` through `499` as reachab
 The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
 When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
 During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
-Each run sends one 16-token request through the stored provider credential, so `status` waits up to 30 seconds for it and consumes provider tokens on a hosted route.
+An ordinary run sends one 16-token request through the stored provider credential, with a 30-second timeout, and consumes provider tokens on a hosted route.
+When the same `status` run recovers a managed gateway, it retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts.
+Each attempt can consume another 16 tokens on a hosted route.
 When NemoClaw sends an inference request, `inferenceHealth.subprobes` reports the route probe result as the `route reachability` hop, so a failing verdict still shows that the route itself answered.
 `inferenceHealth.failureLabel` reports why the inference request failed:
 
@@ -2145,6 +2152,11 @@ Use `--` to separate `exec` options from the command you want to run inside the 
 After the remote command exits, NemoClaw verifies and, when needed, restores the mutable OpenClaw config permission contract.
 When cleanup succeeds, `exec` preserves the remote command's exit code.
 When cleanup fails closed, `exec` returns the cleanup failure and reports both statuses on `stderr`.
+
+A successful direct `openclaw pairing approve googlechat <code>` command in a registered OpenClaw sandbox with a selected owning managed gateway restarts that gateway after cleanup, so the new sender allowlist applies to the next message.
+If the approval commits but cleanup or restart fails, `exec` exits with status `1` and reports that the approval was not rolled back.
+When an owning gateway was selected, it directs you to run `$$nemoclaw <name> gateway restart` after correcting any cleanup problem.
+Without an owning managed gateway, NemoClaw does not attempt activation or print a managed restart command; unregistered and non-OpenClaw sandboxes do not receive the automatic restart.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -4094,10 +4106,30 @@ NemoClaw resolves the OpenShell gateway from the target sandbox's recorded gatew
 Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks and can break other sandboxes.
 When either flag is missing, `$$nemoclaw inference set` reports both required flags without suggesting a raw OpenShell command.
 The command updates the host registry immediately after the gateway route changes.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
 If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `$$nemoclaw <name> rebuild`.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+If the in-sandbox config write or integrity hash update fails, the OpenShell route and NemoClaw registry remain committed, but the command exits with status `1` and points you to `$$nemoclaw <name> rebuild`.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
+When you explicitly supply a direct compatible endpoint at `http://host.openshell.internal:<port>`, NemoClaw skips OpenShell's host-side provider probe because that hostname resolves only inside the sandbox network.
+Before it persists the route in the NemoClaw registry or agent config, the command sends one validation request from the target sandbox with a 16-token output limit.
+If that request fails, the command attempts to restore the previous OpenShell selection and remove a provider that this switch created.
+If the error reports that rollback could not complete, rerun onboarding before using the route or retrying the switch.
+Endpoint-shape and shared-gateway compatibility checks still apply.
 When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL and, except for the Hermes case below, `--inference-api` with its API family so NemoClaw can persist a complete route identity for rebuild and shared-gateway checks.
 For a Hermes `compatible-anthropic-endpoint` target, `--inference-api` may be omitted because NemoClaw deterministically selects `openai-completions`; an explicit different API family is rejected.
 NemoClaw rejects loopback, link-local, private, and internal endpoint addresses, including public hostnames that resolve to a private address.
@@ -4250,7 +4282,7 @@ $$nemoclaw gc [--dry-run] [--yes|-y|--force]
 
 ### `$$nemoclaw uninstall`
 
-Run `uninstall.sh` to remove NemoClaw sandboxes, local gateway resources, related images and containers, and local state.
+Run `uninstall.sh` to uninstall NemoClaw. Unless this section explicitly describes portable cleanup, its resource-removal statements apply outside portable cleanup.
 The CLI runs the local `uninstall.sh` shipped with the installed npm package.
 If that local script is missing, the CLI does not auto-fetch a remote copy.
 It prints the versioned URL of the matching `uninstall.sh` so you can download, review, and run it manually.
@@ -4270,7 +4302,7 @@ If Docker is unavailable or a resource does not match its persisted ownership st
 Host-local cleanup can partially complete before an error.
 Restore Docker access or resolve the named ownership conflict, inspect the remaining container and network, and retry uninstall.
 Managed llama.cpp and vLLM model files remain in the shared Hugging Face cache by default.
-With `--delete-models`, uninstall deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache.
+Outside portable cleanup, `--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache.
 This opt-in can delete cached files that other applications installed or use.
 It preserves the Hugging Face `token` and `stored_tokens` authentication files.
 NemoClaw stops and verifies its managed local and distributed model runtimes before it deletes non-credential data from the local Hugging Face cache.
@@ -4285,16 +4317,16 @@ Refer to [Declare the OpenShell Gateway Lifecycle Authority](../deployment/gatew
 
 </AgentOnly>
 
-Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
+Outside portable cleanup, uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
 
-For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
+Outside portable cleanup, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
 When sibling gateways remain, uninstall leaves the shared proxy running for them.
 
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
 If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-On Linux, uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`, the gateway is externally supervised, or another gateway-port environment remains on the host.
+Outside portable cleanup, Linux uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`, the gateway is externally supervised, or another gateway-port environment remains on the host.
 That directory contains NemoClaw-owned Docker-driver gateway configuration and SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
 Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state.
 When another gateway-port environment remains, uninstall removes only the selected gateway port's subdirectory of that directory and keeps the other ports' subdirectories.
@@ -4306,8 +4338,8 @@ Uninstall does not otherwise target the declared external directory.
 |---|---|
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
-| `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
-| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
+| `--delete-models` | Outside portable cleanup, delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. Portable cleanup preserves both model stores and every Podman image. |
+| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`). Portable cleanup still retains its recovery record until later completed onboarding durably supersedes it. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
@@ -4360,7 +4392,7 @@ Fresh state roots and already scoped configurations continue to use the state-ro
 The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
-Full single-gateway Podman uninstall continues to use normal graceful teardown.
+Full single-gateway Podman uninstall for the portable experimental profile uses exact receipt-owned durable retirement and preserves shared OpenShell providers, the gateway service and process, binaries, configuration, model stores, and Podman images under the [portable authority, retry, and preservation contract](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.
@@ -4391,8 +4423,8 @@ The sweep enumerates the default state root and the non-default roots under `~/.
 When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
 When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
-The selected port runs last so its pass can remove the shared host resources once no other environment remains.
-`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
+Outside portable cleanup, the selected port runs last so its pass can remove the shared host resources once no other environment remains.
+`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port, subject to the portable preservation contract; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
 The sweep cannot select an unidentified environment until its gateway port can be determined.
 A port that fails to uninstall is reported, the sweep continues, and the exit code is nonzero.
@@ -4411,7 +4443,7 @@ The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-When uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
+Outside portable cleanup, when uninstall confirms that no sibling gateways remain, it also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
@@ -4426,7 +4458,7 @@ Decision matrix:
 | Context | Behaviour |
 |---|---|
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
-| Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; a single-gateway uninstall also removes the remaining shared state. |
+| Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; outside portable cleanup, a single-gateway uninstall also removes the remaining shared state. Portable cleanup preserves shared OpenShell resources and its retirement record. |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
 | `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries in the selected gateway's state root. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
@@ -4436,8 +4468,8 @@ Reinstall NemoClaw and re-onboard the sandbox before `$$nemoclaw <name> snapshot
 
 The preserved `sandboxes.json` file does not make the recorded sandboxes recoverable on its own.
 Uninstall deletes the selected sandboxes and attempts to remove the local gateway registration.
-After uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
-For a NemoClaw-managed gateway, it also removes the Docker image.
+Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also deletes provider registrations.
+Outside portable cleanup, a NemoClaw-managed gateway also removes the Docker image.
 For an externally supervised gateway, it preserves Docker resources, but the registry still cannot recover deleted sandbox and provider resources.
 Uninstall warns about this at preserve time.
 After reinstalling, the installer reports such records as not found on their recorded gateway instead of claiming they were recovered; run `$$nemoclaw <name> destroy` to clear a stranded record, then `$$nemoclaw onboard` to rebuild it.
@@ -4516,26 +4548,34 @@ The command requires the exact feature gate `NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY
 Any other value stops the command before argument parsing, credential reads, or listener creation.
 Other experimental feature gates do not enable this command.
 
-Before you start the adapter, provision these two credential files outside the repository:
+Before starting the adapter, the bounded voice-gateway launcher opens two owner-only regular files without following symbolic links and maps only these inherited file descriptors into the child process:
 
-- `--deployment-credential-file` authenticates the configured runtime deployment during session admission.
-- `--openclaw-credential-file` authenticates NemoClaw to the configured OpenClaw agent gateway with `operator.read` and `operator.write` scopes.
+- Descriptor `3` supplies the deployment credential used during session admission.
+- Descriptor `4` supplies the OpenClaw credential with `operator.read` and `operator.write` scopes.
 
-Both paths must be absolute paths to owner-only regular files.
-The command rejects symbolic links, access by group or other users, malformed values, and oversized values.
-The deployment owns each file location, lifetime, rotation, and removal.
-Stopping the command does not remove either file.
-The command reads both files only at startup and does not reload them.
-To rotate either credential, stop the command, replace the file, and start the command again.
-Removing a file does not revoke the credential in a running process.
+The descriptor numbers are fixed and are not configurable flags.
+The command rejects missing, duplicate, non-regular, wrong-owner, group-accessible, malformed, and oversized inputs.
+It reads each descriptor once and closes both before accepting traffic.
+Both credential values remain in process memory until the voice-gateway process stops.
+The launcher does not place credential source paths or values in arguments or environment variables.
+It intentionally inherits only credential descriptors `3` and `4` across this exec, then closes its parent copies.
+To rotate either credential, stop the command and restart it with newly opened descriptors.
 NemoClaw does not send the OpenClaw credential to the runtime.
+The trusted caller selects each credential source path and invokes the launcher.
+That caller must create, replace, and remove each source file and revoke old credential values.
+The launcher opens each source file, maps the inherited child descriptors, and closes its parent copies.
+The child validates, reads, and closes descriptors `3` and `4` before it accepts traffic.
+Closing the descriptors or stopping the gateway does not remove a source file or revoke its credential.
 
-Start the adapter with trusted operator-selected values:
+The launcher is an internal library boundary for trusted external integrations, not another CLI command and not part of normal NemoClaw managed startup.
+Callers use the shipped `runVoiceGatewayLaunch()` action with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that production entry point and verifies descriptor cleanup and restart-based credential rotation.
+If parent descriptor cleanup fails and bounded termination does not observe child exit, the action throws `VoiceGatewayTerminationUnconfirmedError` with the retained child handle and original cleanup failure.
+The trusted caller must recognize that error, terminate and reap its `child`, and confirm exit before starting another gateway.
+The launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
+Do not run this child command directly because it requires the launcher's descriptor mapping.
 
-```bash
+```text
 NEMOCLAW_EXPERIMENTAL_VOICE_GATEWAY=1 $$nemoclaw internal voice-gateway serve \
-  --deployment-credential-file /absolute/private/path/deployment-bearer \
-  --openclaw-credential-file /absolute/private/path/openclaw-bearer \
   --gateway-url ws://127.0.0.1:18789/ws \
   --runtime-identity <deployment-identity> \
   --runtime-profile <runtime-profile-id> \
@@ -5027,9 +5067,15 @@ Set the onboarding variables before running `$$nemoclaw onboard` if a slow conne
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
+
+<AgentOnly variant="openclaw,hermes">
+
+For newly created OpenClaw and Hermes sandboxes, `NEMOCLAW_SANDBOX_READY_TIMEOUT` also covers the durable sandbox ID and no-op command checks that follow the OpenShell `Ready` state.
+
+</AgentOnly>
 
 An unset, blank, invalid, or negative `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` value uses 30 seconds for OpenClaw gateway health and 90 seconds for Hermes gateway health.
 Recreated-sandbox OpenShell registration uses 120 seconds when the recovery path does not supply another budget.
