@@ -118,7 +118,8 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       // counter increments), so they do not consume the bounded approval
       // budget (#4504). They are ordered first here to prove the rejection path
       // runs. The initial CLI pairing and its write-scope upgrade are then both
-      // approved, while the trailing duplicate is never reached.
+      // approved, while the trailing distinct request proves the two-approval
+      // cap stops the pass.
       const run = runApprovalPassScript(script, [
         {
           requestId: "admin-cli",
@@ -151,10 +152,10 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
           scopes: ["operator.pairing", "operator.write"],
         },
         {
-          requestId: "cli-write-upgrade",
-          clientId: "cli",
-          clientMode: "cli",
-          scopes: ["operator.pairing", "operator.write"],
+          requestId: "later-webchat-upgrade",
+          clientId: "openclaw-control-ui",
+          clientMode: "webchat",
+          scopes: ["operator.read", "operator.write"],
         },
       ]);
 
