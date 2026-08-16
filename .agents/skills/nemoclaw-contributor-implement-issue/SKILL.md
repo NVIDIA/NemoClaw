@@ -93,8 +93,8 @@ boundary owns the behavior. Run focused tests after the final behavior-affecting
 exact command and result.
 
 Keep owning repository guidance in the same change.
-Defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
 This includes active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.
+Defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
 
 ## Self-review the completed change
 

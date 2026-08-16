@@ -84,7 +84,7 @@ Use GitHub's observed workflow and PR state:
 set -euo pipefail
 CANDIDATE_SHA="$(git rev-parse --verify 'origin/main^{commit}')"
 gh run list --repo NVIDIA/NemoClaw --workflow post-merge-docs.yaml --event push \
-  --branch main --status success --limit 1 --json databaseId,headSha,status,conclusion,url
+  --branch main --commit "$CANDIDATE_SHA" --status success --limit 1 --json databaseId,headSha,status,conclusion,url
 gh api --paginate "repos/NVIDIA/NemoClaw/pulls?state=open&base=main&per_page=100" | jq --slurp -e '[.[][] | select((.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")] | length == 0' >/dev/null
 REMOTE_BRANCH="$(git ls-remote --heads origin "automation/post-merge-docs-${CANDIDATE_SHA:0:12}")"
 [[ -z "$REMOTE_BRANCH" ]]
