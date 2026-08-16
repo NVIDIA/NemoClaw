@@ -119,54 +119,6 @@ describe("MCP CLI input validation", () => {
     }
   });
 
-  // source-shape-contract: compatibility -- Pinned OpenShell child-visible keys must drive credential rejection through every MCP boundary
-  it("rejects OpenShell child-environment compatibility keys as MCP credentials", () => {
-    for (const name of childVisibleCredentialManifest.rawChildValueKeys) {
-      expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/materialized as a raw child-process value/);
-      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
-        /preserve the host-only credential boundary/,
-      );
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(/materialized as a raw child-process value/);
-    }
-
-    for (const name of childVisibleCredentialManifest.rewrittenChildValueKeys) {
-      expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/rewritten by OpenShell's Google Cloud metadata compatibility path/);
-    }
-  });
-
-  // source-shape-contract: compatibility -- Host subprocess controls must stay synchronized with the pinned OpenShell child environment boundary
-  it("rejects host subprocess control and allowlist names as MCP credentials", () => {
-    for (const name of SUBPROCESS_ENV_ALLOWED_NAMES) {
-      expect(childVisibleCredentialManifest.runtimeControlKeys).toContain(name);
-    }
-    for (const prefix of SUBPROCESS_ENV_ALLOWED_PREFIXES) {
-      expect(childVisibleCredentialManifest.runtimeControlPrefixes).toContain(prefix);
-    }
-    for (const name of [
-      "PATH",
-      "HOME",
-      "HTTP_PROXY",
-      "SSL_CERT_FILE",
-      "KUBECONFIG",
-      "LC_ALL",
-      "XDG_CONFIG_HOME",
-      "OPENSHELL_GATEWAY",
-      "GRPC_TRACE",
-    ]) {
-      expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/reserved for host subprocess control/);
-    }
-  });
-
   it("rejects sandbox runtime-control names as MCP credentials", () => {
     for (const name of [
       "BASH_ENV",

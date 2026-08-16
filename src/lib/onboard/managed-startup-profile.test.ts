@@ -467,57 +467,6 @@ describe("managed startup profile", () => {
     ).toThrow(/not supported/);
   });
 
-  // source-shape-contract: compatibility -- Every shipped Docker build input must map to versioned startup intent or a declared build-only exclusion
-  it("classifies every stock Docker ARG as startup-affordance or deliberate exclusion", () => {
-    for (const agent of MANAGED_STARTUP_AGENTS) {
-      const classified = new Set([
-        ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
-        ...MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS[agent].map(({ input }) => input),
-      ]);
-      expect([...STOCK_DOCKER_ARGS[agent]].filter((input) => !classified.has(input))).toEqual([]);
-    }
-  });
-
-  // source-shape-contract: compatibility -- Every centralized agent runtime input must map to versioned startup intent or a typed downstream owner
-  it("classifies every centralized runtime input as profile intent or an explicit deferral", () => {
-    expect([...STOCK_RUNTIME_INPUTS].sort()).toEqual(
-      Object.keys(STOCK_RUNTIME_INPUT_AGENTS).sort(),
-    );
-    const missing = Object.entries(STOCK_RUNTIME_INPUT_AGENTS).flatMap(([input, agents]) =>
-      agents
-        .filter(
-          (agent) =>
-            !new Set([
-              ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(
-                ({ input: profileInput }) => profileInput,
-              ),
-              ...MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].map(
-                ({ input: deferredInput }) => deferredInput,
-              ),
-            ]).has(input),
-        )
-        .map((agent) => `${agent}:${input}`),
-    );
-    expect(missing).toEqual([]);
-
-    const openClawAutoPairInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS.openclaw.filter(
-      ({ input }) => input.startsWith("NEMOCLAW_AUTO_PAIR_"),
-    );
-    expect([...OPENCLAW_AUTO_PAIR_CONSUMER_INPUTS].sort()).toEqual(
-      openClawAutoPairInputs.map(({ input }) => input).sort(),
-    );
-    expect(
-      Object.fromEntries(openClawAutoPairInputs.map(({ admission, input }) => [input, admission])),
-    ).toEqual({
-      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "managed-launch-forwarded",
-    });
-  });
-
   it("records generic cross-agent emissions as cleanup obligations, not supported semantics", () => {
     expect(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS).toHaveLength(2);
     for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {

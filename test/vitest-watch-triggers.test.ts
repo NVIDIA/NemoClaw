@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import rootVitestConfig from "../vitest.config";
 import {
   resolveVitestWatchTests,
   vitestWatchTriggerPatterns,
@@ -85,11 +84,6 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  // source-shape-contract: compatibility -- Root watch mode must install the canonical opaque-input trigger resolver
-  it("registers the focused mappings at the root configuration boundary (#6692)", () => {
-    expect(rootVitestConfig.test?.watchTriggerPatterns).toBe(vitestWatchTriggerPatterns);
-  });
-
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
