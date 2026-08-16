@@ -1469,8 +1469,11 @@ jobs:
           printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
           printf 'account_created=true\n' >>"$GITHUB_OUTPUT"
           runtime_dir="/run/user/${uid}"
-          systemctl cat user-runtime-dir@.service >/dev/null
-          sudo systemctl start "user-runtime-dir@${uid}.service"
+          [[ -x /usr/lib/systemd/systemd-user-runtime-dir ]] || {
+            echo "::error::Protected runner is missing the signed systemd user-runtime helper" >&2
+            exit 1
+          }
+          sudo /usr/lib/systemd/systemd-user-runtime-dir start "$uid"
           [[ -d "$runtime_dir" && ! -L "$runtime_dir" && "$(stat -c '%u:%g:%a' "$runtime_dir")" == "${uid}:${uid}:700" ]] || {
             echo "::error::Qualification runtime directory is missing or invalid" >&2
             exit 1
@@ -1720,7 +1723,7 @@ jobs:
             if getent passwd "$account" >/dev/null; then
               sudo pkill -KILL -u "$uid" 2>/dev/null || true
             fi
-            sudo systemctl stop "user-runtime-dir@${uid}.service"
+            sudo /usr/lib/systemd/systemd-user-runtime-dir stop "$uid"
             if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
               [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
                 echo "::error::Qualification storage configuration cleanup target is invalid" >&2

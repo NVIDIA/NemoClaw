@@ -49,6 +49,10 @@ function fixtureSource(source: string): string {
       'storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
       'storage_config_directory="${FIXTURE_ROOT}/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"',
     )
+    .replaceAll(
+      "/usr/lib/systemd/systemd-user-runtime-dir",
+      "${FIXTURE_ROOT}/bin/systemd-user-runtime-dir",
+    )
     .replaceAll('"/run/user/${uid}"', '"${FIXTURE_ROOT}/run/user/${uid}"');
 }
 
@@ -121,11 +125,9 @@ printf '%s:%s:%s\\n' "$3" "$start" "$((end - start + 1))" >>"$file"`,
 esac`,
   );
   writeExecutable(
-    path.join(bin, "systemctl"),
-    `printf 'systemctl:%s\\n' "$*" >>"$FIXTURE_CALLS"
-if [[ "$1" == stop && "$2" =~ user-runtime-dir@([0-9]+)\\.service ]]; then
-  /bin/rm -rf -- "$FIXTURE_ROOT/run/user/\${BASH_REMATCH[1]}"
-fi`,
+    path.join(bin, "systemd-user-runtime-dir"),
+    `printf 'systemd-user-runtime-dir:%s\\n' "$*" >>"$FIXTURE_CALLS"
+[[ "$1" != stop ]] || /bin/rm -rf -- "$FIXTURE_ROOT/run/user/$2"`,
   );
   writeExecutable(path.join(bin, "pkill"), `printf 'pkill:%s\\n' "$*" >>"$FIXTURE_CALLS"`);
   writeExecutable(
@@ -292,7 +294,7 @@ describe("native runtime qualification account lifecycle", () => {
     const result = runFixture(fixture, workflowScripts().cleanup);
     expect(result.status, result.stderr).toBe(0);
     const calls = fs.readFileSync(fixture.calls, "utf8");
-    expect(calls).toContain("systemctl:stop user-runtime-dir@1002.service");
+    expect(calls).toContain("systemd-user-runtime-dir:stop 1002");
     expect(calls).toContain("apparmor:-R");
     expect(fs.existsSync(path.join(fixture.root, "run", "user", "1002"))).toBe(false);
     expect(fs.existsSync(storage)).toBe(false);
@@ -304,6 +306,6 @@ describe("native runtime qualification account lifecycle", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("output exists without its ownership marker");
     const calls = fs.readFileSync(fixture.calls, "utf8");
-    expect(calls).not.toMatch(/pkill:|systemctl:|userdel:|apparmor:/u);
+    expect(calls).not.toMatch(/pkill:|systemd-user-runtime-dir:|userdel:|apparmor:/u);
   });
 });

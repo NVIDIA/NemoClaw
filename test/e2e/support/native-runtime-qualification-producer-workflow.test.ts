@@ -268,8 +268,8 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subuid --add-subuids");
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subgid --add-subgids");
     expect(boundary.run).toContain("has no free subordinate-ID range for rootless Podman");
-    expect(boundary.run).toContain("systemctl cat user-runtime-dir@.service");
-    expect(boundary.run).toContain('systemctl start "user-runtime-dir@${uid}.service"');
+    expect(boundary.run).toContain("/usr/lib/systemd/systemd-user-runtime-dir");
+    expect(boundary.run).toContain('systemd-user-runtime-dir start "$uid"');
     expect(boundary.run).toContain("Qualification runtime directory is missing or invalid");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
     expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
@@ -346,7 +346,7 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.run).toContain("pkill -KILL -u");
     expect(cleanup.run).not.toContain("rm -rf");
     expect(cleanup.run).not.toContain("find ");
-    expect(cleanup.run).toContain('systemctl stop "user-runtime-dir@${uid}.service"');
+    expect(cleanup.run).toContain('systemd-user-runtime-dir stop "$uid"');
     expect(cleanup.run).toContain('apparmor_parser -R "$apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$apparmor_profile"');
     expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
