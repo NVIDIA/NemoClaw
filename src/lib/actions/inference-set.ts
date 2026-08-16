@@ -1239,8 +1239,9 @@ async function runInferenceSetWithoutHostLock(
         ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
         : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
     );
-    // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent):
-    //   - don't abort on failure; track whether it synced, never report a false "synced"
+    // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent).
+    // OpenClaw keeps its existing degraded result on failure. Hermes finalizes the committed
+    // route and registry, then returns an error so automation cannot accept partial convergence.
     // Two degraded states, both fixed by `rebuild` (regenerates openclaw.json + .config-hash from registry):
     //   - write fails:           config left old (old .config-hash still matches it)
     //   - hash recompute fails:  config new but .config-hash stale -> integrity-guard mismatch

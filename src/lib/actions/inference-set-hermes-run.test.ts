@@ -243,7 +243,7 @@ describe("runInferenceSet Hermes routing", () => {
       message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
     });
 
-    // A failed gateway-config write leaves the old config in place; re-seeding the
+    // A failed in-sandbox Hermes config write leaves the old config in place; re-seeding the
     // dashboard from it would be pointless. The host route remains committed, but
     // the command must fail so automation cannot accept a partial switch.
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith(

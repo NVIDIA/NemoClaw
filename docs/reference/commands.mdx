@@ -4094,7 +4094,12 @@ NemoClaw resolves the OpenShell gateway from the target sandbox's recorded gatew
 Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks and can break other sandboxes.
 When either flag is missing, `$$nemoclaw inference set` reports both required flags without suggesting a raw OpenShell command.
 The command updates the host registry immediately after the gateway route changes.
+<AgentOnly variant="openclaw">
 If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `$$nemoclaw <name> rebuild`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If the in-sandbox config write or integrity hash update fails, the OpenShell route and NemoClaw registry remain committed, but the command exits with status `1` and points you to `$$nemoclaw <name> rebuild`.
+</AgentOnly>
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
