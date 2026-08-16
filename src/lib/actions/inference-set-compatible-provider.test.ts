@@ -657,6 +657,92 @@ describe("runInferenceSet compatible providers", () => {
       ],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      provider: "compatible-anthropic-endpoint",
+      model: "mock-anthropic-model",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    expect(deps.calls.probeSandboxRoute.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.calls.updateSandbox.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("restores the prior route when sandbox-only provider verification fails", async () => {
+    const captureOpenshell = createCompatibleProviderCapture({
+      name: "compatible-anthropic-endpoint",
+      type: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "ANTHROPIC_BASE_URL",
+      initiallyPresent: false,
+    });
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/old-model" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "old-model",
+      },
+      session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
+      captureOpenshell,
+      probeSandboxRoute: () => ({
+        ok: false,
+        detail: "sandbox inference invocation probe exited with status 7",
+        httpStatus: null,
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "mock-anthropic-model",
+          endpointUrl: "http://host.openshell.internal:18767/",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
+    );
+
+    expect(
+      captureOpenshell.mock.calls
+        .filter(([args]) => args[0] === "inference" && args[1] === "set")
+        .map(([args]) => args),
+    ).toEqual([
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "compatible-anthropic-endpoint",
+        "--model",
+        "mock-anthropic-model",
+        "--no-verify",
+      ],
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "old-model",
+        "--no-verify",
+      ],
+    ]);
+    expect(
+      captureOpenshell.mock.calls.some(
+        ([args]) => args[0] === "provider" && args[1] === "delete",
+      ),
+    ).toBe(true);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   for (const provider of ["compatible-endpoint", "compatible-anthropic-endpoint"]) {

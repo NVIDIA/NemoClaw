@@ -71,7 +71,9 @@ import {
   readPreviousOpenClawInferenceApi,
 } from "./inference-set-gateway-restart";
 import {
+  type InferenceSetSandboxRouteProbe,
   prepareInferenceSetProviderBinding,
+  probeInferenceSetSandboxRoute,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireInferenceSetRuntimeAuthority,
@@ -164,6 +166,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   resolveCredentialValue: (credentialEnv: string) => string;
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute: (routeId: string) => Promise<boolean>;
+  probeSandboxRoute: InferenceSetSandboxRouteProbe;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
 }
 
@@ -269,6 +272,7 @@ function defaultDeps(): InferenceSetDeps {
     resolveCredentialValue: (credentialEnv) => process.env[credentialEnv] ?? "",
     ensureHttpsPinRuntimeAdapter,
     revokeHttpsPinRuntimeAdapterRoute,
+    probeSandboxRoute: probeInferenceSetSandboxRoute,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
@@ -937,12 +941,13 @@ async function runInferenceSetWithoutHostLock(
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
   let effectiveNoVerify = options.noVerify === true;
+  const probeDirectSandboxBridge = isSandboxBridgeProviderBinding(directProviderBinding);
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
   // resolve only from inside the sandbox network. The host-side OpenShell
   // verifier cannot resolve host.openshell.internal, so its result would be a
-  // guaranteed false negative. Endpoint validation above remains the trust
-  // boundary; the live sandbox request verifies actual route reachability.
-  if (isSandboxBridgeProviderBinding(httpsPinProviderBinding ?? directProviderBinding)) {
+  // guaranteed false negative. HTTPS-pin adapters retain their local-health
+  // verification; direct bridge routes are probed from the sandbox below.
+  if (httpsPinProviderBinding || probeDirectSandboxBridge) {
     effectiveNoVerify = true;
   }
   if (deps.isLocalInferenceProvider(provider)) {
@@ -1001,11 +1006,43 @@ async function runInferenceSetWithoutHostLock(
   assertReasoningEffortRoute(reasoningEffortRequest, provider, preMutationInferenceApi);
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
+  if (probeDirectSandboxBridge && (!previousProvider || !previousModel)) {
+    throw new InferenceSetError(
+      `Cannot verify the sandbox-only provider route because sandbox '${sandboxName}' does not record ` +
+        "the previous provider and model needed to restore its OpenShell inference selection.",
+      2,
+    );
+  }
 
   let appliedProvider = false;
   let appliedInferenceSelection = false;
   let restoredSelectionAfterProviderFailure = false;
   let providerMutation: ReturnType<typeof prepareInferenceSetProviderBinding> | null = null;
+  const restorePreviousInferenceSelection = (): string | null => {
+    let restoreResult: CaptureOpenshellResult;
+    try {
+      restoreResult = deps.captureOpenshell(
+        openshellInferenceSetArgs({
+          gatewayName: preparedRoute.gatewayName,
+          provider: previousProvider,
+          model: previousModel,
+          noVerify: true,
+        }),
+        {
+          ignoreError: true,
+          includeStreams: true,
+          maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+        },
+      );
+    } catch {
+      return "the restore command could not be invoked";
+    }
+    if (restoreResult.status !== 0) {
+      return `the restore command exited with status ${restoreResult.status ?? "unknown"}`;
+    }
+    appliedInferenceSelection = false;
+    return null;
+  };
   try {
     const providerBinding = httpsPinProviderBinding ?? directProviderBinding;
     if (providerBinding) {
@@ -1086,34 +1123,53 @@ async function runInferenceSetWithoutHostLock(
           providerError instanceof Error ? providerError.message : String(providerError);
         const providerExitCode =
           providerError instanceof InferenceSetError ? providerError.exitCode : 1;
-        const restoreResult = deps.captureOpenshell(
-          openshellInferenceSetArgs({
-            gatewayName: preparedRoute.gatewayName,
-            provider: previousProvider,
-            model: previousModel,
-            noVerify: true,
-          }),
-          {
-            ignoreError: true,
-            includeStreams: true,
-            maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-          },
-        );
-        if (restoreResult.status !== 0) {
+        const restoreFailure = restorePreviousInferenceSelection();
+        if (restoreFailure) {
           throw new InferenceSetError(
             `${providerDetail}\n  Failed to restore the previous OpenShell inference selection ` +
-              `'${previousProvider}' / '${previousModel}' (status ${restoreResult.status ?? "unknown"}). ` +
+              `'${previousProvider}' / '${previousModel}': ${restoreFailure}. ` +
               `The live selection and provider binding may be split; re-run onboarding before using this route.`,
             providerExitCode,
           );
         }
-        appliedInferenceSelection = false;
         restoredSelectionAfterProviderFailure = true;
         throw new InferenceSetError(
           `${providerDetail}\n  The previous OpenShell inference selection was restored to ` +
             `'${previousProvider}' / '${previousModel}'. Provider state may still be partial; ` +
             `retry this command or re-run onboarding to reconcile it.`,
           providerExitCode,
+        );
+      }
+    }
+
+    if (probeDirectSandboxBridge) {
+      let probe: ReturnType<InferenceSetSandboxRouteProbe>;
+      try {
+        probe = deps.probeSandboxRoute({
+          sandboxName,
+          provider,
+          model,
+          preferredInferenceApi: preMutationInferenceApi,
+        });
+      } catch {
+        probe = {
+          ok: false,
+          detail: "sandbox inference invocation probe was unavailable",
+          httpStatus: null,
+        };
+      }
+      if (!probe.ok) {
+        const restoreFailure = restorePreviousInferenceSelection();
+        if (restoreFailure) {
+          throw new InferenceSetError(
+            `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
+              `Failed to restore the previous OpenShell inference selection '${previousProvider}' / ` +
+              `'${previousModel}': ${restoreFailure}. Re-run onboarding before using this route.`,
+          );
+        }
+        throw new InferenceSetError(
+          `Sandbox-side verification rejected provider '${provider}' / '${model}': ${probe.detail}. ` +
+            `The previous OpenShell inference selection was restored to '${previousProvider}' / '${previousModel}'.`,
         );
       }
     }
