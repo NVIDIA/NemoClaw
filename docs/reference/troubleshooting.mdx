@@ -1137,6 +1137,19 @@ $$nemoclaw onboard
 The onboarding policy step composes a policy document for the policy presets you selected and deselected, then submits it to the OpenShell gateway.
 When the submission finishes, NemoClaw removes the temporary file that carries the composed policy, whether or not the gateway accepted it.
 If it cannot remove that file, it reports the directory that still holds the policy instead of reporting a clean result.
+
+When NemoClaw reports this directory, do not retry the policy operation.
+Remove only the exact directory named in the error, not its parent:
+
+```bash
+retained_policy_dir='<exact-directory-from-error>'
+rm -rf -- "$retained_policy_dir"
+test ! -e "$retained_policy_dir"
+```
+
+Continue only when `test` exits with status `0`, which confirms that the directory is absent.
+Then retry the policy operation.
+
 If the submission does not succeed, onboarding stops and:
 
 - does not record the presets as applied to the sandbox;
@@ -1149,8 +1162,8 @@ The gateway read the policy and refused it:
 OpenShell rejected the policy for sandbox 'my-assistant' (exit <exit status>): <OpenShell diagnostic>. The policy was not applied and re-applying it will be rejected again; change the preset selection instead.
 ```
 
-The live policy is unchanged.
-Resume reapplies the recorded selection, so it submits the same document and receives the same refusal.
+An OpenShell refusal means this submission did not change the live policy.
+If the relevant live policy and recorded preset selection remain unchanged, resume submits the same document and receives the same refusal.
 Use the quoted OpenShell diagnostic to identify what the gateway refused.
 Then follow [Previous onboarding session failed](#previous-onboarding-session-failed) to start fresh onboarding, and choose a different preset selection.
 The default selection can be the refused one, so read the diagnostic before you assume a preset you added caused it.
@@ -1170,7 +1183,8 @@ $$nemoclaw <name> policy list
 ```
 
 `policy list` compares the local registry with the live gateway policy and flags a preset that is applied in one place but not the other.
-Because the failed step did not record the presets as applied, a preset that the gateway did apply appears as that disagreement.
+The failed preset mutation does not update the local registry.
+If the gateway applied that mutation, the affected preset appears as a disagreement.
 
 The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
 When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
