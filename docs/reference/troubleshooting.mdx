@@ -2117,7 +2117,9 @@ It does not cover the inference probe.
 For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal.
 Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`.
 NemoClaw keeps waiting only when OpenShell returns its exact `sandbox is not ready` response.
-A missing or malformed ID, or another command failure, stops the wait and follows the ordinary failed-creation cleanup path.
+A missing or malformed ID, or another command failure, stops the wait.
+Ordinary onboarding then follows the failed-creation cleanup path.
+Portable OpenClaw onboarding preserves the sandbox as described below.
 
 </AgentOnly>
 
