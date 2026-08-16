@@ -668,7 +668,24 @@ describe("runInferenceSet compatible providers", () => {
     );
   });
 
-  it("restores the prior route when sandbox-only provider verification fails", async () => {
+  it.each([
+    [
+      "returns a rejection",
+      () => ({
+        ok: false,
+        detail: "sandbox inference invocation probe exited with status 7",
+        httpStatus: null,
+      }),
+      /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
+    ],
+    [
+      "throws",
+      () => {
+        throw new Error("sandbox dial failed");
+      },
+      /sandbox inference invocation probe was unavailable: sandbox dial failed.*previous OpenShell inference selection was restored/s,
+    ],
+  ])("restores the prior route when sandbox-only provider verification %s", async (_failureMode, probeSandboxRoute, expectedError) => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-anthropic-endpoint",
       type: "anthropic",
@@ -686,11 +703,7 @@ describe("runInferenceSet compatible providers", () => {
       },
       session: baseSession({ provider: "nvidia-prod", model: "old-model" }),
       captureOpenshell,
-      probeSandboxRoute: () => ({
-        ok: false,
-        detail: "sandbox inference invocation probe exited with status 7",
-        httpStatus: null,
-      }),
+      probeSandboxRoute,
     });
 
     await expect(
@@ -704,9 +717,7 @@ describe("runInferenceSet compatible providers", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(
-      /Sandbox-side verification rejected.*previous OpenShell inference selection was restored/s,
-    );
+    ).rejects.toThrow(expectedError);
 
     expect(
       captureOpenshell.mock.calls
