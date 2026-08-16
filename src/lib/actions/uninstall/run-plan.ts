@@ -1754,7 +1754,7 @@ function removeManagedDistributedVllmRuntime(
     });
   } catch (error) {
     runtime.error(
-      `Could not inspect managed distributed vLLM rollback state: ${formatError(error)}`,
+      "Could not inspect managed distributed vLLM rollback state. NemoClaw refused uninstall before making changes.",
     );
     return false;
   }
@@ -1782,7 +1782,7 @@ function removeManagedDistributedVllmRuntime(
   const orphanBinding = bindingPaths.find((bindingPath) => !expectedBindingPaths.has(bindingPath));
   if (orphanBinding) {
     runtime.error(
-      `Managed distributed vLLM SSH binding exists without its ownership receipt at ${orphanBinding}. NemoClaw refused uninstall before making changes. Recover or remove that state explicitly, then retry.`,
+      "A managed distributed vLLM SSH binding exists without its ownership receipt. NemoClaw refused uninstall before making changes. Recover or remove that state explicitly, then retry.",
     );
     return false;
   }
@@ -1890,7 +1890,7 @@ function managedLlamaCppCleanupTargets(
     return targets;
   } catch (error) {
     runtime.error(
-      `Managed llama.cpp cleanup could not safely inventory gateway-scoped ownership state: ${formatError(error)}. NemoClaw did not start the remaining uninstall steps.`,
+      "Managed llama.cpp cleanup could not safely inventory gateway-scoped ownership state. NemoClaw did not start the remaining uninstall steps.",
     );
     return null;
   }

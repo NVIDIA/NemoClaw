@@ -403,6 +403,8 @@ jobs:
       - name: Stop the exact portable-retirement proof gateway
         if: always()
         shell: bash
+        env:
+          E2E_PORTABLE_GATEWAY_STOP_SCOPE: full
         run: |
           set -euo pipefail
           gateway_state="$RUNNER_TEMP/nemoclaw-podman-uninstall-gateway"
@@ -416,7 +418,7 @@ jobs:
               gatewayBin: process.env.E2E_OPENSHELL_GATEWAY_BIN,
               openShellGatewayName: "nemoclaw",
               openShellGatewayPort: 8080,
-              scopedGatewayStop: true,
+              scopedGatewayStop: process.env.E2E_PORTABLE_GATEWAY_STOP_SCOPE !== "full",
               stateDir: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
               usePgrepFallback: false,
             });

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, assert, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, assert, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createSession } from "../../state/onboard-session";
@@ -53,27 +53,34 @@ const temporaryDirectories: string[] = [];
 
 const RETIREMENT_COMPETITOR_SCRIPT = String.raw`
   import fs from "node:fs";
-  const [lifecycleUrl, registryUrl, stateDir, registryFile, receiptFile, marker, sandboxName] = process.argv.slice(1);
+  const [lifecycleUrl, registryUrl, stateDir, registryFile, receiptFile, marker, sandboxName, control] = process.argv.slice(1);
   const lifecycle = (await import(lifecycleUrl)).default;
   const registry = (await import(registryUrl)).default;
+  const attempt = (owner) => {
   const mutate = () => {
     fs.writeFileSync(marker, "entered");
     fs.unlinkSync(receiptFile);
   };
   try {
-    if (sandboxName === "registry-only") {
+    if (owner === "registry-only") {
       registry.withRegistryLockAt(registryFile, mutate, { maxRetries: 2, wait: () => {} });
     } else {
-      lifecycle.withMcpLifecycleLockSync(sandboxName, () => registry.withRegistryLockAt(
+      lifecycle.withMcpLifecycleLockSync(owner, () => registry.withRegistryLockAt(
         registryFile,
         mutate,
         { maxRetries: 2, wait: () => {} },
       ), { stateDir, pollIntervalMs: 1, timeoutMs: 10 });
     }
-    process.exit(0);
+    return 0;
   } catch {
-    process.exit(2);
+    return 2;
   }
+  };
+  if (!control) process.exit(attempt(sandboxName));
+  fs.writeFileSync(control + ".ready", "ready");
+  while (!fs.existsSync(control + ".trigger")) await new Promise(resolve => setTimeout(resolve, 1));
+  fs.writeFileSync(control + ".result", JSON.stringify([attempt(sandboxName), attempt("registry-only")]));
+  process.exit(0);
 `;
 
 function fixture() {
@@ -685,46 +692,63 @@ describe("portable runtime uninstall cleanup", () => {
     },
   );
 
-  it("blocks real lifecycle and registry writers through final supersession (#9189)", async () => {
-    const scope = retiredOnboardAuthority(true);
-    const lifecycleUrl = new URL("../../state/mcp-lifecycle-lock-acquisition.ts", import.meta.url)
-      .href;
-    const registryUrl = new URL("../../state/registry/lock.ts", import.meta.url).href;
-    const receipt = portableDemoReceiptPath(scope.authority.sandboxName, scope.test.stateDir);
-    const originalLoad = scope.authority.deps.loadRegistry;
-    const markers = ["lifecycle", "registry"].map((kind) =>
-      path.join(scope.test.homeDir, `${kind}-entered`),
-    );
-    const loadRegistry = () => {
-      for (const [kind, marker] of ["lifecycle", "registry"].map(
-        (value, index) => [value, markers[index]!] as const,
-      )) {
-        const result = spawnSync(process.execPath, [
-          "--no-warnings",
-          "--import",
-          "tsx",
-          "--input-type=module",
-          "-e",
-          RETIREMENT_COMPETITOR_SCRIPT,
-          lifecycleUrl,
-          registryUrl,
-          path.join(scope.test.stateDir, "state"),
-          scope.test.registryFile,
-          receipt,
-          marker,
-          kind === "registry" ? "registry-only" : scope.authority.sandboxName,
-        ]);
-        expect(result.status, `${kind}: ${String(result.stderr)}`).toBe(2);
-      }
-      return originalLoad();
-    };
-    await supersedePortableRetirementAfterCompletedOnboard(
-      scope.authority.boundary,
-      scope.authority.profile,
-      { ...scope.authority.deps, loadRegistry },
-    );
-    expect(markers.some(fs.existsSync)).toBe(false);
-    expect(fs.existsSync(receipt)).toBe(true);
+  describe("completed-onboarding writer exclusion", () => {
+    let scope: ReturnType<typeof retiredOnboardAuthority>;
+    let writer: ChildProcess;
+    let control: string;
+    let receipt: string;
+
+    beforeAll(async () => {
+      scope = retiredOnboardAuthority(true);
+      control = path.join(scope.test.homeDir, "resident-writer");
+      receipt = portableDemoReceiptPath(scope.authority.sandboxName, scope.test.stateDir);
+      writer = spawn(process.execPath, [
+        "--no-warnings",
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        RETIREMENT_COMPETITOR_SCRIPT,
+        new URL("../../state/mcp-lifecycle-lock-acquisition.ts", import.meta.url).href,
+        new URL("../../state/registry/lock.ts", import.meta.url).href,
+        path.join(scope.test.stateDir, "state"),
+        scope.test.registryFile,
+        receipt,
+        path.join(scope.test.homeDir, "unused-entered"),
+        scope.authority.sandboxName,
+        control,
+      ]);
+      for (let attempt = 0; attempt < 1_000 && !fs.existsSync(`${control}.ready`); attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(fs.existsSync(`${control}.ready`)).toBe(true);
+    });
+
+    afterAll(() => {
+      if (writer?.exitCode === null) writer.kill("SIGTERM");
+    });
+
+    it("blocks real lifecycle and registry writers through final supersession (#9189)", async () => {
+      const originalLoad = scope.authority.deps.loadRegistry;
+      const loadRegistry = () => {
+        fs.writeFileSync(`${control}.trigger`, "trigger");
+        const deadline = Date.now() + 1_000;
+        while (!fs.existsSync(`${control}.result`) && Date.now() < deadline)
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+        expect(JSON.parse(fs.readFileSync(`${control}.result`, "utf8"))).toEqual([2, 2]);
+        return originalLoad();
+      };
+      await supersedePortableRetirementAfterCompletedOnboard(
+        scope.authority.boundary,
+        scope.authority.profile,
+        { ...scope.authority.deps, loadRegistry },
+      );
+      await new Promise<void>((resolve) =>
+        writer.exitCode === null ? writer.once("exit", () => resolve()) : resolve(),
+      );
+      expect(writer.exitCode).toBe(0);
+      expect(fs.existsSync(path.join(scope.test.homeDir, "unused-entered"))).toBe(false);
+      expect(fs.existsSync(receipt)).toBe(true);
+    });
   });
 
   it("preserves the retry record when completed onboarding authority is incomplete (#9189)", async () => {

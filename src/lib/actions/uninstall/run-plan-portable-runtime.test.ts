@@ -14,6 +14,7 @@ import {
 import {
   type RunResult,
   runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction,
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
@@ -242,20 +243,122 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
         return target;
       },
     ],
-  ])("rejects %s before every generic uninstall effect (#9189)", (_case, mutate) => {
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-admission-"));
+    ["HOME gateway-limit", (_home: string, state: string) => state],
+    ["HOME gateway-file", (_home: string, state: string) => state],
+    ["HOME receipt-inventory", (_home: string, state: string) => state],
+    ["HOME orphan-binding", (_home: string, state: string) => state],
+  ])("rejects %s before generic effects (#9189)", async (_case, mutate) => {
+    const privateHome = _case.startsWith("HOME ");
+    const homeDir = fs.mkdtempSync(
+      path.join(
+        os.tmpdir(),
+        privateHome ? "nemoclaw-secret-home-sentinel-" : "nemoclaw-portable-admission-",
+      ),
+    );
     temporaryDirectories.push(homeDir);
     const stateDir = path.join(homeDir, ".nemoclaw");
+    const gatewaysDir = path.join(stateDir, "gateways");
     const registry = path.join(stateDir, "sandboxes.json");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(registry, "{}\n", { mode: 0o600 });
-    const evidence = mutate(homeDir, stateDir);
+    fs.writeFileSync(registry, '{"defaultSandbox":null,"sandboxes":{}}\n', { mode: 0o600 });
+    let evidence = mutate(homeDir, stateDir);
+    const expectedRegistry = fs.readFileSync(registry, "utf8");
+    const gatewayReads = vi.fn((_command: string, _args: string[]) =>
+      ok(JSON.stringify([{ name: "nemoclaw" }])),
+    );
     const run = vi.fn(() => ok());
     const runDocker = vi.fn(() => ok());
     const runModelCleanup = vi.fn(() => ok());
     const rmSync = vi.fn();
     const kill = vi.fn(() => true);
     const runPortableCleanup = vi.fn();
+    let armed = false;
+    let createGatewayEvidence = () => undefined;
+    if (privateHome && _case.endsWith("gateway-limit")) {
+      createGatewayEvidence = () => {
+        fs.mkdirSync(gatewaysDir, { recursive: true });
+        for (let index = 0; index <= 1_024; index++)
+          fs.writeFileSync(path.join(gatewaysDir, `x${index}`), "");
+      };
+    } else if (_case.endsWith("gateway-file")) {
+      evidence = path.join(gatewaysDir, "8090");
+      createGatewayEvidence = () => {
+        fs.mkdirSync(gatewaysDir, { recursive: true });
+        fs.writeFileSync(evidence, "unsafe");
+      };
+    } else if (_case.endsWith("receipt-inventory")) {
+      const readdir = fs.readdirSync.bind(fs);
+      vi.spyOn(fs, "readdirSync").mockImplementation(((target: fs.PathLike, options?: any) =>
+        armed && String(target) === stateDir
+          ? (() => {
+              throw new Error(`${homeDir}/receipt`);
+            })()
+          : readdir(target, options)) as typeof fs.readdirSync);
+    } else if (_case.endsWith("orphan-binding")) {
+      evidence = path.join(stateDir, "dual-station-vllm-runtime.json.ssh-binding");
+      fs.mkdirSync(evidence);
+    }
+    if (privateHome) {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const result = await runUninstallPlanProduction(
+        { assumeYes: true, deleteModels: true, destroyUserData: true, keepOpenShell: false },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: homeDir },
+          existsSync: fs.existsSync,
+          hasPortableRuntimeCleanup: () => {
+            armed = true;
+            createGatewayEvidence();
+            return false;
+          },
+          isTty: false,
+          kill,
+          log: vi.fn(),
+          rmSync,
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "nemoclaw-managed",
+            source: "packaged-service",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          }),
+          run: gatewayReads,
+          runDocker,
+          runDualStationRuntimeCleanup: runModelCleanup,
+          runHuggingFaceCacheDataCleanup: runModelCleanup,
+          runLocalModelRuntimeCleanup: runModelCleanup,
+          runManagedLlamaCppRuntimeCleanup: runModelCleanup,
+          runPortableRuntimeCleanupTransaction: runPortableCleanup,
+          withPortableHostFence: async (_home, operation) => await operation(),
+        },
+      );
+      const output = stderr.mock.calls.flat().join("\n");
+      const category = _case.includes("gateway-")
+        ? "Managed llama.cpp cleanup could not safely inventory gateway-scoped ownership state."
+        : _case.includes("receipt-")
+          ? "Could not inspect managed distributed vLLM rollback state."
+          : "A managed distributed vLLM SSH binding exists without its ownership receipt.";
+      expect(result.exitCode).toBe(1);
+      expect(output).toContain(category);
+      expect(output).not.toContain(homeDir);
+      expect(output).not.toContain("secret-home-sentinel");
+      expect(gatewayReads).toHaveBeenCalled();
+      expect(
+        gatewayReads.mock.calls.every(
+          ([command, args]) => command === "openshell" && args.join(" ") === "gateway list -o json",
+        ),
+      ).toBe(true);
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(runModelCleanup).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
+      expect(kill).not.toHaveBeenCalled();
+      expect(runPortableCleanup).not.toHaveBeenCalled();
+      expect(fs.existsSync(evidence)).toBe(true);
+      return;
+    }
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: true, destroyUserData: true, keepOpenShell: false },
       {
@@ -280,7 +383,7 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
         (effect) => effect.mock.calls.length === 0,
       ),
     ).toBe(true);
-    expect(fs.readFileSync(registry, "utf8")).toBe("{}\n");
+    expect(fs.readFileSync(registry, "utf8")).toBe(expectedRegistry);
     expect(fs.existsSync(evidence)).toBe(true);
   });
 

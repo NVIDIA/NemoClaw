@@ -169,8 +169,8 @@ It never uses `openshell sandbox delete --all` during portable OpenShell cleanup
 If explicit deletion reports an exact receipt sandbox as absent, cleanup continues only because the gateway-scoped status probe proved that exact gateway is connected and reachable.
 A missing gateway, missing provider, transport failure, verification timeout, generic or ambiguous `NotFound` result, or absence that the status probe cannot prove is fatal.
 Uninstall exits nonzero and preserves the portable registry row and container, selectors, receipts, `~/.config/nemoclaw/portable/containers.conf`, gateway state, shared OpenShell provider and gateway registrations, and unrelated OpenShell-only sandboxes.
-Portable cleanup preserves shared OpenShell provider and gateway registrations, the gateway service and process, and shared OpenShell binaries and configuration.
-It also preserves unrelated OpenShell-registered sandboxes.
+Portable cleanup retires only the exact receipt-owned portable resources.
+It preserves model stores and images, shared OpenShell provider and gateway registrations, the gateway service and process, shared OpenShell binaries and configuration, and unrelated OpenShell-registered sandboxes.
 Before it removes the portable registry container or selectors, NemoClaw verifies that the original lifecycle receipts and sandbox registry state have not changed.
 If either changed, uninstall exits nonzero before later gateway-state or `~/.config/nemoclaw/portable/containers.conf` deletion.
 After that verification, NemoClaw removes the prevalidated portable registry container by its exact ID.

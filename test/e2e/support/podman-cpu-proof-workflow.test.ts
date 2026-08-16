@@ -949,9 +949,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(proof.run).toContain("test/e2e/live/podman-portable-uninstall.test.ts");
     const uninstallSource = readRepoText("test/e2e/live/podman-portable-uninstall.test.ts");
     expect(uninstallSource).toContain('executableOnPath("nemoclaw")');
-    expect(uninstallSource).toContain("startPinnedGateway");
-    expect(uninstallSource).toContain("waitForHealthyGateway");
-    expect(uninstallSource).toContain('["gateway", "remove", GATEWAY_NAME]');
+    expect(uninstallSource).toContain("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR");
+    expect(uninstallSource).toContain("OPENSHELL_LOCAL_TLS_DIR");
+    expect(uninstallSource).toContain('["gateway", "info", "-g", "nemoclaw", "-o", "json"]');
     expect(uninstallSource).toContain('gatewayName: "nemoclaw"');
     expect(uninstallSource).toContain('"--all-gateway-ports"');
     expect(uninstallSource).toContain('"--delete-models"');
@@ -986,5 +986,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain('podman --url "$endpoint" volume rm --force');
     expect(cleanup.run).toContain('podman --url "$endpoint" secret rm');
     expect(cleanup.run).toContain('podman --url "$endpoint" network rm openshell-docker');
+    const stopGateway = namedStep("Stop the exact portable-retirement proof gateway");
+    expect(stopGateway.env?.E2E_PORTABLE_GATEWAY_STOP_SCOPE).toBe("full");
   });
 });
