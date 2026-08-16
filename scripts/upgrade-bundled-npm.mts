@@ -20,7 +20,6 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  jsonObject as record,
   readJsonObject as readJson,
   requireRealDirectory as realDirectory,
 } from "./lib/bundled-npm-package.mts";
