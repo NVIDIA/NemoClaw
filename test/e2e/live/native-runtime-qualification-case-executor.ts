@@ -408,8 +408,9 @@ function proveGpuDevices(
         "--pull=never",
         "--device",
         "nvidia.com/gpu=all",
-        probeImageRef,
+        "--entrypoint",
         "nvidia-smi",
+        probeImageRef,
         "--query-gpu=uuid",
         "--format=csv,noheader",
       ],
@@ -1233,5 +1234,6 @@ export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   createProviderNetwork,
   lifecycleSandboxName,
   parsePhysicalGpuDevices,
+  proveGpuDevices,
   removeQualificationSnapshot,
 });

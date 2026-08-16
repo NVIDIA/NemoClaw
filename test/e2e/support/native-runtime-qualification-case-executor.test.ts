@@ -16,6 +16,7 @@ const NETWORK_ID = "a".repeat(64);
 const NETWORK_NAME = "nemoclaw-q-0123456789ab";
 const CASE_ID = "podman-openclaw-linux-amd64-cpu-ollama";
 const QUALIFICATION_LABEL = "ai.nvidia.nemoclaw.qualification";
+const GPU_PROBE_IMAGE = `nvcr.io/nvidia/k8s/cuda-sample@sha256:${"d".repeat(64)}`;
 
 function inspection(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify([
@@ -64,6 +65,29 @@ function engine(outputs: readonly EngineOutput[]): {
 }
 
 describe("native runtime GPU evidence", () => {
+  it("overrides the probe image entrypoint with the exact nvidia-smi UUID query", () => {
+    const gpuUuid = "GPU-8932f937-d72c-4106-c12f-20bd9faed9f6";
+    const runtime = engine([gpuUuid]);
+
+    expect(
+      nativeRuntimeQualificationCaseInternals.proveGpuDevices(runtime.value, GPU_PROBE_IMAGE),
+    ).toEqual([gpuUuid]);
+    expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([
+      [
+        "run",
+        "--rm",
+        "--pull=never",
+        "--device",
+        "nvidia.com/gpu=all",
+        "--entrypoint",
+        "nvidia-smi",
+        GPU_PROBE_IMAGE,
+        "--query-gpu=uuid",
+        "--format=csv,noheader",
+      ],
+    ]);
+  });
+
   it("accepts bounded NVIDIA physical GPU identities and sorts them exactly", () => {
     expect(
       nativeRuntimeQualificationCaseInternals.parsePhysicalGpuDevices(
