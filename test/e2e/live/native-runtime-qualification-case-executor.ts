@@ -653,7 +653,6 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     const networkName = `nemoclaw-q-${caseSuffix}`;
     const network = createProviderNetwork(inferenceEngine, networkName, row.id);
     ownedNetworks.add(network.id);
-    const hostPort = 20_000 + (Number.parseInt(caseSuffix.slice(0, 4), 16) % 20_000);
     const runnerContractFile =
       row.case.acceleration === "nvidia-gpu"
         ? nativeRuntimeQualificationRunnerContractPath(process.env, uid)
@@ -682,9 +681,9 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     }
 
     const inferenceName = `nemoclaw-inference-${caseSuffix}`;
-    const endpoint = `http://${network.gateway}:${String(hostPort)}`;
     progress.phase("launch exact local inference");
     const inferencePort = row.case.inference === "ollama" ? 11434 : 8000;
+    const endpoint = `http://${inferenceName}:${String(inferencePort)}`;
     const inferenceArguments = [
       "run",
       "--detach",
@@ -693,10 +692,6 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       inferenceName,
       "--network",
       network.name,
-      "--publish",
-      `127.0.0.1:${String(hostPort)}:${String(inferencePort)}`,
-      "--publish",
-      `${network.gateway}:${String(hostPort)}:${String(inferencePort)}`,
       "--label",
       `${QUALIFICATION_LABEL}=${row.id}`,
       ...(row.case.acceleration === "nvidia-gpu" ? ["--device", "nvidia.com/gpu=all"] : []),
@@ -799,7 +794,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       protocol: "openai-chat-completions",
       model: inference.model,
       responseSha256: turnSha256,
-      route: "provider-network-gateway",
+      route: "provider-network-dns",
     });
 
     if (!bundle.lifecycle.supported) throw new Error("Podman lifecycle surface is unavailable");
@@ -1168,11 +1163,13 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
     }
     service = null;
     if (cleanupFailures.length > 0) {
-      throw new AggregateError(
-        qualificationFailure === undefined
-          ? cleanupFailures
-          : [qualificationFailure, ...cleanupFailures],
-        "Native runtime qualification cleanup failed",
+      if (qualificationFailure === undefined) {
+        throw new AggregateError(cleanupFailures, "Native runtime qualification cleanup failed");
+      }
+      console.error(
+        `Native runtime qualification also encountered cleanup failures: ${cleanupFailures
+          .map((error) => bounded(error instanceof Error ? error.message : String(error)))
+          .join("; ")}`,
       );
     }
   }

@@ -182,4 +182,15 @@ describe("native runtime provider-network authority", () => {
     expect(fs.existsSync(snapshot)).toBe(false);
     fs.rmSync(root, { force: true, recursive: true });
   });
+
+  it("routes inference inside the provider network without a host port publication", () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "test/e2e/live/native-runtime-qualification-case-executor.ts"),
+      "utf8",
+    );
+
+    expect(source).not.toContain('"--publish"');
+    expect(source).toContain('route: "provider-network-dns"');
+    expect(source).toContain("http://${inferenceName}:${String(inferencePort)}");
+  });
 });
