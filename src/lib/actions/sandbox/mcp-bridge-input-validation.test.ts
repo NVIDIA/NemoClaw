@@ -16,6 +16,24 @@ import {
 } from "./mcp-bridge";
 import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.101.json";
 
+const CHILD_VISIBLE_CREDENTIAL_CASES = [
+  {
+    names: childVisibleCredentialManifest.rawChildValueKeys,
+    error: /materialized as a raw child-process value|preserve the host-only credential boundary/,
+  },
+  {
+    names: childVisibleCredentialManifest.rewrittenChildValueKeys,
+    error: /rewritten by OpenShell's Google Cloud metadata compatibility path/,
+  },
+].flatMap(({ names, error }) =>
+  names.flatMap((name) => [
+    { name, form: "--env NAME", envArgs: ["--env", name], error },
+    { name, form: "-e NAME", envArgs: ["-e", name], error },
+    { name, form: "--env=NAME", envArgs: [`--env=${name}`], error },
+  ]),
+);
+
+
 describe("MCP CLI input validation", () => {
   it("parses server, URL, and env references", () => {
     const parsed = parseMcpAddArgs([
@@ -119,34 +137,20 @@ describe("MCP CLI input validation", () => {
     }
   });
 
-  // source-shape-contract: security -- Manifest-owned OpenShell child-visible keys must fail at every MCP credential attachment boundary
-  it("rejects every OpenShell child-visible credential key at each MCP boundary", () => {
-    const groups = [
-      {
-        names: childVisibleCredentialManifest.rawChildValueKeys,
-        error: /materialized as a raw child-process value|preserve the host-only credential boundary/,
-      },
-      {
-        names: childVisibleCredentialManifest.rewrittenChildValueKeys,
-        error: /rewritten by OpenShell's Google Cloud metadata compatibility path/,
-      },
-    ];
-
-    for (const { names, error } of groups) {
-      for (const name of names) {
-        expect(() =>
-          parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-        ).toThrow(error);
-        expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
-        expect(() =>
-          buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-            [name]: "host-only-secret",
-          }),
-        ).toThrow(error);
-      }
-    }
-  });
-
+  it.each(CHILD_VISIBLE_CREDENTIAL_CASES)(
+    "rejects $name from $form at every MCP credential boundary",
+    ({ name, envArgs, error }) => {
+      expect(() =>
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", ...envArgs]),
+      ).toThrow(error);
+      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
+      expect(() =>
+        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
+          [name]: "host-only-secret",
+        }),
+      ).toThrow(error);
+    },
+  );
 
   it("rejects sandbox runtime-control names as MCP credentials", () => {
     for (const name of [
