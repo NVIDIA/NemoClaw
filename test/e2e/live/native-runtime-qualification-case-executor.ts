@@ -48,6 +48,9 @@ import {
 
 const FULL_ID = /^[a-f0-9]{64}$/u;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
+// nvidia-smi defines the immutable UUID as alphanumeric; retain the repository's
+// bounded physical GPU identifier envelope while excluding MIG device names.
+const PHYSICAL_GPU_UUID = /^GPU-[A-Za-z0-9][A-Za-z0-9-]{6,121}[A-Za-z0-9]$/u;
 const COMMAND_TIMEOUT = 60_000;
 const INFERENCE_TIMEOUT = 900_000;
 const QUALIFICATION_LABEL = "ai.nvidia.nemoclaw.qualification";
@@ -374,25 +377,8 @@ function requirePreloadedImage(engine: PodmanBoundContainerEngine, imageRef: str
   capture(engine, ["image", "exists", imageRef], `inspect preloaded image ${imageRef}`);
 }
 
-function proveGpuDevices(
-  engine: PodmanBoundContainerEngine,
-  probeImageRef: string,
-): readonly string[] {
-  const devices = capture(
-    engine,
-    [
-      "run",
-      "--rm",
-      "--pull=never",
-      "--device",
-      "nvidia.com/gpu=all",
-      probeImageRef,
-      "nvidia-smi",
-      "--query-gpu=uuid",
-      "--format=csv,noheader",
-    ],
-    "NVIDIA CDI runtime proof",
-  )
+function parsePhysicalGpuDevices(output: string): readonly string[] {
+  const devices = output
     .split(/\r?\n/u)
     .map((entry) => entry.trim())
     .filter(Boolean)
@@ -400,11 +386,34 @@ function proveGpuDevices(
   if (
     devices.length === 0 ||
     new Set(devices).size !== devices.length ||
-    devices.some((device) => !/^GPU-[0-9A-Fa-f-]{36}$/u.test(device))
+    devices.some((device) => !PHYSICAL_GPU_UUID.test(device))
   ) {
     throw new Error("NVIDIA CDI runtime proof did not return exact physical GPU UUIDs");
   }
   return Object.freeze(devices);
+}
+
+function proveGpuDevices(
+  engine: PodmanBoundContainerEngine,
+  probeImageRef: string,
+): readonly string[] {
+  return parsePhysicalGpuDevices(
+    capture(
+      engine,
+      [
+        "run",
+        "--rm",
+        "--pull=never",
+        "--device",
+        "nvidia.com/gpu=all",
+        probeImageRef,
+        "nvidia-smi",
+        "--query-gpu=uuid",
+        "--format=csv,noheader",
+      ],
+      "NVIDIA CDI runtime proof",
+    ),
+  );
 }
 
 function proveGpuBackedInference(
@@ -1221,5 +1230,6 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
 export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   createProviderNetwork,
   lifecycleSandboxName,
+  parsePhysicalGpuDevices,
   removeQualificationSnapshot,
 });

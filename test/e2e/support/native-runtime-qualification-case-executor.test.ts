@@ -63,6 +63,38 @@ function engine(outputs: readonly EngineOutput[]): {
   };
 }
 
+describe("native runtime GPU evidence", () => {
+  it("accepts bounded NVIDIA physical GPU identities and sorts them exactly", () => {
+    expect(
+      nativeRuntimeQualificationCaseInternals.parsePhysicalGpuDevices(
+        [
+          "GPU-z9Y8x7W6-v5U4-t3S2-r1Q0-p9O8n7M6l5K4",
+          "GPU-8932f937-d72c-4106-c12f-20bd9faed9f6",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "GPU-8932f937-d72c-4106-c12f-20bd9faed9f6",
+      "GPU-z9Y8x7W6-v5U4-t3S2-r1Q0-p9O8n7M6l5K4",
+    ]);
+  });
+
+  it.each([
+    ["empty output", ""],
+    [
+      "duplicate identities",
+      "GPU-8932f937-d72c-4106-c12f-20bd9faed9f6\nGPU-8932f937-d72c-4106-c12f-20bd9faed9f6",
+    ],
+    ["MIG identities", "MIG-8932f937-d72c-4106-c12f-20bd9faed9f6"],
+    ["leading hyphens", "GPU--932f937"],
+    ["trailing hyphens", "GPU-8932f937-"],
+    ["control characters", "GPU-8932f937\u0000"],
+  ])("rejects %s as physical GPU proof", (_label, output) => {
+    expect(() => nativeRuntimeQualificationCaseInternals.parsePhysicalGpuDevices(output)).toThrow(
+      "NVIDIA CDI runtime proof did not return exact physical GPU UUIDs",
+    );
+  });
+});
+
 describe("native runtime provider-network authority", () => {
   it("uses distinct canonical sandbox names for every qualified agent", () => {
     const names = NATIVE_RUNTIME_QUALIFICATION_AGENTS.map((agent) =>
