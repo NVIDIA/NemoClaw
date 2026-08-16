@@ -304,6 +304,9 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("Qualification runtime directory is missing or invalid");
     expect(boundary.run).toContain('user_manager_unit="user@${uid}.service"');
     expect(boundary.run).toContain('systemctl start "$user_manager_unit"');
+    expect(boundary.run).toContain("/usr/bin/systemctl --user start dbus.socket");
+    expect(boundary.run).toContain("/usr/bin/systemctl --user is-active --quiet dbus.socket");
+    expect(boundary.run).toContain("Qualification systemd user bus socket unit is not active");
     expect(boundary.run).toContain("stat -c '%u:%g' \"$runtime_dir/bus\"");
     expect(boundary.run).toContain("Qualification systemd user bus is missing or invalid");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
@@ -370,6 +373,8 @@ describe("native runtime qualification producer workflow", () => {
       "${{ steps.boundary.outputs.runtime_directory_unit }}",
     );
     expect(installer.run).toContain('sudo chown "$ACCOUNT_UID:$ACCOUNT_GID"');
+    expect(installer.run).toContain("/usr/bin/systemctl --user start dbus.socket");
+    expect(installer.run).toContain("Qualification systemd user bus socket unit did not restart");
     expect(installer.env?.CONTAINERS_CONFIG).toBe(
       "${{ steps.boundary.outputs.containers_config }}",
     );

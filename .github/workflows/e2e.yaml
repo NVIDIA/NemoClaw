@@ -1494,6 +1494,21 @@ jobs:
             echo "::error::Qualification systemd user manager is not active" >&2
             exit 1
           }
+          sudo -u "$account" env -i \
+            HOME="$home" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            /usr/bin/systemctl --user start dbus.socket
+          sudo -u "$account" env -i \
+            HOME="$home" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            /usr/bin/systemctl --user is-active --quiet dbus.socket || {
+              echo "::error::Qualification systemd user bus socket unit is not active" >&2
+              exit 1
+            }
           [[ -S "$runtime_dir/bus" && ! -L "$runtime_dir/bus" && "$(stat -c '%u:%g' "$runtime_dir/bus")" == "${uid}:${gid}" ]] || {
             echo "::error::Qualification systemd user bus is missing or invalid" >&2
             exit 1
@@ -1935,6 +1950,21 @@ jobs:
             echo "::error::Qualification systemd user lifecycle did not restart after installer isolation" >&2
             exit 1
           }
+          sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            /usr/bin/systemctl --user start dbus.socket
+          sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            /usr/bin/systemctl --user is-active --quiet dbus.socket || {
+              echo "::error::Qualification systemd user bus socket unit did not restart after installer isolation" >&2
+              exit 1
+            }
           [[ -S "$RUNTIME_DIRECTORY/bus" && ! -L "$RUNTIME_DIRECTORY/bus" && "$(stat -c '%u:%g' "$RUNTIME_DIRECTORY/bus")" == "${ACCOUNT_UID}:${ACCOUNT_GID}" ]] || {
             echo "::error::Qualification systemd user bus did not restart after installer isolation" >&2
             exit 1
