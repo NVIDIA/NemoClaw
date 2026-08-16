@@ -147,8 +147,10 @@ describe("native runtime qualification producer workflow", () => {
     });
     expect(setupGo.uses).toBe("actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00");
     expect(setupGo.with).toEqual({ "go-version": "1.25.9", cache: false });
-    expect(setupRust.uses).toBe("dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c");
-    expect(setupRust.with).toEqual({ toolchain: "1.88.0" });
+    expect(setupRust.uses).toBe(
+      "actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
+    );
+    expect(setupRust.with).toEqual({ toolchain: "1.88.0", cache: false, rustflags: "" });
     expect(build.run).toContain("podman rootlessport PREFIX=/usr/local");
     expect(build.run).not.toContain("quadlet");
     expect(build.run).toContain("make --directory=.netavark-source --jobs=2 build");
