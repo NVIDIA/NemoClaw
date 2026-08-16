@@ -47,7 +47,7 @@ function fixture(options: { readonly gpu?: boolean } = {}) {
   });
   const row = options.gpu
     ? plan.include.find(
-        (entry) => entry.case.architecture === "amd64" && entry.case.acceleration === "nvidia-gpu",
+        (entry) => entry.case.architecture === "arm64" && entry.case.acceleration === "nvidia-gpu",
       )!
     : plan.include.find((entry) => entry.id === NATIVE_RUNTIME_QUALIFICATION_FOCUSED_CASE)!;
   const installerDirectory = path.join(root, "installer");
@@ -228,7 +228,7 @@ describe("native runtime qualification producer evidence", () => {
       source: value.row.source,
       case: value.row.case,
       installer: {
-        architecture: "amd64",
+        architecture: value.row.case.architecture,
         dockerAvailability: "unavailable",
         exitCode: 0,
         providerId: "podman",
@@ -271,12 +271,22 @@ describe("native runtime qualification producer evidence", () => {
 
     const fragment = JSON.parse(
       fs.readFileSync(path.join(value.evidenceDirectory, "case-fragment.json"), "utf8"),
-    ) as { nvidiaCdi: { artifact: { path: string; sha256: string } } };
-    const copied = fs.readFileSync(
+    ) as {
+      installer: { architecture: string; script: { path: string; sha256: string } };
+      nvidiaCdi: { artifact: { path: string; sha256: string } };
+    };
+    expect(fragment.installer.architecture).toBe("arm64");
+    const copiedInstaller = fs.readFileSync(
+      path.join(value.evidenceDirectory, fragment.installer.script.path),
+    );
+    expect(createHash("sha256").update(copiedInstaller).digest("hex")).toBe(
+      fragment.installer.script.sha256,
+    );
+    const copiedCdi = fs.readFileSync(
       path.join(value.evidenceDirectory, fragment.nvidiaCdi.artifact.path),
     );
     expect(fragment.nvidiaCdi.artifact.path).toContain("/runtime/nvidia-cdi.json");
-    expect(createHash("sha256").update(copied).digest("hex")).toBe(
+    expect(createHash("sha256").update(copiedCdi).digest("hex")).toBe(
       fragment.nvidiaCdi.artifact.sha256,
     );
   });
