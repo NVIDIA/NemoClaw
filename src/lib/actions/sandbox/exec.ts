@@ -27,6 +27,8 @@ export type SandboxExecOptions = {
   stdin?: boolean;
 };
 
+export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
+
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
@@ -364,9 +366,29 @@ export type ExecSandboxDeps = {
   run?: SandboxExecRunner;
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Activate config written by a successful direct Google Chat pairing approval. */
+  restartGateway?: SandboxExecGatewayRestart;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
   selectGateway?: (sandboxName: string) => GatewaySelectResult;
 };
+
+export function isGoogleChatPairingApproval(command: readonly string[]): boolean {
+  return (
+    command.length >= 5 &&
+    command[0] === "openclaw" &&
+    command[1] === "pairing" &&
+    command[2] === "approve" &&
+    command[3] === "googlechat" &&
+    Boolean(command[4]) &&
+    !command[4]!.startsWith("-")
+  );
+}
+
+function defaultRestartGateway(sandboxName: string): { ok: boolean } {
+  const { defaultInferenceGatewayRestart } =
+    require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
+  return defaultInferenceGatewayRestart(sandboxName);
+}
 
 export async function execSandbox(
   sandboxName: string,
@@ -437,5 +459,10 @@ export async function execSandbox(
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
   await emitPolicyDenialHint(completion);
-  process.exit(completion.code);
+  let exitCode = completion.code;
+  if (exitCode === 0 && isGoogleChatPairingApproval(command)) {
+    const restart = (deps.restartGateway ?? defaultRestartGateway)(sandboxName);
+    if (!restart.ok) exitCode = 1;
+  }
+  process.exit(exitCode);
 }
