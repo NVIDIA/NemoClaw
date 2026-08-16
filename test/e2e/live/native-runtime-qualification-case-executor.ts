@@ -28,7 +28,10 @@ import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
-import type { NativeRuntimeQualificationObligation } from "../registry/native-runtime-qualification.ts";
+import type {
+  NativeRuntimeQualificationInference,
+  NativeRuntimeQualificationObligation,
+} from "../registry/native-runtime-qualification.ts";
 import { nativeRuntimeQualificationOperationFile } from "../../../tools/e2e/native-runtime-qualification-producer-plan.mts";
 import {
   assertCredentialFreeQualificationEnvironment,
@@ -492,11 +495,20 @@ async function agentTurn(
   containerId: string,
   endpoint: string,
   model: string,
+  inference: NativeRuntimeQualificationInference,
 ): Promise<string> {
   const body = JSON.stringify({
     model,
-    messages: [{ role: "user", content: "Reply with the single word qualified." }],
-    max_tokens: 32,
+    messages: [
+      {
+        role: "user",
+        content:
+          inference === "ollama"
+            ? "/no_think\nReply with the single word qualified."
+            : "Reply with the single word qualified.",
+      },
+    ],
+    max_tokens: 128,
     stream: false,
   });
   const args = [
@@ -533,17 +545,23 @@ async function agentTurn(
     model?: unknown;
     choices?: Array<{
       finish_reason?: unknown;
-      message?: { content?: unknown; tool_calls?: unknown };
+      message?: { content?: unknown; reasoning?: unknown; tool_calls?: unknown };
     }>;
   };
   const first = response.choices?.[0];
+  const completeMessage =
+    typeof first?.message?.content === "string" ||
+    typeof first?.message?.reasoning === "string" ||
+    Array.isArray(first?.message?.tool_calls);
   if (
     response.model !== model ||
     typeof first?.finish_reason !== "string" ||
     first.finish_reason === "length" ||
-    (typeof first.message?.content !== "string" && !Array.isArray(first.message?.tool_calls))
+    !completeMessage
   ) {
-    throw new Error("Agent turn did not return a complete exact-model inference response");
+    throw new Error(
+      `Agent turn did not return a complete exact-model inference response (modelMatch=${String(response.model === model)}; finishReason=${typeof first?.finish_reason === "string" ? bounded(first.finish_reason) : typeof first?.finish_reason}; contentType=${typeof first?.message?.content}; reasoningType=${typeof first?.message?.reasoning}; toolCalls=${String(Array.isArray(first?.message?.tool_calls))})`,
+    );
   }
   return sha256(output);
 }
@@ -782,7 +800,13 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       imageDigest: digestFromImageReference(agentImage),
     });
 
-    const turnSha256 = await agentTurn(lifecycleEngine, agentId, endpoint, inference.model);
+    const turnSha256 = await agentTurn(
+      lifecycleEngine,
+      agentId,
+      endpoint,
+      inference.model,
+      row.case.inference,
+    );
     if (row.case.acceleration === "nvidia-gpu") {
       gpuComputeProcesses = proveGpuBackedInference(
         inferenceEngine,
@@ -951,6 +975,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       agentId,
       endpoint,
       inference.model,
+      row.case.inference,
     );
     const reconciledGpuComputeProcesses =
       row.case.acceleration === "nvidia-gpu"

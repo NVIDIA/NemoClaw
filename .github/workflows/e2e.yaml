@@ -1863,14 +1863,16 @@ jobs:
                   --fail --location --proto '=https' --retry 3 --show-error --silent --tlsv1.2 \
                   --output "$target" \
                   "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/resolve/${model_revision}/${file}?download=true"
-              [[ -f "$target" && ! -L "$target" && "$(stat -c '%u:%g:%a:%h:%s' "$target")" == "${uid}:${gid}:600:1:${size}" ]] || {
+              sudo test -f "$target" &&
+                sudo test ! -L "$target" &&
+                [[ "$(sudo stat -c '%u:%g:%a:%h:%s' -- "$target")" == "${uid}:${gid}:600:1:${size}" ]] || {
                 echo "::error::Downloaded GPU model file metadata is invalid: $file" >&2
                 exit 1
               }
               if [[ "$algorithm" == "sha256" ]]; then
-                [[ "$(sha256sum "$target" | cut -d' ' -f1)" == "$digest" ]]
+                [[ "$(sudo sha256sum -- "$target" | cut -d' ' -f1)" == "$digest" ]]
               else
-                [[ "$(git hash-object --no-filters "$target")" == "$digest" ]]
+                [[ "$(sudo git hash-object --no-filters -- "$target")" == "$digest" ]]
               fi || {
                 echo "::error::Downloaded GPU model file digest is invalid: $file" >&2
                 exit 1

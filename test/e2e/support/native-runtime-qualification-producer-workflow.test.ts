@@ -251,8 +251,9 @@ describe("native runtime qualification producer workflow", () => {
     );
     expect(gpuResources.run).toContain("unset NVIDIA_API_KEY");
     expect(gpuResources.run).toContain("7ae557604adf67be50417f59c2c2f167def9a775");
-    expect(gpuResources.run).toContain("git hash-object --no-filters");
-    expect(gpuResources.run).toContain("sha256sum");
+    expect(gpuResources.run).toContain("sudo stat -c '%u:%g:%a:%h:%s' -- \"$target\"");
+    expect(gpuResources.run).toContain('sudo git hash-object --no-filters -- "$target"');
+    expect(gpuResources.run).toContain('sudo sha256sum -- "$target"');
     expect(gpuResources.run).toContain("model-free-nim@sha256:");
     expect(gpuResources.run).toContain("nvcr.io/nvidia/vllm@sha256:");
     expect(gpuResources.run).toContain("runner-contract.json");

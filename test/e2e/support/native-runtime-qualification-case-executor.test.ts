@@ -192,5 +192,7 @@ describe("native runtime provider-network authority", () => {
     expect(source).not.toContain('"--publish"');
     expect(source).toContain('route: "provider-network-dns"');
     expect(source).toContain("http://${inferenceName}:${String(inferencePort)}");
+    expect(source).toContain("/no_think\\nReply with the single word qualified.");
+    expect(source).toContain("max_tokens: 128");
   });
 });
