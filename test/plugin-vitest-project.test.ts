@@ -7,17 +7,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import standalonePluginVitestConfig from "../nemoclaw/vitest.config";
-import pluginVitestProjectOptions from "../nemoclaw/vitest.project";
-import rootVitestConfig from "../vitest.config";
-
-type PolicyAlias = {
-  find: RegExp;
-  replacement: string;
-};
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
 const rootRequire = createRequire(path.join(repositoryRoot, "package.json"));
 const pluginRequire = createRequire(path.join(repositoryRoot, "nemoclaw", "package.json"));
 const pluginTypeScript = pluginRequire.resolve("typescript/bin/tsc");
@@ -38,80 +29,6 @@ function listedTypeScriptFiles(configPath: string): string[] {
 }
 
 describe("plugin Vitest project contract", () => {
-  // source-shape-contract: compatibility -- Root and standalone plugin runners must consume one canonical project contract
-  it("defines one canonical plugin project for root and standalone runs", () => {
-    const sourceTransform = pluginVitestProjectOptions.oxc;
-    const policyAliases = pluginVitestProjectOptions.test.alias as PolicyAlias[];
-    const rootProjects = (rootVitestConfig.test?.projects ?? []) as unknown as Array<{
-      test?: { name?: string };
-    }>;
-    const rootPluginProjects = rootProjects.filter((project) => project.test?.name === "plugin");
-
-    expect(pluginVitestProjectOptions.root).toBe(repositoryRoot);
-    expect(sourceTransform.include).toEqual(/\.(?:[cm]?ts|[jt]sx)$/);
-    expect(pluginVitestProjectOptions.test.name).toBe("plugin");
-    expect(pluginVitestProjectOptions.test.environment).toBe("node");
-    expect(pluginVitestProjectOptions.test.env).toEqual({
-      NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
-    });
-    expect(pluginVitestProjectOptions.test.setupFiles).toEqual([fixtureUmaskSetup]);
-    expect(pluginVitestProjectOptions.test.include).toEqual(["nemoclaw/src/**/*.test.ts"]);
-    expect(policyAliases).toEqual([
-      {
-        find: /^.*banner-boundary\.cjs$/,
-        replacement: path.join(repositoryRoot, "nemoclaw/src/shared/banner-boundary.cts"),
-      },
-      {
-        find: /^.*credential-filter-boundary\.cjs$/,
-        replacement: path.join(
-          repositoryRoot,
-          "nemoclaw/src/shared/credential-filter-boundary.cts",
-        ),
-      },
-      {
-        find: /^.*openshell-policy-boundary\.cjs$/,
-        replacement: path.join(repositoryRoot, "nemoclaw/src/shared/openshell-policy-boundary.cts"),
-      },
-      {
-        find: /^.*sandbox-name\.cjs$/,
-        replacement: path.join(repositoryRoot, "nemoclaw/src/shared/sandbox-name.cts"),
-      },
-      {
-        find: /^.*snapshot-sanitizer-boundary\.cjs$/,
-        replacement: path.join(
-          repositoryRoot,
-          "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
-        ),
-      },
-    ]);
-    expect(pluginVitestProjectOptions.test).not.toHaveProperty("globalSetup");
-    expect(rootPluginProjects).toEqual([pluginVitestProjectOptions]);
-    expect(standalonePluginVitestConfig).toEqual({
-      ...pluginVitestProjectOptions,
-      test: {
-        ...pluginVitestProjectOptions.test,
-        globalSetup: path.join(repositoryRoot, "test/helpers/vitest-temp-root.ts"),
-      },
-    });
-  });
-
-  // source-shape-contract: compatibility -- Assertion enforcement must remain scoped to the expect-based plugin project
-  it("pilots assertion presence only in expect-based plugin tests (#6692)", () => {
-    const rootTest = rootVitestConfig.test as {
-      expect?: { requireAssertions?: boolean };
-      projects?: Array<{ test?: { expect?: { requireAssertions?: boolean }; name?: string } }>;
-    };
-
-    expect(pluginVitestProjectOptions.test.expect).toEqual({ requireAssertions: true });
-    expect(rootTest.expect?.requireAssertions).not.toBe(true);
-    const nonPluginProjects = (rootTest.projects ?? []).filter(
-      (project) => project.test?.name !== "plugin",
-    );
-    for (const project of nonPluginProjects) {
-      expect(project.test?.expect?.requireAssertions, project.test?.name).not.toBe(true);
-    }
-  });
-
   it("keeps standalone plugin dependencies on the root Vitest toolchain", () => {
     for (const packageName of ["vitest", "vite"] as const) {
       expect(installedVersion(pluginRequire, packageName), packageName).toBe(

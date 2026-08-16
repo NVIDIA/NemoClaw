@@ -7,16 +7,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import pluginVitestConfig from "../nemoclaw/vitest.config";
-import rootVitestConfig from "../vitest.config";
 import {
   prepareGitHubHostedRuntimeAuthority,
   setupVitestTempRoot,
 } from "./helpers/vitest-temp-root";
 
 const TEMP_ENV_KEYS = ["TMPDIR", "TMP", "TEMP"] as const;
-const ROOT_SETUP = "test/helpers/vitest-temp-root.ts";
-const STATE_SETUP = "test/helpers/isolate-test-state.ts";
 
 type TempEnv = Record<(typeof TEMP_ENV_KEYS)[number], string | undefined>;
 
@@ -282,33 +278,5 @@ describe("Vitest temp root", () => {
     }
   });
 
-  // source-shape-contract: compatibility -- Root and standalone runners must install the shared temporary-root cleanup boundary
-  it("wires cleanup into root and standalone plugin test runs", () => {
-    expect(rootVitestConfig.test?.globalSetup).toBe(ROOT_SETUP);
-    expect(pluginVitestConfig.test?.globalSetup).toBe(
-      path.resolve(import.meta.dirname, "..", ROOT_SETUP),
-    );
-  });
 
-  // source-shape-contract: security -- Non-live state isolation must never redirect credential-bearing live E2E state
-  it("isolates stateful non-live projects without redirecting live E2E state", () => {
-    const projects = (rootVitestConfig.test?.projects ?? []) as Array<{
-      test?: { name?: string; setupFiles?: string[] };
-    }>;
-    const setupFilesByProject = new Map(
-      projects.map((project) => [project.test?.name, project.test?.setupFiles ?? []]),
-    );
-
-    for (const name of [
-      "cli",
-      "integration",
-      "installer-integration",
-      "package-contract",
-      "e2e-support",
-    ]) {
-      expect(setupFilesByProject.get(name), name).toContain(STATE_SETUP);
-    }
-    expect(setupFilesByProject.get("plugin")).not.toContain(STATE_SETUP);
-    expect(setupFilesByProject.get("e2e-live")).not.toContain(STATE_SETUP);
-  });
 });

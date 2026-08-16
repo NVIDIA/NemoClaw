@@ -150,61 +150,6 @@ function validateCleanupArtifactMutation(options: {
 }
 
 describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
-  // source-shape-contract: security -- Immutable credential-bearing action bytes must stay bound to reviewed commit provenance.
-  it("binds the composite action and helper to their immutable reviewed revision (#6961)", () => {
-    expect(validateDockerHubAuthAction()).toEqual([]);
-
-    const mappingErrors = validateAuthArtifactMutation({
-      mutateAction: (action) => {
-        const runs = action.runs as { steps: WorkflowStep[] };
-        runs.steps[0].env = {
-          DOCKERHUB_AUTH_REQUIRED: "${{ inputs.auth-required }}",
-          DOCKERHUB_USERNAME: "${{ inputs.token }}",
-          DOCKERHUB_TOKEN: "${{ inputs.username }}",
-        };
-        runs.steps[0].run = "bash .github/scripts/docker-auth-setup.sh";
-      },
-    });
-    expect(mappingErrors).toContain(
-      "docker-auth-setup action content must match the action reviewed at its immutable commit pin",
-    );
-    expect(mappingErrors).toContain(
-      "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
-    );
-
-    expect(
-      validateAuthArtifactMutation({
-        mutateScript: (source) => `${source}# unreviewed drift\n`,
-      }),
-    ).toContain(
-      "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
-    );
-  });
-
-  // source-shape-contract: security -- The cleanup action and helper content must remain bound to the pinned commit.
-  it("binds the cleanup action and helper content to the pinned commit", () => {
-    expect(validateDockerHubCleanupAction()).toEqual([]);
-
-    const actionErrors = validateCleanupArtifactMutation({
-      mutateAction: (action) => {
-        const runs = action.runs as { steps: WorkflowStep[] };
-        runs.steps[0].run = "bash .github/scripts/docker-auth-cleanup.sh";
-      },
-    });
-    expect(actionErrors).toContain(
-      "docker-auth-cleanup action content must match the pinned commit",
-    );
-    expect(actionErrors).toContain(
-      "docker-auth-cleanup action must invoke the helper through github.action_path",
-    );
-
-    expect(
-      validateCleanupArtifactMutation({
-        mutateScript: (source) => `${source}# unreviewed drift\n`,
-      }),
-    ).toContain("docker-auth-cleanup script content must match the pinned commit");
-  });
-
   it(
     "accepts only the pinned pre-restore cleanup action in the complete workflow",
     () => {

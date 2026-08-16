@@ -227,6 +227,7 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("scripts", "checks", "materialize-locked-npm-cache-seed.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
+    writeFixture(path.join("scripts", "lib", "corporate-ca-runtime.sh"));
     writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
@@ -292,9 +293,17 @@ describe("sandbox build context staging", () => {
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
     const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    const copiedScripts = [...dockerfile.matchAll(/^COPY\s+scripts\/(\S+)/gm)].map(
-      ([, relativePath]) => relativePath,
-    );
+    const copiedScripts = dockerfile
+      .split("\n")
+      .flatMap(
+        (line) =>
+          line
+            .trim()
+            .match(/^COPY(?:\s+--\S+)*\s+(.+)\s+\S+$/u)?.[1]
+            ?.split(/\s+/u) ?? [],
+      )
+      .filter((token) => token.startsWith("scripts/"))
+      .map((token) => token.slice("scripts/".length));
     expect(copiedScripts).not.toHaveLength(0);
 
     for (const relativePath of copiedScripts) {

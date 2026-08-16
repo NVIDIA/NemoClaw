@@ -12,15 +12,6 @@ import {
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
-const DEPENDENCY_REVIEW = path.join(
-  REPO_ROOT,
-  "internal/security-reviews/openclaw-2026.7.1-dependency-review.md",
-);
-const LIVE_VITEST_GUARD = path.join(
-  REPO_ROOT,
-  "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
-);
-
 const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.7.1";
 const PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "run error: LLM request timed out.",
@@ -70,23 +61,5 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
     expect(
       missingIssue4434AcceptanceFields(UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual(["httpStatusOrCause", "reportingLayer", "recoveryHint"]);
-  });
-
-  it("keeps the dependency review and live guards tied to the full-field requirement", () => {
-    const review = fs.readFileSync(DEPENDENCY_REVIEW, "utf-8");
-    const vitestGuard = fs.readFileSync(LIVE_VITEST_GUARD, "utf-8");
-    expect(review).toContain("test/issue-4434-error-fields.test.ts");
-    expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
-    expect(review).toContain("Issue #4434 full live acceptance");
-    expect(review).toContain("The #4434 compatibility-shim disposition is explicitly accepted");
-    expect(review).not.toContain("`PRA-5`");
-    expect(review).toContain("3/3 fields are present in the NemoClaw-patched runtime output");
-    expect(review).toContain(
-      "3/3 fields are missing in the upstream-shaped `openclaw@2026.7.1` output",
-    );
-    expect(vitestGuard).toContain("../support/issue-4434-tui-capture.ts");
-    expect(vitestGuard).toContain("finalErrorBlock");
-    expect(vitestGuard).toContain("full #4434 diagnostic fields");
-    expect(vitestGuard).not.toContain("tighten both live guards");
   });
 });

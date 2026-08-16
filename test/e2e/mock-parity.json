@@ -78,8 +78,7 @@
         "src/lib/onboard/runtime-provider/podman-lifecycle.test.ts",
         "src/lib/onboard/runtime-provider/podman-preflight.test.ts",
         "src/lib/onboard/runtime-provider/podman.test.ts",
-        "test/e2e/support/podman-cpu-proof-workflow.test.ts",
-        "test/runtime-provider-source-shape.test.ts"
+        "test/e2e/support/podman-cpu-proof-workflow.test.ts"
       ]
     },
     {
