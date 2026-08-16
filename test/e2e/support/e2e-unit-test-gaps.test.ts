@@ -11,7 +11,7 @@ import {
   normalizeFailureSignature,
   type RunLogEvidence,
 } from "../../../tools/e2e/unit-test-gaps-core.mts";
-import { rollingRange } from "../../../tools/e2e/unit-test-gaps.mts";
+import { requireCompleteRunSelection, rollingRange } from "../../../tools/e2e/unit-test-gaps.mts";
 
 function evidence(overrides: Partial<RunLogEvidence> = {}): RunLogEvidence {
   return {
@@ -60,6 +60,13 @@ describe("weekly E2E unit-test gap analysis", () => {
       from: "2026-08-09T19:30:00.000Z",
       to: "2026-08-16T19:30:00.000Z",
     });
+  });
+
+  it("rejects a run selection that may have reached the collection limit", () => {
+    expect(() => requireCompleteRunSelection("e2e.yaml", 999)).not.toThrow();
+    expect(() => requireCompleteRunSelection("e2e.yaml", 1000)).toThrow(
+      "e2e.yaml reached the 1000-run collection limit, so the selected range may be incomplete. Narrow --since or --days and retry.",
+    );
   });
 
   it("groups volatile BuildKit references under the missing build-input contract", () => {

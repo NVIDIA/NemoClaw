@@ -17,6 +17,7 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_WORKFLOWS = ["e2e.yaml", "portable-profile-e2e.yaml"];
 const MAX_GH_BUFFER_BYTES = 128 * 1024 * 1024;
+const MAX_RUNS_PER_WORKFLOW = 1000;
 const DEFAULT_CONCURRENCY = 6;
 
 interface Options {
@@ -132,6 +133,13 @@ async function gh(args: readonly string[]): Promise<string> {
   return result.stdout;
 }
 
+export function requireCompleteRunSelection(workflow: string, runCount: number): void {
+  if (runCount < MAX_RUNS_PER_WORKFLOW) return;
+  throw new Error(
+    `${workflow} reached the ${String(MAX_RUNS_PER_WORKFLOW)}-run collection limit, so the selected range may be incomplete. Narrow --since or --days and retry.`,
+  );
+}
+
 async function collectRuns(
   workflows: readonly string[],
   range: { from: string; to: string },
@@ -150,12 +158,13 @@ async function collectRuns(
         "--created",
         `${range.from}..${range.to}`,
         "--limit",
-        "1000",
+        String(MAX_RUNS_PER_WORKFLOW),
         "--json",
         "attempt,conclusion,createdAt,databaseId,event,headBranch,headSha,name,status,url",
       ]);
       const parsed = JSON.parse(output) as unknown;
       if (!Array.isArray(parsed)) throw new Error(`GitHub returned malformed runs for ${workflow}`);
+      requireCompleteRunSelection(workflow, parsed.length);
       return parsed.map(normalizeRun);
     }),
   );

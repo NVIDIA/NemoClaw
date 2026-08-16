@@ -668,6 +668,8 @@ reviews them; redaction reduces exposure but does not prove that a report is
 credential-free. The command exits nonzero when a selected run is unfinished or
 failed-run evidence is unavailable. Do not accept a partial report as the
 weekly ledger.
+The command also stops when a workflow reaches the 1,000-run collection limit.
+Narrow the selected range and retry so the report cannot omit older runs silently.
 
 Review one row per cause candidate instead of one row per failed job. Confirm
 the selected candidate against the first causal line and identify the owning
