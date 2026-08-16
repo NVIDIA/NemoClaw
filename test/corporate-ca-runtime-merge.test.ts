@@ -43,11 +43,16 @@ const OPENCLAW_END = "# Git TLS CA bundle fix (NemoClaw#2270).";
 const HERMES_END = "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.";
 
 describe("corporate proxy CA runtime helper guard (#8292)", () => {
-  it.each(["missing", "symlink"] as const)(
-    "exits before sourcing or merging when the deployed helper is %s and fallback is unavailable",
-    (deployedMode) => {
-      const dir = tmpDir(`nemoclaw-corp-helper-${deployedMode}-`);
-      const result = runCorporateCaHelperGuard(OPENCLAW_START, dir, deployedMode);
+  it.each([
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END, mode: "missing" as const },
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END, mode: "symlink" as const },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END, mode: "missing" as const },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END, mode: "symlink" as const },
+  ])(
+    "exits $agent before sourcing or merging when the deployed helper is $mode and fallback is unavailable",
+    ({ agent, script, end, mode }) => {
+      const dir = tmpDir(`nemoclaw-${agent.toLowerCase()}-helper-${mode}-`);
+      const result = runCorporateCaHelperGuard(script, dir, mode, end);
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("required corporate CA runtime helper is missing or unsafe");

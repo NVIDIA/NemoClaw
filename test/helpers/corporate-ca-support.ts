@@ -334,11 +334,11 @@ export function runCorporateCaHelperGuard(
   scriptPath: string,
   dir: string,
   deployedMode: "missing" | "symlink",
+  endMarker: string,
 ): { status: number; stderr: string; mergedPath: string; secret: string } {
   const src = fs.readFileSync(scriptPath, "utf-8");
   const startMarker =
     '_NEMOCLAW_CORPORATE_CA_HELPER="/usr/local/lib/nemoclaw/corporate-ca-runtime.sh"';
-  const endMarker = "# Git TLS CA bundle fix (NemoClaw#2270).";
   const start = src.indexOf(startMarker);
   const end = src.indexOf(endMarker, start);
   if (start === -1 || end === -1 || end <= start) {
