@@ -20,9 +20,30 @@ import {
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
+import type {
+  SandboxInferenceInvocationInput,
+  SandboxInferenceInvocationResult,
+} from "./sandbox/inference-invocation-probe";
 
 export type { RuntimeProviderBundleRegistry };
 export { RuntimeProviderSelectionError };
+
+export type InferenceSetSandboxRouteProbe = (
+  input: SandboxInferenceInvocationInput,
+) => SandboxInferenceInvocationResult;
+
+export function probeInferenceSetSandboxRoute(
+  input: SandboxInferenceInvocationInput,
+): SandboxInferenceInvocationResult {
+  const probe: typeof import("./sandbox/inference-invocation-probe") = require(
+    "./sandbox/inference-invocation-probe",
+  );
+  return probe.probeSandboxInferenceInvocation(
+    input,
+    {},
+    probe.READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  );
+}
 
 export function requireInferenceSetRuntimeAuthority(
   entry: SandboxEntry,

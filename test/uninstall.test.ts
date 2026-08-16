@@ -15,6 +15,8 @@ import {
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
 } from "../src/lib/onboard/docker-driver-gateway-config";
 import { writeDockerDriverGatewayRuntimeMarkerForStateDir } from "../src/lib/onboard/docker-driver-gateway-runtime-marker";
+import { deriveCheckpointFromSession } from "../src/lib/state/onboard-checkpoint-migrate";
+import { createSession } from "../src/lib/state/onboard-session";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
@@ -39,7 +41,7 @@ exit 0
   }
 
   function seedPreservedState(tmp: string): string {
-    const stateDir = path.join(tmp, ".nemoclaw");
+    const stateDir = seedCompletedDefaultAuthority(tmp);
     fs.mkdirSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101"), { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"),
@@ -47,9 +49,57 @@ exit 0
     );
     fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
     fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
+    return stateDir;
+  }
+
+  function seedCompletedDefaultAuthority(tmp: string): string {
+    const stateDir = path.join(tmp, ".nemoclaw");
+    const sandboxName = "ordinary-authority";
+    const gateway = {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed" as const,
+      source: "standalone" as const,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    };
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(stateDir, 0o700);
+    const session = createSession({
+      agent: "openclaw",
+      sandboxName,
+      metadata: { gatewayName: gateway.gatewayName, fromDockerfile: null },
+    });
+    session.status = "complete";
+    session.resumable = false;
+    session.machine = { ...session.machine, state: "complete", revision: 1 };
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session, { profile: "default" }),
+      sandboxIdentity: { kind: "selected", value: { name: sandboxName, agent: "openclaw" } },
+      gatewayAuthority: { kind: "selected", value: gateway },
+    };
+    fs.writeFileSync(path.join(stateDir, "onboard-session.json"), `${JSON.stringify(session)}\n`, {
+      mode: 0o600,
+    });
     fs.writeFileSync(
       path.join(stateDir, "sandboxes.json"),
-      JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+      `${JSON.stringify({
+        defaultSandbox: sandboxName,
+        sandboxes: {
+          [sandboxName]: {
+            name: sandboxName,
+            agent: null,
+            dashboardPort: null,
+            gatewayName: gateway.gatewayName,
+            gatewayPort: gateway.gatewayPort,
+            lifecycleGeneration: "ordinary-authority-generation",
+            openshellDriver: "docker",
+          },
+        },
+      })}\n`,
+      { mode: 0o600 },
     );
     return stateDir;
   }
@@ -169,6 +219,7 @@ exit 0
   it("skips the confirmation prompt and completes successfully for --yes", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));
     writeFakeTools(path.join(tmp, "bin"));
+    seedCompletedDefaultAuthority(tmp);
     try {
       const result = runUninstall(tmp, ["--yes"]);
       const output = `${result.stdout}${result.stderr}`;
@@ -269,6 +320,7 @@ exit 0
   it("uses NemoHermes branding for --yes when Hermes is active", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-uninstall-yes-"));
     writeFakeTools(path.join(tmp, "bin"));
+    seedCompletedDefaultAuthority(tmp);
     try {
       const result = runUninstall(tmp, ["--yes"], { NEMOCLAW_AGENT: "hermes" });
 
