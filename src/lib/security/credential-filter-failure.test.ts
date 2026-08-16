@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 const fsControl = vi.hoisted(() => ({
   noFollowUnavailable: false,
@@ -26,6 +27,7 @@ vi.mock("node:fs", async (importOriginal) => {
 import {
   sanitizeConfigFile,
   sanitizeEnvFile,
+  sanitizeYamlConfigContent,
   sanitizeYamlConfigFile,
 } from "./credential-filter.js";
 
@@ -64,5 +66,34 @@ describe("credential filter no-follow boundary", () => {
     expect(readFileSync(jsonPath, "utf-8")).toBe(jsonSource);
     expect(readFileSync(yamlPath, "utf-8")).toBe(yamlSource);
     expect(readFileSync(envPath, "utf-8")).toBe(envSource);
+  });
+});
+
+describe("credential filter YAML boundary", () => {
+  it("sanitizes nested arrays and rejects non-object documents", () => {
+    const sanitized = sanitizeYamlConfigContent(
+      [
+        "items:",
+        "  - safe",
+        "  - api_key: sk-secret-value-long-enough",
+        "    enabled: true",
+        "    count: 2",
+        "    optional: null",
+        "",
+      ].join("\n"),
+    );
+
+    expect(parseYaml(sanitized as string)).toEqual({
+      items: [
+        "safe",
+        {
+          api_key: "[STRIPPED_BY_MIGRATION]",
+          enabled: true,
+          count: 2,
+          optional: null,
+        },
+      ],
+    });
+    expect(sanitizeYamlConfigContent("42\n")).toBeNull();
   });
 });
