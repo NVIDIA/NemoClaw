@@ -261,6 +261,11 @@ describe("native runtime qualification producer workflow", () => {
     expect(boundary.run).toContain("ensure_subordinate_range /etc/subgid --add-subgids");
     expect(boundary.run).toContain("has no free subordinate-ID range for rootless Podman");
     expect(boundary.run).toContain('sudo -u "$account" env -i');
+    expect(boundary.run).toContain('CONTAINERS_STORAGE_CONF="$storage_config"');
+    expect(boundary.run).toContain("rootless_storage_path");
+    expect(boundary.run).toContain("${home}/.local/share/containers/storage");
+    expect(boundary.run).toContain('mount_program = "/usr/bin/fuse-overlayfs"');
+    expect(boundary.run).toContain("0:0:444");
     expect(boundary.run).toContain("podman info --format json");
     expect(boundary.run).toContain("Credential-free rootless Podman readiness failed");
     expect(boundary.run).toContain('install -d -m 0755 "$guard_dir"');
@@ -294,6 +299,8 @@ describe("native runtime qualification producer workflow", () => {
     expect(execute.run).not.toContain("GH_TOKEN");
     expect(execute.run).not.toContain("chown -R");
     expect(execute.env?.NODE_DIRECTORY).toBe("${{ steps.boundary.outputs.node_dir }}");
+    expect(execute.env?.STORAGE_CONFIG).toBe("${{ steps.boundary.outputs.storage_config }}");
+    expect(execute.run).toContain('CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG"');
     expect(execute.run).toContain(
       'PATH="$GUARD_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin"',
     );
@@ -309,6 +316,10 @@ describe("native runtime qualification producer workflow", () => {
     expect(cleanup.if).toBe("always()");
     expect(cleanup.run).toContain('account="${ACCOUNT:-nemoclawq}"');
     expect(cleanup.run).toContain("pkill -KILL -u");
+    expect(cleanup.run).not.toContain("rm -rf");
+    expect(cleanup.run).toContain('sudo rm -f -- "$storage_config_directory/storage.conf"');
+    expect(cleanup.run).toContain('sudo rmdir "$runtime_dir/podman"');
+    expect(cleanup.run).toContain("Qualification storage configuration remains after cleanup");
     expect(cleanup.run).toContain("userdel --remove");
     expect(cleanup.run).toContain("Qualification account still exists after cleanup");
   });

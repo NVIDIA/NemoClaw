@@ -1362,7 +1362,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in awk git jq node npm pgrep podman setfacl sha256sum systemctl usermod; do
+          for command in awk git jq node npm pgrep podman setfacl sha256sum stat systemctl tee usermod; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
@@ -1429,8 +1429,34 @@ jobs:
           ensure_subordinate_range /etc/subgid --add-subgids
           uid="$(id -u "$account")"
           home="$(getent passwd "$account" | cut -d: -f6)"
+          [[ "$home" == "/home/${account}" && -d "$home" && ! -L "$home" ]] || {
+            echo "::error::Qualification account home is missing or invalid" >&2
+            exit 1
+          }
           runtime_dir="/run/user/${uid}"
           sudo install -d -o "$uid" -g "$uid" -m 0700 "$runtime_dir"
+          storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          storage_config="${storage_config_directory}/storage.conf"
+          [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
+            echo "::error::Qualification storage configuration directory already exists" >&2
+            exit 1
+          }
+          sudo install -d -o root -g root -m 0755 "$storage_config_directory"
+          printf '%s\n' \
+            '[storage]' \
+            'driver = "overlay"' \
+            "runroot = \"${home}/.local/share/containers/runroot\"" \
+            "graphroot = \"${home}/.local/share/containers/storage\"" \
+            "rootless_storage_path = \"${home}/.local/share/containers/storage\"" \
+            '' \
+            '[storage.options.overlay]' \
+            'mount_program = "/usr/bin/fuse-overlayfs"' | sudo tee "$storage_config" >/dev/null
+          sudo chown root:root "$storage_config"
+          sudo chmod 0444 "$storage_config"
+          [[ -f "$storage_config" && ! -L "$storage_config" && "$(stat -c '%u:%g:%a' "$storage_config")" == "0:0:444" ]] || {
+            echo "::error::Qualification storage configuration is not root-owned and read-only" >&2
+            exit 1
+          }
           ancestor="$(dirname "$CANDIDATE_DIRECTORY")"
           while [[ "$ancestor" != "/home" ]]; do
             [[ ("$ancestor" == "/home/runner" || "$ancestor" == /home/runner/*) && -d "$ancestor" && ! -L "$ancestor" ]] || {
@@ -1451,6 +1477,7 @@ jobs:
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
           chmod 0555 "$guard_dir/docker"
           sudo -u "$account" env -i \
+            CONTAINERS_STORAGE_CONF="$storage_config" \
             HOME="$home" \
             LANG=C.UTF-8 \
             PATH="$guard_dir:/usr/local/bin:/usr/bin:/bin" \
@@ -1463,6 +1490,7 @@ jobs:
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
           printf 'node_dir=%s\n' "$node_directory" >>"$GITHUB_OUTPUT"
+          printf 'storage_config=%s\n' "$storage_config" >>"$GITHUB_OUTPUT"
 
       - name: Install locked candidate test dependencies without scripts
         env:
@@ -1533,6 +1561,7 @@ jobs:
           NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1547,6 +1576,7 @@ jobs:
           cd "$CANDIDATE_DIRECTORY"
           sudo -u "$ACCOUNT" env -i \
             CI=true \
+            CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             E2E_DEFAULT_ENABLED=0 \
             E2E_JOB=1 \
             HOME="$QUALIFICATION_HOME" \
@@ -1593,13 +1623,44 @@ jobs:
         run: |
           set -euo pipefail
           account="${ACCOUNT:-nemoclawq}"
+          uid=""
           if id "$account" >/dev/null 2>&1; then
-            sudo pkill -KILL -u "$(id -u "$account")" 2>/dev/null || true
+            uid="$(id -u "$account")"
+            runtime_dir="/run/user/${uid}"
+            storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            sudo pkill -KILL -u "$uid" 2>/dev/null || true
+            if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
+              [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
+                echo "::error::Qualification storage configuration cleanup target is invalid" >&2
+                exit 1
+              }
+              sudo rm -f -- "$storage_config_directory/storage.conf"
+              sudo rmdir "$storage_config_directory"
+            fi
+            if [[ -e "$runtime_dir" || -L "$runtime_dir" ]]; then
+              [[ -d "$runtime_dir" && ! -L "$runtime_dir" ]] || {
+                echo "::error::Qualification runtime cleanup target is invalid" >&2
+                exit 1
+              }
+              sudo rmdir "$runtime_dir/podman" 2>/dev/null || true
+              sudo rmdir "$runtime_dir"
+            fi
             sudo userdel --remove "$account"
           fi
           if id "$account" >/dev/null 2>&1; then
             echo "::error::Qualification account still exists after cleanup" >&2
             exit 1
+          fi
+          if [[ -n "$uid" ]]; then
+            [[ ! -e "/run/user/${uid}" && ! -L "/run/user/${uid}" ]] || {
+              echo "::error::Qualification runtime directory remains after cleanup" >&2
+              exit 1
+            }
+            storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
+              echo "::error::Qualification storage configuration remains after cleanup" >&2
+              exit 1
+            }
           fi
 
       - name: Upload the qualification case evidence
