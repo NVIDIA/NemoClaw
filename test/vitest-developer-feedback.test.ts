@@ -10,7 +10,7 @@ import { runVitestNpmScript } from "./helpers/vitest-npm-script";
 const focusedProjects = "--project cli --project plugin --project e2e-support";
 
 describe("Vitest developer feedback", () => {
-  it("selects passed-only output for CI (#6692)", () => {
+  it("selects passed-only Vitest output in CI (#6692)", () => {
     expect(resolveVitestFeedback({})).toEqual({ isCi: false, silent: false });
     expect(resolveVitestFeedback({ CI: "0" })).toEqual({ isCi: false, silent: false });
     expect(resolveVitestFeedback({ CI: "1" })).toEqual({ isCi: true, silent: "passed-only" });
