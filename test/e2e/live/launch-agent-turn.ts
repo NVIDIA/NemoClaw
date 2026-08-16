@@ -7,78 +7,17 @@ import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-// The live driver points only the `nemoclaw launch` process at this shim. The
-// shim passes every OpenShell call through unchanged except the exact TTY exec
-// that starts OpenClaw, where it attaches the non-secret run identity through
-// OpenShell's supported request environment. The TUI inherits that identity,
-// allowing readiness to bind to this launch instead of a process-table peer.
-export const OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT = String.raw`#!/usr/bin/env node
-const childProcess = require("node:child_process");
-const fs = require("node:fs");
-
-const argv = process.argv.slice(2);
-const realOpenShell = process.env.NEMOCLAW_LAUNCH_REAL_OPENSHELL;
-const runId = process.env.NEMOCLAW_LAUNCH_RUN_ID;
-const sandboxName = process.env.NEMOCLAW_LAUNCH_SANDBOX;
-const interceptPath = process.env.NEMOCLAW_LAUNCH_INTERCEPT_PATH;
-
-function fail(reason) {
-  process.stderr.write(JSON.stringify({ reason }) + "\n");
-  process.exit(73);
-}
-
-function run(nextArgv) {
-  const result = childProcess.spawnSync(realOpenShell, nextArgv, { stdio: "inherit" });
-  if (result.error || result.status === null) fail("openshell_shim_invocation_failed");
-  process.exit(result.status);
-}
-
-function arraysEqual(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-if (!realOpenShell || !realOpenShell.startsWith("/")) fail("openshell_shim_authority_invalid");
-if (!/^[0-9a-f]{32}$/.test(runId || "")) fail("openshell_shim_run_id_invalid");
-if (!interceptPath || !interceptPath.startsWith("/")) fail("openshell_shim_path_invalid");
-
-const separator = argv.indexOf("--");
-const remoteArgv = separator === -1 ? [] : argv.slice(separator + 1);
-const expectedTail = ["bash", "-lc", "openclaw tui"];
-let optionIndex = 4;
-if (argv[optionIndex] === "-g") optionIndex += 2;
-const launchLike =
-  argv[0] === "sandbox" &&
-  argv[1] === "exec" &&
-  argv[2] === "--name" &&
-  argv[3] === sandboxName &&
-  arraysEqual(argv.slice(optionIndex, separator), ["--tty", "--timeout", "0"]) &&
-  remoteArgv.length >= expectedTail.length &&
-  expectedTail.every((value, index) => value === remoteArgv.at(index - expectedTail.length));
-
-if (!launchLike) run(argv);
-try {
-  fs.writeFileSync(interceptPath, runId + "\n", { flag: "wx", mode: 0o600 });
-} catch {
-  fail("openshell_launch_intercept_duplicate");
-}
-run([
-  ...argv.slice(0, separator),
-  "--env",
-  "NEMOCLAW_LAUNCH_RUN_ID=" + runId,
-  ...argv.slice(separator),
-]);
-`;
-
 // OpenClaw owns the JSONL session store and does not expose a structured
 // result from `nemoclaw launch`. This verifier records an in-sandbox baseline,
 // then qualifies only complete user and assistant records appended after that
 // baseline. Session content never moves to the host.
 export const OPENCLAW_SESSION_EVIDENCE_SCRIPT = String.raw`
 const crypto = require("node:crypto");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const [mode, sessionRoot, baselinePath, expectedTurnsText, runId] = process.argv.slice(1);
+const [mode, sessionRoot, baselinePath, expectedTurnsText] = process.argv.slice(1);
 
 function finish(exitCode, reason, detail = {}) {
   if (reason) process.stderr.write(JSON.stringify({ reason, ...detail }) + "\n");
@@ -105,7 +44,7 @@ function sessionFileNames() {
   }
 }
 
-function launchOwnedOpenClawTuiProcessIds() {
+function openClawTuiProcessIds() {
   let names;
   try {
     names = fs.readdirSync("/proc");
@@ -127,27 +66,15 @@ function launchOwnedOpenClawTuiProcessIds() {
     }
     if (!args.includes("tui")) continue;
     if (!args.some((arg) => ["openclaw", "openclaw.mjs"].includes(path.basename(arg)))) continue;
-    let environment;
-    try {
-      environment = fs.readFileSync(path.join("/proc", name, "environ"), "utf8").split("\0");
-    } catch (error) {
-      if (error && ["EACCES", "ENOENT", "ESRCH"].includes(error.code)) continue;
-      finish(2, "tui_environment_unavailable");
-    }
-    if (environment.includes("NEMOCLAW_LAUNCH_RUN_ID=" + runId)) pids.push(name);
+    pids.push(name);
   }
   return pids;
 }
 
-// The terminal line discipline safely queues a complete submitted line even
-// while a canonical-mode TUI is still installing its reader. Raw mode is a UI
-// implementation detail. Readiness therefore requires the exact run identity
-// injected into this launch's remote exec and a PTY on that process's fd 0.
-function qualifyTuiInputPty() {
-  if (!/^[0-9a-f]{32}$/.test(runId || "")) finish(2, "launch_run_id_invalid");
-  const pids = launchOwnedOpenClawTuiProcessIds();
+function qualifyTuiInputMode() {
+  const pids = openClawTuiProcessIds();
   if (pids.length === 0) finish(1);
-  if (pids.length > 1) finish(2, "multiple_launch_tui_processes");
+  if (pids.length > 1) finish(2, "multiple_tui_processes");
   let ttyPath;
   try {
     ttyPath = fs.realpathSync(path.join("/proc", pids[0], "fd", "0"));
@@ -156,6 +83,16 @@ function qualifyTuiInputPty() {
     finish(2, "tui_stdin_unavailable");
   }
   if (!/^\/dev\/pts\/\d+$/.test(ttyPath)) finish(2, "tui_stdin_not_pty");
+  let state;
+  try {
+    state = childProcess.execFileSync("stty", ["-F", ttyPath, "-a"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    finish(2, "tui_termios_unavailable");
+  }
+  if (!/(^|[\s;])-icanon([\s;]|$)/.test(state)) finish(1);
   finish(0);
 }
 
@@ -291,7 +228,7 @@ function qualifyTurns() {
 
 try {
   if (mode === "baseline") recordBaseline();
-  if (mode === "input-pty") qualifyTuiInputPty();
+  if (mode === "input-mode") qualifyTuiInputMode();
   if (mode === "qualify") qualifyTurns();
 } catch {
   finish(2, "verifier_failed");
@@ -308,9 +245,6 @@ capture="$session_dir/terminal.log"
 driver_error="$session_dir/pty-driver.err"
 evidence_error="$session_dir/session-evidence.err"
 input="$session_dir/input"
-input_submitted_marker="$session_dir/input-submitted"
-openshell_shim="$session_dir/openshell-launch-shim"
-intercept_path="$session_dir/launch-intercept"
 baseline_path="/tmp/nemoclaw-launch-session-$NEMOCLAW_LAUNCH_RUN_ID.json"
 session_pid=""
 session_deadline=""
@@ -389,8 +323,7 @@ session_evidence() {
     "$mode" \
     "$NEMOCLAW_LAUNCH_SESSION_ROOT" \
     "$baseline_path" \
-    "$expected_turns" \
-    "$NEMOCLAW_LAUNCH_RUN_ID"
+    "$expected_turns"
 }
 
 wait_for_turn_count() {
@@ -413,31 +346,29 @@ wait_for_turn_count() {
   fail_launch_session "launch did not record the required structured session turns"
 }
 
-wait_for_tui_input_pty() {
+wait_for_pty_input_mode() {
   local evidence_status
   while (( SECONDS < session_deadline )); do
-    if session_evidence input-pty >/dev/null 2>"$evidence_error"; then
+    if session_evidence input-mode >/dev/null 2>"$evidence_error"; then
       return 0
     else
       evidence_status=$?
     fi
     if [[ "$evidence_status" != 1 ]]; then
-      fail_launch_session "OpenClaw TUI input PTY evidence was invalid or unavailable (status $evidence_status)"
+      fail_launch_session "OpenClaw TUI input-mode evidence was invalid or unavailable (status $evidence_status)"
     fi
     if ! kill -0 "$session_pid" 2>/dev/null; then
       break
     fi
     sleep 0.1
   done
-  fail_launch_session "OpenClaw TUI did not attach standard input to the launch PTY before the session deadline"
+  fail_launch_session "launch PTY did not enter input mode before the session deadline"
 }
 
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not record the structured session baseline"
 fi
 
-printf '%s' "$NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT" >"$openshell_shim"
-chmod 700 "$openshell_shim"
 mkfifo -m 600 "$input"
 if [[ -n "$NEMOCLAW_LAUNCH_ENTRYPOINT" ]]; then
   printf -v launch_command '%q %q %q %q' \
@@ -448,10 +379,6 @@ else
     "$NEMOCLAW_LAUNCH_COMMAND" launch "$NEMOCLAW_LAUNCH_SANDBOX"
 fi
 
-NEMOCLAW_LAUNCH_INPUT_SUBMITTED_MARKER="$input_submitted_marker" \
-NEMOCLAW_LAUNCH_INTERCEPT_PATH="$intercept_path" \
-NEMOCLAW_LAUNCH_REAL_OPENSHELL="$NEMOCLAW_OPENSHELL_COMMAND" \
-NEMOCLAW_OPENSHELL_BIN="$openshell_shim" \
 timeout --kill-after=5s 250s \
   script --quiet --return --flush --command "$launch_command" "$capture" \
   <"$input" >/dev/null 2>"$driver_error" &
@@ -475,11 +402,10 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-wait_for_tui_input_pty
+wait_for_pty_input_mode
 if ! printf '%s\r' "$NEMOCLAW_LAUNCH_FIRST_INPUT" >&3; then
   fail_launch_session "launch exited before the first PTY input was submitted"
 fi
-: >"$input_submitted_marker"
 wait_for_turn_count 1
 if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
   fail_launch_session "launch exited before the second PTY input was submitted"
@@ -548,9 +474,6 @@ export async function runOpenClawLaunchSession(
   if (process.platform !== "linux") {
     throw new Error("launch session coverage requires the Linux util-linux PTY driver");
   }
-  if (!options.host.openshellCommandPath.startsWith("/")) {
-    throw new Error("launch session coverage requires an absolute OpenShell command path");
-  }
   const inputs = uniqueTurnInputs();
   const result = await options.host.command("bash", ["-lc", LAUNCH_TURN_SCRIPT], {
     artifactName: options.artifactName,
@@ -560,7 +483,6 @@ export async function runOpenClawLaunchSession(
       NEMOCLAW_LAUNCH_ENTRYPOINT: options.cliEntrypoint ?? "",
       NEMOCLAW_LAUNCH_EXIT_COMMAND: options.exitCommand ?? "",
       NEMOCLAW_LAUNCH_FIRST_INPUT: inputs.first,
-      NEMOCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT: OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT,
       NEMOCLAW_LAUNCH_RUN_ID: randomUUID().replaceAll("-", ""),
       NEMOCLAW_LAUNCH_SANDBOX: options.sandboxName,
       NEMOCLAW_LAUNCH_SESSION_BUDGET_SECONDS: "230",
