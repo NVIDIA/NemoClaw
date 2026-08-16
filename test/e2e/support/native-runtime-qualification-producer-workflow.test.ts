@@ -565,7 +565,7 @@ describe("native runtime qualification producer workflow", () => {
     const identity = step(aggregate, "Resolve this aggregate job identity");
     const setupNode = step(aggregate, "Set up Node for qualification aggregation");
     const collect = step(aggregate, "Validate and aggregate all 24 case receipts");
-    const upload = step(aggregate, "Upload the immutable aggregate evidence");
+    const upload = step(aggregate, "Upload aggregate evidence");
     const aggregateCheckout = step(aggregate, "Check out the trusted qualification aggregator");
 
     expect(aggregate.name).toBe("Aggregate native runtime qualification evidence");

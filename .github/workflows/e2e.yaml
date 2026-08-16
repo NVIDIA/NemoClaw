@@ -2531,7 +2531,7 @@ jobs:
           node --experimental-strip-types --no-warnings
           tools/e2e/native-runtime-qualification-producer-aggregate.mts
 
-      - name: Upload the immutable aggregate evidence
+      - name: Upload aggregate evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-runtime-qualification-${{ inputs.checkout_sha }}

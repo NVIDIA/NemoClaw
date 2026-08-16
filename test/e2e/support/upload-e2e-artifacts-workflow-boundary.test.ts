@@ -153,7 +153,7 @@ describe("E2E artifact uploads", () => {
   it("allows only the exact 30-day native runtime aggregate upload", () => {
     const workflow = mutableWorkflow();
     const upload = workflow.jobs["native-runtime-qualification-producer-aggregate"].steps?.find(
-      (step) => step.name === "Upload the immutable aggregate evidence",
+      (step) => step.name === "Upload aggregate evidence",
     );
     expect(upload).toBeDefined();
     upload!.with!["retention-days"] = 14;

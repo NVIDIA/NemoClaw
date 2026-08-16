@@ -53,7 +53,7 @@ const RELEASE_QUALIFICATION_WAIVER_UPLOAD_CONTRACT: WorkflowStep = {
   },
 };
 const NATIVE_RUNTIME_AGGREGATE_UPLOAD_CONTRACT: WorkflowStep = {
-  name: "Upload the immutable aggregate evidence",
+  name: "Upload aggregate evidence",
   uses: UPLOAD_ARTIFACT_ACTION,
   with: {
     name: "native-runtime-qualification-${{ inputs.checkout_sha }}",

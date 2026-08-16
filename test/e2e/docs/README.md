@@ -257,8 +257,17 @@ test/e2e/
   A maintainer can also dispatch the trusted `main` workflow against the latest
   commit from an open internal or fork PR. The manual path validates the actor,
   PR number, PR source repository, candidate commit SHA, base commit SHA,
-  workflow SHA, review reason, and
-  allowed jobs, targets, and Launchable combination before candidate checkout.
+  workflow SHA, review reason, and allowed jobs, targets, and Launchable
+  combination before candidate checkout.
+  A trusted `main` native runtime producer run requires the executing workflow
+  commit and `workflow_sha` input to equal the exact PR-recorded base commit.
+  The `native-runtime-qualification-producer` job also accepts an
+  administrator-only PR source-branch workflow dispatch for a same-repository
+  PR. That path requires the first workflow attempt, the PR source branch as
+  the workflow ref, and the same latest PR commit SHA for `checkout_sha` and
+  `workflow_sha`.
+  It executes candidate workflow code, not trusted `main` workflow code. Review
+  and authorize that exact candidate commit before dispatch.
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
   E2E except `Exact staging Brev Launchable`, every catalogue target in the
@@ -271,9 +280,12 @@ test/e2e/
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  Accepted nonempty `jobs` values are `inference-routing` and
-  `managed-image-protected-runtime`. The `jetson-nvmap-gpu` target is also
-  accepted when `allow_jetson_dispatch` is `true`.
+  Accepted nonempty `jobs` values are `inference-routing`,
+  `managed-image-protected-runtime`, and
+  `native-runtime-qualification-producer`. Only the native runtime producer
+  accepts the administrator-only PR source-branch workflow path. The
+  `jetson-nvmap-gpu` target is also accepted when
+  `allow_jetson_dispatch` is `true`.
   Refer to [NemoClaw E2E CI](../README.md).
 
 - [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
