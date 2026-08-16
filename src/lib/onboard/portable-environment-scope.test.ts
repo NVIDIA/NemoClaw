@@ -98,6 +98,36 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual(before);
   });
 
+  it("fresh portable onboarding selects only the default open-internet preset when no preset list is set (#9206)", () => {
+    const env: NodeJS.ProcessEnv = { HOME: "/home/alice" };
+    const before = { ...env };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("personal-open-internet");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+
+    scope.restore();
+    expect(env).not.toHaveProperty("NEMOCLAW_POLICY_PRESETS");
+    expect(env).toEqual(before);
+  });
+
+  it("fresh portable onboarding preserves an explicit preset list instead of the default (#9206)", () => {
+    const env: NodeJS.ProcessEnv = {
+      HOME: "/home/alice",
+      NEMOCLAW_POLICY_PRESETS: "weather,github",
+    };
+    const before = { ...env };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,github");
+    expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
+    expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
+
+    scope.restore();
+    expect(env).toEqual(before);
+  });
+
   it("clears ambient inference selectors while preserving an explicit resume policy list (#9035)", () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_PROVIDER: "ollama",
