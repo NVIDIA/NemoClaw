@@ -116,9 +116,9 @@ describe("slack.statusHealth hook", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  for (const [name, account, inputs, expected, signal] of [
+  it.each([
     [
-      "classifies unavailable Slack credentials as terminal (#7383)",
+      "unavailable Slack credentials",
       {
         running: false,
         connected: false,
@@ -130,14 +130,15 @@ describe("slack.statusHealth hook", () => {
       { label: "Account probe", severity: "fail" },
     ],
     [
-      "classifies a Slack plugin probe failure as terminal (#7383)",
+      "a Slack plugin probe failure",
       { probe: { ok: false, error: "plugin failed to load" } },
       {},
       ["terminal", "plugin", "plugin_probe_failed", false],
       { label: "Account probe", severity: "warn" },
     ],
-  ] as const) {
-    it(name, () => {
+  ] as const)(
+    "classifies %s as terminal (#7383)",
+    (_condition, account, inputs, expected, signal) => {
       const [state, category, reason, retryable] = expected;
       const report = runProbe(account, inputs).report;
       expect(report.readiness).toMatchObject({
@@ -147,8 +148,8 @@ describe("slack.statusHealth hook", () => {
         retryable,
       } satisfies Partial<ChannelReadiness>);
       expect(report.signals).toContainEqual(expect.objectContaining(signal));
-    });
-  }
+    },
+  );
 
   it("returns a null transition time for an out-of-range Slack timestamp (#7383)", () => {
     expect(
