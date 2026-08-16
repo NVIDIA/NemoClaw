@@ -10,7 +10,7 @@ import {
   type DcodePlatform,
   parseDcodeBaseImageContract,
 } from "../../../tools/e2e/dcode-base-image-contract.mts";
-import { DCODE_BASE_IMAGE, requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
+import { requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
 
 export const DCODE_BASE_IMAGE_TARGET_ID = "ubuntu-repo-cloud-langchain-deepagents-code";
