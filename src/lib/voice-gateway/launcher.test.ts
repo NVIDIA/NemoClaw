@@ -104,7 +104,8 @@ describe("voice gateway launcher", () => {
     vi.mocked(spawn).mockReturnValueOnce(child);
     const close = fs.closeSync.bind(fs);
     vi.spyOn(fs, "closeSync")
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce((descriptor) => {
+        close(descriptor);
         throw Object.assign(new Error("close failed"), { code: "EIO" });
       })
       .mockImplementation(close);
@@ -140,7 +141,8 @@ describe("voice gateway launcher", () => {
     vi.mocked(spawn).mockReturnValueOnce(child);
     const close = fs.closeSync.bind(fs);
     vi.spyOn(fs, "closeSync")
-      .mockImplementationOnce(() => {
+      .mockImplementationOnce((descriptor) => {
+        close(descriptor);
         throw Object.assign(new Error("close failed"), { code: "EIO" });
       })
       .mockImplementation(close);
@@ -156,6 +158,47 @@ describe("voice gateway launcher", () => {
     });
     expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
     expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  it("retains the child handle when process control emits an error (#9235)", async () => {
+    const launchOptions = options();
+    fs.writeFileSync(
+      launchOptions.deploymentCredentialPath,
+      "deployment-credential-for-launcher-012345",
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      launchOptions.openClawCredentialPath,
+      "openclaw-credential-for-launcher-01234567",
+      { mode: 0o600 },
+    );
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => {
+        queueMicrotask(() => child.emit("error", new Error("kill failed")));
+        return true;
+      }),
+    });
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const close = fs.closeSync.bind(fs);
+    vi.spyOn(fs, "closeSync")
+      .mockImplementationOnce((descriptor) => {
+        close(descriptor);
+        throw Object.assign(new Error("close failed"), { code: "EIO" });
+      })
+      .mockImplementation(close);
+
+    const error = await launchVoiceGateway(launchOptions).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(VoiceGatewayTerminationUnconfirmedError);
+    expect(error).toMatchObject({
+      child,
+      cause: expect.objectContaining({ message: "close failed" }),
+    });
     expect(child.listenerCount("error")).toBe(0);
     expect(child.listenerCount("exit")).toBe(0);
   });

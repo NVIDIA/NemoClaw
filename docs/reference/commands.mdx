@@ -4537,6 +4537,8 @@ Closing the descriptors or stopping the gateway does not remove a source file or
 
 The launcher is an internal library boundary for trusted external integrations, not another CLI command and not part of normal NemoClaw managed startup.
 Callers use the shipped `runVoiceGatewayLaunch()` action with trusted source paths and runtime fields; package-contract coverage launches the real internal command through that production entry point and verifies descriptor cleanup and restart-based credential rotation.
+If parent descriptor cleanup fails and bounded termination does not observe child exit, the action throws `VoiceGatewayTerminationUnconfirmedError` with the retained child handle and original cleanup failure.
+The trusted caller must recognize that error, terminate and reap its `child`, and confirm exit before starting another gateway.
 The launcher emits the following child-process contract with no credential paths or values in its arguments or environment.
 Do not run this child command directly because it requires the launcher's descriptor mapping.
 

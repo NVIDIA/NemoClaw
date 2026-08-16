@@ -115,22 +115,6 @@ function closeDescriptors(descriptors: readonly number[]): void {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EBADF") continue;
       cleanupError ??= error;
-
-      // A failed close may or may not have consumed the descriptor. Probe before
-      // retrying so an already-closed descriptor cannot be reused accidentally.
-      try {
-        fs.fstatSync(descriptor);
-      } catch (probeError) {
-        if ((probeError as NodeJS.ErrnoException).code === "EBADF") continue;
-        continue;
-      }
-      try {
-        fs.closeSync(descriptor);
-      } catch (retryError) {
-        if ((retryError as NodeJS.ErrnoException).code !== "EBADF") {
-          cleanupError ??= retryError;
-        }
-      }
     }
   }
   if (cleanupError !== undefined) throw cleanupError;
@@ -145,11 +129,12 @@ async function terminateChild(child: ChildProcess): Promise<boolean> {
     const settled = (exitObserved: boolean) => {
       if (forceTimer !== undefined) clearTimeout(forceTimer);
       if (terminalTimer !== undefined) clearTimeout(terminalTimer);
-      child.off("error", confirmed);
+      child.off("error", failed);
       child.off("exit", confirmed);
       resolve(exitObserved);
     };
     const confirmed = () => settled(true);
+    const failed = () => settled(false);
     forceTimer = setTimeout(() => {
       if (!child.kill("SIGKILL")) {
         settled(false);
@@ -159,7 +144,7 @@ async function terminateChild(child: ChildProcess): Promise<boolean> {
       terminalTimer.unref();
     }, 5_000);
     forceTimer.unref();
-    child.once("error", confirmed);
+    child.once("error", failed);
     child.once("exit", confirmed);
     if (!child.kill("SIGTERM")) settled(false);
   });
