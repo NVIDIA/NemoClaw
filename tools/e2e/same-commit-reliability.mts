@@ -51,6 +51,7 @@ export type ReliabilityOutcome =
   | "superseded"
   | "unclassified";
 export type ReliabilityFailureClass = RetryFailureClass | TerminalClassification | "unclassified";
+export type EvidenceState = "complete" | "malformed" | "missing";
 
 export interface ReliabilitySample {
   runId: number;
@@ -59,7 +60,8 @@ export interface ReliabilitySample {
   source: ReliabilitySource | null;
   outcome: ReliabilityOutcome;
   failureClasses: ReliabilityFailureClass[];
-  evidence: "complete" | "malformed" | "missing";
+  evidence: EvidenceState;
+  failureClassEvidence: EvidenceState;
   url: string;
 }
 
@@ -77,6 +79,8 @@ export interface ReliabilityGroup {
   firstPassRate: number;
   recoveryRate: number | null;
   failureClasses: Record<string, number>;
+  evidence: Record<EvidenceState, number>;
+  failureClassEvidence: Record<EvidenceState, number>;
 }
 
 type WorkflowRun = {
@@ -223,6 +227,43 @@ function parseDispatchReceipt(text: string | null, run: WorkflowRun): string | n
   }
 }
 
+function parseTerminalEvidenceManifest(
+  text: string | null,
+  run: WorkflowRun,
+  candidateSha: string,
+): "cancelled" | "failure" | "success" | null {
+  if (text === null || Buffer.byteLength(text) > 16_384) return null;
+  try {
+    const manifest = record(JSON.parse(text));
+    const candidate = record(manifest?.candidate);
+    const workflow = record(manifest?.workflow);
+    const jobStatus = workflow?.jobStatus;
+    const valid =
+      manifest?.kind === "nemoclaw-e2e-evidence-v1" &&
+      typeof manifest.targetId === "string" &&
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(manifest.targetId) &&
+      candidate?.repository !== undefined &&
+      typeof candidate.repository === "string" &&
+      /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(candidate.repository) &&
+      candidate.sha === candidateSha &&
+      workflow?.repository === REPOSITORY &&
+      workflow.sha === run.head_sha &&
+      workflow.runId === String(run.id) &&
+      workflow.runAttempt === String(run.run_attempt) &&
+      (jobStatus === "cancelled" || jobStatus === "failure" || jobStatus === "success") &&
+      typeof manifest.artifactDirectory === "string" &&
+      /^e2e-artifacts\/live\/[a-z0-9]+(?:[_-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[_-][a-z0-9]+)*)?$/u.test(
+        manifest.artifactDirectory,
+      ) &&
+      Number.isSafeInteger(manifest.productEvidenceFileCount) &&
+      (manifest.productEvidenceFileCount as number) >= (jobStatus === "success" ? 1 : 0);
+    if (!valid) return null;
+    return jobStatus as "cancelled" | "failure" | "success";
+  } catch {
+    return null;
+  }
+}
+
 function parseRetryEvidence(value: unknown): RetryEvidence | null {
   const evidence = record(value);
   if (
@@ -324,25 +365,52 @@ async function identifyCandidateSha(
     : null;
 }
 
-async function collectFailureClasses(
+async function collectRunEvidence(
   artifacts: Artifact[],
+  run: WorkflowRun,
+  candidateSha: string | null,
   requestArchive: ArchiveRequest,
-): Promise<{ classes: ReliabilityFailureClass[]; malformed: boolean; records: number }> {
+): Promise<{
+  classes: ReliabilityFailureClass[];
+  failureClassEvidence: EvidenceState;
+  terminalEvidence: EvidenceState;
+}> {
   const classes = new Set<ReliabilityFailureClass>();
-  let malformed = false;
-  let records = 0;
+  let failureClassMalformed = false;
+  let failureClassRecords = 0;
+  let terminalMalformed = false;
+  let terminalRecords = 0;
   let bytes = 0;
   for (const artifact of artifacts.filter((item) => item.name.startsWith("e2e-"))) {
     if (artifact.expired || artifact.size_in_bytes > MAX_ARTIFACT_BYTES) continue;
     bytes += artifact.size_in_bytes;
-    if (bytes > MAX_RUN_ARTIFACT_BYTES) break;
+    if (bytes > MAX_RUN_ARTIFACT_BYTES) {
+      terminalMalformed = true;
+      failureClassMalformed = true;
+      break;
+    }
     const archive = await requestArchive(artifact.id, MAX_ARTIFACT_BYTES);
     const entries = listValidatedArtifactZipEntries(archive, {
       maxEntries: 1000,
     });
     if (entries === null) {
-      malformed = true;
+      terminalMalformed = true;
+      failureClassMalformed = true;
       continue;
+    }
+    for (const entry of entries.filter(
+      (name) => name.endsWith("/evidence-manifest.json") || name === "evidence-manifest.json",
+    )) {
+      const text = readValidatedArtifactZipEntry(archive, entry, {
+        maxBytes: 16_384,
+      });
+      const jobStatus =
+        candidateSha === null ? null : parseTerminalEvidenceManifest(text, run, candidateSha);
+      if (jobStatus === null) {
+        terminalMalformed = true;
+      } else if (jobStatus === run.conclusion) {
+        terminalRecords += 1;
+      }
     }
     for (const entry of entries.filter(
       (name) =>
@@ -353,37 +421,52 @@ async function collectFailureClasses(
         maxBytes: 64 * 1024,
       });
       if (text === null) {
-        malformed = true;
+        failureClassMalformed = true;
         continue;
       }
       try {
         if (entry.endsWith("/runner-pressure-classification.jsonl")) {
           classes.add(parseClassificationLine(text).classification);
-          records += 1;
+          failureClassRecords += 1;
         } else {
           const evidence = parseRetryEvidence(JSON.parse(text));
           if (evidence === null) {
-            malformed = true;
+            failureClassMalformed = true;
             continue;
           }
-          records += 1;
+          failureClassRecords += 1;
           for (const attempt of evidence.attempts) {
             if (attempt.failureClass) classes.add(attempt.failureClass);
           }
         }
       } catch {
-        malformed = true;
+        failureClassMalformed = true;
       }
     }
   }
-  return { classes: [...classes].sort(), malformed, records };
+  return {
+    classes: [...classes].sort(),
+    failureClassEvidence: failureClassMalformed
+      ? "malformed"
+      : failureClassRecords > 0
+        ? "complete"
+        : "missing",
+    terminalEvidence: terminalMalformed
+      ? "malformed"
+      : terminalRecords > 0
+        ? "complete"
+        : "missing",
+  };
 }
 
 async function trustedMainRetryArtifact(
   artifacts: Artifact[] | null,
   expectedName: string,
   requestJson: JsonRequest,
-): Promise<{ artifact: Artifact | null; evidence: "complete" | "malformed" | "missing" }> {
+): Promise<{
+  artifact: Artifact | null;
+  evidence: "complete" | "malformed" | "missing";
+}> {
   if (artifacts === null) return { artifact: null, evidence: "malformed" };
   const matches = artifacts.filter((artifact) => artifact.name === expectedName);
   if (matches.length === 0) return { artifact: null, evidence: "missing" };
@@ -430,6 +513,7 @@ export async function normalizeReliabilityRun(
       outcome: "unclassified",
       failureClasses: ["unclassified"],
       evidence: "malformed",
+      failureClassEvidence: "malformed",
       url: run.html_url,
     };
   }
@@ -482,11 +566,10 @@ export async function normalizeReliabilityRun(
       }
     }
   }
-  const classified = await collectFailureClasses(artifacts, services.requestArchive);
-  if (classified.malformed) evidence = "malformed";
-  if (run.event === "workflow_dispatch" && candidateSha !== null && classified.records === 0) {
-    evidence = classified.malformed ? "malformed" : "missing";
-    outcome = "unclassified";
+  const collected = await collectRunEvidence(artifacts, run, candidateSha, services.requestArchive);
+  if (run.event === "workflow_dispatch" && candidateSha !== null) {
+    evidence = collected.terminalEvidence;
+    if (evidence !== "complete") outcome = "unclassified";
   }
   const failed = outcome === "exhausted" || outcome === "failed-first-attempt";
   return {
@@ -495,9 +578,9 @@ export async function normalizeReliabilityRun(
     candidateSha,
     source: run.event === "push" ? "trusted-main" : "manual-qualification",
     outcome,
-    failureClasses:
-      failed && classified.classes.length === 0 ? ["unclassified"] : classified.classes,
+    failureClasses: failed && collected.classes.length === 0 ? ["unclassified"] : collected.classes,
     evidence,
+    failureClassEvidence: collected.failureClassEvidence,
     url: run.html_url,
   };
 }
@@ -538,6 +621,12 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
           classes[failureClass] = (classes[failureClass] ?? 0) + 1;
         }
       }
+      const evidence = { complete: 0, malformed: 0, missing: 0 };
+      const failureClassEvidence = { complete: 0, malformed: 0, missing: 0 };
+      for (const sample of ordered) {
+        evidence[sample.evidence] += 1;
+        failureClassEvidence[sample.failureClassEvidence] += 1;
+      }
       return {
         candidateSha: ordered[0]!.candidateSha,
         source: ordered[0]!.source!,
@@ -553,6 +642,8 @@ export function summarizeReliability(samples: readonly ReliabilitySample[]): Rel
         recoveryRate:
           recovered + exhausted === 0 ? null : fixedRate(recovered, recovered + exhausted),
         failureClasses: classes,
+        evidence,
+        failureClassEvidence,
       };
     })
     .sort((a, b) => {
@@ -572,8 +663,8 @@ export function formatReliabilityReport(groups: readonly ReliabilityGroup[]): st
   if (groups.length === 0)
     return [...lines, "No authenticated same-commit history is available."].join("\n");
   lines.push(
-    "| Source | Commit | Runs | First pass | After retry | Exhausted | Failed first | Flips | First-pass rate | Recovery rate | Failure classes |",
-    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    "| Source | Commit | Runs | First pass | After retry | Exhausted | Failed first | Superseded | Unclassified | Flips | First-pass rate | Recovery rate | Failure classes | Outcome evidence | Failure-class evidence |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
   );
   for (const group of groups) {
     const classes = Object.entries(group.failureClasses)
@@ -581,10 +672,14 @@ export function formatReliabilityReport(groups: readonly ReliabilityGroup[]): st
       .map(([name, count]) => `${name}: ${count}`)
       .join(", ");
     lines.push(
-      `| ${group.source} | ${group.candidateSha ? `\`${group.candidateSha.slice(0, 12)}\`` : "unclassified"} | ${group.runs} | ${group.passedFirstAttempt} | ${group.passedAfterRetry} | ${group.exhausted} | ${group.failedFirstAttempt} | ${group.passFailFlips} | ${(group.firstPassRate * 100).toFixed(1)}% | ${group.recoveryRate === null ? "n/a" : `${(group.recoveryRate * 100).toFixed(1)}%`} | ${classes || "none"} |`,
+      `| ${group.source} | ${group.candidateSha ? `\`${group.candidateSha.slice(0, 12)}\`` : "unclassified"} | ${group.runs} | ${group.passedFirstAttempt} | ${group.passedAfterRetry} | ${group.exhausted} | ${group.failedFirstAttempt} | ${group.superseded} | ${group.unclassified} | ${group.passFailFlips} | ${(group.firstPassRate * 100).toFixed(1)}% | ${group.recoveryRate === null ? "n/a" : `${(group.recoveryRate * 100).toFixed(1)}%`} | ${classes || "none"} | ${formatEvidenceCounts(group.evidence)} | ${formatEvidenceCounts(group.failureClassEvidence)} |`,
     );
   }
   return lines.join("\n");
+}
+
+function formatEvidenceCounts(counts: Record<EvidenceState, number>): string {
+  return `complete: ${counts.complete}, malformed: ${counts.malformed}, missing: ${counts.missing}`;
 }
 
 async function githubJson(path: string, token: string): Promise<unknown> {

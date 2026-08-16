@@ -32,6 +32,7 @@ function sample(
     outcome,
     failureClasses,
     evidence: "complete",
+    failureClassEvidence: failureClasses.length > 0 ? "complete" : "missing",
     url: `https://github.com/${REPOSITORY}/actions/runs/${runId}`,
   };
 }
@@ -83,6 +84,37 @@ function retryEvidence(runId: number, sourceSha: string): Buffer {
       }),
     },
   ]);
+}
+
+function terminalEvidence(
+  candidateSha: string,
+  jobStatus: "failure" | "success",
+): { name: string; contents: string } {
+  return {
+    name: "e2e-artifacts/live/example/evidence-manifest.json",
+    contents: JSON.stringify({
+      kind: "nemoclaw-e2e-evidence-v1",
+      targetId: "example",
+      candidate: { repository: REPOSITORY, sha: candidateSha },
+      workflow: {
+        repository: REPOSITORY,
+        sha: SHA_B,
+        runId: "101",
+        runAttempt: "1",
+        jobStatus,
+      },
+      artifactDirectory: "e2e-artifacts/live/example",
+      productEvidenceFileCount: 1,
+    }),
+  };
+}
+
+function mappedRequest(entries: ReadonlyArray<readonly [string, unknown]>) {
+  const responses = new Map(entries);
+  return async (path: string): Promise<unknown> => {
+    expect(responses.has(path), `unexpected path ${path}`).toBe(true);
+    return responses.get(path);
+  };
 }
 
 function workflowStep(job: WorkflowJob, name: string): WorkflowStep {
@@ -138,7 +170,9 @@ describe("same-commit E2E reliability", () => {
 
   // source-shape-contract: security -- The reliability reporter must execute only from the trusted default-branch controller while authenticating the canonical E2E source repository and branch
   it("locks the reporter to canonical source and trusted controller identities (#9168)", () => {
-    type RetryWorkflow = { jobs: { "report-same-commit-reliability": WorkflowJob } };
+    type RetryWorkflow = {
+      jobs: { "report-same-commit-reliability": WorkflowJob };
+    };
     const reporter =
       readYaml<RetryWorkflow>(RETRY_WORKFLOW_PATH).jobs["report-same-commit-reliability"];
     const guard = reporter.if ?? "";
@@ -173,6 +207,7 @@ describe("same-commit E2E reliability", () => {
       },
     ]);
     const evidence = artifactZip([
+      terminalEvidence(SHA_A, "failure"),
       {
         name: "e2e-artifacts/live/example/runner-pressure-classification.jsonl",
         contents:
@@ -236,6 +271,7 @@ describe("same-commit E2E reliability", () => {
       outcome: "failed-first-attempt",
       failureClasses: ["timeout", "transient-external"],
       evidence: "complete",
+      failureClassEvidence: "complete",
     });
     expect(JSON.stringify(result)).not.toContain(secret);
   });
@@ -317,18 +353,132 @@ describe("same-commit E2E reliability", () => {
     });
   });
 
+  it("accepts authenticated terminal evidence for a passing manual run", async () => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const terminal = artifactZip([terminalEvidence(SHA_A, "success")]);
+    const archives = new Map([
+      [1, dispatch],
+      [2, terminal],
+    ]);
+    const result = await normalizeReliabilityRun(workflowRun({ conclusion: "success" }), {
+      requestJson: async () => ({
+        total_count: 2,
+        artifacts: [
+          {
+            id: 1,
+            name: "e2e-dispatch-101-1",
+            size_in_bytes: dispatch.length,
+            expired: false,
+          },
+          {
+            id: 2,
+            name: "e2e-example",
+            size_in_bytes: terminal.length,
+            expired: false,
+          },
+        ],
+      }),
+      requestArchive: async (artifactId) => archives.get(artifactId)!,
+    });
+
+    expect(result).toMatchObject({
+      candidateSha: SHA_A,
+      source: "manual-qualification",
+      outcome: "passed-first-attempt",
+      evidence: "complete",
+      failureClassEvidence: "missing",
+    });
+  });
+
+  it("reports malformed failure-class evidence without discarding a terminal outcome", async () => {
+    const dispatch = artifactZip([
+      {
+        name: "dispatch.json",
+        contents: JSON.stringify({
+          kind: "nemoclaw-e2e-dispatch-v2",
+          repository: REPOSITORY,
+          eventName: "workflow_dispatch",
+          workflowRunId: "101",
+          workflowRunAttempt: 1,
+          candidateSha: SHA_A,
+        }),
+      },
+    ]);
+    const terminal = artifactZip([
+      terminalEvidence(SHA_A, "success"),
+      {
+        name: "e2e-artifacts/live/example/retry/provider.json",
+        contents: "{}",
+      },
+    ]);
+    const archives = new Map([
+      [1, dispatch],
+      [2, terminal],
+    ]);
+    const result = await normalizeReliabilityRun(workflowRun({ conclusion: "success" }), {
+      requestJson: async () => ({
+        total_count: 2,
+        artifacts: [
+          {
+            id: 1,
+            name: "e2e-dispatch-101-1",
+            size_in_bytes: dispatch.length,
+            expired: false,
+          },
+          {
+            id: 2,
+            name: "e2e-example",
+            size_in_bytes: terminal.length,
+            expired: false,
+          },
+        ],
+      }),
+      requestArchive: async (artifactId) => archives.get(artifactId)!,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "passed-first-attempt",
+      evidence: "complete",
+      failureClassEvidence: "malformed",
+    });
+    const groups = summarizeReliability([result!]);
+    expect(groups[0]).toMatchObject({
+      evidence: { complete: 1, malformed: 0, missing: 0 },
+      failureClassEvidence: { complete: 0, malformed: 1, missing: 0 },
+    });
+    expect(formatReliabilityReport(groups)).toContain("complete: 0, malformed: 1, missing: 0");
+  });
+
   it("accepts trusted-main evidence only from the canonical retry controller", async () => {
     const archive = retryEvidence(101, SHA_B);
     const name = "e2e-main-retry-101-1";
     const result = await normalizeReliabilityRun(
-      workflowRun({ event: "push", conclusion: "success", display_title: "E2E main" }),
+      workflowRun({
+        event: "push",
+        conclusion: "success",
+        display_title: "E2E main",
+      }),
       {
-        requestJson: async (path) => {
-          if (path.includes("actions/runs/101/artifacts")) {
-            return { total_count: 0, artifacts: [] };
-          }
-          if (path.includes("actions/artifacts?")) {
-            return {
+        requestJson: mappedRequest([
+          [
+            `repos/${REPOSITORY}/actions/runs/101/artifacts?per_page=100`,
+            { total_count: 0, artifacts: [] },
+          ],
+          [
+            `repos/${REPOSITORY}/actions/artifacts?name=${name}&per_page=100`,
+            {
               total_count: 1,
               artifacts: [
                 {
@@ -339,11 +489,10 @@ describe("same-commit E2E reliability", () => {
                   workflow_run: { id: 202 },
                 },
               ],
-            };
-          }
-          if (path.endsWith("actions/runs/202")) return controllerRun(202);
-          throw new Error(`unexpected path ${path}`);
-        },
+            },
+          ],
+          [`repos/${REPOSITORY}/actions/runs/202`, controllerRun(202)],
+        ]),
         requestArchive: async () => archive,
       },
     );
@@ -360,14 +509,20 @@ describe("same-commit E2E reliability", () => {
     const archive = retryEvidence(101, SHA_B);
     const name = "e2e-main-retry-101-1";
     const result = await normalizeReliabilityRun(
-      workflowRun({ event: "push", conclusion: "success", display_title: "E2E main" }),
+      workflowRun({
+        event: "push",
+        conclusion: "success",
+        display_title: "E2E main",
+      }),
       {
-        requestJson: async (path) => {
-          if (path.includes("actions/runs/101/artifacts")) {
-            return { total_count: 0, artifacts: [] };
-          }
-          if (path.includes("actions/artifacts?")) {
-            return {
+        requestJson: mappedRequest([
+          [
+            `repos/${REPOSITORY}/actions/runs/101/artifacts?per_page=100`,
+            { total_count: 0, artifacts: [] },
+          ],
+          [
+            `repos/${REPOSITORY}/actions/artifacts?name=${name}&per_page=100`,
+            {
               total_count: 1,
               artifacts: [
                 {
@@ -378,13 +533,13 @@ describe("same-commit E2E reliability", () => {
                   workflow_run: { id: 203 },
                 },
               ],
-            };
-          }
-          if (path.endsWith("actions/runs/203")) {
-            return controllerRun(203, { path: ".github/workflows/other.yaml" });
-          }
-          throw new Error(`unexpected path ${path}`);
-        },
+            },
+          ],
+          [
+            `repos/${REPOSITORY}/actions/runs/203`,
+            controllerRun(203, { path: ".github/workflows/other.yaml" }),
+          ],
+        ]),
         requestArchive: async () => archive,
       },
     );
@@ -401,14 +556,20 @@ describe("same-commit E2E reliability", () => {
     const archive = retryEvidence(101, SHA_B);
     const name = "e2e-main-retry-101-1";
     const result = await normalizeReliabilityRun(
-      workflowRun({ event: "push", conclusion: "success", display_title: "E2E main" }),
+      workflowRun({
+        event: "push",
+        conclusion: "success",
+        display_title: "E2E main",
+      }),
       {
-        requestJson: async (path) => {
-          if (path.includes("actions/runs/101/artifacts")) {
-            return { total_count: 0, artifacts: [] };
-          }
-          if (path.includes("actions/artifacts?")) {
-            return {
+        requestJson: mappedRequest([
+          [
+            `repos/${REPOSITORY}/actions/runs/101/artifacts?per_page=100`,
+            { total_count: 0, artifacts: [] },
+          ],
+          [
+            `repos/${REPOSITORY}/actions/artifacts?name=${name}&per_page=100`,
+            {
               total_count: 2,
               artifacts: [202, 203].map((controllerId) => ({
                 id: controllerId,
@@ -417,10 +578,9 @@ describe("same-commit E2E reliability", () => {
                 expired: false,
                 workflow_run: { id: controllerId },
               })),
-            };
-          }
-          throw new Error(`artifact collision must fail before controller lookup: ${path}`);
-        },
+            },
+          ],
+        ]),
         requestArchive: async () => archive,
       },
     );

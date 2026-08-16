@@ -58,9 +58,11 @@ function isSafeExpectedFile(expectedFile: string): boolean {
 }
 
 /**
- * Lists safe regular-file entries from a GitHub artifact ZIP without
- * extracting or inflating their contents. Structural ambiguity, links,
- * encryption, split archives, ZIP64, duplicate names, and excess entries are
+ * Lists structurally validated regular-file entries from a GitHub artifact
+ * ZIP without extracting or inflating their contents. Relative names must not
+ * contain empty, dot, parent, backslash, NUL, absolute, or trailing-slash
+ * segments. Links, encryption, split archives, ZIP64, duplicate names,
+ * unsupported compression, inconsistent headers, and excess entries are
  * rejected before callers select an allowlisted evidence file.
  */
 export function listValidatedArtifactZipEntries(
@@ -155,9 +157,11 @@ export function listValidatedArtifactZipEntries(
 }
 
 /**
- * Reads the exact bytes of one safe relative file from a GitHub artifact ZIP
- * without extracting paths to disk. Duplicate targets, links, encryption,
- * split archives, ZIP64, excess entries, and oversized payloads are rejected.
+ * Reads the exact bytes of one structurally validated relative regular-file
+ * entry from a GitHub artifact ZIP without extracting paths to disk. The same
+ * name, archive-layout, file-type, encryption, split/ZIP64, compression,
+ * header-consistency, entry-count, compressed-size, inflated-size, and CRC
+ * constraints used by the entry validator are enforced before bytes return.
  */
 export function readValidatedArtifactZipEntryBytes(
   archive: Buffer,
