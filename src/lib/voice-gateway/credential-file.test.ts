@@ -53,10 +53,12 @@ describe("voice gateway credential descriptors", () => {
   });
 
   it("rejects two descriptors for the same credential file and closes both (#9235)", () => {
-    const file = path.join(temporaryDirectory(), "credential");
-    fs.writeFileSync(file, DEPLOYMENT_CREDENTIAL, { mode: 0o600 });
-    const deployment = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-    const openClaw = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const deployment = credentialDescriptor(DEPLOYMENT_CREDENTIAL);
+    const openClaw = credentialDescriptor(OPENCLAW_CREDENTIAL);
+    const deploymentStat = fs.fstatSync(deployment);
+    vi.spyOn(fs, "fstatSync")
+      .mockReturnValueOnce(deploymentStat)
+      .mockReturnValueOnce(deploymentStat);
 
     expect(() => readPair(deployment, openClaw)).toThrow("different files");
     expect(() => fs.fstatSync(deployment)).toThrow();
