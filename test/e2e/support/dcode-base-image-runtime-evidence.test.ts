@@ -184,7 +184,7 @@ describe("Deep Agents Code published base runtime evidence", () => {
 
     expect(() =>
       parseDcodeBaseImagePublicationEvidence(evidence, publicationEnvironment()),
-    ).toThrow(/linux\/amd64 base contract identity is invalid/);
+    ).toThrow(/base contract linux\/amd64 reference is invalid/);
   });
 
   it("allows direct local execution without the workflow-only publication artifact", () => {

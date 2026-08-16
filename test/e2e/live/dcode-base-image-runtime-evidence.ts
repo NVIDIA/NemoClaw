@@ -5,30 +5,17 @@ import fs from "node:fs";
 
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/label-codec.ts";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types.ts";
+import {
+  type DcodeBaseImageContract,
+  type DcodePlatform,
+  parseDcodeBaseImageContract,
+} from "../../../tools/e2e/dcode-base-image-contract.mts";
 import { DCODE_BASE_IMAGE, requireDcodeBaseImageReference } from "../fixtures/dcode-base-image.ts";
 import { readRegistrySandboxEntry } from "../fixtures/phases/index.ts";
 
 export const DCODE_BASE_IMAGE_TARGET_ID = "ubuntu-repo-cloud-langchain-deepagents-code";
 
-const DCODE_AGENT = "langchain-deepagents-code";
-const DCODE_PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
-
-type DcodePlatform = "linux/amd64" | "linux/arm64";
-
-export interface DcodeBaseImageContract {
-  agent: typeof DCODE_AGENT;
-  contractVersion: 1;
-  digest: string;
-  image: typeof DCODE_BASE_IMAGE;
-  platformDigests: Record<DcodePlatform, string>;
-  platformReferences: Record<DcodePlatform, string>;
-  platforms: typeof DCODE_PLATFORMS;
-  reference: string;
-  run: { attempt: number; id: number };
-  sourceRevision: string;
-}
 
 export interface DcodeBaseImageRuntimeEvidence {
   contractReference: string;
@@ -49,13 +36,6 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function positiveInteger(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || Number(value) < 1) {
-    throw new Error(`${label} must be a positive integer`);
-  }
-  return Number(value);
-}
-
 function expectedCandidateSha(environment: NodeJS.ProcessEnv): string | undefined {
   const configured = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
   const githubActions = environment.GITHUB_ACTIONS === "true";
@@ -71,62 +51,6 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[], 
   if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())) {
     throw new Error(`${label} has unexpected fields`);
   }
-}
-
-function parseDcodeBaseImageContract(value: unknown): DcodeBaseImageContract {
-  const contract = record(value, "Deep Agents Code base contract");
-  exactKeys(
-    contract,
-    [
-      "agent",
-      "contractVersion",
-      "digest",
-      "image",
-      "platformDigests",
-      "platformReferences",
-      "platforms",
-      "reference",
-      "run",
-      "sourceRevision",
-    ],
-    "Deep Agents Code base contract",
-  );
-  if (
-    contract.contractVersion !== 1 ||
-    contract.agent !== DCODE_AGENT ||
-    contract.image !== DCODE_BASE_IMAGE ||
-    typeof contract.digest !== "string" ||
-    !DIGEST_PATTERN.test(contract.digest) ||
-    contract.reference !== `${DCODE_BASE_IMAGE}@${contract.digest}` ||
-    typeof contract.sourceRevision !== "string" ||
-    !REVISION_PATTERN.test(contract.sourceRevision) ||
-    !Array.isArray(contract.platforms) ||
-    JSON.stringify(contract.platforms) !== JSON.stringify(DCODE_PLATFORMS)
-  ) {
-    throw new Error("Deep Agents Code base contract identity is invalid");
-  }
-  const platformDigests = record(contract.platformDigests, "base contract platform digests");
-  const platformReferences = record(
-    contract.platformReferences,
-    "base contract platform references",
-  );
-  exactKeys(platformDigests, DCODE_PLATFORMS, "base contract platform digests");
-  exactKeys(platformReferences, DCODE_PLATFORMS, "base contract platform references");
-  for (const platform of DCODE_PLATFORMS) {
-    const digest = platformDigests[platform];
-    if (
-      typeof digest !== "string" ||
-      !DIGEST_PATTERN.test(digest) ||
-      platformReferences[platform] !== `${DCODE_BASE_IMAGE}@${digest}`
-    ) {
-      throw new Error(`Deep Agents Code ${platform} base contract identity is invalid`);
-    }
-  }
-  const run = record(contract.run, "Deep Agents Code base contract run");
-  exactKeys(run, ["attempt", "id"], "Deep Agents Code base contract run");
-  positiveInteger(run.attempt, "Deep Agents Code base contract run attempt");
-  positiveInteger(run.id, "Deep Agents Code base contract run id");
-  return contract as unknown as DcodeBaseImageContract;
 }
 
 export function parseDcodeBaseImagePublicationEvidence(
