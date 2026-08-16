@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,6 +13,7 @@ import {
   type ExecSandboxDeps,
   type SandboxExecCleanupDeps,
 } from "./exec";
+import { restartSandboxGatewayWithDeps } from "./gateway-restart";
 
 const CLEANUP_SKIPPED: SandboxExecCleanupDeps = {
   getSandbox: () => null,
@@ -56,6 +61,7 @@ async function runAndCaptureExit(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -136,6 +142,138 @@ describe("Google Chat pairing approval gateway activation (#8553)", () => {
 
     expect(order).toEqual(["command", "cleanup", "restart"]);
     expect(exitCode).toBe(0);
+  });
+
+  it("authorizes the approved sender after a sandbox-process approval and managed restart", async () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-pairing-"));
+    const openshellPath = path.join(fixtureRoot, "openshell");
+    const configPath = path.join(fixtureRoot, "openclaw.json");
+    const runtimePath = path.join(fixtureRoot, "gateway-runtime.json");
+    const supervisorLog = path.join(fixtureRoot, "supervisor.log");
+    const sender = "googlechat:users/123456789";
+
+    fs.writeFileSync(configPath, JSON.stringify({ commands: { ownerAllowFrom: [] } }));
+    fs.writeFileSync(runtimePath, JSON.stringify({ ownerAllowFrom: [] }));
+    fs.writeFileSync(
+      openshellPath,
+      [
+        `#!${process.execPath}`,
+        'const fs = require("node:fs");',
+        "const args = process.argv.slice(2);",
+        'const commandIndex = args.indexOf("openclaw");',
+        "const command = commandIndex === -1 ? [] : args.slice(commandIndex);",
+        'if (args[0] !== "sandbox" || args[1] !== "exec" || command.join(" ") !== "openclaw pairing approve googlechat ABCD1234") process.exit(64);',
+        'const config = JSON.parse(fs.readFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_CONFIG, "utf8"));',
+        "config.commands.ownerAllowFrom = [process.env.NEMOCLAW_TEST_GOOGLECHAT_SENDER];",
+        "fs.writeFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_CONFIG, JSON.stringify(config));",
+        'process.stdout.write("Approved googlechat sender users/123456789\\n");',
+        "process.exit(0);",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    vi.stubEnv("NEMOCLAW_TEST_GOOGLECHAT_CONFIG", configPath);
+    vi.stubEnv("NEMOCLAW_TEST_GOOGLECHAT_RUNTIME", runtimePath);
+    vi.stubEnv("NEMOCLAW_TEST_GOOGLECHAT_SENDER", sender);
+
+    try {
+      const exitCode = await runAndCaptureExit(
+        ["openclaw", "pairing", "approve", "googlechat", "ABCD1234"],
+        {
+          resolveBinary: () => openshellPath,
+          selectGateway: () => ({ outcome: "selected", gatewayName: "nemoclaw-alpha" }),
+          cleanupDeps: {
+            getSandbox: () => ({ agent: "openclaw" }),
+            inspectMutableConfigPerms: () => ({
+              applies: true,
+              ok: true,
+              dirMode: "2770",
+              dirOwner: "sandbox:sandbox",
+              fileMode: "660",
+              fileOwner: "sandbox:sandbox",
+              configDir: "/sandbox/.openclaw",
+              configFile: "openclaw.json",
+              issues: [],
+            }),
+            repairMutableConfigPerms: () => {
+              throw new Error("healthy config should not need repair");
+            },
+          },
+          resolveSandboxAgent: () => "openclaw",
+          restartGateway: (sandboxName) =>
+            restartSandboxGatewayWithDeps(sandboxName, {
+              quiet: true,
+              deps: {
+                getSessionAgent: () => null,
+                getSandbox: () => ({ name: sandboxName, agent: "openclaw" }),
+                resolveSandboxDashboardPort: () => 18789,
+                requestGatewaySupervisorAction: (_name, action) => {
+                  const result = spawnSync(
+                    process.execPath,
+                    [
+                      "-e",
+                      [
+                        'const fs = require("node:fs");',
+                        'const config = JSON.parse(fs.readFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_CONFIG, "utf8"));',
+                        "fs.writeFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_RUNTIME, JSON.stringify({ ownerAllowFrom: config.commands.ownerAllowFrom }));",
+                        'fs.appendFileSync(process.env.NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG, process.argv[1] + "\\n");',
+                        'process.stdout.write("GATEWAY_PID=4242\\n");',
+                      ].join("\n"),
+                      action,
+                    ],
+                    {
+                      encoding: "utf8",
+                      env: {
+                        ...process.env,
+                        NEMOCLAW_TEST_GOOGLECHAT_SUPERVISOR_LOG: supervisorLog,
+                      },
+                    },
+                  );
+                  return {
+                    status: result.status ?? 1,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                  };
+                },
+                executeSandboxExecCommand: () => null,
+                waitForRecoveredSandboxGateway: () => true,
+                ensureSandboxPortForward: () => true,
+                ensureHermesDashboardPortForwardIfEnabled: () => null,
+                recoverMessagingHostForward: () => null,
+                recoverDeclaredAgentForwardPorts: () => null,
+                printGatewayWedgeDiagnostics: () => false,
+                inspectHermesMcpReconciliationRefusal: () => null,
+              },
+            }),
+          policyHint: {
+            now: () => 1_000,
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+            writeStderr: () => {},
+          },
+        },
+      );
+
+      const nextDm = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          'const fs = require("node:fs"); const runtime = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(runtime.ownerAllowFrom.includes(process.argv[2]) ? 0 : 1);',
+          runtimePath,
+          sender,
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(fs.readFileSync(supervisorLog, "utf8")).toBe("restart\n");
+      expect(nextDm.status, nextDm.stderr).toBe(0);
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not restart when post-command config cleanup fails", async () => {
