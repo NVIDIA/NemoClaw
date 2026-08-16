@@ -2261,6 +2261,27 @@ If JSON still appears as text, confirm that vLLM started with automatic tool cho
 
 <AgentOnly variant="openclaw">
 
+### Onboarding rejects an Anthropic-compatible tool call
+
+Validation for an OpenClaw **Other Anthropic-compatible endpoint** selection can fail with either of these diagnostics:
+
+```text
+anthropic-streaming-missing-tool-use
+anthropic-streaming-missing-tool-use-stop-reason
+```
+
+After an ordinary `/v1/messages` request succeeds, NemoClaw sends a streaming request that forces the endpoint to call the `emit_ok` validation tool.
+The response must include a native Anthropic `tool_use` content block named `emit_ok` and a later `message_delta` with `stop_reason: tool_use`.
+NemoClaw checks these observations independently: the first diagnostic means the named native block is absent, and the second means the stream does not finish the tool request with the required stop reason.
+
+A text delta containing JSON such as `{"name":"emit_ok","arguments":{"value":"OK"}}` is still assistant text.
+NemoClaw rejects it instead of treating it as a tool call because OpenClaw cannot dispatch text as a native Anthropic tool request.
+Fix the endpoint's Anthropic tool parser or chat template so it emits native protocol events, then run onboarding again.
+
+This check applies only to OpenClaw custom Anthropic routes.
+Hermes and Deep Agents Code keep their existing `/v1/chat/completions` validation and do not run the native Anthropic `emit_ok` probe.
+For a reasoning-only endpoint, `NEMOCLAW_REASONING=true` skips the streaming sequence and forced tool-call checks; OpenClaw still needs streaming and native tool calls at runtime, so use this only when the selected model cannot complete the onboarding probe.
+
 ### Onboarding fails with duplicate Anthropic message_start events
 
 Validation for an OpenClaw **Other Anthropic-compatible endpoint** selection ends with an error like:
@@ -2270,6 +2291,7 @@ Anthropic Messages API (streaming): duplicate message_start
 ```
 
 For OpenClaw custom Anthropic routes, NemoClaw sends a `stream: true` request to `/v1/messages` and validates the SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
+The same request forces the `emit_ok` tool and separately requires a native `tool_use` block plus `stop_reason: tool_use`; JSON-shaped assistant text does not satisfy that tool-call contract.
 This error means the streaming layer on the endpoint or gateway is malformed even though its non-streaming responses are valid.
 A working non-streaming response does not imply that streaming works.
 Some inference gateways proxy plain requests correctly but corrupt the SSE stream, for example by emitting `message_start` twice for one request.
@@ -2282,8 +2304,8 @@ An older Hermes sandbox that still uses native Anthropic Messages can report tha
 Fix the streaming layer on the endpoint or gateway, or onboard with a different Anthropic-compatible endpoint.
 The official Anthropic provider does not run this check and is not affected.
 If an OpenClaw sandbox created by an older release fails at runtime with an empty final response on an Anthropic-compatible endpoint, re-run `$$nemoclaw onboard` so the streaming check can diagnose the endpoint.
-If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming check.
-Streaming defects then surface at runtime instead of during onboarding.
+If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming sequence and forced tool-call checks.
+Streaming or native tool-call defects then surface at runtime instead of during onboarding.
 
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
