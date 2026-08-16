@@ -126,6 +126,37 @@ describe("openshell policy set outcome classification", () => {
     expect(withStatus.kind).toBe("rejected");
   });
 
+  it("ignores a refusal marker echoed from the submitted policy document (#9206)", () => {
+    const outcome = classifyPolicySetResult({
+      status: 1,
+      stderr:
+        "Error: code: 'Deadline exceeded', message: 'deadline has elapsed', submitted document:\n" +
+        "network_policies:\n  custom:\n    description: 'grpc_status: 9 seen in prod'",
+    });
+
+    expect(outcome.kind).toBe("ambiguous");
+  });
+
+  it("reads the refusal only from the diagnostic OpenShell reported first (#9206)", () => {
+    const outcome = classifyPolicySetResult({
+      status: 1,
+      stderr:
+        "Error: code: 'Unavailable', message: 'connection refused'\n" +
+        "code: 'Failed precondition', message: 'echoed from the submitted policy'",
+    });
+
+    expect(outcome.kind).toBe("ambiguous");
+  });
+
+  it("ignores a refusal marker that no diagnostic frame carries (#9206)", () => {
+    const outcome = classifyPolicySetResult({
+      status: 1,
+      stderr: "grpc_status: 9 message: 'anything at all'",
+    });
+
+    expect(outcome.kind).toBe("ambiguous");
+  });
+
   it("treats a clean exit carrying a transport error as ambiguous (#9206)", () => {
     const outcome = classifyPolicySetResult({
       status: 0,

@@ -280,14 +280,53 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     expect(fs.existsSync(created[0] as string)).toBe(false);
   });
 
-  it("reports a cleanup failure instead of leaving the composed policy readable (#9206)", () => {
+  it("names the directory that still holds the composed policy when cleanup fails (#9206)", () => {
+    const created: string[] = [];
+    const realMkdtemp = fs.mkdtempSync;
+    vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
+      const dir = (realMkdtemp as (p: string) => string)(prefix);
+      created.push(dir);
+      return dir;
+    }) as unknown as typeof fs.mkdtempSync);
     vi.spyOn(fs, "rmSync").mockImplementation(() => {
       throw new Error("EPERM: operation not permitted");
     });
 
     const error = applyWeatherPreset();
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(/temporary policy/iu);
+    expect(created).toHaveLength(1);
+    expect((error as Error).message).toContain(created[0] as string);
+    expect((error as Error).message).toContain("EPERM: operation not permitted");
+  });
+
+  it("reports a residual directory that removal left behind without an error (#9206)", () => {
+    const created: string[] = [];
+    const realMkdtemp = fs.mkdtempSync;
+    vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
+      const dir = (realMkdtemp as (p: string) => string)(prefix);
+      created.push(dir);
+      return dir;
+    }) as unknown as typeof fs.mkdtempSync);
+    // Removal reports success while the directory survives.
+    vi.spyOn(fs, "rmSync").mockImplementation(() => undefined);
+
+    const error = applyWeatherPreset();
+
+    expect(created).toHaveLength(1);
+    expect((error as Error).message).toContain(created[0] as string);
+    expect((error as Error).message).toContain("the path still exists");
+  });
+
+  it("reports retained policy material even when the submission itself failed (#9206)", () => {
+    run.mockImplementation(() => {
+      throw new Error("spawn failed before any result");
+    });
+    vi.spyOn(fs, "rmSync").mockImplementation(() => {
+      throw new Error("EPERM: operation not permitted");
+    });
+
+    const error = applyWeatherPreset();
+
+    expect((error as Error).message).toMatch(/still holds the composed sandbox policy/iu);
   });
 });

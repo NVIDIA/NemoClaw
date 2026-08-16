@@ -63,9 +63,11 @@ const UNPARSEABLE_FAILURE_STDERR = "openshell: policy set: unexpected end of str
 const UNPARSEABLE_FAILURE_EXIT_CODE = 3;
 
 /**
- * OpenShell renders an authoritative verdict as `code: '...', message: '...'`.
- * Only that shape classifies as `rejected`; a bare `Error: policy rejected: ...`
- * line carries no status OpenShell vouches for and stays `ambiguous`.
+ * A final refusal is read only from the refusal status and message that
+ * OpenShell renders together on its own first diagnostic line. That shape is
+ * necessary but not sufficient: the same text appearing anywhere later in the
+ * output is treated as quoted policy content and stays `ambiguous`, so a
+ * document echoed back cannot speak for the gateway (#9206).
  */
 const AUTHORITATIVE_REJECTION_MESSAGE = "unsupported field in network_policies.weather";
 const AUTHORITATIVE_REJECTION_STDERR = `Error: code: 'Failed precondition', message: '${AUTHORITATIVE_REJECTION_MESSAGE}'`;

@@ -26,35 +26,24 @@ const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
   "tonic::transport::error",
 ];
 
-/** OpenShell renders the authoritative diagnostic as `message: '...'`. */
-const AUTHORITATIVE_MESSAGE_PATTERN = /message:\s*'([^']*)'/;
-
 /**
- * gRPC FAILED_PRECONDITION is the status issue #8991 recorded for a policy the
- * gateway read and refused: `UpdateConfig` completed at HTTP 200 with gRPC
- * status 9.
+ * The one rendering that earns a final refusal: OpenShell's own diagnostic
+ * frame, carrying the refusal status and its message adjacently on a single
+ * line.
  *
- * A quoted message alone does not establish a refusal. `Unavailable`,
- * `Deadline exceeded`, `Unauthenticated`, and TLS failures render in the same
- * `code:`/`message:` shape, and for a deadline the gateway may have applied
- * the policy after the client stopped waiting. Reporting any of those as final
- * would tell the operator the policy was not applied and that re-applying is
- * pointless, neither of which is known. Only an explicit refusal status earns
- * that claim; everything else falls through to a readback.
+ * Status evidence and message must come from the SAME match. Scanning for
+ * them separately let a marker echoed anywhere in the output promote an
+ * unrelated failure into a refusal, because OpenShell can quote the submitted
+ * policy back and that document carries operator-supplied text. A
+ * `Deadline exceeded` whose echoed policy mentioned the marker was reported as
+ * final, which is the one verdict a deadline can never support.
  */
-const SEMANTIC_REFUSAL_PATTERNS: ReadonlyArray<RegExp> = [
-  /grpc_status:\s*9\b/iu,
-  /code:\s*'failed[ _]precondition'/iu,
-  /code:\s*failedprecondition\b/iu,
-];
+const AUTHORITATIVE_REFUSAL_PATTERN =
+  /code:\s*'failed[ _]precondition'[^\n]*?message:\s*'([^']*)'/iu;
 
 function isTransportFailure(detail: string): boolean {
   const haystack = detail.toLowerCase();
   return TRANSPORT_FAILURE_MARKERS.some((marker) => haystack.includes(marker));
-}
-
-function isSemanticRefusal(detail: string): boolean {
-  return SEMANTIC_REFUSAL_PATTERNS.some((pattern) => pattern.test(detail));
 }
 
 function combineDetail(
@@ -67,8 +56,17 @@ function combineDetail(
     .join("\n");
 }
 
-function authoritativeMessage(stderr: string | null | undefined): string | null {
-  const matched = stderr?.match(AUTHORITATIVE_MESSAGE_PATTERN)?.[1]?.trim();
+/**
+ * Return the message of an authoritative refusal frame, or null when OpenShell
+ * did not report one.
+ *
+ * Only the first line is read. OpenShell reports its own verdict there, and
+ * anything after it can be quoted policy content, which would otherwise let a
+ * document carrying a refusal frame speak for the gateway.
+ */
+function authoritativeRefusalMessage(stderr: string | null | undefined): string | null {
+  const reportedDiagnostic = stderr?.split("\n", 1)[0] ?? "";
+  const matched = reportedDiagnostic.match(AUTHORITATIVE_REFUSAL_PATTERN)?.[1]?.trim();
   return matched ? matched : null;
 }
 
@@ -103,8 +101,6 @@ export function classifyPolicySetResult(input: {
   // never have run, or may have run and lost its result.
   if (input.status === null) return ambiguous();
 
-  if (!isSemanticRefusal(detail)) return ambiguous();
-
-  const message = authoritativeMessage(input.stderr);
+  const message = authoritativeRefusalMessage(input.stderr);
   return message === null ? ambiguous() : { kind: "rejected", status: input.status, message };
 }

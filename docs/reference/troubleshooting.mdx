@@ -1134,8 +1134,8 @@ $$nemoclaw onboard
 
 ### Onboarding Reports a Rejected or Unconfirmed Policy Update
 
-The onboarding policy step composes a policy document for the presets you selected and deselected, then submits it to the OpenShell gateway.
-NemoClaw removes the temporary file that carries the composed policy whether or not the gateway accepts it.
+The onboarding policy step composes a policy document for the policy presets you selected and deselected, then submits it to the OpenShell gateway.
+When the submission finishes, NemoClaw removes the temporary file that carries the composed policy, whether or not the gateway accepted it.
 If it cannot remove that file, it reports the directory that still holds the policy instead of reporting a clean result.
 If the submission does not succeed, onboarding stops and:
 
@@ -1146,7 +1146,7 @@ If the submission does not succeed, onboarding stops and:
 The gateway read the policy and refused it:
 
 ```text
-OpenShell rejected the policy for sandbox 'my-assistant' (exit 1): <OpenShell diagnostic>. The policy was not applied and re-applying it will be rejected again; change the preset selection instead.
+OpenShell rejected the policy for sandbox 'my-assistant' (exit <exit status>): <OpenShell diagnostic>. The policy was not applied and re-applying it will be rejected again; change the preset selection instead.
 ```
 
 The live policy is unchanged.
@@ -1156,7 +1156,7 @@ Then follow [Previous onboarding session failed](#previous-onboarding-session-fa
 The default selection can be the refused one, so read the diagnostic before you assume a preset you added caused it.
 
 NemoClaw could not confirm the result.
-This covers a connection that ended before the result arrived, an unreachable gateway, an elapsed deadline, and a rejected credential.
+This covers a connection that ended before the result arrived, an unreachable gateway, an elapsed deadline, a rejected credential, and a refusal the gateway reported with a status NemoClaw does not recognize as final.
 NemoClaw reports this whenever the gateway did not return an explicit refusal, because only an explicit refusal proves the policy was not applied:
 
 ```text
@@ -1174,6 +1174,7 @@ Because the failed step did not record the presets as applied, a preset that the
 
 The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
 When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
+If the container runtime is down, it prints that runtime's recovery guidance instead.
 That output reports local state, so it does not tell you whether the gateway applied the policy.
 Restore the gateway connection and run `policy list` again before you decide.
 
