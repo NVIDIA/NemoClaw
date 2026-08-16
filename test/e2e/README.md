@@ -581,6 +581,12 @@ graph as the live targets:
 
 - GitHub Actions run history is the authoritative record for push and
   manual E2E results.
+- `E2E / Main Retry` publishes an advisory same-commit reliability table for
+  trusted-main and explicit manual qualification runs. It keeps first-pass
+  success, pass-after-retry, exhausted retries, and pass/fail flips distinct,
+  consumes only fixed retry and terminal runner classifications, and leaves
+  missing or malformed evidence unclassified. The table never changes a
+  required check, release conclusion, or rerun decision.
 - Automated issue routing and the workflow's `issues: write` capability are
   retired. Any future issue escalation should use a separately reviewed
   exceptional threshold, such as the same lane failing twice consecutively or
