@@ -316,13 +316,35 @@ function parseCachedEvidence(contents: string, run: E2ERunRecord): CachedFailure
 
 function readCachedEvidence(cacheDir: string, run: E2ERunRecord): CachedFailureEvidence | null {
   const file = cacheFile(cacheDir, run);
-  if (!fs.existsSync(file)) return null;
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CACHE_FILE_BYTES) {
-    throw new Error(`Cached evidence for run ${String(run.databaseId)} is not a bounded regular file.`);
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("O_NOFOLLOW is required for the evidence cache.");
   }
-  fs.chmodSync(file, 0o600);
-  return parseCachedEvidence(fs.readFileSync(file, "utf8"), run);
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | fs.constants.O_NONBLOCK);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    if (code === "ELOOP") {
+      throw new Error(
+        `Cached evidence for run ${String(run.databaseId)} is not a bounded regular file.`,
+      );
+    }
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > MAX_CACHE_FILE_BYTES) {
+      throw new Error(
+        `Cached evidence for run ${String(run.databaseId)} is not a bounded regular file.`,
+      );
+    }
+    fs.fchmodSync(descriptor, 0o600);
+    return parseCachedEvidence(fs.readFileSync(descriptor, "utf8"), run);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function writeCachedEvidence(
