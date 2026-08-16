@@ -1323,7 +1323,7 @@ async function runInferenceSetWithoutHostLock(
       throw new InferenceSetError(
         `Hermes inference route synchronization did not complete for '${sandboxName}'. ` +
           `The OpenShell route and NemoClaw registry remain committed, but the in-sandbox ` +
-          `Hermes config is stale. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
+          `Hermes configuration did not fully converge. Run '${CLI_NAME} ${sandboxName} rebuild' to converge it.`,
       );
     }
     return mutation;

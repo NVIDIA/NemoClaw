@@ -237,7 +237,11 @@ describe("runInferenceSet Hermes routing", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/Hermes inference route synchronization did not complete/);
+    ).rejects.toMatchObject({
+      name: "InferenceSetError",
+      exitCode: 1,
+      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
+    });
 
     // A failed gateway-config write leaves the old config in place; re-seeding the
     // dashboard from it would be pointless. The host route remains committed, but
@@ -282,9 +286,20 @@ describe("runInferenceSet Hermes routing", () => {
         },
         deps,
       ),
-    ).rejects.toThrow(/Hermes inference route synchronization did not complete/);
+    ).rejects.toMatchObject({
+      name: "InferenceSetError",
+      exitCode: 1,
+      message: expect.stringMatching(/Hermes inference route synchronization did not complete/),
+    });
 
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      }),
+    );
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
     const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
     expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
