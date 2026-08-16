@@ -2,8 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { waitUntil } from "../core/wait";
 
 import { getOccupiedPorts } from "./dashboard-port";
+
+const FORWARD_RELEASE_TIMEOUT_MS = 5_000;
+const FORWARD_RELEASE_POLL_MS = 250;
+const FORWARD_RECOVERY_INITIAL_POLL_MS = 100;
+const FORWARD_RECOVERY_MAX_POLL_MS = 500;
+const FORWARD_RECOVERY_BACKOFF_FACTOR = 1.5;
 
 export type ForwardStopRunner = (
   args: string[],
@@ -19,6 +26,39 @@ export type ForwardListRunner = (
   args: string[],
   opts: { ignoreError?: boolean; timeout?: number },
 ) => string | null;
+
+/**
+ * Wait for a stopped forward's host listener to retire before its fixed port
+ * is reused. OpenShell can remove forward metadata before the underlying SSH
+ * process releases the listener, so both onboarding and runtime teardown use
+ * this single bounded release policy.
+ */
+export function waitForStoppedForwardPortRelease(
+  port: number,
+  isPortBound: (port: number) => boolean,
+  options: { sleep?: (milliseconds: number) => void } = {},
+): boolean {
+  return waitUntil(() => !isPortBound(port), {
+    initialIntervalMs: FORWARD_RELEASE_POLL_MS,
+    maxIntervalMs: FORWARD_RELEASE_POLL_MS,
+    backoffFactor: 1,
+    maxAttempts: Math.ceil(FORWARD_RELEASE_TIMEOUT_MS / FORWARD_RELEASE_POLL_MS) + 1,
+    sleep: options.sleep,
+  });
+}
+
+/** Poll a forward ownership/readiness condition within its configured recovery budget. */
+export function waitForForwardRecoveryState(
+  condition: () => boolean,
+  budgetMs: number,
+): boolean {
+  return waitUntil(condition, {
+    deadlineMs: Date.now() + budgetMs,
+    initialIntervalMs: FORWARD_RECOVERY_INITIAL_POLL_MS,
+    maxIntervalMs: FORWARD_RECOVERY_MAX_POLL_MS,
+    backoffFactor: FORWARD_RECOVERY_BACKOFF_FACTOR,
+  });
+}
 
 /**
  * `openshell forward stop <port>` — port-scoped, kills whatever forward is
