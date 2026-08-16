@@ -3079,32 +3079,16 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     initialHint: opts.baseImageResolutionHint,
     initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
   });
-  const ownsOnboardLock = opts.onboardLockAlreadyHeld !== true;
-  const lockResult = ownsOnboardLock
-    ? onboardSession.acquireOnboardLock(
-        `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
-      )
-    : { acquired: true as const };
-  if (!lockResult.acquired) {
-    console.error(`  Another ${cliDisplayName()} onboarding run is already in progress.`);
-    if (lockResult.holderPid) {
-      console.error(`  Lock holder PID: ${lockResult.holderPid}`);
-    }
-    if (lockResult.holderStartedAt) {
-      console.error(`  Started: ${lockResult.holderStartedAt}`);
-    }
-    console.error("  Wait for it to finish, or remove the stale lock if the previous run crashed:");
-    console.error(`    rm -f "${lockResult.lockFile}"`);
-    process.exit(1);
-  }
-  let lockReleased = false;
-  const releaseOnboardLock = () => {
-    if (lockReleased || !ownsOnboardLock) return;
-    lockReleased = true;
-    process.removeListener("exit", releaseOnboardLock);
-    onboardSession.releaseOnboardLock();
-  };
-  if (ownsOnboardLock) process.once("exit", releaseOnboardLock);
+  const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
+    alreadyHeld: opts.onboardLockAlreadyHeld === true,
+    command: `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
+    displayName: cliDisplayName(),
+    homeDir: process.env.HOME || os.homedir(),
+    loadRegistry: registry.load,
+    registryFile: registry.REGISTRY_FILE,
+    sessionFile: onboardSession.SESSION_FILE,
+    withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
+  });
 
   let portableEnvScope:
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
@@ -3119,20 +3103,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   };
   let completed = false, returnedNormally = false;
   try {
-    const homeDir = process.env.HOME || os.homedir();
-    const portableRetirementBoundary = {
-      homeDir,
-      registryFile: registry.REGISTRY_FILE,
-      sessionFile: onboardSession.SESSION_FILE,
-      stateDir: path.dirname(onboardSession.SESSION_FILE),
-    };
-    const portableRetirementDeps = {
-      loadRegistry: registry.load,
-      withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
-    };
-    await portableRetirementAuthority.withPortableOnboardRetirementBoundary(
-      portableRetirementBoundary,
-      async () => {
+    await portableRetirementEntry.run(async () => {
     const lockedRuntime = await resumeRuntime.prepare(opts, resume, isNonInteractive(), onboardSession.loadSession);
     portableEnvScope = lockedRuntime.environmentScope;
     entryDecisions.clearGatewayEnvironmentWithoutBinding(authoritativeGateway, process.env);
@@ -3726,21 +3697,15 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     });
     completed = finalFlowResult.session.machine.state === "complete";
     if (completed && finalFlowResult.session.sandboxName) {
-      await portableRetirementAuthority.supersedePortableRetirementAfterCompletedOnboard(
-        portableRetirementBoundary,
-        lockedRuntime.checkpointProfile,
-        portableRetirementDeps,
-      );
+      await portableRetirementEntry.supersede(lockedRuntime.checkpointProfile);
     }
     process.exitCode = completed ? 0 : 1;
-      },
-      portableRetirementDeps,
-    );
+    });
   } finally {
     try {
       await hermesApiPortReservationScope.release();
       restorePortableEnvScope();
-      releaseOnboardLock();
+      portableRetirementEntry.release();
       onboardRuntimeBoundary.clear();
       onboardTracing.finishOnboardTrace(onboardTrace, completed);
       GATEWAY_NAME = previousGatewayBinding.name;

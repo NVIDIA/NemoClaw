@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
-import { normalizeSession } from "../state/onboard-session";
+import { acquireOnboardLock, normalizeSession, releaseOnboardLock } from "../state/onboard-session";
 import {
   inspectPortableOnboardSupersession,
   inspectPortableRetirementRecovery,
@@ -61,6 +61,15 @@ export interface PortableRetirementAuthorityDeps extends PortableAuthorityAdmiss
     sandboxName: string,
     operation: () => Promise<T> | T,
   ) => Promise<T>;
+}
+
+export interface PortableOnboardRetirementEntryOptions extends PortableRetirementAuthorityDeps {
+  readonly alreadyHeld: boolean;
+  readonly command: string;
+  readonly displayName: string;
+  readonly homeDir: string;
+  readonly registryFile: string;
+  readonly sessionFile: string;
 }
 
 function strictJson(bytes: Buffer, description: string): Record<string, unknown> {
@@ -496,6 +505,45 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   await lockedAuthority(boundary, expected, deps, (authority) =>
     supersedePortableRetirementAfterOnboard(boundary.homeDir, authority),
   );
+}
+
+export function beginPortableOnboardRetirementEntry(
+  options: PortableOnboardRetirementEntryOptions,
+) {
+  const ownsOnboardLock = !options.alreadyHeld;
+  const lockResult = ownsOnboardLock
+    ? acquireOnboardLock(options.command)
+    : { acquired: true as const };
+  if (!lockResult.acquired) {
+    console.error(`  Another ${options.displayName} onboarding run is already in progress.`);
+    if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
+    if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
+    console.error("  Wait for it to finish, or remove the stale lock if the previous run crashed:");
+    console.error(`    rm -f "${lockResult.lockFile}"`);
+    process.exit(1);
+  }
+  const boundary: PortableOnboardRetirementBoundary = {
+    homeDir: options.homeDir,
+    registryFile: options.registryFile,
+    sessionFile: options.sessionFile,
+    stateDir: path.dirname(options.sessionFile),
+  };
+  const deps: PortableRetirementAuthorityDeps = options;
+  let released = false;
+  const release = () => {
+    if (released || !ownsOnboardLock) return;
+    released = true;
+    process.removeListener("exit", release);
+    releaseOnboardLock();
+  };
+  if (ownsOnboardLock) process.once("exit", release);
+  return {
+    release,
+    run: <T>(operation: () => Promise<T> | T) =>
+      withPortableOnboardRetirementBoundary(boundary, operation, deps),
+    supersede: (expected: Profile) =>
+      supersedePortableRetirementAfterCompletedOnboard(boundary, expected, deps),
+  };
 }
 
 export const portableRetirementAuthorityInternals = { admission, recover };
