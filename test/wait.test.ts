@@ -49,6 +49,12 @@ describe("wait utility", () => {
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
   });
 
+  const throwWhenSelected = (selected: boolean, error: Error): void =>
+    selected ? (() => {
+      throw error;
+    })() : undefined;
+
+
   const retryCases = [
     { label: "accepts the first result", acceptAt: 1, delays: [10, 20], attempt: 1 },
     { label: "accepts the third result", acceptAt: 3, delays: [10, 20, 30], attempt: 3 },
@@ -79,14 +85,14 @@ describe("wait utility", () => {
     (failure) => {
       const error = new Error(`${failure} failed`);
       const operation = vi.fn(() => {
-        if (failure === "operation") throw error;
+        throwWhenSelected(failure === "operation", error);
         return "retry";
       });
       const onRetry = vi.fn(() => {
-        if (failure === "onRetry") throw error;
+        throwWhenSelected(failure === "onRetry", error);
       });
       const sleep = vi.fn(() => {
-        if (failure === "sleep") throw error;
+        throwWhenSelected(failure === "sleep", error);
       });
 
       expect(() =>
@@ -126,14 +132,14 @@ describe("wait utility", () => {
     async (failure) => {
       const error = new Error(`${failure} failed`);
       const operation = vi.fn(async () => {
-        if (failure === "operation") throw error;
+        throwWhenSelected(failure === "operation", error);
         return "retry";
       });
       const onRetry = vi.fn(async () => {
-        if (failure === "onRetry") throw error;
+        throwWhenSelected(failure === "onRetry", error);
       });
       const sleep = vi.fn(async () => {
-        if (failure === "sleep") throw error;
+        throwWhenSelected(failure === "sleep", error);
       });
 
       await expect(
