@@ -2343,7 +2343,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     `matrix='[${defaultMappings}]'`,
     `test_matrix='[${defaultTestMappings}]'`,
     ";;",
-    "inference-routing: | managed-image-protected-runtime: | :jetson-nvmap-gpu)",
+    "inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)",
     "matrix='[]'",
     ";;",
     `:${deepAgentsTarget})`,

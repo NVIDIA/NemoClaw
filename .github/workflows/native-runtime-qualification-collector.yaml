@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Native Runtime Qualification Evidence Collector
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider_id:
+        description: Provider identity expected by the canonical native qualification contract
+        required: true
+        type: string
+      pr_number:
+        description: Candidate pull request number
+        required: true
+        type: string
+      head_sha:
+        description: Candidate PR commit SHA
+        required: true
+        type: string
+      base_sha:
+        description: Target-branch base SHA and trusted collector revision
+        required: true
+        type: string
+      evidence_workflow:
+        description: Path of the separately trusted producer workflow
+        required: true
+        type: string
+      evidence_run_id:
+        description: Successful producer workflow run ID
+        required: true
+        type: string
+      evidence_job_name:
+        description: Exact successful producer job name
+        required: true
+        type: string
+      evidence_artifact_name:
+        description: Exact immutable producer artifact name
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: native-runtime-qualification-collector-${{ inputs.pr_number }}-${{ inputs.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  collect-protected-evidence:
+    name: Authenticate native runtime qualification evidence
+    if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted collector revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/scorecard/read-artifact-zip.mts
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
+            test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-collector.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.1
+
+      - name: Authenticate and consume protected qualification evidence
+        id: collect
+        working-directory: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_PROVIDER_ID: ${{ inputs.provider_id }}
+          EXPECTED_PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ inputs.base_sha }}
+          EVIDENCE_WORKFLOW: ${{ inputs.evidence_workflow }}
+          EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          EVIDENCE_JOB_NAME: ${{ inputs.evidence_job_name }}
+          EVIDENCE_ARTIFACT_NAME: ${{ inputs.evidence_artifact_name }}
+          QUALIFICATION_AUTHORITY_PATH: ${{ runner.temp }}/native-runtime-qualification-authority.json
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/native-runtime-qualification-collector.mts
+
+      - name: Preserve authenticated authority receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-runtime-qualification-authority-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-runtime-qualification-authority.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
