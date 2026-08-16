@@ -1,38 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   cpuDelegationControllerPaths,
   inspectPortableCpuDelegation,
   portableCpuDelegationError,
 } from "./portable-cpu-delegation-preflight";
 
-function files(contents: Record<string, string>): (file: string) => string {
-  return (file: string) => {
-    const value = contents[file];
-    return (
-      value ??
+function files(
+  contents: Record<string, Buffer | string>,
+): (file: string, maxBytes: number) => Buffer {
+  return (file: string, maxBytes: number) => {
+    const value =
+      contents[file] ??
       (() => {
         throw Object.assign(new Error(`ENOENT: no such file or directory, open '${file}'`), {
           code: "ENOENT",
         });
-      })()
-    );
+      })();
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+    return bytes.subarray(0, maxBytes);
   };
 }
 
 function unreadableAt(
   unreadableFile: string,
-  contents: Record<string, string>,
-): (file: string) => string {
+  contents: Record<string, Buffer | string>,
+): (file: string, maxBytes: number) => Buffer {
   const readFile = files(contents);
   const throwUnreadable = (file: string): never => {
     throw Object.assign(new Error(`EACCES: permission denied, open '${file}'`), {
       code: "EACCES",
     });
   };
-  return (file: string) => (file === unreadableFile ? throwUnreadable(file) : readFile(file));
+  return (file: string, maxBytes: number) =>
+    file === unreadableFile ? throwUnreadable(file) : readFile(file, maxBytes);
 }
 
 const UID = 1001;
@@ -40,6 +43,23 @@ const PATHS = cpuDelegationControllerPaths(UID);
 
 const CPU_FULL = "cpuset cpu io memory pids";
 const NO_CPU = "cpuset io memory pids";
+const MALFORMED = "cpu memory\nDelegate=cpu";
+
+function expectManagerInterruptionGuidance(detail: string): void {
+  const saveWork = detail.indexOf("Save the current user's work");
+  const stopManager = detail.indexOf("stops the user manager");
+  const startFailure = detail.indexOf("start fails with 219/CGROUP");
+  const laterLogin = detail.indexOf("start a later login session");
+  const saveHostWork = detail.indexOf("save every user's work first");
+  const reboot = detail.indexOf("reboot the host");
+
+  expect(saveWork).toBeGreaterThanOrEqual(0);
+  expect(saveWork).toBeLessThan(stopManager);
+  expect(startFailure).toBeGreaterThan(stopManager);
+  expect(laterLogin).toBeGreaterThan(startFailure);
+  expect(saveHostWork).toBeGreaterThan(laterLogin);
+  expect(saveHostWork).toBeLessThan(reboot);
+}
 
 describe("inspectPortableCpuDelegation", () => {
   it("skips the check on non-Linux platforms", () => {
@@ -54,18 +74,21 @@ describe("inspectPortableCpuDelegation", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({}),
+      readControllerFileSync: files({}),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("cgroups-v2-unavailable");
     expect(preflight.detail).toContain("cgroups v2");
+    expect(preflight.detail.indexOf("save every user's work")).toBeLessThan(
+      preflight.detail.indexOf("Boot a cgroups v2 host"),
+    );
   });
 
   it("reports access recovery when the root controllers file is unreadable", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: unreadableAt(PATHS.root, {}),
+      readControllerFileSync: unreadableAt(PATHS.root, {}),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("cgroup-controllers-unreadable");
@@ -79,7 +102,7 @@ describe("inspectPortableCpuDelegation", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({
+      readControllerFileSync: files({
         [PATHS.root]: NO_CPU,
         [PATHS.userManager]: CPU_FULL,
         [PATHS.appSlice]: CPU_FULL,
@@ -88,125 +111,32 @@ describe("inspectPortableCpuDelegation", () => {
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("cpu-controller-unavailable");
     expect(preflight.detail).toContain('no "cpu"');
-  });
-
-  it.each([
-    [PATHS.root, "cpu cpu"],
-    [PATHS.userSlice, "CPU memory"],
-    [PATHS.userManager, "cpu,memory"],
-    [PATHS.appSlice, "cpu memory!"],
-  ])(
-    "fails closed when %s contains malformed controller evidence",
-    (malformedPath, malformedContent) => {
-      const preflight = inspectPortableCpuDelegation({
-        platform: "linux",
-        uid: UID,
-        readFileSync: files({
-          [PATHS.root]: CPU_FULL,
-          [PATHS.userSlice]: CPU_FULL,
-          [PATHS.userManager]: CPU_FULL,
-          [PATHS.appSlice]: CPU_FULL,
-          [malformedPath]: malformedContent,
-        }),
-      });
-      expect(preflight.ok).toBe(false);
-      expect(preflight.failure).toBe("cgroup-controllers-malformed");
-      expect(preflight.detail).toContain(malformedPath);
-      expect(preflight.detail).toContain("mount integrity");
-      expect(preflight.detail).toContain("Do not change systemd delegation");
-      expect(preflight.detail).not.toContain(malformedContent);
-    },
-  );
-
-  it.each([
-    [PATHS.root, "cpu-controller-unavailable"],
-    [PATHS.userSlice, "systemd-user-slice-cpu-unavailable"],
-    [PATHS.userManager, "systemd-user-delegation-missing"],
-    [PATHS.appSlice, "app-slice-cpu-unavailable"],
-  ] as const)("classifies an empty readable controller file at %s", (emptyPath, failure) => {
-    const preflight = inspectPortableCpuDelegation({
-      platform: "linux",
-      uid: UID,
-      readFileSync: files({
-        [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
-        [PATHS.userManager]: CPU_FULL,
-        [PATHS.appSlice]: CPU_FULL,
-        [emptyPath]: "",
-      }),
-    });
-    expect(preflight.ok).toBe(false);
-    expect(preflight.failure).toBe(failure);
-    expect(preflight.detail).toContain('no "cpu"');
-  });
-
-  it("reports when the per-user systemd slice has no controllers file", () => {
-    const preflight = inspectPortableCpuDelegation({
-      platform: "linux",
-      uid: UID,
-      readFileSync: files({
-        [PATHS.root]: CPU_FULL,
-      }),
-    });
-    expect(preflight.ok).toBe(false);
-    expect(preflight.failure).toBe("systemd-user-slice-cpu-unavailable");
-    expect(preflight.detail).toContain("user-1001.slice");
-    expect(preflight.detail).toContain("CPUWeight=100 for user-1001.slice");
-  });
-
-  it("reports when the per-user systemd slice does not expose cpu", () => {
-    const preflight = inspectPortableCpuDelegation({
-      platform: "linux",
-      uid: UID,
-      readFileSync: files({
-        [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: NO_CPU,
-      }),
-    });
-    expect(preflight.ok).toBe(false);
-    expect(preflight.failure).toBe("systemd-user-slice-cpu-unavailable");
-    expect(preflight.detail).toContain('no "cpu"');
-  });
-
-  it("reports access recovery when the per-user slice evidence is unreadable", () => {
-    const preflight = inspectPortableCpuDelegation({
-      platform: "linux",
-      uid: UID,
-      readFileSync: unreadableAt(PATHS.userSlice, {
-        [PATHS.root]: CPU_FULL,
-      }),
-    });
-    expect(preflight.ok).toBe(false);
-    expect(preflight.failure).toBe("cgroup-controllers-unreadable");
-    expect(preflight.detail).toContain("EACCES");
-    expect(preflight.detail).toContain(PATHS.userSlice);
+    expect(preflight.detail.indexOf("save every user's work")).toBeLessThan(
+      preflight.detail.indexOf("Enable the cpu controller"),
+    );
   });
 
   it("reports when systemd did not delegate cpu to the user manager (missing file)", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({
+      readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("Delegate=cpu memory pids for user@.service");
-    expect(preflight.detail).toContain("CPUWeight=100 for user-1001.slice");
-    expect(preflight.detail).toContain("CPUWeight=100 for app.slice");
-    expect(preflight.detail).toContain("status=219/CGROUP");
-    expect(preflight.detail).toContain("save work for every host user");
+    expect(preflight.detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
+    expect(preflight.detail).toContain("`CPUWeight=100` for `app.slice`");
+    expectManagerInterruptionGuidance(preflight.detail);
   });
 
   it("reports access recovery when the user manager controllers file is unreadable", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: unreadableAt(PATHS.userManager, {
+      readControllerFileSync: unreadableAt(PATHS.userManager, {
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
@@ -220,27 +150,25 @@ describe("inspectPortableCpuDelegation", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({
+      readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: NO_CPU,
         [PATHS.appSlice]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("systemd-user-delegation-missing");
-    expect(preflight.detail).toContain("Delegate=cpu memory pids for user@.service");
-    expect(preflight.detail).toContain("CPUWeight=100 for user-1001.slice");
-    expect(preflight.detail).toContain("CPUWeight=100 for app.slice");
+    expect(preflight.detail).toContain("`Delegate=cpu memory pids` for `user@.service`");
+    expect(preflight.detail).toContain("`CPUWeight=100` for `app.slice`");
+    expectManagerInterruptionGuidance(preflight.detail);
   });
 
   it("reports when the cpu controller is not available to app.slice for this boot", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({
+      readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
         [PATHS.appSlice]: NO_CPU,
       }),
@@ -249,32 +177,30 @@ describe("inspectPortableCpuDelegation", () => {
     expect(preflight.failure).toBe("app-slice-cpu-unavailable");
     expect(preflight.detail).toContain("app.slice");
     expect(preflight.detail).toContain("CPU controller setting");
-    expect(preflight.detail).toContain("CPUWeight=100 for user-1001.slice");
-    expect(preflight.detail).toContain("status=219/CGROUP");
+    expectManagerInterruptionGuidance(preflight.detail);
   });
 
   it("reports when the app.slice controllers file is missing", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({
+      readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
       }),
     });
     expect(preflight.ok).toBe(false);
     expect(preflight.failure).toBe("app-slice-cpu-unavailable");
     expect(preflight.detail).toContain("CPU controller setting");
+    expectManagerInterruptionGuidance(preflight.detail);
   });
 
   it("reports access recovery when the app.slice controllers file is unreadable", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: unreadableAt(PATHS.appSlice, {
+      readControllerFileSync: unreadableAt(PATHS.appSlice, {
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
       }),
     });
@@ -285,13 +211,73 @@ describe("inspectPortableCpuDelegation", () => {
     expect(preflight.detail).not.toContain("Restart the user manager");
   });
 
+  it.each([
+    ["root", PATHS.root, {}],
+    ["user manager", PATHS.userManager, { [PATHS.root]: CPU_FULL }],
+    ["app.slice", PATHS.appSlice, { [PATHS.root]: CPU_FULL, [PATHS.userManager]: CPU_FULL }],
+  ])(
+    "rejects malformed %s controller evidence before remediation (#9188)",
+    (_name, path, prefix) => {
+      const preflight = inspectPortableCpuDelegation({
+        platform: "linux",
+        uid: UID,
+        readControllerFileSync: files({ ...prefix, [path]: MALFORMED }),
+      });
+
+      expect(preflight.ok).toBe(false);
+      expect(preflight.failure).toBe("cgroup-controllers-malformed");
+      expect(preflight.detail).toContain(path);
+      expect(preflight.detail).toContain("evidence is malformed");
+      expect(preflight.detail).not.toContain(MALFORMED);
+      expect(preflight.detail).not.toContain("Delegate=cpu memory pids");
+      expect(preflight.detail).not.toContain("CPUWeight=100");
+      expect(preflight.detail).not.toContain("stop and start");
+    },
+  );
+
+  it.each([
+    ["NUL bytes", Buffer.from("cpu\0memory", "utf8")],
+    ["oversized content", Buffer.alloc(4097, 0x61)],
+    ["duplicate controller names", "cpu cpu memory"],
+  ])("rejects %s as malformed controller evidence (#9188)", (_case, content) => {
+    const preflight = inspectPortableCpuDelegation({
+      platform: "linux",
+      uid: UID,
+      readControllerFileSync: files({ [PATHS.root]: content }),
+    });
+
+    expect(preflight.ok).toBe(false);
+    expect(preflight.failure).toBe("cgroup-controllers-malformed");
+    expect(preflight.detail).toContain(PATHS.root);
+    expect(preflight.detail).not.toContain("Delegate=cpu memory pids");
+    expect(preflight.detail).not.toContain("CPUWeight=100");
+  });
+
+  it("caps each controller read at the evidence limit plus one sentinel byte (#9188)", () => {
+    const readControllerFileSync = vi.fn(
+      files({
+        [PATHS.root]: CPU_FULL,
+        [PATHS.userManager]: CPU_FULL,
+        [PATHS.appSlice]: CPU_FULL,
+      }),
+    );
+
+    expect(
+      inspectPortableCpuDelegation({ platform: "linux", uid: UID, readControllerFileSync }).ok,
+    ).toBe(true);
+    expect(readControllerFileSync.mock.calls).toEqual([
+      [PATHS.root, 4097],
+      [PATHS.userManager, 4097],
+      [PATHS.appSlice, 4097],
+    ]);
+  });
+
   it("passes when cpu is delegated through the whole current-user hierarchy", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({
+      readControllerFileSync: files({
         [PATHS.root]: CPU_FULL,
-        [PATHS.userSlice]: CPU_FULL,
         [PATHS.userManager]: CPU_FULL,
         [PATHS.appSlice]: CPU_FULL,
       }),
@@ -305,7 +291,7 @@ describe("inspectPortableCpuDelegation", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: Number.NaN,
-      readFileSync: files({}),
+      readControllerFileSync: files({}),
     });
     expect(preflight.ok).toBe(true);
   });
@@ -314,7 +300,7 @@ describe("inspectPortableCpuDelegation", () => {
     const preflight = inspectPortableCpuDelegation({
       platform: "linux",
       uid: UID,
-      readFileSync: files({}),
+      readControllerFileSync: files({}),
     });
     const error = portableCpuDelegationError(preflight);
     expect(error.message).toContain("Portable CPU-delegation preflight failed");

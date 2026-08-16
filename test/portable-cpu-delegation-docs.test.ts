@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { PORTABLE_CPU_DELEGATION_PROOF_CONTRACT } from "../scripts/checks/run-portable-cpu-delegation-proof.mts";
+
 const repoRoot = path.join(import.meta.dirname, "..");
 const troubleshootingPath = path.join(repoRoot, "docs", "reference", "troubleshooting.mdx");
 const temporaryDirectories: string[] = [];
@@ -17,7 +19,6 @@ type CommandFixture = {
   delegationDropIn: string;
   environment: NodeJS.ProcessEnv;
   mkdirCallMarker: string;
-  userSliceDropIn: string;
 };
 
 type RollbackFixture = {
@@ -28,41 +29,52 @@ type RollbackFixture = {
   delegationDropInDirectory: string;
   environment: NodeJS.ProcessEnv;
   systemctlCallMarker: string;
-  userSliceDropIn: string;
-  userSliceDropInDirectory: string;
 };
 
-function extractDropInCreationCommand(): string {
-  const markdown = fs.readFileSync(troubleshootingPath, "utf8");
-  const sectionStart = markdown.indexOf("Use the three dedicated NemoClaw drop-in paths below.");
-  expect(sectionStart).toBeGreaterThanOrEqual(0);
+type RollbackFixtureOptions = {
+  appSliceDropInCreated?: boolean;
+  delegationDropInCreated?: boolean;
+  expectedDelegationDropInId?: string;
+};
 
+function extractFirstBashCommandAfter(anchor: string): string {
+  const markdown = fs.readFileSync(troubleshootingPath, "utf8");
+  const sectionStart = markdown.indexOf(anchor);
+  expect(sectionStart).toBeGreaterThanOrEqual(0);
   const section = markdown.slice(sectionStart);
   const block = section.match(/```bash\n([\s\S]*?)\n```/u);
   expect(block).not.toBeNull();
   return block?.[1] ?? "";
+}
+
+function extractDropInCreationCommand(): string {
+  return extractFirstBashCommandAfter("Use the two dedicated NemoClaw drop-in paths below.");
+}
+
+function extractControllerClassificationCommand(): string {
+  return extractFirstBashCommandAfter("### Portable CPU Delegation Preflight Fails");
+}
+
+function extractMalformedEvidenceInspectionCommand(): string {
+  return extractFirstBashCommandAfter("Do not print malformed bytes directly to a terminal.");
 }
 
 function extractPartialCreationRollbackCommand(): string {
-  const markdown = fs.readFileSync(troubleshootingPath, "utf8");
-  const sectionStart = markdown.indexOf("#### Clean Up a Partial Drop-In Creation");
-  expect(sectionStart).toBeGreaterThanOrEqual(0);
+  return extractFirstBashCommandAfter("#### Clean Up a Partial Drop-In Creation");
+}
 
-  const section = markdown.slice(sectionStart);
-  const block = section.match(/```bash\n([\s\S]*?)\n```/u);
-  expect(block).not.toBeNull();
-  return block?.[1] ?? "";
+function extractUnrecordedDirectoryRecoveryCommand(): string {
+  return extractFirstBashCommandAfter("#### Recover an Unrecorded Drop-In Directory");
 }
 
 function extractApplyCommand(): string {
-  const markdown = fs.readFileSync(troubleshootingPath, "utf8");
-  const sectionStart = markdown.indexOf("The administrator's `sudo` policy can request");
-  expect(sectionStart).toBeGreaterThanOrEqual(0);
+  return extractFirstBashCommandAfter("Run the stop, reload, and start sequence:");
+}
 
-  const section = markdown.slice(sectionStart);
-  const block = section.match(/```bash\n([\s\S]*?)\n```/u);
-  expect(block).not.toBeNull();
-  return block?.[1] ?? "";
+function extractFinalControllerVerificationCommand(): string {
+  return extractFirstBashCommandAfter(
+    "Verify the root hierarchy, current user manager, and `app.slice`:",
+  );
 }
 
 function extractDropInRollbackCommand(): string {
@@ -74,7 +86,7 @@ function extractDropInRollbackCommand(): string {
   const sectionEnd = section.indexOf("\n### Portable Podman Readiness Fails");
   expect(sectionEnd).toBeGreaterThanOrEqual(0);
   const blocks = [...section.slice(0, sectionEnd).matchAll(/```bash\n([\s\S]*?)\n```/gu)];
-  expect(blocks).toHaveLength(4);
+  expect(blocks).toHaveLength(3);
   return blocks[1]?.[1] ?? "";
 }
 
@@ -87,7 +99,6 @@ function makeTemporaryDirectory(): string {
 function makeCommandFixture(): CommandFixture {
   const root = makeTemporaryDirectory();
   const delegationDropIn = path.join(root, "system", "90-nemoclaw-cpu-delegation.conf");
-  const userSliceDropIn = path.join(root, "user-slice", "90-nemoclaw-cpu-controller.conf");
   const appSliceDropIn = path.join(root, "user", "90-nemoclaw-cpu-controller.conf");
   const fakeBin = path.join(root, "bin");
   const mkdirCallMarker = path.join(root, "mkdir-call");
@@ -98,6 +109,7 @@ function makeCommandFixture(): CommandFixture {
     sudo,
     `#!/bin/sh
 set -eu
+if [ -n "\${FAIL_PREDICATE_PATH:-}" ] && [ "\${1-}" = sh ] && [ "\${5-}" = "$FAIL_PREDICATE_PATH" ]; then printf '%s\\n' 'simulated predicate inspection failure' >&2; exit 77; fi
 if [ "\${1-}" = mkdir ]; then
   mkdir_call=1
   if [ -e "$MKDIR_CALL_MARKER" ]; then
@@ -108,19 +120,32 @@ if [ "\${1-}" = mkdir ]; then
     printf '%s\\n' 'simulated directory creation failure' >&2
     exit 73
   fi
-  exec mkdir -m 0755 "$5"
+  exec mkdir -m "$3" "$5"
 fi
 if [ "\${1-}" = stat ]; then
   if [ "\${3-}" = "%d:%i" ]; then
-    exec node -e '
-      const fs = require("node:fs");
-      const metadata = fs.statSync(process.argv[1]);
-      process.stdout.write(String(metadata.dev) + ":" + String(metadata.ino) + "\\n");
-    ' "$5"
+    case "\${5##*/}" in
+      .nemoclaw-cpu-controller.*) is_staging_dir=1 ;;
+      *) is_staging_dir=0 ;;
+    esac
+    if [ "\${FAIL_STAGING_STAT:-0}" = 1 ] && [ "$is_staging_dir" = 1 ]; then
+      printf '%s\\n' 'simulated staging identity recording failure' >&2
+      exit 76
+    elif [ "\${FAIL_STAT_ID_PATH:-}" = "\${5-}" ]; then
+      printf '%s\\n' 'simulated identity recording failure' >&2
+      exit 76
+    elif [ "\${STAT_ID_OVERRIDE_PATH:-}" = "\${5-}" ]; then
+      printf '%s\\n' "\${STAT_ID_OVERRIDE:-0:0}"
+    else
+      printf '%s\\n' '1:1'
+    fi
   elif [ "\${SUDO_SCENARIO:-}" = existing-directory-metadata ]; then
     printf '%s\\n' 'root:root 750'
   else
-    printf '%s\\n' 'root:root 755'
+    case "\${5##*/}" in
+      .nemoclaw-cpu-controller.*) printf '%s\\n' 'root:root 700' ;;
+      *) printf '%s\\n' 'root:root 755' ;;
+    esac
   fi
   exit 0
 fi
@@ -130,17 +155,14 @@ fi
 if [ "\${1-}" = chmod ]; then
   exec chmod "$2" "$4"
 fi
-if [ "\${1-}" = dd ]; then
-  if [ "\${SUDO_SCENARIO:-}" = write-failure ]; then
-    for argument in "$@"; do
-      case "$argument" in
-        of=*) temporary_file="\${argument#of=}" ;;
-      esac
-    done
-    printf '%s\\n' 'partial content' > "$temporary_file"
+if [ "\${1-}" = sh ] && [ "\${SUDO_SCENARIO:-}" = write-failure ]; then
+  case "\${3-}" in
+    *'cat >'*)
+    printf '%s\\n' 'partial content' > "$5"
     printf '%s\\n' 'simulated temporary file write failure' >&2
     exit 74
-  fi
+    ;;
+  esac
 fi
 if [ "\${1-}" = ln ]; then
   link_call=1
@@ -155,7 +177,12 @@ if [ "\${1-}" = ln ]; then
   if [ "\${SUDO_SCENARIO:-}" = concurrent ]; then
     printf '%s\\n' 'concurrent content' > "$FAILURE_TARGET"
   fi
-  exec ln "$4" "$5"
+  ln "$4" "$5"
+  if [ "$link_call" -eq "\${FAIL_AFTER_LINK_CALL:-0}" ]; then
+    printf '%s\\n' 'simulated interruption after publish link' >&2
+    exit 78
+  fi
+  exit 0
 fi
 exec "$@"
 `,
@@ -170,10 +197,6 @@ exec "$@"
     .replace(
       'app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"',
       `app_slice_drop_in=${JSON.stringify(appSliceDropIn)}`,
-    )
-    .replace(
-      'user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"',
-      `user_slice_drop_in=${JSON.stringify(userSliceDropIn)}`,
     );
 
   return {
@@ -189,7 +212,6 @@ exec "$@"
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
     mkdirCallMarker,
-    userSliceDropIn,
   };
 }
 
@@ -198,38 +220,49 @@ function fileIdentity(filePath: string): string {
   return `${metadata.dev}:${metadata.ino}`;
 }
 
-function makeRollbackFixture(expectedDelegationDropInId?: string): RollbackFixture {
+function makeRollbackFixture(options: RollbackFixtureOptions = {}): RollbackFixture {
   const root = makeTemporaryDirectory();
   const delegationDropInDirectory = path.join(root, "system");
-  const userSliceDropInDirectory = path.join(root, "user-slice");
   const appSliceDropInDirectory = path.join(root, "user");
   const delegationDropIn = path.join(delegationDropInDirectory, "90-nemoclaw-cpu-delegation.conf");
-  const userSliceDropIn = path.join(userSliceDropInDirectory, "90-nemoclaw-cpu-controller.conf");
   const appSliceDropIn = path.join(appSliceDropInDirectory, "90-nemoclaw-cpu-controller.conf");
   const fakeBin = path.join(root, "bin");
   const systemctlCallMarker = path.join(root, "systemctl-calls");
   const sudo = path.join(fakeBin, "sudo");
+  const delegationDropInCreated = options.delegationDropInCreated ?? true;
+  const appSliceDropInCreated = options.appSliceDropInCreated ?? true;
   fs.mkdirSync(delegationDropInDirectory);
-  fs.mkdirSync(userSliceDropInDirectory);
   fs.mkdirSync(appSliceDropInDirectory);
   fs.mkdirSync(fakeBin);
-  fs.writeFileSync(delegationDropIn, "[Service]\nDelegate=cpu memory pids\n");
-  fs.writeFileSync(userSliceDropIn, "[Slice]\nCPUWeight=100\n");
-  fs.writeFileSync(appSliceDropIn, "[Slice]\nCPUWeight=100\n");
+  [
+    {
+      content: "[Service]\nDelegate=cpu memory pids\n",
+      created: delegationDropInCreated,
+      file: delegationDropIn,
+    },
+    {
+      content: "[Slice]\nCPUWeight=100\n",
+      created: appSliceDropInCreated,
+      file: appSliceDropIn,
+    },
+  ]
+    .filter(({ created }) => created)
+    .forEach(({ content, file }) => fs.writeFileSync(file, content));
   fs.writeFileSync(
     sudo,
     `#!/bin/sh
 set -eu
+if [ -n "\${FAIL_PREDICATE_PATH:-}" ] && [ "\${1-}" = sh ] && [ "\${5-}" = "$FAIL_PREDICATE_PATH" ]; then printf '%s\\n' 'simulated predicate inspection failure' >&2; exit 77; fi
 if [ "\${1-}" = systemctl ]; then
   printf '%s\n' "$*" >> "$SYSTEMCTL_CALL_MARKER"
-  if [ "\${2-}" = start ] && [ "\${FAIL_SYSTEMCTL_START:-0}" = 1 ]; then
-    printf '%s\n' 'simulated status=219/CGROUP' >&2
-    exit 219
+  if [ "\${2-}" = start ] && [ "\${START_FAILURE_219:-0}" = 1 ]; then
+    printf '%s\n' 'Job failed with result cgroup' >&2
+    exit 1
   fi
-  exit 0
-fi
-if [ "\${1-}" = journalctl ]; then
-  printf '%s\n' "$*" >> "$SYSTEMCTL_CALL_MARKER"
+  if [ "\${2-}" = status ] && [ "\${START_FAILURE_219:-0}" = 1 ]; then
+    printf '%s\n' 'Process: 100 ExecStart=/bin/false (code=exited, status=219/CGROUP)'
+    exit 3
+  fi
   exit 0
 fi
 if [ "\${1-}" = stat ]; then
@@ -271,22 +304,26 @@ exec "$@"
       `app_slice_drop_in=${JSON.stringify(appSliceDropIn)}`,
     )
     .replace(
-      'user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"',
-      `user_slice_drop_in=${JSON.stringify(userSliceDropIn)}`,
+      'delegation_drop_in_created="<recorded-final-0-or-1>"',
+      `delegation_drop_in_created=${JSON.stringify(delegationDropInCreated ? "1" : "0")}`,
     )
     .replace(
-      'expected_delegation_drop_in_id="<recorded-delegation-device:inode>"',
+      'expected_delegation_drop_in_id="<recorded-device:inode-if-created>"',
       `expected_delegation_drop_in_id=${JSON.stringify(
-        expectedDelegationDropInId ?? fileIdentity(delegationDropIn),
+        delegationDropInCreated
+          ? (options.expectedDelegationDropInId ?? fileIdentity(delegationDropIn))
+          : "",
       )}`,
     )
     .replace(
-      'expected_app_slice_drop_in_id="<recorded-app-slice-device:inode>"',
-      `expected_app_slice_drop_in_id=${JSON.stringify(fileIdentity(appSliceDropIn))}`,
+      'app_slice_drop_in_created="<recorded-final-0-or-1>"',
+      `app_slice_drop_in_created=${JSON.stringify(appSliceDropInCreated ? "1" : "0")}`,
     )
     .replace(
-      'expected_user_slice_drop_in_id="<recorded-user-slice-device:inode>"',
-      `expected_user_slice_drop_in_id=${JSON.stringify(fileIdentity(userSliceDropIn))}`,
+      'expected_app_slice_drop_in_id="<recorded-device:inode-if-created>"',
+      `expected_app_slice_drop_in_id=${JSON.stringify(
+        appSliceDropInCreated ? fileIdentity(appSliceDropIn) : "",
+      )}`,
     )
     .replace(
       'delegation_drop_in_dir_created="<recorded-0-or-1>"',
@@ -303,14 +340,6 @@ exec "$@"
     .replace(
       'app_slice_drop_in_dir_id="<recorded-device:inode-if-created>"',
       `app_slice_drop_in_dir_id=${JSON.stringify(fileIdentity(appSliceDropInDirectory))}`,
-    )
-    .replace(
-      'user_slice_drop_in_dir_created="<recorded-0-or-1>"',
-      'user_slice_drop_in_dir_created="1"',
-    )
-    .replace(
-      'user_slice_drop_in_dir_id="<recorded-device:inode-if-created>"',
-      `user_slice_drop_in_dir_id=${JSON.stringify(fileIdentity(userSliceDropInDirectory))}`,
     );
 
   return {
@@ -326,8 +355,6 @@ exec "$@"
       SYSTEMCTL_CALL_MARKER: systemctlCallMarker,
     },
     systemctlCallMarker,
-    userSliceDropIn,
-    userSliceDropInDirectory,
   };
 }
 
@@ -346,18 +373,21 @@ function runDocumentedRollback(fixture: RollbackFixture, environment: NodeJS.Pro
 }
 
 function finalRecord(output: string, name: string): string | undefined {
-  const matches = [...output.matchAll(new RegExp(`Record for rollback: ${name}=([^\\n]+)`, "gu"))];
+  const matches = [...output.matchAll(new RegExp(`Record for rollback: ${name}=([^\\n]*)`, "gu"))];
   return matches.at(-1)?.[1];
 }
 
 function partialCreationRollbackCommand(fixture: CommandFixture, creationOutput: string): string {
   const values = new Map<string, string>();
-  for (const prefix of ["delegation", "user_slice", "app_slice"]) {
+  for (const prefix of ["delegation", "app_slice"]) {
     for (const suffix of [
       "drop_in_created",
       "drop_in_id",
       "drop_in_dir_created",
       "drop_in_dir_id",
+      "staging_dir_path",
+      "staging_dir_created",
+      "staging_dir_id",
     ]) {
       const name = `${prefix}_${suffix}`;
       values.set(name, finalRecord(creationOutput, name) ?? "");
@@ -365,14 +395,9 @@ function partialCreationRollbackCommand(fixture: CommandFixture, creationOutput:
   }
 
   let command = extractPartialCreationRollbackCommand()
-    .replace('uid="<affected-user-id>"', 'uid="1000"')
     .replace(
       'delegation_drop_in="/etc/systemd/system/user@.service.d/90-nemoclaw-cpu-delegation.conf"',
       `delegation_drop_in=${JSON.stringify(fixture.delegationDropIn)}`,
-    )
-    .replace(
-      'user_slice_drop_in="/etc/systemd/system/user-${uid}.slice.d/90-nemoclaw-cpu-controller.conf"',
-      `user_slice_drop_in=${JSON.stringify(fixture.userSliceDropIn)}`,
     )
     .replace(
       'app_slice_drop_in="/etc/systemd/user/app.slice.d/90-nemoclaw-cpu-controller.conf"',
@@ -388,10 +413,48 @@ function partialCreationRollbackCommand(fixture: CommandFixture, creationOutput:
   return command;
 }
 
-function runPartialCreationRollback(fixture: CommandFixture, creationOutput: string) {
+function runPartialCreationRollback(
+  fixture: CommandFixture,
+  creationOutput: string,
+  environment: NodeJS.ProcessEnv = {},
+) {
   return spawnSync("bash", ["-c", partialCreationRollbackCommand(fixture, creationOutput)], {
     encoding: "utf8",
-    env: fixture.environment,
+    env: { ...fixture.environment, ...environment },
+  });
+}
+
+function runUnrecordedDirectoryRecovery(
+  fixture: CommandFixture,
+  directory: string,
+  environment: NodeJS.ProcessEnv = {},
+  creationOutput = "",
+) {
+  const command = extractUnrecordedDirectoryRecoveryCommand()
+    .replace(
+      'unrecorded_directory="<exact-directory-from-identity-recording-error>"',
+      `unrecorded_directory=${JSON.stringify(directory)}`,
+    )
+    .replace(
+      'delegation_drop_in_dir="/etc/systemd/system/user@.service.d"',
+      `delegation_drop_in_dir=${JSON.stringify(path.dirname(fixture.delegationDropIn))}`,
+    )
+    .replace(
+      'app_slice_drop_in_dir="/etc/systemd/user/app.slice.d"',
+      `app_slice_drop_in_dir=${JSON.stringify(path.dirname(fixture.appSliceDropIn))}`,
+    )
+    .replace(
+      'delegation_staging_dir_path="<recorded-delegation-staging-dir-path-or-empty>"',
+      `delegation_staging_dir_path=${JSON.stringify(finalRecord(creationOutput, "delegation_staging_dir_path") ?? "")}`,
+    )
+    .replace(
+      'app_slice_staging_dir_path="<recorded-app-slice-staging-dir-path-or-empty>"',
+      `app_slice_staging_dir_path=${JSON.stringify(finalRecord(creationOutput, "app_slice_staging_dir_path") ?? "")}`,
+    );
+
+  return spawnSync("bash", ["-c", command], {
+    encoding: "utf8",
+    env: { ...fixture.environment, ...environment },
   });
 }
 
@@ -399,14 +462,49 @@ function runDocumentedApply(fixture: RollbackFixture) {
   const command = extractApplyCommand().replace('uid="<affected-user-id>"', 'uid="1000"');
   return spawnSync("bash", ["-c", command], {
     encoding: "utf8",
-    env: { ...fixture.environment, FAIL_SYSTEMCTL_START: "1" },
+    env: { ...fixture.environment, START_FAILURE_219: "1" },
   });
+}
+
+function runClassificationWithUserManagerEvidence(evidence: Buffer | string) {
+  const root = makeTemporaryDirectory();
+  const rootControllers = path.join(root, "root.controllers");
+  const userManager = path.join(root, "user-manager");
+  const userManagerControllers = path.join(userManager, "cgroup.controllers");
+  const appSliceControllers = path.join(userManager, "app.slice", "cgroup.controllers");
+  fs.mkdirSync(path.dirname(appSliceControllers), { recursive: true });
+  fs.writeFileSync(rootControllers, "cpuset cpu memory pids\n");
+  fs.writeFileSync(userManagerControllers, evidence);
+  fs.writeFileSync(appSliceControllers, "cpu memory pids\n");
+  const command = extractControllerClassificationCommand()
+    .replace('uid="$(id -u)"', 'uid="1000"')
+    .replace(
+      'user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"',
+      `user_manager=${JSON.stringify(userManager)}`,
+    )
+    .replace("/sys/fs/cgroup/cgroup.controllers", JSON.stringify(rootControllers));
+  const verificationCommand = extractFinalControllerVerificationCommand()
+    .replace('uid="$(id -u)"', 'uid="1000"')
+    .replace(
+      'user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"',
+      `user_manager=${JSON.stringify(userManager)}`,
+    )
+    .replace("/sys/fs/cgroup/cgroup.controllers", JSON.stringify(rootControllers));
+
+  return {
+    appSliceControllers,
+    command,
+    result: spawnSync("bash", ["-c", command], { encoding: "utf8" }),
+    rootControllers,
+    userManagerControllers,
+    verificationCommand,
+    verificationResult: spawnSync("bash", ["-c", verificationCommand], { encoding: "utf8" }),
+  };
 }
 
 function listTemporaryDropIns(fixture: CommandFixture): string[] {
   const directories = new Set([
     path.dirname(fixture.delegationDropIn),
-    path.dirname(fixture.userSliceDropIn),
     path.dirname(fixture.appSliceDropIn),
   ]);
 
@@ -426,18 +524,243 @@ afterEach(() => {
   }
 });
 
-describe("portable CPU delegation documentation", () => {
-  it("removes recorded drop-ins and procedure-created directories (#9188)", () => {
-    const fixture = makeRollbackFixture();
-    const result = runDocumentedRollback(fixture);
+describe("portable CPU delegation documentation (#9188)", () => {
+  it("classifies malformed controller evidence without printing its content (#9188)", () => {
+    const {
+      appSliceControllers,
+      command,
+      result,
+      rootControllers,
+      userManagerControllers,
+      verificationResult,
+    } = runClassificationWithUserManagerEvidence("cpu memory\nDelegate=cpu\n");
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`${rootControllers}: readable (cpuset cpu memory pids)`);
+    expect(result.stdout).toContain(`${userManagerControllers}: malformed`);
+    expect(result.stdout).toContain(`${appSliceControllers}: readable (cpu memory pids)`);
+    expect(result.stdout).not.toContain("Delegate=cpu");
+    expect(command).toContain("Buffer.alloc(4097)");
+    expect(command).toContain("content.length > 4096");
+    expect(command).not.toContain('cat -- "$controllers"');
+    expect(verificationResult.status).not.toBe(0);
+    expect(verificationResult.stdout).toContain(`${userManagerControllers}: malformed`);
+    expect(verificationResult.stdout).not.toContain("Delegate=cpu");
+  });
+
+  it.each([
+    { caseName: "NUL-containing", evidence: Buffer.from("cpu\0memory\n"), leaked: "cpu\0memory" },
+    { caseName: "invalid UTF-8", evidence: Buffer.from([0x63, 0x70, 0x75, 0xff]), leaked: "�" },
+    { caseName: "oversized", evidence: Buffer.alloc(1024 * 1024, 0x61), leaked: "a".repeat(256) },
+    { caseName: "duplicate", evidence: "cpu memory cpu\n", leaked: "cpu memory cpu" },
+  ])("classifies $caseName evidence as malformed (#9188)", ({ evidence, leaked }) => {
+    const { result, userManagerControllers, verificationResult } =
+      runClassificationWithUserManagerEvidence(evidence);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain(`${userManagerControllers}: malformed`);
+    expect(result.stdout).not.toContain(leaked);
+    expect(result.stdout.length).toBeLessThan(1024);
+    expect(verificationResult.status).not.toBe(0);
+    expect(verificationResult.stdout).toContain(`${userManagerControllers}: malformed`);
+    expect(verificationResult.stdout).not.toContain(leaked);
+  });
+
+  it("refuses to inspect malformed evidence outside the exact controller paths (#9188)", () => {
+    const root = makeTemporaryDirectory();
+    const rootControllers = path.join(root, "root.controllers");
+    const userManager = path.join(root, "user-manager");
+    const unexpectedPath = path.join(root, "unexpected.controllers");
+    const command = extractMalformedEvidenceInspectionCommand()
+      .replace(
+        'reported_path="<reported-cgroup.controllers-path>"',
+        `reported_path=${JSON.stringify(unexpectedPath)}`,
+      )
+      .replace('uid="$(id -u)"', 'uid="1000"')
+      .replace(
+        'user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"',
+        `user_manager=${JSON.stringify(userManager)}`,
+      )
+      .replace("/sys/fs/cgroup/cgroup.controllers", rootControllers);
+
+    const result = spawnSync("bash", ["-c", command], { encoding: "utf8" });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(`Refusing unexpected cgroup evidence path: ${unexpectedPath}`);
+    expect(command).toContain('"${user_manager}/cgroup.controllers"');
+    expect(command).toContain('"${user_manager}/app.slice/cgroup.controllers"');
+    expect(command).not.toContain("user_slice_drop_in");
+  });
+
+  it("bounds hexadecimal inspection for an exact controller evidence path (#9188)", () => {
+    const root = makeTemporaryDirectory();
+    const rootControllers = path.join(root, "root.controllers");
+    const userManager = path.join(root, "user-manager");
+    const fakeBin = path.join(root, "bin");
+    const sudo = path.join(fakeBin, "sudo");
+    const findmnt = path.join(fakeBin, "findmnt");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      rootControllers,
+      Buffer.concat([Buffer.alloc(256, 0x41), Buffer.from("SECRET_AFTER_LIMIT", "utf8")]),
+    );
+    fs.writeFileSync(sudo, '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
+    fs.writeFileSync(findmnt, "#!/bin/sh\nprintf '%s\\n' 'bounded mount inspection'\n", {
+      mode: 0o755,
+    });
+    const command = extractMalformedEvidenceInspectionCommand()
+      .replace(
+        'reported_path="<reported-cgroup.controllers-path>"',
+        `reported_path=${JSON.stringify(rootControllers)}`,
+      )
+      .replace('uid="$(id -u)"', 'uid="1000"')
+      .replace(
+        'user_manager="/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service"',
+        `user_manager=${JSON.stringify(userManager)}`,
+      )
+      .replace("/sys/fs/cgroup/cgroup.controllers", JSON.stringify(rootControllers));
+
+    const result = spawnSync("bash", ["-c", command], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toMatch(/41\s+41\s+41\s+41/u);
+    expect(result.stdout).toContain("bounded mount inspection");
+    expect(result.stdout).not.toContain("53 45 43 52 45 54");
+    expect(command).toContain('od -An -tx1 -N 256 -v -- "$reported_path"');
+  });
+
+  it("keeps the two-setting repair and warns before each host interruption (#9188)", () => {
+    const markdown = fs.readFileSync(troubleshootingPath, "utf8");
+    const sectionStart = markdown.indexOf("### Portable CPU Delegation Preflight Fails");
+    const sectionEnd = markdown.indexOf("### Portable Podman Readiness Fails", sectionStart);
+    const section = markdown.slice(sectionStart, sectionEnd);
+    const rollbackStart = section.indexOf("#### Remove the CPU Controller Drop-Ins");
+    const applySection = section.slice(0, rollbackStart);
+    const rollbackSection = section.slice(rollbackStart);
+    const applyWarning = applySection.indexOf("Save the affected user's work");
+    const applyStop = applySection.indexOf('sudo systemctl stop "user@${uid}.service"');
+    const rebootWarning = applySection.indexOf("Save work for every host user");
+    const reboot = applySection.indexOf("sudo systemctl reboot");
+    const rollbackWarning = rollbackSection.indexOf("Save the affected user's work");
+    const rollbackStop = rollbackSection.indexOf('sudo systemctl stop "user@${uid}.service"');
+    const cleanupRouting = applySection.indexOf(
+      "Choose the cleanup route that matches the final records:",
+    );
+    const incompleteReceiptRoute = applySection.indexOf(
+      "If any final `*_created` value is `0` but the same command printed its matching `*_id`",
+    );
+    const unrecordedCleanupRoute = applySection.indexOf(
+      "If any final `*_drop_in_dir_created` or `*_staging_dir_created` value is `unrecorded`",
+    );
+    const recordedCleanupRoute = applySection.indexOf(
+      "Otherwise, when every final `*_created` value is `0` or `1`",
+    );
+    const unrecordedCleanupHeading = applySection.indexOf(
+      "#### Recover an Unrecorded Drop-In Directory",
+    );
+    const generalCleanupHeading = applySection.indexOf("#### Clean Up a Partial Drop-In Creation");
+
+    const creationCommand = extractDropInCreationCommand();
+
+    expect(creationCommand).toContain(
+      `delegation_drop_in=${JSON.stringify(PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.delegationDropIn)}`,
+    );
+    expect(creationCommand).toContain(
+      `app_slice_drop_in=${JSON.stringify(PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.appSliceDropIn)}`,
+    );
+    expect(creationCommand).toContain(
+      "delegation \"$delegation_drop_in\" '[Service]' 'Delegate=cpu memory pids'",
+    );
+    expect(creationCommand).toContain(
+      "create_drop_in app_slice \"$app_slice_drop_in\" '[Slice]' 'CPUWeight=100'",
+    );
+    expect(PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.controllerEvidenceReadBytes).toBe(4097);
+    expect(PORTABLE_CPU_DELEGATION_PROOF_CONTRACT.immediateStartFailure).toBe("219/CGROUP");
+    expect(creationCommand).toContain("randomBytes(16)");
+    expect(creationCommand).not.toContain("mktemp");
+    expect(creationCommand.indexOf("drop_in_dir_created=unrecorded")).toBeLessThan(
+      creationCommand.indexOf("sudo mkdir -m 0755"),
+    );
+    expect(creationCommand.indexOf("staging_dir_created=unrecorded")).toBeLessThan(
+      creationCommand.indexOf("sudo mkdir -m 0700"),
+    );
+    expect(creationCommand).not.toContain("CPUAccounting");
+    expect(creationCommand).not.toContain("user_slice_drop_in");
+    expect(applySection).toContain("printf '%s: malformed\\n' \"$controllers\"");
+    expect(applySection).toContain(
+      "Do not use a boot, delegation, or service lifecycle action to correct an unreadable or malformed file.",
+    );
+    expect(applySection).toContain(
+      'start_output="$(sudo systemctl start "user@${uid}.service" 2>&1)"',
+    );
+    expect(applySection).toContain(
+      "Immediate user-manager start failed with 219/CGROUP; use later-login recovery.",
+    );
+    expect(applyWarning).toBeGreaterThanOrEqual(0);
+    expect(applyStop).toBeGreaterThan(applyWarning);
+    expect(rebootWarning).toBeGreaterThanOrEqual(0);
+    expect(reboot).toBeGreaterThan(rebootWarning);
+    expect(rollbackWarning).toBeGreaterThanOrEqual(0);
+    expect(rollbackStop).toBeGreaterThan(rollbackWarning);
+    expect(cleanupRouting).toBeGreaterThanOrEqual(0);
+    expect(incompleteReceiptRoute).toBeGreaterThan(cleanupRouting);
+    expect(unrecordedCleanupRoute).toBeGreaterThan(incompleteReceiptRoute);
+    expect(recordedCleanupRoute).toBeGreaterThan(unrecordedCleanupRoute);
+    expect(unrecordedCleanupHeading).toBeGreaterThan(recordedCleanupRoute);
+    expect(generalCleanupHeading).toBeGreaterThan(unrecordedCleanupHeading);
+    expect(applySection).not.toContain(
+      "The initial `0` records make cleanup executable even when only the first file or directory was created.",
+    );
+    expect(applySection.slice(generalCleanupHeading)).toContain(
+      "Enter this procedure only when every final `*_created` value is `0` or `1`.",
+    );
+    expect(applySection).toContain(
+      "a later login can create it under the corrected cgroup hierarchy",
+    );
+    expect(rollbackSection).toContain(
+      "sign in again so systemd creates the user manager under the restored hierarchy",
+    );
+  });
+
+  it("executes apply-side 219/CGROUP diagnosis after the inactive reload (#9188)", () => {
+    const fixture = makeRollbackFixture();
+    const result = runDocumentedApply(fixture);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("status=219/CGROUP");
+    expect(result.stderr).toContain("use later-login recovery");
+    expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toBe(
+      "systemctl stop user@1000.service\n" +
+        "systemctl daemon-reload\n" +
+        "systemctl start user@1000.service\n" +
+        "systemctl status user@1000.service --no-pager\n",
+    );
+  });
+
+  it("fails closed on rollback inspection before removing recorded objects (#9188)", () => {
+    const fixture = makeRollbackFixture();
+    const inspectionFailure = runDocumentedRollback(fixture, {
+      FAIL_PREDICATE_PATH: fixture.delegationDropIn,
+    });
+    expect(inspectionFailure.status).not.toBe(0);
+    expect(inspectionFailure.stderr).toContain("simulated predicate inspection failure");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(true);
+    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(true);
+    expect(fs.existsSync(fixture.delegationDropInDirectory)).toBe(true);
+    expect(fs.existsSync(fixture.appSliceDropInDirectory)).toBe(true);
+    expect(fs.existsSync(fixture.systemctlCallMarker)).toBe(false);
+    const result = runDocumentedRollback(fixture);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
     expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
     expect(fs.existsSync(fixture.delegationDropInDirectory)).toBe(false);
-    expect(fs.existsSync(fixture.userSliceDropInDirectory)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropInDirectory)).toBe(false);
     expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toBe(
       "systemctl stop user@1000.service\n" +
@@ -449,11 +772,8 @@ describe("portable CPU delegation documentation", () => {
   it("accepts recorded rollback resources that are already absent (#9188)", () => {
     const fixture = makeRollbackFixture();
     fs.rmSync(fixture.delegationDropInDirectory, { recursive: true });
-    fs.rmSync(fixture.userSliceDropInDirectory, { recursive: true });
     fs.rmSync(fixture.appSliceDropInDirectory, { recursive: true });
-
     const result = runDocumentedRollback(fixture);
-
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toContain(
@@ -461,95 +781,73 @@ describe("portable CPU delegation documentation", () => {
     );
   });
 
-  it("preserves a drop-in whose identity changed after creation (#9188)", () => {
-    const fixture = makeRollbackFixture("0:0");
-    const result = runDocumentedRollback(fixture);
+  it("removes a partial publication and accepts the same record on retry (#9188)", () => {
+    const fixture = makeRollbackFixture({ appSliceDropInCreated: false });
+    const firstResult = runDocumentedRollback(fixture);
+    const retryResult = runDocumentedRollback(fixture);
+    expect(firstResult.status).toBe(0);
+    expect(firstResult.stderr).toBe("");
+    expect(retryResult.status).toBe(0);
+    expect(retryResult.stderr).toBe("");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
+    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+    expect(fs.existsSync(fixture.delegationDropInDirectory)).toBe(false);
+    expect(fs.existsSync(fixture.appSliceDropInDirectory)).toBe(false);
+    expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toBe(
+      (
+        "systemctl stop user@1000.service\n" +
+        "systemctl daemon-reload\n" +
+        "systemctl start user@1000.service\n"
+      ).repeat(2),
+    );
+  });
 
+  it("preserves a drop-in whose identity changed after creation (#9188)", () => {
+    const fixture = makeRollbackFixture({ expectedDelegationDropInId: "0:0" });
+    const result = runDocumentedRollback(fixture);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Refusing CPU controller drop-in whose identity changed");
     expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe(
       "[Service]\nDelegate=cpu memory pids\n",
     );
     expect(fs.existsSync(fixture.delegationDropInDirectory)).toBe(true);
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.userSliceDropInDirectory)).toBe(false);
-    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.appSliceDropInDirectory)).toBe(false);
-    expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toContain(
-      "systemctl start user@1000.service\n",
-    );
+    expect(fs.readFileSync(fixture.appSliceDropIn, "utf8")).toBe("[Slice]\nCPUWeight=100\n");
+    expect(fs.existsSync(fixture.appSliceDropInDirectory)).toBe(true);
+    expect(fs.existsSync(fixture.systemctlCallMarker)).toBe(false);
   });
 
-  it("captures an immediate apply start 219/CGROUP failure after inactive reload (#9188)", () => {
+  it("reports immediate 219/CGROUP and accepts rollback after later-login recovery (#9188)", () => {
     const fixture = makeRollbackFixture();
-    const result = runDocumentedApply(fixture);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("status=219/CGROUP");
+    const failedStart = runDocumentedRollback(fixture, { START_FAILURE_219: "1" });
+    const recoveredRetry = runDocumentedRollback(fixture);
+    expect(failedStart.status).not.toBe(0);
+    expect(failedStart.stderr).toContain("status=219/CGROUP");
+    expect(failedStart.stderr).toContain("use later-login recovery");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
+    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+    expect(recoveredRetry.status).toBe(0);
+    expect(recoveredRetry.stderr).toBe("");
     expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toBe(
       "systemctl stop user@1000.service\n" +
         "systemctl daemon-reload\n" +
         "systemctl start user@1000.service\n" +
-        "systemctl --no-pager --full status user@1000.service\n" +
-        "journalctl --no-pager --unit user@1000.service --lines 200\n",
+        "systemctl status user@1000.service --no-pager\n" +
+        "systemctl stop user@1000.service\n" +
+        "systemctl daemon-reload\n" +
+        "systemctl start user@1000.service\n",
     );
   });
 
-  it("removes the drop-ins and diagnoses rollback start 219/CGROUP before a safe retry (#9188)", () => {
-    const fixture = makeRollbackFixture();
-    const failedStart = runDocumentedRollback(fixture, { FAIL_SYSTEMCTL_START: "1" });
-
-    expect(failedStart.status).not.toBe(0);
-    expect(failedStart.stderr).toContain("status=219/CGROUP");
-    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
-    expect(fs.readFileSync(fixture.systemctlCallMarker, "utf8")).toContain(
-      "journalctl --no-pager --unit user@1000.service --lines 200\n",
-    );
-
-    const retry = runDocumentedRollback(fixture);
-    expect(retry.status).toBe(0);
-  });
-
-  it("places interruption warnings before lifecycle commands and documents later-login recovery (#9188)", () => {
-    const markdown = fs.readFileSync(troubleshootingPath, "utf8");
-    const applyCommand = markdown.indexOf('sudo systemctl stop "user@${uid}.service"');
-    const rollbackHeading = markdown.indexOf("#### Remove the CPU Controller Drop-Ins");
-    const rollbackCommand = markdown.indexOf(
-      'sudo systemctl stop "user@${uid}.service"',
-      rollbackHeading,
-    );
-    const applyWarning = markdown.lastIndexOf("Before the next command", applyCommand);
-    const rollbackWarning = markdown.lastIndexOf("Before the next command", rollbackCommand);
-
-    expect(applyWarning).toBeGreaterThanOrEqual(0);
-    expect(applyWarning).toBeLessThan(applyCommand);
-    expect(rollbackWarning).toBeGreaterThan(rollbackHeading);
-    expect(rollbackWarning).toBeLessThan(rollbackCommand);
-    expect(markdown.match(/status=219\/CGROUP/gu)).toHaveLength(2);
-    expect(markdown.match(/create a fresh login session later/gu)).toHaveLength(2);
-    expect(markdown.match(/Before rebooting, every host user must save their work/gu)).toHaveLength(
-      2,
-    );
-    expect(markdown.match(/systemctl cat user@\.service/gu)).toHaveLength(2);
-    expect(markdown.match(/sudo systemctl cat "user-\$\{uid\}\.slice"/gu)).toHaveLength(2);
-    expect(markdown.match(/systemctl --user cat app\.slice/gu)).toHaveLength(2);
-  });
-
-  it("creates all three drop-ins with their required content and mode (#9188)", () => {
+  it("creates both drop-ins with their required content and mode (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture);
-
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe(
       "[Service]\nDelegate=cpu memory pids\n",
     );
-    expect(fs.readFileSync(fixture.userSliceDropIn, "utf8")).toBe("[Slice]\nCPUWeight=100\n");
     expect(fs.readFileSync(fixture.appSliceDropIn, "utf8")).toBe("[Slice]\nCPUWeight=100\n");
     expect(fs.statSync(fixture.delegationDropIn).mode & 0o777).toBe(0o644);
-    expect(fs.statSync(fixture.userSliceDropIn).mode & 0o777).toBe(0o644);
     expect(fs.statSync(fixture.appSliceDropIn).mode & 0o777).toBe(0o644);
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
@@ -557,7 +855,6 @@ describe("portable CPU delegation documentation", () => {
   it("does not replace a drop-in created before the publish link (#9188)", () => {
     const fixture = makeCommandFixture();
     const result = runDocumentedCommand(fixture, { SUDO_SCENARIO: "concurrent" });
-
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("File exists");
     expect(result.stderr).toContain(
@@ -565,18 +862,16 @@ describe("portable CPU delegation documentation", () => {
     );
     expect(result.stderr).not.toContain("Refusing to replace existing file");
     expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe("concurrent content\n");
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 
   it.each([
-    { failedMkdirCall: 1, recordedCreatedDirectories: 0 },
-    { failedMkdirCall: 2, recordedCreatedDirectories: 1 },
-    { failedMkdirCall: 3, recordedCreatedDirectories: 2 },
+    { failedMkdirCall: 1, recordsFirstDirectory: false },
+    { failedMkdirCall: 2, recordsFirstDirectory: true },
   ])(
     "does not create a drop-in when mkdir call $failedMkdirCall fails (#9188)",
-    ({ failedMkdirCall, recordedCreatedDirectories }) => {
+    ({ failedMkdirCall, recordsFirstDirectory }) => {
       const fixture = makeCommandFixture();
       const result = runDocumentedCommand(fixture, {
         FAIL_MKDIR_CALL: String(failedMkdirCall),
@@ -586,14 +881,70 @@ describe("portable CPU delegation documentation", () => {
       expect(result.stderr).toContain("simulated directory creation failure");
       expect(fs.readFileSync(fixture.mkdirCallMarker, "utf8")).toBe(`${failedMkdirCall}\n`);
       expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-      expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
       expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
       expect(listTemporaryDropIns(fixture)).toEqual([]);
-      expect(result.stdout.match(/_drop_in_dir_created=1/gu) ?? []).toHaveLength(
-        recordedCreatedDirectories,
+      expect(result.stdout.includes("delegation_drop_in_dir_created=1")).toBe(
+        recordsFirstDirectory,
       );
+      expect(result.stdout.includes("delegation_drop_in_dir_id=1:1")).toBe(recordsFirstDirectory);
+      expect(result.stdout).toContain("delegation_drop_in_created=0");
+      expect(result.stdout).toContain("app_slice_drop_in_created=0");
     },
   );
+
+  it("recovers an exact empty directory when identity recording fails after mkdir (#9188)", () => {
+    const fixture = makeCommandFixture();
+    const delegationDirectory = path.dirname(fixture.delegationDropIn);
+    const creation = runDocumentedCommand(fixture, {
+      FAIL_STAT_ID_PATH: delegationDirectory,
+    });
+    expect(creation.stderr).toContain("simulated identity recording failure");
+    expect(creation.stderr).toContain(
+      `CPU controller drop-in directory identity recording failed: ${delegationDirectory}`,
+    );
+    expect(finalRecord(creation.stdout, "delegation_drop_in_dir_created")).toBe("unrecorded");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
+    const rejectedGeneralCleanup = runPartialCreationRollback(fixture, creation.stdout);
+    expect(rejectedGeneralCleanup.status).not.toBe(0);
+    expect(fs.existsSync(delegationDirectory)).toBe(true);
+    const inspectionFailure = runUnrecordedDirectoryRecovery(fixture, delegationDirectory, {
+      FAIL_PREDICATE_PATH: delegationDirectory,
+    });
+    expect(inspectionFailure.status).not.toBe(0);
+    expect(inspectionFailure.stderr).toContain("simulated predicate inspection failure");
+    expect(fs.existsSync(delegationDirectory)).toBe(true);
+    const concurrentFile = path.join(delegationDirectory, "concurrent.conf");
+    fs.writeFileSync(concurrentFile, "preserve\n");
+    const refusedRecovery = runUnrecordedDirectoryRecovery(fixture, delegationDirectory);
+    expect(refusedRecovery.status).not.toBe(0);
+    expect(refusedRecovery.stderr).toContain("Refusing nonempty unrecorded drop-in directory");
+    expect(fs.readFileSync(concurrentFile, "utf8")).toBe("preserve\n");
+    fs.rmSync(concurrentFile);
+    const recovery = runUnrecordedDirectoryRecovery(fixture, delegationDirectory);
+    expect(recovery.status).toBe(0);
+    expect(fs.existsSync(delegationDirectory)).toBe(false);
+    const stagingFixture = makeCommandFixture();
+    const stagingCreation = runDocumentedCommand(stagingFixture, { FAIL_STAGING_STAT: "1" });
+    const stagingDirectory =
+      finalRecord(stagingCreation.stdout, "delegation_staging_dir_path") ?? "";
+    expect(finalRecord(stagingCreation.stdout, "delegation_staging_dir_created")).toBe(
+      "unrecorded",
+    );
+    const rejectedStagingCleanup = runPartialCreationRollback(
+      stagingFixture,
+      stagingCreation.stdout,
+    );
+    expect(rejectedStagingCleanup.status).not.toBe(0);
+    expect(fs.existsSync(stagingDirectory)).toBe(true);
+    const stagingRecovery = runUnrecordedDirectoryRecovery(
+      stagingFixture,
+      stagingDirectory,
+      {},
+      stagingCreation.stdout,
+    );
+    expect(stagingRecovery.status).toBe(0);
+    expect(fs.existsSync(stagingDirectory)).toBe(false);
+  });
 
   it("prints each creation identity before a later drop-in publish fails (#9188)", () => {
     const fixture = makeCommandFixture();
@@ -601,86 +952,102 @@ describe("portable CPU delegation documentation", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("simulated publish link failure");
-    expect(result.stdout).toContain("delegation_drop_in_dir_created=1");
-    expect(finalRecord(result.stdout, "delegation_drop_in_dir_id")).toMatch(/^\d+:\d+$/u);
-    expect(result.stdout).toContain("user_slice_drop_in_dir_created=1");
-    expect(finalRecord(result.stdout, "user_slice_drop_in_dir_id")).toMatch(/^\d+:\d+$/u);
-    expect(result.stdout).toContain("app_slice_drop_in_dir_created=1");
-    expect(finalRecord(result.stdout, "app_slice_drop_in_dir_id")).toMatch(/^\d+:\d+$/u);
-    expect(finalRecord(result.stdout, "delegation_drop_in_id")).toMatch(/^\d+:\d+$/u);
-    expect(finalRecord(result.stdout, "delegation_drop_in_created")).toBe("1");
-    expect(finalRecord(result.stdout, "user_slice_drop_in_created")).toBe("0");
+    expect(result.stdout).toMatch(
+      /delegation_drop_in_dir_id=1:1\nRecord for rollback: delegation_drop_in_dir_created=1/u,
+    );
+    expect(result.stdout).toMatch(
+      /app_slice_drop_in_dir_id=1:1\nRecord for rollback: app_slice_drop_in_dir_created=1/u,
+    );
+    expect(result.stdout).toMatch(
+      /delegation_drop_in_id=1:1\nRecord for rollback: delegation_drop_in_created=1/u,
+    );
     expect(finalRecord(result.stdout, "app_slice_drop_in_created")).toBe("0");
+    expect(finalRecord(result.stdout, "app_slice_drop_in_id")).toBe("1:1");
     expect(fs.existsSync(fixture.delegationDropIn)).toBe(true);
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
 
-  it.each([2, 3])(
-    "executes retry-safe partial cleanup after publish call %s fails (#9188)",
-    (failedLinkCall) => {
-      const fixture = makeCommandFixture();
-      const creation = runDocumentedCommand(fixture, {
-        FAIL_LINK_CALL: String(failedLinkCall),
-      });
-      expect(creation.status).not.toBe(0);
-
-      const firstCleanup = runPartialCreationRollback(fixture, creation.stdout);
-      expect(firstCleanup.status).toBe(0);
-      expect(firstCleanup.stderr).toBe("");
-      expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-      expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
-      expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
-      expect(fs.existsSync(path.dirname(fixture.delegationDropIn))).toBe(false);
-      expect(fs.existsSync(path.dirname(fixture.userSliceDropIn))).toBe(false);
-      expect(fs.existsSync(path.dirname(fixture.appSliceDropIn))).toBe(false);
-
-      const retry = runPartialCreationRollback(fixture, creation.stdout);
-      expect(retry.status).toBe(0);
-      expect(retry.stderr).toBe("");
-    },
-  );
-
-  it("partial cleanup preserves pre-existing directories (#9188)", () => {
+  it("repairs an incomplete receipt and fails closed on partial-cleanup inspection (#9188)", () => {
     const fixture = makeCommandFixture();
-    const directories = [
-      path.dirname(fixture.delegationDropIn),
-      path.dirname(fixture.userSliceDropIn),
-      path.dirname(fixture.appSliceDropIn),
-    ];
-    for (const directory of directories) {
-      fs.mkdirSync(directory, { mode: 0o755 });
-    }
+    const creation = runDocumentedCommand(fixture, { FAIL_AFTER_LINK_CALL: "1" });
+    const interruptedReceipt = creation.stdout;
+    const incompleteCleanup = runPartialCreationRollback(fixture, interruptedReceipt);
+    const completedReceipt = `${interruptedReceipt}Record for rollback: delegation_drop_in_created=1\n`;
+    const inspectionFailure = runPartialCreationRollback(fixture, completedReceipt, {
+      FAIL_PREDICATE_PATH: fixture.delegationDropIn,
+    });
 
-    const creation = runDocumentedCommand(fixture, { FAIL_LINK_CALL: "2" });
-    const cleanup = runPartialCreationRollback(fixture, creation.stdout);
-
-    expect(cleanup.status).toBe(0);
+    expect(creation.stderr).toContain("simulated interruption after publish link");
+    expect(finalRecord(interruptedReceipt, "delegation_drop_in_id")).toBe("1:1");
+    expect(finalRecord(interruptedReceipt, "delegation_drop_in_created")).toBe("0");
+    expect(incompleteCleanup.status).not.toBe(0);
+    expect(incompleteCleanup.stderr).toContain("Unexpected identity for unrecorded");
+    expect(inspectionFailure.status).not.toBe(0);
+    expect(inspectionFailure.stderr).toContain("simulated predicate inspection failure");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(true);
+    expect(fs.existsSync(path.dirname(fixture.delegationDropIn))).toBe(true);
+    expect(fs.existsSync(path.dirname(fixture.appSliceDropIn))).toBe(true);
+    const firstCleanup = runPartialCreationRollback(fixture, completedReceipt);
+    const retry = runPartialCreationRollback(fixture, completedReceipt);
+    expect(firstCleanup.stderr).toBe("");
+    expect(firstCleanup.status).toBe(0);
+    expect(retry.status).toBe(0);
+    expect(retry.stderr).toBe("");
     expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-    expect(directories.every((directory) => fs.existsSync(directory))).toBe(true);
+    expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
+    expect(fs.existsSync(path.dirname(fixture.delegationDropIn))).toBe(false);
+    expect(fs.existsSync(path.dirname(fixture.appSliceDropIn))).toBe(false);
   });
 
-  it("partial cleanup refuses a published file whose identity changed (#9188)", () => {
+  it("partial cleanup preserves a published file whose identity changed (#9188)", () => {
     const fixture = makeCommandFixture();
     const creation = runDocumentedCommand(fixture, { FAIL_LINK_CALL: "2" });
-    fs.renameSync(fixture.delegationDropIn, `${fixture.delegationDropIn}.original`);
+    const retainedOriginal = path.join(
+      path.dirname(path.dirname(fixture.delegationDropIn)),
+      "delegation-drop-in.original",
+    );
+    fs.renameSync(fixture.delegationDropIn, retainedOriginal);
     fs.writeFileSync(fixture.delegationDropIn, "replacement\n");
 
-    const cleanup = runPartialCreationRollback(fixture, creation.stdout);
+    const cleanup = runPartialCreationRollback(fixture, creation.stdout, {
+      STAT_ID_OVERRIDE: "0:0",
+      STAT_ID_OVERRIDE_PATH: fixture.delegationDropIn,
+    });
 
+    expect(creation.status).not.toBe(0);
     expect(cleanup.status).not.toBe(0);
-    expect(cleanup.stderr).toContain("whose identity changed");
+    expect(cleanup.stderr).toContain("Refusing CPU controller drop-in whose identity changed");
+    expect(fs.existsSync(retainedOriginal)).toBe(true);
     expect(fs.readFileSync(fixture.delegationDropIn, "utf8")).toBe("replacement\n");
+    expect(fs.existsSync(path.dirname(fixture.delegationDropIn))).toBe(true);
+    expect(fs.existsSync(path.dirname(fixture.appSliceDropIn))).toBe(true);
+  });
+
+  it("partial cleanup preserves valid pre-existing drop-in directories (#9188)", () => {
+    const fixture = makeCommandFixture();
+    const delegationDirectory = path.dirname(fixture.delegationDropIn);
+    const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
+    fs.mkdirSync(delegationDirectory, { mode: 0o755 });
+    fs.mkdirSync(appSliceDirectory, { mode: 0o755 });
+    const creation = runDocumentedCommand(fixture, { FAIL_LINK_CALL: "2" });
+    const completedReceipt = `${creation.stdout}Record for rollback: app_slice_drop_in_created=1\n`;
+
+    const cleanup = runPartialCreationRollback(fixture, completedReceipt);
+
+    expect(creation.status).not.toBe(0);
+    expect(cleanup.status).toBe(0);
+    expect(cleanup.stderr).toBe("");
+    expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
+    expect(fs.existsSync(delegationDirectory)).toBe(true);
+    expect(fs.existsSync(appSliceDirectory)).toBe(true);
   });
 
   it("refuses and preserves pre-existing directory metadata (#9188)", () => {
     const fixture = makeCommandFixture();
     const delegationDirectory = path.dirname(fixture.delegationDropIn);
-    const userSliceDirectory = path.dirname(fixture.userSliceDropIn);
     const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
     fs.mkdirSync(delegationDirectory, { mode: 0o750 });
-    fs.mkdirSync(userSliceDirectory, { mode: 0o750 });
     fs.mkdirSync(appSliceDirectory, { mode: 0o750 });
 
     const result = runDocumentedCommand(fixture, {
@@ -690,33 +1057,26 @@ describe("portable CPU delegation documentation", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Refusing to change existing drop-in directory owner or mode");
     expect(fs.statSync(delegationDirectory).mode & 0o777).toBe(0o750);
-    expect(fs.statSync(userSliceDirectory).mode & 0o777).toBe(0o750);
     expect(fs.statSync(appSliceDirectory).mode & 0o777).toBe(0o750);
     expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
   });
 
   it("records valid pre-existing directories as preserved (#9188)", () => {
     const fixture = makeCommandFixture();
     const delegationDirectory = path.dirname(fixture.delegationDropIn);
-    const userSliceDirectory = path.dirname(fixture.userSliceDropIn);
     const appSliceDirectory = path.dirname(fixture.appSliceDropIn);
     fs.mkdirSync(delegationDirectory, { mode: 0o755 });
-    fs.mkdirSync(userSliceDirectory, { mode: 0o755 });
     fs.mkdirSync(appSliceDirectory, { mode: 0o755 });
 
     const result = runDocumentedCommand(fixture);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("delegation_drop_in_dir_created=0");
-    expect(result.stdout).toContain("user_slice_drop_in_dir_created=0");
     expect(result.stdout).toContain("app_slice_drop_in_dir_created=0");
     expect(result.stdout).not.toContain("delegation_drop_in_dir_id=");
-    expect(result.stdout).not.toContain("user_slice_drop_in_dir_id=");
     expect(result.stdout).not.toContain("app_slice_drop_in_dir_id=");
     expect(fs.statSync(delegationDirectory).mode & 0o777).toBe(0o755);
-    expect(fs.statSync(userSliceDirectory).mode & 0o777).toBe(0o755);
     expect(fs.statSync(appSliceDirectory).mode & 0o777).toBe(0o755);
   });
 
@@ -731,7 +1091,6 @@ describe("portable CPU delegation documentation", () => {
     );
     expect(result.stderr).not.toContain("Refusing to replace existing file");
     expect(fs.existsSync(fixture.delegationDropIn)).toBe(false);
-    expect(fs.existsSync(fixture.userSliceDropIn)).toBe(false);
     expect(fs.existsSync(fixture.appSliceDropIn)).toBe(false);
     expect(listTemporaryDropIns(fixture)).toEqual([]);
   });
