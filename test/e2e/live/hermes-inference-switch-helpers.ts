@@ -338,7 +338,11 @@ const TRANSIENT_HERMES_PROBE_RE =
 
 function hermesProbeFailureClass(result: ShellProbeResult): RetryFailureClass {
   const output = resultText(result);
-  if (/authentication failed|unauthorized|HTTP 401\b|\b401\b/iu.test(output)) {
+  if (
+    /authentication failed|unauthorized|HTTP 401\b|\b401\b|invalid (?:credential|api[_ -]?key)/iu.test(
+      output,
+    )
+  ) {
     return "authentication";
   }
   if (/authorization failed|forbidden|HTTP 403\b|\b403\b/iu.test(output)) {
@@ -434,11 +438,13 @@ export async function runHermesCliPongWithRetry(
       if (error !== undefined || !value) {
         return { outcome: "failed", failureClass: "deterministic" };
       }
+      const failureClass = hermesProbeFailureClass(value.result);
+      if (failureClass !== "deterministic") return { outcome: "failed", failureClass };
       if (value.passed) return { outcome: "passed" };
       if (value.selectedRoutePending) {
         return { outcome: "failed", failureClass: "transient-external" };
       }
-      return { outcome: "failed", failureClass: hermesProbeFailureClass(value.result) };
+      return { outcome: "failed", failureClass };
     },
   });
   if (execution.value) return execution.value.result;

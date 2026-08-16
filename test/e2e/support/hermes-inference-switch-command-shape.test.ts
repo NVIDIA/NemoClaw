@@ -341,9 +341,53 @@ describe("Hermes inference switch command shape", () => {
       expect.objectContaining({
         operation: "hermes-inference-switch.cli-pong",
         outcome: "passed-after-retry",
+        attempts: [
+          expect.objectContaining({
+            attempt: 1,
+            failureClass: "transient-external",
+            retryScheduled: true,
+          }),
+          expect.objectContaining({ attempt: 2, outcome: "passed", retryScheduled: false }),
+        ],
       }),
     );
   });
+
+  it.each(
+    (
+      [
+        ["authentication failed", "authentication"],
+        ["invalid credential", "authentication"],
+        ["invalid API key", "authentication"],
+        ["authorization failed", "authorization"],
+        ["denied by network policy", "policy-denial"],
+        ["malformed request", "malformed-input"],
+      ] as const
+    ).flatMap(([message, failureClass]) => [
+      ["accepted route", message, true, failureClass] as const,
+      ["pending route", message, false, failureClass] as const,
+    ]),
+  )(
+    "does not accept or retry a CLI PONG with %s and %s",
+    async (_routeState, message, accepted, failureClass) => {
+      const result = { exitCode: 0, stderr: message, stdout: "PONG\n" } as ShellProbeResult;
+      const run = vi.fn().mockResolvedValue(result);
+      const delay = vi.fn().mockResolvedValue(undefined);
+      const onEvidence = vi.fn().mockResolvedValue(undefined);
+
+      await expect(
+        runHermesCliPongWithRetry({ accept: () => accepted, delay, onEvidence, run }),
+      ).resolves.toBe(result);
+      expect(run).toHaveBeenCalledOnce();
+      expect(delay).not.toHaveBeenCalled();
+      expect(onEvidence).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: "failed-no-retry",
+          attempts: [expect.objectContaining({ failureClass, retryScheduled: false })],
+        }),
+      );
+    },
+  );
 
   it("parses exact provider and model values from an inference route", () => {
     expect(

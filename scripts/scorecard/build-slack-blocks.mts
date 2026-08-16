@@ -38,13 +38,43 @@ type SlackActionsBlock = { type: "actions"; elements: SlackButtonElement[] };
 type SlackBlock = SlackActionsBlock | SlackContextBlock | SlackSectionBlock;
 
 const SLACK_SECTION_TEXT_LIMIT = 3_000;
+const FAILED_JOBS_CONTINUED_HEADING = "*Failed jobs (continued):*";
+
+function truncateSlackLabel(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+}
+
+function buildFailedJobEntry(
+  job: ScorecardData["failedJobs"][number],
+  runUrl: string,
+  maxLength: number,
+): string {
+  if (!job.url) {
+    const prefix = "• `";
+    const suffix = "`";
+    return `${prefix}${truncateSlackLabel(job.name, maxLength - prefix.length - suffix.length)}${suffix}`;
+  }
+
+  const directLinkOverhead = `• <${job.url}|>`.length;
+  const linkUrl = directLinkOverhead < maxLength ? job.url : runUrl;
+  const prefix = `• <${linkUrl}|`;
+  const suffix = ">";
+  const labelLength = maxLength - prefix.length - suffix.length;
+  if (labelLength < 1) throw new Error("scorecard run URL exceeds Slack section text limit");
+  return `${prefix}${truncateSlackLabel(job.name, labelLength)}${suffix}`;
+}
 
 function buildFailedJobBlocks(data: ScorecardData): SlackSectionBlock[] {
+  const initialHeading = `*Failed jobs (${data.failedJobs.length}):*`;
+  const maxEntryLength =
+    SLACK_SECTION_TEXT_LIMIT -
+    Math.max(initialHeading.length, FAILED_JOBS_CONTINUED_HEADING.length) -
+    1;
   const entries = data.failedJobs.map((job) =>
-    job.url ? `• <${job.url}|${job.name}>` : `• \`${job.name}\``,
+    buildFailedJobEntry(job, data.runUrl, maxEntryLength),
   );
   const blocks: SlackSectionBlock[] = [];
-  let heading = `*Failed jobs (${data.failedJobs.length}):*`;
+  let heading = initialHeading;
   let lines: string[] = [];
 
   for (const entry of entries) {
@@ -54,7 +84,7 @@ function buildFailedJobBlocks(data: ScorecardData): SlackSectionBlock[] {
         type: "section",
         text: { type: "mrkdwn", text: [heading, ...lines].join("\n") },
       });
-      heading = "*Failed jobs (continued):*";
+      heading = FAILED_JOBS_CONTINUED_HEADING;
       lines = [entry];
     } else {
       lines.push(entry);
