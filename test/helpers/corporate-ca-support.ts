@@ -19,7 +19,15 @@ export function sliceBlock(scriptPath: string, startMarker: string, endMarker: s
   if (start === -1 || end === -1 || end <= start) {
     throw new Error(`Failed to extract block [${startMarker} .. ${endMarker}] from ${scriptPath}`);
   }
-  return src.slice(start, end);
+  const block = src.slice(start, end);
+  const sourceCommand = 'source "$_NEMOCLAW_CORPORATE_CA_HELPER"';
+  if (!block.includes(sourceCommand)) return block;
+
+  const helperPath = path.join(import.meta.dirname, "../../scripts/lib/corporate-ca-runtime.sh");
+  const helperSource = fs.readFileSync(helperPath, "utf-8");
+  return block
+    .replaceAll("/usr/local/lib/nemoclaw/corporate-ca-runtime.sh", helperPath)
+    .replace(sourceCommand, helperSource);
 }
 
 export interface CaMaterial {
