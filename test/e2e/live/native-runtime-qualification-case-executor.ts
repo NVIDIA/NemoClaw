@@ -461,6 +461,25 @@ function proveGpuBackedInference(
   return Object.freeze(processes.map((entry) => Object.freeze(entry)));
 }
 
+function inferenceFailureDiagnostic(
+  engine: PodmanBoundContainerEngine,
+  containerId: string,
+): string {
+  const inspect = (args: readonly string[]): string => {
+    try {
+      const result = engine.capture(args, COMMAND_TIMEOUT);
+      return bounded(
+        result.stderr || result.stdout || `command returned exit ${String(result.status)}`,
+      );
+    } catch (error) {
+      return bounded(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const state = inspect(["inspect", "--format", "{{json .State}}", containerId]);
+  const logs = inspect(["logs", "--tail", "50", containerId]);
+  return `state=${state}; logs=${logs}`;
+}
+
 function createAgentContainer(input: {
   readonly engine: PodmanBoundContainerEngine;
   readonly imageRef: string;
@@ -651,7 +670,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
   const ownedContainers = new Set<string>();
   const ownedVolumes = new Set<string>();
   const ownedNetworks = new Set<string>();
-  let inferenceContainerId: string;
+  let inferenceContainerId = "";
   let gpuDevices: readonly string[] = [];
   let gpuComputeProcesses: readonly GpuComputeProcess[] = [];
   let completed = false;
@@ -1197,6 +1216,11 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
       cleanupFailures.push(error);
     }
     if (!completed) {
+      if (inferenceEngine && FULL_ID.test(inferenceContainerId)) {
+        console.error(
+          `Native runtime qualification inference failure diagnostic: ${inferenceFailureDiagnostic(inferenceEngine, inferenceContainerId)}`,
+        );
+      }
       if (lifecycleEngine) {
         for (const containerId of ownedContainers) {
           lifecycleEngine.capture(["rm", "--force", containerId], COMMAND_TIMEOUT);
@@ -1232,6 +1256,7 @@ export async function executeNativeRuntimeQualificationCase(progress: TestProgre
 
 export const nativeRuntimeQualificationCaseInternals = Object.freeze({
   createProviderNetwork,
+  inferenceFailureDiagnostic,
   lifecycleSandboxName,
   parsePhysicalGpuDevices,
   proveGpuDevices,

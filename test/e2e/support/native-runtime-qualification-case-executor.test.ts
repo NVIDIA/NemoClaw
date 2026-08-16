@@ -127,6 +127,29 @@ describe("native runtime GPU evidence", () => {
   });
 });
 
+describe("native runtime failure diagnosis", () => {
+  it("captures bounded inference state and logs without changing the case result", () => {
+    const containerId = "e".repeat(64);
+    const runtime = engine([
+      '{"Status":"exited","ExitCode":1}',
+      "runtime failed after credential-free startup",
+    ]);
+
+    expect(
+      nativeRuntimeQualificationCaseInternals.inferenceFailureDiagnostic(
+        runtime.value,
+        containerId,
+      ),
+    ).toBe(
+      'state={"Status":"exited","ExitCode":1}; logs=runtime failed after credential-free startup',
+    );
+    expect(runtime.capture.mock.calls.map(([args]) => args)).toEqual([
+      ["inspect", "--format", "{{json .State}}", containerId],
+      ["logs", "--tail", "50", containerId],
+    ]);
+  });
+});
+
 describe("native runtime provider-network authority", () => {
   it("uses distinct canonical sandbox names for every qualified agent", () => {
     const names = NATIVE_RUNTIME_QUALIFICATION_AGENTS.map((agent) =>
