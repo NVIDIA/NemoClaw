@@ -54,7 +54,7 @@ export function evaluateLoopViolations(
     headTotal += headCount;
     if (headCount > baseCount) {
       details.push(
-        `${change.headPath ?? change.displayName}: ${headCount} test loop(s), up from ${baseCount}`,
+        `${change.headPath ?? change.displayName}: ${headCount} table-test candidate loop(s), up from ${baseCount}`,
       );
     }
   }
@@ -122,11 +122,11 @@ async function main(): Promise<void> {
   if (!result.ok) {
     console.error("FAIL: changed test files add table-test candidate loops.");
     console.error(
-      `Changed test files contain ${result.headTotal} test loop(s) at PR head vs ${result.baseTotal} at base.`,
+      `Changed test files contain ${result.headTotal} table-test candidate loop(s) at the latest PR commit vs ${result.baseTotal} at base.`,
     );
     console.error("");
     console.error(
-      "Test cases should stay linear. Use it.each or test.each for independent cases. Move iteration that represents one behavior into a named helper.",
+      "Test cases should stay linear. Use it.each or test.each for independent cases. Move iteration that represents one behavior into a named helper outside the test callback.",
     );
     console.error("");
     console.error("Files with increased test loop counts:");
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(
-    `PASS: changed test files did not add table-test candidate loops (${result.headTotal} at PR head vs ${result.baseTotal} at base).`,
+    `PASS: changed test files did not add table-test candidate loops (${result.headTotal} at the latest PR commit vs ${result.baseTotal} at base).`,
   );
 }
 

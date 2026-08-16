@@ -94,7 +94,7 @@ describe("growth-guardrails executable entrypoints (#6953)", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      "PASS: changed test files did not add table-test candidate loops (0 at PR head vs 0 at base).",
+      "PASS: changed test files did not add table-test candidate loops (0 at the latest PR commit vs 0 at base).",
     );
   });
 
@@ -107,7 +107,9 @@ describe("growth-guardrails executable entrypoints (#6953)", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("FAIL: changed test files add table-test candidate loops.");
-    expect(result.stderr).toContain("test/a.test.ts: 1 test loop(s), up from 0");
+    expect(result.stderr).toContain(
+      "test/a.test.ts: 1 table-test candidate loop(s), up from 0",
+    );
   });
 
   it("prints the size-budget guardrail PASS diagnostic", () => {

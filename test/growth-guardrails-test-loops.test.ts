@@ -67,7 +67,7 @@ describe("growth-guardrails test-loops: pure policy", () => {
       blobs({ "test/a.test.ts": NO_LOOP }),
       blobs({ "test/a.test.ts": ONE_LOOP }),
     );
-    expect(result.details).toEqual(["test/a.test.ts: 1 test loop(s), up from 0"]);
+    expect(result.details).toEqual(["test/a.test.ts: 1 table-test candidate loop(s), up from 0"]);
     expect([result.baseTotal, result.headTotal]).toEqual([0, 1]);
   });
 
@@ -102,11 +102,13 @@ describe("growth-guardrails test-loops: pure policy", () => {
       blobs({ "test/adder.test.ts": NO_LOOP, "test/remover.test.ts": TWO_LOOPS }),
       blobs({ "test/adder.test.ts": ONE_LOOP, "test/remover.test.ts": NO_LOOP }),
     );
-    expect(result.details).toEqual(["test/adder.test.ts: 1 test loop(s), up from 0"]);
+    expect(result.details).toEqual([
+      "test/adder.test.ts: 1 table-test candidate loop(s), up from 0",
+    ]);
     expect([result.baseTotal, result.headTotal]).toEqual([2, 1]);
   });
 
-  it("counts a removed test file as zero at the PR commit", () => {
+  it("counts a removed test file as zero at the latest PR commit", () => {
     const result = evaluateLoopViolations(
       [{ basePath: "test/gone.test.ts", headPath: null, displayName: "test/gone.test.ts" }],
       blobs({ "test/gone.test.ts": TWO_LOOPS }),
@@ -133,7 +135,7 @@ describe("growth-guardrails test-loops: orchestration", () => {
     });
     const result = await runTestLoops(client, ENV);
     expect(result.ok).toBe(false);
-    expect(result.details).toEqual(["test/a.test.ts: 1 test loop(s), up from 0"]);
+    expect(result.details).toEqual(["test/a.test.ts: 1 table-test candidate loop(s), up from 0"]);
   });
 
   it("ignores changed source files that are not tests", async () => {

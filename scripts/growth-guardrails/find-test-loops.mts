@@ -4,7 +4,8 @@
 //
 // Finds `for` loops that make test cases or generated test definitions
 // iterative. Independent rows should use it.each or test.each so each failure
-// identifies one behavior. Required iteration can stay in a named helper.
+// identifies one behavior. Required iteration can stay in a named helper
+// outside the test callback.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
