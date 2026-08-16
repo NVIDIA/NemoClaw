@@ -100,8 +100,23 @@ function closeDescriptors(descriptors: readonly number[]): void {
     try {
       fs.closeSync(descriptor);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EBADF" && cleanupError === undefined) {
-        cleanupError = error;
+      if ((error as NodeJS.ErrnoException).code === "EBADF") continue;
+      cleanupError ??= error;
+
+      // A failed close may or may not have consumed the descriptor. Probe before
+      // retrying so an already-closed descriptor cannot be reused accidentally.
+      try {
+        fs.fstatSync(descriptor);
+      } catch (probeError) {
+        if ((probeError as NodeJS.ErrnoException).code === "EBADF") continue;
+        continue;
+      }
+      try {
+        fs.closeSync(descriptor);
+      } catch (retryError) {
+        if ((retryError as NodeJS.ErrnoException).code !== "EBADF") {
+          cleanupError ??= retryError;
+        }
       }
     }
   }
@@ -112,15 +127,22 @@ function closeDescriptors(descriptors: readonly number[]): void {
 async function terminateChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   await new Promise<void>((resolve) => {
-    let forceTimer: NodeJS.Timeout;
+    let forceTimer: NodeJS.Timeout | undefined;
+    let terminalTimer: NodeJS.Timeout | undefined;
     const settled = () => {
-      clearTimeout(forceTimer);
+      if (forceTimer !== undefined) clearTimeout(forceTimer);
+      if (terminalTimer !== undefined) clearTimeout(terminalTimer);
       child.off("error", settled);
       child.off("exit", settled);
       resolve();
     };
     forceTimer = setTimeout(() => {
-      if (!child.kill("SIGKILL")) settled();
+      if (!child.kill("SIGKILL")) {
+        settled();
+        return;
+      }
+      terminalTimer = setTimeout(settled, 5_000);
+      terminalTimer.unref();
     }, 5_000);
     forceTimer.unref();
     child.once("error", settled);

@@ -41,7 +41,7 @@ function options() {
 }
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.useRealTimers();
   for (const directory of directories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -106,7 +106,47 @@ describe("voice gateway launcher", () => {
       .mockImplementation(close);
 
     await expect(launchVoiceGateway(launchOptions)).rejects.toThrow("close failed");
+    const stdio = vi.mocked(spawn).mock.calls[0]?.[2]?.stdio as number[];
+    expect(() => fs.fstatSync(stdio[3]!)).toThrowError(expect.objectContaining({ code: "EBADF" }));
+    expect(() => fs.fstatSync(stdio[4]!)).toThrowError(expect.objectContaining({ code: "EBADF" }));
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  it("bounds forced child termination and removes terminal listeners (#9235)", async () => {
+    vi.useFakeTimers();
+    const launchOptions = options();
+    fs.writeFileSync(
+      launchOptions.deploymentCredentialPath,
+      "deployment-credential-for-launcher-012345",
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      launchOptions.openClawCredentialPath,
+      "openclaw-credential-for-launcher-01234567",
+      { mode: 0o600 },
+    );
+    const child = new EventEmitter() as ChildProcess;
+    Object.assign(child, {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+    });
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const close = fs.closeSync.bind(fs);
+    vi.spyOn(fs, "closeSync")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("close failed"), { code: "EIO" });
+      })
+      .mockImplementation(close);
+
+    const launch = expect(launchVoiceGateway(launchOptions)).rejects.toThrow("close failed");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await launch;
+    expect(child.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(child.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
     expect(child.listenerCount("error")).toBe(0);
     expect(child.listenerCount("exit")).toBe(0);
   });
