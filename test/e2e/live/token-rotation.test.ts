@@ -447,7 +447,7 @@ test(
 
     // OpenShell removes each deployment image during credential-driven
     // recreation. Retain one test-owned tag so Docker can reuse the identical
-    // OpenClaw/plugin layers across the three rotations; token values remain in
+    // OpenClaw/plugin layers for the retained rotation; token values remain in
     // gateway providers and are never baked into this image.
     const cacheImageTag = `nemoclaw-token-rotation-cache:${process.pid}`;
     const retainBuildCache = await host.command(
