@@ -1135,7 +1135,8 @@ $$nemoclaw onboard
 ### Onboarding Reports a Rejected or Unconfirmed Policy Update
 
 The onboarding policy step composes a policy document for the presets you selected and deselected, then submits it to the OpenShell gateway.
-NemoClaw removes the temporary policy file it submits whether or not the gateway accepts it.
+NemoClaw removes the temporary file that carries the composed policy whether or not the gateway accepts it.
+If it cannot remove that file, it reports the directory that still holds the policy instead of reporting a clean result.
 If the submission does not succeed, onboarding stops and:
 
 - does not record the presets as applied to the sandbox;
@@ -1154,7 +1155,9 @@ Use the quoted OpenShell diagnostic to identify what the gateway refused.
 Then follow [Previous onboarding session failed](#previous-onboarding-session-failed) to start fresh onboarding, and choose a different preset selection.
 The default selection can be the refused one, so read the diagnostic before you assume a preset you added caused it.
 
-NemoClaw could not confirm the result, for example, because the gateway connection ended before the result arrived:
+NemoClaw could not confirm the result.
+This covers a connection that ended before the result arrived, an unreachable gateway, an elapsed deadline, and a rejected credential.
+NemoClaw reports this whenever the gateway did not return an explicit refusal, because only an explicit refusal proves the policy was not applied:
 
 ```text
 Could not confirm the policy update for sandbox 'my-assistant': <transport or command error>. The gateway may or may not have applied it; read the current policy back before retrying.

@@ -94,6 +94,38 @@ describe("openshell policy set outcome classification", () => {
     }
   });
 
+  it.each([
+    ["unavailable", "Error: code: 'Unavailable', message: 'tcp connect error: connection refused'"],
+    ["deadline exceeded", "Error: code: 'Deadline exceeded', message: 'deadline has elapsed'"],
+    ["unauthenticated", "Error: code: 'Unauthenticated', message: 'invalid gateway credential'"],
+    ["tls failure", "Error: code: 'Unknown', message: 'tls handshake eof'"],
+    ["internal", "Error: code: 'Internal', message: 'gateway restarted while applying'"],
+  ])(
+    "treats a structured %s status as ambiguous rather than a refusal (#9206)",
+    (_label, stderr) => {
+      const outcome = classifyPolicySetResult({ status: 1, stderr });
+
+      expect(outcome.kind).toBe("ambiguous");
+      expect(ambiguousDetail(outcome)).toContain(stderr);
+    },
+  );
+
+  it("requires an authoritative refusal status before reporting the policy as refused (#9206)", () => {
+    const withoutStatus = classifyPolicySetResult({
+      status: 1,
+      stderr: "Error: code: 'Unknown', message: 'network policy rejected'",
+    });
+    const withStatus = classifyPolicySetResult({
+      status: 1,
+      stderr:
+        "Error: code: 'Failed precondition', message: 'network policy rejected', " +
+        "source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }",
+    });
+
+    expect(withoutStatus.kind).toBe("ambiguous");
+    expect(withStatus.kind).toBe("rejected");
+  });
+
   it("treats a clean exit carrying a transport error as ambiguous (#9206)", () => {
     const outcome = classifyPolicySetResult({
       status: 0,

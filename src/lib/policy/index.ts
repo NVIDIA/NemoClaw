@@ -530,17 +530,20 @@ function decodePolicySetStream(stream: string | Buffer | null | undefined): stri
 }
 
 /** Delete the private temp policy file and its directory, ignoring absence. */
-function removeTempPolicyMaterial(tmpFile: string, tmpDir: string): void {
+function tempPolicyRetentionError(tmpDir: string, reason: string): Error {
+  return new Error(
+    `Could not remove the temporary policy directory '${tmpDir}' (${reason}). It still holds ` +
+      "the composed sandbox policy; remove it before retrying.",
+  );
+}
+
+function removeTempPolicyMaterial(tmpDir: string): void {
   try {
-    fs.unlinkSync(tmpFile);
-  } catch {
-    /* ignored */
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch (error) {
+    throw tempPolicyRetentionError(tmpDir, error instanceof Error ? error.message : String(error));
   }
-  try {
-    fs.rmdirSync(tmpDir);
-  } catch {
-    /* ignored */
-  }
+  if (fs.existsSync(tmpDir)) throw tempPolicyRetentionError(tmpDir, "the path still exists");
 }
 
 interface PolicySetSubmission {
@@ -567,11 +570,17 @@ function submitComposedPolicy(
   policyDocument: string,
   gatewayName?: string,
 ): PolicySetSubmission {
+  // `mkdtempSync` creates nothing when it throws, so only the write and the
+  // submission need the cleanup boundary. Writing inside it keeps a failed or
+  // partial write from leaving the composed policy readable in $TMPDIR.
+  //
+  // A cleanup failure deliberately supersedes whatever the body produced: a
+  // policy document still readable on disk is the condition that must never be
+  // reported as a clean result.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  const tmpFile = path.join(tmpDir, "policy.yaml");
-  fs.writeFileSync(tmpFile, policyDocument, { encoding: "utf-8", mode: 0o600 });
-
   try {
+    const tmpFile = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(tmpFile, policyDocument, { encoding: "utf-8", mode: 0o600 });
     const result = run(buildPolicySetCommand(tmpFile, sandboxName), {
       ignoreError: true,
       ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
@@ -585,7 +594,7 @@ function submitComposedPolicy(
       status: result.status,
     };
   } finally {
-    removeTempPolicyMaterial(tmpFile, tmpDir);
+    removeTempPolicyMaterial(tmpDir);
   }
 }
 

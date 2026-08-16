@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
+import fs from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { addCustomPolicy, getSandbox, resolveOpenshell, run, runCapture, updateSandbox } =
@@ -241,5 +242,52 @@ describe("single-preset mutations when openshell rejects the composed policy", (
       false,
     );
     expect(reportedText()).not.toContain(CREDENTIAL_TOKEN);
+  });
+});
+
+describe("applyPresets temporary policy material under local I/O failure", () => {
+  beforeEach(() => {
+    run.mockReset();
+    runCapture.mockReset();
+    getSandbox.mockReset();
+    updateSandbox.mockReset();
+    resolveOpenshell.mockReset();
+
+    resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
+    runCapture.mockReturnValue(BASE_POLICY);
+    getSandbox.mockReturnValue({ name: SANDBOX, agent: "openclaw", policies: [] });
+    run.mockReturnValue(policySetResult(openshellRejection("refused")));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("removes the private directory when the policy document cannot be written (#9206)", () => {
+    const created: string[] = [];
+    vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix: string) => {
+      const dir = `${prefix}fault${created.length}`;
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      created.push(dir);
+      return dir;
+    }) as unknown as typeof fs.mkdtempSync);
+    vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("ENOSPC: no space left on device");
+    });
+
+    const error = applyWeatherPreset();
+
+    expect(error).toBeInstanceOf(Error);
+    expect(created).toHaveLength(1);
+    expect(fs.existsSync(created[0] as string)).toBe(false);
+  });
+
+  it("reports a cleanup failure instead of leaving the composed policy readable (#9206)", () => {
+    vi.spyOn(fs, "rmSync").mockImplementation(() => {
+      throw new Error("EPERM: operation not permitted");
+    });
+
+    const error = applyWeatherPreset();
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/temporary policy/iu);
   });
 });
