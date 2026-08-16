@@ -3,7 +3,6 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isDeepStrictEqual } from "node:util";
@@ -181,7 +180,7 @@ function requireCompleteReceiptRegistryOwnership(
   gatewayName: string,
 ): string {
   if (!registry) throw new Error("Portable lifecycle receipts have no current sandbox registry");
-  const receiptNames = receipts.map((receipt) => receipt.sandboxName);
+  const receiptNames = receipts.map((receipt) => receipt.sandboxName).sort();
   for (const receipt of receipts) {
     requireReceiptRegistryOwnership(
       receipt,
@@ -256,11 +255,7 @@ function recordedRegistrySandboxNames(registryBytes: Buffer): string[] {
   return names.sort();
 }
 
-/**
- * Remove receipt-owned portable resources while one registry fence and every
- * receipt lifecycle lock remain held across OpenShell cleanup and the caller's
- * final evidence-retirement operation.
- */
+/** Remove receipt-owned portable resources under lifecycle and registry locks through retirement. */
 export function runPortableRuntimeCleanupTransaction(
   input: PortableRuntimeCleanupInput,
   continueAfterSandboxRemoval: (
@@ -477,6 +472,7 @@ function defaultSystemctl(
     encoding: "utf8",
     env,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 30_000,
   });
   return {
     status: result.status,
@@ -540,7 +536,11 @@ function clearPortableUserManagerSelectors(
     ["NETAVARK_FW", "iptables"],
   ]);
   const unset = [...expected.entries()]
-    .filter(([name, value]) => values.get(name) === value)
+    .filter(([name, value]) =>
+      [value, `$'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`].includes(
+        values.get(name) ?? "",
+      ),
+    )
     .map(([name]) => name);
   if (unset.length === 0) return [];
   requireCommand(

@@ -222,7 +222,7 @@ function fixture() {
     return (podmanHandlers.get(String(args[0])) ?? unexpectedPodmanCommand)(args);
   });
   const selectors = new Map<string, string>([
-    ["CONTAINERS_CONF", path.join(authority.configHome, "nemoclaw/portable/containers.conf")],
+    ["CONTAINERS_CONF", `$'${containersConf}'`],
     ["NETAVARK_FW", "iptables"],
     ["CONTAINER_HOST", "ssh://user-managed.example"],
     ["CONTAINER_CONNECTION", "user-managed"],

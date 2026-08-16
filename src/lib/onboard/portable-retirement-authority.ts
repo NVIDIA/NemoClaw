@@ -545,5 +545,3 @@ export function beginPortableOnboardRetirementEntry(
       supersedePortableRetirementAfterCompletedOnboard(boundary, expected, deps),
   };
 }
-
-export const portableRetirementAuthorityInternals = { admission, recover };

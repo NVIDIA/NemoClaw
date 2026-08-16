@@ -174,8 +174,7 @@ It also preserves unrelated OpenShell-registered sandboxes.
 Before it removes the portable registry container or selectors, NemoClaw verifies that the original lifecycle receipts and sandbox registry state have not changed.
 If either changed, uninstall exits nonzero before later gateway-state or `~/.config/nemoclaw/portable/containers.conf` deletion.
 After that verification, NemoClaw removes the prevalidated portable registry container by its exact ID.
-It unsets a current-user systemd manager selector only when its current value matches NemoClaw's recorded or derived portable projection.
-This check covers `CONTAINERS_CONF`, `NETAVARK_FW`, `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY`.
+It unsets the current-user systemd manager values that the portable profile installs, `CONTAINERS_CONF` and `NETAVARK_FW`, only when their current values match NemoClaw's recorded or derived portable projection; it inspects and preserves `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY` because the portable profile does not own those values.
 NemoClaw preserves unrelated or changed selector values.
 It skips the generic Docker availability probe and all generic Docker container, image, and volume cleanup.
 It does not remove the user's Podman installation, storage, networks, or unrelated containers.

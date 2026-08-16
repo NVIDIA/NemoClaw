@@ -4360,8 +4360,7 @@ Fresh state roots and already scoped configurations continue to use the state-ro
 The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
-Full single-gateway Podman uninstall for the portable experimental profile uses exact receipt-owned durable retirement.
-It preserves shared OpenShell providers, the gateway service and process, binaries, configuration, model stores, and Podman images under the [portable authority, retry, and preservation contract](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+Full single-gateway Podman uninstall for the portable experimental profile uses exact receipt-owned durable retirement and preserves shared OpenShell providers, the gateway service and process, binaries, configuration, model stores, and Podman images under the [portable authority, retry, and preservation contract](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
 NemoClaw preserves the gateway runtime evidence and local state.
 Keep that state intact.
@@ -4427,7 +4426,7 @@ Decision matrix:
 | Context | Behaviour |
 |---|---|
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
-| Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; a single-gateway uninstall also removes the remaining shared state. |
+| Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; outside portable cleanup, a single-gateway uninstall also removes the remaining shared state. Portable cleanup preserves shared OpenShell resources and its retirement record. |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
 | `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries in the selected gateway's state root. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
