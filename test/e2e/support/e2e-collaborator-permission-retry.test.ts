@@ -36,9 +36,9 @@ const AUTHORIZATION_STEPS: AuthorizationStep[] = [
     name: "Authorize release qualification waiver",
   },
   {
-    deniedMessage: "Launchable image publication requires a repository maintainer or administrator",
-    mismatchMessage: "Launchable image publication permission response did not match the actor",
-    name: "Authorize Launchable image publication",
+    deniedMessage: "Launchable workflow dispatch requires a repository maintainer or administrator",
+    mismatchMessage: "Launchable workflow dispatch permission response did not match the actor",
+    name: "Authorize Launchable workflow dispatch",
   },
 ];
 

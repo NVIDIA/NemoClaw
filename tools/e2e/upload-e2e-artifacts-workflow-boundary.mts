@@ -154,6 +154,17 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-image.json",
+        "",
+      ].join("\n"),
+    },
+  ],
+  [
+    "staging-brev-launchable-e2e-once",
+    {
+      name: "staging-brev-launchable-e2e-once-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: [
+        "${{ steps.workspace.outputs.work_dir }}/lane.log",
         "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
         "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
         "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
@@ -267,6 +278,7 @@ const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["native-runtime-qualification-podman-toolchain", "success()"],
   ["native-runtime-qualification-producer", "success()"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
+  ["staging-brev-launchable-e2e-once", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
   ["openshell-dev-artifact", "${{ always() }}"],
@@ -397,6 +409,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         const env = record(job.env);
         return (
           jobName === "staging-brev-launchable" ||
+          jobName === "staging-brev-launchable-e2e-once" ||
           jobName === "generate-matrix" ||
           jobName === "jetson-nvmap-gpu" ||
           jobName === "live" ||

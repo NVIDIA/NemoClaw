@@ -458,8 +458,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.name === "Check out the E2E result evaluator" &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedLaunchableLaneCheckout =
-        jobName === "staging-brev-launchable" &&
-        step.name === "Checkout trusted Launchable lane" &&
+        ((jobName === "staging-brev-launchable" &&
+          step.name === "Checkout trusted Launchable lane") ||
+          (jobName === "staging-brev-launchable-e2e-once" &&
+            step.name === "Checkout trusted one-off Launchable lane")) &&
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedPublicationCheckout =
         jobName === "base-image-publication" &&
