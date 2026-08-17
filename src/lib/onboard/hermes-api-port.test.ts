@@ -156,6 +156,55 @@ describe("reserveCreateSandboxHermesApiPort", () => {
     expect(secondRelease).toHaveBeenCalledOnce();
   });
 
+  it("allocates past a busy default when only a route-only reservation exists (#9291)", async () => {
+    const release = vi.fn(async () => undefined);
+    const reservePort = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
+      )
+      .mockResolvedValueOnce({ port: 8643, release });
+    const env: NodeJS.ProcessEnv = {};
+
+    const selection = await reserveCreateSandboxHermesApiPort({
+      sandboxName: "beta",
+      env,
+      getSandbox: () => ({ pendingRouteReservation: true }),
+      forwardListOutput: "",
+      isPortBoundCheck: noneBound,
+      registryOccupiedPorts: new Map(),
+      reservePort,
+    });
+
+    expect(selection.effectivePort).toBe(8643);
+    expect(env[HERMES_API_PORT_ENV]).toBe("8643");
+    expect(reservePort.mock.calls).toEqual([[8642], [8643]]);
+    await selection.reservation?.release();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("reports EADDRINUSE for a durable sandbox without a port instead of allocating (#9291)", async () => {
+    const reservePort = vi.fn().mockRejectedValueOnce(
+      Object.assign(new Error("port 8642 is already held"), { code: "EADDRINUSE" }),
+    );
+    const env: NodeJS.ProcessEnv = {};
+
+    await expect(
+      reserveCreateSandboxHermesApiPort({
+        sandboxName: "beta",
+        env,
+        getSandbox: () => ({}),
+        forwardListOutput: "",
+        isPortBoundCheck: noneBound,
+        registryOccupiedPorts: new Map(),
+        reservePort,
+      }),
+    ).rejects.toMatchObject({ code: "EADDRINUSE" });
+
+    expect(reservePort.mock.calls).toEqual([[8642]]);
+    expect(env[HERMES_API_PORT_ENV]).toBe("8642");
+  });
+
   it("releases a held port when sandbox preparation fails", async () => {
     const release = vi.fn(async () => undefined);
 
@@ -262,6 +311,20 @@ describe("resolveOnboardHermesApiPort", () => {
     ).toBe(8642);
     expect(findAvailablePort).not.toHaveBeenCalled();
     expect(env[HERMES_API_PORT_ENV]).toBe("8642");
+  });
+
+  it("allocates for a route-only reservation instead of pinning the default (#9291)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const findAvailablePort = vi.fn(() => 8643);
+    expect(
+      resolveOnboardHermesApiPort("beta", {
+        env,
+        getSandbox: () => ({ pendingRouteReservation: true }),
+        findAvailablePort,
+      }),
+    ).toBe(8643);
+    expect(findAvailablePort).toHaveBeenCalledOnce();
+    expect(env[HERMES_API_PORT_ENV]).toBe("8643");
   });
 
   it("prefers the registered port over a fresh allocation", () => {
