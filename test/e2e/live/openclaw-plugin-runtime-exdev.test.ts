@@ -511,11 +511,10 @@ function createCustomPluginDockerfile(
   expect(builderImageRef, "builder image must use an immutable digest").toMatch(
     /@sha256:[a-f0-9]{64}$/,
   );
-  if (fixture.source === "release") {
-    expect(builderImageRef, "v0.0.71 builder image must remain release-matched").toBe(
-      RELEASE_BUILDER_IMAGE_REF,
-    );
-  }
+  expect(
+    fixture.source !== "release" || builderImageRef === RELEASE_BUILDER_IMAGE_REF,
+    "v0.0.71 builder image must remain release-matched",
+  ).toBe(true);
   expect(source.match(/^FROM \$\{BASE_IMAGE\}$/gm)?.length, "expected one runtime stage").toBe(1);
   const runtimeOpenClawDeclarations = [...source.matchAll(/^ARG OPENCLAW_VERSION=([0-9.]+)$/gm)];
   expect(runtimeOpenClawDeclarations, "expected one OpenClaw version declaration").toHaveLength(1);

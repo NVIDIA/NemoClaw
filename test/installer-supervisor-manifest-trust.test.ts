@@ -56,8 +56,9 @@ function selectSupervisorManifestPin(source: string, version: string, digest: st
   const identity = new RegExp(
     `("${version.replaceAll(".", "\\.")}":\\s*)"sha256:[a-f0-9]{64}"`,
   );
-  if (identity.test(source)) return source.replace(identity, `$1"${digest}"`);
-  return addSupervisorManifestPin(source, version, digest);
+  return identity.test(source)
+    ? source.replace(identity, `$1"${digest}"`)
+    : addSupervisorManifestPin(source, version, digest);
 }
 
 function addSandboxBuildPins(source: string): string {

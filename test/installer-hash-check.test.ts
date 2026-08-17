@@ -486,10 +486,18 @@ function trustedPinArray(name: string): string {
   let depth = 0;
   for (let index = arrayStart; index < TRUSTED_PARSER_TEMPLATE.length; index += 1) {
     const character = TRUSTED_PARSER_TEMPLATE[index];
-    if (character === "[") depth += 1;
-    if (character !== "]") continue;
-    depth -= 1;
-    if (depth === 0) return TRUSTED_PARSER_TEMPLATE.slice(arrayStart + 1, index);
+    switch (character) {
+      case "[":
+        depth += 1;
+        break;
+      case "]":
+        depth -= 1;
+        switch (depth) {
+          case 0:
+            return TRUSTED_PARSER_TEMPLATE.slice(arrayStart + 1, index);
+        }
+        break;
+    }
   }
 
   expect.fail(`${name} array end`);
@@ -522,27 +530,29 @@ function renderPinFunction(
   formatting: PinFormatting,
   assetDigests = ASSET_DIGESTS,
 ): string {
-  if (formatting === "canonical") {
-    const template =
-      functionName === "openshell_pinned_sha256" ? INSTALLER_TEMPLATE : BREV_TEMPLATE;
-    const nextMarker = "openshell_checksum_line() {";
-    const start = template.indexOf(`${functionName}() {`);
-    const end = template.indexOf(`\n${nextMarker}`, start);
-    assert.notEqual(start, -1, `${functionName} template start must exist`);
-    assert.notEqual(end, -1, `${functionName} template end must exist`);
+  switch (formatting) {
+    case "canonical": {
+      const template =
+        functionName === "openshell_pinned_sha256" ? INSTALLER_TEMPLATE : BREV_TEMPLATE;
+      const nextMarker = "openshell_checksum_line() {";
+      const start = template.indexOf(`${functionName}() {`);
+      const end = template.indexOf(`\n${nextMarker}`, start);
+      assert.notEqual(start, -1, `${functionName} template start must exist`);
+      assert.notEqual(end, -1, `${functionName} template end must exist`);
 
-    let selected = template.slice(start, end).replaceAll(
-      "v0.0.106:",
-      `v${openshellVersion}:`,
-    );
-    for (const asset of assets) {
-      const currentDigest = V00106_ASSET_DIGESTS.get(asset);
-      const selectedDigest = assetDigests.get(asset);
-      assert.ok(currentDigest, `OpenShell 0.0.106 digest must exist for ${asset}`);
-      assert.ok(selectedDigest, `selected OpenShell digest must exist for ${asset}`);
-      selected = selected.replaceAll(currentDigest, selectedDigest);
+      let selected = template.slice(start, end).replaceAll(
+        "v0.0.106:",
+        `v${openshellVersion}:`,
+      );
+      for (const asset of assets) {
+        const currentDigest = V00106_ASSET_DIGESTS.get(asset);
+        const selectedDigest = assetDigests.get(asset);
+        assert.ok(currentDigest, `OpenShell 0.0.106 digest must exist for ${asset}`);
+        assert.ok(selectedDigest, `selected OpenShell digest must exist for ${asset}`);
+        selected = selected.replaceAll(currentDigest, selectedDigest);
+      }
+      return `${selected}\n`;
     }
-    return `${selected}\n`;
   }
 
   const functionOpening =
@@ -671,13 +681,9 @@ function renderSupervisorRuntime(openshellVersion: string): string {
     hasManifestIdentity || manifestDigest,
     `supervisor fixture ${openshellVersion}`,
   ).toBeTruthy();
-  if (hasManifestIdentity) return SUPERVISOR_RUNTIME_TEMPLATE;
   const existingIdentity = new RegExp(
     `("${openshellVersion.replaceAll(".", "\\.")}":\\s*)"sha256:[a-f0-9]{64}"`,
   );
-  if (existingIdentity.test(SUPERVISOR_RUNTIME_TEMPLATE)) {
-    return SUPERVISOR_RUNTIME_TEMPLATE.replace(existingIdentity, `$1"${manifestDigest}"`);
-  }
   const declarationStart = SUPERVISOR_RUNTIME_TEMPLATE.indexOf(
     "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS",
   );
@@ -686,7 +692,11 @@ function renderSupervisorRuntime(openshellVersion: string): string {
   assert.notEqual(declarationStart, -1, "supervisor manifest map declaration must exist");
   assert.notEqual(assignment, -1, "supervisor manifest map assignment must exist");
   assert.notEqual(mapStart, -1, "supervisor manifest map must exist");
-  return `${SUPERVISOR_RUNTIME_TEMPLATE.slice(0, mapStart + 1)}
+  return hasManifestIdentity
+    ? SUPERVISOR_RUNTIME_TEMPLATE
+    : existingIdentity.test(SUPERVISOR_RUNTIME_TEMPLATE)
+      ? SUPERVISOR_RUNTIME_TEMPLATE.replace(existingIdentity, `$1"${manifestDigest}"`)
+      : `${SUPERVISOR_RUNTIME_TEMPLATE.slice(0, mapStart + 1)}
   "${openshellVersion}": "${manifestDigest}",${SUPERVISOR_RUNTIME_TEMPLATE.slice(mapStart + 1)}`;
 }
 
