@@ -1599,7 +1599,17 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
         // now agent-writable and co-located with config — a compromised agent
         // could create symlinks to exfiltrate config contents via backup.
-        const tarCmd = `tar -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
+        //
+        // `--hard-dereference` archives each multiply-linked path as its own
+        // regular file. Without it `tar` emits a hard-link record for the second
+        // and later paths sharing an inode, and `safeTarExtract` rejects those
+        // records — so a state dir holding two links to one inode would pass the
+        // audit and then fail while unpacking (#9314). It also keeps the archive
+        // self-describing: every entry restores as a plain file, matching what
+        // the audit now accepts. Note this is about links *within* the archived
+        // tree; a link whose other end lives outside it (a package manager
+        // linking out of its cache) already archives as a plain file.
+        const tarCmd = `tar --hard-dereference -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
         _log(`Downloading via SSH+tar: ${tarCmd}`);
         let downloadedTarDir: string | undefined;
         let downloadedTarPath: string;

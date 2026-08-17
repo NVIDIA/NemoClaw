@@ -91,6 +91,13 @@ function backupWithAuditOutput(
     fs.mkdirSync(binDir, { recursive: true });
     for (const d of existingDirs) fs.mkdirSync(path.join(stateRoot, d), { recursive: true });
     fs.writeFileSync(path.join(stateRoot, "workspace", "note.txt"), "content\n");
+    // A real multiply-linked pair inside the archived tree, the shape a package
+    // manager leaves behind. `tar` would otherwise emit a hard-link record for
+    // the second path and `safeTarExtract` would reject the archive.
+    const linkedDir = path.join(stateRoot, "workspace", "lazy-packages");
+    fs.mkdirSync(linkedDir, { recursive: true });
+    fs.writeFileSync(path.join(linkedDir, "impl.py"), "package payload\n");
+    fs.linkSync(path.join(linkedDir, "impl.py"), path.join(linkedDir, "alias.py"));
 
     const openshell = writeFakeOpenshell(binDir);
     writeExecutable(
@@ -108,10 +115,11 @@ if (cmd.includes("find ")) {
   process.stdout.write(${JSON.stringify(auditLines)} + (${JSON.stringify(auditLines)} ? "\\n" : ""));
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
-  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(stateRoot)}, ...existingDirs], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+if (cmd.includes("tar ") && cmd.includes("-cf -")) {
+  // Run the archive command the product actually issued, with the sandbox
+  // state path mapped onto the fixture, so tar flags are exercised for real.
+  const real = cmd.split("/sandbox/.openclaw").join(${JSON.stringify(stateRoot)});
+  const r = spawnSync("sh", ["-c", real], { stdio: ["ignore", "pipe", "pipe"] });
   if (r.stdout) fs.writeSync(1, r.stdout);
   process.exit(r.status || 0);
 }
@@ -151,6 +159,13 @@ describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
     expect(backup.success).toBe(true);
     expect(backup.error).toBeUndefined();
     expect(backup.backedUpDirs).toEqual(["workspace"]);
+
+    // Both linked paths must survive as independent regular files: the archive
+    // is unpacked through safeTarExtract, which rejects hard-link records.
+    const linked = path.join(String(backup.manifest?.backupPath), "workspace", "lazy-packages");
+    expect(fs.readFileSync(path.join(linked, "impl.py"), "utf8")).toBe("package payload\n");
+    expect(fs.readFileSync(path.join(linked, "alias.py"), "utf8")).toBe("package payload\n");
+    expect(fs.lstatSync(path.join(linked, "alias.py")).nlink).toBe(1);
   });
 
   it("still rejects an unsafe symlink alongside hard-linked files", () => {
