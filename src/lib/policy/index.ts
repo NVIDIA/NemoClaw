@@ -2320,9 +2320,10 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   if (policyChanged) assertOpenshellResolvable();
 
   if (policyChanged) {
-    // Throwing keeps the local preset attribution in the registry unwritten.
-    const { outcome } = submitComposedPolicy(sandboxName, merged);
-    if (outcome.kind !== "applied") throw policySetFailure(sandboxName, outcome);
+    // The shared fatal path preserves OpenShell's status after it removes the
+    // temporary policy. Onboarding defers that exit until its recovery state
+    // and outer cleanup have finished.
+    setPolicyDocument(sandboxName, merged);
 
     for (const preset of presetContents.filter((entry) => entry.state !== "match")) {
       console.log(`  Applied preset: ${preset.name}`);

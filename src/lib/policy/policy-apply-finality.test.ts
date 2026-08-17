@@ -106,12 +106,25 @@ function policySetResult(stderr: string): SpawnSyncReturns<string | Buffer> {
   };
 }
 
+function reportedText(): string {
+  return vi
+    .mocked(console.error)
+    .mock.calls.flat()
+    .map((entry) => String(entry))
+    .join("\n");
+}
+
 function applyWeatherPreset(): unknown {
+  const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+    throw new Error(`process.exit(${String(code)}): ${reportedText()}`);
+  });
   try {
     applyPresets(SANDBOX, ["weather"]);
     return null;
   } catch (error) {
     return error;
+  } finally {
+    exit.mockRestore();
   }
 }
 
@@ -212,14 +225,6 @@ describe("single-preset mutations when openshell rejects the composed policy", (
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
-
-  function reportedText(): string {
-    return vi
-      .mocked(console.error)
-      .mock.calls.flat()
-      .map((entry) => String(entry))
-      .join("\n");
-  }
 
   it("returns false from a nonFatal removePreset and reports the OpenShell message (#9206)", () => {
     runCapture.mockReturnValue(BASE_POLICY_WITH_WEATHER);

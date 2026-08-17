@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
+const registryModulePath = path.join(repoRoot, "src", "lib", "state", "registry.ts");
 
 /**
  * Distinctive network policy key carried by the stubbed `openshell policy get
@@ -126,9 +127,10 @@ console.log(${JSON.stringify(RETURN_MARKER)} + String(returned));
 `;
 }
 
-const APPLY_PRESETS_DRIVER = buildDriver(
-  `applyPresets(${JSON.stringify(SANDBOX_NAME)}, [${JSON.stringify(PRESET_NAME)}])`,
-);
+const APPLY_PRESETS_DRIVER =
+  `const registry = require(${JSON.stringify(registryModulePath)});\n` +
+  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [] });\n` +
+  buildDriver(`applyPresets(${JSON.stringify(SANDBOX_NAME)}, [${JSON.stringify(PRESET_NAME)}])`);
 
 /**
  * `removePreset` and `applyPreset` bypass the batch path that `applyPresets`
@@ -143,6 +145,7 @@ const APPLY_PRESET_DRIVER = buildDriver(
 
 interface ChildRun {
   readonly result: SpawnSyncReturns<string>;
+  readonly homeDir: string;
   readonly tmpDir: string;
 }
 
@@ -217,7 +220,7 @@ function runPolicyMutation({ driver, policySet, basePolicy }: PolicyMutationRun)
     timeout: 120000,
   });
 
-  return { result, tmpDir };
+  return { homeDir, result, tmpDir };
 }
 
 function runApplyPresets(policySet: PolicySetBehavior): ChildRun {
@@ -235,6 +238,7 @@ function describeChildRun(run: ChildRun): string {
 interface PolicySetFailureScenario {
   /** Names the scenario in the `describe.each` title. */
   readonly summary: string;
+  readonly policySetExitCode: number;
   readonly policySetStderr: string;
   /** Text only `policySetFailure` can produce, never the stub's own stderr. */
   readonly expectedOperatorMessage: string;
@@ -245,6 +249,7 @@ interface PolicySetFailureScenario {
 const POLICY_SET_FAILURES: ReadonlyArray<PolicySetFailureScenario> = [
   {
     summary: "an authoritative semantic rejection",
+    policySetExitCode: 1,
     policySetStderr: AUTHORITATIVE_REJECTION_STDERR,
     expectedOperatorMessage:
       `OpenShell rejected the policy for sandbox '${SANDBOX_NAME}' (exit 1): ` +
@@ -253,6 +258,7 @@ const POLICY_SET_FAILURES: ReadonlyArray<PolicySetFailureScenario> = [
   },
   {
     summary: "a torn transport stream",
+    policySetExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
     policySetStderr: TRANSPORT_RESET_STDERR,
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
     expectedGuidance: "read the current policy back before retrying",
@@ -265,7 +271,10 @@ describe.each(POLICY_SET_FAILURES)(
     let run: ChildRun;
 
     beforeAll(() => {
-      run = runApplyPresets({ exitCode: 1, stderr: scenario.policySetStderr });
+      run = runApplyPresets({
+        exitCode: scenario.policySetExitCode,
+        stderr: scenario.policySetStderr,
+      });
     }, 180000);
 
     afterAll(() => {
@@ -278,7 +287,7 @@ describe.each(POLICY_SET_FAILURES)(
       expect(stderr, diagnostics).toContain(scenario.expectedOperatorMessage);
       expect(stderr, diagnostics).toContain(scenario.expectedGuidance);
       expect(stderr, diagnostics).not.toContain(GENERIC_RUNNER_FAILURE_TEXT);
-      expect(run.result.status, diagnostics).toBe(1);
+      expect(run.result.status, diagnostics).toBe(scenario.policySetExitCode);
       expect(run.result.stdout, diagnostics).not.toContain(RETURN_MARKER);
     });
 
@@ -289,6 +298,13 @@ describe.each(POLICY_SET_FAILURES)(
     it("leaves no composed sandbox policy content on disk (#9206)", () => {
       expect(readableFilesContaining(run.tmpDir, CANARY_HOST), describeChildRun(run)).toEqual([]);
       expect(readableFilesContaining(run.tmpDir, "wttr.in"), describeChildRun(run)).toEqual([]);
+    });
+
+    it("leaves local preset attribution unwritten (#9206)", () => {
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(run.homeDir, ".nemoclaw", "sandboxes.json"), "utf-8"),
+      ) as { sandboxes: Record<string, { policies?: string[] }> };
+      expect(registry.sandboxes[SANDBOX_NAME]?.policies).toEqual([]);
     });
   },
 );
