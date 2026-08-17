@@ -4903,12 +4903,13 @@ When the sandbox gateway is healthy but the host forward never came up, verifica
   The OpenAI-compatible API on port 8642 is not reachable from the host. Run: openshell forward start --background 8642 <name>
 ```
 
-The sandbox itself is intact, so start the forward and re-check:
+The sandbox itself is intact, so start the forward and re-check.
+Each Hermes sandbox owns an API port allocated from `8642` through `8652`, so use the port named in the `api` diagnostic rather than the default:
 
 ```bash
-openshell forward list                        # confirm no row owns the API port
-openshell forward start --background 8642 <name>
-curl -sf http://127.0.0.1:8642/health
+openshell forward list                          # confirm no row owns the API port
+openshell forward start --background <port> <name>
+curl -sf http://127.0.0.1:<port>/health
 ```
 
 If the forward still refuses connections, a foreign host listener usually holds the port; stop it, then rerun `$$nemoclaw onboard` to complete verification.

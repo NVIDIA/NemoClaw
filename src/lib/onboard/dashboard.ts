@@ -249,10 +249,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: VerifyChainAgent | null | undefined,
   ): ReturnType<typeof buildChain> {
+    // Resolve WSL once: `buildChain` and the host-address lookup must agree, or
+    // the chain can claim WSL while dropping the fallback URL that pairs with it.
+    const isWsl = deps.isWsl();
     return buildChain({
       chatUiUrl,
-      isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress(),
+      isWsl,
+      wslHostAddress: getWslHostAddress({ isWsl }),
       dashboardHealthEndpoint: agent?.dashboard?.healthPath,
       gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent),
       gatewayHealthEndpoint: agent?.healthProbe?.url,
