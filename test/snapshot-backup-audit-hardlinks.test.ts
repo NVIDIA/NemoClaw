@@ -12,6 +12,7 @@
  */
 
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,6 +21,11 @@ import { afterAll, describe, expect, it } from "vitest";
 const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-backup-audit-hardlinks-"));
 process.env.HOME = TMP_HOME;
+const tarHelp = spawnSync("tar", ["--help"], { encoding: "utf8" });
+const supportsHardDereference = `${tarHelp.stdout}${tarHelp.stderr}`.includes("--hard-dereference");
+// Production executes GNU tar inside the Linux sandbox. Skip only this
+// archive-behavior case on hosts such as macOS whose BSD tar lacks that flag.
+const hardDereferenceTest = supportsHardDereference ? it : it.skip;
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 type SandboxStateModule = typeof import("../src/lib/state/sandbox.js");
@@ -144,29 +150,32 @@ afterAll(() => {
 });
 
 describe("pre-backup audit — multiply-linked regular files (#9314)", () => {
-  it("backs up a sandbox whose state dirs contain hard-linked package files", () => {
-    // Shape emitted by `find -type f -a -links +1`: type `f`, empty link
-    // target. A lazily installed dependency hard-links out of the package
-    // manager cache, so every installed file looks like this.
-    const auditLines = [
-      "f\t/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/impl.py\t",
-      "f\t/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/utils.py\t",
-      "f\t/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py\t",
-    ].join("\n");
+  hardDereferenceTest(
+    "backs up a sandbox whose state dirs contain hard-linked package files",
+    () => {
+      // Shape emitted by `find -type f -a -links +1`: type `f`, empty link
+      // target. A lazily installed dependency hard-links out of the package
+      // manager cache, so every installed file looks like this.
+      const auditLines = [
+        "f\t/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/impl.py\t",
+        "f\t/sandbox/.openclaw/workspace/lazy-packages/aiohappyeyeballs/utils.py\t",
+        "f\t/sandbox/.openclaw/workspace/lazy-packages/edge_tts/__init__.py\t",
+      ].join("\n");
 
-    const backup = backupWithAuditOutput(auditLines);
+      const backup = backupWithAuditOutput(auditLines);
 
-    expect(backup.success).toBe(true);
-    expect(backup.error).toBeUndefined();
-    expect(backup.backedUpDirs).toEqual(["workspace"]);
+      expect(backup.success, backup.error).toBe(true);
+      expect(backup.error).toBeUndefined();
+      expect(backup.backedUpDirs).toEqual(["workspace"]);
 
-    // Both linked paths must survive as independent regular files: the archive
-    // is unpacked through safeTarExtract, which rejects hard-link records.
-    const linked = path.join(String(backup.manifest?.backupPath), "workspace", "lazy-packages");
-    expect(fs.readFileSync(path.join(linked, "impl.py"), "utf8")).toBe("package payload\n");
-    expect(fs.readFileSync(path.join(linked, "alias.py"), "utf8")).toBe("package payload\n");
-    expect(fs.lstatSync(path.join(linked, "alias.py")).nlink).toBe(1);
-  });
+      // Both linked paths must survive as independent regular files: the archive
+      // is unpacked through safeTarExtract, which rejects hard-link records.
+      const linked = path.join(String(backup.manifest?.backupPath), "workspace", "lazy-packages");
+      expect(fs.readFileSync(path.join(linked, "impl.py"), "utf8")).toBe("package payload\n");
+      expect(fs.readFileSync(path.join(linked, "alias.py"), "utf8")).toBe("package payload\n");
+      expect(fs.lstatSync(path.join(linked, "alias.py")).nlink).toBe(1);
+    },
+  );
 
   it("still rejects an unsafe symlink alongside hard-linked files", () => {
     // Regression lock: accepting hard links must not weaken symlink rejection.

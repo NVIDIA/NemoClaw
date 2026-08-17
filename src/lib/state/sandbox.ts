@@ -1488,16 +1488,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
         //
         // Multiply-linked regular files are collected for observability but do
-        // not reject the backup (#9314). `tar` runs without `-h`, so a hard
-        // link is archived as that path's own content and restores as a plain
-        // regular file: it cannot escape the archived tree the way a followed
-        // symlink can. It also offers no exfiltration path the audit could
-        // close, because an agent that can create a hard link inside a state
-        // dir can equally `cp` the same bytes there, and a copy is an ordinary
-        // regular file this audit never sees. Rejecting them only broke
-        // legitimate installs: package managers hard-link from their cache, so
-        // every Hermes sandbox that lazily installed a dependency failed its
-        // pre-upgrade backup.
+        // not reject the backup (#9314). The archive command below uses
+        // `--hard-dereference`, so every included path is stored and restored
+        // as a plain regular file. It offers no exfiltration path the audit
+        // could close, because an agent that can create a hard link inside a
+        // state dir can equally `cp` the same bytes there, and a copy is an
+        // ordinary regular file this audit never sees. Rejecting hard links
+        // only broke legitimate installs: package managers hard-link from
+        // their cache, so every Hermes sandbox that lazily installed a
+        // dependency failed its pre-upgrade backup.
         //
         // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
         // empty for non-symlinks but always present, so the field count is
