@@ -274,8 +274,9 @@ keeps environment, onboarding profile, expected state, lifecycle, and `suiteIds`
 as matrix metadata. Extend that metadata only to select existing behavior; do
 not duplicate behavior logic in workflows, lists, or catalogues. When a
 combination is missing but not ready for a test, record a combinatorial gap with
-the missing dimension, nearest existing coverage, and follow-up owner instead of
-adding speculative coverage or changing release judgment.
+the missing dimension, nearest existing coverage, why a new test would duplicate
+or overreach current behavior, the follow-up owner, and the issue or PR that will
+make the gap testable. Do not add speculative coverage or change release judgment.
 
 E2E assertions should check outcomes, state, artifacts, and redacted diagnostics.
 Do not assert incidental terminal output, progress wording, ANSI escape
