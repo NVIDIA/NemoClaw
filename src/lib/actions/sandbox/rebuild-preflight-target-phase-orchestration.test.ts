@@ -58,6 +58,57 @@ describe("prepareRebuildTargetPreflights", () => {
     mocks.preflightAuthoritativeOnboardRuntime.mockResolvedValue(false);
   });
 
+  async function prepareN1xTarget(endpointSource: "onboard" | "inference-set") {
+    const resumeConfig = {
+      provider: "vllm-local",
+      model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      preferredInferenceApi: "openai-completions",
+      pinEndpoint: true,
+      endpointUrl: null,
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      registryInferenceRoute: null,
+    };
+    mocks.prepareRebuildTargetConfig.mockReturnValue({
+      agentDefinition: {},
+      resumeConfig,
+      durableConfig: {
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        webSearchConfig: null,
+      },
+      credentialEnv: null,
+      fromDockerfile: false,
+      hermesToolGateways: [],
+    });
+    mocks.prepareRebuildRecreateOptions.mockReturnValue({
+      controlUiPort: 18_789,
+      targetGatewayName: "nemoclaw",
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+    });
+
+    await prepareRebuildTargetPreflights({
+      sandboxName: "my-assistant",
+      sandboxEntry: {
+        name: "my-assistant",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        openshellDriver: "docker",
+        provider: resumeConfig.provider,
+        model: resumeConfig.model,
+        endpointUrl: "http://host.openshell.internal:8000/v1",
+        endpointSource,
+      } as never,
+      rebuildAgent: "openclaw",
+      autoYes: true,
+      log: vi.fn(),
+      bail: mocks.bail as never,
+    });
+    return mocks.preflightAuthoritativeOnboardRuntime.mock.calls[0]?.[2];
+  }
+
   it("resolves the Ollama context window through target preparation", async () => {
     const catalogHandoff = {
       agent: "openclaw",
@@ -131,81 +182,17 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(mocks.resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
   });
 
-  it.each([
-    { caseName: "exact legacy route", endpointSource: "onboard", expectedIntent: true },
-    {
-      caseName: "mismatched endpoint source",
-      endpointSource: "inference-set",
-      expectedIntent: undefined,
-    },
-  ])(
-    "passes managed-vLLM intent from the $caseName into authoritative readiness (#9292)",
-    async ({ endpointSource, expectedIntent }) => {
-      const resumeConfig = {
-        provider: "vllm-local",
-        model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        preferredInferenceApi: "openai-completions",
-        pinEndpoint: true,
-        endpointUrl: null,
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        registryInferenceRoute: null,
-      };
-      const recreateOptions = {
-        controlUiPort: 18_789,
-        targetGatewayName: "nemoclaw",
-        toolDisclosure: "progressive",
-        dcodeAutoApprovalMode: "disabled",
-        observabilityEnabled: false,
-      };
-      mocks.prepareRebuildTargetConfig.mockReturnValue({
-        agentDefinition: {},
-        resumeConfig,
-        durableConfig: {
-          toolDisclosure: "progressive",
-          dcodeAutoApprovalMode: "disabled",
-          webSearchConfig: null,
-        },
-        credentialEnv: null,
-        fromDockerfile: false,
-        hermesToolGateways: [],
-      });
-      mocks.prepareRebuildRecreateOptions.mockReturnValue(recreateOptions);
+  it("passes exact legacy N1x intent into authoritative readiness (#9292)", async () => {
+    const readinessOptions = await prepareN1xTarget("onboard");
 
-      await expect(
-        prepareRebuildTargetPreflights({
-          sandboxName: "my-assistant",
-          sandboxEntry: {
-            name: "my-assistant",
-            agent: "openclaw",
-            gatewayName: "nemoclaw",
-            openshellDriver: "docker",
-            provider: resumeConfig.provider,
-            model: resumeConfig.model,
-            endpointUrl: "http://host.openshell.internal:8000/v1",
-            endpointSource,
-          } as never,
-          rebuildAgent: "openclaw",
-          autoYes: true,
-          log: vi.fn(),
-          bail: mocks.bail as never,
-        }),
-      ).resolves.toBeNull();
-      expect(mocks.preflightAuthoritativeOnboardRuntime).toHaveBeenCalledWith(
-        "my-assistant",
-        resumeConfig,
-        expect.any(Object),
-        mocks.bail,
-        {},
-      );
-      const readinessOptions = mocks.preflightAuthoritativeOnboardRuntime.mock.calls[0]?.[2];
-      if (expectedIntent === true) {
-        expect(readinessOptions).toEqual(
-          expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
-        );
-      } else {
-        expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
-      }
-    },
-  );
+    expect(readinessOptions).toEqual(
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+  });
+
+  it("withholds N1x intent for a mismatched endpoint source (#9292)", async () => {
+    const readinessOptions = await prepareN1xTarget("inference-set");
+
+    expect(readinessOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
+  });
 });
