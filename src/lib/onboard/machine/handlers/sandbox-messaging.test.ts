@@ -396,7 +396,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv },
+      { clearPlanEnv, note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -417,7 +417,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -432,7 +432,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
