@@ -109,7 +109,16 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).not.toContain("recover_failed_scope_approval");
   });
 
-  it("accepts exactly one terminal fixed receipt", () => {
+  it.each(
+    Array.from(
+      [
+        `${RECEIPT_MARKER}=approved-one\nlater output\n`,
+        `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
+        `${RECEIPT_MARKER}=raw-request-id\n`,
+      ],
+      (value) => [value],
+    ),
+  )("accepts exactly one terminal fixed receipt [case %#]", (output) => {
     for (const receipt of [
       "approved-one",
       "list-failed",
@@ -136,12 +145,7 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
         parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
       ).toBe(receipt);
     }
-    for (const output of [
-      `${RECEIPT_MARKER}=approved-one\nlater output\n`,
-      `${RECEIPT_MARKER}=approve-failed\n${RECEIPT_MARKER}=approved-one\n`,
-      `${RECEIPT_MARKER}=raw-request-id\n`,
-    ]) {
-      expect(parseAutoPairApprovalReceipt(output)).toBeNull();
-    }
+
+    expect(parseAutoPairApprovalReceipt(output)).toBeNull();
   });
 });

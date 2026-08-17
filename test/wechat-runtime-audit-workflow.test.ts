@@ -168,33 +168,35 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 describe("WeChat runtime audit and install-cache gates (#5896)", () => {
-  it("audits the installed graph and exercises the exact archive through a copied cache", () => {
-    const script = fs.readFileSync(auditScript, "utf8");
-    for (const fragment of [
-      'npm --prefix "$runtime_dir" ci',
-      "--ignore-scripts",
-      "--omit=dev",
-      "--legacy-peer-deps",
-      "audit-level=low",
-      "audit signatures",
-      "npm-audit.json",
-      "npm-audit-signatures.txt",
-      'chmod -R a-w "$trusted_cache"',
-      'cp -R "$trusted_cache"/. "$install_cache"/',
-      'chmod -R u+rwX,go-w "$install_cache"',
-      'npm pack "$wechat_tarball"',
-      "--offline",
-      'EXPECTED_INTEGRITY="$wechat_integrity"',
-      "WeChat runtime package.json must contain exactly the reviewed plugin dependency",
-      "WeChat runtime plugin lock entry must carry sha512 integrity",
-      'npm_registry="https://registry.npmjs.org/"',
-      '--userconfig "$trusted_npmrc"',
-      '--registry "$npm_registry"',
-      "requireRegistryUrl(record.resolved, location)",
-    ]) {
+  it.each([
+    'npm --prefix "$runtime_dir" ci',
+    "--ignore-scripts",
+    "--omit=dev",
+    "--legacy-peer-deps",
+    "audit-level=low",
+    "audit signatures",
+    "npm-audit.json",
+    "npm-audit-signatures.txt",
+    'chmod -R a-w "$trusted_cache"',
+    'cp -R "$trusted_cache"/. "$install_cache"/',
+    'chmod -R u+rwX,go-w "$install_cache"',
+    'npm pack "$wechat_tarball"',
+    "--offline",
+    'EXPECTED_INTEGRITY="$wechat_integrity"',
+    "WeChat runtime package.json must contain exactly the reviewed plugin dependency",
+    "WeChat runtime plugin lock entry must carry sha512 integrity",
+    'npm_registry="https://registry.npmjs.org/"',
+    '--userconfig "$trusted_npmrc"',
+    '--registry "$npm_registry"',
+    "requireRegistryUrl(record.resolved, location)",
+  ])(
+    "audits the installed graph and exercises the exact archive through a copied cache [%s]",
+    (fragment) => {
+      const script = fs.readFileSync(auditScript, "utf8");
+
       expect(script).toContain(fragment);
-    }
-  });
+    },
+  );
 
   it("rejects a target-controlled npm registry override", () => {
     const result = runAuditValidation(({ runtimeDir }) => {
@@ -248,17 +250,20 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
       0,
       /complete vulnerability finding report/,
     ],
-  ])("records provenance and fails closed for %s", (_label, auditReport, auditStatus, expectedFailure) => {
-    const result = runAuditValidation(({ targetRoot }) => {
-      installFakeAuditNpm(targetRoot, auditReport, auditStatus);
-    });
+  ])(
+    "records provenance and fails closed for %s",
+    (_label, auditReport, auditStatus, expectedFailure) => {
+      const result = runAuditValidation(({ targetRoot }) => {
+        installFakeAuditNpm(targetRoot, auditReport, auditStatus);
+      });
 
-    expect(result.status).not.toBe(0);
-    expect(result.provenance, result.stderr).toMatchObject({
-      failure: expect.stringMatching(expectedFailure),
-      rawReportPath: "npm-audit.json",
-    });
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.provenance, result.stderr).toMatchObject({
+        failure: expect.stringMatching(expectedFailure),
+        rawReportPath: "npm-audit.json",
+      });
+    },
+  );
 
   it("retries signature download failures and succeeds on the third attempt", () => {
     const result = runAuditValidation(({ targetRoot }) => {

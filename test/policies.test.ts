@@ -38,12 +38,13 @@ function parseResultPayload(stdout: string): any {
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("each preset has name and description", () => {
-      for (const p of policies.listPresets()) {
+    it.each(Array.from(policies.listPresets(), (value) => [value]))(
+      "$name has a name and description",
+      (p) => {
         expect(p.name).toBeTruthy();
         expect(p.description).toBeTruthy();
-      }
-    });
+      },
+    );
 
     it("does not include the WhatsApp preset YAML body in the description", () => {
       const whatsapp = policies.listPresets().find((p) => p.name === "whatsapp");

@@ -84,6 +84,49 @@ describe("migration snapshot sanitizer fallbacks", () => {
     mtimeNs: "3",
     ctimeNs: "4",
   };
+  const malformedDescriptorOutputs = [
+    { label: "non-JSON output", output: "not-json" },
+    {
+      label: "array directories",
+      output: JSON.stringify({ root: identity, directories: [], files: [] }),
+    },
+    {
+      label: "escaping directory path",
+      output: JSON.stringify({
+        root: identity,
+        directories: { "nested\\escape": identity },
+        files: [],
+      }),
+    },
+    {
+      label: "null file",
+      output: JSON.stringify({ root: identity, directories: {}, files: [null] }),
+    },
+    {
+      label: "absolute file path",
+      output: JSON.stringify({
+        root: identity,
+        directories: {},
+        files: [{ path: "/escape", metadata: identity }],
+      }),
+    },
+    {
+      label: "null file metadata",
+      output: JSON.stringify({
+        root: identity,
+        directories: {},
+        files: [{ path: "config.json", metadata: null }],
+      }),
+    },
+    {
+      label: "non-string file content",
+      output: JSON.stringify({
+        root: identity,
+        directories: {},
+        files: [{ path: "config.json", metadata: identity, content: 42 }],
+      }),
+    },
+  ];
 
   it("fails closed when the descriptor helper is unavailable", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
@@ -285,35 +328,14 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("rejects every malformed descriptor scan boundary", () => {
-    const root = { canonicalPath: makeRoot(), identity };
-    const malformedOutputs = [
-      "not-json",
-      JSON.stringify({ root: identity, directories: [], files: [] }),
-      JSON.stringify({ root: identity, directories: { "nested\\escape": identity }, files: [] }),
-      JSON.stringify({ root: identity, directories: {}, files: [null] }),
-      JSON.stringify({
-        root: identity,
-        directories: {},
-        files: [{ path: "/escape", metadata: identity }],
-      }),
-      JSON.stringify({
-        root: identity,
-        directories: {},
-        files: [{ path: "config.json", metadata: null }],
-      }),
-      JSON.stringify({
-        root: identity,
-        directories: {},
-        files: [{ path: "config.json", metadata: identity, content: 42 }],
-      }),
-    ];
-
-    for (const output of malformedOutputs) {
+  it.each(malformedDescriptorOutputs)(
+    "rejects a malformed descriptor with $label",
+    ({ output }) => {
+      const root = { canonicalPath: makeRoot(), identity };
       writePythonWrapper([`printf '%s\\n' ${shellQuote(output)}`]);
       expect(scanDescriptorSnapshot(root, new Set())).toBeNull();
-    }
-  });
+    },
+  );
 
   it("rejects unsafe roots and non-canonical helper payloads", () => {
     const root = makeRoot();
@@ -349,47 +371,40 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(decodeDescriptorSnapshotContent(oversized)).toBeNull();
   });
 
-  it("preserves canonical base64 and UTF-8 boundary rules", () => {
-    expect(decodeDescriptorSnapshotContent("")).toBe("");
-    expect(decodeDescriptorSnapshotContent("Zg==")).toBe("f");
-    expect(decodeDescriptorSnapshotContent("Zm8=")).toBe("fo");
-    expect(decodeDescriptorSnapshotContent("Zm9v")).toBe("foo");
-    expect(decodeDescriptorSnapshotContent("aGVsbG8=")).toBe("hello");
-    for (const rejected of [
-      "A",
-      "AAAAA",
-      "AA=A",
-      "A===",
-      "====",
-      "YWJj=",
-      "AB==",
-      "AAB=",
-      "/w==",
-      "YWJj\n",
-    ]) {
+  it.each(["A", "AAAAA", "AA=A", "A===", "====", "YWJj=", "AB==", "AAB=", "/w==", "YWJj\n"])(
+    "preserves canonical base64 and UTF-8 boundary rules [%s]",
+    (rejected) => {
+      expect(decodeDescriptorSnapshotContent("")).toBe("");
+      expect(decodeDescriptorSnapshotContent("Zg==")).toBe("f");
+      expect(decodeDescriptorSnapshotContent("Zm8=")).toBe("fo");
+      expect(decodeDescriptorSnapshotContent("Zm9v")).toBe("foo");
+      expect(decodeDescriptorSnapshotContent("aGVsbG8=")).toBe("hello");
+
       expect(decodeDescriptorSnapshotContent(rejected)).toBeNull();
-    }
-  });
+    },
+  );
 
-  it("rejects non-canonical base64 at the descriptor apply boundary", () => {
-    const rootPath = makeRoot();
-    const configPath = path.join(rootPath, "config.json");
-    writeFileSync(configPath, "original");
-    const root = inspectDescriptorSnapshotRoot(rootPath)!;
-    const scan = scanDescriptorSnapshot(root, new Set())!;
-    const config = scan.files.find((file) => file.path === "config.json")!;
+  it.each(["AB==", "AAB="])(
+    "rejects non-canonical base64 at the descriptor apply boundary [%s]",
+    (content) => {
+      const rootPath = makeRoot();
+      const configPath = path.join(rootPath, "config.json");
+      writeFileSync(configPath, "original");
+      const root = inspectDescriptorSnapshotRoot(rootPath)!;
+      const scan = scanDescriptorSnapshot(root, new Set())!;
+      const config = scan.files.find((file) => file.path === "config.json")!;
 
-    expect(scan).not.toBeNull();
-    expect(config).toBeDefined();
-    for (const content of ["AB==", "AAB="]) {
+      expect(scan).not.toBeNull();
+      expect(config).toBeDefined();
+
       expect(
         applyDescriptorSnapshotActions(root, scan, [
           { kind: "replace", path: config.path, metadata: config.metadata, content },
         ]),
       ).toBe(false);
       expect(readFileSync(configPath, "utf-8")).toBe("original");
-    }
-  });
+    },
+  );
 
   it("fails closed when sanitized output cannot be installed", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");

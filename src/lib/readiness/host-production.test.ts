@@ -32,13 +32,18 @@ describe("production host readiness collection (#7411)", () => {
     collectHostObservations({ now: () => new Date("2026-08-07T12:00:00.000Z") });
 
     expect(subprocess.spawnSync.mock.calls.length).toBeGreaterThan(0);
-    for (const [, , options] of subprocess.spawnSync.mock.calls) {
-      const env = options?.env as NodeJS.ProcessEnv | undefined;
-      expect(env).toBeDefined();
-      expect(env?.OPENSHELL_GATEWAY_AUTH_TOKEN).toBeUndefined();
-      expect(env?.OPENSHELL_SANDBOX_TOKEN).toBeUndefined();
-      expect(env?.XDG_API_TOKEN).toBeUndefined();
-    }
+
+    expect(
+      subprocess.spawnSync.mock.calls.every(([, , options]) => {
+        const env = options?.env as NodeJS.ProcessEnv | undefined;
+        return (
+          env !== undefined &&
+          env.OPENSHELL_GATEWAY_AUTH_TOKEN === undefined &&
+          env.OPENSHELL_SANDBOX_TOKEN === undefined &&
+          env.XDG_API_TOKEN === undefined
+        );
+      }),
+    ).toBe(true);
   });
 
   it("does not contact Docker through an unsupported configured endpoint", () => {

@@ -53,16 +53,11 @@ describe("Docker-driver gateway env config validation", () => {
     }
   });
 
-  it("rejects configs missing any required gateway JWT entry", () => {
-    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
-    try {
-      for (const key of [
-        "signing_key_path",
-        "public_key_path",
-        "kid_path",
-        "gateway_id",
-        "ttl_secs",
-      ]) {
+  it.each(["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"])(
+    "rejects a config missing gateway_jwt.$key",
+    (key) => {
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+      try {
         const configPath = writeSafeGatewayAuthConfig(stateDir);
         const config = fs
           .readFileSync(configPath, "utf-8")
@@ -75,11 +70,11 @@ describe("Docker-driver gateway env config validation", () => {
             OPENSHELL_GATEWAY_CONFIG: configPath,
           }),
         ).toThrow(new RegExp(`gateway_jwt\\.${key}`));
+      } finally {
+        fs.rmSync(stateDir, { recursive: true, force: true });
       }
-    } finally {
-      fs.rmSync(stateDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("rejects a gateway JWT TTL outside NemoClaw's bounded value", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));

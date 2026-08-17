@@ -165,6 +165,17 @@ describe("vLLM served route identity", () => {
 
 describe("managed vLLM image distribution boundary", () => {
   const digest = `sha256:${"a".repeat(64)}`;
+  const platformRefs = Object.values(VLLM_IMAGES).flatMap((imageSet) =>
+    Object.values(imageSet)
+      .map((value) =>
+        typeof value === "object" && value !== null && "ref" in value ? String(value.ref) : null,
+      )
+      .filter((ref): ref is string => ref !== null),
+  );
+  const runtimeRefs = VLLM_MODELS.map((model) => model.runtime?.image).filter(
+    (ref): ref is string => typeof ref === "string",
+  );
+  const managedImageRefs = [...new Set([...platformRefs, ...runtimeRefs])];
 
   it("accepts repository-qualified immutable registry digests", () => {
     expect(() => assertVllmRegistryDigestRef(`vllm/vllm-openai@${digest}`)).not.toThrow();
@@ -187,23 +198,12 @@ describe("managed vLLM image distribution boundary", () => {
     );
   });
 
-  it("keeps every shipped managed-vLLM image on a registry digest", () => {
-    const platformRefs = Object.values(VLLM_IMAGES).flatMap((imageSet) =>
-      Object.values(imageSet)
-        .map((value) =>
-          typeof value === "object" && value !== null && "ref" in value ? String(value.ref) : null,
-        )
-        .filter((ref): ref is string => ref !== null),
-    );
-    const runtimeRefs = VLLM_MODELS.map((model) => model.runtime?.image).filter(
-      (ref): ref is string => typeof ref === "string",
-    );
-    const refs = new Set([...platformRefs, ...runtimeRefs]);
+  it("ships at least one managed-vLLM image", () => {
+    expect(managedImageRefs.length).toBeGreaterThan(0);
+  });
 
-    expect(refs.size).toBeGreaterThan(0);
-    for (const ref of refs) {
-      expect(() => assertVllmRegistryDigestRef(ref), ref).not.toThrow();
-    }
+  it.each(managedImageRefs)("keeps the shipped image %s on a registry digest", (ref) => {
+    expect(() => assertVllmRegistryDigestRef(ref)).not.toThrow();
   });
 
   it("refuses a local image ID before invoking Docker pull", async () => {
@@ -348,30 +348,29 @@ describe("vLLM profile detection", () => {
         "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
       imageDownloadSizeBytes: 8_928_665_752,
     },
-  ] as const)("keeps generic Linux on the smaller Nemotron Nano default for $arch", async ({
-    arch,
-    image,
-    imageDownloadSizeBytes,
-  }) => {
-    const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
-    try {
-      Object.defineProperty(process, "arch", { configurable: true, value: arch });
-      vi.resetModules();
-      const { detectVllmProfile: detectVllmProfileForArch } = await import("./vllm");
+  ] as const)(
+    "keeps generic Linux on the smaller Nemotron Nano default for $arch",
+    async ({ arch, image, imageDownloadSizeBytes }) => {
+      const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
+      try {
+        Object.defineProperty(process, "arch", { configurable: true, value: arch });
+        vi.resetModules();
+        const { detectVllmProfile: detectVllmProfileForArch } = await import("./vllm");
 
-      const profile = detectVllmProfileForArch({ platform: "linux", type: "nvidia" });
+        const profile = detectVllmProfileForArch({ platform: "linux", type: "nvidia" });
 
-      expect(profile).not.toBeNull();
-      expect(profile!.name).toBe("Linux + NVIDIA GPU");
-      expect(profile!.image).toBe(image);
-      expect(profile!.imageDownloadSizeBytes).toBe(imageDownloadSizeBytes);
-      expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
-      expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
-    } finally {
-      Object.defineProperty(process, "arch", originalArch);
-      vi.resetModules();
-    }
-  });
+        expect(profile).not.toBeNull();
+        expect(profile!.name).toBe("Linux + NVIDIA GPU");
+        expect(profile!.image).toBe(image);
+        expect(profile!.imageDownloadSizeBytes).toBe(imageDownloadSizeBytes);
+        expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
+        expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
+      } finally {
+        Object.defineProperty(process, "arch", originalArch);
+        vi.resetModules();
+      }
+    },
+  );
 
   it("generic-Linux default model pins the tool-call flags (#6314)", () => {
     // Regression for #6314: without --enable-auto-tool-choice + --tool-call-parser,
@@ -1388,28 +1387,28 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerRunDetached).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    "",
-    "false",
-  ])("preserves a same-name container with managed label %j before downloads", async (label) => {
-    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(mocks, profile.containerName, [
-      () => vllmContainerRow(profile.containerName, { label }),
-    ]);
+  it.each(["", "false"])(
+    "preserves a same-name container with managed label %j before downloads",
+    async (label) => {
+      const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+      mockSuccessfulVllmInstall(mocks, profile.containerName, [
+        () => vllmContainerRow(profile.containerName, { label }),
+      ]);
 
-    const result = await installVllm(profile, {
-      hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-    });
+      const result = await installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+      });
 
-    expect(result).toEqual({ ok: false });
-    expect(mocks.dockerForceRm).not.toHaveBeenCalled();
-    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
-    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("NemoClaw will not remove it"));
-  });
+      expect(result).toEqual({ ok: false });
+      expect(mocks.dockerForceRm).not.toHaveBeenCalled();
+      expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+      expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+      expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("NemoClaw will not remove it"));
+    },
+  );
 
   it.each([
     [

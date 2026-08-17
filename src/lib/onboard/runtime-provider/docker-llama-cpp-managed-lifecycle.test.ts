@@ -822,20 +822,22 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
   });
 
-  it("rolls back malformed create output and readiness failure before receipt prepare (#8395)", () => {
-    const arrangeFailure = {
-      stdout: (fixture: DockerFixture) => fixture.setCreateStdout("short-id\n"),
-      probe: (fixture: DockerFixture) => fixture.failProbe(),
-    } as const;
-    for (const failure of ["stdout", "probe"] as const) {
+  it.each(["stdout", "probe"] as const)(
+    "rolls back malformed create output and readiness failure before receipt prepare [%s] (#8395)",
+    (failure) => {
+      const arrangeFailure = {
+        stdout: (fixture: DockerFixture) => fixture.setCreateStdout("short-id\n"),
+        probe: (fixture: DockerFixture) => fixture.failProbe(),
+      } as const;
+
       const fixture = dockerFixture();
       const store = journalStore();
       arrangeFailure[failure](fixture);
       expect(() => controller(fixture, store).start(receiptWriter())).toThrow();
       expect(store.list()).toEqual([]);
       expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
-    }
-  });
+    },
+  );
 
   it("rolls back when durable receipt preparation fails before publication is possible (#8414)", () => {
     const fixture = dockerFixture();
@@ -1200,27 +1202,31 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     );
   });
 
-  it("rejects effective hardening drift after creation (#8395)", () => {
+  it.each(
+    Array.from(
+      [
+        (candidate: DockerFixture) => candidate.driftGpuRequest(undefined, 1),
+        (candidate: DockerFixture) => candidate.driftGpuRequest("nvidia", 2),
+        (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("cap-add"),
+        (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("legacy-device"),
+        (candidate: DockerFixture) => candidate.dropTmpfs(),
+      ],
+      (value) => [value],
+    ),
+  )("rejects effective hardening drift after creation [case %#] (#8395)", (mutate) => {
     const fixture = dockerFixture();
     const lifecycle = controller(fixture);
     const receipt = lifecycle.start(receiptWriter());
     fixture.driftHardening();
     expect(() => lifecycle.runtime.inspectManaged(receipt)).toThrow("exact journal authority");
-    for (const mutate of [
-      (candidate: DockerFixture) => candidate.driftGpuRequest(undefined, 1),
-      (candidate: DockerFixture) => candidate.driftGpuRequest("nvidia", 2),
-      (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("cap-add"),
-      (candidate: DockerFixture) => candidate.driftExtraDeviceAuthority("legacy-device"),
-      (candidate: DockerFixture) => candidate.dropTmpfs(),
-    ]) {
-      const candidate = dockerFixture();
-      const candidateLifecycle = controller(candidate);
-      const candidateReceipt = candidateLifecycle.start(receiptWriter());
-      mutate(candidate);
-      expect(() => candidateLifecycle.runtime.inspectManaged(candidateReceipt)).toThrow(
-        "exact journal authority",
-      );
-    }
+
+    const candidate = dockerFixture();
+    const candidateLifecycle = controller(candidate);
+    const candidateReceipt = candidateLifecycle.start(receiptWriter());
+    mutate(candidate);
+    expect(() => candidateLifecycle.runtime.inspectManaged(candidateReceipt)).toThrow(
+      "exact journal authority",
+    );
   });
   it("rejects model and API-key filesystem identity drift during exact inspection", () => {
     const modelFixture = dockerFixture();

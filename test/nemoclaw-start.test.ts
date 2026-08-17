@@ -1180,53 +1180,49 @@ describe("runtime model override (#759)", () => {
     expect(modes.hash).toBe(0o660);
   });
 
-  it("treats invalid supplemental overrides as atomic no-ops", () => {
-    const cases = [
-      {
-        env: { NEMOCLAW_CONTEXT_WINDOW: "not-a-number" },
-        message: "NEMOCLAW_CONTEXT_WINDOW must be a positive integer",
-      },
-      {
-        env: { NEMOCLAW_CONTEXT_WINDOW: "0" },
-        message: "NEMOCLAW_CONTEXT_WINDOW must be a positive integer",
-      },
-      {
-        env: { NEMOCLAW_MAX_TOKENS: "not-a-number" },
-        message: "NEMOCLAW_MAX_TOKENS must be a positive integer",
-      },
-      {
-        env: { NEMOCLAW_MAX_TOKENS: "0" },
-        message: "NEMOCLAW_MAX_TOKENS must be a positive integer",
-      },
-      {
-        env: { NEMOCLAW_REASONING: "maybe" },
-        message: 'NEMOCLAW_REASONING must be "true" or "false"',
-      },
-      {
-        env: { NEMOCLAW_INFERENCE_API_OVERRIDE: "unexpected-api" },
-        message: 'must be "openai-completions" or "anthropic-messages"',
-      },
-    ];
+  it.each([
+    {
+      env: { NEMOCLAW_CONTEXT_WINDOW: "not-a-number" },
+      message: "NEMOCLAW_CONTEXT_WINDOW must be a positive integer",
+    },
+    {
+      env: { NEMOCLAW_CONTEXT_WINDOW: "0" },
+      message: "NEMOCLAW_CONTEXT_WINDOW must be a positive integer",
+    },
+    {
+      env: { NEMOCLAW_MAX_TOKENS: "not-a-number" },
+      message: "NEMOCLAW_MAX_TOKENS must be a positive integer",
+    },
+    {
+      env: { NEMOCLAW_MAX_TOKENS: "0" },
+      message: "NEMOCLAW_MAX_TOKENS must be a positive integer",
+    },
+    {
+      env: { NEMOCLAW_REASONING: "maybe" },
+      message: 'NEMOCLAW_REASONING must be "true" or "false"',
+    },
+    {
+      env: { NEMOCLAW_INFERENCE_API_OVERRIDE: "unexpected-api" },
+      message: 'must be "openai-completions" or "anthropic-messages"',
+    },
+  ])("treats invalid supplemental overrides as atomic no-ops [case %#]", ({ env, message }) => {
+    const { result, config, hash } = runApplyModelOverride({
+      NEMOCLAW_MODEL_OVERRIDE: "new-model",
+      ...env,
+    });
 
-    for (const { env, message } of cases) {
-      const { result, config, hash } = runApplyModelOverride({
-        NEMOCLAW_MODEL_OVERRIDE: "new-model",
-        ...env,
-      });
-
-      expect(result.status).toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain(message);
-      expect(config.agents.defaults.model.primary).toBe("old-model");
-      expect(config.models.providers.inference.api).toBe("openai-completions");
-      expect(config.models.providers.inference.models[0]).toMatchObject({
-        id: "old-model",
-        name: "old-model",
-        contextWindow: 1024,
-        maxTokens: 128,
-        reasoning: false,
-      });
-      expect(hash).toBe("oldhash\n");
-    }
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(message);
+    expect(config.agents.defaults.model.primary).toBe("old-model");
+    expect(config.models.providers.inference.api).toBe("openai-completions");
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "old-model",
+      name: "old-model",
+      contextWindow: 1024,
+      maxTokens: 128,
+      reasoning: false,
+    });
+    expect(hash).toBe("oldhash\n");
   });
 });
 

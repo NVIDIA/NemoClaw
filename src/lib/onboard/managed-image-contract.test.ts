@@ -71,20 +71,22 @@ describe("managed image contract v1", () => {
     });
   });
 
-  it("keeps the candidate cohort outside the shipped cohort (#7925)", () => {
-    expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toEqual(["pi"]);
-    expect(MANAGED_IMAGE_AGENTS).toEqual([
-      ...SHIPPED_MANAGED_IMAGE_AGENTS,
-      ...CANDIDATE_MANAGED_IMAGE_AGENTS,
-    ]);
-    for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
-      expect(isShippedManagedImageAgent(agent)).toBe(false);
-      expect(isCandidateManagedImageAgent(agent)).toBe(true);
-    }
-    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+  it.each(Array.from(SHIPPED_MANAGED_IMAGE_AGENTS, (value) => [value]))(
+    "keeps the candidate cohort outside shipped agent %s (#7925)",
+    (agent) => {
+      expect(CANDIDATE_MANAGED_IMAGE_AGENTS).toEqual(["pi"]);
+      expect(MANAGED_IMAGE_AGENTS).toEqual([
+        ...SHIPPED_MANAGED_IMAGE_AGENTS,
+        ...CANDIDATE_MANAGED_IMAGE_AGENTS,
+      ]);
+      for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+        expect(isShippedManagedImageAgent(agent)).toBe(false);
+        expect(isCandidateManagedImageAgent(agent)).toBe(true);
+      }
+
       expect(isCandidateManagedImageAgent(agent)).toBe(false);
-    }
-  });
+    },
+  );
 
   it("validates a candidate contract without making it selectable (#7925)", () => {
     const contract = contractFor("pi");
@@ -94,18 +96,19 @@ describe("managed image contract v1", () => {
     expect(isShippedManagedImageAgent(contract.agent)).toBe(false);
   });
 
-  it.each(
-    SHIPPED_MANAGED_IMAGE_AGENTS,
-  )("maps %s to its immutable public GHCR identity (#7744)", (agent) => {
-    const parsed = parseManagedImageContractV1(contractFor(agent), agent);
+  it.each(SHIPPED_MANAGED_IMAGE_AGENTS)(
+    "maps %s to its immutable public GHCR identity (#7744)",
+    (agent) => {
+      const parsed = parseManagedImageContractV1(contractFor(agent), agent);
 
-    expect(parsed).toEqual(contractFor(agent));
-    expect(parsed.image).toBe(MANAGED_IMAGE_REPOSITORIES[agent]);
-    expect(parsed.reference).toBe(`${parsed.image}@${parsed.digest}`);
-    expect(parsed.reference).toMatch(
-      /^ghcr\.io\/nvidia\/nemoclaw\/[a-z0-9-]+@sha256:[0-9a-f]{64}$/u,
-    );
-  });
+      expect(parsed).toEqual(contractFor(agent));
+      expect(parsed.image).toBe(MANAGED_IMAGE_REPOSITORIES[agent]);
+      expect(parsed.reference).toBe(`${parsed.image}@${parsed.digest}`);
+      expect(parsed.reference).toMatch(
+        /^ghcr\.io\/nvidia\/nemoclaw\/[a-z0-9-]+@sha256:[0-9a-f]{64}$/u,
+      );
+    },
+  );
 
   it.each(MANAGED_IMAGE_PLATFORMS)("accepts the complete contract on %s (#7744)", (platform) => {
     const contract = { ...contractFor("openclaw"), platform };
@@ -189,20 +192,20 @@ describe("managed image contract v1", () => {
     );
   });
 
-  it.each([
-    "ghrun-123456789012345678901-1",
-    "ghrun-1-12345678901",
-  ])("rejects an unbounded publication cohort %s (#7744)", (cohort) => {
-    expect(() =>
-      parseManagedImageContractV1(
-        {
-          ...contractFor("openclaw"),
-          source: { ...contractFor("openclaw").source, cohort },
-        },
-        "openclaw",
-      ),
-    ).toThrow("contract.source.cohort");
-  });
+  it.each(["ghrun-123456789012345678901-1", "ghrun-1-12345678901"])(
+    "rejects an unbounded publication cohort %s (#7744)",
+    (cohort) => {
+      expect(() =>
+        parseManagedImageContractV1(
+          {
+            ...contractFor("openclaw"),
+            source: { ...contractFor("openclaw").source, cohort },
+          },
+          "openclaw",
+        ),
+      ).toThrow("contract.source.cohort");
+    },
+  );
 
   it.each([
     ["platform", { platform: "linux/ppc64le" }, "contract.platform"],
@@ -212,11 +215,14 @@ describe("managed image contract v1", () => {
       "contract.startupProfileContractVersion",
     ],
     ["capability", { capabilityContractVersion: 2 }, "contract.capabilityContractVersion"],
-  ])("rejects %s contract-version drift instead of guessing compatibility (#7744)", (_label, mutation, expectedField) => {
-    expect(() =>
-      parseManagedImageContractV1({ ...contractFor("hermes"), ...mutation }, "hermes"),
-    ).toThrow(expectedField);
-  });
+  ])(
+    "rejects %s contract-version drift instead of guessing compatibility (#7744)",
+    (_label, mutation, expectedField) => {
+      expect(() =>
+        parseManagedImageContractV1({ ...contractFor("hermes"), ...mutation }, "hermes"),
+      ).toThrow(expectedField);
+    },
+  );
 
   it("rejects unexpected identity fields so publication metadata cannot alter runtime semantics (#7744)", () => {
     const contract = {

@@ -460,20 +460,22 @@ describe("nemoclaw-start mutable config startup ordering", () => {
     }
   });
 
-  it("repairs only the exact legacy owner-private device journal posture (#8304)", () => {
-    const repairMessage = "[config-guard] repairing legacy unreadable OpenClaw state";
-    for (const { journalPosture, expectedEvents, shouldRepair } of [
-      {
-        journalPosture: "8180 root:sandbox",
-        expectedEvents: ["guard:revoke-startup-ready", "guard:recover", "state:lock"],
-        shouldRepair: true,
-      },
-      {
-        journalPosture: "8180 root:root",
-        expectedEvents: ["guard:revoke-startup-ready", "guard:recover"],
-        shouldRepair: false,
-      },
-    ]) {
+  it.each([
+    {
+      journalPosture: "8180 root:sandbox",
+      expectedEvents: ["guard:revoke-startup-ready", "guard:recover", "state:lock"],
+      shouldRepair: true,
+    },
+    {
+      journalPosture: "8180 root:root",
+      expectedEvents: ["guard:revoke-startup-ready", "guard:recover"],
+      shouldRepair: false,
+    },
+  ])(
+    "repairs only the exact legacy owner-private device journal posture [case %#] (#8304)",
+    ({ journalPosture, expectedEvents, shouldRepair }) => {
+      const repairMessage = "[config-guard] repairing legacy unreadable OpenClaw state";
+
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-startup-journal-repair-"));
       const events = path.join(root, "events");
       const script = [
@@ -498,8 +500,8 @@ describe("nemoclaw-start mutable config startup ordering", () => {
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
-    }
-  });
+    },
+  );
 });
 
 describe("nemoclaw-start mutable config seal classification", () => {

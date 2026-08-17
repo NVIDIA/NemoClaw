@@ -94,24 +94,22 @@ detect_express_platform
     expect(detectN1x(false, true).result.stdout).toBe("");
   });
 
-  it("validates bounded root-owned FastOS metadata (#8574)", () => {
+  it.each([
+    "a1ff:0:0:777:24:1:2",
+    "81a4:1000:0:644:116:1:2",
+    "81a4:0:1000:644:116:1:2",
+    "81b6:0:0:666:116:1:2",
+    "81a4:0:0:644:4097:1:2",
+  ])("validates bounded root-owned FastOS metadata [%s] (#8574)", (metadata) => {
     const accepted = runInstallerSourced(
       `n1x_fastos_release_metadata_is_trusted "81a4:0:0:644:116:1:2"`,
     );
     expect(accepted.result.status, accepted.output).toBe(0);
 
-    for (const metadata of [
-      "a1ff:0:0:777:24:1:2",
-      "81a4:1000:0:644:116:1:2",
-      "81a4:0:1000:644:116:1:2",
-      "81b6:0:0:666:116:1:2",
-      "81a4:0:0:644:4097:1:2",
-    ]) {
-      const rejected = runInstallerSourced(
-        `if n1x_fastos_release_metadata_is_trusted "${metadata}"; then exit 9; fi`,
-      );
-      expect(rejected.result.status, `${metadata}: ${rejected.output}`).toBe(0);
-    }
+    const rejected = runInstallerSourced(
+      `if n1x_fastos_release_metadata_is_trusted "${metadata}"; then exit 9; fi`,
+    );
+    expect(rejected.result.status, `${metadata}: ${rejected.output}`).toBe(0);
   });
 
   it("collects numeric FastOS metadata under a non-C locale (#8574)", () => {
