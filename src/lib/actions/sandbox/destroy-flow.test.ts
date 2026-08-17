@@ -126,6 +126,26 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("leaves a foreign same-name Hermes volume untouched and completes registry cleanup", async () => {
+    const harness = createDestroyHarness({
+      agent: "hermes",
+      openshellDriver: "docker",
+      workload: managedHermesWorkload,
+      managedHermesStateVolumeCleanupResult: {
+        status: "not-owned",
+        detail: "the exact NemoClaw ownership labels are absent or changed",
+        volumeName: "nemoclaw-hermes-state-v1-alpha",
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.warnSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Left Docker volume 'nemoclaw-hermes-state-v1-alpha' untouched",
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  });
+
   it("runs routed teardown under the gateway and host router-port locks (#9098)", async () => {
     const harness = createDestroyHarness({ provider: "nvidia-router" });
 
