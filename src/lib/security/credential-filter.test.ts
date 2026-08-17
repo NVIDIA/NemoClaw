@@ -36,6 +36,7 @@ import {
   sanitizeConfigFile,
   sanitizeEnvFile,
   sanitizeEnvFileContent,
+  sanitizeYamlConfigContent,
   sanitizeYamlConfigFile,
   shouldScanSnapshotFileForCredentials,
   stripCredentials,
@@ -455,6 +456,10 @@ describe("sanitizeConfigFile", () => {
     expect(sanitizeYamlConfigFile(configPath)).toBe(false);
     expect(sanitizeConfigFile(configPath)).toBe(false);
     expect(readFileSync(configPath, "utf-8")).toContain("api_key:");
+  });
+
+  it("fails closed for array-root Hermes YAML", () => {
+    expect(sanitizeYamlConfigContent("- first\n- second\n")).toBeNull();
   });
 
   it("returns failure without changing the source when a YAML rewrite fails", () => {
