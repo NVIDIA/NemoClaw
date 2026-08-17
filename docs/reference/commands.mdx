@@ -2510,6 +2510,8 @@ If the base policy read returns non-empty output that NemoClaw cannot parse, the
 Fix the gateway or policy read problem, then rerun the command.
 For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy list` or `status`.
 Recover or re-onboard the sandbox, then re-apply the custom preset.
+For built-in presets in that same case, the command applies the preset and returns success, because a built-in preset stays discoverable from the gateway.
+It warns that `policy list` will report the preset as active on gateway, missing from local state.
 
 With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <exact-host-or-ip>` option to admit matching RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local endpoints.
 The option is invalid for built-in presets.
@@ -2590,7 +2592,7 @@ $$nemoclaw my-assistant policy list
 ### `$$nemoclaw <name> policy remove`
 
 Remove a previously applied policy preset from a sandbox.
-The command lists only the presets currently applied, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
+The command lists the presets the local registry records together with the presets the live gateway enforces, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
 
 ```bash
 $$nemoclaw my-assistant policy remove
@@ -2604,7 +2606,9 @@ $$nemoclaw my-assistant policy remove pypi --yes
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
 Without a preset name, `policy remove` reports the same two picker errors as `policy add` and exits non-zero.
-If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
+If the preset is unknown, or neither the local registry nor the live gateway holds it, the command exits non-zero with a clear error.
+A preset the gateway enforces without a local registry record is removable, which is the state `policy list` reports as active on gateway, missing from local state.
+When NemoClaw cannot query the gateway, the command checks the local registry alone; with a preset name it also reports that the gateway could not be queried.
 
 | Flag | Description |
 |------|-------------|

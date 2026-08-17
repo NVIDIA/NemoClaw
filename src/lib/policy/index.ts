@@ -2131,6 +2131,16 @@ function applyPresetContent(
         `re-onboard the sandbox, then re-apply.`,
     );
     return false;
+  } else {
+    // A built-in preset stays discoverable from the gateway, so the mutation
+    // stands. Name the gap anyway: silence here is what leaves an operator
+    // holding egress that no local state explains. (#9295)
+    console.error(
+      `  Warning: '${presetName}' was applied to the gateway but could not be ` +
+        `recorded locally because sandbox '${sandboxName}' is not in the ` +
+        `registry, so policy list will report it as active on gateway, missing ` +
+        `from local state.`,
+    );
   }
 
   return true;

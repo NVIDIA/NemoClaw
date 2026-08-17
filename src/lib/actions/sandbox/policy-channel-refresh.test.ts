@@ -92,6 +92,7 @@ beforeEach(() => {
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
   vi.spyOn(policies, "getAppliedPresets").mockReturnValue([]);
+  vi.spyOn(policies, "getGatewayPresets").mockReturnValue(null);
   vi.spyOn(policies, "selectFromList").mockResolvedValue("pypi");
   vi.spyOn(policies, "selectForRemoval").mockResolvedValue("pypi");
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
