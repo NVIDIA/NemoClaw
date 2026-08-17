@@ -25,6 +25,8 @@ import {
   runHermesAgentAssertionRetry,
   runOpenClawAgentAssertionRetry,
   type NvdaPersonalStockReply,
+  type OpenClawAgentAttemptEvidenceOptions,
+  validateOpenClawAgentAttemptEvidence,
 } from "../live/common-egress-agent-helpers.ts";
 
 const STOCK_SOURCE_URL =
@@ -102,6 +104,30 @@ function stockTrajectory(extraToolName?: string): string {
       ],
     },
   });
+}
+
+function stockAttemptValidationOptions(
+  overrides: Partial<OpenClawAgentAttemptEvidenceOptions> = {},
+): OpenClawAgentAttemptEvidenceOptions {
+  const evidence = reduceOpenClawToolEvidence(
+    stockSessionJsonLines(),
+    stockTrajectory(),
+    STOCK_REPLY,
+  );
+  return {
+    classification: { passed: true },
+    label: "personal-stock",
+    recordToolEvidence: vi.fn().mockResolvedValue(undefined),
+    reduceToolEvidence: vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stdout: `__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
+    }),
+    reply: JSON.stringify(STOCK_REPLY),
+    replyValidator: (reply, evidence) =>
+      evidence !== undefined && nvdaPersonalStockReplyMatchesEvidence(reply, evidence),
+    toolEvidenceValidator: (candidate) => assessPersonalStockToolEvidence(candidate).matches,
+    ...overrides,
+  };
 }
 
 describe("common-egress agent parsing and classification helpers", () => {
@@ -213,6 +239,89 @@ describe("common-egress agent parsing and classification helpers", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("validates and records a successful Personal stock-fetch attempt", async () => {
+    const recordToolEvidence = vi.fn().mockResolvedValue(undefined);
+    const reduceToolEvidence = vi
+      .fn()
+      .mockImplementation(stockAttemptValidationOptions().reduceToolEvidence);
+    const result = await validateOpenClawAgentAttemptEvidence(
+      stockAttemptValidationOptions({ recordToolEvidence, reduceToolEvidence }),
+    );
+
+    expect(result).toMatchObject({
+      attempt: { passed: true },
+      evidence: {
+        reply: JSON.stringify(STOCK_REPLY),
+        toolEvidence: { errors: [], finalStatuses: ["success"] },
+      },
+    });
+    expect(reduceToolEvidence).toHaveBeenCalledWith(STOCK_REPLY);
+    expect(recordToolEvidence).toHaveBeenCalledWith(result.evidence?.toolEvidence);
+  });
+
+  it("preserves a failed OpenClaw classification before evidence collection", async () => {
+    const reduceToolEvidence = vi.fn();
+    const result = await validateOpenClawAgentAttemptEvidence(
+      stockAttemptValidationOptions({
+        classification: {
+          passed: false,
+          failureClass: "transient-external",
+          recoveryRequired: true,
+        },
+        reduceToolEvidence,
+      }),
+    );
+
+    expect(result).toEqual({
+      attempt: {
+        passed: false,
+        failureClass: "transient-external",
+        recoveryRequired: true,
+      },
+    });
+    expect(reduceToolEvidence).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "an invalid stock reply",
+      overrides: { reply: "not stock JSON" },
+      failure: /did not contain a valid stock quote/u,
+    },
+    {
+      name: "a reducer command failure",
+      overrides: {
+        reduceToolEvidence: vi.fn().mockResolvedValue({ exitCode: 2, stdout: "" }),
+      },
+      failure: /reduced tool evidence exited with 2/u,
+    },
+    {
+      name: "malformed reduced evidence",
+      overrides: {
+        reduceToolEvidence: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "no marker" }),
+      },
+      failure: /reduced tool evidence marker is missing/u,
+    },
+    {
+      name: "a trajectory mismatch",
+      overrides: { toolEvidenceValidator: () => false },
+      failure: /did not match the required trajectory/u,
+    },
+    {
+      name: "a reply mismatch",
+      overrides: { replyValidator: () => false },
+      failure: /did not contain a recent fetched stock quote/u,
+    },
+  ])("rejects $name deterministically", async ({ overrides, failure }) => {
+    const result = await validateOpenClawAgentAttemptEvidence(
+      stockAttemptValidationOptions(overrides),
+    );
+
+    expect(result.attempt).toEqual({ passed: false, failureClass: "deterministic" });
+    expect(result.failure).toMatch(failure);
+    expect(result.evidence).toBeUndefined();
   });
 
   it("uses parseable tool-result text when persisted OpenClaw details are capped", () => {

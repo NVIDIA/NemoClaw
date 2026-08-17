@@ -37,12 +37,11 @@ import {
   COMMON_EGRESS_TEST_TIMEOUT_MS,
   nvdaPersonalStockReplyMatchesEvidence,
   parseChatContent,
-  parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
-  parseOpenClawToolEvidence,
   type OpenClawToolEvidence,
   runHermesAgentAssertionRetry,
   runOpenClawAgentAssertionRetry,
+  validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
@@ -537,55 +536,38 @@ async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
-      if (!classification.passed) return classification;
-
-      let toolEvidence: OpenClawToolEvidence | undefined;
-      if (args.toolEvidenceValidator) {
-        const expectedStock = parseNvdaPersonalStockReply(reply);
-        if (!expectedStock) {
-          lastFailure = `${args.label}: agent reply did not contain a valid stock quote`;
-          return { passed: false, failureClass: "deterministic" };
-        }
-        const reduced = await sandbox.exec(
-          args.sandboxName,
-          [
-            "node",
-            "-e",
-            buildOpenClawToolEvidenceReducerScript(expectedStock),
-            `${sessionRoot}/${sessionId}.jsonl`,
-            `${sessionRoot}/${sessionId}.trajectory.jsonl`,
-          ],
-          {
-            env: commandEnv(),
-            persistArtifacts: false,
-            timeoutMs: 30_000,
-          },
-        );
-        if (reduced.exitCode !== 0) {
-          lastFailure = `reduced tool evidence exited with ${reduced.exitCode}`;
-          return { passed: false, failureClass: "deterministic" };
-        }
-        try {
-          toolEvidence = parseOpenClawToolEvidence(reduced.stdout);
-        } catch (error) {
-          lastFailure = error instanceof Error ? error.message : String(error);
-          return { passed: false, failureClass: "deterministic" };
-        }
-        await artifacts.writeJson(
-          `trajectory/${args.label}-attempt-${attempt}-reduced.json`,
-          toolEvidence,
-        );
-        if (!args.toolEvidenceValidator(toolEvidence)) {
-          lastFailure = `${args.label}: reduced tool evidence did not match the required trajectory`;
-          return { passed: false, failureClass: "deterministic" };
-        }
-      }
-      if (args.replyValidator && !args.replyValidator(reply, toolEvidence)) {
-        lastFailure = `${args.label}: agent reply did not contain a recent fetched stock quote`;
-        return { passed: false, failureClass: "deterministic" };
-      }
-      successfulEvidence = toolEvidence ? { reply, toolEvidence } : { reply };
-      return { passed: true };
+      const validation = await validateOpenClawAgentAttemptEvidence({
+        classification,
+        label: args.label,
+        recordToolEvidence: async (toolEvidence) => {
+          await artifacts.writeJson(
+            `trajectory/${args.label}-attempt-${attempt}-reduced.json`,
+            toolEvidence,
+          );
+        },
+        reduceToolEvidence: async (expectedStock) =>
+          sandbox.exec(
+            args.sandboxName,
+            [
+              "node",
+              "-e",
+              buildOpenClawToolEvidenceReducerScript(expectedStock),
+              `${sessionRoot}/${sessionId}.jsonl`,
+              `${sessionRoot}/${sessionId}.trajectory.jsonl`,
+            ],
+            {
+              env: commandEnv(),
+              persistArtifacts: false,
+              timeoutMs: 30_000,
+            },
+          ),
+        reply,
+        replyValidator: args.replyValidator,
+        toolEvidenceValidator: args.toolEvidenceValidator,
+      });
+      lastFailure = validation.failure ?? lastFailure;
+      successfulEvidence = validation.evidence ?? successfulEvidence;
+      return validation.attempt;
     },
     recover: async (_attempt, attemptNumber) => {
       const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {

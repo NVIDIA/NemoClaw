@@ -59,11 +59,6 @@ function allowedAddressMatcher(cidrs: readonly string[]): (address: string) => b
   };
 }
 
-function endpointPorts(endpoint: Endpoint): number[] {
-  if (typeof endpoint.port === "number") return [endpoint.port];
-  return endpoint.ports ?? [];
-}
-
 describe("Personal open internet policy preset", () => {
   it("uses OpenShell hostless L4 matching on ports 80 and 443 from every binary", () => {
     const policy = loadPersonalInternetPolicy();
@@ -121,23 +116,23 @@ describe("Personal open internet policy preset", () => {
     const original = parsePolicy(baseline);
     const result = policies.mergePresetNamesIntoPolicy(baseline, names);
     const effective = parsePolicy(result.policy);
+    const { personal_open_internet: personalPolicy, ...otherPolicies } =
+      effective.network_policies ?? {};
 
     expect(result.appliedPresets).toEqual(names);
     expect(result.missingPresets).toEqual([]);
     expect(effective.filesystem_policy).toEqual(original.filesystem_policy);
     expect(effective.process).toEqual(original.process);
-    expect(effective.network_policies?.personal_open_internet).toEqual(
-      loadPersonalInternetPolicy(),
-    );
+    expect(personalPolicy).toEqual(loadPersonalInternetPolicy());
     expect(effective.network_policies?.tavily).toBeUndefined();
     expect(effective.network_policies?.["openclaw-pricing"]).toBeUndefined();
     expect(effective.network_policies?.npm_yarn).toBeUndefined();
 
-    for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
-      if (policyName === "personal_open_internet") continue;
+    for (const [policyName, policy] of Object.entries(otherPolicies)) {
       for (const endpoint of policy.endpoints ?? []) {
-        expect(endpointPorts(endpoint), policyName).not.toContain(80);
-        expect(endpointPorts(endpoint), policyName).not.toContain(443);
+        const ports = [endpoint.port, ...(endpoint.ports ?? [])];
+        expect(ports, policyName).not.toContain(80);
+        expect(ports, policyName).not.toContain(443);
       }
     }
   });

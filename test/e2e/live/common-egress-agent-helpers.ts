@@ -117,6 +117,24 @@ interface AgentAssertionRetryOptions {
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
+export interface OpenClawAgentAttemptEvidenceOptions {
+  classification: AgentAssertionAttempt;
+  label: string;
+  recordToolEvidence: (evidence: OpenClawToolEvidence) => Promise<void>;
+  reduceToolEvidence: (
+    expectedStock: NvdaPersonalStockReply,
+  ) => Promise<{ exitCode: number | null; stdout: string }>;
+  reply: string;
+  replyValidator?: (reply: string, evidence?: OpenClawToolEvidence) => boolean;
+  toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
+}
+
+export interface OpenClawAgentAttemptEvidenceResult {
+  attempt: AgentAssertionAttempt;
+  evidence?: { reply: string; toolEvidence?: OpenClawToolEvidence };
+  failure?: string;
+}
+
 export function runHermesAgentAssertionRetry(
   options: AgentAssertionRetryOptions,
 ): Promise<BoundedRetryResult<AgentAssertionAttempt>> {
@@ -751,6 +769,55 @@ export function nvdaPersonalStockReplyMatchesEvidence(
     evidence.expectedStockFingerprint === stockReplyFingerprint(reply) &&
     assessPersonalStockToolEvidence(evidence).matches
   );
+}
+
+export async function validateOpenClawAgentAttemptEvidence(
+  options: OpenClawAgentAttemptEvidenceOptions,
+): Promise<OpenClawAgentAttemptEvidenceResult> {
+  if (!options.classification.passed) return { attempt: options.classification };
+
+  let toolEvidence: OpenClawToolEvidence | undefined;
+  if (options.toolEvidenceValidator) {
+    const expectedStock = parseNvdaPersonalStockReply(options.reply);
+    if (!expectedStock) {
+      return {
+        attempt: { passed: false, failureClass: "deterministic" },
+        failure: `${options.label}: agent reply did not contain a valid stock quote`,
+      };
+    }
+    const reduced = await options.reduceToolEvidence(expectedStock);
+    if (reduced.exitCode !== 0) {
+      return {
+        attempt: { passed: false, failureClass: "deterministic" },
+        failure: `reduced tool evidence exited with ${String(reduced.exitCode)}`,
+      };
+    }
+    try {
+      toolEvidence = parseOpenClawToolEvidence(reduced.stdout);
+    } catch (error) {
+      return {
+        attempt: { passed: false, failureClass: "deterministic" },
+        failure: error instanceof Error ? error.message : String(error),
+      };
+    }
+    await options.recordToolEvidence(toolEvidence);
+    if (!options.toolEvidenceValidator(toolEvidence)) {
+      return {
+        attempt: { passed: false, failureClass: "deterministic" },
+        failure: `${options.label}: reduced tool evidence did not match the required trajectory`,
+      };
+    }
+  }
+  if (options.replyValidator && !options.replyValidator(options.reply, toolEvidence)) {
+    return {
+      attempt: { passed: false, failureClass: "deterministic" },
+      failure: `${options.label}: agent reply did not contain a recent fetched stock quote`,
+    };
+  }
+  return {
+    attempt: { passed: true },
+    evidence: toolEvidence ? { reply: options.reply, toolEvidence } : { reply: options.reply },
+  };
 }
 
 export function parseChatContent(raw: string): string {
