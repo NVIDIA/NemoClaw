@@ -495,25 +495,33 @@ const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>
     ),
   "trusted-formula-mismatch": (source) => source.replace(FORMULA_DIGEST, "0".repeat(64)),
 };
+const prependTrustedPin = (source: string, name: string, pin: string): string => {
+  const declarationStart = source.indexOf(`const ${name}`);
+  const assignment = source.indexOf("=", declarationStart);
+  const arrayStart = source.indexOf("[", assignment);
+  assert.notEqual(declarationStart, -1, `${name} declaration must exist`);
+  assert.notEqual(assignment, -1, `${name} assignment must exist`);
+  assert.notEqual(arrayStart, -1, `${name} array must exist`);
+  return `${source.slice(0, arrayStart + 1)}\n${pin}${source.slice(arrayStart + 1)}`;
+};
+
 const trustAlternateRelease = (source: string): string => {
   const digests = SYNTHETIC_SANDBOX_BUILD_DIGESTS;
-  const sandbox = source.replace(
-    "const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [\n",
-    `const TRUSTED_SANDBOX_BUILD_PINS: readonly TrustedSandboxBuildPin[] = [
-  { required: false, sha256: "${digests[0]}", version: "9.9.9" },
-  { required: false, sha256: "${digests[1]}", version: "9.9.9" },
-`,
+  const sandbox = prependTrustedPin(
+    source,
+    "TRUSTED_SANDBOX_BUILD_PINS",
+    `  { required: false, sha256: "${digests[0]}", version: "9.9.9" },
+  { required: false, sha256: "${digests[1]}", version: "9.9.9" },`,
   );
-  return sandbox.replace(
-    "const TRUSTED_SUPERVISOR_MANIFEST_PINS: readonly TrustedSupervisorManifestPin[] = [\n",
-    `const TRUSTED_SUPERVISOR_MANIFEST_PINS: readonly TrustedSupervisorManifestPin[] = [
-  {
+  return prependTrustedPin(
+    sandbox,
+    "TRUSTED_SUPERVISOR_MANIFEST_PINS",
+    `  {
     image: OPENSHELL_SUPERVISOR_IMAGE,
     manifestDigest: "${SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST}",
     required: false,
     version: "9.9.9",
-  },
-`,
+  },`,
   );
 };
 const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
@@ -524,10 +532,22 @@ const tempDirs: string[] = [];
 
 function trustedPinArray(name: string): string {
   const start = TRUSTED_PARSER_TEMPLATE.indexOf(`const ${name}`);
-  const end = TRUSTED_PARSER_TEMPLATE.indexOf("\n];", start);
+  const assignment = TRUSTED_PARSER_TEMPLATE.indexOf("=", start);
+  const arrayStart = TRUSTED_PARSER_TEMPLATE.indexOf("[", assignment);
   expect(start, `${name} start`).not.toBe(-1);
-  expect(end, `${name} end`).not.toBe(-1);
-  return TRUSTED_PARSER_TEMPLATE.slice(start, end);
+  expect(assignment, `${name} assignment`).not.toBe(-1);
+  expect(arrayStart, `${name} array start`).not.toBe(-1);
+
+  let depth = 0;
+  for (let index = arrayStart; index < TRUSTED_PARSER_TEMPLATE.length; index += 1) {
+    const character = TRUSTED_PARSER_TEMPLATE[index];
+    if (character === "[") depth += 1;
+    if (character !== "]") continue;
+    depth -= 1;
+    if (depth === 0) return TRUSTED_PARSER_TEMPLATE.slice(arrayStart + 1, index);
+  }
+
+  expect.fail(`${name} array end`);
 }
 
 function trustedSandboxBuildDigests(version: string): readonly [string, string] | undefined {

@@ -185,17 +185,14 @@ function runParser(options: RunOptions = {}) {
 }
 
 describe("OpenShell supervisor manifest trust", () => {
-  it("accepts the selected base-trusted OpenShell 0.0.101 supervisor identity (#8893)", () => {
+  it("accepts the selected base-trusted OpenShell 0.0.106 supervisor identity (#6256)", () => {
     const result = runParser();
 
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it("accepts the base-trusted OpenShell 0.0.103 supervisor identity before version selection (#8893)", () => {
-    const result = runParser({
-      transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST),
-    });
+  it("accepts the selected base-trusted OpenShell 0.0.103 supervisor identity (#8893)", () => {
+    const result = runParser({ selectV00103: true });
 
     expect(result.status, result.stderr).toBe(0);
   });
@@ -203,7 +200,7 @@ describe("OpenShell supervisor manifest trust", () => {
   it("rejects a replacement supervisor digest", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
+        source.replace(V00103_SUPERVISOR_MANIFEST_DIGEST, REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status).toBe(1);
@@ -223,7 +220,11 @@ describe("OpenShell supervisor manifest trust", () => {
   });
 
   it("rejects selecting OpenShell 0.0.103 without its supervisor manifest identity (#8893)", () => {
-    const result = runParser({ selectV00103: true });
+    const result = runParser({
+      selectV00103: true,
+      transformSupervisor: (source) =>
+        source.replace(/^  "0\.0\.103": "sha256:[a-f0-9]{64}",\n/mu, ""),
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
@@ -236,7 +237,7 @@ describe("OpenShell supervisor manifest trust", () => {
       candidateParserBypass: true,
       selectV00103: true,
       transformSupervisor: (source) =>
-        addSupervisorManifestPin(source, "0.0.103", REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
+        source.replace(V00103_SUPERVISOR_MANIFEST_DIGEST, REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status).toBe(1);
