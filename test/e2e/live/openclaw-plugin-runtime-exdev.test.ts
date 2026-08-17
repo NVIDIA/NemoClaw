@@ -94,8 +94,6 @@ const CURRENT_OPENSHELL_VERSION = "0.0.106";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const RELEASE_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
-const CURRENT_BUILDER_IMAGE_REF =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
@@ -503,14 +501,21 @@ function createCustomPluginDockerfile(
   const sourceDockerfile = path.join(context.sourceRoot, "Dockerfile");
   const source = fs.readFileSync(sourceDockerfile, "utf8");
   const baseImageAnchor = "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n";
-  const builderImageRef =
-    fixture.source === "release" ? RELEASE_BUILDER_IMAGE_REF : CURRENT_BUILDER_IMAGE_REF;
-  const builderImageAnchor = `FROM ${builderImageRef} AS builder\n`;
+  const builderImageDeclarations = [...source.matchAll(/^FROM (\S+) AS builder$/gm)];
   const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
   expect(
     source.match(/^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base:latest$/gm)?.length,
   ).toBe(1);
-  expect(source.split(builderImageAnchor)).toHaveLength(2);
+  expect(builderImageDeclarations, "expected one builder stage").toHaveLength(1);
+  const builderImageRef = builderImageDeclarations[0]?.[1];
+  expect(builderImageRef, "builder image must use an immutable digest").toMatch(
+    /@sha256:[a-f0-9]{64}$/,
+  );
+  if (fixture.source === "release") {
+    expect(builderImageRef, "v0.0.71 builder image must remain release-matched").toBe(
+      RELEASE_BUILDER_IMAGE_REF,
+    );
+  }
   expect(source.match(/^FROM \$\{BASE_IMAGE\}$/gm)?.length, "expected one runtime stage").toBe(1);
   const runtimeOpenClawDeclarations = [...source.matchAll(/^ARG OPENCLAW_VERSION=([0-9.]+)$/gm)];
   expect(runtimeOpenClawDeclarations, "expected one OpenClaw version declaration").toHaveLength(1);

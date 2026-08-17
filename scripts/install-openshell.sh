@@ -360,6 +360,21 @@ file_sha256() {
   fi
 }
 
+is_pinned_openshell_v00106_linux_x86_64_install() {
+  local openshell_bin="$1"
+  local gateway_bin="$2"
+  local sandbox_bin="$3"
+  local openshell_sha gateway_sha sandbox_sha
+
+  [ "$OS" = "Linux" ] && [ "$ARCH_LABEL" = "x86_64" ] || return 1
+  openshell_sha="$(file_sha256 "$openshell_bin")" || return 1
+  gateway_sha="$(file_sha256 "$gateway_bin")" || return 1
+  sandbox_sha="$(file_sha256 "$sandbox_bin")" || return 1
+  [ "$openshell_sha" = "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59" ] \
+    && [ "$gateway_sha" = "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c" ] \
+    && [ "$sandbox_sha" = "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8" ]
+}
+
 pinned_sandbox_build_version() {
   local digest="$1"
   case "$digest" in
@@ -574,6 +589,16 @@ openshell_has_required_messaging_features() {
   if [ -f "$sandbox_bin" ] && ! component_matches_cli_build "$openshell_bin" "$sandbox_bin" sandbox; then
     OPENSHELL_FEATURE_CHECK_ERROR="The selected OpenShell sandbox does not match the active CLI build. Install one coherent OpenShell release."
     return 1
+  fi
+
+  # The v0.0.106 release binaries are stripped and no longer retain every
+  # source-level capability marker used by the development-build fallback
+  # below. Accept only the reviewed executable byte identities as the stable
+  # release capability proof; arbitrary binaries that merely report 0.0.106
+  # must still pass the fail-closed marker checks.
+  if is_pinned_openshell_v00106_linux_x86_64_install \
+    "$openshell_bin" "$gateway_bin" "$sandbox_bin"; then
+    return 0
   fi
 
   # OpenShell #1865 has no authoritative CLI/RPC capability query yet. Scan the
