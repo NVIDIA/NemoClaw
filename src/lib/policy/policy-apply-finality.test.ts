@@ -115,6 +115,15 @@ function applyWeatherPreset(): unknown {
   }
 }
 
+function removeTemporaryDirectories(
+  directories: readonly string[],
+  removeDirectory: typeof fs.rmSync,
+): void {
+  for (const directory of directories) {
+    removeDirectory(directory, { recursive: true, force: true });
+  }
+}
+
 describe("applyPresets finality when openshell rejects the composed policy", () => {
   beforeEach(() => {
     run.mockReset();
@@ -301,7 +310,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       expect((error as Error).message).toContain("EPERM: operation not permitted");
     } finally {
       vi.restoreAllMocks();
-      for (const dir of created) realRmSync(dir, { recursive: true, force: true });
+      removeTemporaryDirectories(created, realRmSync);
     }
   });
 
@@ -325,7 +334,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       expect((error as Error).message).toContain("the path still exists");
     } finally {
       vi.restoreAllMocks();
-      for (const dir of created) realRmSync(dir, { recursive: true, force: true });
+      removeTemporaryDirectories(created, realRmSync);
     }
   });
 
@@ -352,7 +361,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
       expect((error as Error).message).toMatch(/still holds the composed sandbox policy/iu);
     } finally {
       vi.restoreAllMocks();
-      for (const dir of created) realRmSync(dir, { recursive: true, force: true });
+      removeTemporaryDirectories(created, realRmSync);
     }
   });
 });

@@ -77,9 +77,9 @@ describe("Portable default policy finality", () => {
     const composed = composeDefaultPolicy();
 
     expect(Object.keys(baseline.network_policies).sort()).toEqual([...BASELINE_KEYS].sort());
-    for (const key of BASELINE_KEYS) {
-      expect(composed.network_policies, key).toHaveProperty(key);
-    }
+    expect(Object.keys(composed.network_policies)).toEqual(
+      expect.arrayContaining([...BASELINE_KEYS]),
+    );
     expect(composed.network_policies.managed_inference).toEqual(
       baseline.network_policies.managed_inference,
     );
@@ -95,7 +95,7 @@ describe("Portable default policy finality", () => {
     ]);
   });
 
-  it("the composed default policy still denies loopback, link-local, metadata, and unspecified addresses (#9206)", () => {
+  it("does not use unrestricted IP address ranges in the composed default policy (#9206)", () => {
     const entry = composeDefaultPolicy().network_policies.personal_open_internet;
     expect(entry?.endpoints).toHaveLength(1);
     const endpoint = entry?.endpoints?.[0] as Endpoint;
@@ -105,24 +105,34 @@ describe("Portable default policy finality", () => {
     const allowedIps = endpoint.allowed_ips ?? [];
     expect(allowedIps).not.toContain("0.0.0.0/0");
     expect(allowedIps).not.toContain("::/0");
-
-    const isAllowed = allowedAddressMatcher(allowedIps);
-    for (const address of [
-      "0.0.0.0",
-      "127.0.0.1",
-      "127.1.2.3",
-      "169.254.169.254",
-      "::",
-      "::1",
-      "fe80::1",
-      "::ffff:127.0.0.1",
-      "::ffff:169.254.169.254",
-    ]) {
-      expect(isAllowed(address), address).toBe(false);
-    }
-
-    for (const address of ["8.8.8.8", "2001:4860:4860::8888"]) {
-      expect(isAllowed(address), address).toBe(true);
-    }
   });
+
+  it.each([
+    "0.0.0.0",
+    "127.0.0.1",
+    "127.1.2.3",
+    "169.254.169.254",
+    "::",
+    "::1",
+    "fe80::1",
+    "::ffff:127.0.0.1",
+    "::ffff:169.254.169.254",
+  ])("denies the non-public address %s in the composed default policy (#9206)", (address) => {
+    const endpoint = composeDefaultPolicy().network_policies.personal_open_internet
+      ?.endpoints?.[0] as Endpoint;
+    const isAllowed = allowedAddressMatcher(endpoint.allowed_ips ?? []);
+
+    expect(isAllowed(address), address).toBe(false);
+  });
+
+  it.each(["8.8.8.8", "2001:4860:4860::8888"])(
+    "allows the public address %s in the composed default policy (#9206)",
+    (address) => {
+      const endpoint = composeDefaultPolicy().network_policies.personal_open_internet
+        ?.endpoints?.[0] as Endpoint;
+      const isAllowed = allowedAddressMatcher(endpoint.allowed_ips ?? []);
+
+      expect(isAllowed(address), address).toBe(true);
+    },
+  );
 });

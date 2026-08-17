@@ -31,6 +31,36 @@ const SEMANTIC_REJECTION_STDERR =
   'preset "slack" declares an egress host that conflicts with the sandbox baseline\', ' +
   "source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }";
 
+const NON_SUCCESS_STATUSES = [
+  { statusLabel: "exit status 1", status: 1 },
+  { statusLabel: "exit status 2", status: 2 },
+  { statusLabel: "exit status 9", status: 9 },
+  { statusLabel: "exit status 13", status: 13 },
+  { statusLabel: "exit status 14", status: 14 },
+  { statusLabel: "exit status 127", status: 127 },
+  { statusLabel: "an absent exit status", status: null },
+] as const;
+
+const NON_SUCCESS_DIAGNOSTICS = [
+  { diagnosticLabel: "a semantic rejection", stderr: SEMANTIC_REJECTION_STDERR },
+  { diagnosticLabel: "an HTTP/2 reset", stderr: HTTP2_RESET_STDERR },
+  { diagnosticLabel: "empty stderr", stderr: "" },
+  { diagnosticLabel: "absent stderr", stderr: null },
+  {
+    diagnosticLabel: "an unstructured transport error",
+    stderr: "openshell: connection refused",
+  },
+] as const;
+
+const NON_SUCCESS_CASES = NON_SUCCESS_STATUSES.flatMap(({ statusLabel, status }) =>
+  NON_SUCCESS_DIAGNOSTICS.map(({ diagnosticLabel, stderr }) => ({
+    statusLabel,
+    status,
+    diagnosticLabel,
+    stderr,
+  })),
+);
+
 describe("openshell policy set outcome classification", () => {
   it("reports a clean exit with no error as applied (#9206)", () => {
     expect(classifyPolicySetResult({ status: 0 })).toEqual({ kind: "applied" });
@@ -72,27 +102,18 @@ describe("openshell policy set outcome classification", () => {
     expect(classifyPolicySetResult({ status: 1, stderr: "   \n  " }).kind).toBe("ambiguous");
   });
 
-  it("never reports success for any nonzero or absent exit status (#9206)", () => {
-    const statuses: ReadonlyArray<number | null> = [1, 2, 9, 13, 14, 127, null];
-    const stderrs: ReadonlyArray<string | null> = [
-      SEMANTIC_REJECTION_STDERR,
-      HTTP2_RESET_STDERR,
-      "",
-      null,
-      "openshell: connection refused",
-    ];
+  it.each(NON_SUCCESS_CASES)(
+    "does not report the policy as applied for $statusLabel with $diagnosticLabel (#9206)",
+    ({ status, stderr }) => {
+      const outcome = classifyPolicySetResult({ status, stderr });
 
-    for (const status of statuses) {
-      for (const stderr of stderrs) {
-        const outcome = classifyPolicySetResult({ status, stderr });
-        expect({ status, stderr, kind: outcome.kind }).toEqual({
-          status,
-          stderr,
-          kind: expect.not.stringMatching(/^applied$/),
-        });
-      }
-    }
-  });
+      expect({ status, stderr, kind: outcome.kind }).toEqual({
+        status,
+        stderr,
+        kind: expect.not.stringMatching(/^applied$/),
+      });
+    },
+  );
 
   it.each([
     ["unavailable", "Error: code: 'Unavailable', message: 'tcp connect error: connection refused'"],
