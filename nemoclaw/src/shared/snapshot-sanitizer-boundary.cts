@@ -67,11 +67,33 @@ export function setSnapshotSanitizerPythonPathForTest(
   snapshotSanitizerPythonPathForTest = pythonPath;
 }
 
+/** Resolve the interpreter the helpers will actually run, including the test substitute. */
 function snapshotSanitizerPythonPath(): string | null {
   if (process.env.VITEST === "true" && snapshotSanitizerPythonPathForTest !== undefined) {
     return snapshotSanitizerPythonPathForTest;
   }
   return resolveTrustedSnapshotSanitizerPythonPath();
+}
+
+/** No trusted python3 interpreter resolved, so no descriptor-relative helper can run. (#8202) */
+export class SnapshotSanitizerPrerequisiteError extends Error {
+  constructor() {
+    super("python3 is required for snapshot sanitization; install python3 and retry");
+    this.name = "SnapshotSanitizerPrerequisiteError";
+  }
+}
+
+/**
+ * Return the prerequisite error when no interpreter resolved.
+ *
+ * Every helper reports an unresolved interpreter and a helper that ran and
+ * failed the same way, so this separates them before the caller reports a
+ * generic failure.
+ */
+export function snapshotSanitizerFailure(message: string): Error {
+  return snapshotSanitizerPythonPath() === null
+    ? new SnapshotSanitizerPrerequisiteError()
+    : new Error(message);
 }
 
 export interface SnapshotFileIdentity {

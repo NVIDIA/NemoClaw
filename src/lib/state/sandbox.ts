@@ -50,7 +50,10 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
+import {
+  SnapshotSanitizerPrerequisiteError,
+  sanitizeSnapshotDirectory,
+} from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -752,19 +755,24 @@ export function sanitizeBackupDirectory(
   try {
     operations.sanitizeDirectory(dirPath);
   } catch (error) {
+    // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
+    // would otherwise survive only as `cause` and never reach the operator. (#8202)
+    const prerequisite =
+      error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error("Credential sanitization failed and backup cleanup failed", {
+      throw new Error(`${prerequisite}Credential sanitization failed and backup cleanup failed`, {
         cause: cleanupError,
       });
     }
     if (operations.backupExists(dirPath)) {
-      throw new Error("Credential sanitization failed and the incomplete backup remains", {
-        cause: error,
-      });
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and the incomplete backup remains`,
+        { cause: error },
+      );
     }
-    throw new Error("Credential sanitization failed; removed the incomplete backup", {
+    throw new Error(`${prerequisite}Credential sanitization failed; removed the incomplete backup`, {
       cause: error,
     });
   }

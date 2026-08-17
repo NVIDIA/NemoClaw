@@ -310,6 +310,17 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(false);
   });
 
+  it("names the python3 prerequisite when the backup sanitizer finds no interpreter (#8202)", () => {
+    const backupPath = createBackup();
+    writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
+    setSnapshotSanitizerPythonPathForTest(null);
+
+    expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
+      "python3 is required for snapshot sanitization; install python3 and retry",
+    );
+    expect(existsSync(backupPath)).toBe(false);
+  });
+
   it("reports when cleanup leaves an incomplete backup behind", () => {
     const backupPath = createBackup();
     const yamlPath = join(backupPath, "state", "config.yaml");

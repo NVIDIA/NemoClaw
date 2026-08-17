@@ -13,6 +13,7 @@ import {
   type SnapshotSanitizationAction,
   type SnapshotScannedFile,
   scanDescriptorSnapshot,
+  snapshotSanitizerFailure,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import {
   CREDENTIAL_PLACEHOLDER,
@@ -96,14 +97,14 @@ export function sanitizeMigrationDirectory(rootPath: string): void {
     }
     const scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES);
     if (scan === null) {
-      throw new Error(`Failed to inspect migration artifacts safely: ${rootPath}`);
+      throw snapshotSanitizerFailure(`Failed to inspect migration artifacts safely: ${rootPath}`);
     }
     const actions = scan.files
       .map((file) => actionForScannedFile(file))
       .filter((action): action is SnapshotSanitizationAction => action !== null);
     if (actions.length === 0) return;
     if (!applyDescriptorSnapshotActions(root, scan, actions)) {
-      throw new Error(`Failed to sanitize migration artifacts safely: ${rootPath}`);
+      throw snapshotSanitizerFailure(`Failed to sanitize migration artifacts safely: ${rootPath}`);
     }
   }
   throw new Error(`Migration artifacts did not reach a stable sanitized state: ${rootPath}`);

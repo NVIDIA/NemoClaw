@@ -95,6 +95,16 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
+  it("names the python3 prerequisite when the migration scan finds no interpreter (#8202)", () => {
+    const root = makeRoot();
+    writeFileSync(path.join(root, "openclaw.json"), JSON.stringify({ apiKey: "sk-secret-value" }));
+    setSnapshotSanitizerPythonPathForTest(null);
+
+    expect(() => sanitizeMigrationDirectory(root)).toThrow(
+      "python3 is required for snapshot sanitization; install python3 and retry",
+    );
+  });
+
   it("fails closed when the descriptor apply helper is unavailable", () => {
     const root = { canonicalPath: makeRoot(), identity };
     setSnapshotSanitizerPythonPathForTest(null);
