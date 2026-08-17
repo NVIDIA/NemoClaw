@@ -284,10 +284,11 @@ function removeGlob(
 function removePath(
   target: string,
   deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
-): void {
-  if (!deps.existsSync(target)) return;
+): boolean {
+  if (!deps.existsSync(target)) return false;
   deps.rmSync(target, { force: true, recursive: true });
   deps.log(`Removed ${target}`);
+  return true;
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
@@ -1670,6 +1671,36 @@ function removeNvmLeftovers(paths: UninstallPaths, runtime: UninstallRuntime): v
   }
 }
 
+/**
+ * Remove installer-managed user-local CLI shims (`~/.local/bin/nemoclaw` and
+ * agent-alias siblings). Classification still preserves foreign files of those
+ * names. Shared npm global package removal stays in `removeNemoclawCli`.
+ * Returns how many shim paths `removePath` actually deleted.
+ */
+function removeManagedCliShims(paths: UninstallPaths, runtime: UninstallRuntime): number {
+  let removed = 0;
+  const shim = classifyShimPath(paths.nemoclawShimPath);
+  if (shim.remove) {
+    if (removePath(paths.nemoclawShimPath, runtime)) removed += 1;
+  } else if (shim.kind === "preserve-foreign-file") {
+    runtime.warn(
+      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
+    );
+  }
+  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
+  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // The same classification guard preserves any non-managed file of that name.
+  for (const alias of paths.agentAliasShimPaths) {
+    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
+    if (aliasShim.remove) {
+      if (removePath(alias.path, runtime)) removed += 1;
+    } else if (aliasShim.kind === "preserve-foreign-file") {
+      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
+    }
+  }
+  return removed;
+}
+
 function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const branding = runtimeBranding(runtime);
   if (runtime.commandExists("npm")) {
@@ -1684,23 +1715,7 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
     runtime.warn(`npm not found; skipping ${branding.display} CLI uninstall.`);
   }
 
-  const shim = classifyShimPath(paths.nemoclawShimPath);
-  if (shim.remove) removePath(paths.nemoclawShimPath, runtime);
-  else if (shim.kind === "preserve-foreign-file") {
-    runtime.warn(
-      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
-    );
-  }
-  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
-  // installer creates; uninstall previously left them resolving on PATH (#6098).
-  // The same classification guard preserves any non-managed file of that name.
-  for (const alias of paths.agentAliasShimPaths) {
-    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
-    if (aliasShim.remove) removePath(alias.path, runtime);
-    else if (aliasShim.kind === "preserve-foreign-file") {
-      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
-    }
-  }
+  removeManagedCliShims(paths, runtime);
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
 }
@@ -2744,7 +2759,22 @@ function executePlan(
       }
     } else if (step.name === "NemoClaw CLI") {
       if (scopedToSelectedGateway) {
-        runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
+        // Sibling-scoped cleanup keeps the shared npm CLI package. With
+        // `--destroy-user-data`, also delete installer-managed user-local shims
+        // when `removePath` succeeds so a destructive uninstall does not leave
+        // them on PATH (#9277). Foreign files of those names stay; the summary
+        // log runs only when at least one managed shim was removed.
+        if (options.destroyUserData) {
+          runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI package.");
+          const removedShims = removeManagedCliShims(paths, runtime);
+          if (removedShims > 0) {
+            runtime.log(
+              "Removed managed user-local CLI shims because --destroy-user-data was set.",
+            );
+          }
+        } else {
+          runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
+        }
       } else {
         removeNemoclawCli(paths, runtime);
       }

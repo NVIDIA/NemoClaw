@@ -25,7 +25,7 @@ It preserves resources from a separate OpenClaw installation while continuing to
 | `--yes` | Skip the confirmation prompt. |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process. |
 | `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
-| `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
+| `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`, and remove installer-managed user-local CLI shims under `~/.local/bin/`. When sibling gateways remain, the shared npm CLI package stays. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
@@ -230,6 +230,7 @@ If validation, runtime cleanup, or temporary-claim retirement fails, uninstall e
 Resolve the reported SSH, Docker, peer-host, or claim error before you retry.
 Runtime cleanup can partially complete before an error, so inspect every cluster node before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
+With `--destroy-user-data`, that scoped path still removes installer-managed user-local CLI shims under `~/.local/bin/` while it keeps the shared npm CLI package and the other shared host resources for remaining gateways.
 A recorded sandbox that OpenShell reports as already removed leaves nothing to delete, so the scoped path reports it, finishes the remaining gateway cleanup, and exits `0`.
 A sandbox that OpenShell cannot reach or refuses to delete still leaves state behind.
 Uninstall exits nonzero and preserves the selected gateway registration, port-scoped state, and selected sandbox registry entry for a retry.
