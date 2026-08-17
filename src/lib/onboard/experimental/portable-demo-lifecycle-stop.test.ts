@@ -188,16 +188,39 @@ function timedOutStop(
   let stopAttempted = false;
   harness.runtime.podman.mockImplementation((args, env) => {
     const command = args[0] === "--url" ? args.slice(2) : args;
-    if (command[0] === "stop") {
-      stopAttempted = true;
-      return { status: null, error: timeout };
+    switch (command[0]) {
+      case "stop":
+        stopAttempted = true;
+        return { status: null, error: timeout };
+      default: {
+        const result = stopAttempted ? afterStop?.(command) : undefined;
+        return result ?? harness.originalPodman(args, env);
+      }
     }
-    if (stopAttempted) {
-      const result = afterStop?.(command);
-      if (result) return result;
-    }
-    return harness.originalPodman(args, env);
   });
+}
+
+function stopAfterSecondInspection(harness: ReturnType<typeof createStopHarness>) {
+  let inspectionsAfterStop = 0;
+  return (command: readonly string[]): undefined => {
+    switch (command[0]) {
+      case "inspect":
+        inspectionsAfterStop += 1;
+        switch (inspectionsAfterStop) {
+          case 2:
+            harness.runtime.setRunning(false);
+        }
+    }
+  };
+}
+
+function replaceContainerOnInspection(harness: ReturnType<typeof createStopHarness>) {
+  return (command: readonly string[]): undefined => {
+    switch (command[0]) {
+      case "inspect":
+        harness.runtime.setContainerId("b".repeat(64));
+    }
+  };
 }
 
 function expectOnlyExactStopAndInspects(harness: ReturnType<typeof createStopHarness>): void {
@@ -221,15 +244,8 @@ afterEach(() => {
 describe("portable demo sandbox stop reconciliation", () => {
   it("reconciles an ETIMEDOUT stop to the exact receipt-owned container state (#9200)", () => {
     const harness = createStopHarness();
-    let inspectionsAfterStop = 0;
     let now = 0;
-    timedOutStop(harness, (command) => {
-      if (command[0] === "inspect") {
-        inspectionsAfterStop += 1;
-        if (inspectionsAfterStop === 2) harness.runtime.setRunning(false);
-      }
-      return undefined;
-    });
+    timedOutStop(harness, stopAfterSecondInspection(harness));
     const beforeStop = vi.fn();
 
     expect(
@@ -272,10 +288,7 @@ describe("portable demo sandbox stop reconciliation", () => {
 
   it("rejects container identity drift while reconciling an ETIMEDOUT stop (#9200)", () => {
     const harness = createStopHarness();
-    timedOutStop(harness, (command) => {
-      if (command[0] === "inspect") harness.runtime.setContainerId("b".repeat(64));
-      return undefined;
-    });
+    timedOutStop(harness, replaceContainerOnInspection(harness));
 
     expect(() => stopSandbox(harness, { now: () => 0, sleep: vi.fn() })).toThrow(
       "OpenShell identity does not match sandbox 'alpha'",
