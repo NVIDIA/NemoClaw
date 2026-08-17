@@ -48,7 +48,16 @@ const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
 const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST = `sha256:${"c".repeat(64)}`;
 const SYNTHETIC_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
-const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
+const ASSETS = [
+  "openshell-x86_64-unknown-linux-musl.tar.gz",
+  "openshell-aarch64-unknown-linux-musl.tar.gz",
+  "openshell-aarch64-apple-darwin.tar.gz",
+  "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+  "openshell-gateway-aarch64-apple-darwin.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
+] as const;
 const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
