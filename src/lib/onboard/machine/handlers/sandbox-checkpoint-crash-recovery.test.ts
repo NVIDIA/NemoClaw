@@ -25,10 +25,13 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 vi.mocked(detectMessagingChannelsFromEnv).mockReturnValue([]);
 
-function defaultCreateFingerprint(sandboxName = "my-assistant"): string {
+function defaultCreateFingerprint(
+  builtFingerprint = "my-assistant",
+  policyFingerprint = "default",
+): string {
   return [
-    sandboxName,
-    "default",
+    builtFingerprint,
+    policyFingerprint,
     "provider",
     "model",
     "openai-completions",
@@ -924,11 +927,14 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
-  it("recreates after build or policy drift when explicitly requested (#9297)", async () => {
+  it.each([
+    ["build", defaultCreateFingerprint("v0.0.108")],
+    ["policy", defaultCreateFingerprint("my-assistant", "previous-policy")],
+  ] as const)("recreates after %s drift when explicitly requested (#9297)", async (_drift, fingerprint) => {
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
         effectGroups: {
-          sandbox_create: { completedAt: "2026-01-01T00:00:00.000Z", fingerprint: "stale-build" },
+          sandbox_create: { completedAt: "2026-01-01T00:00:00.000Z", fingerprint },
         },
       }),
     );
@@ -943,6 +949,9 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     });
 
     expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual(
+      expect.objectContaining({ recreate: true }),
+    );
     expect(calls.error).not.toHaveBeenCalled();
   });
 
