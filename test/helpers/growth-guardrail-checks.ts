@@ -275,7 +275,7 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
     if (headBudget.legacyMaxLines[file] !== undefined) continue;
     const source = head.get(file);
     if (source === null || source === undefined) {
-      violations.push(`${file} was not found at the change head`);
+      violations.push(`${file} was not found at the latest PR commit`);
       continue;
     }
     const lines = countLines(source);

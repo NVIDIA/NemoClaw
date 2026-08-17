@@ -67,13 +67,14 @@ describe("codebase growth guardrails workflow trust boundary", () => {
 
     const action = YAML.parse(readFileSync(STATIC_CHECK_ACTION_PATH, "utf8"));
     expect(
-      action.runs.steps.find((step: { name?: string }) => step.name === "Run static hook checks"),
-    ).toEqual({
-      name: "Run static hook checks",
-      shell: "bash",
-      run:
-        "npx prek run --all-files --stage pre-commit \\\n  --skip source-shape-test-budget \\\n  --skip test-skills-yaml\n",
-    });
+      action.runs.steps.filter((step: { name?: string }) => step.name === "Run static hook checks"),
+    ).toEqual([
+      {
+        name: "Run static hook checks",
+        shell: "bash",
+        run: "npx prek run --all-files --stage pre-commit \\\n  --skip source-shape-test-budget \\\n  --skip test-skills-yaml\n",
+      },
+    ]);
     expect(JSON.stringify(action)).not.toContain("test-size:check");
   });
 });

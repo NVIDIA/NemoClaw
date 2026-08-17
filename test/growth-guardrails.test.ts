@@ -99,14 +99,14 @@ describe("codebase growth guardrail test support", () => {
     expect(await testSizeViolations(diff)).toContain("defaultMaxLines increased from 1500 to 2000");
   });
 
-  it("rejects a changed test that is missing from the change head", async () => {
+  it("rejects a changed test that is missing from the latest PR commit", async () => {
     const diff = fixtureDiff(
       [{ filename: "test/example.test.ts", status: "modified" }],
       { "ci/test-file-size-budget.json": '{"defaultMaxLines":1500}' },
       {},
     );
     expect(await testSizeViolations(diff)).toContain(
-      "test/example.test.ts was not found at the change head",
+      "test/example.test.ts was not found at the latest PR commit",
     );
   });
 
@@ -166,6 +166,37 @@ describe("codebase growth guardrail test support", () => {
     expect(await loopGrowthViolations(diff)).toEqual([
       "test/example.test.ts: 1 test loop(s), up from 0",
     ]);
+  });
+
+  it.each([
+    ["if statements", conditionalGrowthViolations, "if (ok) expect(ok).toBe(true);"],
+    [
+      "test loops",
+      loopGrowthViolations,
+      "for (const row of rows) it(row.name, () => expect(row).toBeDefined());",
+    ],
+  ])("compares %s across a renamed test", async (_name, violations, addedSyntax) => {
+    const file = {
+      filename: "test/new.test.ts",
+      previous_filename: "test/old.test.ts",
+      status: "renamed",
+    };
+    const base = "it('works', () => expect(ok).toBe(true));";
+
+    expect(
+      await violations(
+        fixtureDiff([file], { "test/old.test.ts": base }, { "test/new.test.ts": base }),
+      ),
+    ).toEqual([]);
+    expect(
+      await violations(
+        fixtureDiff(
+          [file],
+          { "test/old.test.ts": base },
+          { "test/new.test.ts": `${base}\n${addedSyntax}` },
+        ),
+      ),
+    ).toHaveLength(1);
   });
 
   it.each([
