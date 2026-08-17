@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
+import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type StopHostGatewayResult,
@@ -21,6 +22,7 @@ import {
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAuthorityStore,
+  ManagedBootstrapOwnerCleanupRequiredError,
 } from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
 import { createDockerManagedBootstrapAdapter } from "../../src/lib/onboard/managed-bootstrap/docker.ts";
 import { createDockerManagedBootstrapSurface } from "../../src/lib/onboard/managed-bootstrap/docker-runtime.ts";
@@ -36,6 +38,7 @@ import type {
   RuntimeProviderBundle,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
+import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
 import {
   OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   prepareSandboxCreateLaunch,
@@ -786,23 +789,50 @@ export function assertExactSandboxImage(
   return resolved.exactIds[0] ?? "";
 }
 
-export function assertFailedBootstrapContainerCleanup(
+export function assertFailedBootstrapOwnerCleanupRetention(
   input: Inputs,
   networkName: string,
+  expectedRuntimeId: string,
   env: NodeJS.ProcessEnv,
   runCommand: ManagedImageCommandRunner = commandResult,
 ): void {
   const resolved = exactHarnessContainerIds(input, networkName, env, true, runCommand);
-  if (resolved.candidateCount !== 0 || resolved.exactIds.length !== 0) {
+  if (
+    resolved.candidateCount !== 1 ||
+    resolved.exactIds.length !== 1 ||
+    resolved.exactIds[0] !== expectedRuntimeId
+  ) {
     throw new Error(
-      `managed-bootstrap rollback retained a failed held sandbox: found ${resolved.candidateCount} labeled and ${resolved.exactIds.length} exact containers`,
+      `managed-bootstrap rollback did not retain its one exact owner-cleanup runtime: found ${resolved.candidateCount} labeled and ${resolved.exactIds.length} exact containers`,
+    );
+  }
+  const inspect = runCommand(["docker", "inspect", expectedRuntimeId], env);
+  if (inspect.status !== 0) {
+    throw new Error(
+      `managed-bootstrap rollback could not inspect its retained owner-cleanup runtime: ${commandDetail(inspect)}`,
+    );
+  }
+  try {
+    const records = JSON.parse(String(inspect.stdout ?? "")) as Array<{
+      State?: { Paused?: boolean; Restarting?: boolean; Running?: boolean };
+    }>;
+    const state = records.length === 1 ? records[0]?.State : undefined;
+    if (state?.Running !== false || state.Paused !== false || state.Restarting !== false) {
+      throw new Error("retained runtime is not explicitly quiescent");
+    }
+  } catch (error) {
+    throw new Error(
+      `managed-bootstrap rollback did not prove a quiescent owner-cleanup runtime: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
   }
 }
 
-function assertFailedSandboxAbsent(
+export function assertFailedSandboxOwnerCleanupRetention(
   onboard: OnboardModule,
   input: Inputs,
+  expectedSandboxId: string,
   env: NodeJS.ProcessEnv,
 ): void {
   const get = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
@@ -816,12 +846,13 @@ function assertFailedSandboxAbsent(
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (
-    get.status === 0 ||
+    get.status !== 0 ||
+    parseOpenShellSandboxId(String(get.stdout ?? "")) !== expectedSandboxId ||
     list.status !== 0 ||
-    `${list.stdout ?? ""}\n${list.stderr ?? ""}`.includes(input.sandbox)
+    !parseLiveSandboxNames(String(list.stdout ?? "")).has(input.sandbox)
   ) {
     throw new Error(
-      `managed-bootstrap rollback retained failed OpenShell sandbox state: get=${commandDetail(get)} list=${commandDetail(list)}`,
+      `managed-bootstrap rollback did not retain its exact OpenShell owner-cleanup state: get=${commandDetail(get)} list=${commandDetail(list)}`,
     );
   }
 }
@@ -1021,11 +1052,29 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         error instanceof Error &&
         error.message.includes("protected-e2e-injected-bootstrap-completion-failure")
       ) {
-        assertFailedBootstrapContainerCleanup(input, networkName, launch.sandboxEnv);
-        assertFailedSandboxAbsent(onboard, input, launch.sandboxEnv);
+        const rollbackError = (error as Error & { managedBootstrapRollbackError?: unknown })
+          .managedBootstrapRollbackError;
+        if (
+          !(rollbackError instanceof ManagedBootstrapOwnerCleanupRequiredError) ||
+          rollbackError.sandboxName !== input.sandbox
+        ) {
+          throw error;
+        }
+        assertFailedBootstrapOwnerCleanupRetention(
+          input,
+          networkName,
+          rollbackError.runtimeId,
+          launch.sandboxEnv,
+        );
+        assertFailedSandboxOwnerCleanupRetention(
+          onboard,
+          input,
+          rollbackError.sandboxId,
+          launch.sandboxEnv,
+        );
         failureInjectionQualified = true;
         process.stdout.write(
-          `Injected managed-bootstrap completion failure removed the failed exact ${input.agent} sandbox before harness cleanup.\n`,
+          `Injected managed-bootstrap completion failure retained one exact quiescent ${input.agent} sandbox for owner cleanup.\n`,
         );
       } else {
         throw error;
@@ -1238,7 +1287,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   }
   if (failureInjectionQualified) {
     process.stdout.write(
-      `Managed-bootstrap failure injection left no sandbox, container, network, or harness state orphan for ${input.agent}.\n`,
+      `Managed-bootstrap failure injection retained only its exact quiescent sandbox until harness owner cleanup and left no sandbox, container, network, or harness state orphan for ${input.agent}.\n`,
     );
   }
   return {

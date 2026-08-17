@@ -148,6 +148,55 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("uses the one locally proven platform digest when the first inspect reports the index", () => {
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === REF || ref === PLATFORM_REF ? 0 : 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (
+        new Map([
+          [`{{json .RepoDigests}}\0${REF}`, JSON.stringify([REF])],
+          [
+            `{{json .}}\0${REF}`,
+            JSON.stringify({
+              Id: IMAGE_ID,
+              RepoDigests: [PLATFORM_REF],
+              Os: "linux",
+              Architecture: "amd64",
+            }),
+          ],
+          [
+            `{{json .}}\0${PLATFORM_REF}`,
+            JSON.stringify({
+              Id: IMAGE_ID,
+              RepoDigests: [PLATFORM_REF],
+              Os: "linux",
+              Architecture: "amd64",
+            }),
+          ],
+        ]).get(`${format}\0${ref}`) ?? ""
+      ).trim(),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
+    });
+
+    expect(resolved).toMatchObject({
+      ref: PLATFORM_REF,
+      digest: PLATFORM_DIGEST,
+      source: "pinned",
+      pinnedRemoteRef: REF,
+      metadata: {
+        ref: PLATFORM_REF,
+        digest: PLATFORM_DIGEST,
+        imageId: IMAGE_ID,
+      },
+    });
+  });
+
   it("falls back to the Dockerfile-pinned digest when RepoDigests JSON is malformed", () => {
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF ? 0 : 1,
