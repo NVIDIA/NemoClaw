@@ -60,7 +60,7 @@ describe("preflightGatewayCleanupDecision", () => {
   });
 
   it.each(["stale", "active-unnamed"] as const)(
-    "returns noop for an externally supervised gateway even when stale [case %#] (#6576)",
+    "returns noop for an externally supervised %s gateway (#6576)",
     (state) => {
       expect(
         preflightGatewayCleanupDecision({
