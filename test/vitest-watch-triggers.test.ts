@@ -70,6 +70,9 @@ const OPAQUE_INPUTS = [
   ".github/scripts/docker-auth-cleanup.sh",
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
+  ".github/workflows/post-merge-docs.yaml",
+  "tools/post-merge-docs/review-policy.yaml",
+  "tools/post-merge-docs/artifact.mts",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
@@ -158,14 +161,13 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
     ]);
-    for (const portableProfilePath of [
-      ".github/workflows/portable-profile-e2e.yaml",
-      "test/e2e/fixtures/portable-profile-systemctl-shim.sh",
-    ]) {
-      expect(triggeredBy(portableProfilePath)).toEqual([
-        "test/e2e/support/portable-profile-systemctl-shim.test.ts",
-      ]);
-    }
+    expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/fixtures/portable-profile-systemctl-shim.sh")).toEqual([
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
     for (const authPath of [
       ".github/actions/docker-auth-setup/action.yaml",
       ".github/actions/docker-auth-cleanup/action.yaml",
@@ -181,6 +183,15 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/post-merge-docs.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/artifact.mts")).toEqual([
+      "test/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",

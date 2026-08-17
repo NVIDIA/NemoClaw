@@ -173,7 +173,7 @@ For missing, unsafe, malformed, expired, mismatched, changed, or unhealthy evide
 Ordinary launch continues only when NemoClaw proves that no old authority or evidence can exist, or durably rotates the runtime epoch.
 If an old epoch might exist and cannot be durably rotated, `launch` and `connect --probe-only` stop before complete preflight or recovery.
 Their redacted guidance asks you to repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.
-If NemoClaw securely proves that both the authority and receipt are absent but cannot create new authority, ordinary `launch` can run the complete preflight without optimization; `connect --probe-only` exits nonzero because it could not publish evidence.
+If NemoClaw securely proves that both the authority and receipt are absent but cannot create new authority, ordinary `launch` can run the complete preflight without optimization; on Linux, `connect --probe-only` exits nonzero because it could not publish evidence.
 If that preflight succeeds before the lease expires, replacement evidence keeps the original start and expiry time.
 After expiry, a successful complete preflight starts a new 24-hour lease only when publication succeeds.
 
@@ -190,8 +190,9 @@ Lease acceptance and publication are currently Linux-only and require a secure, 
 It never uses caller-provided environment variables to select this authority.
 
 On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease.
-`connect --probe-only` also runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
-The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+`connect --probe-only` also runs the complete preflight, including recovery and probes.
+After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero.
+On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
 Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
 Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.

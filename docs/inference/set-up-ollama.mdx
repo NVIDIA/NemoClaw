@@ -31,12 +31,21 @@ The wizard checks `ollama --version` and `/api/version` on port `11434` independ
 If NemoClaw detects an installed CLI or local running daemon but cannot read its version, onboarding uses the upgrade path instead of reusing it.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.
-On Linux, the wizard uses the official `https://ollama.com/install.sh` path.
+On Linux, the wizard uses the official `https://ollama.com/install.sh` path and asks it for `0.32.9` by name when the installed binary is stale, because the version the installer calls latest is below the minimum on some hosts.
+If the installed binary is already at or above the minimum and only the daemon is stale, the wizard restarts the daemon without running the installer or replacing the newer binary.
 Linux upgrades use the sudo-driven system path because a user-local fallback would leave an existing system daemon serving the stale binary.
 If sudo is unavailable in a non-interactive run, rerun interactively or upgrade Ollama manually.
+An upgrade also needs sudo to restart the service onto the new binary, so it does not accept an already-loopback-only daemon as a reason to skip that step.
+A fresh install takes the latest version.
 
-After an upgrade, NemoClaw probes the running daemon again.
-If the version remains below the minimum or cannot be read, interactive onboarding returns to provider selection, and non-interactive onboarding exits.
+After an upgrade, NemoClaw probes the running daemon and the installed binary again.
+`ollama --version` reports the version of the daemon it can reach, so NemoClaw reads the binary's own version from the client-version line that the command prints when the two differ.
+Both versions must be readable and at or above `0.32.9` before onboarding accepts the upgrade.
+If either version is below the minimum or cannot be read, interactive onboarding returns to provider selection, and non-interactive onboarding exits.
+The failure identifies each stale or unreadable version.
+A binary at or above the minimum means the service still serves the old one and needs a restart, while a binary below it means the installer did not deliver the required version on that host.
+When only the binary cannot be read, the failure asks you to verify the installed Ollama binary before you retry.
+When neither side can be read, the failure asks you to check that Ollama is installed and running before you retry.
 Fresh installs skip this second probe because the bundled installers provide a daemon at or above the minimum.
 
 The version gate does not apply to Windows-host Ollama reached from Docker Desktop through `host.docker.internal`.

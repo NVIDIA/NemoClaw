@@ -80,13 +80,12 @@ describe("repo skill markdown files", () => {
     expect(skillFiles.length).toBeGreaterThan(0);
   });
 
-  for (const skillFile of skillFiles) {
-    const relPath = path.relative(repoRoot, skillFile);
-
-    it(`parses valid YAML frontmatter for ${relPath}`, () => {
+  it.each(skillFiles.map((skillFile) => [path.relative(repoRoot, skillFile), skillFile] as const))(
+    "parses valid YAML frontmatter for %s",
+    (_relPath, skillFile) => {
       expectValidSkillMarkdown(skillFile);
-    });
-  }
+    },
+  );
 
   it("keeps contributor implementation skills concise and discovery-based", () => {
     const names = ["nemoclaw-contributor-update-dependencies", "nemoclaw-contributor-update-docs"];
@@ -274,6 +273,9 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Error or recovery:");
     expect(skill).toContain("Boundary or ambiguous state:");
     expect(skill).toContain("Name the operation and failure class the change belongs to");
+    expect(skill).toContain("Keep owning repository guidance in the same change.");
+    expect(skill).toContain("`.agents/skills/**`");
+    expect(skill).toContain("`test/e2e/**/README.md`");
     expect(skill).toContain("Record the sibling paths");
     expect(skill).toContain("Re-check the recorded operation and failure class");
     expect(skill).toContain("Sibling paths checked:");

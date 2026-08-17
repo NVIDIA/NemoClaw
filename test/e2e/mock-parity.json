@@ -82,6 +82,15 @@
       ]
     },
     {
+      "live": "test/e2e/live/native-runtime-qualification-case.test.ts",
+      "fast": [
+        "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
+        "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
+        "test/e2e/support/native-runtime-qualification.test.ts",
+        "test/install-native-runtime-qualification.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/podman-portable-uninstall.test.ts",
       "fast": [
         "src/lib/actions/uninstall/portable-runtime-cleanup.test.ts",

@@ -155,9 +155,10 @@ The sandbox's filesystem, process, gateway authentication, and managed credentia
 Use this tier only for trusted personal workloads with trusted prompts and data.
 </Warning>
 
-By default, the experimental portable profile selects only `personal-open-internet` from the Personal tier.
-Portable onboarding does not add narrower Personal presets when it uses this default.
+For a fresh onboarding run, the experimental portable profile selects `weather`, `public-reference`, and `github` when `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace.
+This default does not select `personal-open-internet`.
 If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, portable onboarding treats that explicit list as authoritative instead.
+`$$nemoclaw onboard --resume` does not inject the fresh-onboarding default.
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.

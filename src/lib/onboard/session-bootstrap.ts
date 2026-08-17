@@ -107,6 +107,8 @@ const PORTABLE_OWNED_ENV_KEYS = [
   ...PORTABLE_DEFAULT_ENV_KEYS,
 ] as const;
 
+const PORTABLE_DEFAULT_POLICY_PRESETS = "weather,public-reference,github";
+
 interface PreviousEnvironmentValue {
   readonly present: boolean;
   readonly value: string | undefined;
@@ -220,12 +222,14 @@ export function createPortableOnboardEnvironmentScope(
   }
   if (!options.resume) {
     const requestedModel = previous.get("NEMOCLAW_MODEL")?.value?.trim();
+    const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value;
     env[TOOL_DISCLOSURE_ENV] = "direct";
     env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
     env.NEMOCLAW_MODEL = activation?.model ?? (requestedModel || "qwen3-vl:4b");
     env.NEMOCLAW_POLICY_MODE = "custom";
-    env.NEMOCLAW_POLICY_PRESETS =
-      previous.get("NEMOCLAW_POLICY_PRESETS")?.value ?? "personal-open-internet";
+    env.NEMOCLAW_POLICY_PRESETS = requestedPolicyPresets?.trim()
+      ? requestedPolicyPresets
+      : PORTABLE_DEFAULT_POLICY_PRESETS;
     env.NEMOCLAW_POLICY_TIER = "personal";
   } else {
     const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value?.trim();

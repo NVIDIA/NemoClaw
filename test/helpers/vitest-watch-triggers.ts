@@ -148,8 +148,14 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)(?:\.github\/workflows\/portable-profile-e2e\.yaml|test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh)$/,
+    pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,
+    testsToRun: runTests(
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh$/,
     testsToRun: runTests("test/e2e/support/portable-profile-systemctl-shim.test.ts"),
   },
   {
@@ -168,6 +174,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/post-merge-docs\.yaml|tools\/post-merge-docs\/(?:review-policy\.yaml|[^/]+\.mts))$/,
+    testsToRun: runTests("test/post-merge-docs.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,

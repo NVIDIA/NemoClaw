@@ -22,11 +22,12 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 ## Release-Prep Docs
 
-Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
-The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx`.
-Use the required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
-This dated file is the release history for all documentation variants. Ordinary documentation pages and the post-tag Announcement do not replace it.
-Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
+During the evening flow, continue the managed documentation PR when one exists; otherwise open a
+direct documentation-only PR. Add `docs/changelog/YYYY-MM-DD.mdx` with its required `## vX.Y.Z`
+heading, parser-safe MDX SPDX comment, summary, and detailed bullets. Merge it before the final plan.
+
+Require the exact candidate's successful no-change `Docs / Post-Merge Catch-Up` publisher job.
+At plan generation and tag cut, no managed documentation PR may be open and no branch may exist for the exact candidate.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
 ## Cutoff
@@ -38,7 +39,7 @@ At cutoff:
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Confirm the merged release-note docs PR contains the dated changelog entry for the target version, or record an explicit waiver that names the missing entry.
+4. Complete [Release-Prep Docs](#release-prep-docs) for the exact candidate.
 5. Generate QA handoff from merged PRs.
 6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
 7. Review the candidate commit's pre-tag E2E evidence.

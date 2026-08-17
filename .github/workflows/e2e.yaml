@@ -64,12 +64,12 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Optional lowercase PR head SHA for manual exact-revision E2E.
+        description: Optional lowercase 40-character latest PR commit SHA for manual E2E.
         required: false
         default: ""
         type: string
       checkout_repository:
-        description: Optional PR head repository for manual exact-revision E2E.
+        description: Optional PR source repository for manual E2E.
         required: false
         default: ""
         type: string
@@ -84,7 +84,7 @@ on:
         default: ""
         type: string
       workflow_sha:
-        description: Optional trusted main workflow SHA for manual exact-revision E2E.
+        description: Optional trusted main workflow SHA for manual E2E.
         required: false
         default: ""
         type: string
@@ -327,7 +327,6 @@ jobs:
             { echo "::error::review_reason must contain 10 to 500 printable characters" >&2; exit 1; }
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
 
-
           require_maintainer "$ACTOR"
           if [[ "$(printf '%s' "$TRIGGERING_ACTOR" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')" ]]; then
             require_maintainer "$TRIGGERING_ACTOR"
@@ -339,8 +338,8 @@ jobs:
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must be open" >&2; exit 1; }
-          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR head repository" >&2; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head SHA" >&2; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$CHECKOUT_REPOSITORY" ]] || { echo "::error::checkout_repository must match the PR source repository" >&2; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the latest PR commit SHA" >&2; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base SHA" >&2; exit 1; }
 
       - name: Authorize release qualification waiver
@@ -844,6 +843,7 @@ jobs:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: |
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
             test/e2e/registry/native-runtime-qualification.ts
             tools/e2e/native-runtime-qualification-producer-plan.mts
           sparse-checkout-cone-mode: false
@@ -957,9 +957,210 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: node --experimental-strip-types --no-warnings tools/e2e/native-runtime-qualification-producer-plan.mts --ci-output
 
+  native-runtime-qualification-podman-toolchain:
+    name: Build pinned native Podman toolchain / ${{ matrix.architecture }}
+    needs: [generate-matrix, native-runtime-qualification-producer-plan]
+    if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pinned Podman source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: podman-container-tools/podman
+          ref: cade97a52ebdf9dbf9e81de8009015776837a074 # v6.1.0
+          path: .podman-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Netavark source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: containers/netavark
+          ref: 8e91ad1d947ed325327b638f0cb906bea1f7d0ab # v2.1.0
+          path: .netavark-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned Aardvark DNS source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: containers/aardvark-dns
+          ref: cd7417681229219059939bdd9f0b3bd9ac9abb08 # v2.1.0
+          path: .aardvark-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pinned Go for the Podman build
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: 1.25.9
+          cache: false
+
+      - name: Set up pinned Rust for the network helper builds
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.88.0
+          cache: false
+          rustflags: ""
+
+      - name: Install build dependencies from the signed runner OS repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
+            --yes --no-install-recommends \
+            curl gcc git libapparmor-dev libbtrfs-dev libc6-dev \
+            libdevmapper-dev libglib2.0-dev \
+            libprotobuf-c-dev libprotobuf-dev libseccomp-dev libselinux1-dev \
+            libsqlite3-dev libsystemd-dev make pkg-config protobuf-compiler
+
+      - name: Build and package the pinned native toolchain
+        env:
+          AARDVARK_SOURCE_SHA: cd7417681229219059939bdd9f0b3bd9ac9abb08
+          EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+          NETAVARK_SOURCE_SHA: 8e91ad1d947ed325327b638f0cb906bea1f7d0ab
+          PASTA_SOURCE_ARCHIVE_SHA256: 54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958
+          PASTA_SOURCE_SHA: f8df3f1b228fe19a74a269334fdfe6cc7d0605ce
+          PASTA_VERSION: 2026_07_28.f8df3f1
+          PODMAN_SOURCE_SHA: cade97a52ebdf9dbf9e81de8009015776837a074
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(dpkg --print-architecture)" == "$EXPECTED_ARCHITECTURE" ]]
+          [[ "$(git -C .podman-source rev-parse --verify 'HEAD^{commit}')" == "$PODMAN_SOURCE_SHA" ]]
+          [[ "$(git -C .netavark-source rev-parse --verify 'HEAD^{commit}')" == "$NETAVARK_SOURCE_SHA" ]]
+          [[ "$(git -C .aardvark-source rev-parse --verify 'HEAD^{commit}')" == "$AARDVARK_SOURCE_SHA" ]]
+          [[ ! -e .passt-source && ! -L .passt-source ]]
+          pasta_source_archive="${RUNNER_TEMP}/passt-${PASTA_SOURCE_SHA}.tar.gz"
+          [[ ! -e "$pasta_source_archive" && ! -L "$pasta_source_archive" ]]
+          /usr/bin/curl \
+            --fail --location --proto '=https' --proto-redir '=https' \
+            --retry 3 --show-error --silent --tlsv1.2 \
+            --output "$pasta_source_archive" \
+            "https://passt.top/passt/snapshot/passt-${PASTA_SOURCE_SHA}.tar.gz"
+          [[ -f "$pasta_source_archive" && ! -L "$pasta_source_archive" ]]
+          [[ "$(sha256sum "$pasta_source_archive" | cut -d' ' -f1)" == "$PASTA_SOURCE_ARCHIVE_SHA256" ]]
+          mkdir .passt-source
+          tar \
+            --extract --gzip --file="$pasta_source_archive" \
+            --directory=.passt-source --strip-components=1 \
+            --no-same-owner --no-same-permissions
+          [[ -f .passt-source/Makefile && ! -L .passt-source/Makefile ]]
+          [[ -f .passt-source/passt.c && ! -L .passt-source/passt.c ]]
+          [[ ! -e .passt-source/passt && ! -L .passt-source/passt ]]
+          for source in .podman-source .netavark-source .aardvark-source; do
+            [[ -z "$(git -C "$source" status --porcelain --untracked-files=no)" ]]
+          done
+          [[ "$(go version)" == go\ version\ go1.25.9\ * ]]
+          [[ "$(rustc --version)" == rustc\ 1.88.0\ * ]]
+
+          SOURCE_DATE_EPOCH=1786554266 \
+            BUILD_ORIGIN="NVIDIA/NemoClaw native runtime qualification" \
+            EXTRA_BUILDTAGS=containers_image_openpgp \
+            make --directory=.podman-source --jobs=2 \
+              podman rootlessport PREFIX=/usr/local
+          SOURCE_DATE_EPOCH=1785940686 CI=1 \
+            make --directory=.netavark-source --jobs=2 build
+          SOURCE_DATE_EPOCH=1785940850 CI=1 \
+            make --directory=.aardvark-source --jobs=2 build
+          SOURCE_DATE_EPOCH=1785255008 \
+            make --directory=.passt-source --jobs=2 VERSION="$PASTA_VERSION" passt
+
+          podman_dependencies="$(ldd .podman-source/bin/podman)"
+          printf '%s\n' "$podman_dependencies"
+          if grep -F "not found" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Podman build has an unresolved runtime dependency" >&2
+            exit 1
+          fi
+          if grep -E "libgpgme|libsubid" <<<"$podman_dependencies"; then
+            echo "::error::Pinned Podman build must not require an optional host ABI" >&2
+            exit 1
+          fi
+
+          install -D -m 0755 .podman-source/bin/podman "$TOOLCHAIN_DIRECTORY/bin/podman"
+          [[ -f .passt-source/passt && ! -L .passt-source/passt ]]
+          install -D -m 0755 .passt-source/passt "$TOOLCHAIN_DIRECTORY/bin/pasta"
+          install -D -m 0755 .podman-source/bin/rootlessport \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/rootlessport"
+          install -D -m 0755 .netavark-source/bin/netavark \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/netavark"
+          install -D -m 0755 .aardvark-source/bin/aardvark-dns \
+            "$TOOLCHAIN_DIRECTORY/libexec/podman/aardvark-dns"
+          install -D -m 0644 \
+            .podman-source/vendor/go.podman.io/common/pkg/config/containers.conf \
+            "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf"
+
+          [[ "$("$TOOLCHAIN_DIRECTORY/bin/podman" --version)" == "podman version 6.1.0" ]]
+          pasta_version_output="$("$TOOLCHAIN_DIRECTORY/bin/pasta" --version)"
+          [[ "${pasta_version_output%%$'\n'*}" == "pasta $PASTA_VERSION" ]] || {
+            echo "::error::Pinned qualification pasta version is invalid" >&2
+            exit 1
+          }
+          [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/netavark" --version)" == "netavark 2.1.0" ]]
+          [[ "$("$TOOLCHAIN_DIRECTORY/libexec/podman/aardvark-dns" --version)" == "aardvark-dns 2.1.0" ]]
+          jq -n \
+            --arg architecture "$EXPECTED_ARCHITECTURE" \
+            --arg aardvarkDnsSourceSha "$AARDVARK_SOURCE_SHA" \
+            --arg netavarkSourceSha "$NETAVARK_SOURCE_SHA" \
+            --arg pastaSourceArchiveSha256 "$PASTA_SOURCE_ARCHIVE_SHA256" \
+            --arg pastaSourceSha "$PASTA_SOURCE_SHA" \
+            --arg pastaVersion "$PASTA_VERSION" \
+            --arg podmanSourceSha "$PODMAN_SOURCE_SHA" '
+              {
+                schemaVersion: 1,
+                kind: "nemoclaw-native-podman-toolchain-v1",
+                architecture: $architecture,
+                podmanVersion: "6.1.0",
+                podmanSourceSha: $podmanSourceSha,
+                netavarkVersion: "2.1.0",
+                netavarkSourceSha: $netavarkSourceSha,
+                aardvarkDnsVersion: "2.1.0",
+                aardvarkDnsSourceSha: $aardvarkDnsSourceSha,
+                pastaVersion: $pastaVersion,
+                pastaSourceArchiveSha256: $pastaSourceArchiveSha256,
+                pastaSourceSha: $pastaSourceSha,
+                goVersion: "1.25.9",
+                rustVersion: "1.88.0"
+              }
+            ' >"$TOOLCHAIN_DIRECTORY/manifest.json"
+          (
+            cd "$TOOLCHAIN_DIRECTORY"
+            sha256sum \
+              bin/pasta \
+              bin/podman \
+              libexec/podman/aardvark-dns \
+              libexec/podman/netavark \
+              libexec/podman/rootlessport \
+              manifest.json \
+              share/containers/containers.conf >SHA256SUMS
+          )
+
+      - name: Upload the pinned native Podman toolchain
+        if: success()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: native-runtime-podman-toolchain-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/native-runtime-podman-toolchain/
+
   native-runtime-qualification-producer:
     name: ${{ matrix.jobName }}
-    needs: [generate-matrix, native-runtime-qualification-producer-plan]
+    needs:
+      - generate-matrix
+      - native-runtime-qualification-podman-toolchain
+      - native-runtime-qualification-producer-plan
     if: ${{ needs.native-runtime-qualification-producer-plan.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
     strategy:
       fail-fast: false
@@ -988,10 +1189,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ matrix.source.workflowSha }}
-          path: .trusted-qualification
+          path: .qualification-workflow
           persist-credentials: false
           sparse-checkout: |
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
             scripts/checks/run-native-runtime-installer-qualification.sh
+            test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-producer-plan.mts
             tools/e2e/native-runtime-qualification-producer-evidence.mts
           sparse-checkout-cone-mode: false
 
@@ -1009,25 +1213,153 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Install locked candidate test dependencies without scripts
-        working-directory: .candidate-runtime
-        run: npm ci --ignore-scripts
+      - name: Require a reviewed Ubuntu runtime host
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -r /etc/os-release ]] || {
+            echo "::error::Protected runner does not expose an OS release identity" >&2
+            exit 1
+          }
+          # shellcheck disable=SC1091
+          source /etc/os-release
+          [[ "${ID:-}" == "ubuntu" ]] || {
+            echo "::error::Protected runner must use a reviewed Ubuntu image" >&2
+            exit 1
+          }
+          [[ "${VERSION_ID:-}" == "24.04" || "${VERSION_ID:-}" == "26.04" ]] || {
+            echo "::error::Protected runner Ubuntu release is not reviewed for Podman qualification" >&2
+            exit 1
+          }
+
+      - name: Download the pinned native Podman toolchain
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-runtime-podman-toolchain-${{ matrix.case.architecture }}
+          path: ${{ runner.temp }}/native-runtime-podman-toolchain
+
+      - name: Install the pinned native Podman toolchain and rootless prerequisites
+        env:
+          EXPECTED_ARCHITECTURE: ${{ matrix.case.architecture }}
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -x /usr/bin/apt-get ]] || {
+            echo "::error::Protected runner cannot install rootless Podman prerequisites from its signed OS repository" >&2
+            exit 1
+          }
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install \
+            --yes --no-install-recommends \
+            acl apparmor btrfs-progs conmon \
+            golang-github-containers-common iptables nftables runc slirp4netns uidmap
+
+          [[ -d "$TOOLCHAIN_DIRECTORY" && ! -L "$TOOLCHAIN_DIRECTORY" ]]
+          [[ -z "$(find -P "$TOOLCHAIN_DIRECTORY" -type l -print -quit)" ]]
+          mapfile -t actual_files < <(
+            cd "$TOOLCHAIN_DIRECTORY"
+            find . -type f -print | LC_ALL=C sort
+          )
+          expected_files=(
+            ./SHA256SUMS
+            ./bin/pasta
+            ./bin/podman
+            ./libexec/podman/aardvark-dns
+            ./libexec/podman/netavark
+            ./libexec/podman/rootlessport
+            ./manifest.json
+            ./share/containers/containers.conf
+          )
+          [[ "${actual_files[*]}" == "${expected_files[*]}" ]] || {
+            echo "::error::Downloaded native Podman toolchain contains unexpected files" >&2
+            exit 1
+          }
+          (
+            cd "$TOOLCHAIN_DIRECTORY"
+            sha256sum --check --strict SHA256SUMS
+          )
+          jq -e \
+            --arg architecture "$EXPECTED_ARCHITECTURE" '
+              type == "object" and
+              keys == [
+                "aardvarkDnsSourceSha",
+                "aardvarkDnsVersion",
+                "architecture",
+                "goVersion",
+                "kind",
+                "netavarkSourceSha",
+                "netavarkVersion",
+                "pastaSourceArchiveSha256",
+                "pastaSourceSha",
+                "pastaVersion",
+                "podmanSourceSha",
+                "podmanVersion",
+                "rustVersion",
+                "schemaVersion"
+              ] and
+              .schemaVersion == 1 and
+              .kind == "nemoclaw-native-podman-toolchain-v1" and
+              .architecture == $architecture and
+              .podmanVersion == "6.1.0" and
+              .podmanSourceSha == "cade97a52ebdf9dbf9e81de8009015776837a074" and
+              .netavarkVersion == "2.1.0" and
+              .netavarkSourceSha == "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" and
+              .aardvarkDnsVersion == "2.1.0" and
+              .aardvarkDnsSourceSha == "cd7417681229219059939bdd9f0b3bd9ac9abb08" and
+              .pastaVersion == "2026_07_28.f8df3f1" and
+              .pastaSourceArchiveSha256 == "54fc6a3b39b0fcb13182078662886a629032852e186e47a371fd9d7fd20d3958" and
+              .pastaSourceSha == "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce" and
+              .goVersion == "1.25.9" and
+              .rustVersion == "1.88.0"
+            ' "$TOOLCHAIN_DIRECTORY/manifest.json" >/dev/null
+          for target in \
+            /usr/local/bin/podman \
+            /usr/local/libexec/podman/aardvark-dns \
+            /usr/local/libexec/podman/netavark \
+            /usr/local/libexec/podman/rootlessport \
+            /usr/share/containers/containers.conf; do
+            [[ ! -L "$target" ]] || {
+              echo "::error::Native Podman toolchain target must not be a symlink: $target" >&2
+              exit 1
+            }
+          done
+          sudo install --owner=root --group=root --mode=0755 \
+            "$TOOLCHAIN_DIRECTORY/bin/podman" /usr/local/bin/podman
+          for helper in aardvark-dns netavark rootlessport; do
+            sudo install -D --owner=root --group=root --mode=0755 \
+              "$TOOLCHAIN_DIRECTORY/libexec/podman/$helper" \
+              "/usr/local/libexec/podman/$helper"
+          done
+          sudo install --owner=root --group=root --mode=0644 \
+            "$TOOLCHAIN_DIRECTORY/share/containers/containers.conf" \
+            /usr/share/containers/containers.conf
+          [[ "$(command -v podman)" == "/usr/local/bin/podman" ]]
+          conmon_version="$(conmon --version | awk 'NR == 1 { print $NF }')"
+          runc_version="$(runc --version | awk 'NR == 1 { print $NF }')"
+          dpkg --compare-versions "$conmon_version" ge 2.1.7
+          dpkg --compare-versions "$runc_version" ge 1.1.11
+          [[ "$(/usr/local/libexec/podman/netavark --version)" == "netavark 2.1.0" ]]
+          [[ "$(/usr/local/libexec/podman/aardvark-dns --version)" == "aardvark-dns 2.1.0" ]]
+          version="$(podman --version)"
+          [[ "$version" == "podman version 6.1.0" ]]
 
       - name: Prepare the credential-free execution account and disable Docker
         id: boundary
         env:
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          TOOLCHAIN_DIRECTORY: ${{ runner.temp }}/native-runtime-podman-toolchain
         shell: bash
         run: |
           set -euo pipefail
-          for command in git jq node pgrep podman sha256sum systemctl; do
+          for command in apparmor_parser awk cat curl getent git grep groupdel id jq node npm pgrep podman setfacl sha256sum stat systemctl tee unlink useradd userdel usermod; do
             command -v "$command" >/dev/null || {
               echo "::error::Protected runner is missing required command: $command" >&2
               exit 1
             }
           done
-          [[ "$(podman --version)" =~ ^podman\ version\ 5[.] ]] || {
-            echo "::error::Protected runner must provide Podman 5" >&2
+          [[ "$(podman --version)" == "podman version 6.1.0" ]] || {
+            echo "::error::Protected runner must provide Podman 6.1.0" >&2
             exit 1
           }
           sudo systemctl stop docker.service docker.socket 2>/dev/null || true
@@ -1039,88 +1371,730 @@ jobs:
           ! pgrep -x dockerd >/dev/null
           [[ ! -S /var/run/docker.sock && ! -S /run/docker.sock ]]
           account="nemoclawq"
-          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
-          sudo useradd --create-home --shell /usr/sbin/nologin "$account"
+          ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if getent passwd "$account" >/dev/null || getent group "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
+            echo "::error::Qualification account, group, or subordinate-ID authorization already exists" >&2
+            exit 1
+          fi
+          [[ ! -e "$ownership_marker" && ! -L "$ownership_marker" ]] || {
+            echo "::error::Qualification account ownership marker already exists" >&2
+            exit 1
+          }
+          account_created_without_marker=0
+          rollback_unmarked_account() {
+            local result="$?"
+            trap - EXIT
+            if ((result != 0 && account_created_without_marker == 1)); then
+              sudo userdel --remove "$account" 2>/dev/null || true
+              sudo groupdel "$account" 2>/dev/null || true
+              sudo rm -f -- "$ownership_marker"
+              if getent passwd "$account" >/dev/null || getent group "$account" >/dev/null || grep -q "^${account}:" /etc/subuid /etc/subgid; then
+                echo "::error::Partially created qualification account could not be rolled back" >&2
+                exit 1
+              fi
+            fi
+            exit "$result"
+          }
+          trap rollback_unmarked_account EXIT
+          sudo useradd --create-home --shell /usr/sbin/nologin --user-group "$account"
+          account_created_without_marker=1
           uid="$(id -u "$account")"
+          gid="$(id -g "$account")"
           home="$(getent passwd "$account" | cut -d: -f6)"
+          group_entry="$(getent group "$account")"
+          [[ "$uid" =~ ^[0-9]+$ && "$gid" =~ ^[0-9]+$ && "$home" == "/home/${account}" && -d "$home" && ! -L "$home" ]] || {
+            echo "::error::Qualification account identity is missing or invalid" >&2
+            exit 1
+          }
+          [[ "$group_entry" == "${account}:x:${gid}:" ]] || {
+            echo "::error::Qualification private group identity is missing or invalid" >&2
+            exit 1
+          }
+          printf '%s:%s:%s\n' "$account" "$uid" "$gid" | sudo tee "$ownership_marker" >/dev/null
+          sudo chown root:root "$ownership_marker"
+          sudo chmod 0400 "$ownership_marker"
+          [[ -f "$ownership_marker" && ! -L "$ownership_marker" && "$(stat -c '%u:%g:%a' "$ownership_marker")" == "0:0:400" ]] || {
+            echo "::error::Qualification account ownership marker is invalid" >&2
+            exit 1
+          }
+          account_created_without_marker=0
+          trap - EXIT
+          ensure_subordinate_range() {
+            local file="$1"
+            local option="$2"
+            local range_start=100000
+            local range_end
+            local conflict_end
+            [[ -f "$file" && ! -L "$file" ]] || {
+              echo "::error::Rootless Podman subordinate-ID file is missing or invalid: $file" >&2
+              exit 1
+            }
+            if awk -F: -v account="$account" '
+              $1 == account && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$file"; then
+              return
+            fi
+            while :; do
+              ((range_start <= 4294901760)) || {
+                echo "::error::Protected runner has no free subordinate-ID range for rootless Podman" >&2
+                exit 1
+              }
+              range_end=$((range_start + 65535))
+              conflict_end="$(awk -F: -v start="$range_start" -v end="$range_end" '
+                $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ {
+                  current_end = $2 + $3 - 1
+                  if ($2 <= end && current_end >= start && current_end > maximum) maximum = current_end
+                }
+                END { if (maximum != "") print maximum }
+              ' "$file")"
+              [[ -n "$conflict_end" ]] || break
+              range_start=$((conflict_end + 1))
+            done
+            range_end=$((range_start + 65535))
+            sudo usermod "$option" "${range_start}-${range_end}" "$account"
+            awk -F: -v account="$account" '
+              $1 == account && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= 65536 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$file" || {
+              echo "::error::Protected runner did not provision rootless Podman subordinate IDs" >&2
+              exit 1
+            }
+          }
+          ensure_subordinate_range /etc/subuid --add-subuids
+          ensure_subordinate_range /etc/subgid --add-subgids
+          printf 'account=%s\n' "$account" >>"$GITHUB_OUTPUT"
+          printf 'account_created=true\n' >>"$GITHUB_OUTPUT"
+          printf 'uid=%s\n' "$uid" >>"$GITHUB_OUTPUT"
+          printf 'gid=%s\n' "$gid" >>"$GITHUB_OUTPUT"
           runtime_dir="/run/user/${uid}"
-          sudo install -d -o "$uid" -g "$uid" -m 0700 "$runtime_dir"
-          sudo chown -R "$uid:$uid" "$CANDIDATE_DIRECTORY"
+          runtime_directory_unit="user-runtime-dir@${uid}.service"
+          user_manager_unit="user@${uid}.service"
+          user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
+          user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
+          trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"
+          [[ ! -e "$user_manager_dropin_directory" && ! -L "$user_manager_dropin_directory" ]] || {
+            echo "::error::Qualification systemd user-manager drop-in directory already exists" >&2
+            exit 1
+          }
+          sudo install -d --owner=root --group=root --mode=0755 "$user_manager_dropin_directory"
+          printf '[Service]\nEnvironment="SYSTEMD_UNIT_PATH=%s"\n' "$trusted_user_unit_path" |
+            sudo tee "$user_manager_dropin" >/dev/null
+          sudo chown root:root "$user_manager_dropin"
+          sudo chmod 0444 "$user_manager_dropin"
+          [[ -f "$user_manager_dropin" && ! -L "$user_manager_dropin" && "$(stat -c '%u:%g:%a:%h' "$user_manager_dropin")" == "0:0:444:1" ]] || {
+            echo "::error::Qualification systemd user-manager drop-in is invalid" >&2
+            exit 1
+          }
+          sudo systemctl daemon-reload
+          verify_user_manager_unit_path() {
+            local environment
+            environment="$(sudo -u "$1" env -i \
+              HOME="$2" \
+              LANG=C.UTF-8 \
+              PATH=/usr/bin:/bin \
+              XDG_RUNTIME_DIR="$3" \
+              /usr/bin/systemctl --user show-environment)"
+            tr ' ' '\n' <<<"$environment" | grep -Fx -- "SYSTEMD_UNIT_PATH=$trusted_user_unit_path" >/dev/null || {
+              echo "::error::Qualification systemd user manager did not inherit the trusted unit path" >&2
+              return 1
+            }
+          }
+          verify_user_bus() {
+            local execution_account="$1"
+            local expected_uid="$2"
+            local bus="$3"
+            local context="$4"
+            sudo /usr/bin/test -S "$bus" &&
+              sudo /usr/bin/test ! -L "$bus" &&
+              [[ "$(sudo stat -c '%u' -- "$bus")" == "$expected_uid" ]] &&
+              sudo -u "$execution_account" /usr/bin/test -S "$bus" || {
+              echo "::error::Qualification systemd user bus $context" >&2
+              return 1
+            }
+          }
+          sudo systemctl start "$user_manager_unit"
+          systemctl is-active --quiet "$runtime_directory_unit" || {
+            echo "::error::Qualification systemd runtime-directory unit is not active" >&2
+            exit 1
+          }
+          [[ -d "$runtime_dir" && ! -L "$runtime_dir" && "$(stat -c '%u:%g:%a' "$runtime_dir")" == "${uid}:${gid}:700" ]] || {
+            echo "::error::Qualification runtime directory is missing or invalid" >&2
+            exit 1
+          }
+          systemctl is-active --quiet "$user_manager_unit" || {
+            echo "::error::Qualification systemd user manager is not active" >&2
+            exit 1
+          }
+          sudo -u "$account" env -i \
+            HOME="$home" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            /usr/bin/systemctl --user start dbus.socket
+          sudo -u "$account" env -i \
+            HOME="$home" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            /usr/bin/systemctl --user is-active --quiet dbus.socket || {
+              echo "::error::Qualification systemd user bus socket unit is not active" >&2
+              exit 1
+            }
+          verify_user_bus "$account" "$uid" "$runtime_dir/bus" \
+            "is invalid or inaccessible to the execution account"
+          verify_user_manager_unit_path "$account" "$home" "$runtime_dir"
+          storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          storage_config="${storage_config_directory}/storage.conf"
+          containers_config="${storage_config_directory}/containers.conf"
+          podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          apparmor_profile="${storage_config_directory}/podman.apparmor"
+          apparmor_profile_name="nemoclaw-native-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          pasta_executable="${helper_directory}/pasta"
+          pasta_apparmor_profile="${storage_config_directory}/pasta.apparmor"
+          pasta_apparmor_profile_name="nemoclaw-native-pasta-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
+            echo "::error::Qualification storage configuration directory already exists" >&2
+            exit 1
+          }
+          [[ ! -e "$helper_directory" && ! -L "$helper_directory" ]] || {
+            echo "::error::Qualification helper directory already exists" >&2
+            exit 1
+          }
+          sudo install -d -o root -g root -m 0755 "$storage_config_directory"
+          [[ -f "$TOOLCHAIN_DIRECTORY/bin/podman" && ! -L "$TOOLCHAIN_DIRECTORY/bin/podman" ]] || {
+            echo "::error::Pinned qualification Podman executable source is missing or invalid" >&2
+            exit 1
+          }
+          [[ ! -e "$podman_executable" && ! -L "$podman_executable" ]] || {
+            echo "::error::Run-owned qualification Podman executable already exists" >&2
+            exit 1
+          }
+          sudo install --owner=root --group=root --mode=0555 \
+            "$TOOLCHAIN_DIRECTORY/bin/podman" "$podman_executable"
+          [[ -f "$podman_executable" && ! -L "$podman_executable" && "$(stat -c '%u:%g:%a' "$podman_executable")" == "0:0:555" ]] || {
+            echo "::error::Run-owned qualification Podman executable is invalid" >&2
+            exit 1
+          }
+          [[ "$(sha256sum "$podman_executable" | cut -d' ' -f1)" == "$(sha256sum "$TOOLCHAIN_DIRECTORY/bin/podman" | cut -d' ' -f1)" ]] || {
+            echo "::error::Run-owned qualification Podman executable digest changed during installation" >&2
+            exit 1
+          }
+          [[ -f "$TOOLCHAIN_DIRECTORY/bin/pasta" && ! -L "$TOOLCHAIN_DIRECTORY/bin/pasta" ]] || {
+            echo "::error::Pinned qualification pasta executable source is missing or invalid" >&2
+            exit 1
+          }
+          sudo install -d --owner=root --group=root --mode=0555 "$helper_directory"
+          sudo install --owner=root --group=root --mode=0555 \
+            "$TOOLCHAIN_DIRECTORY/bin/pasta" "$pasta_executable"
+          [[ -d "$helper_directory" && ! -L "$helper_directory" && "$(stat -c '%u:%g:%a' "$helper_directory")" == "0:0:555" ]] || {
+            echo "::error::Run-owned qualification helper directory is invalid" >&2
+            exit 1
+          }
+          [[ -f "$pasta_executable" && ! -L "$pasta_executable" && "$(stat -c '%u:%g:%a' "$pasta_executable")" == "0:0:555" ]] || {
+            echo "::error::Run-owned qualification pasta executable is invalid" >&2
+            exit 1
+          }
+          [[ "$(sha256sum "$pasta_executable" | cut -d' ' -f1)" == "$(sha256sum "$TOOLCHAIN_DIRECTORY/bin/pasta" | cut -d' ' -f1)" ]] || {
+            echo "::error::Run-owned qualification pasta executable digest changed during installation" >&2
+            exit 1
+          }
+          printf '%s\n' \
+            '[storage]' \
+            'driver = "overlay"' \
+            "runroot = \"${home}/.local/share/containers/runroot\"" \
+            "graphroot = \"${home}/.local/share/containers/storage\"" \
+            "rootless_storage_path = \"${home}/.local/share/containers/storage\"" | sudo tee "$storage_config" >/dev/null
+          sudo chown root:root "$storage_config"
+          sudo chmod 0444 "$storage_config"
+          [[ -f "$storage_config" && ! -L "$storage_config" && "$(stat -c '%u:%g:%a' "$storage_config")" == "0:0:444" ]] || {
+            echo "::error::Qualification storage configuration is not root-owned and read-only" >&2
+            exit 1
+          }
+          printf '%s\n' \
+            '[network]' \
+            'firewall_driver = "nftables"' | sudo tee "$containers_config" >/dev/null
+          sudo chown root:root "$containers_config"
+          sudo chmod 0444 "$containers_config"
+          [[ -f "$containers_config" && ! -L "$containers_config" && "$(stat -c '%u:%g:%a' "$containers_config")" == "0:0:444" ]] || {
+            echo "::error::Qualification containers configuration is not root-owned and read-only" >&2
+            exit 1
+          }
+          if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
+            printf '%s\n' \
+              '# This ephemeral profile grants user namespaces only to the pinned qualification Podman binary.' \
+              '' \
+              'abi <abi/4.0>,' \
+              'include <tunables/global>' \
+              '' \
+              "profile ${apparmor_profile_name} ${podman_executable} flags=(unconfined) {" \
+              '  userns,' \
+              '}' | sudo tee "$apparmor_profile" >/dev/null
+            sudo chown root:root "$apparmor_profile"
+            sudo chmod 0444 "$apparmor_profile"
+            [[ -f "$apparmor_profile" && ! -L "$apparmor_profile" && "$(stat -c '%u:%g:%a' "$apparmor_profile")" == "0:0:444" ]] || {
+              echo "::error::Qualification AppArmor profile is not root-owned and read-only" >&2
+              exit 1
+            }
+            sudo apparmor_parser -r "$apparmor_profile"
+            printf '%s\n' \
+              '# This ephemeral profile is limited to the immutable run-owned pasta helper.' \
+              '' \
+              'abi <abi/4.0>,' \
+              'include <tunables/global>' \
+              '' \
+              "profile ${pasta_apparmor_profile_name} ${pasta_executable} flags=(unconfined) {" \
+              '  userns,' \
+              '}' | sudo tee "$pasta_apparmor_profile" >/dev/null
+            sudo chown root:root "$pasta_apparmor_profile"
+            sudo chmod 0444 "$pasta_apparmor_profile"
+            [[ -f "$pasta_apparmor_profile" && ! -L "$pasta_apparmor_profile" && "$(stat -c '%u:%g:%a' "$pasta_apparmor_profile")" == "0:0:444" ]] || {
+              echo "::error::Qualification pasta AppArmor profile is not root-owned and read-only" >&2
+              exit 1
+            }
+            sudo apparmor_parser -r "$pasta_apparmor_profile"
+          fi
+          ancestor="$(dirname "$CANDIDATE_DIRECTORY")"
+          while [[ "$ancestor" != "/home" ]]; do
+            [[ ("$ancestor" == "/home/runner" || "$ancestor" == /home/runner/*) && -d "$ancestor" && ! -L "$ancestor" ]] || {
+              echo "::error::Candidate checkout ancestor is outside the reviewed runner workspace" >&2
+              exit 1
+            }
+            sudo setfacl --modify "u:${account}:--x" "$ancestor"
+            ancestor="$(dirname "$ancestor")"
+          done
+          sudo chown -R "$uid:$gid" "$CANDIDATE_DIRECTORY"
+          node_directory="$(dirname "$(command -v node)")"
+          [[ "$node_directory" == /* && -x "$node_directory/node" && -x "$node_directory/npm" ]] || {
+            echo "::error::Pinned Node toolchain path is invalid" >&2
+            exit 1
+          }
           guard_dir="${RUNNER_TEMP}/native-runtime-docker-guard"
-          install -d -m 0700 "$guard_dir"
+          install -d -m 0755 "$guard_dir"
           printf '%s\n' '#!/usr/bin/env bash' 'exit 97' >"$guard_dir/docker"
-          chmod 0500 "$guard_dir/docker"
+          chmod 0555 "$guard_dir/docker"
+          podman_info="$(sudo -u "$account" env -i \
+            CONTAINERS_CONF="$containers_config" \
+            CONTAINERS_STORAGE_CONF="$storage_config" \
+            HOME="$home" \
+            LANG=C.UTF-8 \
+            PATH="$guard_dir:$helper_directory:/usr/local/bin:/usr/bin:/bin" \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            "$podman_executable" info --format json)" || {
+              echo "::error::Credential-free rootless Podman readiness failed" >&2
+              exit 1
+            }
+          jq -e '
+            .host.security.rootless == true and
+            .store.graphDriverName == "overlay" and
+            (((.store.graphOptions // {})["overlay.mount_program"].Executable? // "") == "")
+          ' <<<"$podman_info" >/dev/null || {
+            echo "::error::Qualification requires native rootless overlay storage" >&2
+            exit 1
+          }
           printf 'home=%s\n' "$home" >>"$GITHUB_OUTPUT"
           printf 'runtime_dir=%s\n' "$runtime_dir" >>"$GITHUB_OUTPUT"
           printf 'guard_dir=%s\n' "$guard_dir" >>"$GITHUB_OUTPUT"
+          printf 'helper_dir=%s\n' "$helper_directory" >>"$GITHUB_OUTPUT"
+          printf 'node_dir=%s\n' "$node_directory" >>"$GITHUB_OUTPUT"
+          printf 'podman_executable=%s\n' "$podman_executable" >>"$GITHUB_OUTPUT"
+          printf 'containers_config=%s\n' "$containers_config" >>"$GITHUB_OUTPUT"
+          printf 'runtime_directory_unit=%s\n' "$runtime_directory_unit" >>"$GITHUB_OUTPUT"
+          printf 'storage_config=%s\n' "$storage_config" >>"$GITHUB_OUTPUT"
+          printf 'user_manager_unit=%s\n' "$user_manager_unit" >>"$GITHUB_OUTPUT"
 
-      - name: Run the authenticated installer qualification
+      - name: Prepare GPU resources with the NVIDIA API key
+        id: gpu_resources
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
+          ACCELERATION: ${{ matrix.case.acceleration }}
           ARCHITECTURE: ${{ matrix.case.architecture }}
-          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
-          CANDIDATE_SHA: ${{ matrix.source.candidateSha }}
+          CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
-          INSTALLER_RECEIPT_PARENT: ${{ runner.temp }}/native-runtime-installer
-          INSTALLER_SHA256: ${{ matrix.installerSha256 }}
+          HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
+          INFERENCE: ${{ matrix.case.inference }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          PODMAN_EXECUTABLE: ${{ steps.boundary.outputs.podman_executable }}
+          QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+          RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ "$ACCELERATION" != "nvidia-gpu" ]]; then
+            printf 'runner_contract=\n' >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ -n "$NVIDIA_API_KEY" ]] || {
+            echo "::error::Native runtime GPU preparation requires the NVIDIA_API_KEY repository secret" >&2
+            exit 1
+          }
+          uid="$(id -u "$ACCOUNT")"
+          gid="$(id -g "$ACCOUNT")"
+          [[ "$uid" == "$ACCOUNT_UID" && "$gid" == "$ACCOUNT_GID" ]] || {
+            echo "::error::Qualification account identity changed before GPU resource preparation" >&2
+            exit 1
+          }
+          storage_config_directory="$(dirname "$STORAGE_CONFIG")"
+          runner_contract="${storage_config_directory}/runner-contract.json"
+          registry_auth_directory="${storage_config_directory}/registry-auth"
+          registry_auth_file="${registry_auth_directory}/auth.json"
+          resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+          model_directory="${resource_directory}/model"
+          model_revision="7ae557604adf67be50417f59c2c2f167def9a775"
+          model_name="Qwen/Qwen2.5-0.5B-Instruct"
+          case "$ARCHITECTURE" in
+            amd64)
+              probe_image="nvcr.io/nvidia/k8s/cuda-sample@sha256:9855f4c8500addf185360474184b9efdaf4384284779aa9173dcd70164a4ae6f"
+              nim_image="nvcr.io/nim/nvidia/model-free-nim@sha256:a0fdbecdf51792dadc48d284fde3199a58d5a2067007ad5b80319975fe81ce93"
+              vllm_image="nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773"
+              ;;
+            arm64)
+              probe_image="nvcr.io/nvidia/k8s/cuda-sample@sha256:a54fdceac3bc2a8d177f07db942defc2f7237e18d07fca2ff00718ba5aee4940"
+              nim_image="nvcr.io/nim/nvidia/model-free-nim@sha256:8342257b9744e9bc23a02e0f45badad6b88474727473965b4dc83e8fee45956a"
+              vllm_image="nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4"
+              ;;
+            *)
+              echo "::error::GPU resource architecture is unsupported" >&2
+              exit 1
+              ;;
+          esac
+          [[ ! -e "$runner_contract" && ! -L "$runner_contract" ]] || {
+            echo "::error::Run-owned GPU runner contract already exists" >&2
+            exit 1
+          }
+          [[ ! -e "$registry_auth_directory" && ! -L "$registry_auth_directory" ]] || {
+            echo "::error::Run-owned registry authentication directory already exists" >&2
+            exit 1
+          }
+          sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$registry_auth_directory"
+          cleanup_registry_auth() {
+            local result="$?"
+            trap - EXIT
+            if sudo test -e "$registry_auth_file" || sudo test -L "$registry_auth_file"; then
+              sudo test -f "$registry_auth_file" &&
+                sudo test ! -L "$registry_auth_file" &&
+                [[ "$(sudo stat -c '%u:%g:%a:%h' -- "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+                echo "::error::Run-owned registry authentication file cleanup target is invalid" >&2
+                return 1
+              }
+              sudo unlink "$registry_auth_file"
+            fi
+            sudo rmdir "$registry_auth_directory" || {
+              echo "::error::Run-owned registry authentication directory was not empty" >&2
+              return 1
+            }
+            return "$result"
+          }
+          trap cleanup_registry_auth EXIT
+          printf '%s' "$NVIDIA_API_KEY" | sudo -u "$ACCOUNT" env -i \
+            CONTAINERS_CONF="$CONTAINERS_CONFIG" \
+            CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH="$HELPER_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            REGISTRY_AUTH_FILE="$registry_auth_file" \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            "$PODMAN_EXECUTABLE" login nvcr.io --username '$oauthtoken' --password-stdin >/dev/null
+          sudo test -f "$registry_auth_file" &&
+            sudo test ! -L "$registry_auth_file" &&
+            [[ "$(sudo stat -c '%u:%g:%h' -- "$registry_auth_file")" == "${uid}:${gid}:1" ]] || {
+            echo "::error::Run-owned registry authentication file is invalid" >&2
+            exit 1
+          }
+          sudo chmod 0600 -- "$registry_auth_file"
+          [[ "$(sudo stat -c '%u:%g:%a:%h' -- "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+            echo "::error::Run-owned registry authentication file permissions are invalid" >&2
+            exit 1
+          }
+          image_to_pull="$probe_image"
+          if [[ "$INFERENCE" == "nim" ]]; then
+            image_to_pull="$nim_image"
+          elif [[ "$INFERENCE" == "vllm" ]]; then
+            image_to_pull="$vllm_image"
+          fi
+          images=("$probe_image")
+          [[ "$image_to_pull" == "$probe_image" ]] || images+=("$image_to_pull")
+          for image in "${images[@]}"; do
+            sudo -u "$ACCOUNT" env -i \
+              CONTAINERS_CONF="$CONTAINERS_CONFIG" \
+              CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
+              HOME="$QUALIFICATION_HOME" \
+              LANG=C.UTF-8 \
+              PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+              REGISTRY_AUTH_FILE="$registry_auth_file" \
+              XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+              "$PODMAN_EXECUTABLE" pull "$image"
+          done
+          cleanup_registry_auth
+          trap - EXIT
+          unset NVIDIA_API_KEY
+
+          if [[ "$INFERENCE" == "nim" || "$INFERENCE" == "vllm" ]]; then
+            [[ ! -e "$resource_directory" && ! -L "$resource_directory" ]] || {
+              echo "::error::Run-owned GPU model resource already exists" >&2
+              exit 1
+            }
+            sudo install -d --owner=root --group=root --mode=0711 "$resource_directory"
+            sudo install -d --owner="$uid" --group="$gid" --mode=0700 "$model_directory"
+            download_model_file() {
+              local file="$1"
+              local size="$2"
+              local algorithm="$3"
+              local digest="$4"
+              local target="${model_directory}/${file}"
+              sudo -u "$ACCOUNT" env -i \
+                HOME="$QUALIFICATION_HOME" \
+                LANG=C.UTF-8 \
+                /usr/bin/curl \
+                  --fail --location --proto '=https' --retry 3 --show-error --silent --tlsv1.2 \
+                  --output "$target" \
+                  "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/resolve/${model_revision}/${file}?download=true"
+              sudo test -f "$target" &&
+                sudo test ! -L "$target" &&
+                [[ "$(sudo stat -c '%u:%g:%h:%s' -- "$target")" == "${uid}:${gid}:1:${size}" ]] || {
+                echo "::error::Downloaded GPU model file metadata is invalid: $file" >&2
+                exit 1
+              }
+              sudo chmod 0600 -- "$target"
+              [[ "$(sudo stat -c '%u:%g:%a:%h:%s' -- "$target")" == "${uid}:${gid}:600:1:${size}" ]] || {
+                echo "::error::Downloaded GPU model file permissions are invalid: $file" >&2
+                exit 1
+              }
+              if [[ "$algorithm" == "sha256" ]]; then
+                [[ "$(sudo sha256sum -- "$target" | cut -d' ' -f1)" == "$digest" ]]
+              else
+                [[ "$(sudo git hash-object --no-filters -- "$target")" == "$digest" ]]
+              fi || {
+                echo "::error::Downloaded GPU model file digest is invalid: $file" >&2
+                exit 1
+              }
+            }
+            download_model_file config.json 659 sha1 0dbb161213629a23f0fc00ef286e6b1e366d180f
+            download_model_file generation_config.json 242 sha1 dfc11073787daf1b0f9c0f1499487ab5f4c93738
+            download_model_file merges.txt 1671839 sha1 20024bfe7c83998e9aeaf98a0cd6a2ce6306c2f0
+            download_model_file model.safetensors 988097824 sha256 fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe
+            download_model_file tokenizer.json 7031645 sha1 443909a61d429dff23010e5bddd28ff530edda00
+            download_model_file tokenizer_config.json 7305 sha1 07bfe0640cb5a0037f9322287fbfc682806cf672
+            download_model_file vocab.json 2776833 sha1 4783fe10ac3adce15ac8f358ef5462739852c569
+            for file in config.json generation_config.json merges.txt model.safetensors tokenizer.json tokenizer_config.json vocab.json; do
+              sudo chown root:root "${model_directory}/${file}"
+              sudo chmod 0444 "${model_directory}/${file}"
+            done
+            sudo chown root:root "$model_directory"
+            sudo chmod 0555 "$model_directory"
+            sudo chmod 0555 "$resource_directory"
+          fi
+
+          jq -n \
+            --arg architecture "$ARCHITECTURE" \
+            --arg gpuProbeImageRef "$probe_image" \
+            --arg model "$model_name" \
+            --arg modelPath "$model_directory" \
+            --arg modelRevision "$model_revision" \
+            --arg nimImageRef "$nim_image" \
+            --arg vllmImageRef "$vllm_image" '
+              {
+                schemaVersion: 1,
+                kind: "nemoclaw-native-runtime-qualification-runner-v1",
+                architecture: $architecture,
+                gpuProbeImageRef: $gpuProbeImageRef,
+                nim: {
+                  imageRef: $nimImageRef,
+                  model: $model,
+                  modelPath: $modelPath,
+                  modelRevision: $modelRevision
+                },
+                vllm: {
+                  imageRef: $vllmImageRef,
+                  model: $model,
+                  modelPath: $modelPath,
+                  modelRevision: $modelRevision
+                }
+              }
+            ' | sudo tee "$runner_contract" >/dev/null
+          sudo chown root:root "$runner_contract"
+          sudo chmod 0444 "$runner_contract"
+          [[ -f "$runner_contract" && ! -L "$runner_contract" && "$(stat -c '%u:%g:%a' "$runner_contract")" == "0:0:444" ]] || {
+            echo "::error::Run-owned GPU runner contract is invalid" >&2
+            exit 1
+          }
+          printf 'runner_contract=%s\n' "$runner_contract" >>"$GITHUB_OUTPUT"
+
+      - name: Install locked candidate test dependencies without scripts
+        env:
+          ACCOUNT: ${{ steps.boundary.outputs.account }}
+          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
+          NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
         shell: bash
         run: |
           set -euo pipefail
-          install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
-          sudo chown "$ACCOUNT:$ACCOUNT" "$INSTALLER_RECEIPT_PARENT"
           sudo -u "$ACCOUNT" env -i \
             HOME="$QUALIFICATION_HOME" \
             LANG=C.UTF-8 \
-            PATH="$GUARD_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
-            bash .trusted-qualification/scripts/checks/run-native-runtime-installer-qualification.sh \
+            PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            /bin/bash --noprofile --norc -c '
+              set -euo pipefail
+              cd "$1"
+              for file in package.json package-lock.json; do
+                [[ -f "$file" && ! -L "$file" && -O "$file" ]] || {
+                  echo "Candidate dependency manifest is missing or invalid: $file" >&2
+                  exit 1
+                }
+              done
+              exec npm --prefix "$1" ci --ignore-scripts
+            ' bash "$CANDIDATE_DIRECTORY"
+
+      - name: Run the authenticated installer qualification
+        env:
+          ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
+          ARCHITECTURE: ${{ matrix.case.architecture }}
+          CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          CANDIDATE_SHA: ${{ matrix.source.candidateSha }}
+          CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
+          GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
+          INSTALLER_RECEIPT_PARENT: ${{ runner.temp }}/native-runtime-installer
+          INSTALLER_SHA256: ${{ matrix.installerSha256 }}
+          QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+          RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          RUNTIME_DIRECTORY_UNIT: ${{ steps.boundary.outputs.runtime_directory_unit }}
+          STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
+          TRUSTED_USER_UNIT_PATH: /usr/lib/systemd/user:/lib/systemd/user
+          USER_MANAGER_UNIT: ${{ steps.boundary.outputs.user_manager_unit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$INSTALLER_RECEIPT_PARENT"
+          sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$INSTALLER_RECEIPT_PARENT"
+          sudo -u "$ACCOUNT" env -i \
+            CONTAINERS_CONF="$CONTAINERS_CONFIG" \
+            CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            bash .qualification-workflow/scripts/checks/run-native-runtime-installer-qualification.sh \
               --candidate-checkout "$CANDIDATE_DIRECTORY" \
               --candidate-sha "$CANDIDATE_SHA" \
               --installer-sha256 "$INSTALLER_SHA256" \
               --architecture "$ARCHITECTURE" \
               --artifact-dir "$INSTALLER_RECEIPT_PARENT/receipts"
-          sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
-          [[ -d "$INSTALLER_RECEIPT_PARENT/receipts" && ! -L "$INSTALLER_RECEIPT_PARENT/receipts" ]] || {
+          sudo systemctl stop "$USER_MANAGER_UNIT" "$RUNTIME_DIRECTORY_UNIT"
+          ! systemctl is-active --quiet "$USER_MANAGER_UNIT" && ! systemctl is-active --quiet "$RUNTIME_DIRECTORY_UNIT" || {
+            echo "::error::Qualification systemd user lifecycle remained active after installer isolation" >&2
+            exit 1
+          }
+          sudo pkill -KILL -u "$ACCOUNT_UID" 2>/dev/null || true
+          sudo systemctl start "$USER_MANAGER_UNIT"
+          systemctl is-active --quiet "$USER_MANAGER_UNIT" && systemctl is-active --quiet "$RUNTIME_DIRECTORY_UNIT" || {
+            echo "::error::Qualification systemd user lifecycle did not restart after installer isolation" >&2
+            exit 1
+          }
+          sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            /usr/bin/systemctl --user start dbus.socket
+          sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            /usr/bin/systemctl --user is-active --quiet dbus.socket || {
+              echo "::error::Qualification systemd user bus socket unit did not restart after installer isolation" >&2
+              exit 1
+            }
+          sudo /usr/bin/test -S "$RUNTIME_DIRECTORY/bus" &&
+            sudo /usr/bin/test ! -L "$RUNTIME_DIRECTORY/bus" &&
+            [[ "$(sudo stat -c '%u' -- "$RUNTIME_DIRECTORY/bus")" == "$ACCOUNT_UID" ]] &&
+            sudo -u "$ACCOUNT" /usr/bin/test -S "$RUNTIME_DIRECTORY/bus" || {
+            echo "::error::Qualification systemd user bus is invalid or inaccessible after installer isolation" >&2
+            exit 1
+          }
+          manager_environment="$(sudo -u "$ACCOUNT" env -i \
+            HOME="$QUALIFICATION_HOME" \
+            LANG=C.UTF-8 \
+            PATH=/usr/bin:/bin \
+            XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
+            /usr/bin/systemctl --user show-environment)"
+          tr ' ' '\n' <<<"$manager_environment" | grep -Fx -- "SYSTEMD_UNIT_PATH=$TRUSTED_USER_UNIT_PATH" >/dev/null || {
+            echo "::error::Qualification systemd user manager lost the trusted unit path after installer isolation" >&2
+            exit 1
+          }
+          sudo test -d "$INSTALLER_RECEIPT_PARENT/receipts" || {
             echo "::error::Installer receipt directory is missing or invalid" >&2
             exit 1
           }
-          sudo chown -R -h root:root "$INSTALLER_RECEIPT_PARENT/receipts"
+          sudo test ! -L "$INSTALLER_RECEIPT_PARENT/receipts" || {
+            echo "::error::Installer receipt directory must not be a symlink" >&2
+            exit 1
+          }
 
       - name: Execute the candidate qualification case without credentials
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_GID: ${{ steps.boundary.outputs.gid }}
+          ACCOUNT_UID: ${{ steps.boundary.outputs.uid }}
           CANDIDATE_DIRECTORY: ${{ github.workspace }}/.candidate-runtime
+          CONTAINERS_CONFIG: ${{ steps.boundary.outputs.containers_config }}
           GUARD_DIRECTORY: ${{ steps.boundary.outputs.guard_dir }}
+          HELPER_DIRECTORY: ${{ steps.boundary.outputs.helper_dir }}
+          NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
+          PODMAN_EXECUTABLE: ${{ steps.boundary.outputs.podman_executable }}
           QUALIFICATION_HOME: ${{ steps.boundary.outputs.home }}
+          RUNNER_CONTRACT: ${{ steps.gpu_resources.outputs.runner_contract }}
           RUNTIME_DIRECTORY: ${{ steps.boundary.outputs.runtime_dir }}
+          RUNTIME_DIRECTORY_UNIT: ${{ steps.boundary.outputs.runtime_directory_unit }}
+          STORAGE_CONFIG: ${{ steps.boundary.outputs.storage_config }}
+          USER_MANAGER_UNIT: ${{ steps.boundary.outputs.user_manager_unit }}
         shell: bash
         run: |
           set -euo pipefail
-          live_test="$CANDIDATE_DIRECTORY/test/e2e/live/native-runtime-qualification-case.test.ts"
-          [[ -f "$live_test" && ! -L "$live_test" ]] || {
+          live_test="test/e2e/live/native-runtime-qualification-case.test.ts"
+          [[ -f "$CANDIDATE_DIRECTORY/$live_test" && ! -L "$CANDIDATE_DIRECTORY/$live_test" ]] || {
             echo "::error::Candidate commit does not provide the native runtime qualification case executor" >&2
             exit 1
           }
           receipt_directory="${RUNNER_TEMP}/native-runtime-case"
           install -d -m 0700 "$receipt_directory"
-          sudo chown "$ACCOUNT:$ACCOUNT" "$receipt_directory"
+          sudo chown "$ACCOUNT_UID:$ACCOUNT_GID" "$receipt_directory"
+          cd "$CANDIDATE_DIRECTORY"
           sudo -u "$ACCOUNT" env -i \
             CI=true \
+            CONTAINERS_CONF="$CONTAINERS_CONFIG" \
+            CONTAINERS_STORAGE_CONF="$STORAGE_CONFIG" \
             E2E_DEFAULT_ENABLED=0 \
             E2E_JOB=1 \
             HOME="$QUALIFICATION_HOME" \
             LANG=C.UTF-8 \
             NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RECEIPT="$receipt_directory/execution.json" \
             NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_ROW="$QUALIFICATION_ROW" \
+            NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_PODMAN_EXECUTABLE="$PODMAN_EXECUTABLE" \
+            NEMOCLAW_NATIVE_RUNTIME_QUALIFICATION_RUNNER_CONTRACT="$RUNNER_CONTRACT" \
             NEMOCLAW_RUN_LIVE_E2E=1 \
-            PATH="$GUARD_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
+            PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:$NODE_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
             "$CANDIDATE_DIRECTORY/node_modules/.bin/vitest" run \
               --config "$CANDIDATE_DIRECTORY/vitest.config.ts" \
               --project e2e-live \
               "$live_test"
-          sudo pkill -KILL -u "$(id -u "$ACCOUNT")" 2>/dev/null || true
-          sudo chown -R root:root "$receipt_directory"
+          sudo systemctl stop "$USER_MANAGER_UNIT" "$RUNTIME_DIRECTORY_UNIT"
+          ! systemctl is-active --quiet "$USER_MANAGER_UNIT" && ! systemctl is-active --quiet "$RUNTIME_DIRECTORY_UNIT" || {
+            echo "::error::Qualification systemd user lifecycle remained active after candidate execution" >&2
+            exit 1
+          }
+          sudo pkill -KILL -u "$ACCOUNT_UID" 2>/dev/null || true
 
       - name: Verify Docker stayed unavailable
         shell: bash
@@ -1136,38 +2110,380 @@ jobs:
           EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-evidence
           EXECUTION_RECEIPT_PATH: ${{ runner.temp }}/native-runtime-case/execution.json
           INSTALLER_RECEIPT_DIRECTORY: ${{ runner.temp }}/native-runtime-installer/receipts
+          NODE_DIRECTORY: ${{ steps.boundary.outputs.node_dir }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo chown -R "$(id -u):$(id -g)" \
-            "$INSTALLER_RECEIPT_DIRECTORY" \
-            "$(dirname "$EXECUTION_RECEIPT_PATH")"
-          node --experimental-strip-types --no-warnings \
-            .trusted-qualification/tools/e2e/native-runtime-qualification-producer-evidence.mts
+          sudo --preserve-env=EVIDENCE_DIRECTORY,EXECUTION_RECEIPT_PATH,INSTALLER_RECEIPT_DIRECTORY,QUALIFICATION_ROW \
+            "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
+            .qualification-workflow/tools/e2e/native-runtime-qualification-producer-evidence.mts
+          sudo chown -R "$(id -u):$(id -g)" "$EVIDENCE_DIRECTORY"
 
       - name: Remove qualification resources
         if: always()
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
+          ACCOUNT_CREATED: ${{ steps.boundary.outputs.account_created }}
         shell: bash
         run: |
           set -euo pipefail
-          account="${ACCOUNT:-nemoclawq}"
-          if id "$account" >/dev/null 2>&1; then
-            sudo pkill -KILL -u "$(id -u "$account")" 2>/dev/null || true
-            sudo userdel --remove "$account"
-          fi
-          if id "$account" >/dev/null 2>&1; then
-            echo "::error::Qualification account still exists after cleanup" >&2
+          reported_account="${ACCOUNT:-}"
+          reported_created="${ACCOUNT_CREATED:-}"
+          ownership_marker="/run/nemoclaw-native-runtime-owner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          account=""
+          uid=""
+          gid=""
+          if [[ -e "$ownership_marker" || -L "$ownership_marker" ]]; then
+            [[ -f "$ownership_marker" && ! -L "$ownership_marker" && "$(stat -c '%u:%g:%a' "$ownership_marker")" == "0:0:400" ]] || {
+              echo "::error::Qualification account ownership marker cleanup target is invalid" >&2
+              exit 1
+            }
+            ownership="$(sudo cat "$ownership_marker")"
+            [[ "$ownership" =~ ^nemoclawq:([0-9]+):([0-9]+)$ ]] || {
+              echo "::error::Qualification account ownership marker content is invalid" >&2
+              exit 1
+            }
+            account="nemoclawq"
+            uid="${BASH_REMATCH[1]}"
+            gid="${BASH_REMATCH[2]}"
+            [[ -z "$reported_account" || "$reported_account" == "$account" ]] || {
+              echo "::error::Qualification account output does not match its ownership marker" >&2
+              exit 1
+            }
+            if getent passwd "$uid" >/dev/null && ! getent passwd "$account" >/dev/null; then
+              echo "::error::Qualification account UID belongs to a different host account" >&2
+              exit 1
+            fi
+            if getent passwd "$account" >/dev/null; then
+              [[ "$(id -u "$account")" == "$uid" && "$(id -g "$account")" == "$gid" ]] || {
+                echo "::error::Qualification account identity changed before cleanup" >&2
+                exit 1
+              }
+            fi
+            if getent group "$account" >/dev/null; then
+              [[ "$(getent group "$account")" == "${account}:x:${gid}:" ]] || {
+                echo "::error::Qualification private group identity changed before cleanup" >&2
+                exit 1
+              }
+            elif getent passwd "$account" >/dev/null; then
+              echo "::error::Qualification private group disappeared before cleanup" >&2
+              exit 1
+            fi
+            runtime_dir="/run/user/${uid}"
+            runtime_directory_unit="user-runtime-dir@${uid}.service"
+            user_manager_unit="user@${uid}.service"
+            user_manager_dropin_directory="/run/systemd/system/${user_manager_unit}.d"
+            user_manager_dropin="${user_manager_dropin_directory}/50-nemoclaw-native-runtime.conf"
+            trusted_user_unit_path="/usr/lib/systemd/user:/lib/systemd/user"
+            storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            podman_executable="/nemoclaw-native-runtime-podman-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            apparmor_profile="${storage_config_directory}/podman.apparmor"
+            pasta_apparmor_profile="${storage_config_directory}/pasta.apparmor"
+            helper_directory="/nemoclaw-native-runtime-helpers-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            pasta_executable="${helper_directory}/pasta"
+            registry_auth_directory="${storage_config_directory}/registry-auth"
+            registry_auth_file="${registry_auth_directory}/auth.json"
+            runner_contract="${storage_config_directory}/runner-contract.json"
+            resource_directory="/var/tmp/nemoclaw-native-runtime-resources-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            model_directory="${resource_directory}/model"
+            sudo systemctl stop "$user_manager_unit" "$runtime_directory_unit" 2>/dev/null || true
+            ! systemctl is-active --quiet "$user_manager_unit" && ! systemctl is-active --quiet "$runtime_directory_unit" || {
+              echo "::error::Qualification systemd user lifecycle remained active during cleanup" >&2
+              exit 1
+            }
+            if getent passwd "$account" >/dev/null; then
+              sudo pkill -KILL -u "$uid" 2>/dev/null || true
+            fi
+            if [[ -e "$user_manager_dropin_directory" || -L "$user_manager_dropin_directory" ]]; then
+              [[ -d "$user_manager_dropin_directory" && ! -L "$user_manager_dropin_directory" && "$(stat -c '%u:%g:%a' "$user_manager_dropin_directory")" == "0:0:755" ]] || {
+                echo "::error::Qualification systemd user-manager drop-in directory cleanup target is invalid" >&2
+                exit 1
+              }
+              [[ -f "$user_manager_dropin" && ! -L "$user_manager_dropin" && "$(stat -c '%u:%g:%a:%h' "$user_manager_dropin")" == "0:0:444:1" ]] || {
+                echo "::error::Qualification systemd user-manager drop-in cleanup target is invalid" >&2
+                exit 1
+              }
+              expected_user_manager_dropin="$(printf '[Service]\nEnvironment="SYSTEMD_UNIT_PATH=%s"' "$trusted_user_unit_path")"
+              [[ "$(cat "$user_manager_dropin")" == "$expected_user_manager_dropin" ]] || {
+                echo "::error::Qualification systemd user-manager drop-in content changed before cleanup" >&2
+                exit 1
+              }
+              sudo unlink "$user_manager_dropin"
+              sudo rmdir "$user_manager_dropin_directory"
+              sudo systemctl daemon-reload
+            fi
+            if [[ -e "$storage_config_directory" || -L "$storage_config_directory" ]]; then
+              [[ -d "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
+                echo "::error::Qualification storage configuration cleanup target is invalid" >&2
+                exit 1
+              }
+              if [[ -e "$apparmor_profile" || -L "$apparmor_profile" ]]; then
+                [[ -f "$apparmor_profile" && ! -L "$apparmor_profile" && "$(stat -c '%u:%g:%a' "$apparmor_profile")" == "0:0:444" ]] || {
+                  echo "::error::Qualification AppArmor profile cleanup target is invalid" >&2
+                  exit 1
+                }
+                sudo apparmor_parser -R "$apparmor_profile"
+                sudo rm -f -- "$apparmor_profile"
+              fi
+              if [[ -e "$pasta_apparmor_profile" || -L "$pasta_apparmor_profile" ]]; then
+                [[ -f "$pasta_apparmor_profile" && ! -L "$pasta_apparmor_profile" && "$(stat -c '%u:%g:%a' "$pasta_apparmor_profile")" == "0:0:444" ]] || {
+                  echo "::error::Qualification pasta AppArmor profile cleanup target is invalid" >&2
+                  exit 1
+                }
+                sudo apparmor_parser -R "$pasta_apparmor_profile"
+                sudo rm -f -- "$pasta_apparmor_profile"
+              fi
+              if [[ -e "$registry_auth_directory" || -L "$registry_auth_directory" ]]; then
+                [[ -d "$registry_auth_directory" && ! -L "$registry_auth_directory" && "$(stat -c '%u:%g:%a' "$registry_auth_directory")" == "${uid}:${gid}:700" ]] || {
+                  echo "::error::Qualification registry authentication directory cleanup target is invalid" >&2
+                  exit 1
+                }
+                if sudo test -e "$registry_auth_file" || sudo test -L "$registry_auth_file"; then
+                  sudo test -f "$registry_auth_file" &&
+                    sudo test ! -L "$registry_auth_file" &&
+                    [[ "$(sudo stat -c '%u:%g:%a:%h' -- "$registry_auth_file")" == "${uid}:${gid}:600:1" ]] || {
+                    echo "::error::Qualification registry authentication file cleanup target is invalid" >&2
+                    exit 1
+                  }
+                  sudo unlink "$registry_auth_file"
+                fi
+                sudo rmdir "$registry_auth_directory"
+              fi
+              if [[ -e "$runner_contract" || -L "$runner_contract" ]]; then
+                [[ -f "$runner_contract" && ! -L "$runner_contract" && "$(stat -c '%u:%g:%a' "$runner_contract")" == "0:0:444" ]] || {
+                  echo "::error::Qualification GPU runner contract cleanup target is invalid" >&2
+                  exit 1
+                }
+                sudo unlink "$runner_contract"
+              fi
+              if [[ -e "$storage_config_directory/containers.conf" || -L "$storage_config_directory/containers.conf" ]]; then
+                [[ -f "$storage_config_directory/containers.conf" && ! -L "$storage_config_directory/containers.conf" && "$(stat -c '%u:%g:%a' "$storage_config_directory/containers.conf")" == "0:0:444" ]] || {
+                  echo "::error::Qualification containers configuration cleanup target is invalid" >&2
+                  exit 1
+                }
+                sudo unlink "$storage_config_directory/containers.conf"
+              fi
+              sudo rm -f -- "$storage_config_directory/storage.conf"
+              sudo rmdir "$storage_config_directory"
+            fi
+            if [[ -e "$resource_directory" || -L "$resource_directory" ]]; then
+              [[ -d "$resource_directory" && ! -L "$resource_directory" && ("$(stat -c '%u:%g:%a' "$resource_directory")" == "0:0:711" || "$(stat -c '%u:%g:%a' "$resource_directory")" == "0:0:555") ]] || {
+                echo "::error::Qualification GPU resource directory cleanup target is invalid" >&2
+                exit 1
+              }
+              if sudo test -e "$model_directory" || sudo test -L "$model_directory"; then
+                model_mode="$(sudo stat -c '%u:%g:%a' -- "$model_directory")"
+                sudo test -d "$model_directory" &&
+                  sudo test ! -L "$model_directory" &&
+                  [[ "$model_mode" == "${uid}:${gid}:700" || "$model_mode" == "0:0:555" ]] || {
+                  echo "::error::Qualification GPU model directory cleanup target is invalid" >&2
+                  exit 1
+                }
+                for file in config.json generation_config.json merges.txt model.safetensors tokenizer.json tokenizer_config.json vocab.json; do
+                  target="${model_directory}/${file}"
+                  if sudo test -e "$target" || sudo test -L "$target"; then
+                    file_mode="$(sudo stat -c '%u:%g:%a:%h' -- "$target")"
+                    sudo test -f "$target" &&
+                      sudo test ! -L "$target" &&
+                      [[ "$file_mode" == "${uid}:${gid}:600:1" || "$file_mode" == "0:0:444:1" ]] || {
+                      echo "::error::Qualification GPU model file cleanup target is invalid: $file" >&2
+                      exit 1
+                    }
+                    sudo unlink "$target"
+                  fi
+                done
+                sudo rmdir "$model_directory" || {
+                  echo "::error::Qualification GPU model directory contains unexpected entries" >&2
+                  exit 1
+                }
+              fi
+              sudo rmdir "$resource_directory" || {
+                echo "::error::Qualification GPU resource directory contains unexpected entries" >&2
+                exit 1
+              }
+            fi
+            if [[ -e "$podman_executable" || -L "$podman_executable" ]]; then
+              [[ -f "$podman_executable" && ! -L "$podman_executable" && "$(stat -c '%u:%g:%a' "$podman_executable")" == "0:0:555" ]] || {
+                echo "::error::Qualification Podman executable cleanup target is invalid" >&2
+                exit 1
+              }
+              sudo rm -f -- "$podman_executable"
+            fi
+            if [[ -e "$helper_directory" || -L "$helper_directory" ]]; then
+              [[ -d "$helper_directory" && ! -L "$helper_directory" && "$(stat -c '%u:%g:%a' "$helper_directory")" == "0:0:555" ]] || {
+                echo "::error::Qualification helper directory cleanup target is invalid" >&2
+                exit 1
+              }
+              [[ -f "$pasta_executable" && ! -L "$pasta_executable" && "$(stat -c '%u:%g:%a' "$pasta_executable")" == "0:0:555" ]] || {
+                echo "::error::Qualification pasta executable cleanup target is invalid" >&2
+                exit 1
+              }
+              sudo rm -f -- "$pasta_executable"
+              sudo rmdir "$helper_directory"
+            fi
+            if [[ -e "$runtime_dir" || -L "$runtime_dir" ]]; then
+              echo "::error::Qualification runtime directory remains after its systemd cleanup" >&2
+              exit 1
+            fi
+            if getent passwd "$account" >/dev/null; then
+              sudo userdel --remove "$account"
+            fi
+            if getent group "$account" >/dev/null; then
+              sudo groupdel "$account"
+            fi
+            if getent passwd "$account" >/dev/null; then
+              echo "::error::Qualification account still exists after cleanup" >&2
+              exit 1
+            fi
+            if getent group "$account" >/dev/null; then
+              echo "::error::Qualification private group still exists after cleanup" >&2
+              exit 1
+            fi
+            if grep -q "^${account}:" /etc/subuid /etc/subgid; then
+              echo "::error::Qualification subordinate-ID authorization remains after cleanup" >&2
+              exit 1
+            fi
+            [[ ! -e "/run/user/${uid}" && ! -L "/run/user/${uid}" ]] || {
+              echo "::error::Qualification runtime directory remains after cleanup" >&2
+              exit 1
+            }
+            storage_config_directory="/run/nemoclaw-native-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${uid}"
+            [[ ! -e "$storage_config_directory" && ! -L "$storage_config_directory" ]] || {
+              echo "::error::Qualification storage configuration remains after cleanup" >&2
+              exit 1
+            }
+            [[ ! -e "$podman_executable" && ! -L "$podman_executable" ]] || {
+              echo "::error::Qualification Podman executable remains after cleanup" >&2
+              exit 1
+            }
+            [[ ! -e "$helper_directory" && ! -L "$helper_directory" ]] || {
+              echo "::error::Qualification helper directory remains after cleanup" >&2
+              exit 1
+            }
+            [[ ! -e "$resource_directory" && ! -L "$resource_directory" ]] || {
+              echo "::error::Qualification GPU resource directory remains after cleanup" >&2
+              exit 1
+            }
+            sudo rm -f -- "$ownership_marker"
+          elif [[ -n "$reported_account" || "$reported_created" == "true" ]]; then
+            echo "::error::Qualification account output exists without its ownership marker" >&2
             exit 1
           fi
+          [[ ! -e "$ownership_marker" && ! -L "$ownership_marker" ]] || {
+            echo "::error::Qualification account ownership marker remains after cleanup" >&2
+            exit 1
+          }
 
       - name: Upload the qualification case evidence
-        if: always()
+        if: success()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: ${{ matrix.artifactName }}
-          path: ${{ runner.temp }}/native-runtime-evidence/evidence.json
+          path: ${{ runner.temp }}/native-runtime-evidence/
+
+  native-runtime-qualification-producer-aggregate:
+    name: Aggregate native runtime qualification evidence
+    needs:
+      [
+        generate-matrix,
+        native-runtime-qualification-producer-plan,
+        native-runtime-qualification-producer,
+      ]
+    if: ${{ always() && needs.native-runtime-qualification-producer-plan.result == 'success' && needs.native-runtime-qualification-producer.result == 'success' && contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'native-runtime-qualification-producer') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the qualification aggregator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: .qualification-aggregate
+          persist-credentials: false
+          sparse-checkout: |
+            src/lib/onboard/runtime-provider/native-qualification-authority.ts
+            test/e2e/registry/native-runtime-qualification.ts
+            tools/e2e/native-runtime-qualification-producer-plan.mts
+            tools/e2e/native-runtime-qualification-producer-aggregate.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Download the exact case evidence cohort
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-runtime-qualification-evidence-${{ inputs.checkout_sha }}-*
+          path: ${{ runner.temp }}/native-runtime-case-artifacts
+          merge-multiple: false
+
+      - name: Resolve this aggregate job identity
+        id: aggregate-job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PRODUCER_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jobs="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PRODUCER_RUN_ID}/attempts/${PRODUCER_RUN_ATTEMPT}/jobs" \
+            -f per_page=100)"
+          total_count="$(jq -er '.total_count | select(type == "number" and . >= 1)' <<<"$jobs")" || {
+            echo "::error::Aggregate job lookup returned an invalid job count" >&2
+            exit 1
+          }
+          (( total_count <= 100 )) || {
+            echo "::error::Aggregate job lookup exceeds the bounded 100-job page" >&2
+            exit 1
+          }
+          job_id="$(jq -er \
+            --arg name 'Aggregate native runtime qualification evidence' \
+            --argjson runId "$PRODUCER_RUN_ID" \
+            --argjson attempt "$PRODUCER_RUN_ATTEMPT" '
+              [.jobs[] | select(
+                .name == $name and
+                .run_id == $runId and
+                .run_attempt == $attempt and
+                .status == "in_progress"
+              )] |
+              select(length == 1) |
+              .[0].id
+            ' <<<"$jobs")" || {
+              echo "::error::Could not resolve one in-progress aggregate job identity" >&2
+              exit 1
+            }
+          [[ "$job_id" =~ ^[1-9][0-9]{0,19}$ ]] || {
+            echo "::error::Aggregate job identity is invalid" >&2
+            exit 1
+          }
+          printf 'job_id=%s\n' "$job_id" >>"$GITHUB_OUTPUT"
+
+      - name: Set up Node for qualification aggregation
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Validate and aggregate all 24 case receipts
+        working-directory: .qualification-aggregate
+        env:
+          AGGREGATE_JOB_ID: ${{ steps.aggregate-job.outputs.job_id }}
+          CASE_ARTIFACT_ROOT: ${{ runner.temp }}/native-runtime-case-artifacts
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/native-runtime-aggregate
+          QUALIFICATION_PLAN: ${{ needs.native-runtime-qualification-producer-plan.outputs.matrix }}
+        run: >-
+          node --experimental-strip-types --no-warnings
+          tools/e2e/native-runtime-qualification-producer-aggregate.mts
+
+      - name: Upload aggregate evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-runtime-qualification-${{ inputs.checkout_sha }}
+          path: ${{ runner.temp }}/native-runtime-aggregate/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
 
   retired-selector-compatibility:
     needs: generate-matrix
@@ -4145,6 +5461,7 @@ jobs:
         openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
         native-runtime-qualification-producer,
+        native-runtime-qualification-producer-aggregate,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
