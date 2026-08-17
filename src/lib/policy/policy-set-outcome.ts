@@ -27,9 +27,8 @@ const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
 ];
 
 /**
- * The one rendering that earns a final refusal: OpenShell's own diagnostic
- * frame, carrying the refusal status and its message adjacently on a single
- * line.
+ * The one diagnostic shape the classifier accepts as a final refusal: an
+ * adjacent failed-precondition status and message on the first line.
  *
  * Status evidence and message must come from the SAME match. Scanning for
  * them separately let a marker echoed anywhere in the output promote an
@@ -57,10 +56,9 @@ function combineDetail(
 }
 
 /**
- * Return the message of an authoritative refusal frame, or null when OpenShell
- * did not report one.
+ * Return the message of a refusal frame accepted as authoritative, or null.
  *
- * Only the first line is read. OpenShell reports its own verdict there, and
+ * Only the first line is read. The classifier accepts a verdict only there;
  * anything after it can be quoted policy content, which would otherwise let a
  * document carrying a refusal frame speak for the gateway.
  */

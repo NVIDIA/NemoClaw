@@ -1203,16 +1203,16 @@ $$nemoclaw <name> policy list
 
 If `policy list` reports `⚠ Could not query gateway — showing local state only.`, stop because the command did not read the gateway policy.
 If it reports container-runtime recovery guidance, restore that runtime and run `policy list` again.
-Do not resume or restart onboarding until `policy list` reports the live gateway policy.
+Do not resume or start fresh onboarding until `policy list` reports the live gateway policy.
 
-If a policy mutation does not succeed, onboarding stops and:
+When NemoClaw reports a rejected or unconfirmed policy mutation, onboarding stops and:
 
 - leaves earlier successful mutations applied and recorded;
-- does not record the failed mutation in the sandbox registry;
+- does not record that mutation in the sandbox registry;
 - marks the session failed and resumable;
 - reports one of the two results below.
 
-After either result, run `policy list` before you resume or restart onboarding.
+After either result, run `policy list` before you resume or start fresh onboarding.
 
 The gateway read the policy and refused it:
 
@@ -1237,13 +1237,13 @@ Could not confirm the policy update for sandbox 'my-assistant': <transport or co
 
 The gateway state is unknown, so read the sandbox policy with `policy list` before you retry.
 `policy list` compares the sandbox registry with the live gateway policy and flags a preset that is applied in one place but not the other.
-The failed mutation does not update the sandbox registry.
+The unconfirmed mutation does not update the sandbox registry.
 
 The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
 When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
 If the container runtime is down, it prints that runtime's recovery guidance instead.
 Stop while `policy list` reports local state only because that output does not show whether the gateway applied the mutation.
-Restore gateway access and run `policy list` again before you resume or restart onboarding.
+Restore gateway access and run `policy list` again before you resume or start fresh onboarding.
 
 After `policy list` reads the live gateway policy, follow the result below.
 The [failed-session recovery steps](#previous-onboarding-session-failed) provide the resume and fresh onboarding commands.
@@ -1253,8 +1253,8 @@ The [failed-session recovery steps](#previous-onboarding-session-failed) provide
 - If an affected preset reports `recorded locally, not active on gateway`, do not resume or start fresh onboarding.
   The gateway may have completed the removal while the sandbox registry retained the preset.
   Preserve the original unconfirmed error and the complete `policy list` output for support.
-- If `policy list` reports no disagreement for the failed mutation, compare the live preset set with the selection in the failed session.
-  Resume only if the live policy still requires the failed addition or removal to match that selection.
+- If `policy list` reports no disagreement for the unconfirmed mutation, compare the live preset set with the selection in the failed session.
+  Resume only if the live policy still requires the unconfirmed addition or removal to match that selection.
   Otherwise, start fresh onboarding and select the exact preset set that `policy list` reports as active.
 
 ### Previous onboarding session failed

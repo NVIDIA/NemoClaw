@@ -259,7 +259,8 @@ describe("MCP-generated network policy ownership", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('__RESULT__{"result":false,"policies":[]}');
-    expect(result.stderr).toContain("Failed to update policy");
+    expect(result.stderr).toContain("Could not confirm the policy update");
+    expect(result.stderr).toContain("read the current policy back before retrying");
   });
 
   it("preserves MCP policy ownership state when policy removal fails", () => {
@@ -267,19 +268,23 @@ describe("MCP-generated network policy ownership", () => {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('__RESULT__{"result":false,"policies":["mcp-bridge-example"]}');
-    expect(result.stderr).toContain("Failed to update policy");
+    expect(result.stderr).toContain("Could not confirm the policy update");
+    expect(result.stderr).toContain("read the current policy back before retrying");
   });
 
   it.each([
     [false, []],
     [true, ["mcp-bridge-example"]],
-  ] as const)("supports ownership-preserving policy removal (skipRegistryUpdate=%s)", (skipRegistryUpdate, expectedPolicies) => {
-    const result = runSuccessfulPolicyRemoval(skipRegistryUpdate);
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain(
-      `__RESULT__${JSON.stringify({ result: true, policies: expectedPolicies })}`,
-    );
-  });
+  ] as const)(
+    "supports ownership-preserving policy removal (skipRegistryUpdate=%s)",
+    (skipRegistryUpdate, expectedPolicies) => {
+      const result = runSuccessfulPolicyRemoval(skipRegistryUpdate);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain(
+        `__RESULT__${JSON.stringify({ result: true, policies: expectedPolicies })}`,
+      );
+    },
+  );
 
   it("does not delete an operator-owned same-key policy when add rolls back", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-lifecycle-"));

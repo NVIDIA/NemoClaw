@@ -86,7 +86,7 @@ network_policies:
  */
 const CREDENTIAL_TOKEN = "nvapi-abcdefghijklmnopqrstuvwxyz";
 
-/** The `code:`/`message:` rendering OpenShell uses for a semantic refusal. */
+/** A synthetic `code:`/`message:` frame the classifier accepts as a refusal. */
 function openshellRejection(message: string): string {
   return (
     `Error: code: 'Failed precondition', message: '${message}', ` +

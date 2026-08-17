@@ -56,19 +56,19 @@ const BASE_POLICY_WITH_PRESET = `${BASE_POLICY_WITHOUT_PRESET}
           - allow: { method: GET, path: "/**" }`;
 
 /**
- * A `policy set` failure OpenShell renders without an authoritative `message:`
- * field, so it classifies as `ambiguous`. The nonzero status is deliberately
- * not 1: the process must still exit with the status OpenShell reported.
+ * A synthetic `policy set` failure without an authoritative `message:` field,
+ * so it classifies as `ambiguous`. The nonzero status is deliberately not 1:
+ * the process must still exit with the status the child reported.
  */
 const UNPARSEABLE_FAILURE_STDERR = "openshell: policy set: unexpected end of stream";
 const UNPARSEABLE_FAILURE_EXIT_CODE = 3;
 
 /**
- * A final refusal is read only from the refusal status and message that
- * OpenShell renders together on its own first diagnostic line. That shape is
- * necessary but not sufficient: the same text appearing anywhere later in the
- * output is treated as quoted policy content and stays `ambiguous`, so a
- * document echoed back cannot speak for the gateway (#9206).
+ * The synthetic refusal fixture puts the status and message together on the
+ * first diagnostic line. That shape is necessary but not sufficient: the same
+ * text appearing anywhere later in the output is treated as quoted policy
+ * content and stays `ambiguous`, so a document echoed back cannot speak for the
+ * gateway (#9206).
  */
 const AUTHORITATIVE_REJECTION_MESSAGE = "unsupported field in network_policies.weather";
 const AUTHORITATIVE_REJECTION_STDERR = `Error: code: 'Failed precondition', message: '${AUTHORITATIVE_REJECTION_MESSAGE}'`;
