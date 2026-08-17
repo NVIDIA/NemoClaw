@@ -6,6 +6,7 @@ import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import { parseHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import {
   createRebuildProviderReconfigureHandoff,
   mintProviderRecoveryReceipt,
@@ -81,6 +82,64 @@ export function stageRegistryProviderRecoveryReceipt(
       expiresAtMs: Date.now() + PROVIDER_RECOVERY_RECEIPT_TTL_MS,
     },
   );
+}
+
+const N1X_EXPRESS_PROVIDER = "vllm-local";
+const N1X_EXPRESS_MODEL = "nvidia/Qwen3.6-35B-A3B-NVFP4";
+const N1X_EXPRESS_ENDPOINT_URL = "http://host.openshell.internal:8000/v1";
+
+/** Reuse only the exact N1x Express selection recorded by onboarding. */
+export function stageRecordedManagedVllmIntent(
+  recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xManagedVllm">,
+  sandboxEntry: Pick<
+    RebuildSandboxEntry,
+    | "provider"
+    | "model"
+    | "endpointUrl"
+    | "endpointSource"
+    | "openshellDriver"
+    | "hostLocalInferenceReceipt"
+  >,
+  rebuildSelection: {
+    provider: string;
+    model: string;
+    pinEndpoint: boolean;
+    endpointUrl: string | null;
+  },
+): void {
+  const recordedEndpointUsesCanonicalLocalRoute =
+    sandboxEntry.endpointUrl === null || sandboxEntry.endpointUrl === N1X_EXPRESS_ENDPOINT_URL;
+  if (
+    sandboxEntry.provider !== N1X_EXPRESS_PROVIDER ||
+    sandboxEntry.model !== N1X_EXPRESS_MODEL ||
+    !recordedEndpointUsesCanonicalLocalRoute ||
+    sandboxEntry.endpointSource !== "onboard" ||
+    sandboxEntry.openshellDriver !== "docker" ||
+    rebuildSelection.provider !== sandboxEntry.provider ||
+    rebuildSelection.model !== sandboxEntry.model ||
+    rebuildSelection.pinEndpoint !== true ||
+    rebuildSelection.endpointUrl !== null
+  ) {
+    return;
+  }
+  const serialized = sandboxEntry.hostLocalInferenceReceipt;
+  if (serialized === undefined || serialized === null) {
+    recreateOptions.allowDeferredN1xManagedVllm = true;
+    return;
+  }
+  try {
+    const receipt = parseHostLocalInferenceReceipt(serialized);
+    if (
+      receipt.service === "vllm" &&
+      receipt.endpoint.host === "host.openshell.internal" &&
+      receipt.endpoint.port === 8000 &&
+      receipt.inference?.model === N1X_EXPRESS_MODEL
+    ) {
+      recreateOptions.allowDeferredN1xManagedVllm = true;
+    }
+  } catch {
+    // Malformed durable state must not grant the narrow N1x readiness exception.
+  }
 }
 
 export interface RebuildPreparedTarget {
@@ -233,6 +292,7 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
+  stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, resumeConfig);
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,
