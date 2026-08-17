@@ -924,6 +924,28 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
+  it("recreates after build or policy drift when explicitly requested (#9297)", async () => {
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: { completedAt: "2026-01-01T00:00:00.000Z", fingerprint: "stale-build" },
+        },
+      }),
+    );
+    session.machine.state = "openclaw";
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" }, session);
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      recreateSandbox: () => true,
+    });
+
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.error).not.toHaveBeenCalled();
+  });
+
   it("rejects reuse when a resolved policy or package input drifted despite an unchanged build version and policy tier (#7022)", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
     const session = sessionWithCheckpoint(crashedCheckpoint());
