@@ -174,8 +174,9 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects non-canonical Hermes Buildx action pins", () => {
-    for (const stepName of ["Set up Docker Buildx", "Build Hermes production image"]) {
+  it.each(["Set up Docker Buildx", "Build Hermes production image"])(
+    "rejects non-canonical Hermes Buildx action pins [case %#]",
+    (stepName) => {
       const { imageWorkflow, mainWorkflow } = readWorkflows();
       const step = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
         (candidate) => candidate.name === stepName,
@@ -187,8 +188,8 @@ describe("sandbox image workflow boundary", () => {
           ? "Hermes producer must use the canonical Docker Buildx setup action exactly once"
           : "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
       );
-    }
-  });
+    },
+  );
 
   it("rejects a non-canonical Hermes artifact download pin", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
@@ -567,24 +568,22 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects direct base64 encoding of the broad system CA bundle", () => {
-    for (const forbidden of [
-      'forbidden_ca_b64="$(base64 -w 0 "$system_ca_bundle")"',
-      [
-        "corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt",
-        'forbidden_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
-      ].join("\n"),
-    ]) {
-      const { imageWorkflow, mainWorkflow } = readWorkflows();
-      const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
-        (step) => step.name === "Build and verify Hermes messaging plan boundary",
-      )!;
-      hermes.run = `${hermes.run}\n${forbidden}`;
+  it.each([
+    'forbidden_ca_b64="$(base64 -w 0 "$system_ca_bundle")"',
+    [
+      "corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt",
+      'forbidden_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
+    ].join("\n"),
+  ])("rejects direct base64 encoding of the broad system CA bundle [case %#]", (forbidden) => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = `${hermes.run}\n${forbidden}`;
 
-      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
-        "hermes messaging plan image boundary must not encode the system CA bundle directly",
-      );
-    }
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "hermes messaging plan image boundary must not encode the system CA bundle directly",
+    );
   });
 
   it("requires offline equality and parse proofs for the installed Hermes CA bundle", () => {

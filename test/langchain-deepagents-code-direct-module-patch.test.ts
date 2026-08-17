@@ -219,27 +219,27 @@ else:
     expect(`${result.stdout}\n${result.stderr}`).toContain("disabled in NemoClaw-managed");
   });
 
-  it.each([
-    ["-y"],
-    ["--auto-approve"],
-  ])("preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)", (...args) => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    writeManagedAutoApproval(tempDir, "thread-opt-in\n");
-    const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
-      env: {
-        PATH: process.env.PATH,
-        PYTHONPATH: tempDir,
-        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
-      },
-      encoding: "utf8",
-    });
+  it.each([["-y"], ["--auto-approve"]])(
+    "preserves explicit direct-module auto-approval in thread-opt-in mode: %s (#6478)",
+    (...args) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
+      writeManagedAutoApproval(tempDir, "thread-opt-in\n");
+      const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
+        env: {
+          PATH: process.env.PATH,
+          PYTHONPATH: tempDir,
+          NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+        },
+        encoding: "utf8",
+      });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
-    expect(result.stderr).toContain("Auto-approval is enabled for this thread");
-    expect(result.stderr).toContain("shell commands");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("managed-posture-ok auto_approve=True");
+      expect(result.stderr).toContain("Auto-approval is enabled for this thread");
+      expect(result.stderr).toContain("shell commands");
+    },
+  );
 
   it("validates exact trusted auto-approval state and otherwise fails closed (#6478)", () => {
     const tempDir = createPackageFixture();
@@ -313,10 +313,11 @@ check("disabled", False)
     expect(result.stderr).toContain("capability contents are invalid");
   });
 
-  it("preserves ordinary direct-module and read-only tools execution", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    for (const args of [[], ["tools", "list"], ["tools", "help"]]) {
+  it.each([[[]], [["tools", "list"]], [["tools", "help"]]] as const)(
+    "preserves ordinary direct-module and read-only tools execution for argv %#",
+    (args) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
       const result = spawnSync("python3", ["-m", "deepagents_code", ...args], {
         env: {
           PATH: process.env.PATH,
@@ -327,24 +328,23 @@ check("disabled", False)
       });
       expect(result.status, `${args.join(" ")} failed: ${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("managed-posture-ok");
-    }
-  });
+    },
+  );
 
-  it("rejects direct-module runtime credentials before settings bootstrap", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    for (const [name, value] of [
-      ["OPENAI_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
-      ["NOTES", "metadata API_KEY=ABCDEFGHIJKL"],
-      ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
-      ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
-      ["LANGCHAIN_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
-      // A plain OTLP endpoint URL is allowed (#6466); credential-bearing forms
-      // (embedded userinfo, structured key blob) are still refused.
-      ["OTEL_EXPORTER_OTLP_ENDPOINT", "http://token@collector.example:4318"],
-      ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", '{"https://trace.example":"opaque-key-value"}'],
-      ["OTEL_EXPORTER_OTLP_HEADERS", "authorization=opaque-value"],
-    ]) {
+  it.each([
+    ["OPENAI_API_KEY", "sk-TEST-FAKE-DO-NOT-USE-000000000000"],
+    ["NOTES", "metadata API_KEY=ABCDEFGHIJKL"],
+    ["SLACK_BOT_TOKEN", "xoxb-sk-abcdefghijklmnopqrstuv"],
+    ["LANGSMITH_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
+    ["LANGCHAIN_RUNS_ENDPOINTS", '{"https://trace.example":"opaque-key-value"}'],
+    ["OTEL_EXPORTER_OTLP_ENDPOINT", "http://token@collector.example:4318"],
+    ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", '{"https://trace.example":"opaque-key-value"}'],
+    ["OTEL_EXPORTER_OTLP_HEADERS", "authorization=opaque-value"],
+  ] as const)(
+    "rejects direct-module runtime credential in %s before settings bootstrap",
+    (name, value) => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
       const result = spawnSync("python3", ["-m", "deepagents_code"], {
         env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
         encoding: "utf8",
@@ -352,8 +352,8 @@ check("disabled", False)
 
       expect(result.status, `${name} was allowed`).not.toBe(0);
       expect(result.stderr).toContain(`runtime environment variable ${name}`);
-    }
-  });
+    },
+  );
 
   it.each([
     ["OPENSHELL_TLS_CA", "/etc/openshell/tls/client/ca.crt"],
@@ -373,30 +373,28 @@ check("disabled", False)
     expect(result.stderr).not.toContain(value);
   });
 
-  it("allows the managed OTLP collector URL in the direct-module runtime (#6466)", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
-      for (const value of [
+  it.each(
+    ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"].flatMap((name) =>
+      [
         "http://host.openshell.internal:4318",
         "http://host.openshell.internal:4318/v1/traces",
         "http://host.openshell.internal",
-      ]) {
-        const result = spawnSync("python3", ["-m", "deepagents_code"], {
-          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
-          encoding: "utf8",
-        });
-        expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
-        expect(result.stdout).toContain("managed-posture-ok");
-      }
-    }
-  });
-
-  it("rejects fail-open OTLP endpoint values in the direct-module runtime (#6538)", () => {
+      ].map((value) => ({ name, value })),
+    ),
+  )("allows managed OTLP collector URL candidate %# for $name (#6466)", ({ name, value }) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
-    for (const name of ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]) {
-      for (const value of [
+    const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+      encoding: "utf8",
+    });
+    expect(result.status, `${name}=${value} was rejected: ${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("managed-posture-ok");
+  });
+
+  it.each(
+    ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"].flatMap((name) =>
+      [
         "https://collector.example.com:4318",
         "http://evil.host.openshell.internal:4318",
         "http://host.openshell.internal.evil.com",
@@ -410,15 +408,17 @@ check("disabled", False)
         "http://héllo:4318",
         "http://",
         `http://host.openshell.internal:4318/p${"a".repeat(3000)}`,
-      ]) {
-        const result = spawnSync("python3", ["-m", "deepagents_code"], {
-          env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
-          encoding: "utf8",
-        });
-        expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
-        expect(result.stderr).toContain(`runtime environment variable ${name}`);
-      }
-    }
+      ].map((value) => ({ name, value })),
+    ),
+  )("rejects fail-open OTLP endpoint candidate %# for $name (#6538)", ({ name, value }) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+      encoding: "utf8",
+    });
+    expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+    expect(result.stderr).toContain(`runtime environment variable ${name}`);
   });
 
   it("allows only scoped managed credential-shaped runtime values", () => {
@@ -447,7 +447,11 @@ check("disabled", False)
     expect(result.stdout).toContain("managed-posture-ok");
   });
 
-  it("accepts only exact same-name OpenShell credential placeholders", () => {
+  it.each([
+    "openshell:resolve:env:GITHUB_MCP_TOKEN",
+    "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
+    `openshell:resolve:env:v${"1".repeat(20)}_GITHUB_MCP_TOKEN`,
+  ])("accepts exact same-name OpenShell credential placeholder candidate %#", (value) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     const run = (name: string, value: string) =>
@@ -456,24 +460,25 @@ check("disabled", False)
         encoding: "utf8",
       });
 
-    for (const value of [
-      "openshell:resolve:env:GITHUB_MCP_TOKEN",
-      "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
-      `openshell:resolve:env:v${"1".repeat(20)}_GITHUB_MCP_TOKEN`,
-    ]) {
-      const result = run("GITHUB_MCP_TOKEN", value);
-      expect(result.status, result.stderr).toBe(0);
-    }
+    const result = run("GITHUB_MCP_TOKEN", value);
+    expect(result.status, result.stderr).toBe(0);
+  });
 
-    for (const [name, value] of [
-      ["GITHUB_MCP_TOKEN", "prefix-openshell:resolve:env:GITHUB_MCP_TOKEN"],
-      ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
-      ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
-    ]) {
-      const result = run(name, value);
-      expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
-      expect(result.stderr).toContain("invalid OpenShell credential placeholder");
-    }
+  it.each([
+    ["GITHUB_MCP_TOKEN", "prefix-openshell:resolve:env:GITHUB_MCP_TOKEN"],
+    ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
+    ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
+  ] as const)("rejects mismatched OpenShell credential placeholder candidate %#", (name, value) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const run = (candidateName: string, candidateValue: string) =>
+      spawnSync("python3", ["-m", "deepagents_code"], {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [candidateName]: candidateValue },
+        encoding: "utf8",
+      });
+    const result = run(name, value);
+    expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+    expect(result.stderr).toContain("invalid OpenShell credential placeholder");
   });
 
   it("loads only strict HTTPS-only managed MCP configuration", () => {

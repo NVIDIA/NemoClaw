@@ -322,11 +322,9 @@ describe("isDockerRuntimeDown", () => {
     ).toBe(true);
   });
 
-  it("treats legacy/recovered entries without driver metadata as Docker-backed", () => {
-    // Sandboxes registered before `openshellDriver` existed (or recovered from
-    // gateway state) omit the field; they must still get the outage guard
-    // rather than falling back to the broken Provisioning/rebuild path (#4428).
-    for (const entry of [{}, { openshellDriver: null }, () => null] as const) {
+  it.each([{}, { openshellDriver: null }, () => null] as const)(
+    "treats legacy/recovered entries without driver metadata as Docker-backed [case %#]",
+    (entry) => {
       const getSandbox = typeof entry === "function" ? entry : () => entry;
       expect(
         isDockerRuntimeDown("alpha", {
@@ -334,8 +332,8 @@ describe("isDockerRuntimeDown", () => {
           getSandbox,
         }),
       ).toBe(true);
-    }
-  });
+    },
+  );
 });
 
 describe("printDockerRuntimeDownGuidance", () => {

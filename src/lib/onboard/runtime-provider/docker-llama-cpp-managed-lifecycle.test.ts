@@ -440,38 +440,38 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
   it.each([
     { failure: "connection refusal", status: 7, stderr: "curl: (7) failed to connect" },
     { failure: "timeout", status: 28, stderr: "curl: (28) timed out" },
-  ])("reports a narrow UFW remediation and rolls back after bridge $failure (#8712)", ({
-    status,
-    stderr,
-  }) => {
-    const fixture = dockerFixture();
-    const store = journalStore();
-    const privateBridge = privateBridgeFixture();
-    fixture.failSandboxBridgeProbe({ status, stderr });
+  ])(
+    "reports a narrow UFW remediation and rolls back after bridge $failure (#8712)",
+    ({ status, stderr }) => {
+      const fixture = dockerFixture();
+      const store = journalStore();
+      const privateBridge = privateBridgeFixture();
+      fixture.failSandboxBridgeProbe({ status, stderr });
 
-    let failure: Error | undefined;
-    try {
-      createLifecycle(options(fixture, store), {}, privateBridge).start(receiptWriter());
-    } catch (error) {
-      failure = error instanceof Error ? error : new Error(String(error));
-    }
+      let failure: Error | undefined;
+      try {
+        createLifecycle(options(fixture, store), {}, privateBridge).start(receiptWriter());
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+      }
 
-    expect(failure?.message).toContain(
-      "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
-    );
-    expect(failure?.message).toContain("OpenShell Docker network: openshell-docker");
-    expect(failure?.message).toContain("Source subnet: 172.29.0.0/16");
-    expect(failure?.message).toContain("Gateway IP address: 172.29.0.1");
-    expect(failure?.message).toContain("TCP port: 8081");
-    expect(failure?.message).toContain(
-      "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
-    );
-    expect(failure?.message).not.toContain("test-only-secret");
-    expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
-    expect(store.list()).toEqual([]);
-    expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
-    expect(dockerCommandPrefixes(fixture)).toContainEqual(["network", "rm"]);
-  });
+      expect(failure?.message).toContain(
+        "Managed llama.cpp host-loopback health check passed, but the OpenShell Docker bridge health check failed.",
+      );
+      expect(failure?.message).toContain("OpenShell Docker network: openshell-docker");
+      expect(failure?.message).toContain("Source subnet: 172.29.0.0/16");
+      expect(failure?.message).toContain("Gateway IP address: 172.29.0.1");
+      expect(failure?.message).toContain("TCP port: 8081");
+      expect(failure?.message).toContain(
+        "sudo ufw allow from 172.29.0.0/16 to 172.29.0.1 port 8081 proto tcp",
+      );
+      expect(failure?.message).not.toContain("test-only-secret");
+      expect(privateBridge.stopTransaction).toHaveBeenCalledWith(TRANSACTION_ID);
+      expect(store.list()).toEqual([]);
+      expect(dockerCommandPrefixes(fixture)).toContainEqual(["rm", "--force"]);
+      expect(dockerCommandPrefixes(fixture)).toContainEqual(["network", "rm"]);
+    },
+  );
 
   it("does not report UFW remediation for a Docker probe command failure (#8712)", () => {
     const fixture = dockerFixture();
@@ -606,36 +606,45 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       (fixture: DockerFixture) => fixture.onProbe(() => fixture.setNetworkId("6".repeat(64))),
       /network identity/u,
     ],
-  ] as const)("fails closed on post-readiness %s drift without replacement (#8144)", (_kind, drift, expected) => {
-    const fixture = dockerFixture();
-    const store = journalStore();
-    const lifecycle = controller(fixture, store);
-    const receipt = lifecycle.start(receiptWriter());
-    lifecycle.runtime.stopManaged(receipt);
-    drift(fixture);
-    fixture.capture.mockClear();
+  ] as const)(
+    "fails closed on post-readiness %s drift without replacement (#8144)",
+    (_kind, drift, expected) => {
+      const fixture = dockerFixture();
+      const store = journalStore();
+      const lifecycle = controller(fixture, store);
+      const receipt = lifecycle.start(receiptWriter());
+      lifecycle.runtime.stopManaged(receipt);
+      drift(fixture);
+      fixture.capture.mockClear();
 
-    expect(() => lifecycle.resume(receipt)).toThrow(expected);
-    const calls = fixture.capture.mock.calls.map((call) => call[0]);
-    expect(calls.filter((args) => args[0] === "start")).toEqual([["start", RUNTIME_ID]]);
-    expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
-    expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
-    expect(store.load(TRANSACTION_ID)).toMatchObject({ phase: "finalized", runtimeId: RUNTIME_ID });
-  });
+      expect(() => lifecycle.resume(receipt)).toThrow(expected);
+      const calls = fixture.capture.mock.calls.map((call) => call[0]);
+      expect(calls.filter((args) => args[0] === "start")).toEqual([["start", RUNTIME_ID]]);
+      expect(calls).toContainEqual(expect.arrayContaining(["run", "--rm"]));
+      expect(calls).not.toContainEqual(expect.arrayContaining(["create"]));
+      expect(calls).not.toContainEqual(expect.arrayContaining(["network", "create"]));
+      expect(store.load(TRANSACTION_ID)).toMatchObject({
+        phase: "finalized",
+        runtimeId: RUNTIME_ID,
+      });
+    },
+  );
   it.each([
     ["configured", "8081", undefined, "127.0.0.1", 0, /must not configure/u],
     ["runtime", "", "8081", "127.0.0.1", 1, /must not publish/u],
     ["runtime-wide", "", "8081", "0.0.0.0", 1, /must not publish/u],
-  ] as const)("rolls back exact ownership for unexpected %s Docker publication (#8544)", (_kind, configured, published, ip, count, expectedError) => {
-    const [fixture, store] = [dockerFixture(configured, published, ip, count), journalStore()];
-    const lifecycle = createLifecycle(options(fixture, store));
-    expect(() => lifecycle.start(receiptWriter())).toThrow(expectedError);
-    const calls = fixture.capture.mock.calls.map((call) => call[0]);
-    expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
-    expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
-    expect(store.list()).toEqual([]);
-  });
+  ] as const)(
+    "rolls back exact ownership for unexpected %s Docker publication (#8544)",
+    (_kind, configured, published, ip, count, expectedError) => {
+      const [fixture, store] = [dockerFixture(configured, published, ip, count), journalStore()];
+      const lifecycle = createLifecycle(options(fixture, store));
+      expect(() => lifecycle.start(receiptWriter())).toThrow(expectedError);
+      const calls = fixture.capture.mock.calls.map((call) => call[0]);
+      expect(calls).toContainEqual(["rm", "--force", RUNTIME_ID]);
+      expect(calls).toContainEqual(["network", "rm", NETWORK_ID]);
+      expect(store.list()).toEqual([]);
+    },
+  );
   it("uses the declarative readiness timeout as both curl retry budget and capture budget", () => {
     const fixture = dockerFixture();
     const lifecycle = createLifecycle({
@@ -907,8 +916,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(writer.writeExact).toHaveBeenCalledTimes(2);
   });
 
-  it("fails closed on receipt writer target or existing-value drift (#8414)", () => {
-    for (const drift of ["transaction", "target", "value"] as const) {
+  it.each(["transaction", "target", "value"] as const)(
+    "fails closed on receipt writer target or existing-value drift [case %#] (#8414)",
+    (drift) => {
       const fixture = dockerFixture();
       const store = journalStore();
       const initialWriter = receiptWriter(() => {
@@ -937,8 +947,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
         case "target":
           expect(fixture.capture.mock.calls).toHaveLength(writesBeforeRecovery);
       }
-    }
-  });
+    },
+  );
 
   it("rejects a malformed receipt writer before engine or journal mutation (#8414)", () => {
     const fixture = dockerFixture();
@@ -1118,8 +1128,9 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
     expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["network", "rm"]);
   });
 
-  it("recovers prepared and exact creating/created/started journals without touching finalized ownership (#8395)", () => {
-    for (const phase of ["prepared", "creating", "created", "started"] as const) {
+  it.each(["prepared", "creating", "created", "started"] as const)(
+    "recovers prepared and exact creating/created/started journals without touching finalized ownership [case %#] (#8395)",
+    (phase) => {
       const fixture = dockerFixture();
       const store = journalStore();
       const base = preparedJournal();
@@ -1146,11 +1157,12 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       }).recoverUnfinished(receiptWriter());
       expect(recovery).toEqual({ recovered: [TRANSACTION_ID], failures: [] });
       expect(store.list()).toEqual([]);
-    }
-  });
+    },
+  );
 
-  it("refuses unfinished recovery when protected engine authority is missing or drifted (#8395)", () => {
-    for (const state of ["missing", "drifted"] as const) {
+  it.each(["missing", "drifted"] as const)(
+    "refuses unfinished recovery when protected engine authority is missing or drifted [case %#] (#8395)",
+    (state) => {
       const fixture = dockerFixture();
       const store = journalStore();
       const base = preparedJournal();
@@ -1175,8 +1187,8 @@ describe("dormant Docker llama.cpp managed lifecycle", () => {
       expect(recovery.failures).toHaveLength(1);
       expect(store.load(TRANSACTION_ID)).not.toBeNull();
       expect(dockerCommandPrefixes(fixture)).not.toContainEqual(["rm", "--force"]);
-    }
-  });
+    },
+  );
 
   it("fails re-prove on Docker network identity drift (#8395)", () => {
     const fixture = dockerFixture();

@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { isRecordedN1xManagedVllmRebuildEligible } from "../../domain/sandbox/n1x-managed-vllm-rebuild";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import {
   createRebuildRouteHandoff,
   type RegistryInferenceRoute,
 } from "../../onboard/rebuild-route-handoff";
+import { parseHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildBail } from "./rebuild-credential-preflight";
@@ -82,6 +84,36 @@ export function stageRebuildHermesDashboardConfig(
     else process.env[key] = value;
   }
   return true;
+}
+
+/** Stage the recorded N1x decision without moving action state into the domain layer. */
+export function stageRecordedManagedVllmIntent(
+  recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xManagedVllm">,
+  sandboxEntry: Pick<
+    RebuildSandboxEntry,
+    | "provider"
+    | "model"
+    | "endpointUrl"
+    | "endpointSource"
+    | "openshellDriver"
+    | "hostLocalInferenceReceipt"
+  >,
+  rebuildSelection: {
+    provider: string;
+    model: string;
+    pinEndpoint: boolean;
+    endpointUrl: string | null;
+  },
+): void {
+  if (
+    isRecordedN1xManagedVllmRebuildEligible(
+      sandboxEntry,
+      rebuildSelection,
+      parseHostLocalInferenceReceipt,
+    )
+  ) {
+    recreateOptions.allowDeferredN1xManagedVllm = true;
+  }
 }
 
 export function hydrateMessagingConfigForRebuild(
