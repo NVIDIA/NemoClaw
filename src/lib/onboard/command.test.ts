@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCredential } from "../credentials/store";
 import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { servingProfileProvenance } from "../inference/serving/profile-provenance";
-import { resolveOnboardOptions, runOnboardCommand } from "./command";
+import { resolveOnboardOptions, runOnboardCommand, servingProfileProviderKey } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { PortableInferenceDescriptorError } from "./experimental/portable-inference-descriptor";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
@@ -20,6 +20,7 @@ import {
   LOCAL_MODEL_PROFILE_RUNTIME_ENV,
 } from "./local-model-profile/plan";
 import { OnboardResumeIntentError, OnboardResumeIntentRaceError } from "./session-bootstrap";
+import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -745,6 +746,63 @@ describe("onboard command options", () => {
 
     expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("selects the profile's backend provider so onboarding skips the menu (#9313)", async () => {
+    // The preset alone only picks the model once a provider is chosen. Without
+    // a provider the run fell through to the interactive provider menu with the
+    // requested profile never applied.
+    const vllmProfile = {
+      ...COMPATIBLE_NANO_PROFILE,
+      id: "vllm.dgx-spark-gb10.single.muse-glimmer-30b-nvfp4-w4a4",
+      displayName: "Muse Glimmer 30B NVFP4 W4A4 on one DGX Spark",
+      backend: "vllm",
+    };
+    const env: NodeJS.ProcessEnv = {};
+    let observedProvider: string | undefined;
+    let observedPreset: string | undefined;
+    await runOnboardCommand({
+      flags: { profile: vllmProfile.id },
+      env,
+      listServingProfiles: () => [vllmProfile],
+      runOnboard: async () => {
+        observedProvider = env.NEMOCLAW_PROVIDER;
+        observedPreset = env.NEMOCLAW_SERVING_PRESET;
+      },
+    });
+
+    expect(observedProvider).toBe("install-vllm");
+    expect(observedPreset).toBe(vllmProfile.id);
+    // Scoped to the run, like the preset itself.
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
+  });
+
+  it("selects the managed llama.cpp provider for a llama-cpp profile (#9313)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    let observedProvider: string | undefined;
+    await runOnboardCommand({
+      flags: { profile: COMPATIBLE_NANO_PROFILE.id },
+      env,
+      listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      runOnboard: async () => {
+        observedProvider = env.NEMOCLAW_PROVIDER;
+      },
+    });
+
+    expect(observedProvider).toBe("install-llama-cpp");
+    expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+  });
+
+  it("maps each serving backend to the provider that can run it (#9313)", () => {
+    // A backend with no provider returns null, which `resolveServingProfile`
+    // reports instead of accepting the flag and then asking for a provider.
+    const withBackend = (backend: string) => ({ recipe: { backend } }) as never;
+
+    // Pinned against the provider menu's own key so the two cannot drift.
+    expect(servingProfileProviderKey(withBackend("vllm"))).toBe(MANAGED_VLLM_PROVIDER_KEY);
+    expect(servingProfileProviderKey(withBackend("install-llama-cpp"))).toBe("install-llama-cpp");
+    expect(servingProfileProviderKey(withBackend("future-backend"))).toBeNull();
   });
 
   it("records an installer profile without activating the disabled generic preset", async () => {
