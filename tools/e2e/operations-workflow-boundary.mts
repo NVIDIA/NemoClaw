@@ -489,7 +489,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
-      const trustedNativeRuntimeCheckout =
+      const nativeRuntimeQualificationCheckout =
         (jobName === "native-runtime-qualification-podman-toolchain" &&
           step.name === "Check out the pinned Podman source" &&
           step.with?.repository === "podman-container-tools/podman" &&
@@ -512,17 +512,17 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.with?.["fetch-depth"] === 1 &&
           step.with?.["persist-credentials"] === false) ||
         (jobName === "native-runtime-qualification-producer-plan" &&
-          step.name === "Check out the trusted qualification producer" &&
+          step.name === "Check out the qualification producer" &&
           step.with?.ref === "${{ github.workflow_sha }}") ||
         (jobName === "native-runtime-qualification-producer" &&
-          step.name === "Check out the trusted qualification harness" &&
+          step.name === "Check out the qualification harness" &&
           step.with?.ref === "${{ matrix.source.workflowSha }}") ||
         (jobName === "native-runtime-qualification-producer" &&
           step.name === "Check out the candidate commit" &&
           step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
           step.with?.ref === "${{ matrix.source.candidateSha }}") ||
         (jobName === "native-runtime-qualification-producer-aggregate" &&
-          step.name === "Check out the trusted qualification aggregator" &&
+          step.name === "Check out the qualification aggregator" &&
           step.with?.repository === "${{ github.repository }}" &&
           step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
@@ -536,7 +536,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
-        trustedNativeRuntimeCheckout ||
+        nativeRuntimeQualificationCheckout ||
         trustedOpenShellDevToolingCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&

@@ -66,7 +66,7 @@ describe("native runtime qualification producer workflow", () => {
   it("compiles the matrix only from authenticated source and repository-owned runner policy", () => {
     const plan = job("native-runtime-qualification-producer-plan");
     const authenticate = step(plan, "Authenticate the candidate and dispatch artifact");
-    const compile = step(plan, "Compile the trusted qualification producer matrix");
+    const compile = step(plan, "Compile the qualification producer matrix");
 
     expect(plan.if).toContain("github.ref == 'refs/heads/main'");
     expect(plan.if).toContain("inputs.jobs == 'native-runtime-qualification-producer'");
@@ -89,13 +89,13 @@ describe("native runtime qualification producer workflow", () => {
     );
     expect(compile.run).toContain("native-runtime-qualification-producer-plan.mts --ci-output");
     expect(JSON.stringify(plan)).not.toContain("linux-arm64-gpu-dgx-spark-gb10-protected-1");
-    const trustedCheckout = step(plan, "Check out the trusted qualification producer");
-    expect(trustedCheckout.with?.["sparse-checkout"]).toContain(
+    const producerCheckout = step(plan, "Check out the qualification producer");
+    expect(producerCheckout.with?.["sparse-checkout"]).toContain(
       "src/lib/onboard/runtime-provider/native-qualification-authority.ts",
     );
   });
 
-  it("limits candidate-workflow protected execution to the latest commit on an administrator-controlled PR source branch", () => {
+  it("limits candidate-workflow protected execution to the latest commit on an administrator-authorized PR source branch", () => {
     const generate = job("generate-matrix");
     const authenticate = step(generate, "Authenticate manual PR dispatch");
     const source = authenticate.run ?? "";
@@ -217,9 +217,9 @@ describe("native runtime qualification producer workflow", () => {
     );
   });
 
-  it("runs each candidate case in an isolated account and emits one trusted artifact", () => {
+  it("runs each candidate case in an isolated account and emits one bounded evidence artifact", () => {
     const producer = job("native-runtime-qualification-producer");
-    const harness = step(producer, "Check out the trusted qualification harness");
+    const harness = step(producer, "Check out the qualification harness");
     const podmanHost = step(producer, "Require a reviewed Ubuntu runtime host");
     const podmanDownload = step(producer, "Download the pinned native Podman toolchain");
     const podman = step(
@@ -549,14 +549,14 @@ describe("native runtime qualification producer workflow", () => {
     expect(accountOwnershipSource).not.toContain("$ACCOUNT:$ACCOUNT");
   });
 
-  it("aggregates the exact successful 24-case cohort in a separate trusted job", () => {
+  it("aggregates the exact successful 24-case cohort in a separate workflow job", () => {
     const aggregate = job("native-runtime-qualification-producer-aggregate");
     const download = step(aggregate, "Download the exact case evidence cohort");
     const identity = step(aggregate, "Resolve this aggregate job identity");
     const setupNode = step(aggregate, "Set up Node for qualification aggregation");
     const collect = step(aggregate, "Validate and aggregate all 24 case receipts");
     const upload = step(aggregate, "Upload aggregate evidence");
-    const aggregateCheckout = step(aggregate, "Check out the trusted qualification aggregator");
+    const aggregateCheckout = step(aggregate, "Check out the qualification aggregator");
 
     expect(aggregate.name).toBe("Aggregate native runtime qualification evidence");
     expect(aggregate.needs).toEqual([

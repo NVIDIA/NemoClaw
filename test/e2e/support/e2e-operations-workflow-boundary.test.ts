@@ -497,7 +497,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     ["maintain", "refs/heads/feat/native", 1, "requires a repository administrator"],
     ["admin", "refs/heads/feat/other", 1, "must match the PR source branch"],
   ])(
-    "requires the latest commit on an admin-controlled PR source branch for %s on %s",
+    "requires the latest commit on an administrator-authorized PR source branch for %s on %s",
     (role, workflowRef, expectedStatus, expectedStderr) => {
       const workflow = readE2eOperationsWorkflow();
       const authentication = workflow.jobs["generate-matrix"].steps!.find(

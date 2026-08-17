@@ -891,7 +891,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - name: Check out the trusted qualification producer
+      - name: Check out the qualification producer
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
@@ -911,7 +911,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Node for trusted qualification planning
+      - name: Set up Node for qualification planning
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
@@ -980,7 +980,7 @@ jobs:
               select((.workflow_run.id | tostring) == $runId) |
               select(.workflow_run.head_sha == $workflowSha)
             ' <<<"$artifacts")" || {
-              echo "::error::Trusted dispatch artifact is missing or ambiguous" >&2
+              echo "::error::Authenticated dispatch artifact is missing or ambiguous" >&2
               exit 1
             }
           installer_sha256="$(sha256sum .candidate-source/scripts/install.sh | awk '{print $1}')"
@@ -995,7 +995,7 @@ jobs:
           printf 'installer_sha256=%s\n' "$installer_sha256" >>"$GITHUB_OUTPUT"
 
       - id: plan
-        name: Compile the trusted qualification producer matrix
+        name: Compile the qualification producer matrix
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
@@ -1240,11 +1240,11 @@ jobs:
             exit 1
           fi
 
-      - name: Check out the trusted qualification harness
+      - name: Check out the qualification harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ matrix.source.workflowSha }}
-          path: .trusted-qualification
+          path: .qualification-workflow
           persist-credentials: false
           sparse-checkout: |
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
@@ -2038,7 +2038,7 @@ jobs:
             LANG=C.UTF-8 \
             PATH="$GUARD_DIRECTORY:$HELPER_DIRECTORY:/usr/local/bin:/usr/bin:/bin" \
             XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY" \
-            bash .trusted-qualification/scripts/checks/run-native-runtime-installer-qualification.sh \
+            bash .qualification-workflow/scripts/checks/run-native-runtime-installer-qualification.sh \
               --candidate-checkout "$CANDIDATE_DIRECTORY" \
               --candidate-sha "$CANDIDATE_SHA" \
               --installer-sha256 "$INSTALLER_SHA256" \
@@ -2171,7 +2171,7 @@ jobs:
           set -euo pipefail
           sudo --preserve-env=EVIDENCE_DIRECTORY,EXECUTION_RECEIPT_PATH,INSTALLER_RECEIPT_DIRECTORY,QUALIFICATION_ROW \
             "$NODE_DIRECTORY/node" --experimental-strip-types --no-warnings \
-            .trusted-qualification/tools/e2e/native-runtime-qualification-producer-evidence.mts
+            .qualification-workflow/tools/e2e/native-runtime-qualification-producer-evidence.mts
           sudo chown -R "$(id -u):$(id -g)" "$EVIDENCE_DIRECTORY"
 
       - name: Remove qualification resources
@@ -2452,12 +2452,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted qualification aggregator
+      - name: Check out the qualification aggregator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ github.repository }}
           ref: ${{ github.workflow_sha }}
-          path: .trusted-qualification-aggregate
+          path: .qualification-aggregate
           persist-credentials: false
           sparse-checkout: |
             src/lib/onboard/runtime-provider/native-qualification-authority.ts
@@ -2521,7 +2521,7 @@ jobs:
           node-version: 22.19.0
 
       - name: Validate and aggregate all 24 case receipts
-        working-directory: .trusted-qualification-aggregate
+        working-directory: .qualification-aggregate
         env:
           AGGREGATE_JOB_ID: ${{ steps.aggregate-job.outputs.job_id }}
           CASE_ARTIFACT_ROOT: ${{ runner.temp }}/native-runtime-case-artifacts
