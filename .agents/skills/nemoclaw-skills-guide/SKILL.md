@@ -39,7 +39,7 @@ Each stage has one owner: `nemoclaw-contributor-plan-issue` refines an issue int
 `nemoclaw-contributor-create-pr` publishes the branch and follows CI and automated review.
 Load `nemoclaw-contributor-update-dependencies` for a dependency upgrade and
 `nemoclaw-contributor-update-docs` for documentation catch-up.
-The dependency workflow runs inside the implementation stage. The documentation workflow also runs during pre-tag release preparation.
+The dependency workflow runs inside the implementation stage.
 Component-specific guidance lives with the package it describes, not in a skill.
 
 ## Skill Catalog
@@ -61,8 +61,8 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-policies` | Answer maintainer workflow questions from the read-only policy references. |
 | `nemoclaw-maintainer-cross-issue-sweep` | Find open issues that a PR can also fix or conflict with. Report file and line evidence. |
 | `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
-| `nemoclaw-maintainer-evening` | End-of-day handoff: require the pre-tag dated changelog PR, check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, carry stragglers forward, retire the released label, and hand off the Announcement. |
-| `nemoclaw-maintainer-cut-release-tag` | Verify the dated changelog entry, cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
+| `nemoclaw-maintainer-evening` | End-of-day handoff: complete and merge the documentation PR with its release entry, check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, carry stragglers forward, retire the released label, and hand off the Announcement. |
+| `nemoclaw-maintainer-cut-release-tag` | Verify post-merge documentation workflow state, cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
 | `nemoclaw-maintainer-e2e` | Describe default E2E triggered by pushes to `main`, dispatch exact-revision manual PR E2E, and verify applicable workflow evidence. |
 | `nemoclaw-maintainer-fix-e2e-failures` | Continuously fix automatic `main` E2E failures by root cause, coordinate peer approvals, merge eligible PRs, and monitor new results. |
 | `nemoclaw-maintainer-validate-launchable` | Run advisory validation of the staging Brev Launchable deployment, exact image and runtime identity, preinstalled user journey, inference, and cleanup. |
@@ -83,7 +83,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-contributor-implement-issue` | Implement the smallest accepted issue capability slice with focused validation and no pull request publication. |
 | `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit and implement a dependency upgrade from current upstream and downstream contracts, including Hermes CalVer and base-image upgrades. |
-| `nemoclaw-contributor-update-docs` | Find user-visible changes and update their owning documentation under current repository policy. |
+| `nemoclaw-contributor-update-docs` | Find user-visible changes merged to `main` and update their owning documentation under current repository policy. |
 
 ## Getting Started
 

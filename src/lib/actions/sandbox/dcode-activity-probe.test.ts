@@ -121,11 +121,13 @@ describe("dcode activity probe", () => {
     );
   });
 
-  it("parses every declared probe state", () => {
+  function verifyDeclaredActivityProbeStates() {
     for (const state of Object.values(DCODE_PROBE_STATE)) {
       expect(parseDcodeProbeState(`${DCODE_PROBE_PREFIX}${state}\n`)).toBe(state);
     }
-  });
+  }
+
+  it("parses every declared probe state", verifyDeclaredActivityProbeStates);
 
   it("parses exactly one probe sentinel from sandbox exec output", () => {
     expect(parseDcodeProbeState(`${DCODE_PROBE_PREFIX}idle\n`)).toBe(

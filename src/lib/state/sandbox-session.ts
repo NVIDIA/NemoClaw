@@ -14,6 +14,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createOpenshellSandboxIdReader } from "../adapters/openshell/sandbox-identity";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 
 // ---------------------------------------------------------------------------
@@ -96,13 +97,30 @@ export function parseForwardList(output: string | null | undefined): ForwardEntr
 }
 
 /**
+ * Does this command line belong to an interactive shell rather than a forward?
+ *
+ * OpenShell starts the dashboard port-forward through the same proxy and the
+ * same `sandbox` host alias as `connect`, so the sandbox reference alone cannot
+ * tell them apart. The interactive session is the one that asks for a TTY; the
+ * forward runs `-N` with no remote command. Counting the forward would report a
+ * session on every Ready sandbox.
+ */
+function isInteractiveSshCommand(command: string): boolean {
+  return /(?:^|\s)-tt(?:\s|$)/.test(command) || /RequestTTY=force/.test(command);
+}
+
+/**
  * Parse process list output to find SSH processes targeting a specific sandbox.
  *
- * Current SSH connections use `openshell-<sandboxName>.default`. During the
- * supported v0.0.85 to v0.0.99 upgrade window, an already-running connection
- * may still target the legacy `openshell-<sandboxName>` alias. We recognize
- * both as complete tokens to avoid false positives when one sandbox name is a
- * prefix of another (e.g., `dev` vs `dev-staging`).
+ * Two shapes are recognized. OpenShell used to place the sandbox in the SSH
+ * host itself (`openshell-<sandboxName>.default`, and the legacy
+ * `openshell-<sandboxName>` from the v0.0.85 to v0.0.99 upgrade window); those
+ * are matched as complete tokens so one sandbox name cannot match another it is
+ * a prefix of (`dev` vs `dev-staging`). Newer OpenShell connects every sandbox
+ * through the fixed `sandbox` alias and identifies the target with
+ * `--sandbox-id <id>` on its proxy command instead, which left interactive
+ * sessions invisible to every session-reporting surface (#9316). When the
+ * caller knows the durable sandbox ID, that form is matched too.
  *
  * Input format: one line per process — `<PID> <full command line>`
  * (compatible with both `pgrep -a` on Linux and `ps -axo pid,command`)
@@ -110,6 +128,7 @@ export function parseForwardList(output: string | null | undefined): ForwardEntr
 export function parseSshProcesses(
   pgrepOutput: string | null | undefined,
   sandboxName: string,
+  sandboxId?: string | null,
 ): SandboxSession[] {
   if (!pgrepOutput || typeof pgrepOutput !== "string") return [];
   if (!sandboxName) return [];
@@ -118,6 +137,10 @@ export function parseSshProcesses(
   const hostPatterns = sshHosts.map(
     (sshHost) => [sshHost, new RegExp(`(?:^|\\s)${escapeRegExp(sshHost)}(?:\\s|$)`)] as const,
   );
+  const idPattern =
+    sandboxId && sandboxId.trim()
+      ? new RegExp(`--sandbox-id[=\\s]+${escapeRegExp(sandboxId.trim())}(?:\\s|$)`)
+      : null;
   const sessions: SandboxSession[] = [];
   const lines = pgrepOutput.split("\n").filter(Boolean);
 
@@ -126,10 +149,17 @@ export function parseSshProcesses(
     if (!pidMatch) continue;
 
     const pid = Number.parseInt(pidMatch[1], 10);
+    const command = pidMatch[2];
 
-    const sshHost = hostPatterns.find(([, pattern]) => pattern.test(pidMatch[2]))?.[0];
+    const sshHost = hostPatterns.find(([, pattern]) => pattern.test(command))?.[0];
     if (sshHost) {
       sessions.push({ sandboxName, pid, sshHost });
+      continue;
+    }
+    // The proxied form carries no sandbox name, so it is only attributable
+    // when the caller resolved the sandbox's durable ID.
+    if (idPattern?.test(command) && isInteractiveSshCommand(command)) {
+      sessions.push({ sandboxName, pid, sshHost: openshellSandboxSshHost(sandboxName) });
     }
   }
 
@@ -216,6 +246,12 @@ export interface SessionDetectionDeps {
   getForwardList: () => string | null;
   /** Run `pgrep -a ssh` and return stdout. Null if unavailable. */
   getSshProcesses: () => string | null;
+  /**
+   * Resolve the sandbox's durable OpenShell ID, or null when it cannot be
+   * determined. Only consulted when the process list contains a proxied
+   * connection, which is the only shape that needs it (#9316).
+   */
+  resolveSandboxId?: (sandboxName: string) => string | null;
 }
 
 /**
@@ -244,7 +280,12 @@ export function getActiveSandboxSessions(
     return { detected: false, sessions: [] };
   }
 
-  const sshSessions = parseSshProcesses(pgrepOutput, sandboxName);
+  // Resolving the ID costs an OpenShell call, so only pay it for the proxied
+  // shape that cannot be attributed from the SSH host alone (#9316).
+  const sandboxId = pgrepOutput.includes("--sandbox-id")
+    ? (deps.resolveSandboxId?.(sandboxName) ?? null)
+    : null;
+  const sshSessions = parseSshProcesses(pgrepOutput, sandboxName, sandboxId);
 
   return {
     detected: true,
@@ -298,5 +339,13 @@ export function createSystemDeps(openshellBinary: string): SessionDetectionDeps 
       }
     },
     getSshProcesses: querySshProcesses,
+    resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
+      const result = spawnSync(binary, args, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 5000,
+      });
+      return { status: result.status, stdout: result.stdout || "" };
+    }),
   };
 }

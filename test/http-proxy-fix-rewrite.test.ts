@@ -227,30 +227,32 @@ describe("http-proxy-fix rewrite for a deepinfra-style failure (#2344)", () => {
     expect("checkServerIdentity" in (captured ?? {})).toBe(false);
   });
 
-  it("strips proxy-hop transport hints (socketPath, localAddress, lookup, family, hints)", () => {
-    http.request({
-      hostname: PROXY_HOST,
-      port: 3128,
-      path: "https://api.deepinfra.com/v1/foo",
-      socketPath: "/var/run/cntlm.sock",
-      localAddress: "10.0.0.42",
-      lookup: () => undefined,
-      family: 4,
-      hints: 0,
-      headers: {},
-    } as http.RequestOptions & {
-      socketPath?: string;
-      localAddress?: string;
-      lookup?: unknown;
-      family?: number;
-      hints?: number;
-    });
+  it.each(["socketPath", "localAddress", "lookup", "family", "hints"])(
+    "strips proxy-hop transport hints (socketPath, localAddress, lookup, family, hints) [%s]",
+    (k) => {
+      http.request({
+        hostname: PROXY_HOST,
+        port: 3128,
+        path: "https://api.deepinfra.com/v1/foo",
+        socketPath: "/var/run/cntlm.sock",
+        localAddress: "10.0.0.42",
+        lookup: () => undefined,
+        family: 4,
+        hints: 0,
+        headers: {},
+      } as http.RequestOptions & {
+        socketPath?: string;
+        localAddress?: string;
+        lookup?: unknown;
+        family?: number;
+        hints?: number;
+      });
 
-    expect(captured).not.toBeNull();
-    for (const k of ["socketPath", "localAddress", "lookup", "family", "hints"]) {
+      expect(captured).not.toBeNull();
+
       expect(k in (captured ?? {})).toBe(false);
-    }
-  });
+    },
+  );
 
   it("uses the explicit target port when one is present in the URL", () => {
     http.request({

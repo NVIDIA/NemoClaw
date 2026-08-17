@@ -458,8 +458,9 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(combined).not.toContain("all-password");
   });
 
-  it("fails closed when the image-baked dcode proxy contract is missing (#6191)", () => {
-    for (const missingFile of ["trusted-proxy-host", "trusted-proxy-port"]) {
+  it.each(["trusted-proxy-host", "trusted-proxy-port"])(
+    "fails closed when the image-baked dcode proxy contract is missing [case %#] (#6191)",
+    (missingFile) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-missing-proxy-"));
       const launcherPath = makeLauncherProxyProbeFixture(tempDir);
       const { scriptPath } = makeStartProxyProbeFixture(tempDir);
@@ -482,8 +483,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       const combined = `${launcherResult.stdout}\n${launcherResult.stderr}\n${startResult.stdout}\n${startResult.stderr}`;
       expect(combined).toContain("trusted managed proxy");
       expect(combined).not.toContain("attacker-proxy.internal");
-    }
-  });
+    },
+  );
 
   it("rejects writable image-baked dcode proxy files (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-proxy-mode-"));
@@ -583,12 +584,12 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
         fs.symlinkSync(`${caFile}.missing`, caFile);
       },
     },
-  ])("rejects $condition managed fetch CA bundles in start, connect, and direct dcode paths (#6636)", ({
-    expected,
-    mutate,
-  }) => {
-    expectManagedCaBundleRejection({ expected, mutate });
-  });
+  ])(
+    "rejects $condition managed fetch CA bundles in start, connect, and direct dcode paths (#6636)",
+    ({ expected, mutate }) => {
+      expectManagedCaBundleRejection({ expected, mutate });
+    },
+  );
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "rejects an unreadable managed fetch CA bundle in start, connect, and direct dcode paths (#6636)",
@@ -600,33 +601,34 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     },
   );
 
-  it("keeps dcode shell proxy validators aligned with onboard validation (#6191)", () => {
-    const start = readAgentFile("start.sh");
-    const launcher = readAgentFile("dcode-launcher.sh");
-    const hostSamples = [
-      "10.200.0.1",
-      "managed-proxy.internal",
-      "proxy_name",
-      "http://proxy.internal",
-      "user:password@proxy.internal",
-      "proxy.internal/path",
-      "proxy internal",
-      "proxy.internal\ninjected",
-      "",
-    ];
-    const portSamples = ["1", "3128", "65535", "00001", "0", "65536", "000001", "12a", ""];
+  it.each(["1", "3128", "65535", "00001", "0", "65536", "000001", "12a", ""])(
+    "keeps dcode shell proxy validators aligned with onboard validation [%s] (#6191)",
+    (value) => {
+      const start = readAgentFile("start.sh");
+      const launcher = readAgentFile("dcode-launcher.sh");
+      const hostSamples = [
+        "10.200.0.1",
+        "managed-proxy.internal",
+        "proxy_name",
+        "http://proxy.internal",
+        "user:password@proxy.internal",
+        "proxy.internal/path",
+        "proxy internal",
+        "proxy.internal\ninjected",
+        "",
+      ];
 
-    for (const value of hostSamples) {
-      const expected = isValidProxyHost(value);
-      expect(shellValidatorAccepts(start, "is_valid_proxy_host", value), value).toBe(expected);
-      expect(shellValidatorAccepts(launcher, "is_valid_proxy_host", value), value).toBe(expected);
-    }
-    for (const value of portSamples) {
+      for (const value of hostSamples) {
+        const expected = isValidProxyHost(value);
+        expect(shellValidatorAccepts(start, "is_valid_proxy_host", value), value).toBe(expected);
+        expect(shellValidatorAccepts(launcher, "is_valid_proxy_host", value), value).toBe(expected);
+      }
+
       const expected = isValidProxyPort(value);
       expect(shellValidatorAccepts(start, "is_valid_proxy_port", value), value).toBe(expected);
       expect(shellValidatorAccepts(launcher, "is_valid_proxy_port", value), value).toBe(expected);
-    }
-  });
+    },
+  );
 
   it("documents the proxy-only source boundary and removal condition (#6191)", () => {
     const start = readAgentFile("start.sh");
@@ -651,15 +653,14 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(headlessCheck).toContain("connect --probe-only accepted the managed inference route");
   });
 
-  it("rejects unsafe direct dcode proxy overrides before managed code runs (#6191)", () => {
-    const rejectedOverrides = [
-      { host: "corp-user:corp-password@proxy.example", port: "3128" },
-      { host: "proxy.example/path", port: "3128" },
-      { host: "10.200.0.1", port: "0" },
-      { host: "10.200.0.1", port: "65536" },
-    ];
-
-    for (const managedProxy of rejectedOverrides) {
+  it.each([
+    { host: "corp-user:corp-password@proxy.example", port: "3128" },
+    { host: "proxy.example/path", port: "3128" },
+    { host: "10.200.0.1", port: "0" },
+    { host: "10.200.0.1", port: "65536" },
+  ])(
+    "rejects unsafe direct dcode proxy overrides before managed code runs [case %#] (#6191)",
+    (managedProxy) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-launch-invalid-"));
       const launcherPath = makeLauncherProxyProbeFixture(tempDir, managedProxy);
       const { scriptPath } = makeStartProxyProbeFixture(tempDir, managedProxy);
@@ -675,6 +676,6 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       for (const value of Object.values(managedProxy)) {
         expect(`${result.stdout}\n${result.stderr}\n${startResult.stderr}`).not.toContain(value);
       }
-    }
-  });
+    },
+  );
 });

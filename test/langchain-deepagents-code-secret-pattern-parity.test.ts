@@ -103,61 +103,69 @@ describe("Deep Agents Code secret-pattern parity", () => {
     expect(wrapperSource).not.toMatch(/\{[01],128\}/);
   });
 
-  it("matches every shared positive vector with its designated canonical regex (#6195)", () => {
-    for (const [group, patterns] of Object.entries(canonicalPatterns) as Array<
-      [CanonicalSecretPatternGroup, readonly RegExp[]]
-    >) {
-      const coveredIndices = new Set(
-        CANONICAL_SECRET_POSITIVE_VECTORS.filter((vector) => vector.patternGroup === group).map(
-          (vector) => vector.patternIndex,
-        ),
-      );
-      expect(coveredIndices, `${group} patterns must all have a positive vector`).toEqual(
-        new Set(patterns.map((_pattern, index) => index)),
-      );
-    }
+  it.each(Array.from(CANONICAL_SECRET_POSITIVE_VECTORS, (value) => [value]))(
+    "matches every shared positive vector with its designated canonical regex [case %#] (#6195)",
+    (vector) => {
+      for (const [group, patterns] of Object.entries(canonicalPatterns) as Array<
+        [CanonicalSecretPatternGroup, readonly RegExp[]]
+      >) {
+        const coveredIndices = new Set(
+          CANONICAL_SECRET_POSITIVE_VECTORS.filter((vector) => vector.patternGroup === group).map(
+            (vector) => vector.patternIndex,
+          ),
+        );
+        expect(coveredIndices, `${group} patterns must all have a positive vector`).toEqual(
+          new Set(patterns.map((_pattern, index) => index)),
+        );
+      }
 
-    for (const vector of CANONICAL_SECRET_POSITIVE_VECTORS) {
       const pattern = canonicalPatterns[vector.patternGroup][vector.patternIndex];
       expect(pattern, `${vector.label} designates an existing canonical regex`).toBeDefined();
       expect(matches(pattern as RegExp, vector.value), vector.label).toBe(true);
-    }
-  });
+    },
+  );
 
-  it("bounds assignment separators and rejects credential-word substrings (#6452)", () => {
-    const assignmentPattern = CONTEXT_PATTERNS[1];
-    for (const value of [
-      "COMPASS=opaqueNonSecretPayload123",
-      "BYPASS=allowedValue123",
-      "TOPSECRET=opaqueNonSecretPayload123",
-      "SUBTOKEN=opaqueNonSecretPayload123",
-      "public-key=opaqueVerificationMaterial123",
-      "custom-key=opaqueNonSecretPayload123",
-      '{"key":"agent:main:main"}',
-      `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
-      `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
-    ]) {
-      expect(matches(assignmentPattern, value), value.slice(0, 80)).toBe(false);
-    }
-    expect(
-      matches(assignmentPattern, `TOKEN${" ".repeat(32)}opaqueCredentialPayloadZ1234567890`),
-    ).toBe(true);
+  it.each(
+    Array.from(
+      [
+        "COMPASS=opaqueNonSecretPayload123",
+        "BYPASS=allowedValue123",
+        "passRate=opaqueNonSecretPayload123",
+        "passCount=opaqueNonSecretPayload123",
+        "passThrough=opaqueNonSecretPayload123",
+        "publicKey=opaqueVerificationMaterial123",
+        "customKey=opaqueNonSecretPayload123",
+        '{"correlationMarker":"reply-correlation-marker-123"}',
+        `${"a".repeat(129)}Secret=opaqueCredentialPayloadZ1234567890`,
+      ],
+      (value) => [value],
+    ),
+  )(
+    "bounds assignment separators and rejects credential-word substrings [case %#] (#6452)",
+    (value) => {
+      const assignmentPattern = CONTEXT_PATTERNS[1];
+      for (const value of [
+        "COMPASS=opaqueNonSecretPayload123",
+        "BYPASS=allowedValue123",
+        "TOPSECRET=opaqueNonSecretPayload123",
+        "SUBTOKEN=opaqueNonSecretPayload123",
+        "public-key=opaqueVerificationMaterial123",
+        "custom-key=opaqueNonSecretPayload123",
+        '{"key":"agent:main:main"}',
+        `TOKEN${" ".repeat(33)}opaqueCredentialPayloadZ1234567890`,
+        `TOKEN${" ".repeat(100_000)}opaqueCredentialPayloadZ1234567890`,
+      ]) {
+        expect(matches(assignmentPattern, value), value.slice(0, 80)).toBe(false);
+      }
+      expect(
+        matches(assignmentPattern, `TOKEN${" ".repeat(32)}opaqueCredentialPayloadZ1234567890`),
+      ).toBe(true);
 
-    const camelPattern = CONTEXT_PATTERNS[2];
-    for (const value of [
-      "COMPASS=opaqueNonSecretPayload123",
-      "BYPASS=allowedValue123",
-      "passRate=opaqueNonSecretPayload123",
-      "passCount=opaqueNonSecretPayload123",
-      "passThrough=opaqueNonSecretPayload123",
-      "publicKey=opaqueVerificationMaterial123",
-      "customKey=opaqueNonSecretPayload123",
-      '{"correlationMarker":"reply-correlation-marker-123"}',
-      `${"a".repeat(129)}Secret=opaqueCredentialPayloadZ1234567890`,
-    ]) {
+      const camelPattern = CONTEXT_PATTERNS[2];
+
       expect(matches(camelPattern, value), value.slice(0, 80)).toBe(false);
-    }
-  });
+    },
+  );
 
   it("detects every shared positive vector in the managed Python runtime (#6195)", () => {
     const probe = `

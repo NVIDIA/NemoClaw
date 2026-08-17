@@ -96,10 +96,10 @@ describe("readRecentShieldsAutoRestore", () => {
     expect(result).toEqual({ kind: "none" });
   });
 
-  it("returns null timeoutSeconds for out-of-bounds timeout values in shields_down entry (#5922)", () => {
-    const now = new Date().toISOString();
-    // JSON.stringify serializes these correctly (finite numbers)
-    for (const bad of [0, -1, 1801, 9999, 1.5]) {
+  it.each([0, -1, 1801, 9999, 1.5])(
+    "returns null timeoutSeconds for out-of-bounds value %s in shields_down entry (#5922)",
+    (bad) => {
+      const now = new Date().toISOString();
       fs.writeFileSync(
         auditPath,
         JSON.stringify({
@@ -115,8 +115,8 @@ describe("readRecentShieldsAutoRestore", () => {
       const event = requireEvent(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath));
       expect(event.timestamp, `bad value ${String(bad)}`).toBe(now);
       expect(event.timeoutSeconds, `bad value ${String(bad)}`).toBeNull();
-    }
-  });
+    },
+  );
 
   it("returns correct timeoutSeconds when a malformed JSONL line sits between shields_down and shields_auto_restore (#5922)", () => {
     const now = new Date().toISOString();
@@ -222,11 +222,12 @@ describe("readRecentShieldsAutoRestore", () => {
     });
   });
 
-  it("returns null timeoutSeconds when shields_down has NaN or Infinity as a raw string payload (#5922)", () => {
-    // JSON.stringify(NaN) and JSON.stringify(Infinity) both produce "null",
-    // so write the JSONL line manually to exercise the non-finite path.
-    const now = new Date().toISOString();
-    for (const rawValue of ["NaN", "Infinity", "-Infinity"]) {
+  it.each(["NaN", "Infinity", "-Infinity"])(
+    "returns null timeoutSeconds when shields_down has raw %s payload (#5922)",
+    (rawValue) => {
+      // JSON.stringify(NaN) and JSON.stringify(Infinity) both produce "null",
+      // so write the JSONL line manually to exercise the non-finite path.
+      const now = new Date().toISOString();
       const downLine = `{"action":"shields_down","sandbox":"alpha","timestamp":"${new Date(Date.now() - 25 * 1000).toISOString()}","timeout_seconds":${rawValue}}`;
       const restoreLine = JSON.stringify({
         action: "shields_auto_restore",
@@ -238,8 +239,8 @@ describe("readRecentShieldsAutoRestore", () => {
       const event = requireEvent(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath));
       expect(event.timestamp, `raw value ${rawValue}`).toBe(now);
       expect(event.timeoutSeconds, `raw value ${rawValue}`).toBeNull();
-    }
-  });
+    },
+  );
 
   it("distinguishes unreadable audit history from an absent audit file (#5922)", () => {
     fs.mkdirSync(auditPath);

@@ -21,7 +21,7 @@ export type AuthoritativeGatewayOptions = Pick<
 
 export type AuthoritativeRebuildPreflightOptions = Pick<
   OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
+  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort" | "allowDeferredN1xManagedVllm"
 > & {
   authoritativeResumeConfig: true;
   /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
@@ -32,6 +32,20 @@ export type AuthoritativeRebuildPreflightOptions = Pick<
   targetGatewayName: string;
   targetGatewayPort: number;
 };
+
+/** Project only the target-bound GPU and N1x intent into runtime preflight. */
+export function authoritativeRebuildRuntimePreflightOptions(
+  opts: AuthoritativeRebuildPreflightOptions,
+): Pick<OnboardOptions, "sandboxGpu" | "sandboxGpuDevice" | "noGpu"> & {
+  allowDeferredN1xManagedVllm: boolean;
+} {
+  return {
+    sandboxGpu: opts.sandboxGpu,
+    sandboxGpuDevice: opts.sandboxGpuDevice,
+    noGpu: opts.noGpu,
+    allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm === true,
+  };
+}
 
 export function resolveAuthoritativeOnboardGatewayBinding(
   opts: AuthoritativeGatewayOptions,

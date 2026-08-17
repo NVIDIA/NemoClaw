@@ -183,38 +183,43 @@ describe("MCP bridge dev runtime compatibility", () => {
     );
   });
 
-  it("keeps every result except an exact version mismatch fatal (#6426)", () => {
-    const fatalAssertions = [
-      () => assertMcpCredentialBoundaryRuntimeVersion({ resolveOpenshell: () => null }),
-      () =>
-        assertMcpCredentialBoundaryRuntimeVersion({
-          resolveOpenshell: () => "/test/openshell",
-          runVersionCommand: () => ({
-            error: Object.assign(new Error("probe failed"), { code: "EACCES" }),
-            status: null,
-            stdout: "",
-            stderr: "",
+  it.each(
+    Array.from(
+      [
+        () => assertMcpCredentialBoundaryRuntimeVersion({ resolveOpenshell: () => null }),
+        () =>
+          assertMcpCredentialBoundaryRuntimeVersion({
+            resolveOpenshell: () => "/test/openshell",
+            runVersionCommand: () => ({
+              error: Object.assign(new Error("probe failed"), { code: "EACCES" }),
+              status: null,
+              stdout: "",
+              stderr: "",
+            }),
           }),
-        }),
-      () =>
-        assertMcpCredentialBoundaryRuntimeVersion({
-          resolveOpenshell: () => "/test/openshell",
-          runVersionCommand: () => ({ status: 23, stdout: "", stderr: "" }),
-        }),
-      () =>
-        assertMcpCredentialBoundaryRuntimeVersion({
-          resolveOpenshell: () => "/test/openshell",
-          runVersionCommand: () => ({ status: 0, stdout: "not-a-version", stderr: "" }),
-        }),
-      () => {
-        throw new McpBridgeError("unrelated MCP bridge failure");
-      },
-      () => {
-        throw new Error("generic failure");
-      },
-    ];
-    for (const assertRuntimeVersion of fatalAssertions) {
+        () =>
+          assertMcpCredentialBoundaryRuntimeVersion({
+            resolveOpenshell: () => "/test/openshell",
+            runVersionCommand: () => ({ status: 23, stdout: "", stderr: "" }),
+          }),
+        () =>
+          assertMcpCredentialBoundaryRuntimeVersion({
+            resolveOpenshell: () => "/test/openshell",
+            runVersionCommand: () => ({ status: 0, stdout: "not-a-version", stderr: "" }),
+          }),
+        () => {
+          throw new McpBridgeError("unrelated MCP bridge failure");
+        },
+        () => {
+          throw new Error("generic failure");
+        },
+      ],
+      (value) => [value],
+    ),
+  )(
+    "keeps every result except an exact version mismatch fatal [case %#] (#6426)",
+    (assertRuntimeVersion) => {
       expect(() => classifyMcpBridgeRuntimeCompatibility(assertRuntimeVersion)).toThrow();
-    }
-  });
+    },
+  );
 });

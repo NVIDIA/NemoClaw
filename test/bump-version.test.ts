@@ -13,11 +13,12 @@ import {
 } from "../scripts/bump-version.mts";
 
 describe("bump-version release contract", () => {
-  it("rejects removed release PR flags", () => {
-    for (const flag of ["--create-pr", "--no-create-pr", "--branch=release/1.2.3"]) {
+  it.each(["--create-pr", "--no-create-pr", "--branch=release/1.2.3"])(
+    "rejects removed release PR flags [case %#]",
+    (flag) => {
       expect(() => parseArgs(["1.2.3", flag])).toThrow(`Unknown flag: ${flag}`);
-    }
-  });
+    },
+  );
 
   it("has no reachable scripts/bump-version.ts entrypoint left behind by the .mts migration", () => {
     const repoRoot = path.join(import.meta.dirname, "..");

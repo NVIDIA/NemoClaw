@@ -44,15 +44,17 @@ describe("Hermes image build probes", () => {
     expect(dockerfile.indexOf(`check_absent ${imageProbePath}`)).toBeGreaterThan(removal);
   });
 
-  it("lists every Dockerfile probe command in the runner usage", () => {
-    const result = spawnSync("python3", ["-I", probes], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+  it.each(Array.from(commands, (value) => [value]))(
+    "lists Dockerfile probe command %s in the runner usage",
+    (command) => {
+      const result = spawnSync("python3", ["-I", probes], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
 
-    expect(result.status).toBe(1);
-    for (const command of commands) {
+      expect(result.status).toBe(1);
+
       expect(result.stderr).toContain(command);
-    }
-  });
+    },
+  );
 });

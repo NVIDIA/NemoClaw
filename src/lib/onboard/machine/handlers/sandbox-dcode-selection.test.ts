@@ -10,6 +10,7 @@ import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-f
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
+  detectUnconfiguredMessagingChannels: vi.fn(() => []),
 }));
 
 function completedSession() {

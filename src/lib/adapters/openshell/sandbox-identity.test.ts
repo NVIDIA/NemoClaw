@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parseOpenShellSandboxId } from "./sandbox-identity";
+import { createOpenshellSandboxIdReader, parseOpenShellSandboxId } from "./sandbox-identity";
 
 describe("OpenShell sandbox identity parsing", () => {
   it("accepts one exact durable ID with optional terminal color", () => {
@@ -17,5 +17,31 @@ describe("OpenShell sandbox identity parsing", () => {
     expect(parseOpenShellSandboxId("ID: first\nID: second\n")).toBeNull();
     expect(parseOpenShellSandboxId("ID: sandbox/alpha\n")).toBeNull();
     expect(parseOpenShellSandboxId("id: sandbox-alpha\n")).toBeNull();
+  });
+});
+
+describe("OpenShell sandbox identity reading", () => {
+  it("reads each sandbox ID once per process (#9316)", () => {
+    const runCommand = vi.fn(() => ({ status: 0, stdout: "Name: alpha\nID: sandbox-alpha\n" }));
+    const readSandboxId = createOpenshellSandboxIdReader("/usr/bin/openshell", runCommand);
+
+    expect(readSandboxId("alpha")).toBe("sandbox-alpha");
+    expect(readSandboxId("alpha")).toBe("sandbox-alpha");
+    expect(runCommand).toHaveBeenCalledExactlyOnceWith("/usr/bin/openshell", [
+      "sandbox",
+      "get",
+      "alpha",
+    ]);
+  });
+
+  it("caches a failed sandbox ID lookup as unavailable (#9316)", () => {
+    const runCommand = vi.fn((): { status: number; stdout: string } => {
+      throw new Error("OpenShell unavailable");
+    });
+    const readSandboxId = createOpenshellSandboxIdReader("/usr/bin/openshell", runCommand);
+
+    expect(readSandboxId("alpha")).toBeNull();
+    expect(readSandboxId("alpha")).toBeNull();
+    expect(runCommand).toHaveBeenCalledOnce();
   });
 });

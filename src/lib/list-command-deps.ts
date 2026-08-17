@@ -50,6 +50,12 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
   // Cache the SSH process probe once for all sandboxes — avoids spawning ps
   // per sandbox row. The getSshProcesses() call is the expensive part (5s timeout).
   let cachedSshOutput: string | null | undefined;
+
+  // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
+  // process list actually contains a proxied connection that needs one (#9316).
+  const resolveSandboxIdForSessions = (sshOutput: string, name: string): string | null =>
+    sshOutput.includes("--sandbox-id") ? (sessionDeps?.resolveSandboxId?.(name) ?? null) : null;
+
   const getCachedSshOutput = () => {
     if (cachedSshOutput === undefined && sessionDeps) {
       try {
@@ -86,7 +92,8 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
           try {
             const sshOutput = getCachedSshOutput();
             if (sshOutput === null) return null;
-            return parseSshProcesses(sshOutput, name).length;
+            return parseSshProcesses(sshOutput, name, resolveSandboxIdForSessions(sshOutput, name))
+              .length;
           } catch {
             return null;
           }

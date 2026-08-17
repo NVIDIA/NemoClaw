@@ -1489,13 +1489,13 @@ reportChildScenario(async () => {
   it("treats an implicit latest Ollama model as installed during systemd repair", {
     timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
   }, () => {
-    const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-");
-    const { root: tmpDir } = workspace;
-    const fakeBin = workspace.binDir;
+      const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-");
+      const { root: tmpDir } = workspace;
+      const fakeBin = workspace.binDir;
 
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
+      writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
-    const script = String.raw`
+      const script = String.raw`
 ${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -1545,53 +1545,53 @@ reportChildScenario(async () => {
   return { result, runCommands, shellCommands };
 });
 `;
-    const result = workspace.runNodeSource(script, {
-      name: "ollama-systemd-check.js",
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_MODEL: "llama3.2",
-      },
-    });
+      const result = workspace.runNodeSource(script, {
+        name: "ollama-systemd-check.js",
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "ollama",
+          NEMOCLAW_MODEL: "llama3.2",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "llama3.2");
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Configuring Ollama systemd loopback override"),
-      ),
-      "existing Ollama systemd installs should get the loopback override",
-    );
-    assert.ok(
-      payload.shellCommands.some(
-        (command: string) =>
-          command.includes("install -D -m 0644") &&
-          command.includes("/etc/systemd/system/ollama.service.d/override.conf") &&
-          command.includes("systemctl daemon-reload") &&
-          command.includes("systemctl --no-block restart ollama") &&
-          command.includes("pre_state=$(") &&
-          command.includes("current_state=$("),
-      ),
-      "should install and wait for the Ollama systemd drop-in restart",
-    );
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.result.provider, "ollama-local");
+      assert.equal(payload.result.model, "llama3.2");
+      assert.ok(
+        payload.lines.some((line: string) =>
+          line.includes("Configuring Ollama systemd loopback override"),
+        ),
+        "existing Ollama systemd installs should get the loopback override",
+      );
+      assert.ok(
+        payload.shellCommands.some(
+          (command: string) =>
+            command.includes("install -D -m 0644") &&
+            command.includes("/etc/systemd/system/ollama.service.d/override.conf") &&
+            command.includes("systemctl daemon-reload") &&
+            command.includes("systemctl --no-block restart ollama") &&
+            command.includes("pre_state=$(") &&
+            command.includes("current_state=$("),
+        ),
+        "should install and wait for the Ollama systemd drop-in restart",
+      );
   });
 
   it("preserves existing Ollama systemd override settings while repairing loopback", {
     timeout: 10_000,
   }, () => {
-    const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-merge-");
-    const { root: tmpDir } = workspace;
-    const fakeBin = workspace.binDir;
+      const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-merge-");
+      const { root: tmpDir } = workspace;
+      const fakeBin = workspace.binDir;
 
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
+      writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
-    const script = String.raw`
+      const script = String.raw`
 ${onboardChildRuntimeSource}
 const fs = require("fs");
 const runner = require(${runnerPath});
@@ -1658,73 +1658,73 @@ reportChildScenario(async () => {
   return { result, shellCommands, shellCalls, installedBody };
 });
 `;
-    const result = workspace.runNodeSource(script, {
-      name: "ollama-systemd-merge-check.js",
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-      },
-    });
+      const result = workspace.runNodeSource(script, {
+        name: "ollama-systemd-merge-check.js",
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "ollama",
+          NEMOCLAW_MODEL: "qwen3:8b",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.ok(payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'));
-    assert.ok(
-      payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
-    );
-    assert.ok(payload.installedBody.includes("[Install]"));
-    assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
-    assert.ok(
-      payload.shellCommands.some((command: string) =>
-        command.includes("sudo -n install -D -m 0644"),
-      ),
-      "non-interactive systemd drop-in install should use sudo -n",
-    );
-    const catCall = payload.shellCalls.find(
-      (call: { command: string }) =>
-        call.command.includes("cat") && call.command.includes("ollama.service.d/override.conf"),
-    );
-    assert.ok(catCall, "expected existing drop-in inspection command");
-    assert.equal(catCall.opts?.suppressOutput, true);
-    assert.ok(
-      catCall.command.includes("if [ -r"),
-      "readable drop-ins should be inspected without sudo first",
-    );
-    assert.ok(
-      catCall.command.indexOf("cat") < catCall.command.indexOf("sudo -n cat"),
-      "sudo cat should only be the unreadable-file fallback",
-    );
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.result.provider, "ollama-local");
+      assert.ok(payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'));
+      assert.ok(
+        payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
+      );
+      assert.ok(payload.installedBody.includes("[Install]"));
+      assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
+      assert.ok(
+        payload.shellCommands.some((command: string) =>
+          command.includes("sudo -n install -D -m 0644"),
+        ),
+        "non-interactive systemd drop-in install should use sudo -n",
+      );
+      const catCall = payload.shellCalls.find(
+        (call: { command: string }) =>
+          call.command.includes("cat") && call.command.includes("ollama.service.d/override.conf"),
+      );
+      assert.ok(catCall, "expected existing drop-in inspection command");
+      assert.equal(catCall.opts?.suppressOutput, true);
+      assert.ok(
+        catCall.command.includes("if [ -r"),
+        "readable drop-ins should be inspected without sudo first",
+      );
+      assert.ok(
+        catCall.command.indexOf("cat") < catCall.command.indexOf("sudo -n cat"),
+        "sudo cat should only be the unreadable-file fallback",
+      );
 
-    const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
-    const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
-    assert.ok(payload.installedBody.includes(repairedHost), "loopback host should be installed");
-    assert.ok(
-      !payload.installedBody.includes(oldHost),
-      "legacy 0.0.0.0 OLLAMA_HOST line should be removed, not just shadowed (#3342)",
-    );
-    assert.ok(
-      payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'),
-      "non-OLLAMA_HOST settings should be preserved",
-    );
-    assert.ok(
-      payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
-      "other Environment= settings should be preserved",
-    );
+      const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
+      const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
+      assert.ok(payload.installedBody.includes(repairedHost), "loopback host should be installed");
+      assert.ok(
+        !payload.installedBody.includes(oldHost),
+        "legacy 0.0.0.0 OLLAMA_HOST line should be removed, not just shadowed (#3342)",
+      );
+      assert.ok(
+        payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'),
+        "non-OLLAMA_HOST settings should be preserved",
+      );
+      assert.ok(
+        payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
+        "other Environment= settings should be preserved",
+      );
   });
 
   it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", {
     timeout: 10_000,
   }, () => {
-    const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-spark-");
-    const { root: tmpDir } = workspace;
+      const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-spark-");
+      const { root: tmpDir } = workspace;
 
-    const script = String.raw`
+      const script = String.raw`
 ${onboardChildRuntimeSource}
 const fs = require("fs");
 const runner = require(${runnerPath});
@@ -1770,36 +1770,38 @@ reportChildScenario(() => {
   return { result, installedBody, shellCommands };
 });
 `;
-    const result = workspace.runNodeSource(script, {
-      name: "ollama-systemd-spark-check.js",
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = workspace.runNodeSource(script, {
+        name: "ollama-systemd-spark-check.js",
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
-    const installedLines = payload.installedBody.split(/\r?\n/);
-    assert.equal(payload.result, "ready");
-    assert.ok(payload.installedBody.includes('Environment="OLLAMA_HOST=127.0.0.1:11434"'));
-    assert.ok(payload.installedBody.includes('Environment="OLLAMA_LLM_LIBRARY=cuda_v13"'));
-    assert.ok(!installedLines.includes('Environment="OLLAMA_LLM_LIBRARY=cuda"'));
-    assert.ok(
-      payload.shellCommands.some((command: string) => command.includes("systemctl enable ollama")),
-      "managed Ollama installs should enable the service for reboot survival",
-    );
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+      const installedLines = payload.installedBody.split(/\r?\n/);
+      assert.equal(payload.result, "ready");
+      assert.ok(payload.installedBody.includes('Environment="OLLAMA_HOST=127.0.0.1:11434"'));
+      assert.ok(payload.installedBody.includes('Environment="OLLAMA_LLM_LIBRARY=cuda_v13"'));
+      assert.ok(!installedLines.includes('Environment="OLLAMA_LLM_LIBRARY=cuda"'));
+      assert.ok(
+        payload.shellCommands.some((command: string) =>
+          command.includes("systemctl enable ollama"),
+        ),
+        "managed Ollama installs should enable the service for reboot survival",
+      );
   });
 
   it("allows prompt-capable sudo in non-interactive Ollama systemd setup", {
     timeout: 10_000,
   }, () => {
-    const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-sudo-mode-");
-    const { root: tmpDir } = workspace;
+      const workspace = onboardProcessWorkspace("nemoclaw-ollama-systemd-sudo-mode-");
+      const { root: tmpDir } = workspace;
 
-    const script = String.raw`
+      const script = String.raw`
 ${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -1825,30 +1827,32 @@ reportChildScenario(() => {
   return { result, shellCommands };
 });
 `;
-    const result = workspace.runNodeSource(script, {
-      name: "ollama-systemd-sudo-mode-check.js",
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "prompt",
-      },
-    });
+      const result = workspace.runNodeSource(script, {
+        name: "ollama-systemd-sudo-mode-check.js",
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "prompt",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
-    assert.equal(payload.result, "ready");
-    assert.ok(
-      payload.shellCommands.some((command: string) => command.includes("sudo install -D -m 0644")),
-      "prompt sudo mode should use sudo without -n",
-    );
-    assert.ok(
-      !payload.shellCommands.some((command: string) =>
-        command.includes("sudo -n install -D -m 0644"),
-      ),
-      "prompt sudo mode should not use sudo -n",
-    );
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+      assert.equal(payload.result, "ready");
+      assert.ok(
+        payload.shellCommands.some((command: string) =>
+          command.includes("sudo install -D -m 0644"),
+        ),
+        "prompt sudo mode should use sudo without -n",
+      );
+      assert.ok(
+        !payload.shellCommands.some((command: string) =>
+          command.includes("sudo -n install -D -m 0644"),
+        ),
+        "prompt sudo mode should not use sudo -n",
+      );
   });
 
   it("rejects unsupported non-interactive sudo mode values", () => {
@@ -1885,13 +1889,13 @@ reportChildScenario(() => {
   it("repairs already-loopback systemd Ollama without starting a duplicate daemon", {
     timeout: 10_000,
   }, () => {
-    const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-loopback-");
-    const { root: tmpDir } = workspace;
-    const fakeBin = workspace.binDir;
+      const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-systemd-loopback-");
+      const { root: tmpDir } = workspace;
+      const fakeBin = workspace.binDir;
 
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
+      writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
-    const script = String.raw`
+      const script = String.raw`
 ${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -1942,55 +1946,55 @@ reportChildScenario(async () => {
   return { result, shellCommands, events };
 });
 `;
-    const result = workspace.runNodeSource(script, {
-      name: "ollama-systemd-loopback-check.js",
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-      },
-    });
+      const result = workspace.runNodeSource(script, {
+        name: "ollama-systemd-loopback-check.js",
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "ollama",
+          NEMOCLAW_MODEL: "qwen3:8b",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.ok(
-      payload.shellCommands.some((command: string) =>
-        command.includes("/etc/systemd/system/ollama.service.d/override.conf"),
-      ),
-      "already-loopback systemd Ollama still needs the persistent drop-in",
-    );
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Configuring Ollama systemd loopback override"),
-      ),
-      "already-loopback repair should emit the visible loopback-override transcript",
-    );
-    assert.ok(
-      !payload.shellCommands.some((command: string) =>
-        command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
-      ),
-      "systemd restart success should not spawn a duplicate manual daemon",
-    );
-    const restartIndex = payload.events.indexOf("restart");
-    assert.ok(restartIndex >= 0, "expected a systemd restart");
-    assert.ok(
-      payload.events.slice(restartIndex + 1).includes("tags"),
-      "should re-probe after the systemd restart instead of trusting a stale loopback cache",
-    );
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.result.provider, "ollama-local");
+      assert.ok(
+        payload.shellCommands.some((command: string) =>
+          command.includes("/etc/systemd/system/ollama.service.d/override.conf"),
+        ),
+        "already-loopback systemd Ollama still needs the persistent drop-in",
+      );
+      assert.ok(
+        payload.lines.some((line: string) =>
+          line.includes("Configuring Ollama systemd loopback override"),
+        ),
+        "already-loopback repair should emit the visible loopback-override transcript",
+      );
+      assert.ok(
+        !payload.shellCommands.some((command: string) =>
+          command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+        ),
+        "systemd restart success should not spawn a duplicate manual daemon",
+      );
+      const restartIndex = payload.events.indexOf("restart");
+      assert.ok(restartIndex >= 0, "expected a systemd restart");
+      assert.ok(
+        payload.events.slice(restartIndex + 1).includes("tags"),
+        "should re-probe after the systemd restart instead of trusting a stale loopback cache",
+      );
   });
 
   it("fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable", {
     timeout: 15_000,
   }, () => {
-    const workspace = onboardProcessWorkspace("nemoclaw-onboard-existing-systemd-restart-fail-");
-    const { root: tmpDir } = workspace;
+      const workspace = onboardProcessWorkspace("nemoclaw-onboard-existing-systemd-restart-fail-");
+      const { root: tmpDir } = workspace;
 
-    const script = String.raw`
+      const script = String.raw`
 ${onboardChildRuntimeSource}
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -2032,21 +2036,21 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    const result = workspace.runNodeSource(script, {
-      name: "existing-systemd-restart-fail-check.js",
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-      },
-    });
+      const result = workspace.runNodeSource(script, {
+        name: "existing-systemd-restart-fail-check.js",
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "ollama",
+          NEMOCLAW_MODEL: "qwen3:8b",
+        },
+      });
 
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Ollama systemd restart did not recover/);
-    assert.doesNotMatch(result.stderr, /manual-start/);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /Ollama systemd restart did not recover/);
+      assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
   it("fails closed when an existing Ollama systemd override cannot be applied", () => {
@@ -2851,10 +2855,12 @@ reportChildScenario(async () => {
 
   const secretCredentialBackScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS.slice(1, -1);
 
-  it.each(secretCredentialBackScenarios.map((scenario) => ({
-    ...scenario,
-    action: scenario.expectedOutcome === "exit" ? "exit" : "back",
-  })))("lets users type $action at the $name secret credential prompt", (scenario) => {
+  it.each(
+    secretCredentialBackScenarios.map((scenario) => ({
+      ...scenario,
+      action: scenario.expectedOutcome === "exit" ? "exit" : "back",
+    })),
+  )("lets users type $action at the $name secret credential prompt", (scenario) => {
     runCredentialBackScenarioProcess(scenario);
   });
 
@@ -3918,13 +3924,10 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(menuOutput, /Start Ollama on Windows host \(suggested\)/);
   });
 
-  it("rejects Windows-host Ollama providers on native Docker WSL before launching Ollama", () => {
-    const scenarios = [
-      { provider: "start-windows-ollama", installed: true },
-      { provider: "install-windows-ollama", installed: false },
-    ] as const;
-
-    for (const scenario of scenarios) {
+  it.each([
+    { provider: "start-windows-ollama", installed: true },
+    { provider: "install-windows-ollama", installed: false },
+  ] as const)("rejects $provider on native Docker WSL before launching Ollama", (scenario) => {
       const boundary = runNativeDockerWindowsProviderBoundary({
         ...scenario,
         reachable: false,
@@ -3938,12 +3941,9 @@ const { setupNim } = require(${onboardPath});
         boundary.stderr,
         /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
       );
-    }
   });
 
-  it("rejects reachable Windows-host Ollama on native Docker WSL through generic and fallback paths", () => {
-    const providers = ["ollama", "start-windows-ollama", "install-windows-ollama"] as const;
-    for (const provider of providers) {
+  it.each(["ollama", "start-windows-ollama", "install-windows-ollama"] as const)("rejects reachable Windows-host Ollama on native Docker WSL through generic and fallback paths [%s]", (provider) => {
       const boundary = runNativeDockerWindowsProviderBoundary({
         provider,
         installed: true,
@@ -3958,7 +3958,6 @@ const { setupNim } = require(${onboardPath});
         boundary.stderr,
         /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
       );
-    }
   });
 
   it("uses the Windows-host start path when install-windows-ollama is requested but Ollama is already installed", async () => {

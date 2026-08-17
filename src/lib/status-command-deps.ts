@@ -248,6 +248,12 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
+
+  // Resolving a sandbox ID costs one OpenShell call, so only pay it when the
+  // process list actually contains a proxied connection that needs one (#9316).
+  const resolveSandboxIdForSessions = (sshOutput: string, name: string): string | null =>
+    sshOutput.includes("--sandbox-id") ? (sessionDeps?.resolveSandboxId?.(name) ?? null) : null;
+
   const getCachedSshOutput = (): string | null => {
     if (cachedSshOutput === undefined && sessionDeps) {
       try {
@@ -278,7 +284,8 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
           try {
             const sshOutput = getCachedSshOutput();
             if (sshOutput === null) return null;
-            return parseSshProcesses(sshOutput, name).length;
+            return parseSshProcesses(sshOutput, name, resolveSandboxIdForSessions(sshOutput, name))
+              .length;
           } catch {
             return null;
           }

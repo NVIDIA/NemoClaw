@@ -38,6 +38,44 @@ describe("custom inference endpoint DNS pinning", () => {
     ).rejects.toThrow(/endpoint-url is not allowed:.*private\/internal address/i);
   });
 
+  it.each([
+    [
+      "shell metacharacters",
+      "http://public.example/v1$(id)",
+      /endpoint-url must contain only URL-safe ASCII characters\./,
+    ],
+    [
+      "percent-encoded control characters",
+      "http://public.example/v1%0ainjected",
+      /endpoint-url must not contain percent-encoded control characters\./,
+    ],
+    [
+      "a leading tab",
+      "\thttp://public.example/v1",
+      /endpoint-url must not contain control characters\./,
+    ],
+    [
+      "a trailing newline",
+      "http://public.example/v1\n",
+      /endpoint-url must not contain control characters\./,
+    ],
+    [
+      "a leading no-break space",
+      "\u00a0http://public.example/v1",
+      /endpoint-url must contain only URL-safe ASCII characters\./,
+    ],
+  ] as const)(
+    "rejects an endpoint URL with %s before DNS validation or any mutation (#9301)",
+    async (_label, endpointUrl, message) => {
+      const rewriteUrl = vi.fn(async () => {
+        throw new Error("unsafe endpoint unexpectedly reached DNS validation");
+      });
+
+      await expect(normalizeCustomEndpointUrl(endpointUrl, rewriteUrl)).rejects.toThrow(message);
+      expect(rewriteUrl).not.toHaveBeenCalled();
+    },
+  );
+
   it("pins validated public HTTP endpoints before they become durable metadata", async () => {
     const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
 

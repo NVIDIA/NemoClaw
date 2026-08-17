@@ -398,20 +398,21 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
     }
   });
 
-  it("does not inject an OpenClaw baseline into other agent policies (#8497)", () => {
-    const policies = requireForTest(
-      path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
-    ) as typeof import("../src/lib/policy");
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "does not inject an OpenClaw baseline into other agent policies [%s] (#8497)",
+    (agent) => {
+      const policies = requireForTest(
+        path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
+      ) as typeof import("../src/lib/policy");
 
-    for (const agent of ["hermes", "langchain-deepagents-code"] as const) {
       const result = policies.mergePresetNamesIntoPolicy(excludedBaselinePolicy(), ["npm"], {
         agent,
       });
       const effective = YAML.parse(result.policy);
       expect(effective.network_policies.npm_yarn, agent).toBeDefined();
       expect(effective.network_policies.npm_registry, agent).toBeUndefined();
-    }
-  });
+    },
+  );
 
   it("keeps an approved baseline exclusion absent during create-time composition (#8497)", () => {
     const policies = requireForTest(
