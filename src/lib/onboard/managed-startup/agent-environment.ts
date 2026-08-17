@@ -571,7 +571,8 @@ function mapPiProfile(
     NEMOCLAW_CONTEXT_WINDOW:
       profile.tuning.contextWindow === null ? "" : String(profile.tuning.contextWindow),
     NEMOCLAW_MAX_TOKENS: profile.tuning.maxTokens === null ? "" : String(profile.tuning.maxTokens),
-    NEMOCLAW_REASONING: profile.tuning.reasoning === null ? "" : booleanFlag(profile.tuning.reasoning),
+    NEMOCLAW_REASONING:
+      profile.tuning.reasoning === null ? "" : String(profile.tuning.reasoning),
   };
   appendHostProxyEnvironment(configurationEnvironment, profile);
   const runtimeEnvironment: MutableEnvironment = { ...configurationEnvironment };

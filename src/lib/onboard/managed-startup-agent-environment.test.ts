@@ -707,22 +707,13 @@ describe("managed startup agent environment", () => {
       https_proxy: "",
       no_proxy: "",
     });
-    const expectedPiRuntime = { ...result.configurationEnvironment };
-    delete expectedPiRuntime.NEMOCLAW_INFERENCE_BASE_URL;
-    delete expectedPiRuntime.NEMOCLAW_CONTEXT_WINDOW;
-    delete expectedPiRuntime.NEMOCLAW_MAX_TOKENS;
-    delete expectedPiRuntime.NEMOCLAW_REASONING;
-    for (const name of [
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "http_proxy",
-      "https_proxy",
-      "no_proxy",
-    ]) {
-      delete expectedPiRuntime[name];
-    }
-    expect(result.runtimeEnvironment).toEqual(expectedPiRuntime);
+    expect(result.runtimeEnvironment).toEqual({
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+    });
     expect(result.materials).toEqual([
       {
         kind: "corporate-ca-handoff",
@@ -770,17 +761,17 @@ describe("managed startup agent environment", () => {
     expect(result.configurationEnvironment).toMatchObject({
       NEMOCLAW_CONTEXT_WINDOW: "262144",
       NEMOCLAW_MAX_TOKENS: "32000",
-      NEMOCLAW_REASONING: "1",
+      NEMOCLAW_REASONING: "true",
     });
-    for (const name of ["NEMOCLAW_CONTEXT_WINDOW", "NEMOCLAW_MAX_TOKENS", "NEMOCLAW_REASONING"]) {
-      expect(result.runtimeEnvironment).not.toHaveProperty(name);
-    }
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_CONTEXT_WINDOW");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_MAX_TOKENS");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING");
     expect(
       mapManagedStartupProfileToAgentEnvironment({
         ...base,
         tuning: { ...base.tuning, reasoning: false },
       }).configurationEnvironment.NEMOCLAW_REASONING,
-    ).toBe("0");
+    ).toBe("false");
   });
 
   it("rebuilds the Pi generator inputs from the current route without retaining the previous one (#7930)", () => {
@@ -810,14 +801,10 @@ describe("managed startup agent environment", () => {
       { ...before.materials[2], contents: "3129\n" },
     ]);
     const serialized = JSON.stringify(after);
-    for (const stale of [
-      "https://inference.local/v1",
-      "nvidia/nemotron-3-super-120b-a12b",
-      "10.200.0.1",
-      "3128",
-    ]) {
-      expect(serialized).not.toContain(stale);
-    }
+    expect(serialized).not.toContain("https://inference.local/v1");
+    expect(serialized).not.toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(serialized).not.toContain("10.200.0.1");
+    expect(serialized).not.toContain("3128");
     expect(after.actions).toEqual(before.actions);
   });
 
