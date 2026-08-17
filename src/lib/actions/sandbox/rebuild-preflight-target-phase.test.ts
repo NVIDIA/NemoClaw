@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  hostLocalInferenceReceipt,
   serializedHostLocalInferenceReceipt,
   serializedLlamaCppHostLocalInferenceReceipt,
 } from "../../../../test/helpers/host-local-inference-receipt";
@@ -11,6 +12,7 @@ import type {
   ProviderRecoveryReceipt,
   RegistryInferenceRoute,
 } from "../../onboard/rebuild-route-handoff";
+import { serializeHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
   pinRebuildTargetGatewayForReadiness,
@@ -127,16 +129,57 @@ describe("stageRegistryProviderRecoveryReceipt", () => {
 });
 
 describe("stageRecordedManagedVllmIntent", () => {
-  it("carries a canonical recorded managed-vLLM selection into both rebuild readiness gates (#9292)", () => {
+  const n1xExpressEntry = {
+    provider: "vllm-local",
+    model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    endpointUrl: "http://host.openshell.internal:8000/v1",
+    endpointSource: "onboard" as const,
+    openshellDriver: "docker",
+  };
+  const n1xExpressSelection = {
+    provider: n1xExpressEntry.provider,
+    model: n1xExpressEntry.model,
+    pinEndpoint: true,
+    endpointUrl: null,
+  };
+
+  it.each([
+    { receiptState: "absent", sandboxEntry: n1xExpressEntry },
+    {
+      receiptState: "null",
+      sandboxEntry: { ...n1xExpressEntry, hostLocalInferenceReceipt: null },
+    },
+  ])(
+    "carries the v0.0.109 N1x Express selection with a $receiptState receipt into rebuild readiness (#9292)",
+    ({ sandboxEntry }) => {
+      const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
+
+      stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, n1xExpressSelection);
+
+      expect(recreateOptions.allowDeferredN1xManagedVllm).toBe(true);
+    },
+  );
+
+  it("also accepts a canonical vLLM receipt on the exact N1x Express selection (#9292)", () => {
     const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
+    const genericReceipt = hostLocalInferenceReceipt("docker");
+    const n1xReceipt = serializeHostLocalInferenceReceipt({
+      ...genericReceipt,
+      endpoint: {
+        ...genericReceipt.endpoint,
+        host: "host.openshell.internal",
+      },
+      inference: {
+        protocol: "openai-chat-completions",
+        model: n1xExpressEntry.model,
+        toolCallingRequired: true,
+      },
+    });
 
     stageRecordedManagedVllmIntent(
       recreateOptions,
-      {
-        provider: "vllm-local",
-        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
-      },
-      "vllm-local",
+      { ...n1xExpressEntry, hostLocalInferenceReceipt: n1xReceipt },
+      n1xExpressSelection,
     );
 
     expect(recreateOptions.allowDeferredN1xManagedVllm).toBe(true);
@@ -144,46 +187,84 @@ describe("stageRecordedManagedVllmIntent", () => {
 
   it.each([
     {
-      caseName: "missing receipt",
-      sandboxEntry: { provider: "vllm-local" },
-      provider: "vllm-local",
+      caseName: "different recorded provider",
+      sandboxEntry: { ...n1xExpressEntry, provider: "compatible-endpoint" },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "different recorded model",
+      sandboxEntry: { ...n1xExpressEntry, model: "meta-llama/Llama-3.1-8B-Instruct" },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "different recorded endpoint",
+      sandboxEntry: { ...n1xExpressEntry, endpointUrl: "http://host.openshell.internal:8001/v1" },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "different endpoint source",
+      sandboxEntry: { ...n1xExpressEntry, endpointSource: "inference-set" as const },
+      rebuildSelection: n1xExpressSelection,
+    },
+    {
+      caseName: "different OpenShell driver",
+      sandboxEntry: { ...n1xExpressEntry, openshellDriver: "podman" },
+      rebuildSelection: n1xExpressSelection,
     },
     {
       caseName: "malformed receipt",
-      sandboxEntry: { provider: "vllm-local", hostLocalInferenceReceipt: "not-json" },
-      provider: "vllm-local",
+      sandboxEntry: { ...n1xExpressEntry, hostLocalInferenceReceipt: "not-json" },
+      rebuildSelection: n1xExpressSelection,
     },
     {
       caseName: "different host-local service",
       sandboxEntry: {
-        provider: "vllm-local",
+        ...n1xExpressEntry,
         hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
       },
-      provider: "vllm-local",
+      rebuildSelection: n1xExpressSelection,
     },
     {
-      caseName: "different rebuild route",
+      caseName: "conflicting vLLM receipt",
       sandboxEntry: {
-        provider: "vllm-local",
+        ...n1xExpressEntry,
         hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
       },
-      provider: "compatible-endpoint",
+      rebuildSelection: n1xExpressSelection,
     },
     {
-      caseName: "different recorded route",
-      sandboxEntry: {
-        provider: "compatible-endpoint",
-        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
-      },
-      provider: "vllm-local",
+      caseName: "different rebuild provider",
+      sandboxEntry: n1xExpressEntry,
+      rebuildSelection: { ...n1xExpressSelection, provider: "compatible-endpoint" },
     },
-  ])("does not infer managed-vLLM intent from a $caseName (#9292)", ({ sandboxEntry, provider }) => {
-    const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
+    {
+      caseName: "different rebuild model",
+      sandboxEntry: n1xExpressEntry,
+      rebuildSelection: { ...n1xExpressSelection, model: "meta-llama/Llama-3.1-8B-Instruct" },
+    },
+    {
+      caseName: "unresolved rebuild endpoint",
+      sandboxEntry: n1xExpressEntry,
+      rebuildSelection: { ...n1xExpressSelection, pinEndpoint: false },
+    },
+    {
+      caseName: "noncanonical rebuild endpoint",
+      sandboxEntry: n1xExpressEntry,
+      rebuildSelection: {
+        ...n1xExpressSelection,
+        endpointUrl: "http://host.openshell.internal:8001/v1",
+      },
+    },
+  ])(
+    "does not infer N1x Express intent from a $caseName (#9292)",
+    ({ sandboxEntry, rebuildSelection }) => {
+      const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
 
-    stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, provider);
+      stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, rebuildSelection);
 
-    expect(recreateOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
-  });
+      expect(recreateOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
+    },
+  );
 });
 
 describe("stageRebuildBaseImageResolutionHandoff", () => {

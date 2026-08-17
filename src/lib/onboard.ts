@@ -3012,12 +3012,7 @@ async function preflightAuthoritativeRebuildTarget(
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
           onboardPreflightGatewayAuthority.runRuntimePreflight(
-            {
-              sandboxGpu: opts.sandboxGpu,
-              sandboxGpuDevice: opts.sandboxGpuDevice,
-              noGpu: opts.noGpu,
-              allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
-            },
+            authoritativeRebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
