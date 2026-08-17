@@ -9,8 +9,9 @@ const DEPRECATED_START_MESSAGE =
 export default class DeprecatedStartCommand extends NemoClawCommand {
   static id = "start";
   static strict = true;
-  static summary = "Deprecated alias for 'tunnel start'";
-  static description = "Deprecated alias for tunnel start.";
+  static summary = "Deprecated command that prints start migration guidance";
+  static description =
+    "Use 'nemoclaw <name> start' or 'nemoclaw tunnel start'; this command does not start a sandbox or public-URL tunnel.";
   static usage = ["start"];
   static examples = ["<%= config.bin %> start"];
   static state = "deprecated" as const;
