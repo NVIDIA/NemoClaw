@@ -138,7 +138,78 @@ function dcodeInput(
   };
 }
 
+function piInput(
+  overrides: Partial<ManagedStartupProfileBuilderInput> = {},
+): ManagedStartupProfileBuilderInput {
+  return {
+    agent: "pi",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    dashboard: { agent: "pi", mode: "disabled" },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: null,
+    observabilityEnabled: null,
+    environment: {},
+    corporateCa: null,
+    ...overrides,
+  };
+}
+
 describe("buildManagedStartupProfile", () => {
+  it("builds Pi model tuning from the environment and leaves the effort scale unset (#7930)", () => {
+    const built = buildManagedStartupProfile(
+      piInput({
+        environment: {
+          NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+          NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+          NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+          NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+          NEMOCLAW_INFERENCE_API: "openai-completions",
+          NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+          NEMOCLAW_CONTEXT_WINDOW: "262144",
+          NEMOCLAW_MAX_TOKENS: "32000",
+          NEMOCLAW_REASONING: "true",
+          NEMOCLAW_PROXY_HOST: "10.200.0.1",
+          NEMOCLAW_PROXY_PORT: "3128",
+        },
+      }),
+    );
+
+    expect(built.profile.tuning).toEqual({
+      contextWindow: 262_144,
+      maxTokens: 32_000,
+      reasoning: true,
+      reasoningEffort: null,
+    });
+    expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
+  });
+
+  it("leaves every Pi model tuning field unset when the environment supplies none (#7930)", () => {
+    expect(buildManagedStartupProfile(piInput()).profile.tuning).toEqual({
+      contextWindow: null,
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    });
+  });
+
+  it("refuses a Pi reasoning flag that is neither true nor false (#7930)", () => {
+    expect(() =>
+      buildManagedStartupProfile(piInput({ environment: { NEMOCLAW_REASONING: "yes" } })),
+    ).toThrow(/NEMOCLAW_REASONING must be "true" or "false"/);
+  });
+
   it("parses and hydrates messaging before exposing the validated transport handoff", () => {
     const compactPlan = {
       schemaVersion: 1,
