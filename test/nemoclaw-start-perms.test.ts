@@ -47,6 +47,44 @@ function replaceRequired(source: string, target: string, replacement: string): s
 
 const oneShotFunction = extractShellFunction("run_oneshot_command");
 const resolveNormalizerFunction = extractShellFunction("resolve_mutable_config_normalizer");
+const configGuardFunction = extractShellFunction("run_openclaw_config_guard");
+
+describe("nemoclaw-start config guard output permissions", () => {
+  it("keeps the shared runtime path traversable while startup-owner output stays private (#9357)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-guard-output-"));
+    const runtimeDir = path.join(root, "nemoclaw");
+    const privateDir = path.join(runtimeDir, "openclaw-config-guard");
+    const caBundle = path.join(runtimeDir, "managed-startup-ca-bundle.pem");
+    const observedOutput = path.join(root, "observed-output");
+    fs.mkdirSync(runtimeDir, { mode: 0o700 });
+    fs.writeFileSync(caBundle, "corporate CA\n", { mode: 0o444 });
+
+    const testFunction = configGuardFunction
+      .replaceAll("/run/nemoclaw", runtimeDir)
+      .replaceAll("install -d -o root -g root -m", "install -d -m");
+    const script = [
+      "set -euo pipefail",
+      `python3() { find ${JSON.stringify(runtimeDir)} -type f -name '.*.output' -print >${JSON.stringify(observedOutput)}; printf 'private guard output\\n'; }`,
+      "_OPENCLAW_CONFIG_GUARD=/tmp/openclaw-config-guard.py",
+      testFunction,
+      "run_openclaw_config_guard publish-startup-ready --startup-owner",
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status, result.stderr).toBe(0);
+      expect(mode(runtimeDir)).toBe(0o755);
+      expect(fs.readFileSync(caBundle, "utf-8")).toBe("corporate CA\n");
+      expect(mode(privateDir)).toBe(0o700);
+      const outputPath = fs.readFileSync(observedOutput, "utf-8").trim();
+      expect(path.dirname(outputPath)).toBe(privateDir);
+      expect(path.basename(outputPath)).toMatch(/^\.\d+\.output$/);
+      expect(fs.readdirSync(privateDir)).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("nemoclaw-start one-shot command lifecycle", () => {
   it("sources the trusted runtime env before preserving one-shot argv (#4504)", () => {
