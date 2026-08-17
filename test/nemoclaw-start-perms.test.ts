@@ -150,8 +150,9 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     }
   });
 
-  it("forwards TERM and INT to the direct child, reaps it, and still runs cleanup (#6047)", () => {
-    for (const signal of ["TERM", "INT"] as const) {
+  it.each(["TERM", "INT"] as const)(
+    "forwards TERM and INT to the direct child, reaps it, and still runs cleanup [case %#] (#6047)",
+    (signal) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-signal-"));
       const childScript = path.join(root, "child.sh");
       const childPidFile = path.join(root, "child.pid");
@@ -195,8 +196,8 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
-    }
-  });
+    },
+  );
 
   it("returns cleanup failure and reports both statuses (#6047)", () => {
     const script = [

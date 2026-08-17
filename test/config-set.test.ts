@@ -115,14 +115,15 @@ describe("selectDirectSandboxContainer", () => {
 
 describe("config set helpers", () => {
   describe("buildConfigSetRestartGuidance", () => {
-    it("keeps managed restart guidance for OpenClaw and Hermes", () => {
-      for (const agentName of ["openclaw", "hermes"]) {
+    it.each(["openclaw", "hermes"])(
+      "keeps managed restart guidance for OpenClaw and Hermes [case %#]",
+      (agentName) => {
         const output = buildConfigSetRestartGuidance("alpha", agentName).join("\n");
 
         expect(output).toContain("--restart");
         expect(output).toContain("nemoclaw 'alpha' gateway restart");
-      }
-    });
+      },
+    );
 
     it("does not name Hermes in the OpenClaw restart note (#8614)", () => {
       const output = buildConfigSetRestartGuidance("alpha", "openclaw").join("\n");
