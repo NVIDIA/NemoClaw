@@ -66,6 +66,7 @@
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.mts",
     "source-shape:scan": "tsx scripts/find-source-shape-tests.mts --metrics",
     "source-shape:check": "tsx scripts/find-source-shape-tests.mts --check",
+    "test-size:check": "vitest run --project integration test/growth-guardrails.test.ts",
     "bump:version": "tsx scripts/bump-version.mts",
     "release:plan": "tsx scripts/release-plan.mts",
     "release:cut": "bash scripts/release-cut-tag.sh",

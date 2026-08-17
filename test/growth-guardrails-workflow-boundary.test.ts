@@ -11,6 +11,10 @@ const WORKFLOW_PATH = path.resolve(
   import.meta.dirname,
   "../.github/workflows/codebase-growth-guardrails.yaml",
 );
+const STATIC_CHECK_ACTION_PATH = path.resolve(
+  import.meta.dirname,
+  "../.github/actions/ci-static-checks/action.yaml",
+);
 
 describe("codebase growth guardrails workflow trust boundary", () => {
   // source-shape-contract: security -- The pull_request_target guardrail must run only the trusted base test and treat pull request files as data
@@ -60,5 +64,16 @@ describe("codebase growth guardrails workflow trust boundary", () => {
         },
       },
     });
+
+    const action = YAML.parse(readFileSync(STATIC_CHECK_ACTION_PATH, "utf8"));
+    expect(
+      action.runs.steps.find((step: { name?: string }) => step.name === "Run static hook checks"),
+    ).toEqual({
+      name: "Run static hook checks",
+      shell: "bash",
+      run:
+        "npx prek run --all-files --stage pre-commit \\\n  --skip source-shape-test-budget \\\n  --skip test-skills-yaml\n",
+    });
+    expect(JSON.stringify(action)).not.toContain("test-size:check");
   });
 });
