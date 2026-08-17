@@ -183,3 +183,87 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
   });
 });
+
+describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * Capture the route the in-sandbox invocation probe is asked to exercise.
+   * The probe reports the health that decides `status --json`'s exit code.
+   */
+  async function captureInvocationRoute(
+    entry: Partial<SandboxEntry>,
+  ): Promise<Record<string, unknown> | null> {
+    let seen: Record<string, unknown> | null = null;
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      policies: [],
+      gatewayName: "nemoclaw",
+      ...entry,
+    } as SandboxEntry;
+    await collectSandboxStatusSnapshot("alpha", {
+      deps: {
+        getSandbox: () => sandbox,
+        listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
+        reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
+        probeProviderHealthImpl: () => null,
+        probeSandboxInferenceGatewayHealthImpl: async () => ({
+          ok: true,
+          endpoint: "https://inference.local/v1/models",
+          detail: "reachable",
+          httpStatus: 200,
+        }),
+        probeSandboxInferenceInvocationImpl: (input: Record<string, unknown>) => {
+          seen = input;
+          return { ok: true };
+        },
+      },
+    } as never);
+    return seen;
+  }
+
+  const recorded = {
+    provider: "compatible-endpoint",
+    model: "recorded/model",
+    endpointUrl: "https://target.example/v1",
+    credentialEnv: "TARGET_KEY",
+    preferredInferenceApi: "openai-responses",
+  } satisfies Partial<SandboxEntry>;
+
+  it("keeps the recorded API family when only the model drifted", async () => {
+    // The recorded family describes the provider, which has not changed, so
+    // dropping it would probe /v1/chat/completions against a responses-only
+    // endpoint and report a healthy route as unhealthy.
+    liveGatewayInference("compatible-endpoint", "live/model");
+
+    expect(await captureInvocationRoute(recorded)).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "live/model",
+      preferredInferenceApi: "openai-responses",
+    });
+  });
+
+  it("keeps the recorded API family when the route is aligned", async () => {
+    liveGatewayInference("compatible-endpoint", "recorded/model");
+
+    expect(await captureInvocationRoute(recorded)).toMatchObject({
+      model: "recorded/model",
+      preferredInferenceApi: "openai-responses",
+    });
+  });
+
+  it("drops the recorded API family when the provider itself drifted", async () => {
+    // Regression lock: one provider's family must never be carried onto
+    // another that may have no such endpoint.
+    liveGatewayInference("nvidia-prod", "nvidia/nemotron");
+
+    expect(await captureInvocationRoute(recorded)).toMatchObject({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron",
+      preferredInferenceApi: null,
+    });
+  });
+});
