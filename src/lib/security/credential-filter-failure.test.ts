@@ -58,6 +58,11 @@ describe("credential filter no-follow boundary", () => {
     writeFileSync(jsonPath, jsonSource);
     writeFileSync(yamlPath, yamlSource);
     writeFileSync(envPath, envSource);
+
+    expect(sanitizeEnvFile(envPath)).toBe(true);
+    expect(readFileSync(envPath, "utf-8")).toBe("API_KEY=[STRIPPED_BY_MIGRATION]\n");
+    writeFileSync(envPath, envSource);
+
     fsControl.noFollowUnavailable = true;
 
     expect(sanitizeConfigFile(jsonPath)).toBe(false);
