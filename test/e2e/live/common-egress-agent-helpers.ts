@@ -477,7 +477,8 @@ export function reduceOpenClawToolEvidence(
     const externalContent = asRecord(payload?.externalContent);
     const extractor = normalizedName(payload?.extractor);
     const provider = externalContent?.provider;
-    const resultText = typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
+    const boundedPayloadText =
+      typeof payload?.text === "string" ? payload.text.slice(0, 20_000) : "";
     const status = payload?.status;
     const paired = call?.name === "web_fetch" && resultName === "web_fetch";
     const httpSuccess =
@@ -493,22 +494,22 @@ export function reduceOpenClawToolEvidence(
     }
     webFetchResults.push({
       asOfMatches:
-        typeof expectedAsOf === "string" && resultText
-          ? dateMatches(resultText, expectedAsOf)
+        typeof expectedAsOf === "string" && boundedPayloadText
+          ? dateMatches(boundedPayloadText, expectedAsOf)
           : false,
       directFetch,
       httpSuccess,
       paired,
       priceMatches:
-        typeof expectedPrice === "number" && Number.isFinite(expectedPrice) && resultText
-          ? numberMatches(resultText, expectedPrice)
+        typeof expectedPrice === "number" && Number.isFinite(expectedPrice) && boundedPayloadText
+          ? numberMatches(boundedPayloadText, expectedPrice)
           : false,
       resultSuccess: paired && message.isError !== true && payload !== null && httpSuccess,
       sourceUrlMatches:
         expectedSourceUrl !== null &&
         call?.requestedUrl === expectedSourceUrl &&
         normalizedUrl(payload?.url) === expectedSourceUrl,
-      symbolMatches: /\b(?:NVDA|NVIDIA)\b/iu.test(resultText),
+      symbolMatches: /\b(?:NVDA|NVIDIA)\b/iu.test(boundedPayloadText),
       ...(call?.target ? { target: call.target } : {}),
     });
   }

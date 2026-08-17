@@ -55,6 +55,12 @@ const REVIEWED_NPM_PRESET = YAML.stringify({
   preset: { name: "npm", description: "independent npm compatibility fixture" },
   network_policies: { npm_yarn: REVIEWED_NPM_ENTRY },
 });
+const REVIEWED_PERSONAL_ENTRY = YAML.parse(
+  fs.readFileSync(
+    path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml"),
+    "utf8",
+  ),
+).network_policies.personal_open_internet;
 
 function policyWith(networkPolicies: Record<string, unknown>): string {
   return YAML.stringify({ version: 1, network_policies: networkPolicies });
@@ -208,6 +214,63 @@ registry.addBaselineExclusion(${JSON.stringify(sandboxName)}, {
 }
 
 describe("OpenClaw npm compatibility policy lifecycle", () => {
+  it("removes npm attribution superseded by Personal without mutating live policy", () => {
+    const initialPolicy = policyWith({
+      personal_open_internet: structuredClone(REVIEWED_PERSONAL_ENTRY),
+    });
+    const { calls, payload } = runLiveScenario({
+      initialPolicy,
+      childScript: `
+registry.registerSandbox({
+  name: "personal-owner",
+  agent: "openclaw",
+  policies: ["personal-open-internet", "npm"],
+});
+const removed = policies.removePreset("personal-owner", "npm");
+process.stdout.write("\\n__RESULT__" + JSON.stringify({
+  removed,
+  policy: fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"),
+  registry: registry.getSandbox("personal-owner"),
+}));`,
+    });
+
+    expect(payload.removed).toBe(true);
+    expect(payload.policy).toBe(initialPolicy);
+    expect(payload.registry.policies).toEqual(["personal-open-internet"]);
+    expect(calls.filter((call) => call.startsWith("policy get "))).toHaveLength(1);
+    expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
+  });
+
+  it("does not restore overlapping npm web routes beside Personal during removal", () => {
+    const initialPolicy = policyWith({
+      personal_open_internet: structuredClone(REVIEWED_PERSONAL_ENTRY),
+      npm_registry: compatibilityEntry(),
+      npm_yarn: structuredClone(REVIEWED_NPM_ENTRY),
+    });
+    const { calls, payload } = runLiveScenario({
+      initialPolicy,
+      childScript: `
+registry.registerSandbox({
+  name: "personal-npm",
+  agent: "openclaw",
+  policies: ["personal-open-internet", "npm"],
+});
+const removed = policies.removePreset("personal-npm", "npm");
+process.stdout.write("\\n__RESULT__" + JSON.stringify({
+  removed,
+  policy: YAML.parse(fs.readFileSync(process.env.CURRENT_POLICY, "utf-8")),
+  registry: registry.getSandbox("personal-npm"),
+}));`,
+    });
+
+    expect(payload.removed).toBe(true);
+    expect(payload.policy.network_policies).toEqual({
+      personal_open_internet: REVIEWED_PERSONAL_ENTRY,
+    });
+    expect(payload.registry.policies).toEqual(["personal-open-internet"]);
+    expect(calls.filter((call) => call.startsWith("policy set "))).toHaveLength(1);
+  });
+
   it("repairs an active npm preset and restores the reviewed baseline on removal (#8497)", () => {
     const { calls, payload, stdout } = runLiveScenario({
       initialPolicy: unoverlaidActivePolicy(),

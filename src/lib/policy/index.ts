@@ -1219,6 +1219,38 @@ function removePreset(
     return false;
   }
 
+  const supersededByPersonal =
+    policyHasNetworkPolicy(currentPolicy, PERSONAL_OPEN_INTERNET_POLICY_KEY) &&
+    classifyPresetEntries(currentPolicy, presetEntries) === "absent" &&
+    policyDocumentsMatch(currentPolicy, mergePresetIntoPolicy(currentPolicy, presetEntries));
+  if (supersededByPersonal) {
+    const sandbox = options.skipRegistryUpdate ? undefined : registry.getSandbox(sandboxName);
+    const attributionRecorded =
+      options.skipRegistryUpdate === true ||
+      (isCustom
+        ? (sandbox?.customPolicies ?? []).some((policy) => policy.name === presetName)
+        : (sandbox?.policies ?? []).includes(presetName));
+    if (!attributionRecorded) {
+      console.error(`  Preset '${presetName}' could not be removed from the current policy.`);
+      return false;
+    }
+    if (sandbox) {
+      const attributionRemoved = isCustom
+        ? registry.removeCustomPolicyByName(sandboxName, presetName)
+        : registry.updateSandbox(sandboxName, {
+            policies: (sandbox.policies ?? []).filter((name) => name !== presetName),
+          });
+      if (!attributionRemoved) {
+        console.error(`  Preset '${presetName}' could not be removed from the registry.`);
+        return false;
+      }
+    }
+    console.log(
+      `  Removed preset: ${presetName} (Personal remains the sole web authority; live policy unchanged).`,
+    );
+    return true;
+  }
+
   let updated = removePresetFromPolicy(currentPolicy, presetEntries);
   if (!isCustom && presetName === "npm") {
     try {
@@ -1234,6 +1266,7 @@ function removePreset(
       return false;
     }
   }
+  updated = normalizePersonalOpenInternetPolicy(updated);
 
   if (updated === currentPolicy) {
     console.error(`  Preset '${presetName}' could not be removed from the current policy.`);

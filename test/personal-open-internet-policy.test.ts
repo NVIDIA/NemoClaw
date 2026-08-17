@@ -59,6 +59,16 @@ function allowedAddressMatcher(cidrs: readonly string[]): (address: string) => b
   };
 }
 
+function expectNoWebEndpoints(policies: Record<string, NetworkPolicy>): void {
+  for (const [policyName, policy] of Object.entries(policies)) {
+    for (const endpoint of policy.endpoints ?? []) {
+      const ports = [endpoint.port, ...(endpoint.ports ?? [])];
+      expect(ports, policyName).not.toContain(80);
+      expect(ports, policyName).not.toContain(443);
+    }
+  }
+}
+
 describe("Personal open internet policy preset", () => {
   it("uses OpenShell hostless L4 matching on ports 80 and 443 from every binary", () => {
     const policy = loadPersonalInternetPolicy();
@@ -128,13 +138,7 @@ describe("Personal open internet policy preset", () => {
     expect(effective.network_policies?.["openclaw-pricing"]).toBeUndefined();
     expect(effective.network_policies?.npm_yarn).toBeUndefined();
 
-    for (const [policyName, policy] of Object.entries(otherPolicies)) {
-      for (const endpoint of policy.endpoints ?? []) {
-        const ports = [endpoint.port, ...(endpoint.ports ?? [])];
-        expect(ports, policyName).not.toContain(80);
-        expect(ports, policyName).not.toContain(443);
-      }
-    }
+    expectNoWebEndpoints(otherPolicies);
   });
 
   it("preserves non-web and mixed-port endpoint authority", () => {

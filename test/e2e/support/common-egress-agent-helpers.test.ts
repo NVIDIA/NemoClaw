@@ -124,7 +124,8 @@ function stockAttemptValidationOptions(
     }),
     reply: JSON.stringify(STOCK_REPLY),
     replyValidator: (reply, evidence) =>
-      evidence !== undefined && nvdaPersonalStockReplyMatchesEvidence(reply, evidence),
+      evidence !== undefined &&
+      nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse(STOCK_REPLY.as_of)),
     toolEvidenceValidator: (candidate) => assessPersonalStockToolEvidence(candidate).matches,
     ...overrides,
   };
