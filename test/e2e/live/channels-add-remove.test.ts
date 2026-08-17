@@ -311,6 +311,7 @@ async function openClawHasTelegram(sandbox: SandboxClient, artifactName: string)
   return verdict === "yes";
 }
 
+/** Assert the active Telegram state recorded inside the OpenClaw sandbox. */
 async function expectOpenClawTelegram(
   sandbox: SandboxClient,
   expected: boolean,
