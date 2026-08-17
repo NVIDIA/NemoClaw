@@ -200,14 +200,11 @@ export interface OllamaUpgradeApplied {
 }
 
 /**
- * After the install/upgrade command, confirm the running Ollama daemon
- * actually advanced past `MIN_OLLAMA_VERSION`. The CLI binary on `PATH`
- * is not sufficient: a user-local install can put a newer binary on
- * `${HOME}/.local/bin` while the system daemon still owns `:11434`, and
- * `brew upgrade ollama` can fail silently with no daemon restart. Probe
- * `/api/version` on the daemon so the verdict matches what NemoClaw will
- * actually use for inference. The binary version is captured alongside
- * for diagnostics only.
+ * After an upgrade command, confirm that the running Ollama daemon and the
+ * installed binary both meet `MIN_OLLAMA_VERSION`. A user-local install
+ * can put a newer binary on `PATH` while the system daemon still owns `:11434`.
+ * The reverse mismatch can leave an older binary on `PATH` after the daemon
+ * restarts. Probe both versions so onboarding rejects either incomplete state.
  */
 export function assertOllamaUpgradeApplied(
   menu: { hasUpgradableOllama: boolean },
@@ -218,7 +215,10 @@ export function assertOllamaUpgradeApplied(
   }
   const detectedDaemonVersion = getRunningOllamaDaemonVersion(runCaptureImpl);
   const detectedBinaryVersion = getInstalledOllamaVersion(runCaptureImpl);
-  if (isOllamaVersionAtLeast(detectedDaemonVersion, MIN_OLLAMA_VERSION)) {
+  if (
+    isOllamaVersionAtLeast(detectedDaemonVersion, MIN_OLLAMA_VERSION) &&
+    isOllamaVersionAtLeast(detectedBinaryVersion, MIN_OLLAMA_VERSION)
+  ) {
     return { ok: true, detectedDaemonVersion, detectedBinaryVersion };
   }
   const daemonLabel = detectedDaemonVersion ?? "unreachable";
@@ -228,11 +228,14 @@ export function assertOllamaUpgradeApplied(
     ok: false,
     detectedDaemonVersion,
     detectedBinaryVersion,
-    message: `Ollama upgrade did not take effect — ${state}. ${resolveUpgradeRemedy(detectedBinaryVersion)}`,
+    message: `Ollama upgrade did not take effect — ${state}. ${resolveUpgradeRemedy(detectedDaemonVersion, detectedBinaryVersion)}`,
   };
 }
 
-function resolveUpgradeRemedy(detectedBinaryVersion: string | null): string {
+function resolveUpgradeRemedy(
+  detectedDaemonVersion: string | null,
+  detectedBinaryVersion: string | null,
+): string {
   if (isOllamaVersionAtLeast(detectedBinaryVersion, MIN_OLLAMA_VERSION)) {
     return (
       "The installed binary meets the minimum, so the service is still serving the old one. " +
@@ -240,9 +243,15 @@ function resolveUpgradeRemedy(detectedBinaryVersion: string | null): string {
     );
   }
   if (!detectedBinaryVersion) {
+    if (!detectedDaemonVersion) {
+      return (
+        "Neither the daemon nor the binary could be read. Check that Ollama is installed and " +
+        "running, then rerun, or install it manually (https://ollama.com/download)."
+      );
+    }
     return (
-      "Neither the daemon nor the binary could be read. Check that Ollama is installed and running, " +
-      "then rerun, or install it manually (https://ollama.com/download)."
+      "The installed binary version could not be read. Check that the Ollama binary is installed " +
+      "and available on PATH, then rerun, or install it manually (https://ollama.com/download)."
     );
   }
   return (

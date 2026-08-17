@@ -11,6 +11,17 @@ import {
 
 const LINUX_NON_WSL = { platform: "linux" as const, isWsl: false };
 
+function captureOllamaVersions(
+  daemonVersion: string | null,
+  binaryVersion: string | null,
+): (command: readonly string[]) => string {
+  const responses = new Map([
+    ["curl", daemonVersion ? JSON.stringify({ version: daemonVersion }) : ""],
+    ["ollama", binaryVersion ? `ollama version is ${binaryVersion}` : ""],
+  ]);
+  return (command) => responses.get(command[0] ?? "") ?? "";
+}
+
 describe("resolveRunningOllamaMenuEntry", () => {
   it("labels unsupported Windows-host Ollama without suggesting it", () => {
     const entry = resolveRunningOllamaMenuEntry({
@@ -243,13 +254,8 @@ describe("resolveOllamaInstallMenuEntry", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("accepts the upgrade when the running daemon reports a fresh version", () => {
-    const capture = (cmd: readonly string[]) => {
-      const joined = cmd.join(" ");
-      if (joined.includes("/api/version")) return '{"version":"0.32.9"}';
-      if (joined.includes("ollama --version")) return "ollama version is 0.32.9";
-      return "";
-    };
+  it("accepts the upgrade when the daemon and installed binary meet the minimum", () => {
+    const capture = captureOllamaVersions("0.32.9", "0.32.9");
     const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
     expect(result.ok).toBe(true);
     expect(result.detectedDaemonVersion).toBe("0.32.9");
@@ -257,12 +263,7 @@ describe("resolveOllamaInstallMenuEntry", () => {
   });
 
   it("rejects the upgrade when the daemon still serves the stale version even though the binary is fresh", () => {
-    const capture = (cmd: readonly string[]) => {
-      const joined = cmd.join(" ");
-      if (joined.includes("/api/version")) return '{"version":"0.6.2"}';
-      if (joined.includes("ollama --version")) return "ollama version is 0.32.9";
-      return "";
-    };
+    const capture = captureOllamaVersions("0.6.2", "0.32.9");
     const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
     expect(result.ok).toBe(false);
     expect(result.detectedDaemonVersion).toBe("0.6.2");
@@ -272,19 +273,26 @@ describe("resolveOllamaInstallMenuEntry", () => {
     expect(result.message).toContain("systemctl restart ollama");
   });
 
-  it("points at the installer, not a restart, when the binary is still below the floor (#9276)", () => {
-    const capture = (cmd: readonly string[]) => {
-      const joined = cmd.join(" ");
-      if (joined.includes("/api/version")) return '{"version":"0.23.4"}';
-      if (joined.includes("ollama --version")) return "ollama version is 0.23.4";
-      return "";
-    };
+  it("rejects a stale binary when the running daemon meets the minimum (#9276)", () => {
+    const capture = captureOllamaVersions("0.32.9", "0.23.4");
     const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
     expect(result.ok).toBe(false);
+    expect(result.detectedDaemonVersion).toBe("0.32.9");
     expect(result.detectedBinaryVersion).toBe("0.23.4");
     expect(result.message).toContain(`did not deliver ${MIN_OLLAMA_VERSION} on this host`);
     expect(result.message).toContain(`OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh`);
     expect(result.message).not.toContain("systemctl restart ollama");
+  });
+
+  it("reports a known daemon when the installed binary version is unavailable (#9276)", () => {
+    const capture = captureOllamaVersions("0.23.4", null);
+    const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
+    expect(result.ok).toBe(false);
+    expect(result.detectedDaemonVersion).toBe("0.23.4");
+    expect(result.detectedBinaryVersion).toBeNull();
+    expect(result.message).toContain("running daemon reports 0.23.4 (binary: unknown)");
+    expect(result.message).toContain("installed binary version could not be read");
+    expect(result.message).not.toContain("Neither the daemon nor the binary could be read");
   });
 
   it("rejects the upgrade when the daemon is unreachable", () => {
@@ -293,6 +301,7 @@ describe("resolveOllamaInstallMenuEntry", () => {
     expect(result.ok).toBe(false);
     expect(result.detectedDaemonVersion).toBeNull();
     expect(result.message).toContain("unreachable");
+    expect(result.message).toContain("Neither the daemon nor the binary could be read");
   });
 
   it("does not return an entry on unsupported platforms", () => {
