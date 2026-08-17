@@ -225,7 +225,7 @@ function selectionFromReusablePlan<Agent>(
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
-  note?: (message: string) => void,
+  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -239,11 +239,14 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     ),
   );
   if (unconfiguredChannels.size === 0) return selection;
-  note?.(
+  deps.note(
     `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
   );
+  const plan = disableChannelsInPlan(selection.plan, unconfiguredChannels);
+  if (plan) deps.writePlanToEnv(plan);
+  else deps.clearPlanEnv();
   return {
-    plan: disableChannelsInPlan(selection.plan, unconfiguredChannels),
+    plan,
     selectedChannels: selection.selectedChannels.filter(
       (channelId) => !unconfiguredChannels.has(channelId),
     ),
@@ -418,7 +421,7 @@ async function selectionFromRegistryPlan<Agent>(
     return filterUnconfiguredHostChannelsFromSelection(
       selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
       options.agent,
-      options.deps.note,
+      options.deps,
     );
   }
   const activeChannels = filterChannelNamesForCurrentAgent(
@@ -446,7 +449,7 @@ async function selectionFromRegistryPlan<Agent>(
     return filterUnconfiguredHostChannelsFromSelection(
       selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
       options.agent,
-      options.deps.note,
+      options.deps,
     );
   }
   options.deps.note(
@@ -463,15 +466,19 @@ async function selectionFromRegistryPlan<Agent>(
 export function reconcileReusedSandboxMessaging<Agent>(
   plan: SandboxMessagingPlan | null,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv">,
+  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
   recordedPlan: SandboxMessagingPlan | null = plan,
 ): SandboxMessagingSelection & { readonly changed: boolean } {
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
-  const changed = !isDeepStrictEqual(filtered, recordedPlan);
-  if (changed) deps.clearPlanEnv();
+  const selection = filterUnconfiguredHostChannelsFromSelection(
+    { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
+    agent,
+    deps,
+  );
+  const changed = !isDeepStrictEqual(selection.plan, recordedPlan);
+  if (changed && isDeepStrictEqual(selection.plan, filtered)) deps.clearPlanEnv();
   return {
-    plan: filtered,
-    selectedChannels: getActiveChannelsFromPlan(filtered),
+    ...selection,
     changed,
   };
 }
@@ -645,7 +652,7 @@ async function selectionFromRegistryAuthority<Agent>(
     return filterUnconfiguredHostChannelsFromSelection(
       selection,
       options.agent,
-      options.deps.note,
+      options.deps,
     );
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);

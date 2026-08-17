@@ -25,7 +25,7 @@ Refer to [Set Up Google Chat](set-up-google-chat) before selecting it.
 </AgentOnly>
 
 If you select no channels, pressing **Enter** skips messaging setup.
-If a token-based channel token is not already in the environment or credential store, the wizard prompts for it and saves it.
+If the current host inputs do not include a token-based channel token, the wizard prompts for it and stages it for the current onboarding process.
 
 If you enable WeChat, the wizard renders a QR code, polls Tencent's iLink gateway, and captures the bot token after you scan the QR with WeChat on your phone.
 The login has an eight-minute deadline, refreshes the QR up to three times on expiry, and follows iLink's IDC redirects automatically.
@@ -93,8 +93,8 @@ Expected output:
   [non-interactive] Applying policy presets: npm, pypi
 ```
 
-The environment is the only place a channel token is read from, so no separate credential removal is needed.
-`$$nemoclaw credentials reset` takes an OpenShell provider name and does not change what onboarding detects.
+Onboarding uses the current host inputs to determine whether a token-based channel remains configured.
+`$$nemoclaw credentials reset` takes an OpenShell provider name and does not change those host inputs.
 
 A QR-paired channel such as WhatsApp is exempt.
 The host holds no value that reports whether the pairing is still live, so an absent host input is not evidence that you removed the channel.

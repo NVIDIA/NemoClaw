@@ -375,11 +375,12 @@ describe("reconcileReusedSandboxMessaging", () => {
   it("does not clear an equal recorded plan from a different authority", () => {
     const plan = telegramPlan(hashCredential("123456:registry-token") ?? "");
     const clearPlanEnv = vi.fn();
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:registry-token");
 
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv },
+      { clearPlanEnv, note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -388,10 +389,11 @@ describe("reconcileReusedSandboxMessaging", () => {
   });
 
   it("removes every unsupported channel artifact from a reused plan", () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "123456:registry-token");
     const result = reconcileReusedSandboxMessaging(
       mixedChannelPlan(),
       { name: "openclaw" },
-      { clearPlanEnv() {} },
+      { clearPlanEnv() {}, note() {}, writePlanToEnv() {} },
     );
     const filtered = result.plan;
 
@@ -425,6 +427,25 @@ describe("reconcileReusedSandboxMessaging", () => {
       stateUpdates: ["telegram"],
       healthChecks: ["telegram"],
     });
+  });
+
+  it("disables and stages an unconfigured host-backed channel for Ready sandbox reuse (#9283)", () => {
+    const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    const deps = reconcileDeps([]);
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = reconcileReusedSandboxMessaging(
+      plan,
+      { name: "openclaw" },
+      deps,
+      structuredClone(plan),
+    );
+    const disabledPlan = withChannelDisabled(plan, "discord");
+
+    expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
+    expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(disabledPlan);
+    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
+    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
   });
 });
 
@@ -504,6 +525,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
 
   it("records the removal in the plan so a later reader cannot re-enable it (#9283)", async () => {
     const registryPlan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    const disabledPlan = withChannelDisabled(registryPlan, "discord");
     const deps = reconcileDeps([]);
     deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
       authoritative: true,
@@ -521,6 +543,7 @@ describe("reconcileSandboxMessaging plan authority", () => {
 
     expect(getActiveChannelsFromPlan(result.plan)).toEqual([]);
     expect(result.plan?.disabledChannels).toEqual(["discord"]);
+    expect(deps.writePlanToEnv).toHaveBeenLastCalledWith(disabledPlan);
     expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
   });
 
