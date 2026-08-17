@@ -80,7 +80,7 @@ export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | und
 // plus "~"; the two sets stay separate because command tokens and endpoint
 // URLs are distinct contracts.
 const ENDPOINT_URL_ALLOWED_CHARACTERS = /^[A-Za-z0-9_./:=,@%+\-[\]~]+$/u;
-const PERCENT_ENCODED_CONTROL_CHARACTER = /%(?:[01][0-9a-f]|7f)/i;
+const CONTROL_OR_FORMAT_CHARACTER = /[\p{Cc}\p{Cf}]/u;
 
 export type EndpointUrlViolation = {
   kind:
@@ -112,10 +112,21 @@ export function unsafeEndpointUrlViolation(
       reason: "must not contain userinfo, query, or fragment components.",
     };
   }
-  if (/[\p{Cc}\p{Cf}]/u.test(raw)) {
+  if (CONTROL_OR_FORMAT_CHARACTER.test(raw)) {
     return { kind: "control-characters", reason: "must not contain control characters." };
   }
-  if (PERCENT_ENCODED_CONTROL_CHARACTER.test(raw)) {
+  // Decode once and reclassify so a percent-encoded control or format
+  // character (ASCII %0A as well as UTF-8 forms such as %C2%80 and %E2%80%8B)
+  // cannot pass while its literal form is rejected. Downstream consumers
+  // decode at most once, so a double-encoded sequence stays inert text.
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // Malformed percent-encoding carries no decoded controls; the remaining
+    // checks classify the raw input.
+  }
+  if (CONTROL_OR_FORMAT_CHARACTER.test(decoded)) {
     return {
       kind: "encoded-control-characters",
       reason: "must not contain percent-encoded control characters.",

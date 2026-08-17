@@ -159,6 +159,12 @@ describe("unsafeEndpointUrlViolation", () => {
     ["encoded newline", "https://example.test/v1%0ainjected", "encoded-control-characters"],
     ["encoded carriage return uppercase", "https://example.test/v1%0Dx", "encoded-control-characters"],
     ["encoded NUL", "https://example.test/v1%00x", "encoded-control-characters"],
+    ["encoded UTF-8 C1 control", "https://example.test/v1%C2%80x", "encoded-control-characters"],
+    [
+      "encoded UTF-8 zero-width space",
+      "https://example.test/v1%E2%80%8Bx",
+      "encoded-control-characters",
+    ],
     ["raw tab", "https://example.test/v\t1", "control-characters"],
     ["raw newline", "https://example.test/v\n1", "control-characters"],
     ["query string", "http://127.0.0.1:8000/v1?param=value", "userinfo-query-fragment"],
