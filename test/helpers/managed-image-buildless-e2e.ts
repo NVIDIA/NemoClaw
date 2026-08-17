@@ -729,7 +729,7 @@ function assertManagedLaunch(
       result.payload.registerCalls,
     )}`,
   ).toBeDefined();
-  expect(registration?.agent).toBe(agent === "openclaw" ? null : agent);
+  expect(registration?.agent).toBe(agent);
   if (agent === "langchain-deepagents-code") {
     expect(registration?.dashboardPort).toBe(0);
   }
