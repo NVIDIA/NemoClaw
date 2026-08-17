@@ -324,7 +324,6 @@ if (process.argv[2] !== "tui") {
 (async () => {
   if (!process.stdin.isTTY || !process.stdout.isTTY) process.exit(64);
   fs.appendFileSync(process.env.NEMOCLAW_FIXTURE_TUI_PIDS, process.pid + "\n");
-  fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
   const recordPath = process.env.NEMOCLAW_FIXTURE_PTY_RECORD_ROOT + "/pty-record.json";
   const record = JSON.parse(fs.readFileSync(recordPath, "utf8"));
   const recordStats = fs.lstatSync(recordPath);
@@ -347,6 +346,7 @@ if (process.argv[2] !== "tui") {
   if (mode === "pty-cleanup-unknown-entry") {
     fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_PTY_RECORD_ROOT + "/unexpected", "owned test residue");
   }
+  fs.writeFileSync(process.env.NEMOCLAW_FIXTURE_TTY_MARKER, "");
   const sessionFile = process.env.NEMOCLAW_FIXTURE_SESSION_FILE;
   const terminalCopy = process.env.NEMOCLAW_FIXTURE_TERMINAL_COPY;
   const append = (role, content) => fs.appendFileSync(
@@ -431,6 +431,11 @@ fs.writeFileSync(
 while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
 [[ "$#" -gt 0 ]]
 shift
+case "$NEMOCLAW_FIXTURE_MODE:$4" in
+  pty-record-invalid:input-mode|pty-record-permission:input-mode|pty-record-identity:input-mode)
+    [[ -e "$NEMOCLAW_FIXTURE_TTY_MARKER" ]] || exit 1
+    ;;
+esac
 if [[ "$NEMOCLAW_FIXTURE_MODE" == "cleanup-failure" && "$4" == "cleanup-baseline" ]]; then
   exit 71
 fi
