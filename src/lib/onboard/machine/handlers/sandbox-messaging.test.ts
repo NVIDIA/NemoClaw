@@ -424,6 +424,22 @@ describe("reconcileReusedSandboxMessaging", () => {
     expect(result.selectedChannels).toEqual(["whatsapp"]);
   });
 
+  it("keeps a lifecycle-selected channel in a reused sandbox selection (#9283)", () => {
+    const plan = {
+      ...discordPlan(hashCredential("previous-discord-token") ?? ""),
+      workflow: "add-channel" as const,
+    };
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = reconcileReusedSandboxMessaging(
+      plan,
+      { name: "openclaw" },
+      { clearPlanEnv() {} },
+    );
+
+    expect(result).toEqual({ plan, selectedChannels: ["discord"], changed: false });
+  });
+
   it("removes every unsupported channel artifact from a reused plan", () => {
     // Keep the channel host-configured so this case stays about unsupported
     // artifact removal, not the #9283 unconfigured-channel selection filter.

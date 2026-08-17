@@ -435,15 +435,16 @@ export function reconcileReusedSandboxMessaging<Agent>(
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
   const changed = !isDeepStrictEqual(filtered, recordedPlan);
   if (changed) deps.clearPlanEnv();
-  // The reused plan records the previous selection, not the current host
-  // input. Report only channels the environment still configures so the
-  // policies handler can classify a retired channel as unconfigured and drop
-  // its egress preset (#9283). The plan itself stays untouched.
+  const selection = {
+    plan: filtered,
+    selectedChannels: getActiveChannelsFromPlan(filtered),
+  };
+  const currentSelection =
+    filtered && registryPlanRecordsLifecycleSelection(filtered)
+      ? selection
+      : filterUnconfiguredHostChannelsFromSelection(selection, agent);
   return {
-    ...filterUnconfiguredHostChannelsFromSelection(
-      { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
-      agent,
-    ),
+    ...currentSelection,
     changed,
   };
 }
