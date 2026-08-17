@@ -353,6 +353,36 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(true);
   });
 
+  it("preserves a generic sanitization error when backup cleanup also fails (#8202)", () => {
+    const backupPath = createBackup();
+    const sanitizeError = new Error("injected sanitization failure");
+    const cleanupError = new Error("injected cleanup failure");
+    let received: unknown;
+
+    try {
+      sanitizeBackupDirectory(backupPath, {
+        sanitizeDirectory: () => {
+          throw sanitizeError;
+        },
+        removeBackup: () => {
+          throw cleanupError;
+        },
+      });
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(Error);
+    expect((received as Error).message).toBe(
+      "Credential sanitization failed and backup cleanup failed",
+    );
+    expect((received as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((received as Error).cause as AggregateError).errors).toEqual([
+      sanitizeError,
+      cleanupError,
+    ]);
+  });
+
   it("reports only the validated directory when failed cleanup retains a snapshot (#8202)", () => {
     const backupPath = createBackup();
     const validatedPath = realpathSync(backupPath);

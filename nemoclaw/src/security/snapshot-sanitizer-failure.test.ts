@@ -75,8 +75,8 @@ function requireTrustedPython(): string {
 function requireApplyFailure(
   result: ReturnType<typeof applyDescriptorSnapshotActionsResult>,
 ): Extract<typeof result, { ok: false }> {
-  if (result.ok) throw new Error("Expected the apply helper to fail");
-  return result;
+  expect(result.ok).toBe(false);
+  return result as Extract<typeof result, { ok: false }>;
 }
 
 afterEach(() => {
@@ -121,10 +121,10 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const rootPath = makeRoot();
     const configPath = path.join(rootPath, "config.json");
     writeFileSync(configPath, "original");
+    const python = requireTrustedPython();
     const root = inspectDescriptorSnapshotRoot(rootPath)!;
     const scan = scanDescriptorSnapshot(root, new Set())!;
     const config = scan.files.find((file) => file.path === "config.json")!;
-    const python = requireTrustedPython();
     setSnapshotSanitizerPythonPathForTest(null);
 
     const result = applyDescriptorSnapshotActionsResult(root, scan, [
