@@ -145,6 +145,12 @@ describe("getRebuildEndpointFromRegistry", () => {
     expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1\n"),
     ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "\u00a0https://example.test/v1"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1\u2029"),
+    ).toEqual({ known: false });
     expect(getRebuildEndpointFromRegistry("compatible-endpoint", "http://@example.test/v1")).toEqual(
       { known: false },
     );

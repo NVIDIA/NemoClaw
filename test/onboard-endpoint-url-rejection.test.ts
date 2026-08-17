@@ -108,6 +108,16 @@ setupNim(null).then(
       "http://127.0.0.1:8000/v1\n",
       /Endpoint URL must not contain control characters\./,
     ],
+    [
+      "a leading no-break space",
+      "\u00a0http://127.0.0.1:8000/v1",
+      /Endpoint URL must contain only URL-safe ASCII characters\./,
+    ],
+    [
+      "a trailing paragraph separator",
+      "http://127.0.0.1:8000/v1\u2029",
+      /Endpoint URL must contain only URL-safe ASCII characters\./,
+    ],
   ] as const)(
     "rejects an unsafe NEMOCLAW_ENDPOINT_URL with %s before any network request or state write (#9301)",
     (_label, endpointUrl, expectedMessage) => {

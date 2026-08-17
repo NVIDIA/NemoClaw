@@ -82,6 +82,10 @@ export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | und
 const ENDPOINT_URL_ALLOWED_CHARACTERS = /^[A-Za-z0-9_./:=,@%+\-[\]~]+$/u;
 const CONTROL_OR_FORMAT_CHARACTER = /[\p{Cc}\p{Cf}]/u;
 
+function trimEndpointUrlAsciiSpaces(value: string): string {
+  return value.replace(/^ +/u, "").replace(/ +$/u, "");
+}
+
 export type EndpointUrlViolation = {
   kind:
     | "userinfo-query-fragment"
@@ -105,9 +109,9 @@ export function unsafeEndpointUrlViolation(
   value: string | null | undefined,
 ): EndpointUrlViolation | null {
   const input = String(value || "");
-  const raw = input.trim();
+  const raw = trimEndpointUrlAsciiSpaces(input);
   if (!raw) return null;
-  // Inspect the original input before ordinary surrounding whitespace is
+  // Inspect the original input before surrounding ASCII spaces are
   // normalized. The WHATWG parser and downstream consumers can discard
   // boundary controls, but intake promises to reject them before mutation.
   if (CONTROL_OR_FORMAT_CHARACTER.test(input)) {

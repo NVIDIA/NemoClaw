@@ -59,6 +59,11 @@ describe("custom inference endpoint DNS pinning", () => {
       "http://public.example/v1\n",
       /endpoint-url must not contain control characters\./,
     ],
+    [
+      "a leading no-break space",
+      "\u00a0http://public.example/v1",
+      /endpoint-url must contain only URL-safe ASCII characters\./,
+    ],
   ] as const)(
     "rejects an endpoint URL with %s before DNS validation or any mutation (#9301)",
     async (_label, endpointUrl, message) => {
