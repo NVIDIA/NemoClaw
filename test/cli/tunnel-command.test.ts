@@ -37,6 +37,13 @@ describe("tunnel CLI dispatch", () => {
     expect(r.out).toContain("Deprecated alias");
   });
 
+  it("deprecated start exits 0 with sandbox-scoped migration guidance (#9303)", () => {
+    const r = run("start 2>&1");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("nemoclaw <name> start");
+    expect(r.out).toContain("nemoclaw tunnel start");
+  });
+
   it("tunnel stop --help exits 0 and shows tunnel usage", () => {
     const r = run("tunnel stop --help");
     expect(r.code).toBe(0);

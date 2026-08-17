@@ -293,7 +293,7 @@ describe("simple global oclif adapters", () => {
     await DeprecatedStartCommand.run([], rootDir);
     await DeprecatedStopCommand.run([], rootDir);
 
-    expect(mocks.runStartCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.runStartCommand).toHaveBeenCalledTimes(1);
     expect(mocks.runStopCommand).toHaveBeenCalledTimes(2);
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),
