@@ -16,30 +16,35 @@ describe("managed workload onboard orchestration", () => {
     const runDocker = vi.fn((args: readonly string[]) => {
       const argv = [...args];
       calls.push(argv);
-      if (argv[0] === "inspect") {
-        return volume
-          ? {
-              status: 0,
-              stdout: `${JSON.stringify({ Name: volume.name, Labels: volume.labels })}\n`,
+      switch (argv[0]) {
+        case "inspect":
+          return volume
+            ? {
+                status: 0,
+                stdout: `${JSON.stringify({ Name: volume.name, Labels: volume.labels })}\n`,
+              }
+            : { status: 1, stderr: "Error response from daemon: no such volume" };
+        case "create": {
+          const labels: Record<string, string> = {};
+          for (let index = 1; index < argv.length - 1; index += 1) {
+            switch (argv[index]) {
+              case "--label": {
+                const [name, ...value] = argv[index + 1]!.split("=");
+                labels[name!] = value.join("=");
+                index += 1;
+                break;
+              }
             }
-          : { status: 1, stderr: "Error response from daemon: no such volume" };
-      }
-      if (argv[0] === "create") {
-        const labels: Record<string, string> = {};
-        for (let index = 1; index < argv.length - 1; index += 1) {
-          if (argv[index] !== "--label") continue;
-          const [name, ...value] = argv[index + 1]!.split("=");
-          labels[name!] = value.join("=");
-          index += 1;
+          }
+          volume = { name: argv.at(-1)!, labels };
+          return { status: 0, stdout: `${volume.name}\n` };
         }
-        volume = { name: argv.at(-1)!, labels };
-        return { status: 0, stdout: `${volume.name}\n` };
+        case "rm":
+          volume = null;
+          return { status: 0, stdout: `${argv[1]}\n` };
+        default:
+          return { status: 1, stderr: "unexpected Docker command" };
       }
-      if (argv[0] === "rm") {
-        volume = null;
-        return { status: 0, stdout: `${argv[1]}\n` };
-      }
-      return { status: 1, stderr: "unexpected Docker command" };
     });
 
     const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
