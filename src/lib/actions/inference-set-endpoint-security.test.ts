@@ -49,6 +49,16 @@ describe("custom inference endpoint DNS pinning", () => {
       "http://public.example/v1%0ainjected",
       /endpoint-url must not contain percent-encoded control characters\./,
     ],
+    [
+      "a leading tab",
+      "\thttp://public.example/v1",
+      /endpoint-url must not contain control characters\./,
+    ],
+    [
+      "a trailing newline",
+      "http://public.example/v1\n",
+      /endpoint-url must not contain control characters\./,
+    ],
   ] as const)(
     "rejects an endpoint URL with %s before DNS validation or any mutation (#9301)",
     async (_label, endpointUrl, message) => {

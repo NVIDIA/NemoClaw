@@ -134,7 +134,8 @@ function normalizeEndpointUrlShape(value: string): { url: URL; normalized: strin
 }
 
 function normalizeCustomEndpointUrlWithoutDns(value: string | null | undefined): string {
-  const raw = typeof value === "string" ? value.trim() : "";
+  const input = typeof value === "string" ? value : "";
+  const raw = input.trim();
   if (!raw)
     throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
   let normalized: string;
@@ -151,7 +152,7 @@ function normalizeCustomEndpointUrlWithoutDns(value: string | null | undefined):
   // sandbox mutation, matching onboarding intake. The shape check above owns
   // the userinfo, query, fragment, scheme, and parse classes and their
   // established message.
-  const violation = unsafeEndpointUrlViolation(raw);
+  const violation = unsafeEndpointUrlViolation(input);
   if (violation) {
     throw new InferenceSetError(`endpoint-url ${violation.reason}`, 2);
   }

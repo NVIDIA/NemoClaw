@@ -104,16 +104,20 @@ export type EndpointUrlViolation = {
 export function unsafeEndpointUrlViolation(
   value: string | null | undefined,
 ): EndpointUrlViolation | null {
-  const raw = String(value || "").trim();
+  const input = String(value || "");
+  const raw = input.trim();
   if (!raw) return null;
+  // Inspect the original input before ordinary surrounding whitespace is
+  // normalized. The WHATWG parser and downstream consumers can discard
+  // boundary controls, but intake promises to reject them before mutation.
+  if (CONTROL_OR_FORMAT_CHARACTER.test(input)) {
+    return { kind: "control-characters", reason: "must not contain control characters." };
+  }
   if (endpointUrlHasUserinfoQueryOrFragment(raw)) {
     return {
       kind: "userinfo-query-fragment",
       reason: "must not contain userinfo, query, or fragment components.",
     };
-  }
-  if (CONTROL_OR_FORMAT_CHARACTER.test(raw)) {
-    return { kind: "control-characters", reason: "must not contain control characters." };
   }
   // Decode once and reclassify so a percent-encoded control or format
   // character (ASCII %0A as well as UTF-8 forms such as %C2%80 and %E2%80%8B)

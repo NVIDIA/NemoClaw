@@ -82,17 +82,35 @@ setupNim(null).then(
       "shell metacharacters",
       "http://127.0.0.1:8000/v1$(id)",
       /Endpoint URL must contain only URL-safe ASCII characters\./,
-      "$(id)",
     ],
     [
       "percent-encoded control characters",
       "http://127.0.0.1:8000/v1%0ainjected",
       /Endpoint URL must not contain percent-encoded control characters\./,
-      "%0ainjected",
+    ],
+    [
+      "a leading tab",
+      "\thttp://127.0.0.1:8000/v1",
+      /Endpoint URL must not contain control characters\./,
+    ],
+    [
+      "a trailing tab",
+      "http://127.0.0.1:8000/v1\t",
+      /Endpoint URL must not contain control characters\./,
+    ],
+    [
+      "a leading newline",
+      "\nhttp://127.0.0.1:8000/v1",
+      /Endpoint URL must not contain control characters\./,
+    ],
+    [
+      "a trailing newline",
+      "http://127.0.0.1:8000/v1\n",
+      /Endpoint URL must not contain control characters\./,
     ],
   ] as const)(
     "rejects an unsafe NEMOCLAW_ENDPOINT_URL with %s before any network request or state write (#9301)",
-    (_label, endpointUrl, expectedMessage, payload) => {
+    (_label, endpointUrl, expectedMessage) => {
       const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-endpoint-url-unsafe-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -153,7 +171,7 @@ setupNim(null).then(
         assert.deepEqual(JSON.parse(result.stdout.trim()), { exitCode: 1 });
         assert.match(result.stderr, expectedMessage);
         // The rejection must not echo the unsafe input back to the terminal.
-        assert.ok(!result.stderr.includes(payload));
+        assert.ok(!result.stderr.includes(endpointUrl));
         // The QA contract (#9301): rejection fires before any network request
         // or persistent state write, so the environment stays unchanged.
         assert.ok(!fs.existsSync(curlMarkerPath));

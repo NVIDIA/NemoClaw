@@ -101,10 +101,13 @@ export async function resolveCompatibleEndpointInput(args: {
   nonInteractive: boolean;
   prompt: (message: string) => Promise<string>;
 }): Promise<string> {
-  const envUrl = (args.envUrl || "").trim();
-  const recoveredUrl = (args.recoveredEndpointUrl || "").trim();
+  const envInput = args.envUrl || "";
+  const recoveredInput = args.recoveredEndpointUrl || "";
+  const envUrl = envInput.trim();
+  const recoveredUrl = recoveredInput.trim();
   const defaultEndpointUrl = envUrl || recoveredUrl;
-  if (args.nonInteractive) return defaultEndpointUrl;
+  const defaultEndpointInput = envUrl ? envInput : recoveredUrl ? recoveredInput : "";
+  if (args.nonInteractive) return defaultEndpointInput;
   return (
     (await args.prompt(
       defaultEndpointUrl
@@ -112,7 +115,7 @@ export async function resolveCompatibleEndpointInput(args: {
         : args.kind === "openai"
           ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
           : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
-    )) || defaultEndpointUrl
+    )) || defaultEndpointInput
   );
 }
 

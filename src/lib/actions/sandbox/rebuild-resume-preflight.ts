@@ -100,7 +100,7 @@ export function canonicalCustomEndpointUrl(value: string | null | undefined): st
   const raw = typeof value === "string" ? value.trim() : "";
   // #9106/#9301: reject unsafe endpoint metadata instead of stripping or
   // forwarding it, matching onboarding intake.
-  if (unsafeEndpointUrlViolation(raw)) return null;
+  if (unsafeEndpointUrlViolation(value)) return null;
   try {
     const url = new URL(raw);
     const supportedProtocol = url.protocol === "http:" || url.protocol === "https:";
