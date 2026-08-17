@@ -332,7 +332,7 @@ describe("initial sandbox policy real preset merge", () => {
     expect(effective.network_policies?.["observability-otlp-local"]).toBeDefined();
   });
 
-  it("keeps effective shipping policy methods explicit and avoids deprecated REST TLS mode", () => {
+  function verifyShippingPolicyMethods() {
     const policyCases = [
       { path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"], agent: "openclaw" },
       {
@@ -363,7 +363,12 @@ describe("initial sandbox policy real preset merge", () => {
         }
       }
     }
-  });
+  }
+
+  it(
+    "keeps effective shipping policy methods explicit and avoids deprecated REST TLS mode",
+    verifyShippingPolicyMethods,
+  );
 
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {
     const baselinePath = repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");

@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import {
   makeEmptyClaimsJwtFixture,
@@ -458,7 +459,31 @@ describe("sanitizeConfigFile", () => {
     expect(readFileSync(configPath, "utf-8")).toContain("api_key:");
   });
 
-  it("fails closed for array-root Hermes YAML", () => {
+  it("sanitizes nested YAML arrays and rejects non-object documents", () => {
+    const sanitized = sanitizeYamlConfigContent(
+      [
+        "items:",
+        "  - safe",
+        "  - api_key: sk-secret-value-long-enough",
+        "    enabled: true",
+        "    count: 2",
+        "    optional: null",
+        "",
+      ].join("\n"),
+    );
+
+    expect(parseYaml(sanitized as string)).toEqual({
+      items: [
+        "safe",
+        {
+          api_key: "[STRIPPED_BY_MIGRATION]",
+          enabled: true,
+          count: 2,
+          optional: null,
+        },
+      ],
+    });
+    expect(sanitizeYamlConfigContent("42\n")).toBeNull();
     expect(sanitizeYamlConfigContent("- first\n- second\n")).toBeNull();
   });
 
@@ -567,10 +592,10 @@ describe("sanitizeEnvFile", () => {
 
   it("rewrites .env credentials in place", () => {
     const envPath = join(tmpDir, ".env");
-    writeFileSync(envPath, "DB_PASS=secret\nLOG_LEVEL=info\n");
+    writeFileSync(envPath, "DB_PASS=secret\nAPI_KEY=sk-secret-value\nLOG_LEVEL=info\n");
     expect(sanitizeEnvFile(envPath)).toBe(true);
     expect(readFileSync(envPath, "utf-8")).toBe(
-      "DB_PASS=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n",
+      "DB_PASS=[STRIPPED_BY_MIGRATION]\nAPI_KEY=[STRIPPED_BY_MIGRATION]\nLOG_LEVEL=info\n",
     );
   });
 

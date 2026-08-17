@@ -392,7 +392,7 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     expect(result).toMatchObject({ block: true });
   });
 
-  it("blocks normalized relative memory paths when the host resolver is unavailable", () => {
+  function verifyRelativeMemoryPathRejection() {
     const api = createMockApi();
     (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
       undefined as unknown as string,
@@ -414,7 +414,12 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
       });
       expect(result).toMatchObject({ block: true });
     }
-  });
+  }
+
+  it(
+    "blocks normalized relative memory paths when the host resolver is unavailable",
+    verifyRelativeMemoryPathRejection,
+  );
 });
 
 describe("getPluginConfig", () => {

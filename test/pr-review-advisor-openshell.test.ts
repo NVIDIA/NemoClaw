@@ -355,7 +355,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(() => readPreparedGitHubContext(contextPath)).toThrow("exceeds the 5 MiB limit");
   });
 
-  it("materializes bounded host context and pinned read tools for read-only mounts", async () => {
+  async function verifyAdvisorReadOnlyMountContext() {
     const env = advisorEnvironment();
     env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH = "/untrusted/recursive-context.json";
     const binaries = path.join(temporaryDirectory(), "binaries");
@@ -406,7 +406,9 @@ describe("PR review advisor OpenShell wrapper", () => {
         expect(fs.statSync(path.join(proofDirectory, name)).mode & 0o777).toBe(0o666);
       }
     }
-  });
+  }
+
+  it("materializes bounded host context and pinned read tools for read-only mounts", verifyAdvisorReadOnlyMountContext);
 
   it("requires repository metadata before placing immutable-boundary proof files", async () => {
     const env = advisorEnvironment();

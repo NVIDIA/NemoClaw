@@ -19,6 +19,16 @@ const INFO = JSON.stringify({
     arch: "amd64",
     os: "linux",
     cgroupVersion: "v2",
+    idMappings: {
+      uidmap: [
+        { container_id: 0, host_id: 1000, size: 1 },
+        { container_id: 1, host_id: 100000, size: 65536 },
+      ],
+      gidmap: [
+        { container_id: 0, host_id: 1000, size: 1 },
+        { container_id: 1, host_id: 100000, size: 65536 },
+      ],
+    },
     networkBackend: "netavark",
     security: { rootless: true },
     discoveredDevices: [
@@ -33,7 +43,6 @@ function engine(
     readonly info?: string;
     readonly serverVersion?: string;
     readonly version?: string;
-    readonly idMap?: string;
   } = {},
 ): ContainerEngine {
   const capture = vi.fn((args: readonly string[]) => {
@@ -55,10 +64,7 @@ function engine(
   });
   const captureHost = vi.fn((args: readonly string[]) => ({
     status: 0,
-    stdout:
-      args[0] === "--version"
-        ? (overrides.version ?? "podman version 5.6.2\n")
-        : (overrides.idMap ?? "0 1000 1\n1 100000 65536\n"),
+    stdout: args[0] === "--version" ? (overrides.version ?? "podman version 5.6.2\n") : "",
     stderr: "",
   }));
   return {
@@ -98,14 +104,7 @@ describe("Podman host preflight", () => {
     expect(runtime.capture).toHaveBeenCalledWith(["info", "--format", "json"], 15_000);
     expect(runtime.capture).toHaveBeenCalledWith(["version", "--format", "json"], 10_000);
     expect(runtime.captureHost).toHaveBeenCalledWith(["--version"], 10_000);
-    expect(runtime.captureHost).toHaveBeenCalledWith(
-      ["unshare", "cat", "/proc/self/uid_map"],
-      10_000,
-    );
-    expect(runtime.captureHost).toHaveBeenCalledWith(
-      ["unshare", "cat", "/proc/self/gid_map"],
-      10_000,
-    );
+    expect(runtime.captureHost).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the CPU receipt server version canonical while preserving exact inference authority", () => {
@@ -196,12 +195,41 @@ describe("Podman host preflight", () => {
   });
 
   it("rejects missing subordinate user mappings", () => {
+    const info = JSON.stringify({
+      ...JSON.parse(INFO),
+      host: {
+        ...JSON.parse(INFO).host,
+        idMappings: {
+          ...JSON.parse(INFO).host.idMappings,
+          uidmap: [{ container_id: 0, host_id: 1000, size: 1 }],
+        },
+      },
+    });
     expect(() =>
-      qualifyPodmanHost(engine({ idMap: "0 1000 1\n" }), {
+      qualifyPodmanHost(engine({ info }), {
         platform: "linux",
         architecture: "x64",
       }),
-    ).toThrow("subordinate UID range");
+    ).toThrow("subordinate UID range for the API service user");
+  });
+
+  it("rejects malformed API-service ID mappings", () => {
+    const info = JSON.stringify({
+      ...JSON.parse(INFO),
+      host: {
+        ...JSON.parse(INFO).host,
+        idMappings: {
+          ...JSON.parse(INFO).host.idMappings,
+          gidmap: [{ container_id: 0, host_id: 1000, size: "65536" }],
+        },
+      },
+    });
+    expect(() =>
+      qualifyPodmanHost(engine({ info }), {
+        platform: "linux",
+        architecture: "x64",
+      }),
+    ).toThrow("Podman API returned malformed gidmap");
   });
 
   it("fails before commands for another engine scope or unsupported host platform", () => {
