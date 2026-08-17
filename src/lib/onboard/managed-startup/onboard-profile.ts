@@ -45,7 +45,13 @@ const PROFILE_ENVIRONMENT_INPUTS = {
     "NEMOCLAW_PROXY_PORT",
     "NEMOCLAW_REASONING_EFFORT",
   ],
-  pi: ["NEMOCLAW_PROXY_HOST", "NEMOCLAW_PROXY_PORT"],
+  pi: [
+    "NEMOCLAW_CONTEXT_WINDOW",
+    "NEMOCLAW_MAX_TOKENS",
+    "NEMOCLAW_PROXY_HOST",
+    "NEMOCLAW_PROXY_PORT",
+    "NEMOCLAW_REASONING",
+  ],
 } as const satisfies Record<ManagedStartupAgent, readonly string[]>;
 
 const HOST_NO_PROXY_INPUTS = ["NO_PROXY", "no_proxy"] as const;
@@ -240,7 +246,7 @@ export function buildManagedStartupOnboardProfile(
     agent,
     inference: input.inference,
     dashboard,
-    webSearch: agent === "langchain-deepagents-code" ? null : input.webSearch,
+    webSearch: capabilities.webSearchProviders.length > 0 ? input.webSearch : null,
     toolDisclosure: input.toolDisclosure,
     hermesToolGateways: agent === "hermes" ? input.hermesToolGateways : [],
     messagingPlan: capabilities.supportsMessaging ? input.messagingPlan : null,

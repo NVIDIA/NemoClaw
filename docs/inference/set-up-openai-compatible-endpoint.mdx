@@ -136,7 +136,7 @@ The portable profile handles the descriptor as follows:
 
 | Descriptor state | Onboarding result |
 |---|---|
-| Absent | NemoClaw keeps the existing portable behavior. The local Podman `qwen3-vl:4b` model remains the active inference route. |
+| Absent | Fresh Portable onboarding uses a nonempty `NEMOCLAW_MODEL`. An empty or absent value uses the local Podman `qwen3-vl:4b` model. A valid Portable inference descriptor remains authoritative when present. Portable resume ignores ambient model selectors and reuses the recorded provider and model authority. |
 | Directory and file metadata meet the requirements above, the descriptor is valid, and the authenticated onboarding checks pass | NemoClaw makes the compatible endpoint model the active inference route. If the local Podman `qwen3-vl:4b` runner already exists, NemoClaw leaves it installed as standby. |
 | File passes the metadata checks but contains malformed JSON, an invalid schema, an expired credential, or a rejected endpoint | NemoClaw deletes the descriptor and exits before it changes gateway, provider, sandbox, or onboarding state. |
 | Descriptor is valid, but the endpoint, selected model, or configured route fails an authenticated onboarding check | NemoClaw deletes the descriptor and exits without reporting onboarding success. The compatible route may already be configured. NemoClaw does not activate an existing local runner automatically. |

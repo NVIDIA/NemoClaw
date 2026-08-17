@@ -176,6 +176,10 @@ ARG NEMOCLAW_INFERENCE_PROVIDER_ID=inference
 ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_CONTEXT_WINDOW=
+# hadolint ignore=DL3064
+ARG NEMOCLAW_MAX_TOKENS=
+ARG NEMOCLAW_REASONING=
 # Pi installs no optional package. The Pi image still declares the managed-image
 # capability contract used by OpenClaw, Hermes, and Deep Agents Code.
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
@@ -197,6 +201,7 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && chown root:root /usr/local/share/nemoclaw/pi-proxy-host /usr/local/share/nemoclaw/pi-proxy-port \
     && chmod 0444 /usr/local/share/nemoclaw/pi-proxy-host /usr/local/share/nemoclaw/pi-proxy-port
 
+# hadolint ignore=DL3064
 ENV HOME=/sandbox \
     PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
     NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -204,6 +209,9 @@ ENV HOME=/sandbox \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
+    NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
+    NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
     NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
     PI_OFFLINE=1 \

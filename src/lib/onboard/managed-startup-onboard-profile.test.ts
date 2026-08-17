@@ -136,7 +136,85 @@ function dcodeInput(
   };
 }
 
+function piInput(
+  overrides: Partial<ManagedStartupOnboardProfileInput> = {},
+): ManagedStartupOnboardProfileInput {
+  return {
+    agentName: "pi",
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+    },
+    chatUiUrl: "",
+    effectiveDashboardPort: 0,
+    manageDashboard: false,
+    dashboardBindAddress: undefined,
+    wslExposure: false,
+    hermesDashboardState: { config: null, enabled: false },
+    webSearch: null,
+    toolDisclosure: "progressive",
+    hermesToolGateways: [],
+    messagingPlan: null,
+    dcodeAutoApprovalMode: "disabled",
+    observabilityEnabled: false,
+    environment: EMPTY_ENVIRONMENT,
+    corporateCa: null,
+    ...overrides,
+  };
+}
+
 describe("buildManagedStartupOnboardProfile", () => {
+  it("builds Pi without requiring state another agent owns (#7930)", () => {
+    const built = buildManagedStartupOnboardProfile(
+      piInput({
+        environment: {
+          NEMOCLAW_CONTEXT_WINDOW: "262144",
+          NEMOCLAW_MAX_TOKENS: "32000",
+          NEMOCLAW_REASONING: "true",
+        },
+      }),
+    );
+
+    expect(built.profile).toMatchObject({
+      agent: "pi",
+      agentConfig: { agent: "pi" },
+      dashboard: { agent: "pi", mode: "disabled" },
+      messaging: { plan: null },
+      tuning: {
+        contextWindow: 262_144,
+        maxTokens: 32_000,
+        reasoning: true,
+        reasoningEffort: null,
+      },
+    });
+  });
+
+  it("rejects Pi web-search intent instead of carrying it into the profile (#7930)", () => {
+    expect(
+      buildManagedStartupOnboardProfile(
+        piInput({ webSearch: { fetchEnabled: true, provider: "tavily" } }),
+      ).profile.agentConfig,
+    ).toEqual({ agent: "pi" });
+  });
+
+  it("rejects Pi messaging intent instead of silently discarding it (#7930)", () => {
+    expect(() =>
+      buildManagedStartupOnboardProfile(piInput({ messagingPlan: messagingPlan("openclaw") })),
+    ).toThrow(/pi does not support messaging/);
+  });
+
+  it("rejects a Pi dashboard request (#7930)", () => {
+    expect(() =>
+      buildManagedStartupOnboardProfile(piInput({ manageDashboard: true })),
+    ).toThrow(/Pi must not enable a dashboard/);
+  });
+
   it("maps a remote OpenClaw dashboard and its complete agent-owned state", () => {
     const plan = messagingPlan("openclaw");
     const built = buildManagedStartupOnboardProfile(

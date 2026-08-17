@@ -93,6 +93,7 @@ const PORTABLE_DEFAULT_ENV_KEYS = [
   TOOL_DISCLOSURE_ENV,
   "NEMOCLAW_PROVIDER",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_PROVIDER_MODEL",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_OLLAMA_NO_AUTOSTART",
@@ -218,9 +219,10 @@ export function createPortableOnboardEnvironmentScope(
     env.NEMOCLAW_PREFERRED_API = "openai-completions";
   }
   if (!options.resume) {
+    const requestedModel = previous.get("NEMOCLAW_MODEL")?.value?.trim();
     env[TOOL_DISCLOSURE_ENV] = "direct";
     env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
-    env.NEMOCLAW_MODEL = activation?.model ?? "qwen3-vl:4b";
+    env.NEMOCLAW_MODEL = activation?.model ?? (requestedModel || "qwen3-vl:4b");
     env.NEMOCLAW_POLICY_MODE = "custom";
     env.NEMOCLAW_POLICY_PRESETS =
       previous.get("NEMOCLAW_POLICY_PRESETS")?.value ?? "personal-open-internet";

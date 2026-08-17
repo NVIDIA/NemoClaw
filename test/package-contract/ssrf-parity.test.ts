@@ -361,12 +361,13 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
     ["ffc0::", true, "ff00::/8 three-quarter"],
   ];
 
-  for (const [addr, expected, label] of vectors) {
-    it(`classifies ${label} at ${addr} as ${String(expected)}`, () => {
+  it.each(vectors.map(([addr, expected, label]) => ({ addr, expected, label })))(
+    "classifies $label at $addr as $expected",
+    ({ addr, expected }) => {
       expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
       expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
-    });
-  }
+    },
+  );
 });
 
 // ── Wrapper-level cases (bracket handling, cross-family, DNS) ───────
@@ -401,10 +402,15 @@ describe("CLI and plugin isPrivateHostname agree on wrapper-level cases", () => 
     ["", false, "empty"],
   ];
 
-  for (const [addr, expected, label] of extras) {
-    it(`classifies ${label} at ${JSON.stringify(addr)} as ${String(expected)}`, () => {
-      expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
-      expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
-    });
-  }
+  it.each(
+    extras.map(([addr, expected, label]) => ({
+      addr,
+      expected,
+      label,
+      displayedAddr: JSON.stringify(addr),
+    })),
+  )("classifies $label at $displayedAddr as $expected", ({ addr, expected }) => {
+    expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
+    expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
+  });
 });
