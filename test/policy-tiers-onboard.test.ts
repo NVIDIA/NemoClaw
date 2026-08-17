@@ -521,6 +521,28 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.syncCalls[0]?.selected, ["personal-open-internet"]);
   });
 
+  it("suppresses a live OpenClaw pricing route when Personal skips optional presets", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "personal",
+        policyMode: "skip",
+        currentApplied: ["personal-open-internet", "openclaw-pricing"],
+      },
+      { agent: "openclaw" },
+    );
+
+    assert.deepEqual(result.applied, ["personal-open-internet"]);
+    assert.deepEqual(result.appliedCalls, []);
+    assert.deepEqual(result.removedCalls, ["openclaw-pricing"]);
+    assert.deepEqual(result.syncCalls, [
+      {
+        sandboxName: "test-sb",
+        current: ["personal-open-internet", "openclaw-pricing"],
+        selected: ["personal-open-internet"],
+      },
+    ]);
+  });
+
   it("restores the Personal requirement after interactive manual deselection", async () => {
     const harness = createSetupHarness({ tierName: "personal", nonInteractive: false });
     harness.deps.selectTierPresetsAndAccess = async () => [

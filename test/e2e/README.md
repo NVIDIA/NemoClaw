@@ -269,8 +269,8 @@ The execution profile owns the credentials available to its target step:
 `common-egress-agent` runs 4 isolated scenario shards.
 The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
 It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
-The ordinary redacted agent-attempt artifact persists OpenClaw CLI stdout and stderr, so it can contain the final price and exact source URL.
-Raw OpenClaw session and trajectory JSONL stay inside the sandbox; the additional host-side trajectory artifact contains only bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
+The Personal stock assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain the complete source URL.
+Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the price and source date, the source hostname and protocol, and bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
 The live assertions require `web_fetch`, reject `web_search` and search-provider use, permit public access from curl and Python, and deny loopback and link-local targets.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.

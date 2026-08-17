@@ -49,7 +49,10 @@ import {
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
-import { findUnexpectedExistingPolicyKey } from "./preset-ownership";
+import {
+  findUnexpectedExistingPolicyKey,
+  PERSONAL_OPEN_INTERNET_PRESET_NAME,
+} from "./preset-ownership";
 import {
   isPolicyDocument,
   isPolicyObject,
@@ -72,7 +75,6 @@ import {
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
-const PERSONAL_OPEN_INTERNET_PRESET_NAME = "personal-open-internet";
 const PERSONAL_OPEN_INTERNET_POLICY_KEY = "personal_open_internet";
 const PERSONAL_OPEN_INTERNET_PORTS = new Set([80, 443]);
 
@@ -2165,7 +2167,15 @@ function applyPresetContent(
       return false;
     }
   }
-  let merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+  let merged: string;
+  try {
+    merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+  } catch (error) {
+    if (!options.nonFatal) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Refusing to apply preset '${presetName}': ${message}`);
+    return false;
+  }
   let npmBaselineWidened = false;
   if (
     !options.custom &&
@@ -2191,7 +2201,14 @@ function applyPresetContent(
       return false;
     }
   }
-  merged = normalizePersonalOpenInternetPolicy(merged);
+  try {
+    merged = normalizePersonalOpenInternetPolicy(merged);
+  } catch (error) {
+    if (!options.nonFatal) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Refusing to apply preset '${presetName}': ${message}`);
+    return false;
+  }
 
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
   const disclosedPresetState =

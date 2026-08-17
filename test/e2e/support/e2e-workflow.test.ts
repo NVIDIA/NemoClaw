@@ -20,12 +20,14 @@ import {
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import {
   catalogueTarget,
+  E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
 import { COMMON_EGRESS_TEST_TIMEOUT_MS } from "../live/common-egress-agent-helpers.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import { requireFixture } from "./require-fixture";
 
 function runReleaseWaiverAuthorization(
@@ -400,6 +402,8 @@ describe("e2e workflow boundary", () => {
         "src/lib/onboard/policy-selection.ts",
         "src/lib/onboard/policy-tier-suppression.ts",
         "src/lib/policy/index.ts",
+        "test/e2e/live/openclaw-agent-assertion.ts",
+        "test/e2e/live/personal-egress-live-proof.ts",
       ]),
     });
     expect(
@@ -567,6 +571,14 @@ describe("e2e workflow boundary", () => {
       expect(() => validateE2eTargetCatalogue([mutation])).toThrow(
         "E2E target inference-routing must remain credential-free with reviewed cloudflared",
       );
+    }
+  });
+
+  it("keeps every catalogue owning path bound to a repository file or directory", () => {
+    for (const target of E2E_TARGET_CATALOGUE) {
+      for (const owner of target.owningPaths) {
+        expect(fs.existsSync(path.join(REPO_ROOT, owner)), `${target.id}: ${owner}`).toBe(true);
+      }
     }
   });
 

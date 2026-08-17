@@ -117,9 +117,10 @@ describe("effective built-in policy contracts", () => {
       const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
       const effective = composePresets(presetNames, agent);
 
-      expect(Object.keys(effective.network_policies ?? {})).toEqual(
-        expect.arrayContaining(["existing", "personal_open_internet"]),
-      );
+      const policyKeys = Object.keys(effective.network_policies ?? {});
+      expect(policyKeys).toEqual(expect.arrayContaining(["existing", "personal_open_internet"]));
+      expect(policyKeys).not.toContain("npm_yarn");
+      expect(policyKeys).not.toContain("tavily");
     },
   );
 

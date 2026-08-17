@@ -6,10 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
-import YAML from "yaml";
-
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
-import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -29,20 +26,18 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
-  assessPersonalStockToolEvidence,
-  buildOpenClawToolEvidenceReducerScript,
   classifyHermesAgentAssertion,
-  classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
-  nvdaPersonalStockReplyMatchesEvidence,
   parseChatContent,
-  parseOpenClawAgentText,
-  type OpenClawToolEvidence,
   runHermesAgentAssertionRetry,
-  runOpenClawAgentAssertionRetry,
-  validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
+import {
+  runOpenClawAgentAssertion,
+  runPersonalStockAgentAssertion,
+  type OpenClawAgentAssertionEvidence,
+} from "./openclaw-agent-assertion.ts";
+import { assertPersonalRuntimeEgress } from "./personal-egress-live-proof.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
 //
@@ -60,9 +55,7 @@ const OPENCLAW_PERSONAL_SANDBOX =
 const HERMES_SANDBOX = process.env.NEMOCLAW_COMMON_EGRESS_HERMES_SANDBOX ?? "e2e-hm-open";
 const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const HERMES_AGENT_TIMEOUT_MS = 150_000;
-const OPENCLAW_AGENT_ATTEMPTS = 3;
 const HERMES_AGENT_ATTEMPTS = 3;
 const KEEP_SANDBOX =
   process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1" ||
@@ -91,11 +84,6 @@ interface CleanupSummary {
 interface ActivePolicyPreset {
   name: string;
   provenance: string;
-}
-
-interface OpenClawAgentAssertionEvidence {
-  reply: string;
-  toolEvidence?: OpenClawToolEvidence;
 }
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -384,39 +372,6 @@ async function assertPolicyAbsent(
   expect(text(policy), `${label}: unexpected policy entry ${needle}`).not.toContain(needle);
 }
 
-async function assertPersonalOwnsAllWebPorts(
-  sandbox: SandboxClient,
-  sandboxName: string,
-): Promise<void> {
-  const policy = await sandbox.openshell(["policy", "get", "--full", sandboxName], {
-    artifactName: "policy-get-c4-personal-web-port-authority",
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(policy.exitCode, text(policy)).toBe(0);
-  const document = YAML.parse(parseOpenShellPolicy(policy.stdout).yamlBody) as {
-    network_policies?: Record<
-      string,
-      { endpoints?: Array<{ port?: number | string; ports?: Array<number | string> }> }
-    >;
-  };
-  const webPortClaims = Object.entries(document.network_policies ?? {})
-    .flatMap(([policyName, entry]) =>
-      (entry.endpoints ?? []).flatMap((endpoint) => {
-        const ports = endpoint.ports ?? (endpoint.port === undefined ? [] : [endpoint.port]);
-        return ports
-          .map(Number)
-          .filter((port) => port === 80 || port === 443)
-          .map((port) => ({ policy: policyName, port }));
-      }),
-    )
-    .sort((left, right) => left.policy.localeCompare(right.policy) || left.port - right.port);
-  expect(webPortClaims).toEqual([
-    { policy: "personal_open_internet", port: 80 },
-    { policy: "personal_open_internet", port: 443 },
-  ]);
-}
-
 async function listActivePolicyPresets(
   host: HostCliClient,
   sandboxName: string,
@@ -455,135 +410,6 @@ async function addPolicyPreset(
   );
   expect(result.exitCode, text(result)).toBe(0);
   await sleep(2_000);
-}
-
-async function runOpenClawAgentAssertion(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  artifacts: ArtifactSink,
-  args: {
-    apiKey: string;
-    expected: string;
-    label: string;
-    prompt: string;
-    replyValidator?: (reply: string, evidence?: OpenClawToolEvidence) => boolean;
-    sandboxName: string;
-    toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
-  },
-): Promise<OpenClawAgentAssertionEvidence> {
-  const sshConfig = await sandbox.openshell(["sandbox", "ssh-config", args.sandboxName], {
-    artifactName: `ssh-config-${args.label}`,
-    env: commandEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(sshConfig.exitCode, text(sshConfig)).toBe(0);
-  const sshConfigPath = await artifacts.writeText(
-    `ssh/${args.label}-${args.sandboxName}.config`,
-    sshConfig.stdout,
-  );
-
-  let lastFailure = "";
-  let successfulEvidence: OpenClawAgentAssertionEvidence | null = null;
-  const execution = await runOpenClawAgentAssertionRetry({
-    attempts: OPENCLAW_AGENT_ATTEMPTS,
-    delayMs: (attempt) => attempt * 15_000,
-    onEvidence: async (evidence) => {
-      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
-    },
-    run: async (attempt) => {
-      const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
-      const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
-      const remoteCommand = [
-        `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl`)} ${shellQuote(
-          `${sessionRoot}/${sessionId}.jsonl.lock`,
-        )} ${shellQuote(`${sessionRoot}/${sessionId}.trajectory.jsonl`)} 2>/dev/null || true`,
-        `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-          sessionId,
-        )} -m ${shellQuote(args.prompt)}`,
-      ].join("; ");
-      const agent = await host.command(
-        "ssh",
-        [
-          "-F",
-          sshConfigPath,
-          "-o",
-          "StrictHostKeyChecking=no",
-          "-o",
-          "UserKnownHostsFile=/dev/null",
-          "-o",
-          "ConnectTimeout=10",
-          "-o",
-          "LogLevel=ERROR",
-          `openshell-${args.sandboxName}.default`,
-          remoteCommand,
-        ],
-        {
-          artifactName: `${args.label}-openclaw-agent-attempt-${attempt}`,
-          env: commandEnv(),
-          redactionValues: [args.apiKey],
-          timeoutMs: AGENT_TURN_TIMEOUT_MS,
-        },
-      );
-      const combined = text(agent);
-      const reply = parseOpenClawAgentText(agent.stdout);
-      lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
-        0,
-        240,
-      )}' stderr='${agent.stderr.slice(0, 240)}'`;
-      const classification = classifyOpenClawAgentAssertion({
-        exitCode: agent.exitCode,
-        expected: args.expected,
-        reply,
-        response: combined,
-      });
-      const validation = await validateOpenClawAgentAttemptEvidence({
-        classification,
-        label: args.label,
-        recordToolEvidence: async (toolEvidence) => {
-          await artifacts.writeJson(
-            `trajectory/${args.label}-attempt-${attempt}-reduced.json`,
-            toolEvidence,
-          );
-        },
-        reduceToolEvidence: async (expectedStock) =>
-          sandbox.exec(
-            args.sandboxName,
-            [
-              "node",
-              "-e",
-              buildOpenClawToolEvidenceReducerScript(expectedStock),
-              `${sessionRoot}/${sessionId}.jsonl`,
-              `${sessionRoot}/${sessionId}.trajectory.jsonl`,
-            ],
-            {
-              env: commandEnv(),
-              persistArtifacts: false,
-              timeoutMs: 30_000,
-            },
-          ),
-        reply,
-        replyValidator: args.replyValidator,
-        toolEvidenceValidator: args.toolEvidenceValidator,
-      });
-      lastFailure = validation.failure ?? lastFailure;
-      successfulEvidence = validation.evidence ?? successfulEvidence;
-      return validation.attempt;
-    },
-    recover: async (_attempt, attemptNumber) => {
-      const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
-        artifactName: `${args.label}-recover-after-attempt-${attemptNumber}`,
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      });
-      if (recover.exitCode !== 0) {
-        lastFailure = `recovery exit=${recover.exitCode}`;
-        return false;
-      }
-      return true;
-    },
-  });
-  if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
-  throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
 function buildHermesReferencePrompt(): string {
@@ -994,125 +820,17 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),
       ).toContainEqual({ name: "personal-open-internet", provenance: "from personal tier" });
-      await assertPolicyContains(sandbox, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-policy", [
-        "personal_open_internet",
-        "169.255.0.0/16",
-        "2000::/3",
-      ]);
-      await assertPersonalOwnsAllWebPorts(sandbox, OPENCLAW_PERSONAL_SANDBOX);
-      await assertPolicyAbsent(
-        sandbox,
-        OPENCLAW_PERSONAL_SANDBOX,
-        "c4-no-brave-policy",
-        "api.search.brave.com",
-      );
-      await assertPolicyAbsent(
-        sandbox,
-        OPENCLAW_PERSONAL_SANDBOX,
-        "c4-no-tavily-policy",
-        "api.tavily.com",
-      );
-      const keyless = await sandbox.execShell(
-        OPENCLAW_PERSONAL_SANDBOX,
-        trustedSandboxShellScript(
-          'test -z "${BRAVE_API_KEY:-}" && test -z "${TAVILY_API_KEY:-}" && printf "PERSONAL_KEYLESS_FETCH_OK\\n"',
-        ),
-        {
-          artifactName: "c4-personal-keyless-fetch",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(keyless.exitCode, text(keyless)).toBe(0);
-      expect(keyless.stdout).toContain("PERSONAL_KEYLESS_FETCH_OK");
-
-      progress.phase("fetch a public website with curl and Python");
-      const multiBinary = await sandbox.execShell(
-        OPENCLAW_PERSONAL_SANDBOX,
-        trustedSandboxShellScript(String.raw`
-set -eu
-curl_bin="$(command -v curl)"
-python_bin="$(command -v python3)"
-test -n "$curl_bin"
-test -n "$python_bin"
-test "$curl_bin" != "$python_bin"
-curl_body="$(mktemp)"
-trap 'rm -f "$curl_body"' EXIT
-"$curl_bin" -fsSL --max-time 30 -o "$curl_body" https://example.com/
-grep -Fq 'Example Domain' "$curl_body"
-"$python_bin" -c 'import sys, urllib.request; body = urllib.request.urlopen(sys.argv[1], timeout=30).read(20000); raise SystemExit(0 if b"Example Domain" in body else 1)' https://example.com/
-printf 'PERSONAL_PUBLIC_MULTI_BINARY_OK curl=%s python=%s\n' "$curl_bin" "$python_bin"
-`),
-        {
-          artifactName: "c4-personal-public-multi-binary",
-          env: commandEnv(),
-          timeoutMs: 90_000,
-        },
-      );
-      expect(multiBinary.exitCode, text(multiBinary)).toBe(0);
-      expect(multiBinary.stdout).toContain("PERSONAL_PUBLIC_MULTI_BINARY_OK");
-
-      progress.phase("deny loopback and link-local targets");
-      const deniedTargets = await sandbox.execShell(
-        OPENCLAW_PERSONAL_SANDBOX,
-        trustedSandboxShellScript(String.raw`
-set -eu
-probe_denied() {
-  label="$1"
-  target="$2"
-  body="/tmp/nemoclaw-c4-denial-$label.body"
-  stderr="/tmp/nemoclaw-c4-denial-$label.stderr"
-  rm -f "$body" "$stderr"
-  set +e
-  status="$(curl --noproxy '' -sS -o "$body" -w '%{http_code}' --connect-timeout 5 --max-time 10 "$target" 2>"$stderr")"
-  rc=$?
-  set -e
-  if [ "$rc" -ne 0 ] || [ "$status" != "403" ]; then
-    printf 'PERSONAL_DENIAL_FAILED label=%s status=%s rc=%s\n' "$label" "$status" "$rc" >&2
-    head -c 1000 "$body" 2>/dev/null || true
-    head -c 1000 "$stderr" >&2 2>/dev/null || true
-    rm -f "$body" "$stderr"
-    return 1
-  fi
-  rm -f "$body" "$stderr"
-  printf 'PERSONAL_DENIAL_OK label=%s status=%s rc=%s\n' "$label" "$status" "$rc"
-}
-probe_denied loopback http://127.0.0.1:80/
-probe_denied link-local http://169.254.169.254/latest/meta-data/
-`),
-        {
-          artifactName: "c4-personal-loopback-link-local-denial",
-          env: commandEnv(),
-          timeoutMs: 60_000,
-        },
-      );
-      expect(deniedTargets.exitCode, text(deniedTargets)).toBe(0);
-      expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=loopback");
-      expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=link-local");
+      await assertPersonalRuntimeEgress(sandbox, OPENCLAW_PERSONAL_SANDBOX, "c4-personal", {
+        beforeDeniedTargets: () => progress.phase("deny loopback and link-local targets"),
+        beforePublicFetch: () => progress.phase("fetch a public website with curl and Python"),
+      });
 
       progress.phase("fetch the latest NVDA quote with representative OpenClaw web fetch");
-      const stockPrompt = `Find the latest available NVIDIA (NVDA) stock price.
-Use web_fetch and choose a public HTTPS source yourself.
-Use no other tool. Do not use web_search, Brave Search, or Tavily Search.
-Set web_fetch maxChars to no more than 8000.
-Only after web_fetch returns a numeric NVDA price with its source date or timestamp, reply with one JSON object and no Markdown.
-Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, source_url to the exact HTTPS URL passed to web_fetch, and as_of to the source's ISO 8601 date or timestamp.`;
-      expect(stockPrompt).not.toMatch(/\bhttps?:\/\//iu);
-      const stock = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
+      await runPersonalStockAgentAssertion(host, sandbox, artifacts, {
         apiKey,
-        expected: "NVDA_PERSONAL_AGENT_OK",
         label: "c4-agent-personal-stock",
-        prompt: stockPrompt,
-        replyValidator: (reply, evidence) =>
-          evidence !== undefined && nvdaPersonalStockReplyMatchesEvidence(reply, evidence),
         sandboxName: OPENCLAW_PERSONAL_SANDBOX,
-        toolEvidenceValidator: (evidence) => assessPersonalStockToolEvidence(evidence).matches,
       });
-      expect(stock.toolEvidence).toBeDefined();
-      await artifacts.writeJson(
-        "trajectory/c4-agent-personal-stock-assessment.json",
-        assessPersonalStockToolEvidence(stock.toolEvidence!),
-      );
       await artifacts.target.complete({
         id: "common-egress-agent",
         case: "openclaw-personal-stock-price",

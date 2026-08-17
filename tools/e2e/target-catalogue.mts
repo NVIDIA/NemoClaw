@@ -206,7 +206,11 @@ function commonEgressTarget(options: {
     runnerComparison: options.runnerComparison ?? true,
     shard: options.shard,
     selector: options.selector,
-    owningPaths: ["test/e2e/live/common-egress-agent-helpers.ts", ...(options.owningPaths ?? [])],
+    owningPaths: [
+      "test/e2e/live/common-egress-agent-helpers.ts",
+      ...(options.hermes ? [] : ["test/e2e/live/openclaw-agent-assertion.ts"]),
+      ...(options.owningPaths ?? []),
+    ],
     environment: {
       ...hostedInference,
       ...nonInteractive,
@@ -550,6 +554,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       "src/lib/onboard/policy-selection.ts",
       "src/lib/onboard/policy-tier-suppression.ts",
       "src/lib/policy/index.ts",
+      "test/e2e/live/personal-egress-live-proof.ts",
     ],
     shard: "openclaw-personal-stock-price",
     selector: "^common-egress.+C4.+$",

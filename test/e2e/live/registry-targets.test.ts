@@ -4,6 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -21,6 +24,14 @@ import {
   loadDcodeBaseImagePublicationEvidence,
 } from "./dcode-base-image-runtime-evidence.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
+import {
+  runPersonalStockAgentAssertion,
+  type PersonalStockAssertionResult,
+} from "./openclaw-agent-assertion.ts";
+import {
+  assertPersonalRuntimeEgress,
+  type PersonalRuntimeEgressEvidence,
+} from "./personal-egress-live-proof.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
   "post-reboot-recovery",
@@ -61,8 +72,32 @@ const REGISTRY_TARGET_PHASES = [
   "execute the target lifecycle boundary",
   "verify the expected sandbox state",
   "run target-specific cloud checks",
+  "verify the Personal stock fetch contract",
   "record target completion evidence",
 ] as const;
+
+const PERSONAL_STOCK_PR_TARGET = "ubuntu-repo-cloud-openclaw";
+
+interface PersonalStockFetchEvidence {
+  egress: PersonalRuntimeEgressEvidence;
+  stock: PersonalStockAssertionResult;
+}
+
+async function verifyPersonalStockFetch(
+  sandbox: SandboxClient,
+  host: HostCliClient,
+  artifacts: ArtifactSink,
+  apiKey: string,
+  sandboxName: string,
+): Promise<PersonalStockFetchEvidence> {
+  const egress = await assertPersonalRuntimeEgress(sandbox, sandboxName, "registry-personal");
+  const stock = await runPersonalStockAgentAssertion(host, sandbox, artifacts, {
+    apiKey,
+    label: "registry-personal-stock",
+    sandboxName,
+  });
+  return { egress, stock };
+}
 
 for (const [targetIndex, target] of listTargets().entries()) {
   const support = liveTargetSupport(target);
@@ -88,6 +123,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
       lifecycle,
       onboard,
       progress,
+      sandbox,
       secrets,
       stateValidation,
     }) => {
@@ -96,6 +132,9 @@ for (const [targetIndex, target] of listTargets().entries()) {
         artifacts.pathFor("dcode-base-image.json"),
       );
       for (const secret of target.requiredSecrets ?? []) {
+        if (target.id === PERSONAL_STOCK_PR_TARGET && !secrets.optional(secret)) {
+          throw new Error(`target '${target.id}' requires E2E secret '${secret}'`);
+        }
         secrets.required(secret);
       }
 
@@ -180,6 +219,20 @@ for (const [targetIndex, target] of listTargets().entries()) {
         secrets,
       });
 
+      let personalStockFetch: PersonalStockFetchEvidence | undefined;
+      if (target.id === PERSONAL_STOCK_PR_TARGET) {
+        expect(target.environment.policyTier).toBe("personal");
+        expect(instance.agent).toBe("openclaw");
+        progress.phase("verify the Personal stock fetch contract");
+        personalStockFetch = await verifyPersonalStockFetch(
+          sandbox,
+          host,
+          artifacts,
+          secrets.required(HOSTED_INFERENCE_SECRET),
+          instance.sandboxName,
+        );
+      }
+
       progress.phase("record target completion evidence");
       const dcodeBaseImage = dcodeBaseContract
         ? captureDcodeBaseImageRuntimeEvidence(dcodeBaseContract, instance.sandboxName)
@@ -193,6 +246,7 @@ for (const [targetIndex, target] of listTargets().entries()) {
         lifecycle: lifecycleResult
           ? { profile: lifecycleResult.profile, steps: lifecycleResult.steps.map((s) => s.id) }
           : undefined,
+        ...(personalStockFetch ? { personalStockFetch } : {}),
       });
     },
   );

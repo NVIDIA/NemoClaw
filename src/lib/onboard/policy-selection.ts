@@ -537,7 +537,11 @@ async function setupPoliciesWithSelectionInner(
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
       const retainedPresets = ensureRequiredTierPolicyPresets(
         tierName,
-        excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+        filterSuppressedAgentRequiredPresets(
+          excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+          tierName,
+          agent,
+        ),
       );
       const selectionChanged =
         retainedPresets.length !== currentAppliedPresets.length ||
