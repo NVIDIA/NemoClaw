@@ -291,7 +291,9 @@ async function openClawHasTelegram(sandbox: SandboxClient, artifactName: string)
       [
         "import json",
         "data=json.load(open('/sandbox/.openclaw/openclaw.json'))",
-        "print('yes' if 'telegram' in data.get('channels', {}) else 'no')",
+        "channel=data.get('channels', {}).get('telegram', {})",
+        "plugin=data.get('plugins', {}).get('entries', {}).get('telegram', {})",
+        "print('yes' if channel.get('enabled') is True and plugin.get('enabled') is True else 'no')",
       ].join("; "),
     ],
     {
