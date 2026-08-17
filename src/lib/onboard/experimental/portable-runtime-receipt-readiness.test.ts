@@ -144,10 +144,9 @@ describe("Portable lifecycle receipt classification", () => {
     ["wrong sandbox", { sandboxName: "beta" }],
   ])("fails closed for %s receipt state (#9207)", (_label, overrides) => {
     const directory = stateDir();
-    const value = receipt(directory, overrides);
-    for (const key of Object.keys(value)) {
-      if (value[key as keyof typeof value] === undefined) delete value[key as keyof typeof value];
-    }
+    const value = Object.fromEntries(
+      Object.entries(receipt(directory, overrides)).filter(([, entry]) => entry !== undefined),
+    );
     writeReceipt(directory, value);
 
     expect(classifyPortableLifecycleReceipt("alpha", classificationDeps(directory))).toEqual({
