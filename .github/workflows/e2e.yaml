@@ -64,7 +64,7 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Optional PR commit SHA for manual E2E.
+        description: Optional lowercase 40-character latest PR commit SHA for manual E2E.
         required: false
         default: ""
         type: string
@@ -1246,7 +1246,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -x /usr/bin/apt-get ]] || {
-            echo "::error::Protected runner cannot install Podman from its signed OS repository" >&2
+            echo "::error::Protected runner cannot install rootless Podman prerequisites from its signed OS repository" >&2
             exit 1
           }
           sudo env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get update

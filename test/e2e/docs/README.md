@@ -311,10 +311,8 @@ test/e2e/
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  Accepted nonempty `jobs` values are `inference-routing`,
-  `managed-image-protected-runtime`, and
-  `native-runtime-qualification-producer`. The `jetson-nvmap-gpu` target is also accepted when
-  `allow_jetson_dispatch` is `true`.
+  Accepted nonempty `jobs` values are `inference-routing`, `managed-image-protected-runtime`, and `native-runtime-qualification-producer`.
+  The `jetson-nvmap-gpu` target is also accepted when `allow_jetson_dispatch` is `true`.
   Refer to [NemoClaw E2E CI](../README.md).
 
 - [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
