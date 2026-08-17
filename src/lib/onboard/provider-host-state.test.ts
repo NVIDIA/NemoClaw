@@ -294,7 +294,7 @@ describe("detectInferenceProviderHostState", () => {
     expect(isWsl).toHaveBeenCalledWith({ platform: "linux", env });
   });
 
-  it("suppresses the duplicate-daemon warning when WSL mirrored networking makes the probes equivalent", () => {
+  it("classifies a mirrored loopback daemon as Windows-host Ollama (#9300)", () => {
     const logs: string[] = [];
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
@@ -324,6 +324,8 @@ describe("detectInferenceProviderHostState", () => {
     });
 
     expect(state.windowsOllamaReachable).toBe(true);
+    expect(state.isWindowsHostOllama).toBe(true);
+    expect(state.ollamaInstallMenu.entry).toBeNull();
     expect(logs).toEqual([]);
   });
 
