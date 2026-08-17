@@ -68,6 +68,7 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // and removes that temporary trust after success or failure.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
   "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
+  "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
 ] as const;
 const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
