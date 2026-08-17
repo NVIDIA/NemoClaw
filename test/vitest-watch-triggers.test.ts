@@ -72,6 +72,7 @@ const OPAQUE_INPUTS = [
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
   "tools/post-merge-docs/review-policy.yaml",
+  "tools/post-merge-docs/artifact.mts",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
@@ -187,6 +188,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/artifact.mts")).toEqual([
       "test/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
