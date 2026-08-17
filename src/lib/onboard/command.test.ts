@@ -687,49 +687,61 @@ describe("onboard command options", () => {
     }
   });
 
-  it("restores every scoped command value before exiting on a handled error (#9035)", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"));
-    const manifestPath = path.join(tmpDir, "agents.yaml");
-    fs.writeFileSync(manifestPath, "agents: []\n");
-    const env: NodeJS.ProcessEnv = {
-      NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
-      NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
-      NEMOCLAW_SERVING_PRESET: "previous-serving",
-      NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
-    };
-    let environmentAtExit: NodeJS.ProcessEnv | null = null;
-
-    try {
-      await expect(
-        runOnboardCommand({
-          flags: {
-            agents: manifestPath,
-            "no-ollama-autostart": true,
-            profile: COMPATIBLE_NANO_PROFILE.id,
-            "tool-disclosure": "direct",
-          },
-          env,
-          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
-          runOnboard: async () => {
-            throw invalidGatewayManagementDeclarationError("unsupported contract");
-          },
-          error: () => {},
-          exit: (code): never => {
-            environmentAtExit = { ...env };
-            throw new Error(`exit:${code}`);
-          },
-        }),
-      ).rejects.toThrow("exit:1");
-      expect(environmentAtExit).toEqual({
+  it.each([
+    { providerState: "unset", previousProvider: undefined },
+    { providerState: "blank", previousProvider: "" },
+  ])(
+    "restores every scoped command value before a handled-error exit when the provider is $providerState (#9035)",
+    async ({ previousProvider }) => {
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-handled-error-environment-"),
+      );
+      const manifestPath = path.join(tmpDir, "agents.yaml");
+      fs.writeFileSync(manifestPath, "agents: []\n");
+      const env: NodeJS.ProcessEnv = {
         NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
         NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
-        NEMOCLAW_SERVING_PRESET: "previous-serving",
+        NEMOCLAW_SERVING_PRESET: COMPATIBLE_NANO_PROFILE.id,
         NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+        ...(previousProvider === undefined ? {} : { NEMOCLAW_PROVIDER: previousProvider }),
+      };
+      let environmentAtExit: NodeJS.ProcessEnv | null = null;
+      const runOnboard = vi.fn(async () => {
+        throw invalidGatewayManagementDeclarationError("unsupported contract");
       });
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
+
+      try {
+        await expect(
+          runOnboardCommand({
+            flags: {
+              agents: manifestPath,
+              "no-ollama-autostart": true,
+              profile: COMPATIBLE_NANO_PROFILE.id,
+              "tool-disclosure": "direct",
+            },
+            env,
+            listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+            runOnboard,
+            error: () => {},
+            exit: (code): never => {
+              environmentAtExit = { ...env };
+              throw new Error(`exit:${code}`);
+            },
+          }),
+        ).rejects.toThrow("exit:1");
+        expect(runOnboard).toHaveBeenCalledOnce();
+        expect(environmentAtExit).toEqual({
+          NEMOCLAW_EXTRA_AGENTS_JSON: "previous-agents",
+          NEMOCLAW_OLLAMA_NO_AUTOSTART: "previous-autostart",
+          NEMOCLAW_SERVING_PRESET: COMPATIBLE_NANO_PROFILE.id,
+          NEMOCLAW_TOOL_DISCLOSURE: "previous-disclosure",
+          ...(previousProvider === undefined ? {} : { NEMOCLAW_PROVIDER: previousProvider }),
+        });
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("scopes the selected catalog preset to one onboarding run (#8384)", async () => {
     const env: NodeJS.ProcessEnv = {};
@@ -748,7 +760,7 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
-  it("selects the profile's backend provider so onboarding skips the menu (#9313)", async () => {
+  it("selects the profile's inference provider so onboarding skips the menu (#9313)", async () => {
     // The preset alone only picks the model once a provider is chosen. Without
     // a provider the run fell through to the interactive provider menu with the
     // requested profile never applied.
@@ -837,7 +849,7 @@ describe("onboard command options", () => {
     // reports instead of accepting the flag and then asking for a provider.
     const withBackend = (backend: string) => ({ recipe: { backend } }) as never;
 
-    // Pinned against the provider menu's own key so the two cannot drift.
+    // Uses the provider menu's exported key so the two cannot drift.
     expect(servingProfileProviderKey(withBackend("vllm"))).toBe(MANAGED_VLLM_PROVIDER_KEY);
     expect(servingProfileProviderKey(withBackend("install-llama-cpp"))).toBe("install-llama-cpp");
     expect(servingProfileProviderKey(withBackend("future-backend"))).toBeNull();
@@ -1061,7 +1073,7 @@ describe("onboard command options", () => {
       name: "serving profile",
       flags: { profile: COMPATIBLE_NANO_PROFILE.id } as OnboardFlags,
       listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
-      keys: ["NEMOCLAW_SERVING_PRESET"],
+      keys: ["NEMOCLAW_PROVIDER", "NEMOCLAW_SERVING_PRESET"],
     },
   ])("restores the $name environment when an agents manifest is invalid", async (testCase) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-agents-manifest-"));
