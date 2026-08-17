@@ -1148,79 +1148,129 @@ Use Bash to enter and validate the exact path from the error before you remove i
 
 ```bash
 cleanup_retained_policy() {
-  local platform_tmp_root platform_tmp_root_real retained_policy_dir retained_policy_real
-  local retained_policy_basename retained_policy_parent retained_policy_expected_real policy_file
+  local platform_tmp_root retained_policy_dir
 
   if ! platform_tmp_root=$(node -p "require('node:os').tmpdir()"); then
     printf 'Validation failed: Node.js could not report the platform temporary directory.\n' >&2
     return 1
   fi
   platform_tmp_root=${platform_tmp_root%/}
-  if [[ -z $platform_tmp_root || $platform_tmp_root != /* ]]; then
-    printf 'Validation failed for %q: the platform temporary directory is not absolute.\n' "$platform_tmp_root" >&2
-    return 1
-  fi
-  if ! platform_tmp_root_real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$platform_tmp_root"); then
-    printf 'Validation failed for %q: the platform temporary directory is not canonical.\n' "$platform_tmp_root" >&2
-    return 1
-  fi
-
   IFS= read -r -p 'Enter the exact temporary policy directory from the error: ' retained_policy_dir
-  retained_policy_basename=${retained_policy_dir##*/}
-  retained_policy_parent=${retained_policy_dir%/*}
+  python3 - "$platform_tmp_root" "$retained_policy_dir" <<'PY'
+import os
+import re
+import stat
+import sys
 
-  if [[ -z $retained_policy_dir || $retained_policy_basename != nemoclaw-policy-* || $retained_policy_basename == nemoclaw-policy- ]]; then
-    printf 'Validation failed for %q: the basename must match nemoclaw-policy-* and include a suffix.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  if [[ $retained_policy_parent != "$platform_tmp_root" ]]; then
-    printf 'Validation failed for %q: the path must be a direct child of the actual platform temporary directory %q.\n' "$retained_policy_dir" "$platform_tmp_root" >&2
-    return 1
-  fi
-  if [[ ! -d $retained_policy_dir ]]; then
-    printf 'Validation failed for %q: the path is not a directory.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  if [[ -L $retained_policy_dir ]]; then
-    printf 'Validation failed for %q: the directory is a symbolic link.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  if [[ ! -O $retained_policy_dir ]]; then
-    printf 'Validation failed for %q: the current user does not own the directory.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  if ! retained_policy_real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$retained_policy_dir"); then
-    printf 'Validation failed for %q: the path cannot be resolved canonically.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  retained_policy_expected_real=$platform_tmp_root_real/$retained_policy_basename
-  if [[ $retained_policy_real != "$retained_policy_expected_real" ]]; then
-    printf 'Validation failed for %q: the canonical path is outside the actual platform temporary directory.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
 
-  policy_file=$retained_policy_dir/policy.yaml
-  if [[ -e $policy_file || -L $policy_file ]]; then
-    if ! rm -- "$policy_file"; then
-      printf 'Cleanup failed for %q while removing policy.yaml.\n' "$retained_policy_dir" >&2
-      return 1
-    fi
-  fi
-  if ! rmdir -- "$retained_policy_dir"; then
-    printf 'Cleanup failed for %q while removing the directory.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  if [[ -e $retained_policy_dir || -L $retained_policy_dir ]]; then
-    printf 'Cleanup failed for %q: the path still exists.\n' "$retained_policy_dir" >&2
-    return 1
-  fi
-  printf 'Removed retained policy directory %q.\n' "$retained_policy_dir"
+class CleanupError(Exception):
+    pass
+
+
+def open_retained_policy_directory(platform_tmp_root, reported_path):
+    if not os.path.isabs(platform_tmp_root):
+        raise CleanupError("the platform temporary directory is not absolute")
+    platform_tmp_root_real = os.path.realpath(platform_tmp_root)
+    if platform_tmp_root_real == os.path.abspath(os.sep):
+        raise CleanupError("the platform temporary directory cannot be the filesystem root")
+    reported_basename = os.path.basename(reported_path)
+    reported_parent = os.path.dirname(reported_path)
+    if not re.fullmatch(r"nemoclaw-policy-.+", reported_basename):
+        raise CleanupError("the basename must match nemoclaw-policy-* and include a suffix")
+    if reported_parent != platform_tmp_root:
+        raise CleanupError(
+            f"the path must be a direct child of the actual platform temporary directory {platform_tmp_root!r}"
+        )
+    if os.path.realpath(reported_path) != os.path.join(platform_tmp_root_real, reported_basename):
+        raise CleanupError("the canonical path is outside the actual platform temporary directory")
+    if (
+        not hasattr(os, "geteuid")
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.stat not in os.supports_dir_fd
+        or os.unlink not in os.supports_dir_fd
+    ):
+        raise CleanupError("this platform cannot perform descriptor-relative cleanup")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0)
+    root_stat = os.stat(platform_tmp_root_real, follow_symlinks=False)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise CleanupError("the canonical platform temporary path is not a directory")
+    root_fd = os.open(platform_tmp_root_real, directory_flags | os.O_NOFOLLOW)
+    try:
+        opened_root_stat = os.fstat(root_fd)
+        if (opened_root_stat.st_dev, opened_root_stat.st_ino) != (root_stat.st_dev, root_stat.st_ino):
+            raise CleanupError("the platform temporary directory changed while it was being opened")
+        reported_stat = os.stat(reported_basename, dir_fd=root_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(reported_stat.st_mode):
+            raise CleanupError("the path is not a directory or is a symbolic link")
+        if reported_stat.st_uid != os.geteuid():
+            raise CleanupError("the current user does not own the directory")
+        policy_fd = os.open(
+            reported_basename,
+            directory_flags | os.O_NOFOLLOW,
+            dir_fd=root_fd,
+        )
+        opened_stat = os.fstat(policy_fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (reported_stat.st_dev, reported_stat.st_ino):
+            os.close(policy_fd)
+            raise CleanupError("the directory changed while it was being opened")
+        return root_fd, policy_fd, reported_basename, opened_stat
+    except Exception:
+        os.close(root_fd)
+        raise
+
+
+def remove_retained_policy_material(policy_fd):
+    try:
+        os.unlink("policy.yaml", dir_fd=policy_fd)
+    except FileNotFoundError:
+        pass
+    remaining = os.listdir(policy_fd)
+    if remaining:
+        raise CleanupError(f"the directory contains unexpected entries: {remaining!r}")
+
+
+def main():
+    root_fd = None
+    policy_fd = None
+    try:
+        root_fd, policy_fd, basename, opened_stat = open_retained_policy_directory(
+            sys.argv[1], sys.argv[2]
+        )
+        remove_retained_policy_material(policy_fd)
+        try:
+            current_stat = os.stat(basename, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError as error:
+            raise CleanupError("the reported path changed during cleanup") from error
+        if (current_stat.st_dev, current_stat.st_ino) != (opened_stat.st_dev, opened_stat.st_ino):
+            raise CleanupError("the reported path was replaced during cleanup; the replacement was not removed")
+        print(
+            f"Removed retained policy material from {sys.argv[2]!r}. "
+            "The empty directory intentionally remains."
+        )
+    except (CleanupError, OSError) as error:
+        print(f"Cleanup failed for {sys.argv[2]!r}: {error}.", file=sys.stderr)
+        raise SystemExit(1) from error
+    finally:
+        if policy_fd is not None:
+            os.close(policy_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+if __name__ == "__main__":
+    main()
+PY
 }
 cleanup_retained_policy
 ```
 
-The procedure removes only `policy.yaml`, so `rmdir` stops if the directory contains anything else.
-Continue only after the procedure reports that the retained policy directory is removed.
+The procedure opens the validated directory without following a symbolic link and removes `policy.yaml` relative to that open directory.
+It fails if the directory contains anything else.
+It intentionally leaves the empty directory because deleting it later by pathname would reintroduce a directory-replacement race.
+Continue only after the procedure reports that the retained policy material was removed.
+Do not remove the empty directory by pathname.
 If validation or cleanup fails, preserve the exact path and complete error message for support.
 Do not use another removal command on that path.
 
