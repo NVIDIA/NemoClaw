@@ -684,8 +684,10 @@ export function writeE2eWorkflowPlanCiOutput(
     controllerMap.retiredSelectorSelected && !hasPlannerSelectors
       ? emptyE2eWorkflowPlan()
       : buildE2eWorkflowPlan(plannerSelectors, { changedFiles });
+  const candidateRevision = COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "");
+  const credentialsAllowed = environment.NEMOCLAW_E2E_CREDENTIALS_ALLOWED === "true";
   const plan = validateE2eWorkflowPlan(
-    COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")
+    candidateRevision && !credentialsAllowed
       ? withoutCredentialedCatalogueProfiles(planned)
       : planned,
   );

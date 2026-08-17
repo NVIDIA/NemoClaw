@@ -65,20 +65,6 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
   ].join("\n");
 }
 
-function prCandidatePlan(
-  plan: ReturnType<typeof buildE2eWorkflowPlan>,
-): ReturnType<typeof buildE2eWorkflowPlan> {
-  return {
-    ...plan,
-    catalogueMatrices: Object.fromEntries(
-      Object.entries(plan.catalogueMatrices).map(([profile, rows]) => [
-        profile,
-        rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id))),
-      ]),
-    ) as ReturnType<typeof buildE2eWorkflowPlan>["catalogueMatrices"],
-  };
-}
-
 describe("E2E workflow plan", () => {
   it("defaults to every release-required target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
@@ -451,16 +437,11 @@ describe("E2E workflow plan", () => {
     ).toThrow("invalid or duplicate display name");
   });
 
-  it("omits credentialed catalogue profiles when checkout_sha is set", () => {
+  it("includes every catalogue profile for an authorized NVIDIA-owned candidate", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
     const plan = buildE2eWorkflowPlan();
-    plan.catalogueMatrices["nvidia-api"] = [];
-    plan.catalogueMatrices["nvidia-inference"] = [];
-    plan.catalogueMatrices["github-read"] = [];
-    plan.catalogueMatrices["brave-nvidia-inference"] = [];
-
     try {
       writeE2eWorkflowPlanCiOutput(
         {},
@@ -468,6 +449,7 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
       );
@@ -479,7 +461,37 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("allows manual PR dispatch only for standard-profile targets", () => {
+  it("omits credentialed catalogue profiles for an untrusted candidate", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-fork-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    try {
+      writeE2eWorkflowPlanCiOutput(
+        {},
+        {
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+      );
+
+      const lines = readFileSync(output, "utf8").split("\n");
+      for (const profile of [
+        "nvidia_api",
+        "nvidia_inference",
+        "github_read",
+        "brave_nvidia_inference",
+      ]) {
+        expect(lines).toContain(`catalogue_${profile}_matrix=[]`);
+      }
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("classifies only standard-profile targets as credential-free PR candidates", () => {
     expect(
       Object.fromEntries(
         E2E_TARGET_CATALOGUE.map((target) => [
@@ -678,6 +690,7 @@ describe("E2E workflow plan", () => {
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
           JOBS: "launchable-smoke",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -685,9 +698,8 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      const expectedPlan = prCandidatePlan(plan);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(expectedPlan));
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -709,6 +721,7 @@ describe("E2E workflow plan", () => {
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
           JOBS: [activeJobs, ...retiredControllerSelectorIds()].join(","),
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "true",
           TARGETS: "",
           NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
         },
@@ -716,9 +729,8 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      const expectedPlan = prCandidatePlan(plan);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(expectedPlan));
+      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

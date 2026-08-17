@@ -112,6 +112,29 @@ describe("e2e workflow boundary", () => {
     () => expect(validateE2eWorkflowBoundary()).toEqual([]),
   );
 
+  it.each([
+    ["live", "Run live E2E tests", "NVIDIA_INFERENCE_API_KEY"],
+    ["cloud-onboard", "Run cloud-onboard live Vitest test", "NVIDIA_INFERENCE_API_KEY"],
+    ["messaging-providers", "Run messaging providers live Vitest test", "SLACK_BOT_TOKEN_REAL"],
+  ])("rejects unguarded candidate credentials in %s", (jobName, stepName, secret) => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { steps?: Array<{ env?: Record<string, string>; name?: string }> }
+      >;
+    };
+    const step = workflow.jobs[jobName]!.steps!.find((candidate) => candidate.name === stepName)!;
+    step.env![secret] = `\${{ secrets.${secret} }}`;
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          `${secret} behind trusted-main candidate authorization`,
+        ),
+      ]),
+    );
+  });
+
   it("rejects a Launchable environment gate, authorization drift, and credential boundary drift", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
@@ -361,7 +384,7 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "workflow concurrency must isolate each full dispatch with github.run_id",
-        "workflow concurrency must not cancel an active Jetson dispatch",
+        "workflow concurrency must not cancel an active Jetson or Launchable dispatch",
         "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
       ]),
     );
@@ -538,7 +561,7 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "generate-matrix job must expose trusted controller matrix output",
         "trusted controller matrix must pin typed target runner to ubuntu-latest",
-        "trusted controller matrix step must run before PR checkout",
+        "external controller matrix must run before PR checkout",
       ]),
     );
   });

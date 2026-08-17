@@ -124,6 +124,8 @@ function executeGenerateMatrixWithPlannerOutput(
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
           JOBS: options.jobs ?? "cloud-onboard",
+          NEMOCLAW_E2E_CREDENTIALS_ALLOWED: "false",
+          NVIDIA_OWNED: "false",
           PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
           TARGETS: options.targets ?? "",
         },

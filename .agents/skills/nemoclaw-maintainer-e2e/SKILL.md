@@ -19,18 +19,20 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 
 ## Manual PR E2E
 
-Use this mode when the maintainer requests E2E for a pull request.
-It runs an authorized E2E selection against the current PR head commit while the workflow definition remains on `main`.
+Use this mode when a repository-authorized dispatcher requests E2E for a pull request.
+GitHub's permission to dispatch the workflow is the actor authorization; do not add a second repository-role check.
+The run executes an E2E selection against the current PR head commit while the workflow definition remains on `main`.
 It is advisory and does not create a required PR check.
 
-An empty-selector manual run exposes these values to candidate-controlled job processes:
+An empty-selector NVIDIA-owned PR run exposes these values to candidate-controlled job processes:
 
 - Long-lived API keys from repository secrets: `NVIDIA_INFERENCE_API_KEY`, `NVIDIA_API_KEY`, and `BRAVE_API_KEY`.
+- Docker Hub credentials from `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, available to candidate processes through the job's temporary Docker configuration until cleanup.
 - Long-lived messaging credentials from repository secrets: `TELEGRAM_BOT_TOKEN_REAL`, `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`.
-- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `checks: read`, `contents: read`, and `pull-requests: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
+- The job-scoped `GITHUB_TOKEN` in the `token-rotation` and `openshell-gateway-upgrade` jobs. It has `contents: read` access. Candidate code can use it while either job runs. GitHub Actions invalidates it after the job.
 - Messaging account and channel identifiers from repository secrets: `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_AUTHORIZED_CHAT_IDS`, `TELEGRAM_CHAT_ID`, `TELEGRAM_CHAT_ID_E2E`, `DISCORD_CHANNEL_ID_E2E`, and `SLACK_CHANNEL_ID_E2E`.
 
-The workflow does not rotate or revoke these API keys or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
+The workflow does not rotate or revoke these API keys, Docker Hub credentials, or messaging credentials. To remove later access, rotate or revoke every listed credential in the external service that issued it. The workflow cannot erase identifiers copied by candidate code. Review the complete candidate diff before dispatch.
 Live targets can create external resources.
 After a failure, inspect the artifacts and remove resources that target cleanup did not remove.
 
@@ -42,7 +44,7 @@ After a failure, inspect the artifacts and remove resources that target cleanup 
 
 `brev login` writes `BREV_API_KEY` and `BREV_ORG_ID` to `$HOME/.brev/credentials.json` on the GitHub-hosted runner. Later trusted steps and processes in the same job can read that file. The workflow does not delete it explicitly; it remains on the ephemeral runner filesystem until runner teardown discards that filesystem.
 These credentials remain valid until they expire or an administrator revokes them in their issuing services. If cleanup fails, remove the recorded Brev workspace. Rotate or revoke each credential to remove later access.
-This Brev credential boundary applies only to trusted Launchable or full manual dispatches against `main`. It does not apply to `main` pushes or manual PR runs.
+This Brev credential boundary applies to trusted manual dispatches against `main` that select Launchable, including NVIDIA-owned PR revision runs. It does not apply to `main` pushes or non-Launchable PR runs.
 
 The `NEMOCLAW_STAGING_LAUNCHABLE_ID` repository Actions variable selects the standing Launchable. Keep its value equal to the Launchable ID in the default URL owned by [`nemoclaw-maintainer-validate-launchable`](../nemoclaw-maintainer-validate-launchable/SKILL.md).
 
@@ -57,36 +59,37 @@ git fetch --prune origin main
 WORKFLOW_SHA="$(git rev-parse origin/main)"
 PR_JSON="$(gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}")"
 test "$(jq -r .state <<<"$PR_JSON")" = open
+test "$(jq -r .base.repo.full_name <<<"$PR_JSON")" = NVIDIA/NemoClaw
+test "$(jq -r .base.ref <<<"$PR_JSON")" = main
 HEAD_SHA="$(jq -r .head.sha <<<"$PR_JSON")"
 BASE_SHA="$(jq -r .base.sha <<<"$PR_JSON")"
 HEAD_REPOSITORY="$(jq -r .head.repo.full_name <<<"$PR_JSON")"
+HEAD_OWNER="$(jq -r .head.repo.owner.login <<<"$PR_JSON")"
+HEAD_OWNER_TYPE="$(jq -r .head.repo.owner.type <<<"$PR_JSON")"
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
 ```
 
-Require a review reason containing 10 to 500 printable characters.
-
 Choose exactly one mode:
 
-- For a PR revision run, leave `E2E_JOBS` empty. The run selects:
+- For an NVIDIA-owned PR revision, require `HEAD_OWNER=NVIDIA` and `HEAD_OWNER_TYPE=Organization`. Empty `jobs` and `targets` select every default-enabled E2E, including every catalogue credential profile. Any supported E2E job or target selector is allowed.
+- For an external PR revision, the existing bounded controller selection remains in effect:
   - every default-selected free-standing workflow E2E except `Exact staging Brev Launchable`;
   - every shared credential-free test; and
   - these controller-selected registry targets: `ubuntu-policy-custom-missing-presets-negative`, `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw`, and `ubuntu-repo-docker-post-reboot-recovery`.
-  The run skips `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
-  It skips `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
+
+Both modes skip `jetson-nvmap-gpu` unless `allow_jetson_dispatch` is `true`.
+Jetson and Launchable dispatch additionally require the PR branch to be in `NVIDIA/NemoClaw`; their operator and image-producer backends do not accept a sibling-repository candidate.
+Both modes skip `llama-cpp-dgx-spark-plan` and `llama-cpp-dgx-spark-qualification` unless their runner-queue flag is `true`.
+
 - For protected managed-image runtime qualification, set `E2E_JOBS=managed-image-protected-runtime`. The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
 - For native-runtime qualification evidence, set `E2E_JOBS=native-runtime-qualification-producer`. Use a same-repository open PR and the first workflow attempt. The trusted workflow runs each case under a credential-free candidate account on a reviewed ephemeral runner. The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts` before the selector can pass.
 
-Leave `targets` empty and keep Launchable disabled:
+The ordinary PR example leaves `targets` empty and keeps Launchable disabled:
 
 ```bash
 E2E_JOBS="${E2E_JOBS:-}"
-case "$E2E_JOBS" in
-  "" | managed-image-protected-runtime | native-runtime-qualification-producer) ;;
-  *) echo "Unsupported manual PR E2E job selector" >&2; exit 1 ;;
-esac
-REVIEW_REASON='Reviewed the commit under review and selected E2E boundary.'
 CORRELATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 INFERENCE_MODE=mock
 ALLOW_JETSON_DISPATCH=false
@@ -105,13 +108,14 @@ gh workflow run .github/workflows/e2e.yaml \
   -f "checkout_repository=${HEAD_REPOSITORY}" \
   -f "base_sha=${BASE_SHA}" \
   -f "workflow_sha=${WORKFLOW_SHA}" \
-  -f "review_reason=${REVIEW_REASON}" \
   -f "correlation_id=${CORRELATION_ID}"
 ```
 
-The trusted pre-checkout step requires current `maintain` or `admin` permission.
-It validates the actor, open PR, repository, head SHA, base SHA, workflow SHA, review reason, and allowed jobs, targets, and Launchable combination.
-A second validation after checkout rejects a changed PR identity before preparation.
+The trusted pre-checkout step validates the open PR, target repository and branch, source repository, source owner, head SHA, base SHA, and workflow SHA.
+An API-confirmed `NVIDIA` organization owner unlocks the full candidate plan and credential profiles.
+External PRs retain the bounded controller matrix and receive no repository credentials in candidate-controlled processes or reusable workflow callers.
+A second validation after checkout rejects a changed PR identity or NVIDIA ownership before preparation.
+Candidate PR runs cannot publish release qualification.
 
 The native-runtime producer binds the open PR, candidate commit, base commit, trusted workflow commit, and first workflow attempt. It runs the trusted plan from `main` and passes no GitHub, model-provider, API, or messaging credentials to candidate code. Configure `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch. The ARM64 GPU case also requires `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides no fallback runner.
 
@@ -141,7 +145,7 @@ RUN_URL="$(jq -r '.[0].url' <<<"$MATCHES")"
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
 RUN_JSON="$(gh api "repos/NVIDIA/NemoClaw/actions/runs/${RUN_ID}")"
 jq -e --arg sha "$WORKFLOW_SHA" '
-  .run_attempt == 1 and
+  .run_attempt >= 1 and
   .head_sha == $sha and
   .status == "completed" and
   .conclusion == "success"
@@ -151,10 +155,12 @@ test "$(jq -r .state <<<"$CURRENT_PR")" = open
 test "$(jq -r .head.sha <<<"$CURRENT_PR")" = "$HEAD_SHA"
 test "$(jq -r .base.sha <<<"$CURRENT_PR")" = "$BASE_SHA"
 test "$(jq -r .head.repo.full_name <<<"$CURRENT_PR")" = "$HEAD_REPOSITORY"
+test "$(jq -r .head.repo.owner.login <<<"$CURRENT_PR")" = "$HEAD_OWNER"
+test "$(jq -r .head.repo.owner.type <<<"$CURRENT_PR")" = "$HEAD_OWNER_TYPE"
 ```
 
 Return the PR number, head repository, head SHA, base SHA, workflow SHA, correlation ID, workflow URL, and result.
-A changed head repository, head SHA, or base SHA invalidates the evidence and requires a new run.
+A changed head repository, repository owner, head SHA, or base SHA invalidates the evidence and requires a new run.
 
 ## Select the Main Mode
 

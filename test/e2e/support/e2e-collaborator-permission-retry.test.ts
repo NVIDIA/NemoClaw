@@ -26,19 +26,14 @@ type PermissionScenario =
 
 const AUTHORIZATION_STEPS: AuthorizationStep[] = [
   {
-    deniedMessage: "Manual PR E2E requires a repository maintainer or administrator",
-    mismatchMessage: "Manual PR E2E permission response did not match the actor",
-    name: "Authenticate manual PR dispatch",
-  },
-  {
     deniedMessage: "Release qualification waiver requires a repository administrator",
     mismatchMessage: "Release qualification waiver permission response did not match the actor",
     name: "Authorize release qualification waiver",
   },
   {
-    deniedMessage: "Launchable image publication requires a repository maintainer or administrator",
-    mismatchMessage: "Launchable image publication permission response did not match the actor",
-    name: "Authorize Launchable image publication",
+    deniedMessage: "Launchable E2E requires a repository maintainer or administrator",
+    mismatchMessage: "Launchable E2E permission response did not match the actor",
+    name: "Authorize Launchable E2E maintainer dispatch",
   },
 ];
 
@@ -138,12 +133,12 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
       ALLOW_JETSON_DISPATCH: "false",
       BASE_SHA: "b".repeat(40),
       CHECKOUT_REPOSITORY: "contributor/NemoClaw",
-      CHECKOUT_SHA: stepName === "Authenticate manual PR dispatch" ? "a".repeat(40) : "",
+      CHECKOUT_SHA: "",
       CURL_LOG: curlLog,
       EXPECTED_WORKFLOW_SHA: workflowSha,
       GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
       GITHUB_TOKEN: "private-test-token",
-      INCLUDE_LAUNCHABLE: stepName === "Authenticate manual PR dispatch" ? "false" : "true",
+      INCLUDE_LAUNCHABLE: "true",
       JOBS: "",
       PATH: `${fixture}:${process.env.PATH ?? ""}`,
       PERMISSION_ATTEMPT_FILE: attemptFile,

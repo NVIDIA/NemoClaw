@@ -219,7 +219,7 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind an authorized trusted-main dispatch",
         ),
       ]),
     );
@@ -237,7 +237,7 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind an authorized trusted-main dispatch",
         ),
       ]),
     );
