@@ -71,6 +71,13 @@ function requireTrustedPython(): string {
   return python as string;
 }
 
+function requireApplyFailure(
+  result: ReturnType<typeof applyDescriptorSnapshotActionsResult>,
+): Extract<typeof result, { ok: false }> {
+  if (result.ok) throw new Error("Expected the apply helper to fail");
+  return result;
+}
+
 afterEach(() => {
   setSnapshotSanitizerPythonPathForTest(undefined);
   vi.unstubAllEnvs();
@@ -125,9 +132,9 @@ describe("migration snapshot sanitizer fallbacks", () => {
     expect(result).toEqual({ ok: false, reason: "python-unavailable" });
 
     setSnapshotSanitizerPythonPathForTest(python);
-    if (result.ok) throw new Error("Expected the apply helper to fail");
+    const failure = requireApplyFailure(result);
     expect(
-      snapshotSanitizerFailure(result.reason, "generic helper failure", root.canonicalPath),
+      snapshotSanitizerFailure(failure.reason, "generic helper failure", root.canonicalPath),
     ).toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
   });
 
