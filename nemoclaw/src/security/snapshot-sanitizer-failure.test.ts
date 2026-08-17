@@ -121,8 +121,8 @@ describe("migration snapshot sanitizer fallbacks", () => {
     const rootPath = makeRoot();
     const configPath = path.join(rootPath, "config.json");
     writeFileSync(configPath, "original");
-    const python = requireTrustedPython();
     const root = inspectDescriptorSnapshotRoot(rootPath)!;
+    const python = requireTrustedPython();
     const scan = scanDescriptorSnapshot(root, new Set())!;
     const config = scan.files.find((file) => file.path === "config.json")!;
     setSnapshotSanitizerPythonPathForTest(null);
