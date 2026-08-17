@@ -285,7 +285,6 @@ If the command trace contains no reviewer-request write, report the event as an 
 - Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**` changes to `Docs / Post-Merge Catch-Up`.
   Keep all other owning repository guidance in the same PR, including active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.
 - Direct documentation-only changes follow `docs/AGENTS.md`, the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract, documented validation, and independent review.
-- Before tagging, `nemoclaw-maintainer-evening` merges the dated release entry. The tag skill requires a successful no-change publisher job for the exact `origin/main` commit, no open managed documentation PR, and no branch for that candidate.
 
 ## PR Requirements
 

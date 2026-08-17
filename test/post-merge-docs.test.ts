@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import { validatePostMergeDocsWorkflowBoundary } from "../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../tools/post-merge-docs/publish.mts";
 import { executePostMergeDocs } from "../tools/post-merge-docs/run.mts";
 import type { OpenShellTools } from "../tools/openshell-agent/runtime.mts";
@@ -81,19 +82,10 @@ class FakeGitHub {
   openPulls: Array<ReturnType<FakeGitHub["pull"]>> = [];
   readonly branch: string;
   readonly commitSha = "c".repeat(40);
-  private afterPull = (): void => undefined;
-  private afterRef = (): void => undefined;
+  afterWrite = (): void => undefined;
   constructor(readonly value: Fixture) {
     this.branch = `automation/post-merge-docs-${value.mainSha.slice(0, 12)}`;
     this.liveSha = value.mainSha;
-  }
-  loseResponses() {
-    this.afterPull = () => {
-      throw new Error("lost pull response");
-    };
-    this.afterRef = () => {
-      throw new Error("lost ref response");
-    };
   }
   pull(body = "existing") {
     return {
@@ -140,13 +132,13 @@ class FakeGitHub {
       case `POST /repos/${repository}/git/refs`: {
         const ref = { object: { sha: this.commitSha }, ref: `refs/heads/${this.branch}` };
         this.branchRef = ref;
-        this.afterRef();
+        this.afterWrite();
         return ref;
       }
       case `POST /repos/${repository}/pulls`: {
         const pull = this.pull((body as { body: string }).body);
         this.openPulls = [pull];
-        this.afterPull();
+        this.afterWrite();
         return pull;
       }
       default:
@@ -212,15 +204,12 @@ function runnerTools(
   const sandbox = path.join(root, "sandbox");
   const output = path.join(root, "work/output");
   const state = { deleted: false };
-  const continueAt = (stage: RunnerStage) => expect(stage).not.toBe(failure);
   const handlers: Record<string, (args: readonly string[]) => unknown> = {
     create: () => {
       fs.cpSync(path.join(root, "work/repo"), sandbox, { recursive: true });
       expect(git(sandbox, ["rev-parse", "HEAD"])).toBe(env.GITHUB_SHA);
-      continueAt("create");
     },
     agent: () => {
-      continueAt("agent");
       const agents = {
         author: () => fs.writeFileSync(path.join(sandbox, "docs/guide.mdx"), "authored\n"),
         review: () =>
@@ -232,7 +221,6 @@ function runnerTools(
       agents[env.POST_MERGE_DOCS_PHASE]();
     },
     export: () => {
-      continueAt("export");
       const patch = execFileSync(
         "git",
         ["diff", "--binary", "--full-index", "HEAD", "--", "docs", "fern"],
@@ -241,7 +229,6 @@ function runnerTools(
       fs.writeFileSync(path.join(output, "docs.patch"), patch);
     },
     download: (args) => {
-      continueAt("download");
       const name = path.basename(args[3]);
       fs.copyFileSync(path.join(output, name), path.join(args[4], name));
     },
@@ -253,7 +240,9 @@ function runnerTools(
     run: (_command, args, options) => {
       for (const name of credentials) expect(options.env).not.toHaveProperty(name);
       const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
-      return String(handlers[commands[executable] ?? args[1]](args) ?? "");
+      const stage = commands[executable] ?? args[1];
+      expect(stage).not.toBe(failure);
+      return String(handlers[stage](args) ?? "");
     },
     start: () => undefined,
     wait: async () => undefined,
@@ -268,8 +257,7 @@ afterEach(() => {
 });
 
 describe("post-merge documentation publisher", () => {
-  it("creates one immutable branch and draft PR without forwarding the model credential", async () => {
-    vi.stubEnv("POST_MERGE_DOCS_API_KEY", "model-secret");
+  it("creates one immutable branch and draft PR", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
@@ -277,7 +265,6 @@ describe("post-merge documentation publisher", () => {
     expect(api.commitBody).toMatchObject({ parents: [value.mainSha], tree: value.finalTree });
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.body).toMatch(/`npm run docs`[\s\S]*approval-required/u);
-    expect(JSON.stringify(api.request.mock.calls)).not.toContain("model-secret");
   });
   it("creates no writes for an approved empty patch", async () => {
     const value = emptyFixture();
@@ -332,7 +319,9 @@ describe("post-merge documentation publisher", () => {
   it("reconciles exact lost branch and PR responses without retrying", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
-    api.loseResponses();
+    api.afterWrite = () => {
+      throw new Error("lost response");
+    };
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
     expect(postCount(api, "/pulls")).toBe(1);
     expect(postCount(api, "/git/refs")).toBe(1);
@@ -379,11 +368,40 @@ describe("post-merge documentation runner", () => {
   );
 });
 
-describe("post-merge documentation review boundary", () => {
+describe("post-merge documentation workflow boundary", () => {
   const root = path.resolve(import.meta.dirname, "..");
+  const workflow = YAML.parse(
+    fs.readFileSync(path.join(root, ".github/workflows/post-merge-docs.yaml"), "utf8"),
+  ) as Record<string, any>;
   const policy = YAML.parse(
     fs.readFileSync(path.join(root, "tools/post-merge-docs/review-policy.yaml"), "utf8"),
   );
+
+  it("separates the model credential from repository writes", () => {
+    expect(validatePostMergeDocsWorkflowBoundary(workflow)).toEqual([]);
+  });
+
+  it("rejects changes to the credential and permission boundary", () => {
+    const mutations: Array<(candidate: Record<string, any>) => void> = [
+      (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
+      (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
+      (candidate) =>
+        (candidate.jobs.delegate = { secrets: "inherit", uses: "owner/repo/.github/workflows/x" }),
+      (candidate) =>
+        (candidate.jobs.author.steps.find(
+          (step: Record<string, any>) => step.env?.OPENAI_API_KEY,
+        ).name = "Other step"),
+      (candidate) =>
+        (candidate.jobs.publish.env = {
+          OPENAI_API_KEY: "${{ secrets.POST_MERGE_DOCS_API_KEY }}",
+        }),
+    ];
+    for (const mutate of mutations) {
+      const candidate = structuredClone(workflow);
+      mutate(candidate);
+      expect(validatePostMergeDocsWorkflowBoundary(candidate)).not.toEqual([]);
+    }
+  });
 
   it("keeps the independent reviewer read-only and offline", () => {
     expect(policy.filesystem_policy.read_write).toEqual(["/dev", "/sandbox/output"]);

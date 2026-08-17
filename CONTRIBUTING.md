@@ -474,30 +474,8 @@ Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**
 Each code PR must include required changes to owning repository guidance outside those paths.
 Direct documentation PRs still follow [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), run the applicable documentation validation, and receive an independent documentation writer review.
 
-### Post-Merge Documentation Workflow
-
-A push to `main` starts `Docs / Post-Merge Catch-Up` for merged changes from the latest reachable semver tag through the pushed commit.
-
-When no managed documentation PR is open, the workflow authors and independently reviews a patch.
-An approved empty patch creates no PR; an approved nonempty patch opens one draft `automation/post-merge-docs-*` PR and leaves that exact-main run non-successful.
-Code merges continue while later merged changes remain pending for cumulative documentation catch-up.
-Repeat after each managed PR merge until a later exact-SHA run approves an empty patch and completes its publisher job successfully.
-Required PR checks run `npm run docs` after any required approval.
-
 Repository administrators provide the `POST_MERGE_DOCS_API_KEY` Actions secret. Only inference
 gateway configuration receives it; the sandboxes, artifacts, and publisher do not.
-
-To build and preview docs locally:
-
-```console
-$ npm run docs                 # validate Fern docs with the pinned Fern CLI version
-$ npm run docs:live            # serve Fern docs locally with auto-rebuild
-$ npm run docs:preview:watch   # publish branch-based Fern previews on file changes
-```
-
-Use these npm scripts when validating docs for a PR.
-
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
 
 ### Markdown Docs for AI Agents
 

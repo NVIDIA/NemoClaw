@@ -174,7 +174,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },
   {
-    pattern: /(?:^|\/)tools\/post-merge-docs\/review-policy\.yaml$/,
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/post-merge-docs\.yaml|tools\/post-merge-docs\/review-policy\.yaml)$/,
     testsToRun: runTests("test/post-merge-docs.test.ts"),
   },
   {

@@ -43,10 +43,6 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 ## Pre-Tag Docs
 
 Follow [Release-Prep Docs](../nemoclaw-maintainer-policies/references/release-train.md#release-prep-docs).
-Continue the managed documentation PR when one exists; otherwise open a direct documentation-only
-PR for the release entry. Merge it, then repeat until a later exact-SHA `Docs / Post-Merge Catch-Up`
-run completes its no-change publisher job successfully. Confirm that no managed documentation PR
-is open and no branch exists for that candidate. Repeat after any later intended merge.
 
 ## Step 4: Cut the Tag and Publish Release Notes
 

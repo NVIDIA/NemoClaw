@@ -187,9 +187,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);
-    expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
-      "test/post-merge-docs.test.ts",
-    ]);
+    for (const input of [
+      ".github/workflows/post-merge-docs.yaml",
+      "tools/post-merge-docs/review-policy.yaml",
+    ])
+      expect(triggeredBy(input)).toEqual(["test/post-merge-docs.test.ts"]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",
       "test/pr-review-advisor-openshell-workflow-boundary.test.ts",

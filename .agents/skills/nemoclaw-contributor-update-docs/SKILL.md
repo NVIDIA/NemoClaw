@@ -60,8 +60,6 @@ documentation or a commit message.
 ## Validate and hand off
 
 In `Docs / Post-Merge Catch-Up`, change only `docs/**`, `fern/docs.yml`, and `fern/assets/**`; the workflow independently reviews the patch.
-An approved empty patch creates no PR; an approved nonempty patch opens one draft PR on an `automation/post-merge-docs-*` branch and leaves that exact-main run non-successful.
-Later merged changes remain pending; repeat after each managed PR merge until a later exact-SHA run approves an empty patch.
 Required PR checks run `npm run docs`; do not perform GitHub writes from the authoring step.
 
 For a direct documentation task, run the current documentation checks discovered from repository
