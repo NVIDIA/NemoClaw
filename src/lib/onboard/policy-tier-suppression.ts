@@ -19,6 +19,22 @@ export function normalizePolicyTierName(tierName: string | null | undefined): st
   return tierName.trim().toLowerCase() || null;
 }
 
+/** Keep tier-defining presets present independently of agent and selection mode. */
+export function ensureRequiredTierPolicyPresets(
+  tierName: string | null | undefined,
+  presetNames: readonly string[],
+): string[] {
+  if (normalizePolicyTierName(tierName) !== PERSONAL_POLICY_TIER_NAME) {
+    return [...presetNames];
+  }
+  return [
+    PERSONAL_OPEN_INTERNET_PRESET_NAME,
+    ...presetNames.filter(
+      (name) => name.trim().toLowerCase() !== PERSONAL_OPEN_INTERNET_PRESET_NAME,
+    ),
+  ];
+}
+
 export function agentRequiredPresetAdditions(
   agent: string | null | undefined,
   env: NodeJS.ProcessEnv,

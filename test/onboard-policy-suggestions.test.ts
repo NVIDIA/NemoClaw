@@ -780,6 +780,20 @@ describe("onboard policy preset suggestions", () => {
   });
 
   describe("mergeRequiredSetupPolicyPresets tier plumbing", () => {
+    it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"])(
+      "requires Personal open internet independently of the selected agent: %s",
+      (agent) => {
+        expect(
+          mergeRequiredSetupPolicyPresets(["weather"], {
+            agent,
+            env: {},
+            knownPresetNames: ["personal-open-internet", "weather"],
+            tierName: " Personal ",
+          }),
+        ).toEqual(["personal-open-internet", "weather"]);
+      },
+    );
+
     it("adds enabled DCode observability and removes it when disabled or restricted", () => {
       const options = {
         agent: "langchain-deepagents-code",

@@ -942,17 +942,17 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
   );
 
   openClawTest(
-    "C4 OpenClaw Personal reaches public websites with keyless fetch and returns an NVDA quote",
+    "C4 Personal permits keyless public fetches with OpenClaw as the NVDA witness",
     {
       timeout: COMMON_EGRESS_TEST_TIMEOUT_MS,
       meta: {
         e2ePhases: [
-          "validate hosted OpenClaw prerequisites",
-          "onboard Personal-policy OpenClaw sandbox without web search",
+          "validate hosted representative-agent prerequisites",
+          "onboard a representative OpenClaw sandbox with Personal and no web search",
           "verify Personal policy and provider-free fetch state",
           "fetch a public website with curl and Python",
           "deny loopback and link-local targets",
-          "fetch the latest NVDA quote with OpenClaw web fetch",
+          "fetch the latest NVDA quote with representative OpenClaw web fetch",
         ],
       },
     },
@@ -964,16 +964,16 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         case: "openclaw-personal-stock-price",
         sandboxName: OPENCLAW_PERSONAL_SANDBOX,
         contract: [
-          "OpenClaw Personal onboarding applies one broad public web policy for every sandbox binary",
+          "Personal onboarding applies one broad public web policy for every sandbox binary",
           "curl and Python fetch a public website without a Brave Search or Tavily Search API key",
           "the Personal policy does not permit loopback or link-local web targets",
-          "a real OpenClaw agent chooses a public source and fetches a recent NVDA price through web_fetch",
+          "OpenClaw is one representative agent witness that chooses a public source and fetches a recent NVDA price through web_fetch",
           "the reduced agent trajectory contains no web_search, Brave Search, or Tavily Search call",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_PERSONAL_SANDBOX);
 
-      progress.phase("onboard Personal-policy OpenClaw sandbox without web search");
+      progress.phase("onboard a representative OpenClaw sandbox with Personal and no web search");
       await runOnboard(host, {
         agent: "openclaw",
         artifacts,
@@ -1090,7 +1090,7 @@ probe_denied link-local http://169.254.169.254/latest/meta-data/
       expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=loopback");
       expect(deniedTargets.stdout).toContain("PERSONAL_DENIAL_OK label=link-local");
 
-      progress.phase("fetch the latest NVDA quote with OpenClaw web fetch");
+      progress.phase("fetch the latest NVDA quote with representative OpenClaw web fetch");
       const stockPrompt = `Find the latest available NVIDIA (NVDA) stock price.
 Use web_fetch and choose a public HTTPS source yourself.
 Use no other tool. Do not use web_search, Brave Search, or Tavily Search.

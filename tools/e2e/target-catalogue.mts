@@ -541,13 +541,14 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     selector: "^common-egress.+C3.+$",
   }),
   commonEgressTarget({
-    displayName: "Networking: OpenClaw fetches a stock price through Personal web access",
+    displayName: "Networking: Personal permits a keyless public stock fetch",
     profile: "nvidia-inference",
     runnerComparison: false,
     owningPaths: [
       "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
       "nemoclaw-blueprint/policies/tiers.yaml",
-      "src/lib/onboard/session-bootstrap.ts",
+      "src/lib/onboard/policy-selection.ts",
+      "src/lib/onboard/policy-tier-suppression.ts",
       "src/lib/policy/index.ts",
     ],
     shard: "openclaw-personal-stock-price",

@@ -241,6 +241,47 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
     expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
   });
 
+  it("preserves superseded npm attribution while baseline repair is pending", () => {
+    const initialPolicy = policyWith({
+      personal_open_internet: structuredClone(REVIEWED_PERSONAL_ENTRY),
+    });
+    const { calls, payload, stderr } = runLiveScenario({
+      initialPolicy,
+      childScript: `
+registry.registerSandbox({
+  name: "personal-pending",
+  agent: "openclaw",
+  policies: ["personal-open-internet", "npm"],
+});
+registry.beginBaselineExclusionTransition("personal-pending", {
+  id: "123e4567-e89b-42d3-a456-426614174920",
+  operation: "exclude",
+  exclusion: {
+    version: 1,
+    agent: "openclaw",
+    key: "npm_registry",
+    digest: "d".repeat(64),
+  },
+  targetLiveDigest: null,
+  startedAt: "2026-08-17T00:00:00.000Z",
+});
+const removed = policies.removePreset("personal-pending", "npm", { nonFatal: true });
+process.stdout.write("\\n__RESULT__" + JSON.stringify({
+  removed,
+  policy: fs.readFileSync(process.env.CURRENT_POLICY, "utf-8"),
+  registry: registry.getSandbox("personal-pending"),
+}));`,
+    });
+
+    expect(payload.removed).toBe(false);
+    expect(payload.policy).toBe(initialPolicy);
+    expect(payload.registry.policies).toEqual(["personal-open-internet", "npm"]);
+    expect(payload.registry.baselineExclusionTransition).toBeDefined();
+    expect(calls.filter((call) => call.startsWith("policy get "))).toHaveLength(1);
+    expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
+    expect(stderr).toContain("baseline repair for 'npm_registry' is still pending");
+  });
+
   it("does not restore overlapping npm web routes beside Personal during removal", () => {
     const initialPolicy = policyWith({
       personal_open_internet: structuredClone(REVIEWED_PERSONAL_ENTRY),

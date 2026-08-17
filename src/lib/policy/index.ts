@@ -1219,6 +1219,21 @@ function removePreset(
     return false;
   }
 
+  let openClawNpmBaseline: string | null = null;
+  if (!isCustom && presetName === "npm") {
+    try {
+      openClawNpmBaseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
+      if (openClawNpmBaseline) {
+        const exclusionError = openClawNpmExclusionStateError(sandboxName, currentPolicy);
+        if (exclusionError) throw new Error(exclusionError);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Refusing to remove npm policy compatibility: ${message}`);
+      return false;
+    }
+  }
+
   const supersededByPersonal =
     policyHasNetworkPolicy(currentPolicy, PERSONAL_OPEN_INTERNET_POLICY_KEY) &&
     classifyPresetEntries(currentPolicy, presetEntries) === "absent" &&
@@ -1252,14 +1267,9 @@ function removePreset(
   }
 
   let updated = removePresetFromPolicy(currentPolicy, presetEntries);
-  if (!isCustom && presetName === "npm") {
+  if (openClawNpmBaseline) {
     try {
-      const baseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
-      if (baseline) {
-        const exclusionError = openClawNpmExclusionStateError(sandboxName, currentPolicy);
-        if (exclusionError) throw new Error(exclusionError);
-        updated = restoreOpenClawNpmCompatibility(currentPolicy, updated, baseline);
-      }
+      updated = restoreOpenClawNpmCompatibility(currentPolicy, updated, openClawNpmBaseline);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`  Refusing to remove npm policy compatibility: ${message}`);

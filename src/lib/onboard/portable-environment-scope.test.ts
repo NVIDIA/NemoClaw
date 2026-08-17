@@ -78,7 +78,7 @@ describe("portable onboarding environment scope", () => {
     },
   );
 
-  it("preserves a nonblank fresh Portable policy list as custom intent (#9206)", () => {
+  it("adds required Personal access to explicit Portable presets (#9206)", () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_POLICY_PRESETS: "github,weather",
     };
@@ -86,7 +86,7 @@ describe("portable onboarding environment scope", () => {
 
     expect(env.NEMOCLAW_POLICY_TIER).toBe("personal");
     expect(env.NEMOCLAW_POLICY_MODE).toBe("custom");
-    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("github,weather");
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("personal-open-internet,github,weather");
 
     scope.restore();
     expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: "github,weather" });

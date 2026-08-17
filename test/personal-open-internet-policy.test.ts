@@ -33,6 +33,40 @@ type PolicyDocument = {
   process?: unknown;
 };
 
+const AGENT_POLICY_BASELINES = [
+  [
+    "openclaw",
+    "OpenClaw",
+    path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+  ],
+  ["hermes", "Hermes", path.join(ROOT, "agents", "hermes", "policy-additions.yaml")],
+  [
+    "langchain-deepagents-code",
+    "Deep Agents Code",
+    path.join(ROOT, "agents", "langchain-deepagents-code", "policy-additions.yaml"),
+  ],
+  ["pi", "Pi", path.join(ROOT, "agents", "pi", "policy-additions.yaml")],
+] as const;
+
+const PERSONAL_COMPOSITION_CASES = AGENT_POLICY_BASELINES.flatMap(
+  ([agent, displayName, baselinePath]) => [
+    [
+      displayName,
+      "Personal first",
+      agent,
+      baselinePath,
+      ["personal-open-internet", "weather"],
+    ] as const,
+    [
+      displayName,
+      "Personal last",
+      agent,
+      baselinePath,
+      ["weather", "personal-open-internet"],
+    ] as const,
+  ],
+);
+
 function parsePolicy(content: string): PolicyDocument {
   return YAML.parse(content) as PolicyDocument;
 }
@@ -115,31 +149,29 @@ describe("Personal open internet policy preset", () => {
     }
   });
 
-  it.each([
-    ["Personal first", ["personal-open-internet", "npm", "tavily", "openclaw-pricing"]],
-    ["Personal last", ["npm", "tavily", "openclaw-pricing", "personal-open-internet"]],
-  ])("makes Personal the sole web authority regardless of preset order: %s", (_label, names) => {
-    const baseline = fs.readFileSync(
-      path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf8",
-    );
-    const original = parsePolicy(baseline);
-    const result = policies.mergePresetNamesIntoPolicy(baseline, names);
-    const effective = parsePolicy(result.policy);
-    const { personal_open_internet: personalPolicy, ...otherPolicies } =
-      effective.network_policies ?? {};
+  it.each(PERSONAL_COMPOSITION_CASES)(
+    "makes Personal the sole web authority for %s regardless of order: %s",
+    (_displayName, _order, agent, baselinePath, names) => {
+      expect(fs.existsSync(baselinePath), baselinePath).toBe(true);
+      const baseline = fs.readFileSync(baselinePath, "utf8");
+      expect(baseline.trim(), baselinePath).not.toBe("");
+      const original = parsePolicy(baseline);
+      const result = policies.mergePresetNamesIntoPolicy(baseline, [...names], { agent });
+      const effective = parsePolicy(result.policy);
+      const { network_policies: _originalNetworkPolicies, ...originalNonNetwork } = original;
+      const { network_policies: effectiveNetworkPolicies, ...effectiveNonNetwork } = effective;
+      const { personal_open_internet: personalPolicy, ...otherPolicies } =
+        effectiveNetworkPolicies ?? {};
 
-    expect(result.appliedPresets).toEqual(names);
-    expect(result.missingPresets).toEqual([]);
-    expect(effective.filesystem_policy).toEqual(original.filesystem_policy);
-    expect(effective.process).toEqual(original.process);
-    expect(personalPolicy).toEqual(loadPersonalInternetPolicy());
-    expect(effective.network_policies?.tavily).toBeUndefined();
-    expect(effective.network_policies?.["openclaw-pricing"]).toBeUndefined();
-    expect(effective.network_policies?.npm_yarn).toBeUndefined();
+      expect(result.appliedPresets).toEqual(names);
+      expect(result.missingPresets).toEqual([]);
+      expect(effectiveNonNetwork).toEqual(originalNonNetwork);
+      expect(personalPolicy).toEqual(loadPersonalInternetPolicy());
+      expect(effectiveNetworkPolicies?.weather).toBeUndefined();
 
-    expectNoWebEndpoints(otherPolicies);
-  });
+      expectNoWebEndpoints(otherPolicies);
+    },
+  );
 
   it("preserves non-web and mixed-port endpoint authority", () => {
     const current = YAML.stringify({

@@ -397,7 +397,8 @@ describe("e2e workflow boundary", () => {
       owningPaths: expect.arrayContaining([
         "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
         "nemoclaw-blueprint/policies/tiers.yaml",
-        "src/lib/onboard/session-bootstrap.ts",
+        "src/lib/onboard/policy-selection.ts",
+        "src/lib/onboard/policy-tier-suppression.ts",
         "src/lib/policy/index.ts",
       ]),
     });

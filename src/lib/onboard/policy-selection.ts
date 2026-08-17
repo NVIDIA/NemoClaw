@@ -43,6 +43,7 @@ import * as policyTierEnv from "./policy-tier-env";
 import {
   agentRequiredPresetAdditions,
   emitSuppressedAgentRequiredPresetsNote,
+  ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
   RESTRICTED_TIER_NAME,
 } from "./policy-tier-suppression";
@@ -250,14 +251,12 @@ export function computeSetupPresetSuggestions(
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const preservesAllWebSearchPresets = tierName === PERSONAL_POLICY_TIER_NAME;
   const suggestions = deps.tiers
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
     .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
     .filter(
       (name) =>
-        preservesAllWebSearchPresets ||
         !isStaleBuiltinWebSearchPolicyPreset(name, {
           webSearchConfig,
           customPresetNames: options.customPresetNames,
@@ -490,6 +489,7 @@ async function setupPoliciesWithSelectionInner(
     // (e.g. `brave` on Balanced) via provenance — a reconcile-triggered reuse
     // reapply must not narrow an applied tier default. (#6844)
     chosen = excludePresets(pruneUnavailablePresets(chosen, { tierName: recordedTierName }));
+    chosen = ensureRequiredTierPolicyPresets(recordedTierName, chosen);
   }
 
   if (selectedPresets !== null) {
@@ -535,18 +535,28 @@ async function setupPoliciesWithSelectionInner(
     let isAuthoritative = false;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      deps.note("  [non-interactive] Skipping policy presets.");
-      const retainedPresets = excludePresets(pruneUnavailablePresets(currentAppliedPresets));
-      if (retainedPresets.length < currentAppliedPresets.length) {
+      const retainedPresets = ensureRequiredTierPolicyPresets(
+        tierName,
+        excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+      );
+      const selectionChanged =
+        retainedPresets.length !== currentAppliedPresets.length ||
+        retainedPresets.some((name, index) => name !== currentAppliedPresets[index]);
+      if (selectionChanged) {
         refuseInPlacePersonalRemoval(personalAlreadyActive, retainedPresets);
         if (onSelection) onSelection(retainedPresets);
         requireSandboxReady(deps, sandboxName, "before");
-        deps.note("  [non-interactive] Removing excluded or unavailable policy presets.");
+        deps.note(
+          personalTier
+            ? "  [non-interactive] Applying the Personal tier requirement while skipping optional policy presets."
+            : "  [non-interactive] Removing excluded or unavailable policy presets.",
+        );
         deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         requireSandboxReady(deps, sandboxName, "after");
         return retainedPresets;
       }
-      return [];
+      deps.note("  [non-interactive] Skipping optional policy presets.");
+      return personalTier ? retainedPresets : [];
     }
 
     if (policyMode === "custom" || policyMode === "list") {
@@ -592,6 +602,7 @@ async function setupPoliciesWithSelectionInner(
         preserveExplicitWebSearch: isAuthoritative || personalTier,
       }),
     );
+    chosen = ensureRequiredTierPolicyPresets(tierName, chosen);
 
     const invalidPresets = chosen.filter((name) => !knownPresets.has(name));
     if (invalidPresets.length > 0) {
@@ -638,24 +649,27 @@ async function setupPoliciesWithSelectionInner(
     allPresets,
     initialSelected,
   );
-  const interactiveChoice = excludePresets(
-    pruneUnavailablePresets(
-      mergeRequiredSetupPolicyPresets(
-        resolvedPresets.map((preset) => preset.name),
-        {
-          enabledChannels,
-          hermesToolGateways,
-          agent,
-          observabilityEnabled,
-          knownPresetNames: knownNames,
-          env: deps.env,
-          tierName,
-          webSearchConfig,
-          customPresetNames,
-          customOwnsObservability,
-        },
+  const interactiveChoice = ensureRequiredTierPolicyPresets(
+    tierName,
+    excludePresets(
+      pruneUnavailablePresets(
+        mergeRequiredSetupPolicyPresets(
+          resolvedPresets.map((preset) => preset.name),
+          {
+            enabledChannels,
+            hermesToolGateways,
+            agent,
+            observabilityEnabled,
+            knownPresetNames: knownNames,
+            env: deps.env,
+            tierName,
+            webSearchConfig,
+            customPresetNames,
+            customOwnsObservability,
+          },
+        ),
+        { preserveExplicitWebSearch: true },
       ),
-      { preserveExplicitWebSearch: true },
     ),
   );
 
