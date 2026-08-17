@@ -1285,11 +1285,19 @@ export async function connectSandbox(
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return;
       }
-      if (readiness.fenceFailed && readiness.authorityUnsupported !== true) {
+      // Refuse recovery only when a prior epoch might exist and could not be
+      // durably rotated. When the authority and receipt are both securely
+      // absent but new authority creation fails (fenceFailed without
+      // recoveryBlocked), the documented contract runs the complete preflight
+      // and recovery and reports the publication failure afterwards, exactly
+      // as `launch` does for the same decision (#9280).
+      if (
+        readiness.fenceFailed &&
+        readiness.authorityUnsupported !== true &&
+        readiness.recoveryBlocked
+      ) {
         console.error(
-          readiness.recoveryBlocked
-            ? "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry."
-            : "  Probe failed: no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+          "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
         );
         process.exit(1);
       }
