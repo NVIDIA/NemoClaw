@@ -27,6 +27,10 @@ export type SandboxExecOptions = {
   stdin?: boolean;
 };
 
+export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
+
+export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
+
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
@@ -364,9 +368,56 @@ export type ExecSandboxDeps = {
   run?: SandboxExecRunner;
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Activate config written by a successful direct Google Chat pairing approval. */
+  restartGateway?: SandboxExecGatewayRestart;
+  /** Resolve the sandbox's recorded agent before applying agent-specific post-exec effects. */
+  resolveSandboxAgent?: SandboxExecAgentResolver;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
   selectGateway?: (sandboxName: string) => GatewaySelectResult;
 };
+
+export function isGoogleChatPairingApproval(command: readonly string[]): boolean {
+  return (
+    command.length >= 5 &&
+    command[0] === "openclaw" &&
+    command[1] === "pairing" &&
+    command[2] === "approve" &&
+    command[3] === "googlechat" &&
+    Boolean(command[4]) &&
+    !command[4]!.startsWith("-")
+  );
+}
+
+function defaultRestartGateway(sandboxName: string): { ok: boolean } {
+  const { defaultInferenceGatewayRestart } =
+    require("../inference-set-gateway-restart") as typeof import("../inference-set-gateway-restart");
+  return defaultInferenceGatewayRestart(sandboxName);
+}
+
+function defaultResolveSandboxAgent(sandboxName: string): string | null {
+  const entry = (
+    require("../../state/registry") as typeof import("../../state/registry")
+  ).getSandbox(sandboxName);
+  if (!entry) return null;
+  return entry.agent ?? "openclaw";
+}
+
+function googleChatPairingActivationFailureMessage(
+  cliName: string,
+  sandboxName: string,
+): string {
+  return (
+    `  Google Chat pairing approval committed for '${sandboxName}', but managed gateway activation failed. ` +
+    `The approval was not rolled back. Run '${cliName} ${sandboxName} gateway restart' before testing the next message.`
+  );
+}
+
+function googleChatPairingUnmanagedCleanupFailureMessage(sandboxName: string): string {
+  return (
+    `  Google Chat pairing approval committed for '${sandboxName}', but post-command cleanup failed. ` +
+    "The approval was not rolled back. No owning managed gateway is registered, so NemoClaw did not attempt gateway activation."
+  );
+}
 
 export async function execSandbox(
   sandboxName: string,
@@ -437,5 +488,39 @@ export async function execSandbox(
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
   await emitPolicyDenialHint(completion);
-  process.exit(completion.code);
+  let exitCode = completion.code;
+  const googleChatApprovalCommitted =
+    completion.commandCode === 0 && isGoogleChatPairingApproval(command);
+  const managedGoogleChatApproval =
+    googleChatApprovalCommitted && gatewaySelection.outcome === "selected";
+  if (googleChatApprovalCommitted && completion.cleanupError) {
+    console.error(
+      managedGoogleChatApproval
+        ? googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName)
+        : googleChatPairingUnmanagedCleanupFailureMessage(sandboxName),
+    );
+  }
+  if (exitCode === 0 && managedGoogleChatApproval) {
+    let recordedAgent: string | null;
+    try {
+      recordedAgent = (deps.resolveSandboxAgent ?? defaultResolveSandboxAgent)(sandboxName);
+    } catch {
+      console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+      process.exit(1);
+    }
+    if (recordedAgent === "openclaw") {
+      let restartSucceeded = false;
+      try {
+        restartSucceeded = (deps.restartGateway ?? defaultRestartGateway)(sandboxName).ok;
+      } catch {
+        // The approval already committed inside OpenClaw. Convert restart
+        // exceptions into the same explicit partial-commit recovery contract.
+      }
+      if (!restartSucceeded) {
+        console.error(googleChatPairingActivationFailureMessage(CLI_NAME, sandboxName));
+        exitCode = 1;
+      }
+    }
+  }
+  process.exit(exitCode);
 }

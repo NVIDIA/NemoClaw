@@ -221,7 +221,7 @@ Isolated `node:22-trixie-slim` containers globally installed the reviewed OpenCl
 Invalid state: any reviewed archive install can run package-controlled install hooks, a package other than an exact allowlisted OpenClaw version receives an explicit lifecycle invocation, or the allowed manifest command/path changes without review.
 Source boundary: the five Docker install transactions, `installOpenClawMessagingPlugins`, and `ci/reviewed-npm-lifecycle-allowlist.json`.
 Source-fix constraint: lifecycle suppression must remain caller-controlled even while OpenClaw's plugin installer independently applies the same policy; do not replace the fixed postinstall command with `npm rebuild`, `npm run` against an unverified package spec, or a blanket script enablement.
-Regression tests: `test/openclaw-lifecycle-policy.test.ts` pins the complete reviewed package set and the two exact exceptions; the integrity-pin base and plugin-install suites, `test/fetch-guard-patch-regression.test.ts`, and `test/messaging-build-applier.test.ts` pin script suppression and the fixed postinstall command at the execution boundaries.
+Regression tests: the integrity-pin base and plugin-install suites, `test/fetch-guard-patch-regression.test.ts`, and `test/messaging-build-applier.test.ts` exercise script suppression and the fixed postinstall command at the execution boundaries.
 Removal condition: re-audit manifests, shrinkwrap `hasInstallScript` entries, and native prebuild coverage on every OpenClaw/plugin bump; remove an exception when the reviewed package no longer needs it, and never carry an exception to a new version implicitly.
 
 #### Messaging Plugin Registry Provenance Boundary

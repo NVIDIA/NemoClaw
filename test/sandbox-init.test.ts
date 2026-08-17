@@ -760,16 +760,19 @@ EOF
   });
 
   describe("entrypoints call harden_resource_limits", () => {
+    const entrypoints = ["../scripts/nemoclaw-start.sh", "../agents/hermes/start.sh"];
+
     // Both entrypoints must delegate RLIMIT hardening to the shared helper and
     // must no longer carry the pre-#4527 raw inline `ulimit -Su 512` block.
-    for (const rel of ["../scripts/nemoclaw-start.sh", "../agents/hermes/start.sh"]) {
-      it(`${rel} calls harden_resource_limits and has no raw inline nproc block`, () => {
+    it.each(entrypoints)(
+      "%s calls harden_resource_limits and has no raw inline nproc block",
+      (rel) => {
         const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
         expect(src).toContain("harden_resource_limits");
         expect(src).not.toContain("ulimit -Su 512");
         expect(src).not.toContain("ulimit -Hu 512");
-      });
-    }
+      },
+    );
 
     // SECURITY (#4527): the RLIMIT caps are only unraisable if they are set
     // while still root PID 1, BEFORE drop_capabilities (capsh) and the
@@ -777,18 +780,16 @@ EOF
     // privilege drop would turn it into dead code (cap set as the unprivileged
     // agent, hard limit no longer lowered) while every other test stayed green.
     // Pin the ordering so that regression is caught.
-    for (const rel of ["../scripts/nemoclaw-start.sh", "../agents/hermes/start.sh"]) {
-      it(`${rel} calls harden_resource_limits before drop_capabilities`, () => {
-        const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
-        // Anchor to executable command lines, not free-text, so a comment
-        // mentioning either name cannot satisfy (or break) the ordering check.
-        const hardenIdx = src.match(/^\s*harden_resource_limits\s*$/m)?.index ?? -1;
-        const dropIdx = src.match(/^\s*drop_capabilities\b.*$/m)?.index ?? -1;
-        expect(hardenIdx).toBeGreaterThanOrEqual(0);
-        expect(dropIdx).toBeGreaterThanOrEqual(0);
-        expect(hardenIdx).toBeLessThan(dropIdx);
-      });
-    }
+    it.each(entrypoints)("%s calls harden_resource_limits before drop_capabilities", (rel) => {
+      const src = readFileSync(join(import.meta.dirname, rel), "utf-8");
+      // Anchor to executable command lines, not free-text, so a comment
+      // mentioning either name cannot satisfy (or break) the ordering check.
+      const hardenIdx = src.match(/^\s*harden_resource_limits\s*$/m)?.index ?? -1;
+      const dropIdx = src.match(/^\s*drop_capabilities\b.*$/m)?.index ?? -1;
+      expect(hardenIdx).toBeGreaterThanOrEqual(0);
+      expect(dropIdx).toBeGreaterThanOrEqual(0);
+      expect(hardenIdx).toBeLessThan(dropIdx);
+    });
   });
 
   describe("init_step_down_prefixes", () => {

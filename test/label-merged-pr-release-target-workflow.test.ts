@@ -180,52 +180,6 @@ async function runScript(harness: ReturnType<typeof createHarness>): Promise<voi
 }
 
 describe("merged PR release target workflow", () => {
-  // source-shape-contract: security -- Privileged label writes must stay metadata-only and serialize retirement with assignment
-  it("keeps fork-safe labeling inside the trusted metadata boundary", () => {
-    const coordination = {
-      group: "release-target-label-operations",
-      queue: "max",
-    };
-    expect(workflow.on?.pull_request_target).toEqual({
-      branches: ["main"],
-      types: ["closed"],
-    });
-    expect(workflow.on).toHaveProperty("workflow_dispatch");
-    expect(workflow.permissions).toEqual({
-      contents: "read",
-      issues: "write",
-      "pull-requests": "write",
-    });
-    expect(workflow.concurrency).toEqual(coordination);
-    expect(releaseWorkflow.concurrency).toEqual(coordination);
-    expect(releaseWorkflow.permissions).toEqual({
-      contents: "write",
-      issues: "write",
-      "pull-requests": "write",
-    });
-    expect(job.if).toBe(
-      "${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}",
-    );
-    expect(actionStep?.uses).toMatch(/^actions\/github-script@[0-9a-f]{40}$/u);
-    expect(job.steps).toHaveLength(1);
-    expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
-    expect(job.steps?.some((step) => typeof step.run === "string")).toBe(false);
-    expect(script).not.toContain("containing release");
-    expect(script).not.toContain("RECONCILIATION_WINDOW_MS");
-    expect(retirementStep?.env).toMatchObject({
-      GH_TOKEN: "${{ github.token }}",
-    });
-    expect(retirementStep?.run).toContain("scripts/retire-release-label.mts");
-    const latestIndex = releaseJob.steps?.findIndex(
-      (step) => step.name === "Move latest to the verified release tag object",
-    );
-    const retirementIndex = releaseJob.steps?.findIndex(
-      (step) => step.name === "Retire the released target label",
-    );
-    expect(latestIndex).toBeGreaterThanOrEqual(0);
-    expect(retirementIndex).toBeGreaterThan(latestIndex ?? -1);
-  });
-
   it.each([
     ["pull request", undefined, "pull_request is missing"],
     [

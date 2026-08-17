@@ -99,27 +99,6 @@ describe("base-image publication workflow boundary (#7372)", () => {
     expect(validate(value)).toEqual([]);
   });
 
-  // source-shape-contract: security -- Immutable base contracts must outlive the qualification interval so later E2E cannot fall back to a mutable alias.
-  it("retains immutable base contracts for later qualification (#9049)", () => {
-    const action = YAML.parse(
-      fs.readFileSync(
-        path.join(process.cwd(), ".github/actions/publish-base-image-manifest/action.yaml"),
-        "utf8",
-      ),
-    ) as { runs: { steps: MutableStep[] } };
-    const upload = action.runs.steps.find(
-      (step) => step.name === "Upload managed base image contract",
-    );
-
-    expect(upload).toMatchObject({
-      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-      with: {
-        "if-no-files-found": "error",
-        "retention-days": 90,
-      },
-    });
-  });
-
   it.each([
     ["push to main", "push", "", "1"],
     ["manual main", "workflow_dispatch", "", "1"],

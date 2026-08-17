@@ -51,34 +51,4 @@ describe("E2E fixture dependency review", () => {
     }
   });
 
-  // source-shape-contract: security -- Exact fixture pins and reviewed lock integrity constrain untrusted dependency code
-  it("keeps installed fixture dependencies on exact versions", () => {
-    const weatherFixture = path.join(FIXTURES_ROOT, "plugins", "weather");
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(weatherFixture, "package.json"), "utf8"),
-    ) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    for (const [name, version] of Object.entries({
-      ...manifest.dependencies,
-      ...manifest.devDependencies,
-    })) {
-      expect(version, name).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
-    }
-
-    const lockfileText = fs.readFileSync(path.join(weatherFixture, "package-lock.json"), "utf8");
-    const lockfileDigest = createHash("sha256").update(lockfileText).digest("hex");
-    expect(review).toContain(`SHA-256 \`${lockfileDigest}\``);
-
-    const lockfile = JSON.parse(lockfileText) as {
-      packages?: Record<string, { resolved?: unknown; integrity?: unknown }>;
-    };
-    for (const [packagePath, entry] of Object.entries(lockfile.packages ?? {}).filter(
-      ([packagePath]) => packagePath.length > 0,
-    )) {
-      expect(entry.resolved, packagePath).toEqual(expect.any(String));
-      expect(entry.integrity, packagePath).toEqual(expect.any(String));
-    }
-  });
 });

@@ -123,8 +123,9 @@ function withTempDir(run: (dir: string) => void): void {
 describe.skipIf(!canRun)(
   "agents/langchain-deepagents-code/dcode-wrapper.sh identity command",
   () => {
-    for (const sub of ["status", "whoami", "identity"]) {
-      it(`'${sub}' reports the sandbox identity and does not launch dcode`, () => {
+    it.each(["status", "whoami", "identity"])(
+      "'%s' reports the sandbox identity and does not launch dcode",
+      (sub) => {
         withTempDir((dir) => {
           const fixture = buildFixture(dir, SAMPLE_CONFIG);
           addAgentDir(fixture, "backend-dev");
@@ -143,8 +144,8 @@ describe.skipIf(!canRun)(
           expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
           expect(run.stdout).toContain("Runtime:  Deep Agents Code (terminal)");
         });
-      });
-    }
+      },
+    );
 
     it("uses a valid recent dcode agent when the configured default is stale", () => {
       withTempDir((dir) => {

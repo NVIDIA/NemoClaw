@@ -76,22 +76,20 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     vi.restoreAllMocks();
   });
 
-  for (const [name, issue] of [
-    ["gateway image drift", imageDriftIssue],
-    ["host-process gateway drift", hostProcessDriftIssue],
-  ] as const) {
-    it(`exits before querying sandbox state for ${name}`, async () => {
-      mocks.detectPreflightIssue.mockReturnValueOnce(issue);
+  it.each([
+    { name: "gateway image drift", issue: imageDriftIssue },
+    { name: "host-process gateway drift", issue: hostProcessDriftIssue },
+  ])("exits before querying sandbox state for $name", async ({ issue }) => {
+    mocks.detectPreflightIssue.mockReturnValueOnce(issue);
 
-      await expect(captureSandboxListWithGatewayPreflightOrExit(context)).rejects.toThrow(
-        "process.exit(1)",
-      );
+    await expect(captureSandboxListWithGatewayPreflightOrExit(context)).rejects.toThrow(
+      "process.exit(1)",
+    );
 
-      expect(mocks.printIssue).toHaveBeenCalledWith(issue, context);
-      expect(mocks.captureOpenshell).not.toHaveBeenCalled();
-      expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    });
-  }
+    expect(mocks.printIssue).toHaveBeenCalledWith(issue, context);
+    expect(mocks.captureOpenshell).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+  });
 
   it("returns the successful sandbox list without gateway recovery", async () => {
     const result = await captureSandboxListWithGatewayPreflightOrExit(context);

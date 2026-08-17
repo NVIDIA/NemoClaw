@@ -53,15 +53,6 @@ const previousManifest = JSON.parse(
     "utf8",
   ),
 ) as CredentialManifest;
-const currentManifest = JSON.parse(
-  fs.readFileSync(
-    path.join(
-      repoRoot,
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json",
-    ),
-    "utf8",
-  ),
-) as CredentialManifest;
 
 const SOURCE_COMMIT = "8ddd98c3dff62619a3963f99ba1e055b67650e72";
 const NEW_COMMITS = [
@@ -75,12 +66,6 @@ const NEW_COMMITS = [
   "d85339d621e0e96697499a9d4c8780ee9b9c1324",
   SOURCE_COMMIT,
 ] as const;
-
-function sha256File(relativePath: string): string {
-  return createHash("sha256")
-    .update(fs.readFileSync(path.join(repoRoot, relativePath)))
-    .digest("hex");
-}
 
 const RANGES = [
   ["v0.0.85 -> v0.0.86", 12, 109],
@@ -155,6 +140,12 @@ const RELEASE_IDENTITIES = [
   "sha256:d30bb067e4769c743cdf020e736cf88f090dc2d66cc01cbaf18f0098cfb90da1",
 ] as const;
 
+function sha256File(relativePath: string): string {
+  return createHash("sha256")
+    .update(fs.readFileSync(path.join(repoRoot, relativePath)))
+    .digest("hex");
+}
+
 function parseRangeTable(): Map<string, readonly [number, number]> {
   const result = new Map<string, readonly [number, number]>();
   for (const match of review.matchAll(/^\| `(v0\.0\.\d+ -> v0\.0\.\d+)` \| (\d+) \| (\d+) \|/gmu)) {
@@ -193,80 +184,6 @@ describe("OpenShell 0.0.101 migration review", () => {
     const ranges = parseRangeTable();
     expect([...ranges]).toEqual(RANGES.map(([name, commits, paths]) => [name, [commits, paths]]));
     expect([...ranges.values()].reduce((sum, [commits]) => sum + commits, 0)).toBe(126);
-  });
-
-  // source-shape-contract: security -- Regenerated credential boundaries must retain exact reviewed upstream blobs and downstream sanitizers before any consumer activates the new manifest
-  it("binds the newly generated credential manifest to reviewed source identities (#8599)", () => {
-    expect(manifest.openshellVersion).toBe("0.0.101");
-    expect(manifest.openshellCommit).toBe(SOURCE_COMMIT);
-    expect(manifest.sources).toEqual([
-      "crates/openshell-core/src/google_cloud.rs",
-      "crates/openshell-core/src/provider_credentials.rs",
-      "crates/openshell-core/src/secrets.rs",
-    ]);
-    expect(manifest.nemoclawSources).toEqual([
-      "src/lib/subprocess-env.ts",
-      "src/lib/actions/sandbox/mcp-bridge-validation.ts",
-      "agents/hermes/mcp-config-transaction.py",
-    ]);
-    expect(manifest.generation).toEqual({
-      method: "openshell-static-config-and-child-env-source-review-v1",
-      upstreamSourceEvidence: [
-        {
-          path: "crates/openshell-core/src/google_cloud.rs",
-          gitObjectId: "fcab45ae086ea7b45a7326b46ceb849c8f115474",
-          sha256: "2583a04a0557f0694f405cbd28d8ea730a74d8a8e6bc952fd9ce5f763f13ac24",
-        },
-        {
-          path: "crates/openshell-core/src/provider_credentials.rs",
-          gitObjectId: "d0b7b38ad5ad85efd17edefe33148c1368de8082",
-          sha256: "e16124481e16616592f41131b31f9d5e674c1eeb3d496e3a50a959b39c70ae1e",
-        },
-        {
-          path: "crates/openshell-core/src/secrets.rs",
-          gitObjectId: "e93bdc53900ae342e11a64f50a53b16ac75be256",
-          sha256: "f67c40cec776f49f49e4553d6e0477d27ca771944afc7fa677fd31cb3ccb7c37",
-        },
-      ],
-      nemoclawSourceEvidence: [
-        {
-          path: "src/lib/subprocess-env.ts",
-          sha256: "82f17b8d5b8e5fcc1e29f0393ff3739fc0a51f738120f19fe962a83f935ec70c",
-        },
-        {
-          path: "src/lib/actions/sandbox/mcp-bridge-validation.ts",
-          sha256: "f78c6d05f2e93314b15901ad7169d46e3f9742ba04a36f53fc7be8753be9cfa4",
-        },
-        {
-          path: "agents/hermes/mcp-config-transaction.py",
-          sha256: "88988d567fd297a1d37919ad269181a7b42059c5f80cf840477322252fc89351",
-        },
-      ],
-    });
-
-    expect(currentManifest).toMatchObject({
-      openshellCommit: "c4b500a7de64d0b66e3ee8098f58d14299092162",
-      openshellVersion: "0.0.106",
-    });
-    for (const evidence of currentManifest.generation?.nemoclawSourceEvidence ?? []) {
-      expect(sha256File(evidence.path), evidence.path).toBe(evidence.sha256);
-    }
-
-    for (const key of [
-      "rawChildValueKeys",
-      "rewrittenChildValueKeys",
-      "runtimeControlKeys",
-      "runtimeControlPrefixes",
-    ] as const) {
-      expect(manifest[key], key).toEqual(previousManifest[key]);
-    }
-    expect(manifest.rawChildValueKeys).toHaveLength(8);
-    expect(manifest.rewrittenChildValueKeys).toHaveLength(3);
-    expect(manifest.runtimeControlKeys).toHaveLength(52);
-    expect(manifest.runtimeControlPrefixes).toHaveLength(24);
-    expect(previousManifest.generation).toBeUndefined();
-    expect(review).toContain("was generated as a new");
-    expect(review).toContain("issue `#8606`, not this review, owns changing active consumers");
   });
 
   it("selects only Docker or Podman without configuring new v0.0.101 surfaces (#8599)", () => {

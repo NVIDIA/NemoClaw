@@ -16,6 +16,15 @@ on:
       - "src/lib/onboard/managed-bootstrap/podman-*.ts"
       - "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts"
       - "src/lib/onboard/experimental/portable-demo-lifecycle.ts"
+      - "src/lib/onboard/experimental/portable-runtime-*.ts"
+      - "src/lib/onboard/portable-retirement-authority.ts"
+      - "src/lib/onboard.ts"
+      - "src/lib/actions/uninstall/portable-runtime-cleanup.ts"
+      - "src/lib/actions/uninstall/all-gateway-ports.ts"
+      - "src/lib/actions/uninstall/run-plan.ts"
+      - "src/commands/internal/uninstall/run-plan.ts"
+      - "src/lib/state/portable-uninstall-retirement.ts"
+      - "src/lib/state/registry/lock.ts"
       - "src/lib/onboard/runtime-provider/container-state-mutation.ts"
       - "src/lib/onboard/runtime-provider/docker-state-mutation.ts"
       - "src/lib/onboard/experimental/portable-host-preparation*.ts"
@@ -26,6 +35,7 @@ on:
       - "test/e2e/live/podman-cpu-lifecycle-helpers.ts"
       - "test/e2e/live/podman-cpu-lifecycle-policy.yaml"
       - "test/e2e/live/podman-cpu-lifecycle.test.ts"
+      - "test/e2e/live/podman-portable-uninstall.test.ts"
       - "test/e2e/registry/native-runtime-qualification.ts"
       - "test/e2e/support/native-runtime-qualification.test.ts"
       - "test/e2e/live/portable-cpu-delegation-proof.test.ts"
@@ -130,8 +140,11 @@ jobs:
       - name: Install locked test dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build shared sandbox-name contract
-        run: npm run build:policy-boundary
+      - name: Build and link candidate CLI
+        run: |
+          npm run build:cli
+          npm link --ignore-scripts
+          nemoclaw --version
 
       - name: Install pinned OpenShell runtime
         shell: bash
@@ -321,8 +334,28 @@ jobs:
             printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
           } >>"$GITHUB_ENV"
 
+      - name: Start the exact connected gateway required by portable retirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          gateway_state="$RUNNER_TEMP/nemoclaw-podman-uninstall-gateway"
+          export DOCKER_HOST="unix://$E2E_PODMAN_SOCKET"
+          export NEMOCLAW_EXPERIMENTAL_PROFILE=portable
+          export NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="$gateway_state"
+          {
+            printf 'NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=%s\n' "$gateway_state"
+            printf 'OPENSHELL_LOCAL_TLS_DIR=%s/tls\n' "$gateway_state"
+          } >>"$GITHUB_ENV"
+          node --input-type=module --eval '
+            const { startDockerDriverGateway } = (await import("./dist/lib/onboard.js")).default;
+            await startDockerDriverGateway({ skipSandboxBridgeReachability: true });
+          '
+
       - name: Prove pinned OpenShell activation and registered-agent Podman CPU lifecycle
-        run: npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts
+        run: |
+          npx vitest run --project e2e-live \
+            test/e2e/live/podman-cpu-lifecycle.test.ts \
+            test/e2e/live/podman-portable-uninstall.test.ts
 
       - name: Verify Docker stayed unavailable
         if: always()
@@ -366,6 +399,36 @@ jobs:
             >"$diagnostic_dir/podman-volumes.txt" 2>&1 || true
           podman --url "$endpoint" secret ls --format '{{.Name}}' \
             >"$diagnostic_dir/podman-secrets.txt" 2>&1 || true
+
+      - name: Stop the exact portable-retirement proof gateway
+        if: always()
+        shell: bash
+        env:
+          E2E_PORTABLE_GATEWAY_STOP_SCOPE: full
+        run: |
+          set -euo pipefail
+          gateway_state="$RUNNER_TEMP/nemoclaw-podman-uninstall-gateway"
+          test "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-$gateway_state}" = "$gateway_state"
+          export NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="$gateway_state"
+          gateway_bin="$(command -v openshell-gateway)"
+          E2E_OPENSHELL_GATEWAY_BIN="$gateway_bin" node --input-type=module --eval '
+            const { stopHostGatewayProcesses } =
+              await import("./dist/lib/onboard/host-gateway-process.js");
+            const result = stopHostGatewayProcesses({}, {
+              gatewayBin: process.env.E2E_OPENSHELL_GATEWAY_BIN,
+              openShellGatewayName: "nemoclaw",
+              openShellGatewayPort: 8080,
+              scopedGatewayStop: process.env.E2E_PORTABLE_GATEWAY_STOP_SCOPE !== "full",
+              stateDir: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+              usePgrepFallback: false,
+            });
+            if (result.failed.length || result.ownershipFailures?.length) {
+              console.error(JSON.stringify(result));
+              process.exitCode = 1;
+            }
+          '
+          openshell gateway remove nemoclaw
+          rm -rf -- "$gateway_state"
 
       - name: Clean up rootless Podman runtime
         if: always()

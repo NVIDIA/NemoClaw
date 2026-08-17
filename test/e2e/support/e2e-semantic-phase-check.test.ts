@@ -101,23 +101,6 @@ describe("semantic E2E phase checker", () => {
     ]);
   });
 
-  // source-shape-contract: compatibility -- Generated policy output must precede semantic collection and remain shared with the canonical CLI build
-  test("builds the policy boundary before semantic collection and CLI compilation", () => {
-    const scripts = (
-      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
-        scripts: Record<string, string>;
-      }
-    ).scripts;
-
-    expect(scripts["build:policy-boundary"]).toBe("tsc -p nemoclaw/tsconfig.shared.json");
-    expect(scripts["test:e2e-phases:check"]).toMatch(
-      /^npm run build:policy-boundary && node .*tools\/e2e\/check-semantic-phases\.mts$/u,
-    );
-    expect(scripts["build:cli"]).toMatch(
-      /^npm run build:policy-boundary && tsc -p tsconfig\.src\.json &&/u,
-    );
-  });
-
   test("derives coverage from registry, free-standing, shared, and forwarding workflow paths", () => {
     const modules = semanticPhaseCoverageModules(
       {

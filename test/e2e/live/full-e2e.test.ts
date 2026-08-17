@@ -16,7 +16,10 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  buildHostedInferenceModelsProbe,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import {
   type ColdOnboardPerformanceBudget,
   evaluateColdOnboardPerformance,
@@ -519,23 +522,13 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
   progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
-  const direct = await host.command(
-    "curl",
-    [
-      "-fsS",
-      "--max-time",
-      "60",
-      "-H",
-      `Authorization: Bearer ${hosted.apiKey}`,
-      `${hosted.endpointUrl}/models`,
-    ],
-    {
-      artifactName: "phase-4-direct-hosted-inference-models",
-      env: env(),
-      redactionValues,
-      timeoutMs: 90_000,
-    },
-  );
+  const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
+  const direct = await host.command(directProbe.command, directProbe.args, {
+    artifactName: "phase-4-direct-hosted-inference-models",
+    env: env(directProbe.env),
+    redactionValues,
+    timeoutMs: 90_000,
+  });
   expect(direct.exitCode, resultText(direct)).toBe(0);
   expect(resultText(direct)).toContain("data");
 

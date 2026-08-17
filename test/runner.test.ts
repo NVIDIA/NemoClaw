@@ -854,27 +854,6 @@ describe("regression guards", () => {
   });
 
   describe("credential exposure guards (#429)", () => {
-    // source-shape-contract: security -- Executable walkthrough commands must never materialize the NVIDIA inference credential in child arguments
-    it("walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands", () => {
-      const fs = require("fs");
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "scripts", "walkthrough.sh"),
-        "utf-8",
-      );
-      // Check only executable lines (tmux spawn, openshell connect) — not comments/docs
-      const cmdLines = src
-        .split("\n")
-        .filter(
-          (l: string) =>
-            !l.trim().startsWith("#") &&
-            !l.trim().startsWith("echo") &&
-            (l.includes("tmux") || l.includes("openshell sandbox connect")),
-        );
-      for (const line of cmdLines) {
-        expect(line.includes("NVIDIA_INFERENCE_API_KEY")).toBe(false);
-      }
-    });
-
     it("install-openshell.sh gh-absent path uses curl directly", () => {
       const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));

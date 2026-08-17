@@ -10,19 +10,23 @@ import {
   constants,
   cpSync,
   fstatSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
-  readdirSync,
   readFileSync,
-  realpathSync,
   renameSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  jsonObject as record,
+  readJsonObject as readJson,
+  rejectUnsafePackageTree,
+  requireRealDirectory as realDirectory,
+} from "./lib/bundled-npm-package.mts";
 
 export const FIXED_TAR_VERSION = "7.5.20";
 export const FIXED_TAR_INTEGRITY =
@@ -43,37 +47,6 @@ export const NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH = [
   "node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c",
 ] as const;
 
-type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown, label: string): JsonRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be a JSON object`);
-  }
-  return value as JsonRecord;
-}
-
-function readJson(file: string, label: string): JsonRecord {
-  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const metadata = fstatSync(descriptor);
-    if (!metadata.isFile()) throw new Error(`${label} must be a real file: ${file}`);
-    return record(JSON.parse(readFileSync(descriptor, "utf8")), label);
-  } catch (error) {
-    throw new Error(`${label} is invalid: ${String(error)}`);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function realDirectory(directory: string, label: string): string {
-  const resolved = resolve(directory);
-  const metadata = lstatSync(resolved);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error(`${label} must be a real directory: ${resolved}`);
-  }
-  return realpathSync(resolved);
-}
-
 function parseVersion(version: unknown, label: string): readonly [number, number, number] {
   if (typeof version !== "string") throw new Error(`${label} must be an exact semver version`);
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(version);
@@ -88,15 +61,6 @@ function versionAtLeast(version: unknown, minimum: string, label: string): boole
     if (observed[index] !== required[index]) return observed[index]! > required[index]!;
   }
   return true;
-}
-
-function rejectUnsafeTree(root: string): void {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
-      throw new Error(`replacement tar package contains an unsafe member: ${entry.name}`);
-    }
-    if (entry.isDirectory()) rejectUnsafeTree(join(root, entry.name));
-  }
 }
 
 export type BundledNpmTarState = Readonly<{
@@ -158,7 +122,7 @@ export function patchBundledNpmTar(options: {
 }): BundledNpmTarState {
   const npmRoot = realDirectory(options.npmRoot, "npm package root");
   const replacementRoot = realDirectory(options.replacementRoot, "replacement tar root");
-  rejectUnsafeTree(replacementRoot);
+  rejectUnsafePackageTree(replacementRoot, "replacement tar package");
   const replacement = readJson(join(replacementRoot, "package.json"), "replacement tar manifest");
   if (replacement.name !== "tar" || replacement.version !== FIXED_TAR_VERSION) {
     throw new Error(`replacement package must be tar@${FIXED_TAR_VERSION}`);
