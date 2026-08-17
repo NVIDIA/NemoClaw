@@ -116,7 +116,7 @@ describe("lifecycle option normalization", () => {
       });
     });
 
-    it("recognises common truthy/falsy spellings of NEMOCLAW_CLEANUP_GATEWAY", () => {
+    function verifyCleanupGatewayBooleanSpellings() {
       for (const truthy of ["1", "true", "TRUE", "Yes"]) {
         process.env[ENV_KEY] = truthy;
         expect(normalizeDestroySandboxOptions({}).cleanupGateway).toBe(true);
@@ -129,7 +129,9 @@ describe("lifecycle option normalization", () => {
         process.env[ENV_KEY] = noise;
         expect(normalizeDestroySandboxOptions({}).cleanupGateway).toBeUndefined();
       }
-    });
+    }
+
+    it("recognises common truthy/falsy spellings of NEMOCLAW_CLEANUP_GATEWAY", verifyCleanupGatewayBooleanSpellings);
   });
 
   it("preserves typed rebuild options and still accepts compatibility argv", () => {

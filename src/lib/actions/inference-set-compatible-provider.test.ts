@@ -1062,17 +1062,29 @@ describe("runInferenceSet compatible providers", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  for (const provider of ["compatible-endpoint", "compatible-anthropic-endpoint"]) {
-    it.each([
-      ["loopback", "http://127.0.0.1:8000/v1", "93.184.216.34"],
-      ["localhost", "http://localhost:8000/v1", "93.184.216.34"],
-      ["link-local", "http://169.254.169.254/latest", "93.184.216.34"],
-      ["RFC1918", "http://10.0.0.1:8000/v1", "93.184.216.34"],
-      ["non-allowlisted internal", "http://evil.host.openshell.internal:18767/v1", "93.184.216.34"],
-      ["HTTPS bridge", "https://host.openshell.internal:18767/v1", "93.184.216.34"],
-      ["privileged-port bridge", "http://host.openshell.internal:80/v1", "93.184.216.34"],
-      ["DNS-private", "https://private-resolution.example/v1", "10.0.0.8"],
-    ])(`rejects %s endpoint metadata for ${provider}`, async (_kind, endpointUrl, resolvedAddress) => {
+  it.each(
+    (["compatible-endpoint", "compatible-anthropic-endpoint"] as const).flatMap((provider) =>
+      [
+        ["loopback", "http://127.0.0.1:8000/v1", "93.184.216.34"],
+        ["localhost", "http://localhost:8000/v1", "93.184.216.34"],
+        ["link-local", "http://169.254.169.254/latest", "93.184.216.34"],
+        ["RFC1918", "http://10.0.0.1:8000/v1", "93.184.216.34"],
+        [
+          "non-allowlisted internal",
+          "http://evil.host.openshell.internal:18767/v1",
+          "93.184.216.34",
+        ],
+        ["HTTPS bridge", "https://host.openshell.internal:18767/v1", "93.184.216.34"],
+        ["privileged-port bridge", "http://host.openshell.internal:80/v1", "93.184.216.34"],
+        ["DNS-private", "https://private-resolution.example/v1", "10.0.0.8"],
+      ].map(
+        ([kind, endpointUrl, resolvedAddress]) =>
+          [kind, provider, endpointUrl, resolvedAddress] as const,
+      ),
+    ),
+  )(
+    "rejects %s endpoint metadata for %s",
+    async (_kind, provider, endpointUrl, resolvedAddress) => {
       const actualConfig =
         await vi.importActual<typeof import("../sandbox/config")>("../sandbox/config");
       const lookup = vi.fn(async () => [{ address: resolvedAddress, family: 4 }]);
@@ -1114,6 +1126,6 @@ describe("runInferenceSet compatible providers", () => {
 
       expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
       expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-    });
-  }
+    },
+  );
 });

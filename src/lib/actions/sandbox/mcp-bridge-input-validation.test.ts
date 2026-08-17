@@ -213,7 +213,7 @@ describe("MCP CLI input validation", () => {
     expect(() => parseMcpAddArgs(["github", "--url", "stdio://github"])).toThrow(/https/);
   });
 
-  it("normalizes URLs without persisting credentials", () => {
+  function verifyCredentialFreeUrlNormalization() {
     expect(normalizeMcpServerUrl("https://mcp.example.test")).toBe("https://mcp.example.test/");
     expect(() => normalizeMcpServerUrl("https://user:pass@mcp.example.test/mcp")).toThrow(
       /must not embed credentials/,
@@ -288,7 +288,9 @@ describe("MCP CLI input validation", () => {
         /literal and canonical/,
       );
     }
-  });
+  }
+
+  it("normalizes URLs without persisting credentials", verifyCredentialFreeUrlNormalization);
 
   it("rejects a malformed credential-bearing URL without echoing it (#8698)", () => {
     const user = "qa-user";

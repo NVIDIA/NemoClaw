@@ -284,11 +284,14 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
     });
   });
 
-  for (const [label, method] of [
+  const teardownCases = [
     ["destroy", "prepareMcpBridgesForDestroy"],
     ["rebuild", "prepareMcpBridgesForRebuild"],
-  ] as const) {
-    it(`${label} teardown does not require the marker from the old image`, async () => {
+  ] as const;
+
+  it.each(teardownCases)(
+    "%s teardown does not require the marker from the old image",
+    async (_label, method) => {
       const preparation = await bridge[method]("alpha");
 
       expect({ entryCount: preparation.entries.length, ...lifecycleResult() }).toMatchObject({
@@ -298,9 +301,12 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
         providerExists: true,
         markerCalls: 0,
       });
-    });
+    },
+  );
 
-    it(`${label} teardown fails closed when adapter ownership is unproved`, async () => {
+  it.each(teardownCases)(
+    "%s teardown fails closed when adapter ownership is unproved",
+    async (_label, method) => {
       adapterRemovalOutcome = "unowned";
 
       let error = "";
@@ -317,8 +323,8 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
         providerExists: true,
         markerCalls: 0,
       });
-    });
-  }
+    },
+  );
 
   it("proves the replacement image marker before post-rebuild reattachment", async () => {
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
