@@ -47,12 +47,13 @@ const launchReadinessObservationStubLines = [
   "fi",
 ];
 
-const expectedProbeOnlyExitCode = process.platform === "darwin" ? 1 : 0;
 const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
 
 function expectProbeOnlyPublicationOutcome(result: { code: number; out: string }): void {
-  expect(result.code, result.out).toBe(expectedProbeOnlyExitCode);
+  // Evidence unavailability on macOS is a note, not a failure (#9278).
+  expect(result.code, result.out).toBe(0);
   expect(result.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
+  expect(result.out.includes("Probe failed")).toBe(false);
 }
 
 function writeGatewayControlDockerStub(

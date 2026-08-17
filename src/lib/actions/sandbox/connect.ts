@@ -1332,10 +1332,19 @@ export async function connectSandbox(
     }
     if (publication.kind === "evidence-failed") {
       if (!requireLaunchReadinessPublication) return;
+      // A platform without a per-user runtime authority (macOS) can never
+      // store launch-readiness evidence. The probe and recovery still
+      // succeeded, and `launch` runs the complete preflight without the
+      // evidence, so a permanent platform gap must not turn a successful
+      // probe into a nonzero exit (#9278).
+      if (readiness.kind === "fallback" && readiness.authorityUnsupported === true) {
+        console.log(
+          "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
+        );
+        return;
+      }
       console.error(
-        readiness.kind === "fallback" && readiness.authorityUnsupported === true
-          ? "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform."
-          : "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
+        "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
       );
       process.exit(1);
     }

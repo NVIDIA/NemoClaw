@@ -1273,16 +1273,18 @@ It validates a usable lease and exits without duplicate recovery.
 Otherwise, it fences prior evidence, waits for the sandbox, verifies or repairs its in-sandbox agent process and host-side forwards, and publishes evidence only after every probe succeeds.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
 If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance.
-A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
-A runtime failure and a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
+A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
+A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
 
 Infrastructure must run the command as the same final numeric user that later runs `launch`.
 Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete.
 On Linux, that user also needs a secure, independently writable OS per-user runtime authority under `/run/user/<numeric-uid>`.
 Do not redirect this authority with caller environment variables.
 Do not use a graphical or login-session identifier as the deployment ordering boundary.
-On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes, but exits nonzero because it cannot publish authoritative launch-readiness evidence.
-The publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
+On macOS, `connect --probe-only` runs the complete preflight, including recovery and probes.
+After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero.
+The next `launch` runs the complete preflight.
+On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
 
 Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want launch-readiness validation, an automatic fallback that runs the complete preflight, and then the agent instead of a sandbox shell.
