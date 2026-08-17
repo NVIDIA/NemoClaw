@@ -59,6 +59,14 @@ function response(bytes: Buffer): Response {
   });
 }
 
+function parseArtifactReadEvidence(message: string): Record<string, string> {
+  const [operation, ...fields] = message.trim().split(/\s+/u);
+  return {
+    operation,
+    ...Object.fromEntries(fields.map((field) => field.split("=", 2))),
+  };
+}
+
 describe("exact artifact download (#9340)", () => {
   it("binds immutable identity before the content read", () => {
     const bytes = archive();
@@ -123,9 +131,20 @@ describe("exact artifact download (#9340)", () => {
       "https://api.github.com/repos/NVIDIA/NemoClaw/actions/artifacts/9001/zip",
     ]);
     expect(sleep).toHaveBeenCalledWith(2000);
-    expect(log.mock.calls.flat().join("\n")).toBe(
-      "artifact-content-read attempt=1 status=503 outcome=retry\nartifact-content-read attempt=2 outcome=passed-after-retry",
-    );
+    const evidence = log.mock.calls.map(([message]) => parseArtifactReadEvidence(message));
+    expect(evidence).toEqual([
+      expect.objectContaining({
+        operation: "artifact-content-read",
+        attempt: "1",
+        status: "503",
+        outcome: "retry",
+      }),
+      expect.objectContaining({
+        operation: "artifact-content-read",
+        attempt: "2",
+        outcome: "passed-after-retry",
+      }),
+    ]);
     expect(log.mock.calls.flat().join("\n")).not.toMatch(/secret|upstream body|Authorization/u);
   });
 
