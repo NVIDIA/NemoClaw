@@ -47,13 +47,21 @@ set -euo pipefail
 url="\${!#}"
 administrator="\${url%/permission}"
 administrator="\${administrator##*/}"
+output_file=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi
+  previous="$argument"
+done
 printf '%s\n' "$administrator" >>"$CURL_LOG"
 case "$administrator" in
   maintainer) role=maintain ;;
-  mismatch) printf '%s\n' '{"user":{"login":"different-user"},"role_name":"admin"}'; exit 0 ;;
+  mismatch) login=different-user; role=admin ;;
   *) role=admin ;;
 esac
-printf '{"user":{"login":"%s"},"role_name":"%s"}\n' "$administrator" "$role"
+login="\${login:-$administrator}"
+printf -v body '{"user":{"login":"%s"},"role_name":"%s"}' "$login" "$role"
+if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi
 `,
   );
   fs.chmodSync(curlPath, 0o755);

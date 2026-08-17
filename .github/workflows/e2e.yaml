@@ -288,6 +288,62 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_collaborator_permission() {
+            local maintainer="$1"
+            local attempt curl_exit failure http_status permission_file
+            permission_file="$(mktemp "${RUNNER_TEMP:-/tmp}/nemoclaw-collaborator-permission.XXXXXX")"
+
+            for attempt in 1 2 3; do
+              : >"$permission_file"
+              if http_status="$(curl --silent --proto '=https' --connect-timeout 10 --max-time 30 \
+                --output "$permission_file" --write-out "%{http_code}" \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission" \
+                2>/dev/null)"; then
+                if [[ "$http_status" =~ ^2[0-9]{2}$ ]]; then
+                  if jq -e 'type == "object" and (.user.login | type == "string") and (.role_name | type == "string")' "$permission_file" >/dev/null 2>&1; then
+                    if (( attempt > 1 )); then
+                      echo "::notice::Collaborator permission read passed after retry on attempt ${attempt}/3" >&2
+                    fi
+                    cat "$permission_file"
+                    rm -f "$permission_file"
+                    return 0
+                  fi
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: malformed response" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+                if [[ "$http_status" =~ ^[0-9]{3}$ ]]; then
+                  failure="HTTP ${http_status}"
+                  case "$http_status" in
+                    408 | 429 | 5??) ;;
+                    *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: ${failure}" >&2; rm -f "$permission_file"; return 1 ;;
+                  esac
+                else
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: invalid HTTP status" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+              else
+                curl_exit=$?
+                case "$curl_exit" in
+                  5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95 | 96) failure="transport" ;;
+                  *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: curl exit ${curl_exit}" >&2; rm -f "$permission_file"; return 1 ;;
+                esac
+              fi
+
+              if (( attempt == 3 )); then
+                echo "::error::Collaborator permission read exhausted after attempt ${attempt}/3: ${failure}" >&2
+                rm -f "$permission_file"
+                return 1
+              fi
+              echo "::warning::Collaborator permission read attempt ${attempt}/3 failed: ${failure}; retrying" >&2
+              sleep "$attempt"
+            done
+          }
+
           require_maintainer() {
             local maintainer="$1"
             [[ "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ && "$maintainer" != -* && "$maintainer" != *- ]] || {
@@ -295,11 +351,7 @@ jobs:
               exit 1
             }
             local permission_json
-            permission_json="$(curl --fail --silent --show-error --proto '=https' \
-              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            permission_json="$(read_collaborator_permission "$maintainer")"
             case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
               maintain | admin) ;;
               *) echo "::error::Manual PR E2E requires a repository maintainer or administrator" >&2; exit 1 ;;
@@ -361,6 +413,62 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_collaborator_permission() {
+            local administrator="$1"
+            local attempt curl_exit failure http_status permission_file
+            permission_file="$(mktemp "${RUNNER_TEMP:-/tmp}/nemoclaw-collaborator-permission.XXXXXX")"
+
+            for attempt in 1 2 3; do
+              : >"$permission_file"
+              if http_status="$(curl --silent --proto '=https' --connect-timeout 10 --max-time 30 \
+                --output "$permission_file" --write-out "%{http_code}" \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${administrator}/permission" \
+                2>/dev/null)"; then
+                if [[ "$http_status" =~ ^2[0-9]{2}$ ]]; then
+                  if jq -e 'type == "object" and (.user.login | type == "string") and (.role_name | type == "string")' "$permission_file" >/dev/null 2>&1; then
+                    if (( attempt > 1 )); then
+                      echo "::notice::Collaborator permission read passed after retry on attempt ${attempt}/3" >&2
+                    fi
+                    cat "$permission_file"
+                    rm -f "$permission_file"
+                    return 0
+                  fi
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: malformed response" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+                if [[ "$http_status" =~ ^[0-9]{3}$ ]]; then
+                  failure="HTTP ${http_status}"
+                  case "$http_status" in
+                    408 | 429 | 5??) ;;
+                    *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: ${failure}" >&2; rm -f "$permission_file"; return 1 ;;
+                  esac
+                else
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: invalid HTTP status" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+              else
+                curl_exit=$?
+                case "$curl_exit" in
+                  5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95 | 96) failure="transport" ;;
+                  *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: curl exit ${curl_exit}" >&2; rm -f "$permission_file"; return 1 ;;
+                esac
+              fi
+
+              if (( attempt == 3 )); then
+                echo "::error::Collaborator permission read exhausted after attempt ${attempt}/3: ${failure}" >&2
+                rm -f "$permission_file"
+                return 1
+              fi
+              echo "::warning::Collaborator permission read attempt ${attempt}/3 failed: ${failure}; retrying" >&2
+              sleep "$attempt"
+            done
+          }
+
           require_admin() {
             local administrator="$1"
             if [[ ! "$administrator" =~ ^[A-Za-z0-9-]{1,39}$ || "$administrator" == -* || "$administrator" == *- ]]; then
@@ -369,11 +477,7 @@ jobs:
             fi
 
             local permission_json
-            permission_json="$(curl --fail --silent --show-error --proto '=https' \
-              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${administrator}/permission")"
+            permission_json="$(read_collaborator_permission "$administrator")"
             if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$administrator")" ]]; then
               echo "::error::Release qualification waiver permission response did not match the actor" >&2
               exit 1
@@ -500,6 +604,62 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_collaborator_permission() {
+            local maintainer="$1"
+            local attempt curl_exit failure http_status permission_file
+            permission_file="$(mktemp "${RUNNER_TEMP:-/tmp}/nemoclaw-collaborator-permission.XXXXXX")"
+
+            for attempt in 1 2 3; do
+              : >"$permission_file"
+              if http_status="$(curl --silent --proto '=https' --connect-timeout 10 --max-time 30 \
+                --output "$permission_file" --write-out "%{http_code}" \
+                --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission" \
+                2>/dev/null)"; then
+                if [[ "$http_status" =~ ^2[0-9]{2}$ ]]; then
+                  if jq -e 'type == "object" and (.user.login | type == "string") and (.role_name | type == "string")' "$permission_file" >/dev/null 2>&1; then
+                    if (( attempt > 1 )); then
+                      echo "::notice::Collaborator permission read passed after retry on attempt ${attempt}/3" >&2
+                    fi
+                    cat "$permission_file"
+                    rm -f "$permission_file"
+                    return 0
+                  fi
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: malformed response" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+                if [[ "$http_status" =~ ^[0-9]{3}$ ]]; then
+                  failure="HTTP ${http_status}"
+                  case "$http_status" in
+                    408 | 429 | 5??) ;;
+                    *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: ${failure}" >&2; rm -f "$permission_file"; return 1 ;;
+                  esac
+                else
+                  echo "::error::Collaborator permission read attempt ${attempt}/3 failed: invalid HTTP status" >&2
+                  rm -f "$permission_file"
+                  return 1
+                fi
+              else
+                curl_exit=$?
+                case "$curl_exit" in
+                  5 | 6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92 | 95 | 96) failure="transport" ;;
+                  *) echo "::error::Collaborator permission read attempt ${attempt}/3 failed: curl exit ${curl_exit}" >&2; rm -f "$permission_file"; return 1 ;;
+                esac
+              fi
+
+              if (( attempt == 3 )); then
+                echo "::error::Collaborator permission read exhausted after attempt ${attempt}/3: ${failure}" >&2
+                rm -f "$permission_file"
+                return 1
+              fi
+              echo "::warning::Collaborator permission read attempt ${attempt}/3 failed: ${failure}; retrying" >&2
+              sleep "$attempt"
+            done
+          }
+
           require_maintainer() {
             local maintainer="$1"
             if [[ ! "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ || "$maintainer" == -* || "$maintainer" == *- ]]; then
@@ -508,11 +668,7 @@ jobs:
             fi
 
             local permission_json
-            permission_json="$(curl --fail --silent --show-error --proto '=https' \
-              --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-              --header "Accept: application/vnd.github+json" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}/collaborators/${maintainer}/permission")"
+            permission_json="$(read_collaborator_permission "$maintainer")"
             if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
               echo "::error::Launchable image publication permission response did not match the actor" >&2
               exit 1
