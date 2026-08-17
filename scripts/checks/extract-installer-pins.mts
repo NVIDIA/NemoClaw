@@ -73,6 +73,7 @@ const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
 ] as const;
 const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+  "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
 ] as const;
 const EXPECTED_INSTALLER_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
