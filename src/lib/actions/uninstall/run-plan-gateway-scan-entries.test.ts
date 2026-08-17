@@ -154,6 +154,12 @@ function uninstall(
   return { result, logs, survivors: shims.filter((shim) => fs.existsSync(shim)) };
 }
 
+function writeForeignCliShims(shims: readonly string[]): void {
+  for (const shim of shims) {
+    fs.writeFileSync(shim, "#!/usr/bin/env node\nconsole.log('foreign')\n", { mode: 0o755 });
+  }
+}
+
 describe("uninstall gateway-directory scan", () => {
   it.each([
     [".DS_Store"],
@@ -243,9 +249,7 @@ describe("uninstall gateway-directory scan", () => {
   it("preserves foreign CLI files under --destroy-user-data without claiming removal (#9277)", () => {
     const { home, shims } = makeHome("nemoclaw-uninstall-destroy-foreign-", ["not-a-port"]);
     writeScopedGatewayState(home);
-    for (const shim of shims) {
-      fs.writeFileSync(shim, "#!/usr/bin/env node\nconsole.log('foreign')\n", { mode: 0o755 });
-    }
+    writeForeignCliShims(shims);
 
     try {
       const { result, logs, survivors } = uninstall(home, shims, { destroyUserData: true });
