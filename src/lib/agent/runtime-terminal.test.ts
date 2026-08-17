@@ -90,12 +90,13 @@ describe("interactive agent command resolution", () => {
 
   // Regression guard: declaring runtime.interactive_command must not promote a
   // gateway agent to terminal behaviour for getTerminalCommand's four callers.
-  it("leaves getTerminalCommand returning null for gateway agents", () => {
-    for (const name of ["openclaw", "hermes"]) {
+  it.each(["openclaw", "hermes"])(
+    "leaves getTerminalCommand returning null for %s gateway",
+    (name) => {
       const agent = loadAgent(name);
       expect(agent.runtime?.kind).toBe("gateway");
       expect(getTerminalCommand(agent, "interactive")).toBeNull();
       expect(getTerminalCommand(agent, "headless")).toBeNull();
-    }
-  });
+    },
+  );
 });

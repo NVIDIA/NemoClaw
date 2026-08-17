@@ -87,13 +87,14 @@ function makeWrapperFixture(
 }
 
 describe("LangChain Deep Agents Code managed entrypoints", () => {
-  it("uses trusted privileged-mode Bash for every image entry script", () => {
-    for (const name of ["dcode-launcher.sh", "dcode-wrapper.sh", "start.sh"]) {
+  it.each(["dcode-launcher.sh", "dcode-wrapper.sh", "start.sh"])(
+    "uses trusted privileged-mode Bash for every image entry script [case %#]",
+    (name) => {
       const source = readAgentFile(name);
       expect(source.startsWith("#!/bin/bash -p\n"), name).toBe(true);
       expect(source).toContain("unset BASH_ENV ENV");
-    }
-  });
+    },
+  );
 
   it("forces every LangChain and LangSmith tracing flag off across image boundaries", () => {
     const dockerfile = readAgentFile("Dockerfile");
@@ -210,20 +211,23 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     "--auto-appro",
     "--auto-approv",
     "--auto-approve",
-  ])("allows explicit thread auto-approval through %s only in thread-opt-in mode (#6478)", (arg) => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-opt-in-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
-    const result = spawnSync("bash", [wrapperPath, arg], {
-      env: {
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
-        NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
-      },
-      encoding: "utf8",
-    });
+  ])(
+    "allows explicit thread auto-approval through %s only in thread-opt-in mode (#6478)",
+    (arg) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-opt-in-"));
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir, "thread-opt-in\n");
+      const result = spawnSync("bash", [wrapperPath, arg], {
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          NEMOCLAW_DCODE_AUTO_APPROVAL: "disabled",
+        },
+        encoding: "utf8",
+      });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(ranMarker)).toBe(true);
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(ranMarker)).toBe(true);
+    },
+  );
 
   it("keeps non-interactive argument scanning fail-closed around auto-approval (#6478)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-headless-"));

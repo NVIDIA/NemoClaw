@@ -160,19 +160,23 @@ describe("gateway management declaration", () => {
     ["a cloud metadata address", "http://169.254.169.254:8080"],
     ["a link-local address", "http://169.254.1.1:8080"],
     ["a non-loopback private address", "http://10.0.0.5:8080"],
-  ])("rejects an endpoint pointing at %s, which onboarding would otherwise request (#6576)", (_label, endpoint) => {
-    const result = parseGatewayManagementDeclaration(externalDeclaration({ endpoint }));
+  ])(
+    "rejects an endpoint pointing at %s, which onboarding would otherwise request (#6576)",
+    (_label, endpoint) => {
+      const result = parseGatewayManagementDeclaration(externalDeclaration({ endpoint }));
 
-    expect(result.ok === false && result.reason).toMatch(/not a supported local gateway origin/);
-  });
+      expect(result.ok === false && result.reason).toMatch(/not a supported local gateway origin/);
+    },
+  );
 
-  it("accepts only numeric loopback endpoint hosts (#6576)", () => {
-    for (const endpoint of ["http://127.0.0.1:8080", "http://[::1]:8080"]) {
+  it.each(["http://127.0.0.1:8080", "http://[::1]:8080"])(
+    "accepts only numeric loopback endpoint hosts [case %#] (#6576)",
+    (endpoint) => {
       expect(parseGatewayManagementDeclaration(externalDeclaration({ endpoint }))).toMatchObject({
         ok: true,
       });
-    }
-  });
+    },
+  );
 
   it("rejects a capability this build does not provide (#6576)", () => {
     const result = parseGatewayManagementDeclaration(
@@ -260,8 +264,9 @@ describe("gateway management declaration loading", () => {
 });
 
 describe("supported supervisor kinds (#6576)", () => {
-  it("accepts the systemd kinds it can bind a listener to", () => {
-    for (const kind of ["systemd-system", "systemd-user"]) {
+  it.each(["systemd-system", "systemd-user"])(
+    "accepts the systemd kinds it can bind a listener to [case %#]",
+    (kind) => {
       expect(
         parseGatewayManagementDeclaration(
           externalDeclaration({
@@ -273,8 +278,8 @@ describe("supported supervisor kinds (#6576)", () => {
           }),
         ),
       ).toMatchObject({ ok: true });
-    }
-  });
+    },
+  );
 
   it("rejects the opaque 'external' kind, which could never attach", () => {
     const result = parseGatewayManagementDeclaration(

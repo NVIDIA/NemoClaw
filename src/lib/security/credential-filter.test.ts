@@ -483,16 +483,14 @@ describe("sanitizeConfigFile", () => {
     expect(readFileSync(configPath, "utf-8")).toBe(source);
   });
 
-  it("preserves empty and comment-only YAML documents", () => {
-    for (const [name, source] of [
-      ["empty.yaml", ""],
-      ["comments.yaml", "# nothing to sanitize\n"],
-    ]) {
-      const configPath = join(tmpDir, name);
-      writeFileSync(configPath, source);
-      expect(sanitizeYamlConfigFile(configPath)).toBe(true);
-      expect(readFileSync(configPath, "utf-8")).toBe(source);
-    }
+  it.each([
+    ["empty.yaml", ""],
+    ["comments.yaml", "# nothing to sanitize\n"],
+  ])("preserves empty and comment-only YAML documents [case %#]", (name, source) => {
+    const configPath = join(tmpDir, name);
+    writeFileSync(configPath, source);
+    expect(sanitizeYamlConfigFile(configPath)).toBe(true);
+    expect(readFileSync(configPath, "utf-8")).toBe(source);
   });
 
   it("sanitizes valid JSON arrays instead of treating them as failures", () => {

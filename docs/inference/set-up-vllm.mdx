@@ -371,6 +371,22 @@ Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pe
 Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
 Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
 
+On a host that still meets the N1x identity checks, `rebuild` reuses the recorded route as explicit preview intent only when all of these conditions hold:
+
+- The sandbox registry records provider `vllm-local`.
+- The registry records model `nvidia/Qwen3.6-35B-A3B-NVFP4`.
+- If the registry records `endpointUrl` as `null`, NemoClaw derives `http://host.openshell.internal:8000/v1`; otherwise, `endpointUrl` must equal that URL.
+- The registry records `endpointSource` as `onboard` and `openshellDriver` as `docker`.
+- The replacement keeps the recorded provider and model, then re-derives the canonical local endpoint.
+- `hostLocalInferenceReceipt` is absent or `null`, or contains a canonical vLLM receipt for `host.openshell.internal:8000` and the same model.
+
+NemoClaw v0.0.109 can omit `hostLocalInferenceReceipt` or record it as `null`.
+Matching sandboxes from that release remain eligible only when every condition above passes.
+You do not need to set `NEMOCLAW_PROVIDER` again for a matching rebuild.
+Any unmet condition stops readiness preflight before NemoClaw deletes the existing sandbox.
+A malformed, non-vLLM, or conflicting receipt also stops readiness preflight before deletion.
+This reuse waives only the pending physical-validation finding and does not change the Deferred status.
+
 <Warning title="N1x Express Qualification Pending">
 Physical CUDA and CDI checks passed on one N1x host.
 The full NemoClaw Express E2E test is still pending, so the N1x platform status remains Deferred.

@@ -2486,43 +2486,41 @@ describe("seed_default_workspace_templates (#3240)", () => {
     }
   });
 
-  it("resolves supported OpenClaw package template layouts", () => {
-    for (const relativeTemplatesDir of [
-      path.join("docs", "reference", "templates"),
-      path.join("dist", "docs", "reference", "templates"),
-    ]) {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-package-"));
-      const workspaceDir = path.join(tmpDir, "workspace");
-      const fakeBin = path.join(tmpDir, "bin");
-      const npmRoot = path.join(tmpDir, "npm-root");
-      const templatesDir = path.join(npmRoot, "openclaw", relativeTemplatesDir);
-      fs.mkdirSync(workspaceDir, { recursive: true });
-      fs.mkdirSync(fakeBin, { recursive: true });
-      writeTemplates(templatesDir);
-      fs.writeFileSync(
-        path.join(fakeBin, "npm"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
-          `  printf '%s\\n' ${JSON.stringify(npmRoot)}`,
-          "  exit 0",
-          "fi",
-          'printf "unexpected npm args: %s\\n" "$*" >&2',
-          "exit 2",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
+  it.each([
+    path.join("docs", "reference", "templates"),
+    path.join("dist", "docs", "reference", "templates"),
+  ])("resolves supported OpenClaw package template layouts [case %#]", (relativeTemplatesDir) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-package-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const fakeBin = path.join(tmpDir, "bin");
+    const npmRoot = path.join(tmpDir, "npm-root");
+    const templatesDir = path.join(npmRoot, "openclaw", relativeTemplatesDir);
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeTemplates(templatesDir);
+    fs.writeFileSync(
+      path.join(fakeBin, "npm"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+        `  printf '%s\\n' ${JSON.stringify(npmRoot)}`,
+        "  exit 0",
+        "fi",
+        'printf "unexpected npm args: %s\\n" "$*" >&2',
+        "exit 2",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
 
-      try {
-        const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
-          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-        });
-        expect(result.status).toBe(0);
-        expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
-        expect(result.stderr).toContain("seeded 6 default workspace template");
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
+    try {
+      const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+        env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+      });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+      expect(result.stderr).toContain("seeded 6 default workspace template");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
@@ -3712,8 +3710,9 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
     expect(diagnosticLines[0]).not.toContain("LATER");
   });
 
-  it("installs and validates the diagnostics preload in both entrypoint paths before gateway launch", () => {
-    for (const kind of ["non-root", "root"] as const) {
+  it.each(["non-root", "root"] as const)(
+    "installs and validates the diagnostics preload in both entrypoint paths before gateway launch [case %#]",
+    (kind) => {
       const setup = runPreGatewaySetup(kind);
       expect(setup.result.status).toBe(0);
       expect(setup.preloadExists).toBe(true);
@@ -3723,8 +3722,8 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain(setup.preloadPath);
       expect(setup.pluginRefreshLogExists).toBe(true);
       expect(setup.pluginRefreshLogMode).toBe("600");
-    }
-  });
+    },
+  );
 
   it("connect-shell rc sources the diagnostics preload when present", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-rc-"));

@@ -49,18 +49,16 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
     );
   });
 
-  it("changes when a recorded replacement input changes", () => {
-    for (const drift of [
-      { observabilityEnabled: true },
-      { toolDisclosure: "direct" },
-      { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },
-      { dcodeAutoApprovalMode: "thread-opt-in" },
-      { policyTier: "balanced" },
-    ]) {
-      expect(fingerprintOnboardRecreateTargetIntent({ ...BASE_INTENT, ...drift })).not.toBe(
-        fingerprintOnboardRecreateTargetIntent(BASE_INTENT),
-      );
-    }
+  it.each([
+    { observabilityEnabled: true },
+    { toolDisclosure: "direct" },
+    { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },
+    { dcodeAutoApprovalMode: "thread-opt-in" },
+    { policyTier: "balanced" },
+  ])("changes when a recorded replacement input changes [case %#]", (drift) => {
+    expect(fingerprintOnboardRecreateTargetIntent({ ...BASE_INTENT, ...drift })).not.toBe(
+      fingerprintOnboardRecreateTargetIntent(BASE_INTENT),
+    );
   });
 
   it("changes when the replacement targets another gateway", () => {

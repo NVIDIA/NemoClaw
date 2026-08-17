@@ -150,8 +150,9 @@ describe("Hermes cross-UID ledger permissions", () => {
     expect(imageBuildProbes).toContain('source.count("os.chmod(path, 0o660)") == 1');
   });
 
-  it("prepares both setgid cross-UID parents in both image layouts", () => {
-    for (const source of [baseDockerfile, dockerfile]) {
+  it.each([baseDockerfile, dockerfile])(
+    "prepares both setgid cross-UID parents in both image layouts [case %#]",
+    (source) => {
       expect(source).toContain("/sandbox/.hermes/cron");
       expect(source).toContain("/sandbox/.hermes/gateway");
       expect(source).toMatch(
@@ -160,8 +161,8 @@ describe("Hermes cross-UID ledger permissions", () => {
       expect(source).toMatch(
         /chmod 2770 \\\n(?:[\s\S]*?)\/sandbox\/[.]hermes\/cron \\\n\s+\/sandbox\/[.]hermes\/gateway \\\n\s+\/sandbox\/[.]hermes\/runtime/,
       );
-    }
-  });
+    },
+  );
 
   it("requires a Dockerfile cross-identity probe for the cron ledger lifecycle", () => {
     expect(dockerfile).toContain(

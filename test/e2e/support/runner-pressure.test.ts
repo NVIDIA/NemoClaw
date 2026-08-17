@@ -673,25 +673,30 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     expect(payload.containers).toHaveLength(5);
   });
 
-  it("rejects phase labels that could inject argv options", () => {
-    expect(assertPhaseLabel("rebuild-hermes.image-build")).toBe("rebuild-hermes.image-build");
-    for (const bad of [undefined, "", "-oProxyCommand=x", "a b", "a$(x)", "a".repeat(80)]) {
+  it.each([undefined, "", "-oProxyCommand=x", "a b", "a$(x)", "a".repeat(80)])(
+    "rejects phase label %# that could inject argv options",
+    (bad) => {
       expect(() => assertPhaseLabel(bad)).toThrow(/phase label/);
-    }
+    },
+  );
+
+  it("accepts a bounded phase label", () => {
+    expect(assertPhaseLabel("rebuild-hermes.image-build")).toBe("rebuild-hermes.image-build");
   });
 
-  it("accepts only a bounded canonical UTC timestamp", () => {
+  it.each([
+    undefined,
+    "",
+    "2026-07-18",
+    "2026-07-18T00:00:00Z",
+    "2026-02-31T00:00:00.000Z",
+    `2026-07-18T00:00:00.000Z${"invalid".repeat(500)}`,
+  ])("rejects non-canonical UTC timestamp %#", (bad) => {
+    expect(() => assertCanonicalTimestamp(bad)).toThrow(/timestamp/);
+  });
+
+  it("accepts a bounded canonical UTC timestamp", () => {
     expect(assertCanonicalTimestamp("2026-07-18T00:00:00.000Z")).toBe("2026-07-18T00:00:00.000Z");
-    for (const bad of [
-      undefined,
-      "",
-      "2026-07-18",
-      "2026-07-18T00:00:00Z",
-      "2026-02-31T00:00:00.000Z",
-      `2026-07-18T00:00:00.000Z${"ghp_secret".repeat(500)}`,
-    ]) {
-      expect(() => assertCanonicalTimestamp(bad)).toThrow(/timestamp/);
-    }
   });
 });
 
@@ -929,32 +934,28 @@ describe("runner-loss signature and retry policy (#7146)", () => {
     expect(decision.reason).toContain("assertion");
   });
 
-  it("never retries classified OOM, disk-pressure, timeout, or unknown failures", () => {
-    for (const classification of [
-      "process-oom",
-      "container-oom",
-      "disk-pressure",
-      "timeout",
-      "unknown",
-    ] as const) {
+  it.each(["process-oom", "container-oom", "disk-pressure", "timeout", "unknown"] as const)(
+    "never retries a classified %s failure",
+    (classification) => {
       expect(decideRetry({ runnerLoss: false, classification, attempt: 1 }).retry).toBe(false);
-    }
-  });
+    },
+  );
 
-  it("fails closed when runner-loss evidence contradicts a terminal classification", () => {
-    for (const classification of [
-      "assertion",
-      "timeout",
-      "process-oom",
-      "container-oom",
-      "disk-pressure",
-      "unknown",
-    ] as const) {
+  it.each([
+    "assertion",
+    "timeout",
+    "process-oom",
+    "container-oom",
+    "disk-pressure",
+    "unknown",
+  ] as const)(
+    "fails closed when runner-loss evidence contradicts a terminal %s classification",
+    (classification) => {
       const decision = decideRetry({ runnerLoss: true, classification, attempt: 1 });
       expect(decision.retry).toBe(false);
       expect(decision.reason).toContain("terminal");
-    }
-  });
+    },
+  );
 
   it("permits exactly one retry for a confirmed runner loss and links the attempts", () => {
     const first = decideRetry({ runnerLoss: true, classification: null, attempt: 1 });
@@ -1023,90 +1024,94 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     }
   }, 90_000);
 
-  it.each([
-    "assertion",
-    "timeout",
-  ] as const)("classifies a trusted harness %s artifact through the real CLI", (outcome) => {
-    withEvidenceFiles(outcome, (baselinePath, outcomePath) => {
-      const classificationPath = path.join(path.dirname(baselinePath), "classification.jsonl");
-      fs.writeFileSync(classificationPath, "", { mode: 0o600 });
-      const result = runHelper(["classify"], {
+  it.each(["assertion", "timeout"] as const)(
+    "classifies a trusted harness %s artifact through the real CLI",
+    (outcome) => {
+      withEvidenceFiles(outcome, (baselinePath, outcomePath) => {
+        const classificationPath = path.join(path.dirname(baselinePath), "classification.jsonl");
+        fs.writeFileSync(classificationPath, "", { mode: 0o600 });
+        const result = runHelper(["classify"], {
+          E2E_RESOURCE_BASELINE_FILE: baselinePath,
+          E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+          E2E_TEST_OUTCOME_FILE: outcomePath,
+        });
+        expect(result.status).toBe(0);
+        const line = result.stdout
+          .split("\n")
+          .find((l) => l.startsWith(CLASSIFICATION_LINE_PREFIX));
+        expect(line).toBeDefined();
+        expect(
+          JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
+        ).toBe(outcome);
+        expect(fs.readFileSync(classificationPath, "utf8").trim()).toBe(line);
+      });
+    },
+    90_000,
+  );
+
+  it.each(["symlink", "hardlink"] as const)(
+    "rejects %s-substituted baseline, phase, and classification evidence",
+    (linkKind) => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-linked-evidence-"));
+      const baselinePath = path.join(directory, "baseline.jsonl");
+      const phaseBaselinesPath = path.join(directory, "phase-baselines.jsonl");
+      const classificationPath = path.join(directory, "classification.jsonl");
+      const outcomePath = path.join(directory, LIVE_TEST_OUTCOME_FILE);
+      const canonicalBaseline = `${renderBaselineLine({
+        phase: "unit-test",
+        at: "2026-07-18T00:00:00.000Z",
+        cgroupOomKills: 0,
+        kernelOomKillCount: 0,
+        containerOomKilled: false,
+      })}\n`;
+      const canonicalClassification = `${renderClassificationLine({
+        classification: "assertion",
+        reason: "protected target",
+      })}\n`;
+      const link = LINK_CREATORS[linkKind];
+      const environment = {
+        DOCKER_OOM_CONTAINER: "",
+        E2E_PHASE: "unit-test",
         E2E_RESOURCE_BASELINE_FILE: baselinePath,
+        E2E_RESOURCE_PHASE_BASELINES_FILE: phaseBaselinesPath,
         E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
         E2E_TEST_OUTCOME_FILE: outcomePath,
-      });
-      expect(result.status).toBe(0);
-      const line = result.stdout.split("\n").find((l) => l.startsWith(CLASSIFICATION_LINE_PREFIX));
-      expect(line).toBeDefined();
-      expect(
-        JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
-      ).toBe(outcome);
-      expect(fs.readFileSync(classificationPath, "utf8").trim()).toBe(line);
-    });
-  }, 90_000);
+      };
+      try {
+        fs.writeFileSync(outcomePath, renderLiveTestOutcome("assertion"), { mode: 0o600 });
 
-  it.each([
-    "symlink",
-    "hardlink",
-  ] as const)("rejects %s-substituted baseline, phase, and classification evidence", (linkKind) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-linked-evidence-"));
-    const baselinePath = path.join(directory, "baseline.jsonl");
-    const phaseBaselinesPath = path.join(directory, "phase-baselines.jsonl");
-    const classificationPath = path.join(directory, "classification.jsonl");
-    const outcomePath = path.join(directory, LIVE_TEST_OUTCOME_FILE);
-    const canonicalBaseline = `${renderBaselineLine({
-      phase: "unit-test",
-      at: "2026-07-18T00:00:00.000Z",
-      cgroupOomKills: 0,
-      kernelOomKillCount: 0,
-      containerOomKilled: false,
-    })}\n`;
-    const canonicalClassification = `${renderClassificationLine({
-      classification: "assertion",
-      reason: "protected target",
-    })}\n`;
-    const link = LINK_CREATORS[linkKind];
-    const environment = {
-      DOCKER_OOM_CONTAINER: "",
-      E2E_PHASE: "unit-test",
-      E2E_RESOURCE_BASELINE_FILE: baselinePath,
-      E2E_RESOURCE_PHASE_BASELINES_FILE: phaseBaselinesPath,
-      E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
-      E2E_TEST_OUTCOME_FILE: outcomePath,
-    };
-    try {
-      fs.writeFileSync(outcomePath, renderLiveTestOutcome("assertion"), { mode: 0o600 });
+        const baselineTarget = path.join(directory, "baseline-target.jsonl");
+        fs.writeFileSync(baselineTarget, canonicalBaseline, { mode: 0o600 });
+        link(baselineTarget, baselinePath);
+        fs.writeFileSync(phaseBaselinesPath, "", { mode: 0o600 });
+        fs.writeFileSync(classificationPath, "", { mode: 0o600 });
+        expect(runHelper(["classify"], environment).status).not.toBe(0);
+        expect(fs.readFileSync(baselineTarget, "utf8")).toBe(canonicalBaseline);
 
-      const baselineTarget = path.join(directory, "baseline-target.jsonl");
-      fs.writeFileSync(baselineTarget, canonicalBaseline, { mode: 0o600 });
-      link(baselineTarget, baselinePath);
-      fs.writeFileSync(phaseBaselinesPath, "", { mode: 0o600 });
-      fs.writeFileSync(classificationPath, "", { mode: 0o600 });
-      expect(runHelper(["classify"], environment).status).not.toBe(0);
-      expect(fs.readFileSync(baselineTarget, "utf8")).toBe(canonicalBaseline);
+        fs.unlinkSync(baselinePath);
+        fs.writeFileSync(baselinePath, canonicalBaseline, { mode: 0o600 });
+        fs.unlinkSync(phaseBaselinesPath);
+        const phaseTarget = path.join(directory, "phase-target.jsonl");
+        fs.writeFileSync(phaseTarget, "", { mode: 0o600 });
+        link(phaseTarget, phaseBaselinesPath);
+        expect(runHelper(["classify"], environment).status).not.toBe(0);
+        expect(fs.readFileSync(phaseTarget, "utf8")).toBe("");
 
-      fs.unlinkSync(baselinePath);
-      fs.writeFileSync(baselinePath, canonicalBaseline, { mode: 0o600 });
-      fs.unlinkSync(phaseBaselinesPath);
-      const phaseTarget = path.join(directory, "phase-target.jsonl");
-      fs.writeFileSync(phaseTarget, "", { mode: 0o600 });
-      link(phaseTarget, phaseBaselinesPath);
-      expect(runHelper(["classify"], environment).status).not.toBe(0);
-      expect(fs.readFileSync(phaseTarget, "utf8")).toBe("");
-
-      fs.unlinkSync(phaseBaselinesPath);
-      fs.writeFileSync(phaseBaselinesPath, "", { mode: 0o600 });
-      fs.unlinkSync(classificationPath);
-      const classificationTarget = path.join(directory, "classification-target.jsonl");
-      fs.writeFileSync(classificationTarget, canonicalClassification, { mode: 0o600 });
-      link(classificationTarget, classificationPath);
-      expect(runHelper(["initialize-evidence"], environment).status).not.toBe(0);
-      expect(runHelper(["validate-classification"], environment).status).not.toBe(0);
-      expect(fs.readFileSync(classificationTarget, "utf8")).toBe(canonicalClassification);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
-  }, 90_000);
+        fs.unlinkSync(phaseBaselinesPath);
+        fs.writeFileSync(phaseBaselinesPath, "", { mode: 0o600 });
+        fs.unlinkSync(classificationPath);
+        const classificationTarget = path.join(directory, "classification-target.jsonl");
+        fs.writeFileSync(classificationTarget, canonicalClassification, { mode: 0o600 });
+        link(classificationTarget, classificationPath);
+        expect(runHelper(["initialize-evidence"], environment).status).not.toBe(0);
+        expect(runHelper(["validate-classification"], environment).status).not.toBe(0);
+        expect(fs.readFileSync(classificationTarget, "utf8")).toBe(canonicalClassification);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    90_000,
+  );
 
   it("rejects missing or malformed pre-phase evidence before classification", () => {
     const missing = runHelper(["classify"], {});
@@ -1188,11 +1193,13 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     expect(JSON.parse(loss.stdout.trim()).retry).toBe(true);
   }, 90_000);
 
-  it("fails closed on a missing or unsupported subcommand", () => {
-    for (const args of [[], ["snapshotx"], ["run"]]) {
-      const result = runHelper(args, {});
+  it.each([[[]], [["snapshotx"]], [["run"]]] as const)(
+    "fails closed on missing or unsupported subcommand %#",
+    (args) => {
+      const result = runHelper([...args], {});
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("usage:");
-    }
-  }, 90_000);
+    },
+    90_000,
+  );
 });
