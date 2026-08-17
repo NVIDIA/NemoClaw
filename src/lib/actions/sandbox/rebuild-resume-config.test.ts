@@ -363,23 +363,30 @@ describe("prepareRebuildResumeConfig", () => {
     ).toThrow("Cannot validate recreate endpoint");
   });
 
-  it("fails closed for a matching custom-endpoint session with an invalid endpoint", () => {
-    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
-      sandboxName: "alpha",
-      provider: "compatible-endpoint",
-      model: "m",
-      endpointUrl: "https://user:pass@example.test/v1",
-    });
-    expect(() =>
-      prepareRebuildResumeConfig(
-        "alpha",
-        entry({ provider: "compatible-endpoint", model: "m" }),
-        null,
-        noopLog,
-        throwingBail,
-      ),
-    ).toThrow("Cannot validate recreate endpoint");
-  });
+  it.each([
+    ["userinfo", "https://user:pass@example.test/v1"],
+    ["a percent-encoded control character", "https://example.test/v1%0ainjected"],
+    ["a shell metacharacter", "https://example.test/v1;id"],
+  ])(
+    "fails closed for a matching custom-endpoint session with %s before rebuild deletion",
+    (_label, endpointUrl) => {
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl,
+      });
+      expect(() =>
+        prepareRebuildResumeConfig(
+          "alpha",
+          entry({ provider: "compatible-endpoint", model: "m" }),
+          null,
+          noopLog,
+          throwingBail,
+        ),
+      ).toThrow("Cannot validate recreate endpoint");
+    },
+  );
 
   it("does not borrow a custom endpoint from a conflicting same-sandbox selection", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
