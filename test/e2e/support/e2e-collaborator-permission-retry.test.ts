@@ -49,8 +49,7 @@ function authorizationScript(stepName: string): string {
 }
 
 function lines(path: string): string[] {
-  if (!existsSync(path)) return [];
-  const value = readFileSync(path, "utf8").trim();
+  const value = existsSync(path) ? readFileSync(path, "utf8").trim() : "";
   return value === "" ? [] : value.split("\n");
 }
 
