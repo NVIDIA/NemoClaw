@@ -14,6 +14,7 @@ import { runCapture as defaultRunCapture } from "../runner";
 import {
   ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent,
   replaceUrlPort,
+  resolveVerifyAgentApiPort,
 } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
@@ -88,6 +89,7 @@ export interface OnboardDashboardDeps {
 
 export interface OnboardDashboardHelpers {
   buildChain: typeof buildChain;
+  resolveVerifyAgentApiPort: typeof resolveVerifyAgentApiPort;
   buildControlUiUrls: typeof buildControlUiUrls;
   buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
@@ -630,6 +632,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   return {
     buildChain,
+    resolveVerifyAgentApiPort,
     buildControlUiUrls,
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
