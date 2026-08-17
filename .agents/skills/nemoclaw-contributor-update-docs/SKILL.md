@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-update-docs
-description: Find user-visible changes merged to NemoClaw and update their owning documentation. Use in the post-main documentation workflow or for direct documentation catch-up. Derive pages, commands, variants, and validation from the current checkout. Trigger keywords - update docs, docs from commits, catch up docs, docs drift.
+description: Find user-visible changes merged to NemoClaw and update their owning documentation. Use in the post-merge documentation workflow or for direct documentation catch-up. Derive pages, commands, variants, and validation from the current checkout. Trigger keywords - update docs, docs from commits, catch up docs, docs drift.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

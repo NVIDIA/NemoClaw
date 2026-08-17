@@ -47,7 +47,7 @@ Each push to `main` starts `Docs / Post-Merge Catch-Up` for the merged implement
 2. A separate offline sandbox reviews the exact documentation candidate with a read-only repository checkout.
 3. For an approved nonempty patch, a publisher with no model credential creates a GitHub-verified commit and one SHA-specific draft PR.
 
-Each nonempty draft merge triggers another cumulative exact-SHA run until a later run approves an empty patch, which creates no PR.
+Each nonempty documentation PR merge triggers another cumulative exact-SHA run until a later run approves an empty patch, which creates no PR.
 Code merges continue while their documentation changes remain pending.
 Required PR checks run `npm run docs` after any required approval.
 
