@@ -1051,6 +1051,45 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(resumedRun.calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
+  it("recreates after stable resolved create-intent drift when explicitly requested (#9297)", async () => {
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const firstRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(firstRun.deps, session),
+      resume: false,
+      sandboxName: "my-assistant",
+    });
+
+    const resumedRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+    const defaultResolve = resumedRun.calls.resolveCreateIntent.getMockImplementation();
+    expect(defaultResolve).toBeDefined();
+    resumedRun.calls.resolveCreateIntent.mockImplementation(async (input) => {
+      const resolved = await defaultResolve!(input);
+      return {
+        ...resolved,
+        policy: { ...resolved.policy, basePolicyPath: "/repo/changed-policy.yaml" },
+      };
+    });
+
+    await handleSandboxState({
+      ...baseOptions(resumedRun.deps, session),
+      resume: true,
+      recreateSandbox: () => true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(resumedRun.calls.createSandbox).toHaveBeenCalledOnce();
+    expect(resumedRun.calls.createSandbox.mock.calls[0]?.at(-1)).toEqual(
+      expect.objectContaining({ recreate: true }),
+    );
+    expect(resumedRun.calls.error).not.toHaveBeenCalled();
+  });
+
   it("rejects reasoning capability drift before replaying a recorded sandbox create (#7570)", async () => {
     const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
     const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
