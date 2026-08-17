@@ -1167,7 +1167,7 @@ The trusted workflow binds the candidate commit, base commit, workflow commit, r
 The unprivileged installer and live-test processes run with `env -i` under a temporary account.
 They receive no GitHub, inference provider, API, or messaging credential.
 Docker is unavailable to these processes.
-For each self-hosted qualification runner, set the GitHub Actions repository variable `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL` to `enabled`.
+Before any self-hosted qualification job runs, set the GitHub Actions repository variable `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL` to `enabled`.
 Set the repository variable `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL` to the reviewed ARM64 GPU runner label.
 The workflow provides no ARM64 GPU fallback runner.
 The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts`.

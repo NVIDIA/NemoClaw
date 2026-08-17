@@ -1704,7 +1704,7 @@ jobs:
           printf 'storage_config=%s\n' "$storage_config" >>"$GITHUB_OUTPUT"
           printf 'user_manager_unit=%s\n' "$user_manager_unit" >>"$GITHUB_OUTPUT"
 
-      - name: Materialize exact credential-free GPU resources
+      - name: Prepare GPU resources with the NVIDIA API key
         id: gpu_resources
         env:
           ACCOUNT: ${{ steps.boundary.outputs.account }}
@@ -1730,7 +1730,7 @@ jobs:
             exit 0
           fi
           [[ -n "$NVIDIA_API_KEY" ]] || {
-            echo "::error::Protected GPU resource preparation requires the existing NVIDIA registry credential" >&2
+            echo "::error::Native runtime GPU preparation requires the NVIDIA_API_KEY repository secret" >&2
             exit 1
           }
           uid="$(id -u "$ACCOUNT")"

@@ -98,7 +98,7 @@ describe("native runtime qualification producer workflow", () => {
 
   it("keeps secret-bearing GPU preparation downstream of the trusted-main plan", () => {
     const producer = job("native-runtime-qualification-producer");
-    const gpuResources = step(producer, "Materialize exact credential-free GPU resources");
+    const gpuResources = step(producer, "Prepare GPU resources with the NVIDIA API key");
 
     expect(producer.needs).toContain("native-runtime-qualification-producer-plan");
     expect(gpuResources.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
@@ -228,7 +228,7 @@ describe("native runtime qualification producer workflow", () => {
       producer,
       "Install locked candidate test dependencies without scripts",
     );
-    const gpuResources = step(producer, "Materialize exact credential-free GPU resources");
+    const gpuResources = step(producer, "Prepare GPU resources with the NVIDIA API key");
     const installer = step(producer, "Run the authenticated installer qualification");
     const execute = step(producer, "Execute the candidate qualification case without credentials");
     const validate = step(producer, "Validate receipts and emit bounded evidence");
@@ -237,7 +237,7 @@ describe("native runtime qualification producer workflow", () => {
     const credentialFreeSource = JSON.stringify({
       ...producer,
       steps: producer.steps?.filter(
-        (entry) => entry.name !== "Materialize exact credential-free GPU resources",
+        (entry) => entry.name !== "Prepare GPU resources with the NVIDIA API key",
       ),
     });
     const boundaryRun = boundary.run ?? "";
@@ -263,7 +263,7 @@ describe("native runtime qualification producer workflow", () => {
       /NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|DOCKERHUB_TOKEN/u,
     );
     expect(gpuResources.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
-    expect(gpuResources.run).toContain("existing NVIDIA registry credential");
+    expect(gpuResources.run).toContain("NVIDIA_API_KEY repository secret");
     expect(gpuResources.run).toContain("login nvcr.io --username '$oauthtoken' --password-stdin");
     expect(gpuResources.run).not.toContain("logout --all");
     expect(gpuResources.run).toContain('sudo unlink "$registry_auth_file"');

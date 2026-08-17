@@ -311,7 +311,11 @@ test/e2e/
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  Accepted nonempty `jobs` values are `inference-routing`, `managed-image-protected-runtime`, and `native-runtime-qualification-producer`.
+  Accepted nonempty `jobs` values are:
+
+  - `inference-routing`
+  - `managed-image-protected-runtime`
+  - `native-runtime-qualification-producer`
   The `jetson-nvmap-gpu` target is also accepted when `allow_jetson_dispatch` is `true`.
   Refer to [NemoClaw E2E CI](../README.md).
 
@@ -320,10 +324,9 @@ test/e2e/
   evidence for `jetson-nvmap-gpu`. The service behind that contract is
   operator-owned infrastructure.
 
-- `.github/workflows/e2e.yaml` runs selected or all supported
-  live E2E targets and uploads an explicit artifact allowlist with
-  JSON summaries plus action, log, and shell command-evidence directories under
-  14-day retention.
+- `.github/workflows/e2e.yaml` runs selected or all supported live E2E targets and uploads an explicit artifact allowlist.
+  The shared E2E uploader retains per-target JSON summaries and command-evidence directories for 14 days.
+  The native runtime aggregate upload retains `native-runtime-qualification-<candidate-sha>` for 30 days.
   Final OpenShell gateway-auth artifacts pass a fail-closed safety scan after
   cleanup. The scanner copies safe files into a private staging directory,
   scans that copy again, and adds a marker bound to the current Actions run ID
