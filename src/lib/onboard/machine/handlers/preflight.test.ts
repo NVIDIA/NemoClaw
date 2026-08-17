@@ -208,9 +208,18 @@ describe("handlePreflightState", () => {
     });
 
     expect(assertOnboardHostReadiness).toHaveBeenCalledTimes(2);
-    for (const [, , options] of assertOnboardHostReadiness.mock.calls) {
-      expect(options).toEqual(expect.objectContaining({ allowDeferredN1xManagedVllm: true }));
-    }
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
+    expect(assertOnboardHostReadiness).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ allowDeferredN1xManagedVllm: true }),
+    );
   });
 
   it("rejects changed gateway ownership before cached resume probe effects (#7411)", async () => {
