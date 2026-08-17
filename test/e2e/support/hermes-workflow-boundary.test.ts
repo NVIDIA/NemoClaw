@@ -189,26 +189,24 @@ describe("Hermes GPU boundary", () => {
     }),
   );
 
-  it.each(hermesTimeoutBoundaries)("requires 15-30 minutes of outer headroom for $jobName", ({
-    jobName,
-    maximumTimeoutMinutes,
-    message,
-    minimumTimeoutMinutes,
-  }) => {
-    const insufficient = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
-    }, validateE2eWorkflowBoundary);
-    const additional = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
-    }, validateE2eWorkflowBoundary);
-    const excessive = wfErrors((workflow) => {
-      workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
-    }, validateE2eWorkflowBoundary);
+  it.each(hermesTimeoutBoundaries)(
+    "requires 15-30 minutes of outer headroom for $jobName",
+    ({ jobName, maximumTimeoutMinutes, message, minimumTimeoutMinutes }) => {
+      const insufficient = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes - 1;
+      }, validateE2eWorkflowBoundary);
+      const additional = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = minimumTimeoutMinutes + 1;
+      }, validateE2eWorkflowBoundary);
+      const excessive = wfErrors((workflow) => {
+        workflow.jobs[jobName]["timeout-minutes"] = maximumTimeoutMinutes + 1;
+      }, validateE2eWorkflowBoundary);
 
-    expect(insufficient).toContain(message);
-    expect(additional).toEqual([]);
-    expect(excessive).toContain(message);
-  });
+      expect(insufficient).toContain(message);
+      expect(additional).toEqual([]);
+      expect(excessive).toContain(message);
+    },
+  );
 
   it("rejects unconditional live secret in hermes-e2e mock run step", () => {
     const errors = wfErrors((workflow) => {
@@ -219,7 +217,7 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a same-repository dispatch",
         ),
       ]),
     );
@@ -237,7 +235,7 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a same-repository dispatch",
         ),
       ]),
     );

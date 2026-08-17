@@ -756,6 +756,19 @@ export function isBaseImagePublicationEvent(eventName: string | undefined): bool
   return eventName === "push" || eventName === "workflow_dispatch";
 }
 
+export function isBaseImagePublicationRun(
+  eventName: string | undefined,
+  ref: string | undefined,
+): boolean {
+  if (eventName === "push") return ref === "refs/heads/main";
+  return (
+    eventName === "workflow_dispatch" &&
+    typeof ref === "string" &&
+    ref.startsWith("refs/heads/") &&
+    ref.length > "refs/heads/".length
+  );
+}
+
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   const known = new Set(["--wait-seconds", "--poll-seconds"]);
   for (let index = 0; index < argv.length; index += 2) {
@@ -781,11 +794,11 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (env.GITHUB_REPOSITORY !== REPOSITORY) {
     throw new Error(`GITHUB_REPOSITORY must be ${REPOSITORY}`);
   }
-  if (env.GITHUB_REF !== "refs/heads/main") {
-    throw new Error("GITHUB_REF must be refs/heads/main");
-  }
   if (!isBaseImagePublicationEvent(env.GITHUB_EVENT_NAME)) {
     throw new Error("GITHUB_EVENT_NAME must be push or workflow_dispatch");
+  }
+  if (!isBaseImagePublicationRun(env.GITHUB_EVENT_NAME, env.GITHUB_REF)) {
+    throw new Error("GITHUB_REF must identify main for a push or a branch for a manual run");
   }
   if (env.GITHUB_SHA !== expectedSha) {
     throw new Error("EXPECTED_SHA must match GITHUB_SHA");
