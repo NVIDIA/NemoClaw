@@ -36,9 +36,9 @@ const AUTHORIZATION_STEPS: AuthorizationStep[] = [
     name: "Authorize release qualification waiver",
   },
   {
-    deniedMessage: "Launchable image publication requires a repository maintainer or administrator",
-    mismatchMessage: "Launchable image publication permission response did not match the actor",
-    name: "Authorize Launchable image publication",
+    deniedMessage: "Launchable E2E requires a repository maintainer or administrator",
+    mismatchMessage: "Launchable E2E permission response did not match the actor",
+    name: "Authorize Launchable E2E maintainer dispatch",
   },
 ];
 
