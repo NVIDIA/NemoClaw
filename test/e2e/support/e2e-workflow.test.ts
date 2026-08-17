@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
@@ -27,72 +26,6 @@ import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
 import { COMMON_EGRESS_TEST_TIMEOUT_MS } from "../live/common-egress-agent-helpers.ts";
 import { requireFixture } from "./require-fixture";
-
-function runReleaseWaiverAuthorization(
-  overrides: Record<string, string> = {},
-): ReturnType<typeof spawnSync> & { permissionChecks: string[] } {
-  const workflow = readWorkflow() as {
-    jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
-  };
-  const script = workflow.jobs["generate-matrix"]!.steps!.find(
-    (step) => step.name === "Authorize release qualification waiver",
-  )!.run!;
-  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-waiver-auth-"));
-  const curlLog = path.join(fixture, "curl.log");
-  const curlPath = path.join(fixture, "curl");
-  fs.writeFileSync(
-    curlPath,
-    `#!/usr/bin/env bash
-set -euo pipefail
-url="\${!#}"
-administrator="\${url%/permission}"
-administrator="\${administrator##*/}"
-output_file=""
-previous=""
-for argument in "$@"; do
-  if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi
-  previous="$argument"
-done
-printf '%s\n' "$administrator" >>"$CURL_LOG"
-case "$administrator" in
-  maintainer) role=maintain ;;
-  mismatch) login=different-user; role=admin ;;
-  *) role=admin ;;
-esac
-login="\${login:-$administrator}"
-printf -v body '{"user":{"login":"%s"},"role_name":"%s"}' "$login" "$role"
-if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi
-`,
-  );
-  fs.chmodSync(curlPath, 0o755);
-  const result = spawnSync("bash", ["-c", script], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PATH: `${fixture}:${process.env.PATH ?? ""}`,
-      ACTOR: "dispatch-admin",
-      ALLOW_DGX_SPARK_RUNNER_QUEUE: "false",
-      ALLOW_JETSON_DISPATCH: "false",
-      CHECKOUT_SHA: "",
-      CURL_LOG: curlLog,
-      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-      GITHUB_TOKEN: "test-token",
-      INCLUDE_LAUNCHABLE: "true",
-      JOBS: "",
-      TARGETS: "",
-      TRIGGERING_ACTOR: "rerun-admin",
-      WAIVED_JOBS: "staging-brev-launchable",
-      WAIVER_REASON: "Brev's credential expired",
-      WORKFLOW_REF: "refs/heads/main",
-      ...overrides,
-    },
-  });
-  const permissionChecks = fs.existsSync(curlLog)
-    ? fs.readFileSync(curlLog, "utf8").trim().split("\n")
-    : [];
-  fs.rmSync(fixture, { force: true, recursive: true });
-  return Object.assign(result, { permissionChecks });
-}
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
@@ -119,6 +52,7 @@ describe("e2e workflow boundary", () => {
         {
           if?: string;
           environment?: Record<string, unknown>;
+          needs?: string;
           steps?: Array<{
             env?: Record<string, string>;
             name?: string;
@@ -130,6 +64,7 @@ describe("e2e workflow boundary", () => {
     };
     const job = workflow.jobs["staging-brev-launchable"]!;
     job.environment = { name: "unprotected" };
+    job.needs = "retired-authorization";
     (job as { env?: Record<string, string> }).env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
     const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
     prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
@@ -140,6 +75,7 @@ describe("e2e workflow boundary", () => {
     run.env!.GH_TOKEN = "${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}";
     run.env!.BREV_LAUNCHABLE_ID = "env-hardcoded";
     run.env!.NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY = "1";
+    run.run = ":";
     const generateSteps = workflow.jobs["generate-matrix"]!.steps!;
     const authorization = generateSteps.find(
       (step) => step.name === "Authorize Launchable E2E maintainer dispatch",
@@ -151,6 +87,7 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "staging-brev-launchable must not use a GitHub environment",
+        "staging-brev-launchable must depend on the authorized generate-matrix job",
         "Launchable E2E maintainer authorization must bind TRIGGERING_ACTOR",
         "step 'Authorize Launchable E2E maintainer dispatch' run script must include maintain | admin",
         "Launchable E2E maintainer authorization must run before generate-matrix checkout",
@@ -158,92 +95,11 @@ describe("e2e workflow boundary", () => {
         "staging-brev-launchable GH_TOKEN must use the trusted-run secret guard",
         "staging-brev-launchable must read the repository Launchable ID variable",
         "staging-brev-launchable must not stop after image publication",
+        "staging-brev-launchable must execute the trusted Launchable E2E script",
         "staging-brev-launchable job must not receive BREV_API_KEY",
         "staging-brev-launchable must pin the Brev CLI version and SHA-256 checksum",
       ]),
     );
-  });
-
-  it("rejects release qualification waiver authorization and planner drift", () => {
-    const workflow = readWorkflow() as {
-      on: {
-        workflow_dispatch: {
-          inputs: Record<string, { default?: string; description?: string; type?: string }>;
-        };
-      };
-      jobs: Record<
-        string,
-        {
-          outputs?: Record<string, string>;
-          steps?: Array<{
-            env?: Record<string, string>;
-            name?: string;
-            run?: string;
-          }>;
-        }
-      >;
-    };
-    workflow.on.workflow_dispatch.inputs.release_qualification_waived_jobs.default =
-      "staging-brev-launchable";
-    const steps = workflow.jobs["generate-matrix"]!.steps!;
-    const authorization = steps.find(
-      (step) => step.name === "Authorize release qualification waiver",
-    )!;
-    delete authorization.env!.TRIGGERING_ACTOR;
-    authorization.run = authorization.run!.replace('== "admin"', '== "maintain"');
-    const matrix = steps.find((step) => step.name === "Generate E2E target matrix")!;
-    delete matrix.env!.RELEASE_QUALIFICATION_WAIVED_JOBS;
-    delete workflow.jobs["generate-matrix"]!.outputs!.release_qualification_waived_jobs;
-
-    expect(validateE2eWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "workflow_dispatch release_qualification_waived_jobs input must be a string and default to empty",
-        "release qualification waiver authorization must bind only trusted identity and release-run inputs",
-        "step 'Authorize release qualification waiver' run script must include == \"admin\"",
-        "matrix generation step must pass release qualification waived jobs through env",
-        "generate-matrix job must expose release_qualification_waived_jobs output",
-      ]),
-    );
-  });
-
-  it("authorizes both administrator identities and accepts an apostrophe in the reason", () => {
-    const result = runReleaseWaiverAuthorization();
-
-    expect(result.status).toBe(0);
-    expect(result.permissionChecks).toEqual(["dispatch-admin", "rerun-admin"]);
-  });
-
-  it.each([
-    ["dispatch actor", { ACTOR: "maintainer" }, "requires a repository administrator"],
-    ["rerun actor", { TRIGGERING_ACTOR: "maintainer" }, "requires a repository administrator"],
-    ["permission identity", { ACTOR: "mismatch" }, "did not match the actor"],
-  ])("rejects an invalid %s", (_case, overrides, error) => {
-    const result = runReleaseWaiverAuthorization(overrides);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(error);
-  });
-
-  it.each([
-    ["candidate checkout", { CHECKOUT_SHA: "a".repeat(40) }],
-    ["non-main workflow ref", { WORKFLOW_REF: "refs/heads/release" }],
-    ["job selector", { JOBS: "live" }],
-    ["target selector", { TARGETS: "cloud-onboard" }],
-    ["missing Launchable", { INCLUDE_LAUNCHABLE: "false" }],
-    ["Jetson override", { ALLOW_JETSON_DISPATCH: "true" }],
-    ["DGX override", { ALLOW_DGX_SPARK_RUNNER_QUEUE: "true" }],
-  ])("rejects a release waiver with %s", (_case, overrides) => {
-    expect(runReleaseWaiverAuthorization(overrides).status).not.toBe(0);
-  });
-
-  it.each([
-    ["reason only", { WAIVED_JOBS: "" }],
-    ["jobs only", { WAIVER_REASON: "" }],
-    ["short reason", { WAIVER_REASON: "too short" }],
-    ["long reason", { WAIVER_REASON: `A${"x".repeat(500)}` }],
-    ["unsupported reason character", { WAIVER_REASON: "Brev key expired & rotated" }],
-  ])("rejects invalid paired waiver input: %s", (_case, overrides) => {
-    expect(runReleaseWaiverAuthorization(overrides).status).not.toBe(0);
   });
 
   it("rejects an inverted selected-jobs condition", () => {
@@ -356,13 +212,13 @@ describe("e2e workflow boundary", () => {
     workflow.concurrency.group =
       "e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}";
     workflow.concurrency["cancel-in-progress"] = "${{ inputs.checkout_sha != '' }}";
-    delete workflow.jobs["staging-brev-launchable"]!.concurrency!.queue;
+    workflow.jobs["staging-brev-launchable"]!.concurrency!.queue = "max";
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "workflow concurrency must isolate each full dispatch with github.run_id",
         "workflow concurrency must not cancel an active Jetson dispatch",
-        "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
+        "staging-brev-launchable concurrency must preserve its Launchable group without cancelling the running job or using unsupported queue keys",
       ]),
     );
   });

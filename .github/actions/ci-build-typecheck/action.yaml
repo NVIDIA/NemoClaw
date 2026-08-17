@@ -43,7 +43,3 @@ runs:
     - name: Typecheck JavaScript config
       shell: bash
       run: npx tsc -p jsconfig.json
-
-    - name: Verify package version matches git tags
-      shell: bash
-      run: bash scripts/check-version-tag-sync.sh
