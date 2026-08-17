@@ -75,6 +75,8 @@ export interface OnboardDashboardDeps {
   listSandboxes?: ListSandboxesFn;
   /** Host-listener probe injected by forward release race tests. */
   isPortBoundOnHost?: typeof isPortBoundOnHost;
+  /** Sandbox lookup used to resolve the per-sandbox Hermes API port. */
+  getSandbox?(name: string): { hermesApiPort?: number | null } | null | undefined;
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -257,7 +259,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       isWsl,
       wslHostAddress: getWslHostAddress({ isWsl }),
       dashboardHealthEndpoint: agent?.dashboard?.healthPath,
-      gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent),
+      gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
+        getSandbox: deps.getSandbox,
+      }),
       gatewayHealthEndpoint: agent?.healthProbe?.url,
     });
   }

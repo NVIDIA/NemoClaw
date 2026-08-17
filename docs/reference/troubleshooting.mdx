@@ -4893,26 +4893,44 @@ Expected output:
 Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions.
 For terminal use, run `nemohermes launch <name>`.
 
-### Onboarding reports "Hermes is not ready" with an unreachable API port
+### Onboarding Reports "Hermes is not ready" With an Unreachable API Port
 
-Deployment verification probes the OpenAI-compatible API on its host forward, not only inside the sandbox.
-When the sandbox gateway is healthy but the host forward never came up, verification reports the API link as failed and onboarding finishes with `Hermes is not ready` instead of a successful handoff:
+Deployment verification probes the OpenAI-compatible API inside the sandbox and through its host-side API port forward.
+When the API answers inside the sandbox but its host-side API port forward is unreachable, verification reports the API port forward as failed.
+Onboarding then prints `Hermes is not ready` and exits with a nonzero status:
 
 ```text
 ✗ api: port forward not working (connection refused)
   The OpenAI-compatible API on port 8642 is not reachable from the host. Run: openshell forward start --background 8642 <name>
 ```
 
-The sandbox itself is intact, so start the forward and re-check.
-Each Hermes sandbox owns an API port allocated from `8642` through `8652`, so use the port named in the `api` diagnostic rather than the default:
+The API remains reachable inside the sandbox.
+Each Hermes sandbox owns an API port allocated from `8642` through `8652`, so use the port from the `api` diagnostic instead of assuming the default.
+First, list the active OpenShell port forwards:
 
 ```bash
-openshell forward list                          # confirm no row owns the API port
+openshell forward list
+```
+
+If no row owns the API port, start its port forward:
+
+```bash
 openshell forward start --background <port> <name>
+```
+
+Continue only when the command exits with status `0`.
+If the command reports that the port is in use, follow [Port Already in Use](#port-already-in-use) immediately.
+Replace that section's example port `18789` with the API port from the `api` diagnostic.
+Apply its process-ownership, service-manager, and active-work conditions before you stop a listener.
+Do not run the health probe after `openshell forward start` fails.
+
+After `openshell forward start` exits with status `0`, probe the health endpoint:
+
+```bash
 curl -sf http://127.0.0.1:<port>/health
 ```
 
-If the forward still refuses connections, a foreign host listener usually holds the port; stop it, then rerun `$$nemoclaw onboard` to complete verification.
+If the health probe still refuses connections, rerun `$$nemoclaw onboard` to collect fresh verification diagnostics.
 
 ### `docker port` shows no mapping for 8642 even though forwarding works
 
