@@ -747,12 +747,18 @@ describe("portable profile systemctl fixture", () => {
         );
         expect(fs.existsSync(scope.gatewayPidFile)).toBe(false);
         expect(fs.existsSync(gatewayLaunchPidFile)).toBe(true);
-        const commands = fs
-          .readFileSync(scope.gatewayCommandLog, "utf8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as Record<string, unknown>);
-        expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+        let commands: Record<string, unknown>[] = [];
+        await vi.waitFor(
+          () => {
+            commands = fs
+              .readFileSync(scope.gatewayCommandLog, "utf8")
+              .trim()
+              .split("\n")
+              .map((line) => JSON.parse(line) as Record<string, unknown>);
+            expect(commands.map((command) => command.kind)).toEqual(["generate-certs", "serve"]);
+          },
+          { timeout: 5_000 },
+        );
         const gatewayPid = commands[1]!.pid as number;
         expect(readFixtureProcessRecord(gatewayLaunchPidFile).pid).toBe(gatewayPid);
         expect(pidIsActive(gatewayPid)).toBe(true);
