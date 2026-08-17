@@ -92,7 +92,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+      "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
     ]);
