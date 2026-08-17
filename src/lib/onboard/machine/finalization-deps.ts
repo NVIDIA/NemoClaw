@@ -11,6 +11,8 @@ type ProcessRecoveryDeps = Pick<
 export const finalizationHandlerRuntime = {
   loadProcessRecovery: () =>
     require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
+  loadRegistryPersistence: () =>
+    require("../../state/registry/persistence") as typeof import("../../state/registry/persistence"),
 };
 
 export const finalizationHandlerDeps = {
@@ -39,6 +41,34 @@ export const finalizationHandlerDeps = {
   warmupScopeUpgrade(name: string): void {
     const warmup: typeof import("../../actions/sandbox/auto-pair-warmup") = require("../../actions/sandbox/auto-pair-warmup");
     warmup.runSandboxScopeWarmupRun(name);
+  },
+  readRegistryAgent(name: string): string | null {
+    try {
+      const value = finalizationHandlerRuntime.loadRegistryPersistence().load().sandboxes[
+        name
+      ]?.agent;
+      return typeof value === "string" ? value : null;
+    } catch {
+      return null;
+    }
+  },
+  settlePortablePairing(
+    name: string,
+    options: { readonly portableRequired: true },
+  ): ReturnType<
+    (typeof import("../../actions/sandbox/launch-readiness"))["settlePortableOpenClawPairing"]
+  > {
+    const pairing: typeof import("../../actions/sandbox/launch-readiness") = require("../../actions/sandbox/launch-readiness");
+    return pairing.settlePortableOpenClawPairing(name, options);
+  },
+  portablePairingIncompleteMessage(
+    name: string,
+    reason: Parameters<
+      (typeof import("../../actions/sandbox/launch-readiness"))["portableOpenClawPairingIncompleteMessage"]
+    >[1],
+  ): string {
+    const pairing: typeof import("../../actions/sandbox/launch-readiness") = require("../../actions/sandbox/launch-readiness");
+    return pairing.portableOpenClawPairingIncompleteMessage(name, reason);
   },
   isDeploymentHealthy(result: import("../../verify-deployment").VerifyDeploymentResult): boolean {
     return result.healthy;

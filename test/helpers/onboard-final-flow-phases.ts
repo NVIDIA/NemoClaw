@@ -260,6 +260,11 @@ export function createPhases(
       checkAndRecoverSandboxProcesses: vi.fn(),
       warmupScopeUpgrade: vi.fn(),
       autoPairScopeApproval: vi.fn(),
+      readRegistryAgent: vi.fn(() => "openclaw"),
+      settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
+      portablePairingIncompleteMessage: vi.fn(
+        () => "Portable onboarding is incomplete; resume onboarding.",
+      ),
       isDeploymentHealthy:
         recorders.isDeploymentHealthy ?? ((result: VerifyDeploymentResult) => result.healthy),
       reportDeploymentReadiness: vi.fn(),

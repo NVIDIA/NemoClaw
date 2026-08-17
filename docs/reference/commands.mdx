@@ -378,6 +378,19 @@ NemoClaw ignores ambient `XDG_CONFIG_HOME` during onboarding and restores its ex
 Resume rejects a checkpoint that records another configuration root.
 It also rejects stored authority or filesystem ownership drift without falling back to Docker.
 
+<AgentOnly variant="openclaw">
+
+Portable OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
+The paired device must have exactly the `operator.pairing` and `operator.write` scopes.
+Any pairing request considered during bounded repair must request exactly those scopes.
+The active token and client authorization must have exactly the `operator.pairing`, `operator.read`, and `operator.write` scopes.
+NemoClaw rejects every extra, missing, unknown, malformed, or ambiguous scope or identity shape.
+If the policy preset step is incomplete, NemoClaw performs no pairing request or approval writes and publishes no launch-readiness evidence.
+Selected Portable onboarding also stops when its lifecycle receipt is missing, invalid, legacy, or incompatible.
+A failed check leaves onboarding incomplete and tells you to resume or rerun onboarding.
+
+</AgentOnly>
+
 <Warning title="Checkpoint Resume Compatibility">
 An active onboarding session with checkpoint schema 1, 2, or 3 cannot resume because those schemas did not record the default or portable profile authority.
 NemoClaw preserves the older session and exits before portable configuration, socket activation, or resource changes.
@@ -1286,6 +1299,17 @@ After a successful probe and recovery, it prints a note that launch-readiness ev
 The next `launch` runs the complete preflight.
 On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.
+
+<AgentOnly variant="openclaw">
+
+For a current Portable OpenClaw sandbox, `connect`, `connect --probe-only`, `recover`, and `launch` require the same strict local CLI operator pairing as onboarding.
+If NemoClaw finds only the paired device and no pending request, it runs the canonical OpenClaw request producer once.
+It then runs at most one canonical approval and observes the final pairing state.
+An ambiguous approval result receives one final observation and no approval retry.
+Pairing with missing, extra, unknown, malformed, or ambiguous scope or identity data exits nonzero with an incomplete-onboarding diagnostic instead of opening a session or publishing launch-readiness evidence.
+Follow the diagnostic to resume or rerun onboarding.
+
+</AgentOnly>
 
 Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want launch-readiness validation, an automatic fallback that runs the complete preflight, and then the agent instead of a sandbox shell.
 
