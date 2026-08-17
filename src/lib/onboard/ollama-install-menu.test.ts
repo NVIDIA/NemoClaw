@@ -200,6 +200,43 @@ describe("resolveOllamaInstallMenuEntry", () => {
     expect(result.entry).toBeNull();
   });
 
+  it("does not flag the daemon as upgradable when mirrored WSL networking answers the Windows host on loopback (#9300)", () => {
+    const result = resolveOllamaInstallMenuEntry({
+      hasOllama: true,
+      ollamaRunning: true,
+      hasWindowsOllama: true,
+      windowsHostOllamaSupported: true,
+      ollamaHost: "127.0.0.1",
+      windowsDaemonOnWslLoopback: true,
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      platform: "linux",
+      isWsl: true,
+    });
+    expect(result.hasUpgradableOllama).toBe(false);
+    expect(result.binaryNeedsUpgrade).toBe(false);
+    expect(result.entry).toBeNull();
+  });
+
+  it("still flags a stale WSL-local daemon on loopback as upgradable (#9300)", () => {
+    const result = resolveOllamaInstallMenuEntry({
+      hasOllama: true,
+      ollamaRunning: true,
+      hasWindowsOllama: true,
+      windowsHostOllamaSupported: true,
+      ollamaHost: "127.0.0.1",
+      windowsDaemonOnWslLoopback: false,
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      platform: "linux",
+      isWsl: true,
+    });
+    expect(result.hasUpgradableOllama).toBe(true);
+    expect(result.entry?.label).toBe(
+      `Upgrade Ollama (WSL Linux) — upgrade running daemon 0.32.5 to ≥ ${MIN_OLLAMA_VERSION}`,
+    );
+  });
+
   it("omits the entry when only Windows-host Ollama is present", () => {
     const result = resolveOllamaInstallMenuEntry({
       hasOllama: false,

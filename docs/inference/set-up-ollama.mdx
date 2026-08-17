@@ -29,6 +29,9 @@ When either the Ollama CLI or running daemon is below `0.32.9`, the wizard displ
 Older versions can return tool calls as message text instead of structured tool calls, which causes onboarding validation to stop.
 The wizard checks `ollama --version` and `/api/version` on port `11434` independently, so the entry appears when either side is stale.
 If NemoClaw detects an installed CLI or local running daemon but cannot read its version, onboarding uses the upgrade path instead of reusing it.
+On WSL with mirrored networking, Docker Desktop can expose a Windows-host Ollama daemon on the WSL loopback address.
+When NemoClaw confirms this topology, it reuses that daemon and does not offer the WSL Linux upgrade, which cannot replace a Windows install.
+Upgrade Ollama on Windows instead.
 
 On macOS, the wizard uses `brew upgrade ollama` for the platform upgrade path.
 On Linux, the wizard uses the official `https://ollama.com/install.sh` path and asks it for `0.32.9` by name when the installed binary is stale, because the version the installer calls latest is below the minimum on some hosts.

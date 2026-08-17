@@ -28,6 +28,11 @@ export interface OllamaInstallMenuInput {
    *  helper skips the daemon-version gate.
    *  Null when no daemon is running locally. */
   ollamaHost?: string | null;
+  /** Whether the daemon answering WSL loopback is the Windows host's own
+   *  Ollama. Mirrored WSL networking shares the loopback interface, so that
+   *  daemon resolves as `127.0.0.1` rather than `host.docker.internal`
+   *  (#9300). Defaults to false. */
+  windowsDaemonOnWslLoopback?: boolean;
   /** Override for tests. Defaults to a live `ollama --version` probe. */
   installedOllamaVersion?: string | null;
   /** Override for tests. Defaults to a live `/api/version` probe on the
@@ -138,7 +143,14 @@ export function resolveOllamaInstallMenuEntry(
   // 127.0.0.1/localhost. A Windows-host daemon reached via
   // `host.docker.internal` is handled by separate menu entries
   // (`install-windows-ollama` / `start-windows-ollama`).
-  const daemonProbeApplies = input.ollamaRunning && isLocalOllamaHost(input.ollamaHost);
+  // Mirrored WSL networking answers the Windows host's daemon on
+  // `127.0.0.1`, so the `host.docker.internal` check above does not recognize
+  // it. The Linux installer can replace neither that daemon nor the Windows
+  // `ollama` the WSL PATH exposes through interop, so both version gates stay
+  // off for this topology (#9300).
+  const windowsDaemonOnWslLoopback = input.windowsDaemonOnWslLoopback === true;
+  const daemonProbeApplies =
+    input.ollamaRunning && isLocalOllamaHost(input.ollamaHost) && !windowsDaemonOnWslLoopback;
   const runningOllamaVersion =
     input.runningOllamaVersion !== undefined
       ? input.runningOllamaVersion
@@ -157,7 +169,9 @@ export function resolveOllamaInstallMenuEntry(
   // installed binary meets the floor. A stale daemon without a local binary
   // still needs the installer to provide one.
   const binaryNeedsUpgrade =
-    !installedBinaryMeetsMinimum && (input.hasOllama || daemonNeedsUpgrade);
+    !windowsDaemonOnWslLoopback &&
+    !installedBinaryMeetsMinimum &&
+    (input.hasOllama || daemonNeedsUpgrade);
   const hasUpgradableOllama = binaryNeedsUpgrade || daemonNeedsUpgrade;
   // A Windows-host install only covers the local-inference need when the
   // sandbox can route to it. Under a container runtime without that routing,

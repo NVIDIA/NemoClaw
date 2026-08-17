@@ -230,16 +230,14 @@ function requireSelectedProvider(
 }
 
 function handleSelectedOllama(
-  deps: Pick<
-    SetupNimFlowDeps,
-    "handleInstallOllamaSelection" | "handleRunningOllamaSelection"
-  >,
+  deps: Pick<SetupNimFlowDeps, "handleInstallOllamaSelection" | "handleRunningOllamaSelection">,
   args: {
     gpu: SetupNimGpu;
     requestedModel: string | null;
     recoveredModel: string | null;
     ollamaRunning: boolean;
     isWindowsHostOllama: boolean;
+    windowsDaemonOnWslLoopback: boolean | undefined;
     state: SetupNimSelectionState;
     ollamaInstallMenu: InferenceProviderHostState["ollamaInstallMenu"];
   },
@@ -253,13 +251,17 @@ function handleSelectedOllama(
       args.ollamaInstallMenu,
     );
   }
+  // Mirrored WSL networking answers the Windows daemon on `127.0.0.1`, so
+  // `isWindowsHostOllama` stays false for it. The reuse handler reads this
+  // argument to decide whether Linux systemd management applies, and it does
+  // not apply to a Windows daemon reached either way (#9300).
   return deps.handleRunningOllamaSelection(
     args.gpu,
     args.requestedModel,
     args.recoveredModel,
     args.ollamaRunning,
     args.state,
-    args.isWindowsHostOllama,
+    Boolean(args.isWindowsHostOllama || args.windowsDaemonOnWslLoopback),
   );
 }
 
@@ -639,6 +641,7 @@ export function createSetupNim(
       ollamaHost,
       ollamaRunning,
       isWindowsHostOllama,
+      windowsDaemonOnWslLoopback,
       isWsl: isWslHost,
       hasWindowsOllama,
       winOllamaInstalledPath,
@@ -899,6 +902,7 @@ export function createSetupNim(
             recoveredModel: recoveredFromSandbox ? recoveredModel : null,
             ollamaRunning,
             isWindowsHostOllama,
+            windowsDaemonOnWslLoopback,
             state,
             ollamaInstallMenu,
           });

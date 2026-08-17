@@ -7,6 +7,7 @@ import {
   getLocalProviderAvailabilityEndpoint,
   getWindowsHostOllamaDockerReachabilityArgs,
   isLocalProviderProbeOutputHealthy,
+  isValidOllamaTagsResponseBody,
   OLLAMA_HOST_DOCKER_INTERNAL,
 } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
@@ -46,6 +47,11 @@ export interface InferenceProviderHostState {
   ollamaHost: string | null;
   ollamaRunning: boolean;
   isWindowsHostOllama: boolean;
+  /** Whether the daemon on WSL loopback is the Windows host's own Ollama,
+   *  which mirrored networking exposes at `127.0.0.1` rather than
+   *  `host.docker.internal`. Neither the Linux installer nor Linux service
+   *  management applies to it. Absent means not that topology (#9300). */
+  windowsDaemonOnWslLoopback?: boolean;
   isWsl: boolean;
   hasWindowsOllama: boolean;
   winOllamaInstalledPath: string;
@@ -146,25 +152,54 @@ function probeWindowsOllamaReachable(input: {
   dockerCapture: DockerCapture;
 }): boolean {
   if (!input.isWsl || input.isWindowsHostOllama || !input.dockerRequirementSupported) return false;
-  return !!input.dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
-    ignoreError: true,
-  });
+  // A 2xx body alone does not prove Ollama answered: the same reasoning the
+  // loopback probe already applies (#4275) holds here, and this result now
+  // also decides whether a version gate runs (#9300).
+  return isValidOllamaTagsResponseBody(
+    input.dockerCapture(getWindowsHostOllamaDockerReachabilityArgs(), {
+      ignoreError: true,
+    }),
+  );
+}
+
+/**
+ * True when the daemon answering WSL loopback is the Windows host's own
+ * Ollama.
+ *
+ * Mirrored WSL networking shares one loopback interface between Windows and
+ * the distro, so a single process owns `:11434` for both. `127.0.0.1` and
+ * `host.docker.internal` therefore cannot reach two different daemons, and a
+ * valid Ollama answer through the Windows-side probe identifies the process
+ * that loopback discovery already selected. `maybeWarnAboutDuplicateOllamaDaemons`
+ * relies on the same reasoning to suppress its duplicate-daemon warning.
+ */
+function isWindowsDaemonOnWslLoopback(input: {
+  isWsl: boolean;
+  ollamaHost: string | null;
+  windowsOllamaReachable: boolean;
+  runCapture: RunCapture;
+}): boolean {
+  if (!input.isWsl || input.ollamaHost !== "127.0.0.1" || !input.windowsOllamaReachable) {
+    return false;
+  }
+  return (
+    input
+      .runCapture(["wslinfo", "--networking-mode"], {
+        ignoreError: true,
+      })
+      .trim() === "mirrored"
+  );
 }
 
 function maybeWarnAboutDuplicateOllamaDaemons(input: {
   isWsl: boolean;
   ollamaHost: string | null;
   windowsOllamaReachable: boolean;
-  runCapture: RunCapture;
+  windowsDaemonOnWslLoopback: boolean;
   log: (message?: string) => void;
 }): void {
   if (!input.isWsl || input.ollamaHost !== "127.0.0.1" || !input.windowsOllamaReachable) return;
-  const networkingMode = input
-    .runCapture(["wslinfo", "--networking-mode"], {
-      ignoreError: true,
-    })
-    .trim();
-  if (networkingMode === "mirrored") return;
+  if (input.windowsDaemonOnWslLoopback) return;
   input.log("");
   input.log("  ⚠ Ollama is running on both WSL and the Windows host.");
   input.log("    Stop one to avoid duplicated GPU memory and model caches.");
@@ -209,11 +244,18 @@ export function detectInferenceProviderHostState(
           dockerCapture: deps.dockerCapture,
         });
 
-  maybeWarnAboutDuplicateOllamaDaemons({
+  const windowsDaemonOnWslLoopback = isWindowsDaemonOnWslLoopback({
     isWsl,
     ollamaHost,
     windowsOllamaReachable,
     runCapture: deps.runCapture,
+  });
+
+  maybeWarnAboutDuplicateOllamaDaemons({
+    isWsl,
+    ollamaHost,
+    windowsOllamaReachable,
+    windowsDaemonOnWslLoopback,
     log,
   });
   const gpuNimCapable = Boolean(input.gpu?.nimCapable);
@@ -231,6 +273,7 @@ export function detectInferenceProviderHostState(
     windowsHostOllamaSupported:
       windowsHostOllamaDockerRequirement.supported && windowsOllamaReachable,
     ollamaHost,
+    windowsDaemonOnWslLoopback,
     platform,
     isWsl,
     installedOllamaVersion: input.installedOllamaVersion,
@@ -242,6 +285,7 @@ export function detectInferenceProviderHostState(
     ollamaHost,
     ollamaRunning,
     isWindowsHostOllama,
+    windowsDaemonOnWslLoopback,
     isWsl,
     hasWindowsOllama,
     winOllamaInstalledPath: winOllamaState.installedPath,

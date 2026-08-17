@@ -185,7 +185,7 @@ describe("detectInferenceProviderHostState", () => {
   it("detects Windows-host Ollama from Docker Desktop when WSL cannot reach it (#8127)", () => {
     const logs: string[] = [];
     const dockerCapture = vi.fn((command: string[]) =>
-      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "",
+      command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? '{"models":[]}' : "",
     );
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
@@ -304,12 +304,12 @@ describe("detectInferenceProviderHostState", () => {
         installedPath: "C:\\Ollama\\ollama.exe",
         loopbackOnly: false,
       })),
-      runCapture: vi.fn((command) => {
-        const joined = command.join(" ");
-        if (joined.includes("wslinfo --networking-mode")) return "mirrored\n";
-        return "";
-      }),
-      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+      ),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? '{"models":[]}' : "",
+      ),
     });
 
     const state = detectInferenceProviderHostState({
@@ -325,6 +325,159 @@ describe("detectInferenceProviderHostState", () => {
 
     expect(state.windowsOllamaReachable).toBe(true);
     expect(logs).toEqual([]);
+  });
+
+  it("keeps a stale Windows daemon on WSL mirrored loopback out of the Linux upgrade (#9300)", () => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      hostCommandExists: vi.fn(() => true),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+      ),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? '{"models":[]}' : "",
+      ),
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: () => {},
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(false);
+    expect(state.ollamaInstallMenu.binaryNeedsUpgrade).toBe(false);
+    expect(state.ollamaInstallMenu.entry).toBeNull();
+    expect(state.windowsDaemonOnWslLoopback).toBe(true);
+  });
+
+  it("does not treat a loopback daemon as the Windows host without Docker Desktop routing (#9300)", () => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      hostCommandExists: vi.fn(() => true),
+      getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
+        () => "docker",
+      ),
+      getWindowsHostOllamaDockerRequirement: vi.fn(() =>
+        getWindowsHostOllamaDockerRequirement("docker"),
+      ),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+      ),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? '{"models":[]}' : "",
+      ),
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: () => {},
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    // Native Docker Engine in WSL cannot route a sandbox to Windows-host
+    // Ollama, so NemoClaw keeps the WSL-local upgrade rather than handing the
+    // sandbox a daemon it cannot reach.
+    expect(state.windowsDaemonOnWslLoopback).toBe(false);
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
+  });
+
+  it("rejects a Windows-host reachability body that is not the Ollama wire format (#9300)", () => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      hostCommandExists: vi.fn(() => true),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "mirrored\n" : "",
+      ),
+      // A captive proxy or unrelated listener answering 2xx must not become
+      // evidence that the Windows daemon owns the port.
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "<html>hello</html>" : "",
+      ),
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: () => {},
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    expect(state.windowsOllamaReachable).toBe(false);
+    expect(state.windowsDaemonOnWslLoopback).toBe(false);
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
+  });
+
+  it("still warns about duplicate daemons under WSL NAT networking (#9300)", () => {
+    const logs: string[] = [];
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      hostCommandExists: vi.fn(() => true),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "nat\n" : "",
+      ),
+      dockerCapture: vi.fn((command) =>
+        command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? '{"models":[]}' : "",
+      ),
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: (message = "") => logs.push(message),
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    // Under NAT the two probes reach two separate daemons, so the WSL-local
+    // upgrade still applies and the duplicate-daemon warning must survive the
+    // refactor that moved the mirrored check out of the warning helper.
+    expect(state.windowsDaemonOnWslLoopback).toBe(false);
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
+    expect(logs.some((line) => line.includes("running on both WSL and the Windows host"))).toBe(
+      true,
+    );
   });
 
   it("does not probe the Windows-host switch path when running Ollama already resolves to the Windows host", () => {
