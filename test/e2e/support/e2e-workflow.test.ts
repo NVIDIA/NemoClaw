@@ -622,7 +622,98 @@ describe("e2e workflow boundary", () => {
     });
   });
 
+  it("derives semantic coverage from retained workflow jobs without counting wrapper jobs", () => {
+    const inventory = readFreeStandingJobsInventory();
+
+    expect(inventory.semanticRows).toHaveLength(21);
+    expect(inventory.semanticRows.filter((row) => row.source === "retained-workflow")).toHaveLength(
+      20,
+    );
+    expect(inventory.semanticRows.filter((row) => row.source === "staging")).toHaveLength(1);
+    expect(inventory.semanticRows.filter((row) => row.id === "mcp-bridge")).toEqual([
+      expect.objectContaining({ variant: "openclaw", agentRuntime: "openclaw" }),
+      expect.objectContaining({ variant: "hermes", agentRuntime: "hermes" }),
+      expect.objectContaining({
+        variant: "deepagents",
+        agentRuntime: "langchain-deepagents-code",
+      }),
+    ]);
+    expect(
+      inventory.semanticRows.filter((row) => row.id === "llama-cpp-dgx-spark-qualification"),
+    ).toEqual([
+      expect.objectContaining({
+        agentRuntime: "unresolved",
+        unresolvedReason: "The protected plan can enable or skip its OpenClaw subqualification",
+      }),
+    ]);
+  });
+
   it.each([
+    {
+      body: `
+jobs:
+  first-evidence:
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: first-evidence
+      E2E_SEMANTIC_AGENT_RUNTIME: openclaw
+      E2E_SEMANTIC_OBSERVABLE_OUTCOME: "Same behavior succeeds"
+      E2E_SEMANTIC_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; no inference endpoint"
+  second-evidence:
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: second-evidence
+      E2E_SEMANTIC_AGENT_RUNTIME: openclaw
+      E2E_SEMANTIC_OBSERVABLE_OUTCOME: "Same behavior succeeds"
+      E2E_SEMANTIC_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; no inference endpoint"
+`,
+      error: "E2E semantic coverage duplicates evidence between first-evidence and second-evidence",
+    },
+    {
+      body: `
+jobs:
+  fixture-version-check:
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: fixture-version-check
+`,
+      error: "fixture-version-check job requires semantic coverage metadata",
+    },
+    {
+      body: `
+jobs:
+  fixture-version-check:
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: fixture-version-check
+      E2E_SEMANTIC_AGENT_RUNTIME: openclaw
+      E2E_SEMANTIC_OBSERVABLE_OUTCOME: "Injected | Markdown row"
+      E2E_SEMANTIC_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; no inference endpoint"
+`,
+      error: "E2E workflow job fixture-version-check has an invalid observable outcome",
+    },
+    {
+      body: `
+jobs:
+  fixture-version-check:
+    strategy:
+      matrix:
+        include:
+          - semantic_agent_runtime: openclaw
+            semantic_observable_outcome: "First valid outcome"
+            semantic_environment_or_inference_endpoint: "Ubuntu; no inference endpoint"
+            semantic_variant: duplicate
+          - semantic_agent_runtime: openclaw
+            semantic_observable_outcome: "Second valid outcome"
+            semantic_environment_or_inference_endpoint: "Ubuntu; no inference endpoint"
+            semantic_variant: duplicate
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: fixture-version-check
+`,
+      error:
+        "E2E semantic coverage contains a duplicate row: retained-workflow:fixture-version-check:duplicate",
+    },
     {
       body: `
 jobs:

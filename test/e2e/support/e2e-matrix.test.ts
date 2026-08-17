@@ -90,10 +90,24 @@ describe("live E2E target matrix", () => {
     expect(buildLiveTargetMatrix([unsupported.id])).toEqual([
       expect.objectContaining({
         id: unsupported.id,
+        agentRuntime: "unresolved",
+        observableOutcome: "unresolved",
+        environmentOrInferenceEndpoint: "unresolved",
+        unresolvedReason: "This typed registry declaration has no executable owner",
         supported: false,
         supportReasons: support.reasons,
       }),
     ]);
+  });
+
+  it("exposes semantic coverage for every executable typed target (#9167)", () => {
+    expect(buildLiveTargetMatrix()).toHaveLength(4);
+    for (const row of buildLiveTargetMatrix()) {
+      expect(row.agentRuntime).not.toBe("unresolved");
+      expect(row.observableOutcome).not.toBe("unresolved");
+      expect(row.environmentOrInferenceEndpoint).not.toBe("unresolved");
+      expect(row.unresolvedReason).toBe("");
+    }
   });
 
   it("prints a single-line JSON array of supported live E2E targets for --emit-live-matrix", () => {

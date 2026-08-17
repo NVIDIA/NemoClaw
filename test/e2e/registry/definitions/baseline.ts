@@ -12,6 +12,10 @@ import {
   wslRepoDocker,
 } from "../matrix.ts";
 import type { ExpectedFailureContract, TargetDefinition, TargetEnvironment } from "../types.ts";
+import {
+  type E2eSemanticMetadata,
+  validateE2eSemanticMetadata,
+} from "../../../../tools/e2e/semantic-coverage.mts";
 
 interface CanonicalTargetInput {
   id: string;
@@ -21,6 +25,7 @@ interface CanonicalTargetInput {
   suiteIds: string[];
   onboardingAssertionIds?: string[];
   description?: string;
+  semanticCoverage?: E2eSemanticMetadata;
   runnerRequirements?: string[];
   requiredSecrets?: string[];
   skippedCapabilities?: Array<Record<string, unknown>>;
@@ -48,7 +53,15 @@ function canonicalTarget(input: CanonicalTargetInput): TargetDefinition {
   if (input.expectedFailure) {
     builder = builder.expectedFailure(input.expectedFailure);
   }
-  return builder.build();
+  const definition = builder.build();
+  if (!input.semanticCoverage) return definition;
+  return {
+    ...definition,
+    semanticCoverage: validateE2eSemanticMetadata(
+      input.semanticCoverage,
+      `Typed E2E target ${input.id}`,
+    ),
+  };
 }
 
 const macosDockerSkipped = [
@@ -68,6 +81,12 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     expectedStateId: "cloud-openclaw-ready",
     suiteIds: ["smoke", "inference", "credentials"],
     description: "Ubuntu repo checkout with Docker and cloud OpenClaw onboarding.",
+    semanticCoverage: {
+      agentRuntime: "openclaw",
+      observableOutcome: "Repository install onboarding and hosted inference succeed",
+      environmentOrInferenceEndpoint: "Ubuntu Docker host; NVIDIA hosted inference",
+      unresolvedReason: "",
+    },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
@@ -88,6 +107,12 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     expectedStateId: "cloud-deepagents-code-ready",
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     description: "Ubuntu repo checkout with Docker and LangChain Deep Agents Code onboarding.",
+    semanticCoverage: {
+      agentRuntime: "langchain-deepagents-code",
+      observableOutcome: "Repository install onboarding and hosted inference succeed",
+      environmentOrInferenceEndpoint: "Ubuntu Docker host; NVIDIA hosted inference",
+      unresolvedReason: "",
+    },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
@@ -179,6 +204,12 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     description:
       "Post-reboot recovery guard: the gateway must recover through the required user service " +
       "while preserving the local sandbox registry and container.",
+    semanticCoverage: {
+      agentRuntime: "openclaw",
+      observableOutcome: "Docker-backed sandbox recovers after a simulated host reboot",
+      environmentOrInferenceEndpoint: "Ubuntu Docker host; local recovery fixture",
+      unresolvedReason: "",
+    },
   },
   {
     id: "ubuntu-repo-openai-compatible-openclaw",
@@ -327,6 +358,12 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     expectedStateId: "onboarding-failure-policy-presets-required",
     onboardingAssertionIds: ["base-installed", "preflight-passed"],
     suiteIds: [],
+    semanticCoverage: {
+      agentRuntime: "openclaw",
+      observableOutcome: "Missing custom policy presets fail closed",
+      environmentOrInferenceEndpoint: "Ubuntu Docker host; local negative fixture",
+      unresolvedReason: "",
+    },
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
     expectedFailure: {
       phase: "onboarding",

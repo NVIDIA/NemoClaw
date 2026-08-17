@@ -4,11 +4,14 @@
 import { appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
+import { listTargets } from "../../test/e2e/registry/registry.ts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestMatrixRow,
+  credentialFreeTestSemantics,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
@@ -32,6 +35,12 @@ import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
 } from "./workflow-boundary.mts";
+import {
+  e2eSemanticExecutionLabel,
+  type E2eSemanticExecutionRow,
+  validateE2eSemanticExecutionRows,
+  validateE2eSemanticMetadata,
+} from "./semantic-coverage.mts";
 
 export type WorkflowPlanSelectors = {
   jobs?: string;
@@ -42,6 +51,7 @@ export type E2eWorkflowPlan = {
   matrix: LiveTargetMatrixEntry[];
   testMatrix: CredentialFreeTestMatrixRow[];
   catalogueMatrices: Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  semanticMatrix: E2eSemanticExecutionRow[];
   selectedJobs: string[];
   hermesSelected: boolean;
   explicitOnlyJobs: string[];
@@ -105,15 +115,43 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function hasValidSemanticMetadata(value: Record<string, unknown>): boolean {
+  if (
+    typeof value.agentRuntime !== "string" ||
+    typeof value.observableOutcome !== "string" ||
+    typeof value.environmentOrInferenceEndpoint !== "string" ||
+    typeof value.unresolvedReason !== "string"
+  ) {
+    return false;
+  }
+  try {
+    validateE2eSemanticMetadata(
+      {
+        agentRuntime: value.agentRuntime as E2eSemanticExecutionRow["agentRuntime"],
+        observableOutcome: value.observableOutcome,
+        environmentOrInferenceEndpoint: value.environmentOrInferenceEndpoint,
+        unresolvedReason: value.unresolvedReason,
+      },
+      "E2E workflow plan row",
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry {
   if (!isRecord(value)) return false;
   if (
     !hasExactKeys(value, [
+      "agentRuntime",
+      "environmentOrInferenceEndpoint",
       "expectedStateId",
       "id",
       "install",
       "label",
       "onboarding",
+      "observableOutcome",
       "pendingRuntimeSuites",
       "platform",
       "requiredSecrets",
@@ -122,6 +160,7 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
       "suites",
       "supportReasons",
       "supported",
+      "unresolvedReason",
     ])
   ) {
     return false;
@@ -137,11 +176,16 @@ function isLiveTargetMatrixEntry(value: unknown): value is LiveTargetMatrixEntry
     typeof value.runtime === "string" &&
     typeof value.onboarding === "string" &&
     typeof value.expectedStateId === "string" &&
+    typeof value.agentRuntime === "string" &&
+    typeof value.observableOutcome === "string" &&
+    typeof value.environmentOrInferenceEndpoint === "string" &&
+    typeof value.unresolvedReason === "string" &&
     typeof value.supported === "boolean" &&
     isStringArray(value.suites) &&
     isStringArray(value.requiredSecrets) &&
     isStringArray(value.supportReasons) &&
-    isStringArray(value.pendingRuntimeSuites)
+    isStringArray(value.pendingRuntimeSuites) &&
+    hasValidSemanticMetadata(value)
   );
 }
 
@@ -174,15 +218,18 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     isRecord(value) &&
     hasExactKeys(value, [
       "artifact_layout",
+      "agent_runtime",
       "cloudflared",
       "compatible_api_key",
       "id",
       "display_name",
+      "environment_or_inference_endpoint",
       "host_preparation",
       "host_packages",
       "install_mode",
       "install_non_interactive",
       "restore_cli",
+      "observable_outcome",
       "runner",
       "runner_comparison",
       "runner_key",
@@ -191,11 +238,16 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
       "target_id",
       "test_file",
       "timeout_minutes",
+      "unresolved_reason",
     ]) &&
     typeof value.id === "string" &&
     /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.id) &&
     typeof value.display_name === "string" &&
     /^[A-Z][A-Za-z0-9 .'+()-]+: [^/\r\n]{1,72}$/u.test(value.display_name) &&
+    typeof value.agent_runtime === "string" &&
+    typeof value.observable_outcome === "string" &&
+    typeof value.environment_or_inference_endpoint === "string" &&
+    typeof value.unresolved_reason === "string" &&
     typeof value.runner === "string" &&
     /^[A-Za-z0-9._-]+$/u.test(value.runner) &&
     typeof value.runner_key === "string" &&
@@ -223,8 +275,51 @@ function isCatalogueMatrixRow(value: unknown): value is E2eCatalogueMatrixRow {
     (value.install_mode === "none" ||
       value.install_mode === "authenticated" ||
       value.install_mode === "credential-free") &&
-    typeof value.restore_cli === "boolean"
+    typeof value.restore_cli === "boolean" &&
+    hasValidSemanticMetadata({
+      agentRuntime: value.agent_runtime,
+      observableOutcome: value.observable_outcome,
+      environmentOrInferenceEndpoint: value.environment_or_inference_endpoint,
+      unresolvedReason: value.unresolved_reason,
+    })
   );
+}
+
+function isSemanticExecutionRow(value: unknown): value is E2eSemanticExecutionRow {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "agentRuntime",
+      "environmentOrInferenceEndpoint",
+      "id",
+      "observableOutcome",
+      "source",
+      "unresolvedReason",
+      "variant",
+    ]) ||
+    typeof value.id !== "string" ||
+    typeof value.variant !== "string" ||
+    typeof value.source !== "string" ||
+    !hasValidSemanticMetadata(value)
+  ) {
+    return false;
+  }
+  try {
+    validateE2eSemanticExecutionRows([value as unknown as E2eSemanticExecutionRow]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSemanticExecutionRows(value: unknown): value is E2eSemanticExecutionRow[] {
+  if (!Array.isArray(value) || !value.every(isSemanticExecutionRow)) return false;
+  try {
+    validateE2eSemanticExecutionRows(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isCatalogueMatrixRowForProfile(
@@ -237,6 +332,10 @@ function isCatalogueMatrixRowForProfile(
     target?.profile === profile &&
     target.targetId === value.target_id &&
     target.displayName === value.display_name &&
+    target.agentRuntime === value.agent_runtime &&
+    target.observableOutcome === value.observable_outcome &&
+    target.environmentOrInferenceEndpoint === value.environment_or_inference_endpoint &&
+    target.unresolvedReason === value.unresolved_reason &&
     target.runner === value.runner &&
     target.runnerKey === value.runner_key &&
     target.testFile === value.test_file &&
@@ -374,9 +473,59 @@ function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
     matrix: [],
     testMatrix: [],
     catalogueMatrices: emptyCatalogueMatrices(),
+    semanticMatrix: [],
     selectedJobs: [],
     hermesSelected: false,
     explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
+  };
+}
+
+type E2eWorkflowPlanWithoutSemantics = Omit<E2eWorkflowPlan, "semanticMatrix">;
+
+function semanticMatrixForPlan(
+  plan: E2eWorkflowPlanWithoutSemantics,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+): E2eSemanticExecutionRow[] {
+  const catalogueRows = E2E_EXECUTION_PROFILES.flatMap((profile) =>
+    plan.catalogueMatrices[profile].map((row) => ({
+      id: row.id,
+      variant: "",
+      source: "catalogue" as const,
+      agentRuntime: row.agent_runtime,
+      observableOutcome: row.observable_outcome,
+      environmentOrInferenceEndpoint: row.environment_or_inference_endpoint,
+      unresolvedReason: row.unresolved_reason,
+    })),
+  );
+  const registryRows = plan.matrix.map((row) => ({
+    id: row.id,
+    variant: "",
+    source: "typed-registry" as const,
+    agentRuntime: row.agentRuntime,
+    observableOutcome: row.observableOutcome,
+    environmentOrInferenceEndpoint: row.environmentOrInferenceEndpoint,
+    unresolvedReason: row.unresolvedReason,
+  }));
+  const sharedRows = plan.testMatrix.map((row) => ({
+    id: row.id,
+    variant: "",
+    source: "shared-e2e" as const,
+    ...credentialFreeTestSemantics(row.id),
+  }));
+  const selectedJobs = new Set(plan.selectedJobs);
+  const workflowRows = inventory.semanticRows.filter((row) => selectedJobs.has(row.id));
+  const rows = [...catalogueRows, ...registryRows, ...sharedRows, ...workflowRows];
+  validateE2eSemanticExecutionRows(rows);
+  return rows;
+}
+
+function withSemanticMatrix(
+  plan: E2eWorkflowPlanWithoutSemantics,
+  inventory: ReturnType<typeof readFreeStandingJobsInventory>,
+): E2eWorkflowPlan {
+  return {
+    ...plan,
+    semanticMatrix: semanticMatrixForPlan(plan, inventory),
   };
 }
 
@@ -454,14 +603,17 @@ export function buildE2eWorkflowPlan(
     (jobs.length === 1 && jobs[0] === JETSON_DISPATCH_TARGET && targets.length === 0) ||
     (targets.length === 1 && targets[0] === JETSON_DISPATCH_TARGET && jobs.length === 0);
   if (jetsonDispatchSelected) {
-    return {
-      matrix: [],
-      testMatrix: [],
-      catalogueMatrices: emptyCatalogueMatrices(),
-      selectedJobs: [JETSON_DISPATCH_TARGET],
-      hermesSelected: false,
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
+    return withSemanticMatrix(
+      {
+        matrix: [],
+        testMatrix: [],
+        catalogueMatrices: emptyCatalogueMatrices(),
+        selectedJobs: [JETSON_DISPATCH_TARGET],
+        hermesSelected: false,
+        explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+      },
+      inventory,
+    );
   }
   const credentialFreeTests = discoverCredentialFreeTests();
   const catalogueIds = new Set(
@@ -496,14 +648,17 @@ export function buildE2eWorkflowPlan(
       selectedJobSet.add("openshell-credential-generation-window");
     }
     const selectedJobs = [...selectedJobSet];
-    return {
-      matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
-      testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
-      catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
-      selectedJobs,
-      hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
+    return withSemanticMatrix(
+      {
+        matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
+        testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
+        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+        selectedJobs,
+        hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
+        explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+      },
+      inventory,
+    );
   }
 
   if (options.changedFiles) {
@@ -559,24 +714,32 @@ export function buildE2eWorkflowPlan(
       ...registryTargetsForChangedFiles(changedFiles),
       ...(riskTargetIds.length > 0 ? buildLiveTargetMatrix(riskTargetIds) : []),
     ].filter((entry, index, rows) => rows.findIndex((row) => row.id === entry.id) === index);
-    return {
-      matrix: registryMatrix,
-      testMatrix: selectedTests,
-      catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
-      selectedJobs,
-      hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
+    return withSemanticMatrix(
+      {
+        matrix: registryMatrix,
+        testMatrix: selectedTests,
+        catalogueMatrices: catalogueMatrices(selectedCatalogueTargets),
+        selectedJobs,
+        hermesSelected: selectedJobs.includes(HERMES_JOB_ID),
+        explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+      },
+      inventory,
+    );
   }
 
-  return {
-    matrix: buildLiveTargetMatrix(),
-    testMatrix: credentialFreeTests,
-    catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE),
-    selectedJobs: inventory.workflowJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)),
-    hermesSelected: true,
-    explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-  };
+  return withSemanticMatrix(
+    {
+      matrix: buildLiveTargetMatrix(),
+      testMatrix: credentialFreeTests,
+      catalogueMatrices: catalogueMatrices(E2E_TARGET_CATALOGUE),
+      selectedJobs: inventory.workflowJobs.filter(
+        (job) => !inventory.explicitOnlyJobs.includes(job),
+      ),
+      hermesSelected: true,
+      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
+    },
+    inventory,
+  );
 }
 
 export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
@@ -587,6 +750,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
       "explicitOnlyJobs",
       "hermesSelected",
       "matrix",
+      "semanticMatrix",
       "selectedJobs",
       "testMatrix",
     ])
@@ -605,6 +769,7 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     !plan.matrix.every(isLiveTargetMatrixEntry) ||
     !Array.isArray(plan.testMatrix) ||
     !plan.testMatrix.every(isCredentialFreeTestMatrixRow) ||
+    !isSemanticExecutionRows(plan.semanticMatrix) ||
     !hasUniqueIds([...plan.matrix, ...plan.testMatrix, ...catalogueMatrixRows]) ||
     !isStringArray(plan.selectedJobs) ||
     !plan.selectedJobs.every((job) => /^[A-Za-z0-9_-]+$/u.test(job)) ||
@@ -615,6 +780,16 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
     new Set(plan.explicitOnlyJobs).size !== plan.explicitOnlyJobs.length
   ) {
     throw new Error("E2E planner returned an invalid output schema");
+  }
+  const { semanticMatrix, ...planWithoutSemantics } = plan as E2eWorkflowPlan;
+  const expectedSemanticMatrix = semanticMatrixForPlan(
+    planWithoutSemantics,
+    readFreeStandingJobsInventory(),
+  );
+  if (!isDeepStrictEqual(semanticMatrix, expectedSemanticMatrix)) {
+    throw new Error(
+      "E2E planner returned semantic coverage that does not match its execution plan",
+    );
   }
   return plan as E2eWorkflowPlan;
 }
@@ -633,14 +808,21 @@ function expectedHermesSelection(
 function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
   const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
     rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
+  const catalogueMatrices = Object.fromEntries(
+    E2E_EXECUTION_PROFILES.map((profile) => [
+      profile,
+      eligibleRows(plan.catalogueMatrices[profile]),
+    ]),
+  ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>;
+  const eligibleCatalogueIds = new Set(
+    E2E_EXECUTION_PROFILES.flatMap((profile) => catalogueMatrices[profile].map((row) => row.id)),
+  );
   return {
     ...plan,
-    catalogueMatrices: Object.fromEntries(
-      E2E_EXECUTION_PROFILES.map((profile) => [
-        profile,
-        eligibleRows(plan.catalogueMatrices[profile]),
-      ]),
-    ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>,
+    catalogueMatrices,
+    semanticMatrix: plan.semanticMatrix.filter(
+      (row) => row.source !== "catalogue" || eligibleCatalogueIds.has(row.id),
+    ),
   };
 }
 
@@ -648,23 +830,79 @@ export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
   const lines = [
     "## E2E Execution Plan",
     "",
-    "| Target or job | Execution | Runner |",
-    "| --- | --- | --- |",
+    "| Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Source | Unresolved reason |",
+    "| --- | --- | --- | --- | --- | --- |",
   ];
-  for (const job of plan.selectedJobs) {
-    lines.push(`| \`${job}\` | retained workflow job | declared by job |`);
+  for (const row of plan.semanticMatrix) {
+    lines.push(
+      `| \`${e2eSemanticExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.source} | ${row.unresolvedReason} |`,
+    );
   }
-  for (const row of plan.matrix) {
-    lines.push(`| \`${row.id}\` | typed registry | \`${row.runner}\` |`);
+  if (!plan.semanticMatrix.some((row) => row.source === "staging")) {
+    return `${lines.join("\n")}\n`;
   }
-  for (const row of plan.testMatrix) {
-    lines.push(`| \`${row.id}\` | shared E2E job | \`ubuntu-latest\` |`);
+  const inventory = readFreeStandingJobsInventory();
+  const explicitOnlyRows = inventory.semanticRows.filter((row) =>
+    plan.explicitOnlyJobs.includes(row.id),
+  );
+  const unsupportedDeclarations = buildLiveTargetMatrix(
+    listTargets().map((target) => target.id),
+  ).filter((row) => !row.supported);
+  const outcomeRows = new Map<string, E2eSemanticExecutionRow[]>();
+  for (const row of plan.semanticMatrix) {
+    const rows = outcomeRows.get(row.observableOutcome) ?? [];
+    rows.push(row);
+    outcomeRows.set(row.observableOutcome, rows);
   }
-  for (const profile of E2E_EXECUTION_PROFILES) {
-    for (const row of plan.catalogueMatrices[profile]) {
-      lines.push(`| \`${row.id}\` | \`${profile}\` profile | \`${row.runner}\` |`);
-    }
+  const repeatedOutcomes = [...outcomeRows].filter(([, rows]) => rows.length > 1);
+  lines.push(
+    "",
+    "### Repeated outcomes with distinct evidence",
+    "",
+    "| Observable outcome | Rows | Distinguishing dimensions |",
+    "| --- | --- | --- |",
+  );
+  for (const [outcome, rows] of repeatedOutcomes) {
+    const dimensions = [
+      new Set(rows.map((row) => row.agentRuntime)).size > 1 ? "agent runtime" : "",
+      new Set(rows.map((row) => row.environmentOrInferenceEndpoint)).size > 1
+        ? "environment or inference endpoint"
+        : "",
+    ].filter(Boolean);
+    lines.push(
+      `| ${outcome} | ${rows.map((row) => `\`${e2eSemanticExecutionLabel(row)}\``).join(", ")} | ${dimensions.join(" and ")} |`,
+    );
   }
+  lines.push(
+    "",
+    "### Intentional exclusions",
+    "",
+    "| Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Exclusion | Unresolved reason |",
+    "| --- | --- | --- | --- | --- | --- |",
+  );
+  for (const row of explicitOnlyRows) {
+    lines.push(
+      `| \`${e2eSemanticExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | Explicit dispatch only; excluded from the default release matrix | ${row.unresolvedReason} |`,
+    );
+  }
+  lines.push(
+    "",
+    "### Unsupported or unresolved typed declarations",
+    "",
+    "| Declaration | Agent runtime | Observable outcome | Environment or inference endpoint | Missing executable ownership |",
+    "| --- | --- | --- | --- | --- |",
+  );
+  for (const row of unsupportedDeclarations) {
+    lines.push(
+      `| \`${row.id}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.supportReasons.join("; ")} |`,
+    );
+  }
+  lines.push(
+    "",
+    "### Combinatorial gaps",
+    "",
+    `The ${unsupportedDeclarations.length} inert typed declarations above are not executable matrix cells. #8285 owns the decision on the inert cross-runtime foundation, and #8286 owns executable-only registry cleanup after that decision. Unlisted Cartesian-product cells are not required without an accepted supported combination. This migration removes no execution, so no duplicate-to-retained-evidence mapping is required.`,
+  );
   return `${lines.join("\n")}\n`;
 }
 
