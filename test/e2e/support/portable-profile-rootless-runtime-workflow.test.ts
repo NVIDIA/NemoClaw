@@ -22,6 +22,7 @@ describe("portable profile rootless runtime workflow", () => {
     const versionIndex = provision.indexOf("podman --version");
 
     expect(packageInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(provision).toMatch(/sudo apt-get install --yes .*\bpodman\b/);
     expect(packagePodmanIndex).toBeGreaterThan(packageInstallIndex);
     expect(provision).toContain('ln -s "$package_podman" "$runtime_bin/podman"');
     expect(pathExportIndex).toBeGreaterThan(packagePodmanIndex);
