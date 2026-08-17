@@ -103,6 +103,8 @@ export interface OllamaInstallMenuEntry {
 export interface OllamaInstallMenuResult {
   entry: OllamaInstallMenuEntry | null;
   hasUpgradableOllama: boolean;
+  /** Whether recovery must install or replace the binary, rather than only restart its daemon. */
+  binaryNeedsUpgrade?: boolean;
 }
 
 function osTagFor(platform: NodeJS.Platform, isWsl: boolean): string | null {
@@ -147,10 +149,15 @@ export function resolveOllamaInstallMenuEntry(
   // put a fresh `ollama` on `PATH` while the system daemon keeps `:11434`
   // on the old version (and vice versa). Upgrade when either source is below
   // the minimum.
-  const binaryNeedsUpgrade =
-    input.hasOllama && !isOllamaVersionAtLeast(installedOllamaVersion, MIN_OLLAMA_VERSION);
+  const installedBinaryMeetsMinimum =
+    input.hasOllama && isOllamaVersionAtLeast(installedOllamaVersion, MIN_OLLAMA_VERSION);
   const daemonNeedsUpgrade =
     daemonProbeApplies && !isOllamaVersionAtLeast(runningOllamaVersion, MIN_OLLAMA_VERSION);
+  // Restart-only recovery is safe only with positive evidence that the
+  // installed binary meets the floor. A stale daemon without a local binary
+  // still needs the installer to provide one.
+  const binaryNeedsUpgrade =
+    !installedBinaryMeetsMinimum && (input.hasOllama || daemonNeedsUpgrade);
   const hasUpgradableOllama = binaryNeedsUpgrade || daemonNeedsUpgrade;
   // A Windows-host install only covers the local-inference need when the
   // sandbox can route to it. Under a container runtime without that routing,
@@ -160,11 +167,11 @@ export function resolveOllamaInstallMenuEntry(
   const showEntry =
     (!input.hasOllama && !input.ollamaRunning && !usableWindowsOllama) || hasUpgradableOllama;
   if (!showEntry) {
-    return { entry: null, hasUpgradableOllama };
+    return { entry: null, hasUpgradableOllama, binaryNeedsUpgrade };
   }
   const osTag = osTagFor(input.platform, input.isWsl);
   if (osTag === null) {
-    return { entry: null, hasUpgradableOllama };
+    return { entry: null, hasUpgradableOllama, binaryNeedsUpgrade };
   }
   const labelPrefix = hasUpgradableOllama ? "Upgrade Ollama" : "Install Ollama";
   // Name the stale source explicitly: "running daemon" when the daemon is
@@ -189,6 +196,7 @@ export function resolveOllamaInstallMenuEntry(
   return {
     entry: { key: "install-ollama", label: `${labelPrefix} (${osTag})${upgradeSuffix}` },
     hasUpgradableOllama,
+    binaryNeedsUpgrade,
   };
 }
 

@@ -56,6 +56,8 @@ export type InstallOllamaLinuxResult = {
 };
 
 export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
+  /** Restart the daemon for an already-current binary without running the pinned installer. */
+  restartOnly?: boolean;
   /** Test seam: override `os.homedir()`. */
   homedir?: () => string;
   /** Test seam: override `process.arch`. */
@@ -116,9 +118,9 @@ function detectJetpackVariant(opts: InstallOllamaLinuxOptions): "jetpack5" | "je
 /**
  * Run the official `https://ollama.com/install.sh`. Sudo-bound. Configures
  * the systemd `ollama.service`, creates the `ollama` system user, and
- * installs CUDA drivers when applicable. An upgrade asks the installer for
- * `MIN_OLLAMA_VERSION` by name; a fresh install has no floor to satisfy and
- * takes latest.
+ * installs CUDA drivers when applicable. An upgrade that replaces a stale
+ * binary asks the installer for `MIN_OLLAMA_VERSION` by name; a fresh install
+ * has no floor to satisfy and takes latest.
  */
 function runOfficialInstallScript(opts: InstallOllamaLinuxOptions): void {
   const log = opts.log ?? ((m: string) => console.log(m));
@@ -323,8 +325,14 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
     opts.ensureManagedOllamaLoopbackSystemdOverrideImpl ??
     ensureManagedOllamaLoopbackSystemdOverride;
 
-  runOfficialInstallScript(opts);
-  sleepSecondsImpl(2);
+  if (opts.restartOnly) {
+    log(
+      `  Installed Ollama already meets ${MIN_OLLAMA_VERSION}; restarting its daemon without replacing the binary.`,
+    );
+  } else {
+    runOfficialInstallScript(opts);
+    sleepSecondsImpl(2);
+  }
 
   const overrideState: OllamaLoopbackSystemdOverrideState = ensureOverrideImpl({
     isNonInteractive: opts.isNonInteractive,

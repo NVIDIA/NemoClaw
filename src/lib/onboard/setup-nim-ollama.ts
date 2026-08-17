@@ -65,6 +65,7 @@ type SetupNimOllamaDeps = {
   installOllamaOnLinux: (args: {
     isNonInteractive: () => boolean;
     isUpgrade: boolean;
+    restartOnly?: boolean;
     contextWindowFloor?: number;
   }) => { ok: boolean };
   abortNonInteractive: (message: string) => never;
@@ -97,7 +98,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     requestedModel: string | null,
     recoveredModel: string | null,
     state: SetupNimSelectionState,
-    ollamaInstallMenu: { hasUpgradableOllama: boolean },
+    ollamaInstallMenu: { hasUpgradableOllama: boolean; binaryNeedsUpgrade?: boolean },
   ) => Promise<SetupNimSelectionResult>;
 } {
   async function selectModel(
@@ -320,7 +321,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     requestedModel: string | null,
     recoveredModel: string | null,
     state: SetupNimSelectionState,
-    ollamaInstallMenu: { hasUpgradableOllama: boolean },
+    ollamaInstallMenu: { hasUpgradableOllama: boolean; binaryNeedsUpgrade?: boolean },
   ): Promise<SetupNimSelectionResult> {
     if (!deps.checkOllamaPortsOrWarn({ isNonInteractive: deps.isNonInteractive })) {
       return "retry-selection";
@@ -337,6 +338,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         : deps.installOllamaOnLinux({
             isNonInteractive: deps.isNonInteractive,
             isUpgrade,
+            restartOnly: isUpgrade && ollamaInstallMenu.binaryNeedsUpgrade === false,
             contextWindowFloor: state.ollamaContextWindowFloor,
           });
     if (!installResult.ok) {

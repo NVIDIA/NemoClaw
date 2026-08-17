@@ -187,4 +187,76 @@ describe("onboard Ollama upgrade version floor", () => {
       resetOllamaHostCache();
     }
   });
+
+  it("restarts a stale daemon without downgrading a newer installed binary (#9276)", async () => {
+    const currentVersion = "0.40.0";
+    const menu = resolveOllamaInstallMenuEntry({
+      hasOllama: true,
+      ollamaRunning: true,
+      ollamaHost: "127.0.0.1",
+      hasWindowsOllama: false,
+      installedOllamaVersion: currentVersion,
+      runningOllamaVersion: STALE_VERSION,
+      platform: "linux",
+      isWsl: false,
+    });
+    assert.equal(menu.hasUpgradableOllama, true);
+    assert.equal(menu.binaryNeedsUpgrade, false);
+
+    const responses = new Map<string, string>([
+      [
+        JSON.stringify([
+          "curl",
+          "-sf",
+          "--connect-timeout",
+          "2",
+          "--max-time",
+          "5",
+          "http://127.0.0.1:11434/api/version",
+        ]),
+        JSON.stringify({ version: currentVersion }),
+      ],
+      [JSON.stringify(["ollama", "--version"]), `ollama version is ${currentVersion}`],
+    ]);
+    const runCapture = (command: readonly string[]) => responses.get(JSON.stringify(command)) ?? "";
+    const commands: string[] = [];
+    const ensureOverride = vi.fn().mockReturnValue("ready");
+    const install = vi.fn((options: Parameters<SetupNimOllamaDeps["installOllamaOnLinux"]>[0]) =>
+      installOllamaOnLinux(
+        makeInstallOptions({
+          ...options,
+          modeOverride: "system",
+          runCaptureImpl: runCapture,
+          runShellImpl: (command) => {
+            commands.push(command);
+            return successfulRunShellResult();
+          },
+          ensureManagedOllamaLoopbackSystemdOverrideImpl: ensureOverride,
+        }),
+      ),
+    );
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeOllamaDeps({
+        installOllamaOnLinux: install,
+        assertOllamaUpgradeApplied: (selection) => {
+          const outcome = assertOllamaUpgradeApplied(selection, runCapture);
+          return outcome.ok
+            ? { ok: true as const }
+            : { ok: false as const, message: outcome.message ?? "Ollama upgrade failed." };
+        },
+      }),
+    );
+
+    const result = await handleInstallOllamaSelection(
+      null,
+      "qwen3:8b",
+      null,
+      makeSelectionState(),
+      menu,
+    );
+    assert.equal(result, "selected");
+    assert.equal(install.mock.calls[0]?.[0].restartOnly, true);
+    assert.ok(!commands.some((command) => command.includes("ollama.com/install.sh")));
+    assert.equal(ensureOverride.mock.calls[0]?.[0].isUpgrade, true);
+  });
 });

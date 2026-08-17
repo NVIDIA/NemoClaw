@@ -229,6 +229,26 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
     expect(installer).toContain(`OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh`);
   });
 
+  it("restarts the daemon for an already-current binary without running the pinned installer", () => {
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const ensureOverride = vi.fn().mockReturnValue("ready");
+    const log = vi.fn();
+    const opts = makeOpts({
+      modeOverride: "system",
+      runShellImpl,
+      ensureManagedOllamaLoopbackSystemdOverrideImpl: ensureOverride,
+      isUpgrade: true,
+      restartOnly: true,
+      log,
+    });
+    expect(installOllamaOnLinux(opts).ok).toBe(true);
+    expect(findRunShellCall(runShellImpl, "ollama.com/install.sh")).toBeUndefined();
+    expect(ensureOverride).toHaveBeenCalledWith(expect.objectContaining({ isUpgrade: true }));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("without replacing the binary"));
+  });
+
   it("leaves a fresh install unpinned so it takes the latest Ollama", () => {
     const runShellImpl = vi
       .fn()
