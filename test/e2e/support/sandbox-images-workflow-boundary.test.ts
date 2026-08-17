@@ -81,60 +81,52 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("requires the guarded build_args shape for every production image build", () => {
-    const cases = [
-      {
-        jobName: "build-sandbox-images",
-        stepName: "Build production image",
-        error:
-          "OpenClaw production image must use the guarded build_args shape under nemoclaw-production",
-      },
-      {
-        jobName: "build-hermes-sandbox-image",
-        stepName: "Validate Hermes production build args",
-        error: "Hermes production image must validate the guarded build_args shape",
-      },
-      {
-        jobName: "build-sandbox-images-arm64",
-        stepName: "Build production image on arm64",
-        error:
-          "OpenClaw arm64 production image must use the guarded build_args shape under nemoclaw-production-arm64",
-      },
-    ];
+  it.each([
+    {
+      jobName: "build-sandbox-images",
+      stepName: "Build production image",
+      error:
+        "OpenClaw production image must use the guarded build_args shape under nemoclaw-production",
+    },
+    {
+      jobName: "build-hermes-sandbox-image",
+      stepName: "Validate Hermes production build args",
+      error: "Hermes production image must validate the guarded build_args shape",
+    },
+    {
+      jobName: "build-sandbox-images-arm64",
+      stepName: "Build production image on arm64",
+      error:
+        "OpenClaw arm64 production image must use the guarded build_args shape under nemoclaw-production-arm64",
+    },
+  ])("requires guarded build_args in $jobName", ({ jobName, stepName, error }) => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const build = imageWorkflow.jobs[jobName].steps!.find((step) => step.name === stepName)!;
+    build.run = build.run!.replace(
+      'scripts/check-production-build-args.sh "${build_args[@]}"',
+      'echo "guard bypassed"',
+    );
 
-    for (const { jobName, stepName, error } of cases) {
-      const { imageWorkflow, mainWorkflow } = readWorkflows();
-      const build = imageWorkflow.jobs[jobName].steps!.find((step) => step.name === stepName)!;
-      build.run = build.run!.replace(
-        'scripts/check-production-build-args.sh "${build_args[@]}"',
-        'echo "guard bypassed"',
-      );
-
-      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
-    }
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
   });
 
-  it("rejects a second source build for every production image job", () => {
-    const cases = [
-      {
-        jobName: "build-sandbox-images",
-        stepName: "Build production image",
-        error: "OpenClaw production image must have exactly one source build",
-      },
-      {
-        jobName: "build-sandbox-images-arm64",
-        stepName: "Build production image on arm64",
-        error: "OpenClaw arm64 production image must have exactly one source build",
-      },
-    ];
+  it.each([
+    {
+      jobName: "build-sandbox-images",
+      stepName: "Build production image",
+      error: "OpenClaw production image must have exactly one source build",
+    },
+    {
+      jobName: "build-sandbox-images-arm64",
+      stepName: "Build production image on arm64",
+      error: "OpenClaw arm64 production image must have exactly one source build",
+    },
+  ])("rejects a second source build in $jobName", ({ jobName, stepName, error }) => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const build = imageWorkflow.jobs[jobName].steps!.find((step) => step.name === stepName)!;
+    build.run = `${build.run}docker build -t duplicate-production-image .\n`;
 
-    for (const { jobName, stepName, error } of cases) {
-      const { imageWorkflow, mainWorkflow } = readWorkflows();
-      const build = imageWorkflow.jobs[jobName].steps!.find((step) => step.name === stepName)!;
-      build.run = `${build.run}docker build -t duplicate-production-image .\n`;
-
-      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
-    }
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
   });
 
   it("rejects a Hermes Buildx action that can publish or bypass the shared cache", () => {

@@ -540,35 +540,34 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
-  it("writes unavailable artifacts through a credential-free trusted host fallback", () => {
-    const env = advisorEnvironment();
-    env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
-    const tools = advisorTools();
+  it.each(["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"])(
+    "writes unavailable artifacts through a credential-free trusted host fallback [case %#]",
+    (name) => {
+      const env = advisorEnvironment();
+      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
+      const tools = advisorTools();
 
-    writeUnavailableAdvisorArtifacts(env, tools);
+      writeUnavailableAdvisorArtifacts(env, tools);
 
-    expect(tools.run).toHaveBeenCalledTimes(1);
-    const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
-    expect(command).toBe(process.execPath);
-    expect(args).toEqual([
-      "--experimental-strip-types",
-      "--no-warnings",
-      path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
-    ]);
-    expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-    expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe("provider configuration failed");
-    expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
-      path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
-    );
-    for (const name of [
-      "GH_TOKEN",
-      "GITHUB_TOKEN",
-      "OPENAI_API_KEY",
-      "PR_REVIEW_ADVISOR_API_KEY",
-    ]) {
+      expect(tools.run).toHaveBeenCalledTimes(1);
+      const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
+      expect(command).toBe(process.execPath);
+      expect(args).toEqual([
+        "--experimental-strip-types",
+        "--no-warnings",
+        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
+      ]);
+      expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
+      expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe(
+        "provider configuration failed",
+      );
+      expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
+        path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
+      );
+
       expect(options.env[name]).toBeUndefined();
-    }
-  });
+    },
+  );
 
   it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
     const env = advisorEnvironment();

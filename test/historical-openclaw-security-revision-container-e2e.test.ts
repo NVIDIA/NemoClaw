@@ -426,19 +426,21 @@ describe("Historical OpenClaw security revision container E2E contract (#7272)",
     expect(() => resolveConfiguredImage({ [IMAGE_ENV]: "candidate:local" })).toThrow(RUN_ENV);
   });
 
-  test("covers every supported OpenClaw state selector without shell-derived inputs", () => {
-    expect(INSTALL_CASES.map(({ id }) => id)).toEqual([
-      "profile-prefix",
-      "profile-suffix",
-      "dev-prefix",
-      "dev-suffix",
-      "custom-state",
-    ]);
-    for (const testCase of INSTALL_CASES) {
+  test.each(Array.from(INSTALL_CASES, (value) => [value]))(
+    "covers the $id OpenClaw state selector without shell-derived inputs",
+    (testCase) => {
+      expect(INSTALL_CASES.map(({ id }) => id)).toEqual([
+        "profile-prefix",
+        "profile-suffix",
+        "dev-prefix",
+        "dev-suffix",
+        "custom-state",
+      ]);
+
       expect(installArgs(testCase, "/fixture/plugin.tgz")).toContain("/fixture/plugin.tgz");
       expect(testCase.expectedStateRoot.startsWith(CONTAINER_HOME)).toBe(true);
-    }
-  });
+    },
+  );
 
   test("builds a bounded least-privilege Docker boundary without host networking", () => {
     const args = secureDockerRunArgs({

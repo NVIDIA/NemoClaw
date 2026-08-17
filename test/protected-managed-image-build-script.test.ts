@@ -258,11 +258,15 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    for (const invocation of recordedBuildInvocations()) {
-      expect(invocation).not.toContain("--cache-to");
-      expect(invocation).not.toContain("--cache-from");
-      expect(invocation).not.toContain("--network none");
-    }
+
+    expect(
+      recordedBuildInvocations().every(
+        (invocation) =>
+          !invocation.includes("--cache-to") &&
+          !invocation.includes("--cache-from") &&
+          !invocation.includes("--network none"),
+      ),
+    ).toBe(true);
   });
 
   it("passes each agent one empty absolute cache export root", () => {

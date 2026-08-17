@@ -181,49 +181,51 @@ describe("PR review advisor", () => {
     expect(comment.match(/`PRA-1`/g)).toHaveLength(1);
   });
 
-  it("keeps hostile file locations inside finding fields", () => {
-    const result = normalizeReviewResult(
-      validResult({
-        findings: [
-          {
-            severity: "blocker",
-            category: "correctness",
-            file: "src/a|b.ts",
-            line: 7,
-            title: "Pipe in path",
-            description: "Location should not add a table cell.",
-          },
-          {
-            severity: "warning",
-            category: "correctness",
-            file: "src/a\nb.ts",
-            line: 8,
-            title: "Newline in path",
-            description: "Location should stay on one rendered line.",
-          },
-          {
-            severity: "suggestion",
-            category: "correctness",
-            file: "src/a`b.ts",
-            line: 9,
-            title: "Backtick in path",
-            description: "Location should not break a Markdown code span.",
-          },
-        ],
-      }),
-      metadata(),
-    );
-    const comment = buildComment({ summary: renderSummary(result), result });
+  it.each(["PRA-1", "PRA-2", "PRA-3"])(
+    "keeps hostile file locations inside finding fields [%s]",
+    (id) => {
+      const result = normalizeReviewResult(
+        validResult({
+          findings: [
+            {
+              severity: "blocker",
+              category: "correctness",
+              file: "src/a|b.ts",
+              line: 7,
+              title: "Pipe in path",
+              description: "Location should not add a table cell.",
+            },
+            {
+              severity: "warning",
+              category: "correctness",
+              file: "src/a\nb.ts",
+              line: 8,
+              title: "Newline in path",
+              description: "Location should stay on one rendered line.",
+            },
+            {
+              severity: "suggestion",
+              category: "correctness",
+              file: "src/a`b.ts",
+              line: 9,
+              title: "Backtick in path",
+              description: "Location should not break a Markdown code span.",
+            },
+          ],
+        }),
+        metadata(),
+      );
+      const comment = buildComment({ summary: renderSummary(result), result });
 
-    expect(comment).toContain("- **Location:** <code>src/a&#124;b.ts:7</code>");
-    expect(comment).toContain("- **Location:** <code>src/a b.ts:8</code>");
-    expect(comment).toContain("- **Location:** <code>src/a`b.ts:9</code>");
-    expect(comment).not.toContain("src/a\nb.ts");
-    expect(comment).not.toContain("`src/a`b.ts:9`");
-    for (const id of ["PRA-1", "PRA-2", "PRA-3"]) {
+      expect(comment).toContain("- **Location:** <code>src/a&#124;b.ts:7</code>");
+      expect(comment).toContain("- **Location:** <code>src/a b.ts:8</code>");
+      expect(comment).toContain("- **Location:** <code>src/a`b.ts:9</code>");
+      expect(comment).not.toContain("src/a\nb.ts");
+      expect(comment).not.toContain("`src/a`b.ts:9`");
+
       expect(comment.match(new RegExp("`" + id + "`", "g"))).toHaveLength(1);
-    }
-  });
+    },
+  );
 
   it("escapes advisor finding text before rendering sticky comments", () => {
     const result = normalizeReviewResult(

@@ -304,24 +304,25 @@ describe("managed image GHCR catalog", () => {
     ).rejects.toBeInstanceOf(ManagedImageCatalogUnavailableError);
   });
 
-  it.each(
-    MANAGED_IMAGE_PLATFORMS,
-  )("selects and validates the exact %s child manifest", async (platform) => {
-    const fixture = registryFixture("openclaw", { platform });
+  it.each(MANAGED_IMAGE_PLATFORMS)(
+    "selects and validates the exact %s child manifest",
+    async (platform) => {
+      const fixture = registryFixture("openclaw", { platform });
 
-    await expect(
-      resolveManagedImageContractFromGhcr({
-        agent: "openclaw",
-        release: RELEASE,
+      await expect(
+        resolveManagedImageContractFromGhcr({
+          agent: "openclaw",
+          release: RELEASE,
+          platform,
+          fetchImpl: fixture.fetchImpl,
+        }),
+      ).resolves.toMatchObject({
         platform,
-        fetchImpl: fixture.fetchImpl,
-      }),
-    ).resolves.toMatchObject({
-      platform,
-      digest: fixture.platformDigest,
-      reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@${fixture.platformDigest}`,
-    });
-  });
+        digest: fixture.platformDigest,
+        reference: `${MANAGED_IMAGE_REPOSITORIES.openclaw}@${fixture.platformDigest}`,
+      });
+    },
+  );
 
   it("rejects wrong manifest bytes even when the registry advertises the expected digest", async () => {
     const fixture = registryFixture("openclaw", { rootBodyMismatch: true });
@@ -365,48 +366,50 @@ describe("managed image GHCR catalog", () => {
     ).rejects.toThrow(/GHCR image config bytes do not match digest/);
   });
 
-  it.each([
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("refuses independent %s release-alias discovery", async (agent) => {
-    const fetchImpl = vi.fn();
-    await expect(
-      resolveManagedImageContractFromGhcr({
-        agent,
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "refuses independent %s release-alias discovery",
+    async (agent) => {
+      const fetchImpl = vi.fn();
+      await expect(
+        resolveManagedImageContractFromGhcr({
+          agent,
+          release: RELEASE,
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      ).rejects.toThrow(/only be resolved from the OpenClaw cohort pointer/);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["hermes", "langchain-deepagents-code"] as const)(
+    "resolves the complete three-agent catalog rather than an OpenClaw-only default [%s] (#7744)",
+    async (agent) => {
+      const fixture = catalogFixture();
+
+      const catalog = await resolveManagedImageCatalogFromGhcr({
         release: RELEASE,
-        fetchImpl: fetchImpl as typeof fetch,
-      }),
-    ).rejects.toThrow(/only be resolved from the OpenClaw cohort pointer/);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
+        fetchImpl: fixture.fetchImpl,
+      });
 
-  it("resolves the complete three-agent catalog rather than an OpenClaw-only default (#7744)", async () => {
-    const fixture = catalogFixture();
+      expect(Object.keys(catalog).sort()).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS].sort());
+      expect(
+        SHIPPED_MANAGED_IMAGE_AGENTS.map(
+          (agent) => (catalog[agent] as { source: { cohort: string } }).source.cohort,
+        ),
+      ).toEqual([COHORT, COHORT, COHORT]);
+      const rootManifestRequests = fixture.fetchMock.mock.calls
+        .map(([input]) => new URL(String(input)).pathname)
+        .filter((pathname) => pathname.includes("/manifests/"));
+      expect(rootManifestRequests.filter((pathname) => pathname.endsWith(`/${RELEASE}`))).toEqual([
+        `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${RELEASE}`,
+        `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${RELEASE}`,
+      ]);
 
-    const catalog = await resolveManagedImageCatalogFromGhcr({
-      release: RELEASE,
-      fetchImpl: fixture.fetchImpl,
-    });
-
-    expect(Object.keys(catalog).sort()).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS].sort());
-    expect(
-      SHIPPED_MANAGED_IMAGE_AGENTS.map(
-        (agent) => (catalog[agent] as { source: { cohort: string } }).source.cohort,
-      ),
-    ).toEqual([COHORT, COHORT, COHORT]);
-    const rootManifestRequests = fixture.fetchMock.mock.calls
-      .map(([input]) => new URL(String(input)).pathname)
-      .filter((pathname) => pathname.includes("/manifests/"));
-    expect(rootManifestRequests.filter((pathname) => pathname.endsWith(`/${RELEASE}`))).toEqual([
-      `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${RELEASE}`,
-      `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${RELEASE}`,
-    ]);
-    for (const agent of ["hermes", "langchain-deepagents-code"] as const) {
       const repository = MANAGED_IMAGE_REPOSITORIES[agent].replace("ghcr.io/", "");
       expect(rootManifestRequests).toContain(`/v2/${repository}/manifests/cohort-${COHORT}`);
       expect(rootManifestRequests).not.toContain(`/v2/${repository}/manifests/${RELEASE}`);
-    }
-  });
+    },
+  );
 
   it("fails closed when a dependent cohort alias is torn or absent", async () => {
     const fixture = catalogFixture({ hermes: { missingRoot: true } });
@@ -490,18 +493,21 @@ describe("managed image GHCR catalog", () => {
     "run-1-1",
     `ghrun-${"1".repeat(21)}-1`,
     `ghrun-1-${"1".repeat(11)}`,
-  ])("rejects malformed OpenClaw publication cohort %j before dependent resolution", async (cohort) => {
-    const fixture = registryFixture("openclaw", {
-      labels: { "io.nvidia.nemoclaw.managed-image.cohort": cohort },
-    });
+  ])(
+    "rejects malformed OpenClaw publication cohort %j before dependent resolution",
+    async (cohort) => {
+      const fixture = registryFixture("openclaw", {
+        labels: { "io.nvidia.nemoclaw.managed-image.cohort": cohort },
+      });
 
-    await expect(
-      resolveManagedImageCatalogFromGhcr({
-        release: RELEASE,
-        fetchImpl: fixture.fetchImpl,
-      }),
-    ).rejects.toThrow(/publication cohort is not a supported identity/);
-  });
+      await expect(
+        resolveManagedImageCatalogFromGhcr({
+          release: RELEASE,
+          fetchImpl: fixture.fetchImpl,
+        }),
+      ).rejects.toThrow(/publication cohort is not a supported identity/);
+    },
+  );
 
   it("accepts an OCI image manifest without requiring an index", async () => {
     const fixture = registryFixture("openclaw", { directManifest: true });
@@ -585,22 +591,20 @@ describe("managed image GHCR catalog", () => {
     ).rejects.toThrow(/returned HTTP 302, expected 307/);
   });
 
-  it.each([
-    "latest",
-    "main",
-    "v0.0.97@sha256:abc",
-    "0",
-  ])("rejects mutable or malformed release selector %j before network access", async (release) => {
-    const fetchImpl = vi.fn();
-    await expect(
-      resolveManagedImageContractFromGhcr({
-        agent: "openclaw",
-        release,
-        fetchImpl: fetchImpl as typeof fetch,
-      }),
-    ).rejects.toThrow(/not a supported release version/);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
+  it.each(["latest", "main", "v0.0.97@sha256:abc", "0"])(
+    "rejects mutable or malformed release selector %j before network access",
+    async (release) => {
+      const fetchImpl = vi.fn();
+      await expect(
+        resolveManagedImageContractFromGhcr({
+          agent: "openclaw",
+          release,
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      ).rejects.toThrow(/not a supported release version/);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
 
   it("normalizes an installed version to the corresponding immutable release alias", () => {
     expect(normalizeManagedImageRelease("0.0.97")).toBe(RELEASE);

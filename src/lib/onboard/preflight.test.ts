@@ -1272,20 +1272,20 @@ describe("probeContainerDns", () => {
     expect(seenScript).toContain("nslookup pinned-test.invalid");
   });
 
-  it("rejects shell metacharacters in probeName to prevent sh -c injection per CodeRabbit review (#3630)", () => {
-    const injections = [
-      "x; touch /tmp/pwned",
-      "x && touch /tmp/pwned",
-      "x`whoami`",
-      "x$(whoami)",
-      "x|whoami",
-      "x\nwhoami",
-      'x "; rm -rf /"',
-    ];
-    for (const probeName of injections) {
+  it.each([
+    "x; touch /tmp/pwned",
+    "x && touch /tmp/pwned",
+    "x`whoami`",
+    "x$(whoami)",
+    "x|whoami",
+    "x\nwhoami",
+    'x "; rm -rf /"',
+  ])(
+    "rejects shell metacharacters in probeName to prevent sh -c injection per CodeRabbit review [%s] (#3630)",
+    (probeName) => {
       expect(() => probeContainerDns({ probeName })).toThrow(/probeName must be a plain DNS name/);
-    }
-  });
+    },
+  );
 
   it("accepts plain DNS labels (RFC 1035 chars only) as probeName", () => {
     expect(() =>

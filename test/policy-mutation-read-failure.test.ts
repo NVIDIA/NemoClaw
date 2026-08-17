@@ -36,11 +36,14 @@ describe("OpenShell policy mutation read failures", () => {
     }
   });
 
-  for (const [mutation, apply] of [
-    ["applyPresetContent", () => policies.applyPresetContent("alpha", "custom", CUSTOM_PRESET)],
-    ["applyPresets", () => policies.applyPresets("alpha", ["npm"])],
-  ] as const) {
-    it(`${mutation} refuses to set policy when the base-policy read fails`, () => {
+  describe.each([
+    {
+      mutation: "applyPresetContent",
+      apply: () => policies.applyPresetContent("alpha", "custom", CUSTOM_PRESET),
+    },
+    { mutation: "applyPresets", apply: () => policies.applyPresets("alpha", ["npm"]) },
+  ] as const)("$mutation policy mutation", ({ mutation, apply }) => {
+    it("refuses to set policy when the base-policy read fails", () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-read-failure-"));
       tempDirs.push(tempDir);
       const callsPath = path.join(tempDir, "calls.log");
@@ -60,11 +63,12 @@ describe("OpenShell policy mutation read failures", () => {
       expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
     });
 
-    for (const [outputName, emitOutput] of [
-      ["empty", ":"],
-      ["whitespace-only", "printf '   \\n'"],
-    ] as const) {
-      it(`${mutation} refuses to set policy when the successful base-policy read is ${outputName}`, () => {
+    it.each([
+      { outputName: "empty", emitOutput: ":" },
+      { outputName: "whitespace-only", emitOutput: "printf '   \\n'" },
+    ])(
+      "refuses to set policy when the successful base-policy read is $outputName",
+      ({ emitOutput }) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-empty-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
@@ -92,11 +96,12 @@ describe("OpenShell policy mutation read failures", () => {
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
         expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
-      });
-    }
+      },
+    );
 
-    for (const [shapeName, policyOutput] of MALFORMED_BASE_POLICIES) {
-      it(`${mutation} refuses to set policy when the base-policy read has ${shapeName}`, () => {
+    it.each(MALFORMED_BASE_POLICIES)(
+      "refuses to set policy when the base-policy read has %s",
+      (_shapeName, policyOutput) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-malformed-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
@@ -125,11 +130,12 @@ describe("OpenShell policy mutation read failures", () => {
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
         expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
-      });
-    }
+      },
+    );
 
-    for (const [shapeName, policyOutput] of UNMARKED_NON_POLICY_MAPPINGS) {
-      it(`${mutation} refuses to set policy when the successful base-policy read is an unmarked ${shapeName}`, () => {
+    it.each(UNMARKED_NON_POLICY_MAPPINGS)(
+      "refuses to set policy when the successful base-policy read is an unmarked %s",
+      (_shapeName, policyOutput) => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
@@ -158,7 +164,7 @@ describe("OpenShell policy mutation read failures", () => {
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
         expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
-      });
-    }
-  }
+      },
+    );
+  });
 });

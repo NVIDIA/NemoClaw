@@ -206,6 +206,7 @@ type ProbeOptions = {
   authMode?: ProbeAuthMode;
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
+  provider?: string;
 };
 
 type ValidationResult =
@@ -425,6 +426,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         retryMessage,
         remoteConfig.helpUrl,
         {
+          provider: state.provider,
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
           authMode: deps.getProbeAuthMode(state.provider),
