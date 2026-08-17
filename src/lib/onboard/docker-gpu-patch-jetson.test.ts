@@ -63,7 +63,12 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
     ]);
   });
 
-  it("rejects invalid, duplicate, or excessive supplementary groups (#7610)", () => {
+  it.each([
+    [["0"]],
+    [["2147483648"]],
+    [["44", "44"]],
+    [Array.from({ length: 17 }, (_, index) => String(index + 1))],
+  ])("rejects invalid, duplicate, or excessive supplementary groups case %# (#7610)", (gids) => {
     const build = (extraGroupGids: readonly string[]) =>
       buildDockerGpuCloneRunArgs(
         inspectFixture(),
@@ -71,16 +76,9 @@ describe("Jetson device-node group propagation (#4231, #7610)", () => {
         { extraGroupGids, preserveJetsonDeviceGroupMembership: true },
       );
 
-    for (const gids of [
-      ["0"],
-      ["2147483648"],
-      ["44", "44"],
-      Array.from({ length: 17 }, (_, index) => String(index + 1)),
-    ]) {
-      expect(() => build(gids)).toThrow(
-        "Docker clone received invalid or excessive supplementary group IDs.",
-      );
-    }
+    expect(() => build(gids)).toThrow(
+      "Docker clone received invalid or excessive supplementary group IDs.",
+    );
   });
 
   it("rejects group preservation outside the fixed supervisor boundary (#7610)", () => {

@@ -24,22 +24,20 @@ describe("detectTegraGpuDevicePaths", () => {
     ).toEqual(["/dev/nvmap"]);
   });
 
-  it("returns no paths when nvmap is missing, a symlink, or not a character device (#7610)", () => {
-    for (const nvmapAccess of [
-      null,
-      { isCharacterDevice: true, isSymbolicLink: true },
-      { isCharacterDevice: false, isSymbolicLink: false },
-    ]) {
-      expect(
-        detectTegraGpuDevicePaths({
-          listDevicePaths: () => ["/dev/nvmap", "/dev/dri/renderD128"],
-          statDevicePath: (devicePath) =>
-            devicePath === "/dev/nvmap"
-              ? nvmapAccess
-              : { isCharacterDevice: true, isSymbolicLink: false },
-        }),
-      ).toEqual([]);
-    }
+  it.each([
+    null,
+    { isCharacterDevice: true, isSymbolicLink: true },
+    { isCharacterDevice: false, isSymbolicLink: false },
+  ])("returns no paths for invalid nvmap access case %# (#7610)", (nvmapAccess) => {
+    expect(
+      detectTegraGpuDevicePaths({
+        listDevicePaths: () => ["/dev/nvmap", "/dev/dri/renderD128"],
+        statDevicePath: (devicePath) =>
+          devicePath === "/dev/nvmap"
+            ? nvmapAccess
+            : { isCharacterDevice: true, isSymbolicLink: false },
+      }),
+    ).toEqual([]);
   });
 });
 

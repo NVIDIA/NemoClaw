@@ -417,10 +417,10 @@ network_policies: {}
       expect.arrayContaining(devicePaths),
     );
     expect(hermesDoc.filesystem_policy.read_only).not.toContain("/opt/nvidia");
-    for (const devicePath of devicePaths) {
-      expect(hermesDoc.filesystem_policy.read_write).not.toContain(devicePath);
-      expect(hermesDoc.filesystem_policy.read_only).not.toContain(devicePath);
-    }
+    expect(hermesDoc.filesystem_policy.read_write).not.toContain("/dev/nvmap");
+    expect(hermesDoc.filesystem_policy.read_write).not.toContain("/dev/nvhost-gpu");
+    expect(hermesDoc.filesystem_policy.read_only).not.toContain("/dev/nvmap");
+    expect(hermesDoc.filesystem_policy.read_only).not.toContain("/dev/nvhost-gpu");
   });
 
   it("keeps non-Station direct GPU policies at the pre-issue sysfs boundary (#7103)", () => {
