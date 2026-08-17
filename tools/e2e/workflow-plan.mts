@@ -25,7 +25,6 @@ import {
   type E2eCatalogueMatrixRow,
   type E2eCatalogueTarget,
   type E2eExecutionProfile,
-  isPrCandidateCatalogueTarget,
   pathMatches,
 } from "./target-catalogue.mts";
 import {
@@ -630,20 +629,6 @@ function expectedHermesSelection(
   return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
-function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
-  const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
-    rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
-  return {
-    ...plan,
-    catalogueMatrices: Object.fromEntries(
-      E2E_EXECUTION_PROFILES.map((profile) => [
-        profile,
-        eligibleRows(plan.catalogueMatrices[profile]),
-      ]),
-    ) as Record<E2eExecutionProfile, E2eCatalogueMatrixRow[]>,
-  };
-}
-
 export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
   const lines = [
     "## E2E Execution Plan",
@@ -684,11 +669,7 @@ export function writeE2eWorkflowPlanCiOutput(
     controllerMap.retiredSelectorSelected && !hasPlannerSelectors
       ? emptyE2eWorkflowPlan()
       : buildE2eWorkflowPlan(plannerSelectors, { changedFiles });
-  const plan = validateE2eWorkflowPlan(
-    COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")
-      ? withoutCredentialedCatalogueProfiles(planned)
-      : planned,
-  );
+  const plan = validateE2eWorkflowPlan(planned);
   if (
     !changedFiles &&
     plan.hermesSelected !==
