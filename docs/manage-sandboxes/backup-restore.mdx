@@ -231,7 +231,8 @@ It clears the remaining local shields state only after deletion succeeds, before
 ## Restore Agent Configuration Safely
 
 The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
-NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
+NemoClaw rejects unsafe symlinks and special files inside sandbox state during backup creation.
+It records multiply-linked regular files and archives each path as a separate regular file.
 
 <AgentOnly variant="openclaw">
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.

@@ -120,13 +120,14 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       );
     });
 
-    it("retries on curl exit codes 6 and 7 (connection failure)", () => {
-      for (const status of [6, 7]) {
+    it.each([6, 7])(
+      "retries on curl exit codes 6 and 7 (connection failure) [case %#]",
+      (status) => {
         const { result, calls } = runProbeWithCurlStatuses([status, status, 0]);
         expect(result.ok).toBe(true);
         expect(calls.length).toBe(3);
-      }
-    });
+      },
+    );
 
     it("does not retry on curl exit code 0 (success) or 22 (HTTP error)", () => {
       expect(runProbeWithCurlStatuses([0]).calls.length).toBe(1);

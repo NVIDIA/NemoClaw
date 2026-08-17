@@ -7,7 +7,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const rootRequire = createRequire(path.join(repositoryRoot, "package.json"));
 const pluginRequire = createRequire(path.join(repositoryRoot, "nemoclaw", "package.json"));
@@ -29,13 +28,14 @@ function listedTypeScriptFiles(configPath: string): string[] {
 }
 
 describe("plugin Vitest project contract", () => {
-  it("keeps standalone plugin dependencies on the root Vitest toolchain", () => {
-    for (const packageName of ["vitest", "vite"] as const) {
+  it.each(["vitest", "vite"] as const)(
+    "keeps standalone plugin dependencies on the root Vitest toolchain [case %#]",
+    (packageName) => {
       expect(installedVersion(pluginRequire, packageName), packageName).toBe(
         installedVersion(rootRequire, packageName),
       );
-    }
-  });
+    },
+  );
 
   it("typechecks plugin production and test sources without emitting tests", () => {
     const productionFiles = listedTypeScriptFiles("nemoclaw/tsconfig.json");

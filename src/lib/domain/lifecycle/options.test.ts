@@ -116,22 +116,27 @@ describe("lifecycle option normalization", () => {
       });
     });
 
-    function verifyCleanupGatewayBooleanSpellings() {
-      for (const truthy of ["1", "true", "TRUE", "Yes"]) {
-        process.env[ENV_KEY] = truthy;
+    it.each(["1", "true", "TRUE", "Yes"])(
+      "recognises truthy NEMOCLAW_CLEANUP_GATEWAY spelling %#",
+      (value) => {
+        process.env[ENV_KEY] = value;
         expect(normalizeDestroySandboxOptions({}).cleanupGateway).toBe(true);
-      }
-      for (const falsy of ["0", "false", "No"]) {
-        process.env[ENV_KEY] = falsy;
+      },
+    );
+    it.each(["0", "false", "No"])(
+      "recognises falsy NEMOCLAW_CLEANUP_GATEWAY spelling %#",
+      (value) => {
+        process.env[ENV_KEY] = value;
         expect(normalizeDestroySandboxOptions({}).cleanupGateway).toBe(false);
-      }
-      for (const noise of ["", "  ", "maybe", "later"]) {
-        process.env[ENV_KEY] = noise;
+      },
+    );
+    it.each(["", "  ", "maybe", "later"])(
+      "ignores unrecognized NEMOCLAW_CLEANUP_GATEWAY spelling %#",
+      (value) => {
+        process.env[ENV_KEY] = value;
         expect(normalizeDestroySandboxOptions({}).cleanupGateway).toBeUndefined();
-      }
-    }
-
-    it("recognises common truthy/falsy spellings of NEMOCLAW_CLEANUP_GATEWAY", verifyCleanupGatewayBooleanSpellings);
+      },
+    );
   });
 
   it("preserves typed rebuild options and still accepts compatibility argv", () => {

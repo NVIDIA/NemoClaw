@@ -324,15 +324,16 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("uses max_completion_tokens for GPT-5 family and reasoning models (#6642)", () => {
-    for (const model of ["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"]) {
+  it.each(["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"])(
+    "uses max_completion_tokens for GPT-5 family and reasoning models [case %#] (#6642)",
+    (model) => {
       expect(getChatCompletionsProbePayload(model)).toEqual({
         model,
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
         max_completion_tokens: 16,
       });
-    }
-  });
+    },
+  );
 
   // Some hosted endpoints reject a reply budget below 16 with HTTP 400 even
   // though discovery succeeds and normal inference works, so a bounded probe
