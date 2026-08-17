@@ -47,6 +47,14 @@ describe("authoritative rebuild runtime preflight options", () => {
       noGpu: false,
       allowDeferredN1xManagedVllm: true,
     });
+
+    const { allowDeferredN1xManagedVllm: _recordedIntent, ...withoutRecordedIntent } = options;
+    expect(authoritativeRebuildRuntimePreflightOptions(withoutRecordedIntent)).toEqual({
+      sandboxGpu: "enable",
+      sandboxGpuDevice: "nvidia.com/gpu=all",
+      noGpu: false,
+      allowDeferredN1xManagedVllm: false,
+    });
   });
 });
 

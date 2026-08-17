@@ -44,8 +44,10 @@ import { MANAGED_VLLM_PROVIDER_KEY } from "./vllm-menu";
 
 export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu" | "allowDeferredN1xManagedVllm"
+  "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
 > & {
+  /** Explicit false prevents ambient provider intent from crossing a rebuild boundary. */
+  allowDeferredN1xManagedVllm?: boolean;
   optedOutGpuPassthrough?: boolean;
 };
 
@@ -155,7 +157,7 @@ export function assertOnboardSystemReadiness(
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
     allowDeferredN1xManagedVllm:
-      options.allowDeferredN1xManagedVllm === true ||
+      options.allowDeferredN1xManagedVllm ??
       process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
   if (admission.admitted) return readinessReport;
