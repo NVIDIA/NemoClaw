@@ -389,6 +389,41 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.isWindowsHostOllama).toBe(false);
   });
 
+  it("keeps an unrecognized WSL networking mode on the Linux upgrade path (#9300)", () => {
+    const detectLocalTcpListener = vi.fn(() => false);
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      hostCommandExists: vi.fn((command) => command === "ollama"),
+      findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+      runCapture: vi.fn((command) =>
+        command.join(" ").includes("wslinfo --networking-mode") ? "future-mode\n" : "",
+      ),
+      dockerCapture: vi.fn((command) => (command.at(-1) === WINDOWS_OLLAMA_TAGS_URL ? "{}" : "")),
+      detectLocalTcpListener,
+    });
+
+    const state = detectInferenceProviderHostState({
+      gpu: null,
+      experimental: false,
+      platform: "linux",
+      env: {},
+      log: () => undefined,
+      installedOllamaVersion: "0.32.5",
+      runningOllamaVersion: "0.32.5",
+      deps,
+    });
+
+    expect(state.isWindowsHostOllama).toBe(false);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(state.ollamaInstallMenu.hasUpgradableOllama).toBe(true);
+    expect(detectLocalTcpListener).not.toHaveBeenCalled();
+  });
+
   it("does not probe the Windows-host switch path when running Ollama already resolves to the Windows host", () => {
     const runCapture = vi.fn<DetectInferenceProviderHostStateDeps["runCapture"]>(() => "");
     const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => "");
