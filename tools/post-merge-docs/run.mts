@@ -164,8 +164,15 @@ function prepare(env: NodeJS.ProcessEnv): void {
   const config = required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR");
   fs.mkdirSync(output, { mode: 0o700 });
   reset(config);
-  write(path.join(config, "models.json"), resolverModelConfiguration());
-  write(path.join(config, "task.txt"), `${prompt(env, current)}\n`);
+  const models = path.join(config, "models.json");
+  const task = path.join(config, "task.txt");
+  write(models, resolverModelConfiguration());
+  write(task, `${prompt(env, current)}\n`);
+  if (current === "review") {
+    fs.chmodSync(config, 0o755);
+    fs.chmodSync(models, 0o444);
+    fs.chmodSync(task, 0o444);
+  }
 }
 
 function agentCommand(current: Phase): string[] {
@@ -188,6 +195,8 @@ function agentCommand(current: Phase): string[] {
 function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   const current = phase(env);
   const work = required(env.POST_MERGE_DOCS_WORKDIR, "POST_MERGE_DOCS_WORKDIR");
+  const config = required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR");
+  const review = current === "review";
   const policy =
     current === "author"
       ? "pr-merge-conflict-fixer/policy.yaml"
@@ -195,29 +204,60 @@ function create(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
   createOpenShellSandbox(
     env,
     {
-      command: ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
+      command: review
+        ? [
+            "/usr/bin/git",
+            "--git-dir=/sandbox/repo/.git",
+            "--work-tree=/sandbox/repo",
+            "status",
+            "--short",
+          ]
+        : ["/usr/bin/git", "-C", "/sandbox/repo", "status", "--short"],
       image: required(env.PI_IMAGE, "PI_IMAGE"),
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
       policyPath: path.join(required(env.TRUSTED_CHECKOUT, "TRUSTED_CHECKOUT"), "tools", policy),
-      uploads: [
-        { destination: "/sandbox", source: path.join(work, "repo") },
-        {
-          destination: "/sandbox",
-          source: required(env.POST_MERGE_DOCS_CONFIG_DIR, "POST_MERGE_DOCS_CONFIG_DIR"),
-        },
-        { destination: "/sandbox", source: path.join(work, "output") },
-      ],
+      driverConfig: review
+        ? {
+            docker: {
+              mounts: [
+                {
+                  read_only: true,
+                  source: path.join(work, "repo"),
+                  target: "/sandbox/repo",
+                  type: "bind",
+                },
+                {
+                  read_only: true,
+                  source: config,
+                  target: "/sandbox/config",
+                  type: "bind",
+                },
+              ],
+            },
+          }
+        : undefined,
+      uploads: review
+        ? []
+        : [
+            { destination: "/sandbox", source: path.join(work, "repo") },
+            { destination: "/sandbox", source: config },
+            { destination: "/sandbox", source: path.join(work, "output") },
+          ],
     },
     tools,
   );
 }
 
 function run(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
+  const current = phase(env);
   execOpenShellSandbox(
     env,
     {
-      command: agentCommand(phase(env)),
+      command: agentCommand(current),
       environment: {
+        ...(current === "review"
+          ? { GIT_DIR: "/sandbox/repo/.git", GIT_WORK_TREE: "/sandbox/repo" }
+          : {}),
         HOME: "/sandbox/output",
         PI_CODING_AGENT_DIR: "/sandbox/config",
         PI_OFFLINE: "1",
@@ -311,14 +351,26 @@ export function executePostMergeDocs(
   }
 }
 
+export function configurePostMergeDocs(
+  env: NodeJS.ProcessEnv,
+  tools: OpenShellTools = defaultOpenShellTools,
+): Promise<void> {
+  return configureOpenShellInference(
+    env,
+    {
+      enableBindMounts: true,
+      gatewayId: "post-merge-docs",
+      modelId: RESOLVER_MODEL_ID,
+      providerName: "docs",
+    },
+    tools,
+  );
+}
+
 async function main(): Promise<void> {
   switch (required(process.argv[2], "command")) {
     case "configure":
-      await configureOpenShellInference(process.env, {
-        gatewayId: "post-merge-docs",
-        modelId: RESOLVER_MODEL_ID,
-        providerName: "docs",
-      });
+      await configurePostMergeDocs(process.env);
       return;
     case "execute":
       executePostMergeDocs(process.env);
