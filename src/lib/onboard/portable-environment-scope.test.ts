@@ -51,6 +51,42 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual({ NEMOCLAW_MODEL: "" });
   });
 
+  it("uses the narrow portable policy defaults when fresh intent is absent (#9200)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
+    expect(env.NEMOCLAW_POLICY_PRESETS).not.toContain("personal-open-internet");
+
+    scope.restore();
+    expect(env).toEqual({});
+  });
+
+  it.each(["", "  \t "])(
+    "uses the narrow portable policy defaults and restores blank fresh intent %# (#9200)",
+    (policyPresets) => {
+      const env: NodeJS.ProcessEnv = { NEMOCLAW_POLICY_PRESETS: policyPresets };
+      const scope = createPortableOnboardEnvironmentScope(env, null);
+
+      expect(env.NEMOCLAW_POLICY_PRESETS).toBe("weather,public-reference,github");
+
+      scope.restore();
+      expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: policyPresets });
+    },
+  );
+
+  it("preserves a nonblank fresh portable policy list (#9200)", () => {
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_POLICY_PRESETS: "github,weather",
+    };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_POLICY_PRESETS).toBe("github,weather");
+
+    scope.restore();
+    expect(env).toEqual({ NEMOCLAW_POLICY_PRESETS: "github,weather" });
+  });
+
   it("uses the activation model instead of ambient fresh model intent (#9200)", () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "ambient/model" };
     const scope = createPortableOnboardEnvironmentScope(env, {
