@@ -737,11 +737,12 @@ exit 1
     });
   });
 
-  describe("policy-add --from-file false success when the sandbox is absent from the registry (#4510)", () => {
+  describe("policy-add when the sandbox is absent from the registry (#4510, #9295)", () => {
     const registryModule = requireForTest(
       path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;
     const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
+    const BUILTIN_CONTENT = "network_policies:\n  github:\n    host: github.com\n";
     const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
 
     let tmpHome: string;
@@ -750,6 +751,7 @@ exit 1
     let resolveSpy: ReturnType<typeof vi.spyOn>;
     let savedGetSandbox: any;
     let savedAddCustomPolicy: any;
+    let savedUpdateSandbox: any;
 
     beforeEach(() => {
       tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4510-"));
@@ -768,6 +770,7 @@ exit 1
         .mockReturnValue(fakeOpenshell);
       savedGetSandbox = registryModule.getSandbox;
       savedAddCustomPolicy = registryModule.addCustomPolicy;
+      savedUpdateSandbox = registryModule.updateSandbox;
     });
 
     afterEach(() => {
@@ -776,6 +779,7 @@ exit 1
       resolveSpy.mockRestore();
       registryModule.getSandbox = savedGetSandbox;
       registryModule.addCustomPolicy = savedAddCustomPolicy;
+      registryModule.updateSandbox = savedUpdateSandbox;
       fs.rmSync(tmpHome, { recursive: true, force: true });
     });
 
@@ -805,6 +809,32 @@ exit 1
         expect(combined).toContain("my-assistant");
         expect(combined).toMatch(/could not be\s+recorded locally/);
         expect(combined).toMatch(/policy list or status/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("warns but keeps the mutation when a built-in preset cannot be recorded locally (#9295)", () => {
+      registryModule.getSandbox = () => null;
+      const updateSpy = vi.fn(() => true);
+      registryModule.updateSandbox = updateSpy;
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errors.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        // A built-in preset stays discoverable from the gateway, so the applied
+        // policy stands. The warning is what tells the operator why policy list
+        // will report it without local state behind it.
+        const result = policies.applyPresetContent("my-assistant", "github", BUILTIN_CONTENT, {});
+        expect(result).toBe(true);
+        expect(updateSpy).not.toHaveBeenCalled();
+        const combined = errors.join("\n");
+        expect(combined).toContain("my-assistant");
+        expect(combined).toMatch(/could not be\s+recorded locally/);
+        expect(combined).toMatch(/active on gateway, missing\s+from local state/);
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();

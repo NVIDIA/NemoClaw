@@ -112,7 +112,7 @@ describe("e2e workflow boundary", () => {
     () => expect(validateE2eWorkflowBoundary()).toEqual([]),
   );
 
-  it("rejects a Launchable environment gate, authorization drift, and credential expansion", () => {
+  it("rejects a Launchable environment gate, authorization drift, and credential boundary drift", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
@@ -130,17 +130,19 @@ describe("e2e workflow boundary", () => {
     };
     const job = workflow.jobs["staging-brev-launchable"]!;
     job.environment = { name: "unprotected" };
+    (job as { env?: Record<string, string> }).env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
     const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
-    prepare.env ??= {};
     prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
-    const publish = job.steps!.find(
-      (step) => step.name === "Build and verify the staging Launchable image",
+    prepare.env!.BREV_CLI_SHA256 = "latest";
+    const run = job.steps!.find(
+      (step) => step.name === "Build, deploy, verify, test, and clean up",
     )!;
-    publish.env!.GH_TOKEN = "${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}";
-    publish.env!.NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY = "0";
+    run.env!.GH_TOKEN = "${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}";
+    run.env!.BREV_LAUNCHABLE_ID = "env-hardcoded";
+    run.env!.NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY = "1";
     const generateSteps = workflow.jobs["generate-matrix"]!.steps!;
     const authorization = generateSteps.find(
-      (step) => step.name === "Authorize Launchable image publication",
+      (step) => step.name === "Authorize Launchable E2E maintainer dispatch",
     )!;
     delete authorization.env!.TRIGGERING_ACTOR;
     authorization.run = authorization.run!.replace("maintain | admin", "write");
@@ -149,12 +151,15 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "staging-brev-launchable must not use a GitHub environment",
-        "Launchable image publication authorization must bind TRIGGERING_ACTOR",
-        "step 'Authorize Launchable image publication' run script must include maintain | admin",
-        "Launchable image publication authorization must run before generate-matrix checkout",
-        "staging-brev-launchable preparation step must not receive BREV_API_KEY",
+        "Launchable E2E maintainer authorization must bind TRIGGERING_ACTOR",
+        "step 'Authorize Launchable E2E maintainer dispatch' run script must include maintain | admin",
+        "Launchable E2E maintainer authorization must run before generate-matrix checkout",
+        "staging-brev-launchable BREV_API_KEY must use the trusted-run secret guard",
         "staging-brev-launchable GH_TOKEN must use the trusted-run secret guard",
-        "staging-brev-launchable must stop after verified image publication",
+        "staging-brev-launchable must read the repository Launchable ID variable",
+        "staging-brev-launchable must not stop after image publication",
+        "staging-brev-launchable job must not receive BREV_API_KEY",
+        "staging-brev-launchable must pin the Brev CLI version and SHA-256 checksum",
       ]),
     );
   });
@@ -253,7 +258,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("selects Launchable image publication only for trusted manual dispatches (#7487)", () => {
+  it("selects Launchable E2E only for trusted manual dispatches (#7487)", () => {
     expect(
       evaluateStagingBrevLaunchableDispatch({
         eventName: "workflow_dispatch",
@@ -343,7 +348,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("rejects superseding full-dispatch and Launchable publication concurrency drift (#7487)", () => {
+  it("rejects superseding full-dispatch and Launchable E2E concurrency drift (#7487)", () => {
     const workflow = readWorkflow() as {
       concurrency: Record<string, unknown>;
       jobs: Record<string, { concurrency?: Record<string, unknown> }>;
@@ -357,7 +362,7 @@ describe("e2e workflow boundary", () => {
       expect.arrayContaining([
         "workflow concurrency must isolate each full dispatch with github.run_id",
         "workflow concurrency must not cancel an active Jetson dispatch",
-        "staging-brev-launchable concurrency must queue all pending image publications without cancellation",
+        "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
       ]),
     );
   });

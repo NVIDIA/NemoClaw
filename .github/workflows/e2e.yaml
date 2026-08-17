@@ -15,12 +15,12 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for staging Brev Launchable image publication. Jetson dispatch and DGX Spark require their opt-in flags. PR revisions use the trusted controller matrix."
+        description: "Optional comma-separated E2E test IDs. Empty selectors choose the default suite. Set include_staging_brev_launchable for Launchable. Jetson dispatch and DGX Spark require their opt-in flags. PR revisions use the trusted controller matrix."
         required: false
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include staging Brev Launchable image publication in a full E2E run when jobs and targets are empty."
+        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -598,7 +598,7 @@ jobs:
           name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
 
-      - name: Authorize Launchable image publication
+      - name: Authorize Launchable E2E maintainer dispatch
         if: ${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
         env:
           ACTOR: ${{ github.actor }}
@@ -667,20 +667,20 @@ jobs:
           require_maintainer() {
             local maintainer="$1"
             if [[ ! "$maintainer" =~ ^[A-Za-z0-9-]{1,39}$ || "$maintainer" == -* || "$maintainer" == *- ]]; then
-              echo "::error::Launchable image publication actor is invalid" >&2
+              echo "::error::Launchable E2E actor is invalid" >&2
               exit 1
             fi
 
             local permission_json
             permission_json="$(read_collaborator_permission "$maintainer")"
             if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
-              echo "::error::Launchable image publication permission response did not match the actor" >&2
+              echo "::error::Launchable E2E permission response did not match the actor" >&2
               exit 1
             fi
             case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
               maintain | admin) ;;
               *)
-                echo "::error::Launchable image publication requires a repository maintainer or administrator" >&2
+                echo "::error::Launchable E2E requires a repository maintainer or administrator" >&2
                 exit 1
                 ;;
             esac
@@ -2683,7 +2683,7 @@ jobs:
           path: e2e-artifacts/live/retired-selector-compatibility/
 
   staging-brev-launchable:
-    name: Publish staging Brev Launchable image
+    name: Exact staging Brev Launchable
     needs: generate-matrix
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}
     runs-on: ubuntu-latest
@@ -2696,6 +2696,8 @@ jobs:
       cancel-in-progress: false
     env:
       CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+      E2E_JOB: "1"
+      INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout trusted Launchable lane
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2708,16 +2710,27 @@ jobs:
 
       - id: workspace
         name: Prepare the trusted lane
+        env:
+          BREV_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_API_KEY || '' }}
+          BREV_CLI_SHA256: d4aa49db1716f10308a6587778a676a0c0076bd48a212d86a421ab9550bc8f32
+          BREV_CLI_VERSION: 0.6.334
+          BREV_ORG_ID: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
           chmod 700 "$work_dir"
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "${RUNNER_TEMP}" brev && sudo install -m 0755 "${RUNNER_TEMP}/brev" /usr/local/bin/brev
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
-      - name: Build and verify the staging Launchable image
+      - name: Build, deploy, verify, test, and clean up
         env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
           GH_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
-          NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY: "1"
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 
@@ -2728,7 +2741,9 @@ jobs:
           name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ steps.workspace.outputs.work_dir }}/lane.log
-            ${{ steps.workspace.outputs.work_dir }}/launchable-image.json
+            ${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json
+            ${{ steps.workspace.outputs.work_dir }}/full-e2e.log
+            ${{ steps.workspace.outputs.work_dir }}/cleanup.json
 
   live:
     needs: [base-image-publication, generate-matrix]

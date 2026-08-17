@@ -125,7 +125,7 @@ Read the generated `plan.json` and show the maintainer:
 
 For the plan's full `origin/main` SHA, require a completed, successful `Release qualification` check from a pre-tag `.github/workflows/e2e.yaml` run.
 The workflow planner derives the required jobs from the workflow's E2E metadata.
-By default, the check requires every release-required execution result, including `Publish staging Brev Launchable image`, to succeed.
+By default, the check requires every release-required E2E execution result, including `Exact staging Brev Launchable`, to succeed.
 A repository administrator may waive one or more release-required E2E execution jobs for a documented release exception.
 The waiver requires a comma-separated `release_qualification_waived_jobs` list and a `release_qualification_waiver_reason`.
 The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
@@ -166,20 +166,6 @@ An administrator-waived full run may conclude with `failure` when a waived execu
 Before showing the confirmation prompt, present the candidate SHA, workflow URL, and `Release qualification` job URL.
 For a waived run, also present the waived jobs, their outcomes, the waiver reason, and both recorded actor identities.
 No release-note-only delta exception is currently defined.
-
-After image publication succeeds, present this advisory manual validation:
-
-- State that the image-publication job built and published the candidate image to the staging family used by the [NemoClaw staging Launchable](https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3GdbIjswX4fs3VJ6cYRHr5zoQXo).
-- Encourage the maintainer to deploy one instance and hand its Brev environment URL to a Codex session that invokes `nemoclaw-maintainer-validate-launchable`.
-- Require the manual validation to compare the deployed concrete image with `launchable-image.json`; do not assume that the mutable family still points to the candidate.
-- State that browser-control capability is required for Codex to click and verify the web interface.
-- State that a securely supplied inference credential is required to complete hosted and sandbox inference validation. Never ask the maintainer to paste the credential into chat.
-- Record the manual result as `complete pass`, `partially blocked`, `failed`, or `not run` when the maintainer provides it.
-
-This manual validation is advisory while the automated Launchable path is blocked by issue #8924.
-Its absence, partial result, or failure does not block the signing preflight, confirmation prompt, or release tag.
-Do not describe successful image publication as successful Launchable, runtime, or inference validation.
-Apply the temporary policy in [Pre-Tag E2E Evidence](../nemoclaw-maintainer-policies/references/release-train.md#temporary-staging-launchable-qualification-policy): NemoClaw maintainers own it while #8924 remains open, the successful exact image-publication job and artifact remain required release evidence under normal Actions retention, and the full automated lane returns only after a checksum-pinned Brev release passes deployment through verified cleanup on trusted `main`.
 
 Run the release script's signing preflight before asking for confirmation:
 
@@ -337,11 +323,10 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Documentation workflow state is incomplete: return to `nemoclaw-maintainer-evening`, then repeat
   Step 1 after the documentation PR merges.
-- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable image-publication job finishes.
+- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA: reject the run and dispatch full mode for the plan candidate SHA.
 - No qualifying `Release qualification` exists: inspect the GitHub result and run pre-tag E2E for the planned SHA only when no qualifying run already exists. Use a job waiver only with explicit repository administrator authorization. Do not release until the release script accepts the canonical check.
-- Launchable image publication fails: inspect `launchable-image.json` and the producer run, correct the failure, and rerun the affected work. Do not infer image publication from manual Launchable validation.
-- Advisory Launchable validation is blocked or fails: record the exact partial result and continue the release flow. Do not convert the result into a release gate or an automated E2E pass.
+- Launchable E2E or cleanup fails: inspect the diagnostic artifacts, correct the failure, and rerun the affected E2E work. Do not infer Launchable success from another workflow result.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.

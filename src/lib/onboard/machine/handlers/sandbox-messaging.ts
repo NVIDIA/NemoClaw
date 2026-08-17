@@ -225,6 +225,7 @@ function selectionFromReusablePlan<Agent>(
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
+  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -238,11 +239,40 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     ),
   );
   if (unconfiguredChannels.size === 0) return selection;
+  deps.note(
+    `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
+  );
+  const plan = disableChannelsInPlan(selection.plan, unconfiguredChannels);
+  if (plan) deps.writePlanToEnv(plan);
+  else deps.clearPlanEnv();
   return {
-    ...selection,
+    plan,
     selectedChannels: selection.selectedChannels.filter(
       (channelId) => !unconfiguredChannels.has(channelId),
     ),
+  };
+}
+
+/**
+ * Record the removal in the plan itself, not only in the selection derived from
+ * it. The plan is what reaches the registry and the next run, so a selection
+ * that alone drops the channel leaves every later reader to rediscover the
+ * removal from host inputs — and a reader that cannot, keeps the channel's
+ * network egress applied.
+ */
+function disableChannelsInPlan(
+  plan: SandboxMessagingPlan | null,
+  channelIds: ReadonlySet<string>,
+): SandboxMessagingPlan | null {
+  if (!plan) return null;
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) =>
+      channelIds.has(channel.channelId)
+        ? { ...channel, active: false, selected: false, disabled: true }
+        : channel,
+    ),
+    disabledChannels: [...new Set([...plan.disabledChannels, ...channelIds])],
   };
 }
 
@@ -343,6 +373,7 @@ async function selectionFromMessagingSetup<Agent>(
   );
 }
 
+/** Reconcile checkpoint channels against current host inputs before reuse. */
 function selectionFromRecordedChannels<Agent>(
   recordedChannels: string[],
   envPlan: SandboxMessagingPlan | null,
@@ -356,7 +387,7 @@ function selectionFromRecordedChannels<Agent>(
   if (envPlan) selection = selectionFromReusablePlan(envPlan, options.agent, false, options.deps);
   else if (registryPlan)
     selection = selectionFromReusablePlan(registryPlan, options.agent, true, options.deps);
-  selection = filterUnconfiguredHostChannelsFromSelection(selection, options.agent);
+  selection = filterUnconfiguredHostChannelsFromSelection(selection, options.agent, options.deps);
   if (selection.selectedChannels.length > 0) {
     options.deps.note(
       `  [non-interactive] Reusing messaging channel configuration: ${selection.selectedChannels.join(", ")}`,
@@ -386,7 +417,14 @@ async function selectionFromRegistryPlan<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
   if (registryPlanRecordsLifecycleSelection(registryPlan)) {
-    return selectionFromReusablePlan(registryPlan, options.agent, true, options.deps);
+    // A lifecycle command owns which channels the operator asked for, but not
+    // whether the host still configures them. Onboarding re-reads the host
+    // either way, so the same removal check applies here.
+    return filterUnconfiguredHostChannelsFromSelection(
+      selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
+      options.agent,
+      options.deps,
+    );
   }
   const activeChannels = filterChannelNamesForCurrentAgent(
     getActiveChannelsFromPlan(registryPlan),
@@ -413,6 +451,7 @@ async function selectionFromRegistryPlan<Agent>(
     return filterUnconfiguredHostChannelsFromSelection(
       selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
       options.agent,
+      options.deps,
     );
   }
   options.deps.note(
@@ -429,21 +468,19 @@ async function selectionFromRegistryPlan<Agent>(
 export function reconcileReusedSandboxMessaging<Agent>(
   plan: SandboxMessagingPlan | null,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv">,
+  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
   recordedPlan: SandboxMessagingPlan | null = plan,
 ): SandboxMessagingSelection & { readonly changed: boolean } {
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
-  const changed = !isDeepStrictEqual(filtered, recordedPlan);
-  if (changed) deps.clearPlanEnv();
-  // The reused plan records the previous selection, not the current host
-  // input. Report only channels the environment still configures so the
-  // policies handler can classify a retired channel as unconfigured and drop
-  // its egress preset (#9283). The plan itself stays untouched.
+  const selection = filterUnconfiguredHostChannelsFromSelection(
+    { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
+    agent,
+    deps,
+  );
+  const changed = !isDeepStrictEqual(selection.plan, recordedPlan);
+  if (changed && isDeepStrictEqual(selection.plan, filtered)) deps.clearPlanEnv();
   return {
-    ...filterUnconfiguredHostChannelsFromSelection(
-      { plan: filtered, selectedChannels: getActiveChannelsFromPlan(filtered) },
-      agent,
-    ),
+    ...selection,
     changed,
   };
 }
@@ -614,7 +651,11 @@ async function selectionFromRegistryAuthority<Agent>(
       authority.plan,
       false,
     );
-    return filterUnconfiguredHostChannelsFromSelection(selection, options.agent);
+    return filterUnconfiguredHostChannelsFromSelection(
+      selection,
+      options.agent,
+      options.deps,
+    );
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);
   options.deps.clearPlanEnv();
