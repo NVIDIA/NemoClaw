@@ -779,8 +779,7 @@ export function sanitizeBackupDirectory(
       );
     }
     if (operations.backupExists(dirPath)) {
-      const retainedPath =
-        validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
+      const retainedPath = validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
       throw new Error(
         `${prerequisite}Credential sanitization failed and the incomplete backup remains${retainedPath}`,
         { cause: error },

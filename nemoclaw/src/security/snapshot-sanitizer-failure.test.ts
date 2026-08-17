@@ -25,6 +25,7 @@ import {
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
+  scanDescriptorSnapshotResult,
   setSnapshotSanitizerPythonPathForTest,
   snapshotSanitizerFailure,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
@@ -143,6 +144,16 @@ describe("migration snapshot sanitizer fallbacks", () => {
 
     expect(error).not.toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
     expect(error.message).toBe("generic helper failure");
+  });
+
+  it("classifies a running helper failure separately from a missing interpreter (#8202)", () => {
+    const root = inspectDescriptorSnapshotRoot(makeRoot())!;
+    writePythonWrapper(["exit 1"]);
+
+    expect(scanDescriptorSnapshotResult(root, new Set())).toEqual({
+      ok: false,
+      reason: "helper-failed",
+    });
   });
 
   it("fails closed when the descriptor install helper is unavailable", () => {

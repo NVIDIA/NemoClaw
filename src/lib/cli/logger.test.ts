@@ -39,17 +39,14 @@ describe("Logger", () => {
     expect(log.level).toBe("debug");
   });
 
-  it.each([
-    "1",
-    "true",
-    "y",
-    "yes",
-    "TRUE",
-  ])("enables debug for the supported NEMOCLAW_DEBUG value %s", async (value) => {
-    vi.stubEnv("NEMOCLAW_DEBUG", value);
-    const { log } = await freshLogger();
-    expect(log.level).toBe("debug");
-  });
+  it.each(["1", "true", "y", "yes", "TRUE"])(
+    "enables debug for the supported NEMOCLAW_DEBUG value %s",
+    async (value) => {
+      vi.stubEnv("NEMOCLAW_DEBUG", value);
+      const { log } = await freshLogger();
+      expect(log.level).toBe("debug");
+    },
+  );
 
   it("does not treat the framework DEBUG variable as a NemoClaw logging control", async () => {
     vi.stubEnv("DEBUG", "*");
@@ -222,6 +219,21 @@ describe("Logger", () => {
     expect(output()).toContain('"count": "1"');
     expect(output()).toContain('"self": "[Circular]"');
     expect(output()).toContain('"name": "Error"');
+  });
+
+  it("serializes the nested errors in an AggregateError", async () => {
+    const { log } = await freshLogger();
+    log.setDebug(true);
+    const cause = new AggregateError(
+      [new Error("sanitizer failed"), new Error("cleanup failed")],
+      "both failed",
+    );
+
+    log.debugObject("context", new Error("outer failure", { cause }));
+
+    expect(output()).toContain('"errors"');
+    expect(output()).toContain("sanitizer failed");
+    expect(output()).toContain("cleanup failed");
   });
 
   it("does not let a synchronous stderr failure escape", async () => {
