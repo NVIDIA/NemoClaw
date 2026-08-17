@@ -223,12 +223,30 @@ export function assertOllamaUpgradeApplied(
   }
   const daemonLabel = detectedDaemonVersion ?? "unreachable";
   const binaryLabel = detectedBinaryVersion ?? "unknown";
+  const state = `running daemon reports ${daemonLabel} (binary: ${binaryLabel}), need ≥ ${MIN_OLLAMA_VERSION}`;
   return {
     ok: false,
     detectedDaemonVersion,
     detectedBinaryVersion,
-    message:
-      `Ollama upgrade did not take effect — running daemon reports ${daemonLabel} (binary: ${binaryLabel}), need ≥ ${MIN_OLLAMA_VERSION}. ` +
-      "Restart the system daemon and rerun, or upgrade Ollama manually (https://ollama.com/download).",
+    message: `Ollama upgrade did not take effect — ${state}. ${resolveUpgradeRemedy(detectedBinaryVersion)}`,
   };
+}
+
+function resolveUpgradeRemedy(detectedBinaryVersion: string | null): string {
+  if (isOllamaVersionAtLeast(detectedBinaryVersion, MIN_OLLAMA_VERSION)) {
+    return (
+      "The installed binary meets the minimum, so the service is still serving the old one. " +
+      "Restart it with 'sudo systemctl restart ollama' and rerun."
+    );
+  }
+  if (!detectedBinaryVersion) {
+    return (
+      "Neither the daemon nor the binary could be read. Check that Ollama is installed and running, " +
+      "then rerun, or install it manually (https://ollama.com/download)."
+    );
+  }
+  return (
+    `The installer did not deliver ${MIN_OLLAMA_VERSION} on this host. Install it directly with ` +
+    `'curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh' and rerun.`
+  );
 }

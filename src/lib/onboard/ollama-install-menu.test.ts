@@ -269,6 +269,22 @@ describe("resolveOllamaInstallMenuEntry", () => {
     expect(result.detectedBinaryVersion).toBe("0.32.9");
     expect(result.message).toContain("0.6.2");
     expect(result.message).toContain(MIN_OLLAMA_VERSION);
+    expect(result.message).toContain("systemctl restart ollama");
+  });
+
+  it("points at the installer, not a restart, when the binary is still below the floor (#9276)", () => {
+    const capture = (cmd: readonly string[]) => {
+      const joined = cmd.join(" ");
+      if (joined.includes("/api/version")) return '{"version":"0.23.4"}';
+      if (joined.includes("ollama --version")) return "ollama version is 0.23.4";
+      return "";
+    };
+    const result = assertOllamaUpgradeApplied({ hasUpgradableOllama: true }, capture);
+    expect(result.ok).toBe(false);
+    expect(result.detectedBinaryVersion).toBe("0.23.4");
+    expect(result.message).toContain(`did not deliver ${MIN_OLLAMA_VERSION} on this host`);
+    expect(result.message).toContain(`OLLAMA_VERSION=${MIN_OLLAMA_VERSION} sh`);
+    expect(result.message).not.toContain("systemctl restart ollama");
   });
 
   it("rejects the upgrade when the daemon is unreachable", () => {
