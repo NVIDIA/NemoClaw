@@ -10,13 +10,17 @@ vi.mock("./experimental/portable-host-preparation", () => ({
 }));
 
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
-import type { GatewayReadinessProjection } from "../readiness/gateway";
+import type {
+  GatewayObservationSnapshot,
+  GatewayReadinessProjection,
+} from "../readiness/gateway";
 import type { SystemReadinessReport } from "../readiness/types";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import {
   assertOnboardGatewayReadiness,
   assertOnboardHostReadiness,
   assertOnboardSystemReadiness,
+  type CollectedGatewayReadiness,
   runFatalOnboardRuntimePreflight,
   runOnboardRuntimeEffectfulPreflightChecks,
   runReadinessGatedRuntimePreflight,
@@ -83,6 +87,35 @@ function managedGatewayReadiness(
     evidence: [],
     ...overrides,
   };
+}
+
+function managedGatewaySnapshot(completedAt = new Date().toISOString()): GatewayObservationSnapshot {
+  return {
+    observedAt: completedAt,
+    completedAt,
+    observations: {
+      owner: {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      },
+      attachmentState: "not-applicable",
+      reuseState: "healthy",
+      driftState: "not-detected",
+      portConflictState: "none",
+    },
+  };
+}
+
+function collectedGatewayReadiness(
+  projection: GatewayReadinessProjection = managedGatewayReadiness(),
+  completedAt?: string,
+): CollectedGatewayReadiness {
+  return { projection, snapshot: managedGatewaySnapshot(completedAt) };
 }
 
 afterEach(() => {
@@ -271,7 +304,7 @@ describe("report-backed runtime readiness (#7411)", () => {
         {},
         {
           nonInteractive: true,
-          collectGatewayReadiness: async () => managedGatewayReadiness(),
+          collectGatewayReadiness: async () => collectedGatewayReadiness(),
           assessHost: () => ({
             ...hostWithRuntime("docker"),
             dockerHostInvalid: true,
@@ -457,13 +490,50 @@ describe("runFatalOnboardRuntimePreflight", () => {
 });
 
 describe("readiness-gated runtime preflight", () => {
-  it("rejects a host assessment that exceeds the freshness window before effects (#7411)", async () => {
+  it("recollects host facts after a gateway collection exceeds the freshness window (#7411)", async () => {
+    let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
+    const bridge = vi.fn();
+    const validateGpu = vi.fn();
+    const assessHost = vi.fn(() => hostWithRuntime("docker"));
+    let gatewayCollections = 0;
+
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        collectGatewayReadiness: async () => {
+          gatewayCollections += 1;
+          if (gatewayCollections === 3) currentTime += 30_001;
+          return collectedGatewayReadiness(
+            managedGatewayReadiness(),
+            new Date(currentTime).toISOString(),
+          );
+        },
+        assessHost,
+        detectGpu: () => null,
+        assertDockerBridgeAndContainerDnsHealthy: bridge,
+        validateSandboxGpuPreflight: validateGpu,
+      },
+    );
+
+    expect(assessHost).toHaveBeenCalledTimes(3);
+    expect(result.readinessReport.evidence).not.toContainEqual(
+      expect.objectContaining({ id: "host.probe.stale" }),
+    );
+    expect(bridge).toHaveBeenCalledOnce();
+    expect(validateGpu).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when refreshing the host expires the paired gateway facts (#7411)", async () => {
     let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
     const bridge = vi.fn();
     const validateGpu = vi.fn();
     const exitProcess = vi.fn((_code: number): never => {
-      throw new Error("stale host blocked");
+      throw new Error("stale gateway blocked");
     });
+    let gatewayCollections = 0;
+    let hostCollections = 0;
 
     await expect(
       runReadinessGatedRuntimePreflight(
@@ -471,9 +541,17 @@ describe("readiness-gated runtime preflight", () => {
         {
           nonInteractive: true,
           now: () => new Date(currentTime),
-          collectGatewayReadiness: async () => managedGatewayReadiness(),
+          collectGatewayReadiness: async () => {
+            gatewayCollections += 1;
+            if (gatewayCollections === 3) currentTime += 30_001;
+            return collectedGatewayReadiness(
+              managedGatewayReadiness(),
+              new Date(currentTime).toISOString(),
+            );
+          },
           assessHost: () => {
-            currentTime += 30_001;
+            hostCollections += 1;
+            if (hostCollections === 3) currentTime += 30_001;
             return hostWithRuntime("docker");
           },
           detectGpu: () => null,
@@ -482,7 +560,7 @@ describe("readiness-gated runtime preflight", () => {
           exitProcess,
         },
       ),
-    ).rejects.toThrow("stale host blocked");
+    ).rejects.toThrow("stale gateway blocked");
     expect(bridge).not.toHaveBeenCalled();
     expect(validateGpu).not.toHaveBeenCalled();
   });
@@ -515,7 +593,7 @@ describe("readiness-gated runtime preflight", () => {
         {},
         {
           nonInteractive: true,
-          collectGatewayReadiness: async () => blocked,
+          collectGatewayReadiness: async () => collectedGatewayReadiness(blocked),
           assessHost,
           detectGpu,
           exitProcess: exitProcess as never,
@@ -549,7 +627,7 @@ describe("readiness-gated runtime preflight", () => {
         nonInteractive: true,
         collectGatewayReadiness: async () => {
           calls.push("gateway-admission");
-          return managedGatewayReadiness();
+          return collectedGatewayReadiness();
         },
         assessHost: () => {
           calls.push("host-observation");
@@ -571,7 +649,6 @@ describe("readiness-gated runtime preflight", () => {
       "gpu-observation",
       "gateway-admission",
       "gpu-runtime-proof",
-      "gateway-admission",
       "host-observation",
       "gateway-admission",
       "gpu-validation",
@@ -587,7 +664,7 @@ describe("readiness-gated runtime preflight", () => {
       {},
       {
         nonInteractive: true,
-        collectGatewayReadiness: async () => managedGatewayReadiness(),
+        collectGatewayReadiness: async () => collectedGatewayReadiness(),
         assessHost: wslDockerDesktopHost,
         detectGpu,
         warnIfHostProxyMissesLoopback: vi.fn(),
@@ -617,7 +694,7 @@ describe("readiness-gated runtime preflight", () => {
         { sandboxGpu: "enable" },
         {
           nonInteractive: true,
-          collectGatewayReadiness: async () => managedGatewayReadiness(),
+          collectGatewayReadiness: async () => collectedGatewayReadiness(),
           assessHost: wslDockerDesktopHost,
           detectGpu: () => null,
           warnIfHostProxyMissesLoopback: vi.fn(),
@@ -637,7 +714,7 @@ describe("readiness-gated runtime preflight", () => {
     const calls: string[] = [];
     const collectGatewayReadiness = vi.fn(async () => {
       calls.push("gateway");
-      return managedGatewayReadiness();
+      return collectedGatewayReadiness();
     });
 
     await runReadinessGatedRuntimePreflight(
@@ -678,7 +755,7 @@ describe("readiness-gated runtime preflight", () => {
         nonInteractive: true,
         collectGatewayReadiness: async () => {
           calls.push("gateway");
-          return managedGatewayReadiness();
+          return collectedGatewayReadiness();
         },
         assessHost: () => {
           calls.push("host");
@@ -727,9 +804,9 @@ describe("readiness-gated runtime preflight", () => {
       ],
     });
     const collectGatewayReadiness = vi
-      .fn<() => Promise<GatewayReadinessProjection>>()
-      .mockResolvedValueOnce(managedGatewayReadiness())
-      .mockResolvedValueOnce(blocked);
+      .fn<() => Promise<CollectedGatewayReadiness>>()
+      .mockResolvedValueOnce(collectedGatewayReadiness())
+      .mockResolvedValueOnce(collectedGatewayReadiness(blocked));
 
     await expect(
       runReadinessGatedRuntimePreflight(
@@ -755,7 +832,7 @@ describe("readiness-gated runtime preflight", () => {
 describe("GPU trust-gate rejection reason propagation (#9000)", () => {
   const gatedContext = (detectGpu: (deps?: DetectGpuDeps) => GpuDetection | null, host: HostAssessment) => ({
     nonInteractive: true,
-    collectGatewayReadiness: async () => managedGatewayReadiness(),
+    collectGatewayReadiness: async () => collectedGatewayReadiness(),
     assessHost: () => host,
     detectGpu,
     warnIfHostProxyMissesLoopback: vi.fn(),

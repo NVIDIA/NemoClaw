@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GatewayReadinessProjection } from "../../readiness/gateway";
+import type {
+  GatewayObservationSnapshot,
+  GatewayReadinessProjection,
+} from "../../readiness/gateway";
 import type { Session } from "../../state/onboard-session";
 import * as fatalRuntimePreflight from "../fatal-runtime-preflight";
 import type { GatewayOwner } from "../gateway-ownership";
@@ -42,12 +45,31 @@ describe("preflight gateway authority", () => {
       findings: [],
       evidence: [],
     };
+    const gatewaySnapshot: GatewayObservationSnapshot = {
+      observedAt: "2026-08-17T12:00:00.000Z",
+      completedAt: "2026-08-17T12:00:00.000Z",
+      observations: {
+        owner: {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+        attachmentState: "not-applicable",
+        reuseState: "healthy",
+        driftState: "not-detected",
+        portConflictState: "none",
+      },
+    };
     const collectReadiness = vi.fn(async (collectorDeps) => {
       events.push("collect readiness");
       expect(collectorDeps.gatewayName?.()).toBe("nemoclaw");
       expect(collectorDeps.gatewayPort?.()).toBe(8080);
       expect(collectorDeps.resolveOwner?.()).toBe(owner);
-      return gatewayReadiness;
+      return { projection: gatewayReadiness, snapshot: gatewaySnapshot };
     });
     const session = {} as Session;
     const deps = {
@@ -117,7 +139,7 @@ describe("preflight gateway authority", () => {
       {},
       {
         nonInteractive: true,
-        collectGatewayReadiness: authority.collectGatewayReadiness,
+        collectGatewayReadiness: expect.any(Function),
         exitProcess,
       },
     );
