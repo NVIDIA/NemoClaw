@@ -37,6 +37,7 @@ NemoClaw does not forward those components to the endpoint.
 Configure the provider credential separately instead of putting it in the endpoint URL.
 
 Custom endpoint onboarding also rejects an endpoint URL that contains control characters, percent-encoded control characters, spaces, shell metacharacters, or other characters outside the URL-safe ASCII set.
+The URL-safe ASCII set is ASCII letters, digits, and the characters `_ . / : = , @ % + - [ ] ~`.
 It also rejects an input that is not an absolute HTTP or HTTPS URL.
 This rejection happens before any network request, provider registration, registry write, or sandbox and image mutation, so a rejected input changes no NemoClaw state.
 The `inference set` command applies the same rejection classes to `--endpoint-url` before DNS resolution.
