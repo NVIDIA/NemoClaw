@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   V00103_SANDBOX_BUILD_DIGESTS,
   V00103_SUPERVISOR_MANIFEST_DIGEST,
+  V00106_SUPERVISOR_MANIFEST_DIGEST,
 } from "./helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -42,11 +43,21 @@ afterEach(() => {
 });
 
 function addSupervisorManifestPin(source: string, version: string, digest: string): string {
-  const marker =
-    "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n";
-  const result = source.replace(marker, `${marker}  "${version}": "${digest}",\n`);
-  assert.notEqual(result, source, "supervisor manifest fixture mutation must change the map");
-  return result;
+  const declarationStart = source.indexOf("const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS");
+  const assignment = source.indexOf("=", declarationStart);
+  const mapStart = source.indexOf("{", assignment);
+  assert.notEqual(declarationStart, -1, "supervisor manifest map declaration must exist");
+  assert.notEqual(assignment, -1, "supervisor manifest map assignment must exist");
+  assert.notEqual(mapStart, -1, "supervisor manifest map must exist");
+  return `${source.slice(0, mapStart + 1)}\n  "${version}": "${digest}",${source.slice(mapStart + 1)}`;
+}
+
+function selectSupervisorManifestPin(source: string, version: string, digest: string): string {
+  const identity = new RegExp(
+    `("${version.replaceAll(".", "\\.")}":\\s*)"sha256:[a-f0-9]{64}"`,
+  );
+  if (identity.test(source)) return source.replace(identity, `$1"${digest}"`);
+  return addSupervisorManifestPin(source, version, digest);
 }
 
 function addSandboxBuildPins(source: string): string {
@@ -86,6 +97,7 @@ function selectOpenShellV00103(): {
   blueprint: string;
   brevInstaller: string;
   installer: string;
+  supervisorRuntime: string;
 } {
   const installer = addSandboxBuildPins(
     replaceRequired(INSTALLER_TEMPLATE, [
@@ -105,7 +117,12 @@ function selectOpenShellV00103(): {
   const blueprint = replaceRequired(BLUEPRINT_TEMPLATE, [
     ['max_openshell_version: "0.0.106"', 'max_openshell_version: "0.0.103"'],
   ]);
-  return { blueprint, brevInstaller, installer };
+  const supervisorRuntime = selectSupervisorManifestPin(
+    SUPERVISOR_RUNTIME_TEMPLATE,
+    "0.0.103",
+    V00103_SUPERVISOR_MANIFEST_DIGEST,
+  );
+  return { blueprint, brevInstaller, installer, supervisorRuntime };
 }
 
 type RunOptions = {
@@ -141,17 +158,18 @@ function runParser(options: RunOptions = {}) {
   fs.mkdirSync(supervisorRuntimeDir, { recursive: true });
 
   const selected = options.selectV00103
-    ? selectOpenShellV00103()
-    : {
-        blueprint: BLUEPRINT_TEMPLATE,
-        brevInstaller: BREV_TEMPLATE,
-        installer: INSTALLER_TEMPLATE,
-      };
+      ? selectOpenShellV00103()
+      : {
+          blueprint: BLUEPRINT_TEMPLATE,
+          brevInstaller: BREV_TEMPLATE,
+          installer: INSTALLER_TEMPLATE,
+          supervisorRuntime: SUPERVISOR_RUNTIME_TEMPLATE,
+        };
   fs.writeFileSync(installer, selected.installer);
   fs.writeFileSync(brevInstaller, selected.brevInstaller);
   fs.writeFileSync(blueprint, selected.blueprint);
   const supervisorSource =
-    options.transformSupervisor?.(SUPERVISOR_RUNTIME_TEMPLATE) ?? SUPERVISOR_RUNTIME_TEMPLATE;
+    options.transformSupervisor?.(selected.supervisorRuntime) ?? selected.supervisorRuntime;
   const writeSupervisorRuntime = options.supervisorSymlink
     ? writeSymlinkedSupervisorRuntime
     : writeRegularSupervisorRuntime;
@@ -200,7 +218,7 @@ describe("OpenShell supervisor manifest trust", () => {
   it("rejects a replacement supervisor digest", () => {
     const result = runParser({
       transformSupervisor: (source) =>
-        source.replace(V00103_SUPERVISOR_MANIFEST_DIGEST, REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
+        source.replace(V00106_SUPERVISOR_MANIFEST_DIGEST, REPLACEMENT_SUPERVISOR_MANIFEST_DIGEST),
     });
 
     expect(result.status).toBe(1);

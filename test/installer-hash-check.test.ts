@@ -577,6 +577,29 @@ function renderPinFunction(
   formatting: PinFormatting,
   assetDigests = ASSET_DIGESTS,
 ): string {
+  if (formatting === "canonical") {
+    const template =
+      functionName === "openshell_pinned_sha256" ? INSTALLER_TEMPLATE : BREV_TEMPLATE;
+    const nextMarker = "openshell_checksum_line() {";
+    const start = template.indexOf(`${functionName}() {`);
+    const end = template.indexOf(`\n${nextMarker}`, start);
+    assert.notEqual(start, -1, `${functionName} template start must exist`);
+    assert.notEqual(end, -1, `${functionName} template end must exist`);
+
+    let selected = template.slice(start, end).replaceAll(
+      "v0.0.106:",
+      `v${openshellVersion}:`,
+    );
+    for (const asset of assets) {
+      const currentDigest = V00106_ASSET_DIGESTS.get(asset);
+      const selectedDigest = assetDigests.get(asset);
+      assert.ok(currentDigest, `OpenShell 0.0.106 digest must exist for ${asset}`);
+      assert.ok(selectedDigest, `selected OpenShell digest must exist for ${asset}`);
+      selected = selected.replaceAll(currentDigest, selectedDigest);
+    }
+    return `${selected}\n`;
+  }
+
   const functionOpening =
     formatting === "mixed-whitespace" ? `${functionName}\t( )\t{` : `${functionName}() {`;
   const localInputs =
@@ -710,12 +733,16 @@ function renderSupervisorRuntime(openshellVersion: string): string {
   if (existingIdentity.test(SUPERVISOR_RUNTIME_TEMPLATE)) {
     return SUPERVISOR_RUNTIME_TEMPLATE.replace(existingIdentity, `$1"${manifestDigest}"`);
   }
-  return SUPERVISOR_RUNTIME_TEMPLATE.replace(
-        "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
-        `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
-  "${openshellVersion}": "${manifestDigest}",
-`,
-      );
+  const declarationStart = SUPERVISOR_RUNTIME_TEMPLATE.indexOf(
+    "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS",
+  );
+  const assignment = SUPERVISOR_RUNTIME_TEMPLATE.indexOf("=", declarationStart);
+  const mapStart = SUPERVISOR_RUNTIME_TEMPLATE.indexOf("{", assignment);
+  assert.notEqual(declarationStart, -1, "supervisor manifest map declaration must exist");
+  assert.notEqual(assignment, -1, "supervisor manifest map assignment must exist");
+  assert.notEqual(mapStart, -1, "supervisor manifest map must exist");
+  return `${SUPERVISOR_RUNTIME_TEMPLATE.slice(0, mapStart + 1)}
+  "${openshellVersion}": "${manifestDigest}",${SUPERVISOR_RUNTIME_TEMPLATE.slice(mapStart + 1)}`;
 }
 
 function createFixture(
