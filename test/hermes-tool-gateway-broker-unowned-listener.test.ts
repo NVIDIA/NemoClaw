@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { type MockInstance, vi } from "vitest";
 import {
   closeServer,
   createUnownedHealthListener,
@@ -215,6 +216,7 @@ describe("Hermes managed-tool broker ownership", () => {
       const previousHome = process.env.HOME;
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nc-broker-unowned-"));
       const impostor = createUnownedHealthListener();
+      let refusalOutput: MockInstance<typeof console.error> | undefined;
 
       try {
         const staging = loadBrokerWithHome(home);
@@ -248,9 +250,21 @@ describe("Hermes managed-tool broker ownership", () => {
           "curl cannot read a loopback response in this environment",
         );
 
+        refusalOutput = vi.spyOn(console, "error").mockImplementation(() => {});
+
         // Reachability alone must not answer "broker ready".
         expect(settled.ensureHermesToolGatewayBroker({})).toBe(false);
+
+        // The refusal has to name the port it declined, otherwise an operator
+        // has no way to find the process holding it.
+        const diagnostics = refusalOutput.mock.calls.map((call) => call.join(" ")).join("\n");
+        expect(diagnostics).toContain(String(settled.HERMES_TOOL_GATEWAY_PORT));
+
+        // Refusing must leave no adoption or restart behind. A pid record would
+        // mean a broker was spawned against the held port.
+        expect(fs.existsSync(pidPath)).toBe(false);
       } finally {
+        refusalOutput?.mockRestore();
         await closeServer(impostor);
         restoreEnv("HOME", previousHome);
         delete require.cache[require.resolve(BROKER_WRAPPER)];
