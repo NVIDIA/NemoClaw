@@ -1720,6 +1720,38 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
   removeAliases(paths, runtime);
 }
 
+/**
+ * CLI uninstall step for `executePlan`. Extracted so the plan loop stays under
+ * the run-plan cognitive-complexity budget when scoped destroy needs the
+ * confirmed-sibling vs unidentified shim split (#9277).
+ */
+function runNemoclawCliUninstallStep(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  otherGatewayPorts: readonly number[],
+): void {
+  if (!scopedToSelectedGateway) {
+    removeNemoclawCli(paths, runtime);
+    return;
+  }
+  // Confirmed sibling gateway ports share ~/.local/bin shims. Only the
+  // unidentified / unproven scoped path (#9277 false positives: odd
+  // gateways/ entries, unreadable gateway list, etc.) may drop managed
+  // shims on `--destroy-user-data` while keeping the shared npm package.
+  const confirmedSiblingPortsRemain = otherGatewayPorts.length > 0;
+  if (options.destroyUserData && !confirmedSiblingPortsRemain) {
+    runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI package.");
+    const removedShims = removeManagedCliShims(paths, runtime);
+    if (removedShims > 0) {
+      runtime.log("Removed managed user-local CLI shims because --destroy-user-data was set.");
+    }
+    return;
+  }
+  runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
+}
+
 function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   if (!runtime.commandExists("docker")) {
     runtime.warn("docker not found; skipping Docker cleanup.");
@@ -2759,26 +2791,13 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
-      if (scopedToSelectedGateway) {
-        // Confirmed sibling gateway ports share ~/.local/bin shims. Only the
-        // unidentified / unproven scoped path (#9277 false positives: odd
-        // gateways/ entries, unreadable gateway list, etc.) may drop managed
-        // shims on `--destroy-user-data` while keeping the shared npm package.
-        const confirmedSiblingPortsRemain = otherGatewayPorts.length > 0;
-        if (options.destroyUserData && !confirmedSiblingPortsRemain) {
-          runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI package.");
-          const removedShims = removeManagedCliShims(paths, runtime);
-          if (removedShims > 0) {
-            runtime.log(
-              "Removed managed user-local CLI shims because --destroy-user-data was set.",
-            );
-          }
-        } else {
-          runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.");
-        }
-      } else {
-        removeNemoclawCli(paths, runtime);
-      }
+      runNemoclawCliUninstallStep(
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        otherGatewayPorts,
+      );
     } else if (step.name === "Docker resources") {
       if (externallySupervised) {
         runtime.log(
