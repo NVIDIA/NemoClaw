@@ -381,25 +381,22 @@ describe("post-merge documentation workflow boundary", () => {
     expect(validatePostMergeDocsWorkflowBoundary(workflow)).toEqual([]);
   });
 
-  it("rejects changes to the credential and permission boundary", () => {
-    const mutations: Array<(candidate: Record<string, any>) => void> = [
-      (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
-      (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
-      (candidate) => (candidate.jobs.gate.secrets = "inherit"),
-      (candidate) =>
-        (candidate.jobs.author.steps.find(
-          (step: Record<string, any>) => step.env?.OPENAI_API_KEY,
-        ).name = "Other step"),
-      (candidate) =>
-        (candidate.jobs.publish.env = {
-          OPENAI_API_KEY: "${{ secrets.POST_MERGE_DOCS_API_KEY }}",
-        }),
-    ];
-    for (const mutate of mutations) {
-      const candidate = structuredClone(workflow);
-      mutate(candidate);
-      expect(validatePostMergeDocsWorkflowBoundary(candidate)).not.toEqual([]);
-    }
+  it.each<(candidate: Record<string, any>) => void>([
+    (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
+    (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
+    (candidate) => (candidate.jobs.gate.secrets = "inherit"),
+    (candidate) =>
+      (candidate.jobs.author.steps.find(
+        (step: Record<string, any>) => step.env?.OPENAI_API_KEY,
+      ).name = "Other step"),
+    (candidate) =>
+      (candidate.jobs.publish.env = {
+        OPENAI_API_KEY: "${{ secrets.POST_MERGE_DOCS_API_KEY }}",
+      }),
+  ])("rejects credential and permission boundary mutation %#", (mutate) => {
+    const candidate = structuredClone(workflow);
+    mutate(candidate);
+    expect(validatePostMergeDocsWorkflowBoundary(candidate)).not.toEqual([]);
   });
 
   it("keeps the independent reviewer's repository read-only and offline", () => {
