@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
 import {
   createManagedHermesStateVolumeOnboardLifecycle,
   prepareOnboardSandboxWorkloadLaunch,
@@ -10,42 +11,8 @@ import {
 
 describe("managed workload onboard orchestration", () => {
   it("keeps failure cleanup armed until the caller commits registration", () => {
-    let volume: { name: string; labels: Record<string, string> } | null = null;
+    const docker = createHermesStateVolumeDockerHarness();
     let exitCleanup: (() => void) | null = null;
-    const calls: string[][] = [];
-    const runDocker = vi.fn((args: readonly string[]) => {
-      const argv = [...args];
-      calls.push(argv);
-      switch (argv[0]) {
-        case "inspect":
-          return volume
-            ? {
-                status: 0,
-                stdout: `${JSON.stringify({ Name: volume.name, Labels: volume.labels })}\n`,
-              }
-            : { status: 1, stderr: "Error response from daemon: no such volume" };
-        case "create": {
-          const labels: Record<string, string> = {};
-          for (let index = 1; index < argv.length - 1; index += 1) {
-            switch (argv[index]) {
-              case "--label": {
-                const [name, ...value] = argv[index + 1]!.split("=");
-                labels[name!] = value.join("=");
-                index += 1;
-                break;
-              }
-            }
-          }
-          volume = { name: argv.at(-1)!, labels };
-          return { status: 0, stdout: `${volume.name}\n` };
-        }
-        case "rm":
-          volume = null;
-          return { status: 0, stdout: `${argv[1]}\n` };
-        default:
-          return { status: 1, stderr: "unexpected Docker command" };
-      }
-    });
 
     const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
       {
@@ -55,7 +22,7 @@ describe("managed workload onboard orchestration", () => {
         workloadKind: "managed-image",
       },
       {
-        runDocker: runDocker as never,
+        runDocker: docker.runDocker as never,
         registerExitCleanup: (cleanup) => {
           exitCleanup = cleanup;
           return vi.fn();
@@ -69,8 +36,8 @@ describe("managed workload onboard orchestration", () => {
     });
     exitCleanup!();
 
-    expect(volume).toBeNull();
-    expect(calls.some((args) => args[0] === "rm")).toBe(true);
+    expect(docker.volume).toBeNull();
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
   });
 
   it("resolves final-image patch metadata after managed build-context staging", async () => {
