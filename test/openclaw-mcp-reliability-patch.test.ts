@@ -262,7 +262,58 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
     expect(audited.stdout).toContain("MCP startup recovery audit ok");
   });
 
-  it("classifies only transient transport startup failures as retryable", () => {
+  it.each(
+    Array.from(
+      [
+        ["unauthorized", new Error("Error POSTing to endpoint (HTTP 401): Unauthorized")],
+        ["forbidden", new Error("Streamable HTTP error: HTTP 403 Forbidden")],
+        [
+          // An OpenShell L4 policy denial reaches the MCP client as a refused
+          // connection, so a refused destination must never be retried (#7958).
+          "sandbox network policy denial",
+          Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9958"), {
+              code: "ECONNREFUSED",
+            }),
+          }),
+        ],
+        [
+          "unresolvable host",
+          Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("getaddrinfo EAI_AGAIN mcp.example.com"), {
+              code: "EAI_AGAIN",
+            }),
+          }),
+        ],
+        ["oauth token rejection", new Error('token exchange failed: {"error":"invalid_grant"}')],
+        [
+          "expired certificate",
+          Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("certificate has expired"), {
+              code: "CERT_HAS_EXPIRED",
+            }),
+          }),
+        ],
+        [
+          "self-signed chain",
+          Object.assign(new TypeError("fetch failed"), {
+            cause: Object.assign(new Error("self-signed certificate in certificate chain"), {
+              code: "SELF_SIGNED_CERT_IN_CHAIN",
+            }),
+          }),
+        ],
+        ["policy denial", new Error("request blocked by sandbox egress policy")],
+        ["SSRF guard", new Error("SSRF guard rejected destination")],
+        [
+          "invalid configuration",
+          Object.assign(new Error("Invalid URL"), { code: "ERR_INVALID_URL" }),
+        ],
+        ["unknown failure", new Error("something else went wrong")],
+        ["missing error", undefined],
+      ] as Array<[string, unknown]>,
+      ([label, error]) => ({ label, error }),
+    ),
+  )("does not classify $label as a retryable transport startup failure", ({ label, error }) => {
     const helper = loadInjectedHelper([]);
     const transient: Array<[string, unknown]> = [
       [
@@ -295,54 +346,7 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
       expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(true);
     }
 
-    const blocked: Array<[string, unknown]> = [
-      ["unauthorized", new Error("Error POSTing to endpoint (HTTP 401): Unauthorized")],
-      ["forbidden", new Error("Streamable HTTP error: HTTP 403 Forbidden")],
-      [
-        // An OpenShell L4 policy denial reaches the MCP client as a refused
-        // connection, so a refused destination must never be retried (#7958).
-        "sandbox network policy denial",
-        Object.assign(new TypeError("fetch failed"), {
-          cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:9958"), {
-            code: "ECONNREFUSED",
-          }),
-        }),
-      ],
-      [
-        "unresolvable host",
-        Object.assign(new TypeError("fetch failed"), {
-          cause: Object.assign(new Error("getaddrinfo EAI_AGAIN mcp.example.com"), {
-            code: "EAI_AGAIN",
-          }),
-        }),
-      ],
-      ["oauth token rejection", new Error('token exchange failed: {"error":"invalid_grant"}')],
-      [
-        "expired certificate",
-        Object.assign(new TypeError("fetch failed"), {
-          cause: Object.assign(new Error("certificate has expired"), { code: "CERT_HAS_EXPIRED" }),
-        }),
-      ],
-      [
-        "self-signed chain",
-        Object.assign(new TypeError("fetch failed"), {
-          cause: Object.assign(new Error("self-signed certificate in certificate chain"), {
-            code: "SELF_SIGNED_CERT_IN_CHAIN",
-          }),
-        }),
-      ],
-      ["policy denial", new Error("request blocked by sandbox egress policy")],
-      ["SSRF guard", new Error("SSRF guard rejected destination")],
-      [
-        "invalid configuration",
-        Object.assign(new Error("Invalid URL"), { code: "ERR_INVALID_URL" }),
-      ],
-      ["unknown failure", new Error("something else went wrong")],
-      ["missing error", undefined],
-    ];
-    for (const [label, error] of blocked) {
-      expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(false);
-    }
+    expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(false);
   });
 
   it("retries a transient streamable-http startup once and returns the recovered result", async () => {

@@ -35,10 +35,10 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("git rev-parse origin/main");
     expect(skill).toContain("correlation_id=${CORRELATION_ID}");
     expect(skill).toContain("head_sha");
-    expect(skill).toContain("Publish staging Brev Launchable image");
+    expect(skill).toContain("Exact staging Brev Launchable");
     expect(skill).toContain("Release qualification");
-    expect(skill).toContain("launchable-image.json");
-    expect(skill).toContain("records Launchable, runtime, and inference validation as not run");
+    expect(skill).toContain("launchable-e2e.json");
+    expect(skill).toContain("cleanup.json");
     expect(skill).toContain("provisional release evidence");
     expect(skill).toContain("If the release candidate SHA changes");
     expect(skill).toContain("nemoclaw-maintainer-cut-release-tag");

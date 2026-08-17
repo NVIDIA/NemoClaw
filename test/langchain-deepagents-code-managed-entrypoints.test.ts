@@ -258,34 +258,33 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     expect(fs.existsSync(disabledFixture.ranMarker)).toBe(false);
   });
 
-  it("fails closed for ambient, malformed, symlinked, and writable auto-approval state (#6478)", () => {
-    const cases = [
-      { label: "ambient only", prepare: (_path: string) => undefined },
-      {
-        label: "malformed",
-        prepare: (capabilityPath: string) => {
-          fs.writeFileSync(capabilityPath, "thread-opt-in");
-          fs.chmodSync(capabilityPath, 0o444);
-        },
+  it.each([
+    { label: "ambient only", prepare: (_path: string) => undefined },
+    {
+      label: "malformed",
+      prepare: (capabilityPath: string) => {
+        fs.writeFileSync(capabilityPath, "thread-opt-in");
+        fs.chmodSync(capabilityPath, 0o444);
       },
-      {
-        label: "writable",
-        prepare: (capabilityPath: string) => {
-          fs.writeFileSync(capabilityPath, "thread-opt-in\n");
-          fs.chmodSync(capabilityPath, 0o644);
-        },
+    },
+    {
+      label: "writable",
+      prepare: (capabilityPath: string) => {
+        fs.writeFileSync(capabilityPath, "thread-opt-in\n");
+        fs.chmodSync(capabilityPath, 0o644);
       },
-      {
-        label: "symlinked",
-        prepare: (capabilityPath: string) => {
-          const target = `${capabilityPath}-target`;
-          fs.writeFileSync(target, "thread-opt-in\n", { mode: 0o444 });
-          fs.symlinkSync(target, capabilityPath);
-        },
+    },
+    {
+      label: "symlinked",
+      prepare: (capabilityPath: string) => {
+        const target = `${capabilityPath}-target`;
+        fs.writeFileSync(target, "thread-opt-in\n", { mode: 0o444 });
+        fs.symlinkSync(target, capabilityPath);
       },
-    ];
-
-    for (const { label, prepare } of cases) {
+    },
+  ])(
+    "fails closed for ambient, malformed, symlinked, and writable auto-approval state [$label] (#6478)",
+    ({ label, prepare }) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auto-unsafe-"));
       const { wrapperPath, ranMarker, autoApprovalPath } = makeWrapperFixture(tempDir);
       prepare(autoApprovalPath);
@@ -301,8 +300,8 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
       expect(result.status, `${label}: ${result.stderr}`).not.toBe(0);
       expect(result.stderr).toContain("tool approval posture");
       expect(fs.existsSync(ranMarker)).toBe(false);
-    }
-  });
+    },
+  );
 
   it("removes an inherited OpenAI-specific proxy before the managed package starts", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-openai-proxy-"));

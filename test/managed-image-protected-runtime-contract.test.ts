@@ -152,19 +152,20 @@ describe("protected managed-image runtime contract", () => {
     expect(Object.isFrozen(protectedLaunch.expectedSupervisorArgv)).toBe(true);
   });
 
-  it("loads every OpenShell operation required before protected image launch (#7744)", async () => {
-    const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
+  it.each([
+    "openshellArgv",
+    "runOpenshell",
+    "runCaptureOpenshell",
+    "sleepSeconds",
+    "startGatewayForRecovery",
+  ] as const)(
+    "loads every OpenShell operation required before protected image launch [%s] (#7744)",
+    async (operation) => {
+      const onboard = resolveManagedImageOnboardModule(await import("../src/lib/onboard.ts"));
 
-    for (const operation of [
-      "openshellArgv",
-      "runOpenshell",
-      "runCaptureOpenshell",
-      "sleepSeconds",
-      "startGatewayForRecovery",
-    ] as const) {
       expect(onboard[operation], operation).toBeTypeOf("function");
-    }
-  });
+    },
+  );
 
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
     expect(() =>
@@ -453,51 +454,50 @@ describe("protected managed-image runtime contract", () => {
     );
   });
 
-  it.each([
-    "openclaw",
-    "hermes",
-    "langchain-deepagents-code",
-  ] as const)("binds %s to an exact GPU/local-inference launch", (agent) => {
-    const parsed = parseManagedImageOpenShellE2eInputs([
-      "--agent",
-      agent,
-      "--image",
-      IMAGE,
-      "--sandbox",
-      managedImageProtectedSandboxName(agent, "nim"),
-      "--gpu",
-      "--local-provider",
-      "nim",
-      "--model",
-      "nvidia/nemotron-3-nano",
-    ]);
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "binds %s to an exact GPU/local-inference launch",
+    (agent) => {
+      const parsed = parseManagedImageOpenShellE2eInputs([
+        "--agent",
+        agent,
+        "--image",
+        IMAGE,
+        "--sandbox",
+        managedImageProtectedSandboxName(agent, "nim"),
+        "--gpu",
+        "--local-provider",
+        "nim",
+        "--model",
+        "nvidia/nemotron-3-nano",
+      ]);
 
-    expect(parsed).toEqual({
-      agent,
-      gpu: true,
-      image: IMAGE,
-      localProvider: "nim",
-      model: "nvidia/nemotron-3-nano",
-      sandbox: managedImageProtectedSandboxName(agent, "nim"),
-    });
-    expect(path.isAbsolute(managedImageOpenShellBasePolicyPath(agent))).toBe(true);
-    const probe = managedImageOpenShellProbe(agent);
-    const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
-    expect(syntax.status, syntax.stderr).toBe(0);
-    expect(probe).toContain("managed-startup-complete.json");
-    expect(probe).toContain(
-      `managed-image startup probe failed: ${
-        agent === "openclaw"
-          ? "OpenClaw health endpoint"
-          : agent === "hermes"
-            ? "Hermes health endpoint"
-            : "LangChain Deep Agents Code version command"
-      }`,
-    );
-    expect(probe).toContain(
-      "managed-image startup probe failed: managed startup completion owner, group, and mode must equal 0:0:444",
-    );
-  });
+      expect(parsed).toEqual({
+        agent,
+        gpu: true,
+        image: IMAGE,
+        localProvider: "nim",
+        model: "nvidia/nemotron-3-nano",
+        sandbox: managedImageProtectedSandboxName(agent, "nim"),
+      });
+      expect(path.isAbsolute(managedImageOpenShellBasePolicyPath(agent))).toBe(true);
+      const probe = managedImageOpenShellProbe(agent);
+      const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
+      expect(syntax.status, syntax.stderr).toBe(0);
+      expect(probe).toContain("managed-startup-complete.json");
+      expect(probe).toContain(
+        `managed-image startup probe failed: ${
+          agent === "openclaw"
+            ? "OpenClaw health endpoint"
+            : agent === "hermes"
+              ? "Hermes health endpoint"
+              : "LangChain Deep Agents Code version command"
+        }`,
+      );
+      expect(probe).toContain(
+        "managed-image startup probe failed: managed startup completion owner, group, and mode must equal 0:0:444",
+      );
+    },
+  );
 
   it("rewrites only the inference route while preserving the managed agent profile", () => {
     const profile = managedStartupE2eProfile("hermes", false, true, true);

@@ -103,38 +103,36 @@ function hostRuntime(value: HostLocalInferenceReceipt) {
 }
 
 describe("host-local inference receipt contract", () => {
-  it.each([
-    "ollama",
-    "nim",
-    "vllm",
-    "llama-cpp",
-  ] as const)("round-trips %s authority without provider-specific state", (service) => {
-    const expected = normalizeHostLocalInferenceReceipt(receipt(service));
-    const serialized = serializeHostLocalInferenceReceipt(expected);
+  it.each(["ollama", "nim", "vllm", "llama-cpp"] as const)(
+    "round-trips %s authority without provider-specific state",
+    (service) => {
+      const expected = normalizeHostLocalInferenceReceipt(receipt(service));
+      const serialized = serializeHostLocalInferenceReceipt(expected);
 
-    expect(parseHostLocalInferenceReceipt(serialized)).toEqual(expected);
-    expect(expected.providerId).toBe("mxc");
-    expect(Object.isFrozen(expected)).toBe(true);
-    expect(Object.isFrozen(expected.endpoint)).toBe(true);
-    expect(Object.isFrozen(expected.runtime)).toBe(true);
-  });
+      expect(parseHostLocalInferenceReceipt(serialized)).toEqual(expected);
+      expect(expected.providerId).toBe("mxc");
+      expect(Object.isFrozen(expected)).toBe(true);
+      expect(Object.isFrozen(expected.endpoint)).toBe(true);
+      expect(Object.isFrozen(expected.runtime)).toBe(true);
+    },
+  );
 
-  it.each([
-    "cpu",
-    "nvidia-gpu",
-  ] as const)("round-trips exact Ollama %s acceleration authority", (acceleration) => {
-    const base = receipt("ollama");
-    expect(base.runtime.kind).toBe("host");
-    const normalized = normalizeHostLocalInferenceReceipt({
-      ...base,
-      runtime: { ...base.runtime, acceleration },
-    });
+  it.each(["cpu", "nvidia-gpu"] as const)(
+    "round-trips exact Ollama %s acceleration authority",
+    (acceleration) => {
+      const base = receipt("ollama");
+      expect(base.runtime.kind).toBe("host");
+      const normalized = normalizeHostLocalInferenceReceipt({
+        ...base,
+        runtime: { ...base.runtime, acceleration },
+      });
 
-    expect(normalized.runtime).toMatchObject({ kind: "host", acceleration });
-    expect(parseHostLocalInferenceReceipt(serializeHostLocalInferenceReceipt(normalized))).toEqual(
-      normalized,
-    );
-  });
+      expect(normalized.runtime).toMatchObject({ kind: "host", acceleration });
+      expect(
+        parseHostLocalInferenceReceipt(serializeHostLocalInferenceReceipt(normalized)),
+      ).toEqual(normalized);
+    },
+  );
 
   it("rejects missing, malformed, or extended Ollama acceleration authority", () => {
     const base = receipt("ollama");
@@ -184,32 +182,33 @@ describe("host-local inference receipt contract", () => {
     );
   });
 
-  it("requires declarative model authority only for llama.cpp receipts (#8395)", () => {
-    const llamaCpp = receipt("llama-cpp");
-    const llamaRuntime = containerRuntime(llamaCpp);
-    expect(() =>
-      normalizeHostLocalInferenceReceipt({
-        ...llamaCpp,
-        runtime: { ...llamaRuntime, model: undefined },
-      }),
-    ).toThrow("model authority must be an object");
-    expect(() =>
-      normalizeHostLocalInferenceReceipt({
-        ...llamaCpp,
-        runtime: { ...llamaRuntime, gpu: { vendor: "nvidia", count: 2 } },
-      }),
-    ).toThrow("exactly one GPU");
-    expect(() =>
-      normalizeHostLocalInferenceReceipt({
-        ...llamaCpp,
-        runtime: {
-          ...llamaRuntime,
-          gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
-        },
-      }),
-    ).toThrow("GPU authority schema is unsupported");
+  it.each(["nim", "vllm"] as const)(
+    "requires declarative model authority only for llama.cpp receipts [%s] (#8395)",
+    (service) => {
+      const llamaCpp = receipt("llama-cpp");
+      const llamaRuntime = containerRuntime(llamaCpp);
+      expect(() =>
+        normalizeHostLocalInferenceReceipt({
+          ...llamaCpp,
+          runtime: { ...llamaRuntime, model: undefined },
+        }),
+      ).toThrow("model authority must be an object");
+      expect(() =>
+        normalizeHostLocalInferenceReceipt({
+          ...llamaCpp,
+          runtime: { ...llamaRuntime, gpu: { vendor: "nvidia", count: 2 } },
+        }),
+      ).toThrow("exactly one GPU");
+      expect(() =>
+        normalizeHostLocalInferenceReceipt({
+          ...llamaCpp,
+          runtime: {
+            ...llamaRuntime,
+            gpu: { vendor: "nvidia", devices: ["nvidia.com/gpu=all"] },
+          },
+        }),
+      ).toThrow("GPU authority schema is unsupported");
 
-    for (const service of ["nim", "vllm"] as const) {
       const managed = receipt(service);
       expect(() =>
         normalizeHostLocalInferenceReceipt({
@@ -226,8 +225,8 @@ describe("host-local inference receipt contract", () => {
           },
         }),
       ).toThrow("container authority schema is unsupported");
-    }
-  });
+    },
+  );
 
   it("rejects malformed llama.cpp model identity without exposing executor state (#8395)", () => {
     const llamaCpp = receipt("llama-cpp");
@@ -383,21 +382,20 @@ describe("host-local inference receipt contract", () => {
     ).toThrow("prior state does not match the service lifecycle");
   });
 
-  it.each([
-    "ollama",
-    "nim",
-    "vllm",
-  ] as const)("rejects schema-v1 %s receipts without proof authority", (service) => {
-    const modern = receipt(service);
-    const { inference: _inference, publication: _publication, ...legacy } = modern;
+  it.each(["ollama", "nim", "vllm"] as const)(
+    "rejects schema-v1 %s receipts without proof authority",
+    (service) => {
+      const modern = receipt(service);
+      const { inference: _inference, publication: _publication, ...legacy } = modern;
 
-    expect(() =>
-      normalizeHostLocalInferenceReceipt({
-        ...legacy,
-        schemaVersion: 1,
-      }),
-    ).toThrow("legacy receipt schema supports only llama.cpp");
-  });
+      expect(() =>
+        normalizeHostLocalInferenceReceipt({
+          ...legacy,
+          schemaVersion: 1,
+        }),
+      ).toThrow("legacy receipt schema supports only llama.cpp");
+    },
+  );
 
   it("rejects extensions and noncanonical serialized receipts", () => {
     const base = receipt();

@@ -234,9 +234,7 @@ describe("probeUserManagedFiles", () => {
     const { probeUserManagedFiles } = loadProbe();
 
     probeUserManagedFiles("alpha");
-    for (const dir of tempSshFiles) {
-      expect(fs.existsSync(dir)).toBe(false);
-    }
+    expect([...tempSshFiles].every((dir) => !fs.existsSync(dir))).toBe(true);
   });
 
   it("cleans up the temp SSH config on SSH failure", () => {
@@ -244,9 +242,7 @@ describe("probeUserManagedFiles", () => {
     const { probeUserManagedFiles } = loadProbe();
 
     expect(() => probeUserManagedFiles("alpha")).toThrow();
-    for (const dir of tempSshFiles) {
-      expect(fs.existsSync(dir)).toBe(false);
-    }
+    expect([...tempSshFiles].every((dir) => !fs.existsSync(dir))).toBe(true);
   });
 
   it("returns empty declared when the agent has no user_managed_files", () => {

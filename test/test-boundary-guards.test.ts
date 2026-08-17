@@ -741,38 +741,39 @@ describe("Vitest project membership boundary", () => {
     }
   });
 
-  it("maps candidate paths to their exact project contract (#6692)", () => {
-    const expectedProjects = new Map<string, string | undefined>([
-      ["src/example.spec.ts", "cli"],
-      ["nemoclaw/src/example.test.js", "plugin"],
-      ["test/coverage-ratchet.test.ts", "integration"],
-      ["test/vitest-coverage-thresholds.test.ts", "integration"],
-      ["test/example.test.js", "integration"],
-      ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
-      ["test/install-clone-ref.test.ts", "installer-integration"],
-      ["test/install-express-prompt.test.ts", "installer-integration"],
-      ["test/install-managed-cli-reuse.test.ts", "installer-integration"],
-      ["test/install-openshell-version-pin.test.ts", "installer-integration"],
-      ["test/install-openshell-version-check.test.ts", "installer-integration"],
-      ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
-      ["test/install-preflight.test.ts", "installer-integration"],
-      ["test/install-station-controller-binding.test.ts", "installer-integration"],
-      ["test/install-station-pair-preparation.test.ts", "installer-integration"],
-      ["test/install-station-resume-cleanup.test.ts", "installer-integration"],
-      ["test/install-station-dgx-os.test.ts", "installer-integration"],
-      ["test/install-station-docker-repository.test.ts", "installer-integration"],
-      ["test/install-station-host-preparation.test.ts", "installer-integration"],
-      ["test/install-station-package-state.test.ts", "installer-integration"],
-      ["test/install-station-package-transaction.test.ts", "installer-integration"],
-      ["test/package-contract/example.test.js", "package-contract"],
-      ["test/e2e/support/example.test.js", "e2e-support"],
-      ["test/e2e/live/example.spec.ts", "e2e-live"],
-      ["test/e2e/other.test.ts", undefined],
-    ]);
-
-    for (const [file, project] of expectedProjects) {
-      expect(expectedProjectForTestPath(file), file).toBe(project);
-    }
+  it.each(
+    Array.from(
+      new Map<string, string | undefined>([
+        ["src/example.spec.ts", "cli"],
+        ["nemoclaw/src/example.test.js", "plugin"],
+        ["test/coverage-ratchet.test.ts", "integration"],
+        ["test/vitest-coverage-thresholds.test.ts", "integration"],
+        ["test/example.test.js", "integration"],
+        ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
+        ["test/install-clone-ref.test.ts", "installer-integration"],
+        ["test/install-express-prompt.test.ts", "installer-integration"],
+        ["test/install-managed-cli-reuse.test.ts", "installer-integration"],
+        ["test/install-openshell-version-pin.test.ts", "installer-integration"],
+        ["test/install-openshell-version-check.test.ts", "installer-integration"],
+        ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
+        ["test/install-preflight.test.ts", "installer-integration"],
+        ["test/install-station-controller-binding.test.ts", "installer-integration"],
+        ["test/install-station-pair-preparation.test.ts", "installer-integration"],
+        ["test/install-station-resume-cleanup.test.ts", "installer-integration"],
+        ["test/install-station-dgx-os.test.ts", "installer-integration"],
+        ["test/install-station-docker-repository.test.ts", "installer-integration"],
+        ["test/install-station-host-preparation.test.ts", "installer-integration"],
+        ["test/install-station-package-state.test.ts", "installer-integration"],
+        ["test/install-station-package-transaction.test.ts", "installer-integration"],
+        ["test/package-contract/example.test.js", "package-contract"],
+        ["test/e2e/support/example.test.js", "e2e-support"],
+        ["test/e2e/live/example.spec.ts", "e2e-live"],
+        ["test/e2e/other.test.ts", undefined],
+      ]),
+      (value) => [value],
+    ),
+  )("maps candidate paths to their exact project contract [case %#] (#6692)", ([file, project]) => {
+    expect(expectedProjectForTestPath(file), file).toBe(project);
   });
 
   it("invokes Vitest through Node on every platform (#6692)", () => {

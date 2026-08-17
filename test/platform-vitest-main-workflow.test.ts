@@ -36,29 +36,25 @@ describe("platform evidence workflow", () => {
     expect(run).toContain('test "$(git rev-parse --verify HEAD)" = "$GITHUB_SHA"');
     expect(run.indexOf("safe.directory")).toBeLessThan(run.indexOf("npm run build:cli"));
   });
-  it("limits credentialed platform E2E to the first main-branch shard", () => {
-    const cases = [
-      {
-        job: "macos-vitest",
-        step: "Run macOS live E2E",
-        dockerOutput: "steps.macos_docker.outputs.docker_ok == 'true'",
-      },
-      {
-        job: "wsl-vitest",
-        step: "Run WSL live E2E",
-        dockerOutput: "steps.wsl_docker.outputs.docker_ok == 'true'",
-      },
-    ];
-
-    for (const workflowCase of cases) {
-      const live = step(workflowCase.job, workflowCase.step);
-      expect(live.if).toContain("matrix.shard == 1");
-      expect(live.if).toContain(workflowCase.dockerOutput);
-      expect(live.if).toContain("github.ref == 'refs/heads/main'");
-      expect(live.env).toMatchObject({
-        GITHUB_TOKEN: "${{ github.token }}",
-        NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      });
-    }
+  it.each([
+    {
+      job: "macos-vitest",
+      step: "Run macOS live E2E",
+      dockerOutput: "steps.macos_docker.outputs.docker_ok == 'true'",
+    },
+    {
+      job: "wsl-vitest",
+      step: "Run WSL live E2E",
+      dockerOutput: "steps.wsl_docker.outputs.docker_ok == 'true'",
+    },
+  ])("limits credentialed $job E2E to the first main-branch shard", (workflowCase) => {
+    const live = step(workflowCase.job, workflowCase.step);
+    expect(live.if).toContain("matrix.shard == 1");
+    expect(live.if).toContain(workflowCase.dockerOutput);
+    expect(live.if).toContain("github.ref == 'refs/heads/main'");
+    expect(live.env).toMatchObject({
+      GITHUB_TOKEN: "${{ github.token }}",
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+    });
   });
 });

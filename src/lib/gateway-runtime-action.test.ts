@@ -105,33 +105,32 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
         gatewayInfoStatus: 0,
         expected: "missing_named",
       },
-    ])("classifies $label conservatively as $expected", ({
-      status,
-      gatewayInfo,
-      gatewayInfoStatus,
-      expected,
-    }) => {
-      captureSpy
-        .mockReturnValueOnce({ status: 0, output: status })
-        .mockReturnValueOnce({ status: gatewayInfoStatus, output: gatewayInfo });
+    ])(
+      "classifies $label conservatively as $expected",
+      ({ status, gatewayInfo, gatewayInfoStatus, expected }) => {
+        captureSpy
+          .mockReturnValueOnce({ status: 0, output: status })
+          .mockReturnValueOnce({ status: gatewayInfoStatus, output: gatewayInfo });
 
-      const result = gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
+        const result = gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
 
-      expect(result.state).toBe(expected);
-    });
+        expect(result.state).toBe(expected);
+      },
+    );
 
     it("keeps probes fatal by default, but still captures stderr (ignoreError falsy)", () => {
       captureSpy.mockReturnValue({ status: 0, output: "Status: Connected\nGateway: nemoclaw\n" });
 
       gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
 
-      for (const [, opts] of captureSpy.mock.calls) {
-        // Default path is fatal (no ignoreError). stderr is still captured here
-        // because captureOpenshell includes stderr whenever ignoreError is falsy,
-        // so the `Status:`/`Gateway:` lines (written to stderr) are not dropped.
-        expect(opts?.ignoreError).not.toBe(true);
-        expect(opts?.includeStderr).not.toBe(true);
-      }
+      // Default path is fatal (no ignoreError). stderr is still captured here
+      // because captureOpenshell includes stderr whenever ignoreError is falsy,
+      // so the `Status:`/`Gateway:` lines (written to stderr) are not dropped.
+      expect(
+        captureSpy.mock.calls.every(
+          ([, opts]) => opts?.ignoreError !== true && opts?.includeStderr !== true,
+        ),
+      ).toBe(true);
     });
 
     it("makes probes non-fatal AND keeps includeStderr in lockstep when ignoreProbeErrors is set (#5714)", () => {
@@ -146,10 +145,12 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw", { ignoreProbeErrors: true });
 
       expect(captureSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-      for (const [, opts] of captureSpy.mock.calls) {
-        expect(opts?.ignoreError).toBe(true);
-        expect(opts?.includeStderr).toBe(true);
-      }
+
+      expect(
+        captureSpy.mock.calls.every(
+          ([, opts]) => opts?.ignoreError === true && opts?.includeStderr === true,
+        ),
+      ).toBe(true);
     });
   });
 
@@ -198,9 +199,8 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
       const selectCalls = runSpy.mock.calls
         .map(([args]) => args)
         .filter((args: string[]) => args[0] === "gateway" && args[1] === "select");
-      for (const args of selectCalls) {
-        expect(args[2]).toBe("nemoclaw-8090");
-      }
+      expect(selectCalls.length).toBeGreaterThan(0);
+      expect(selectCalls.every((args: string[]) => args[2] === "nemoclaw-8090")).toBe(true);
     });
 
     it("starts recovery with the supplied gateway name and derived port", async () => {

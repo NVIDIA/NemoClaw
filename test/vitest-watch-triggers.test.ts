@@ -92,7 +92,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "src/lib/inference/serving/resolver.test.ts",
       "test/managed-inference-catalog-compiler.test.ts",
     ]);
-    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+      "src/lib/sandbox/optimized-build-context-copy-sources.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",
     ]);
@@ -217,20 +220,22 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
-  it("returns only concrete test files that exist (#6692)", () => {
-    const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
+  it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(
+    "returns only concrete test files that exist [case %#] (#6692)",
+    (trigger) => {
+      const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
 
-    expect(triggeredTests.size).toBeGreaterThan(0);
-    for (const testFile of triggeredTests) {
-      expect(testFile).toMatch(/\.test\.ts$/);
-      expect(testFile).not.toMatch(/[?*{}[\]]/);
-      expect(fs.existsSync(testFile), testFile).toBe(true);
-    }
-    for (const trigger of vitestWatchTriggerPatterns) {
+      expect(triggeredTests.size).toBeGreaterThan(0);
+      for (const testFile of triggeredTests) {
+        expect(testFile).toMatch(/\.test\.ts$/);
+        expect(testFile).not.toMatch(/[?*{}[\]]/);
+        expect(fs.existsSync(testFile), testFile).toBe(true);
+      }
+
       expect(trigger.pattern.global).toBe(false);
       expect(trigger.pattern.sticky).toBe(false);
-    }
-  });
+    },
+  );
 
   it("leaves unrelated YAML, shell, Python, and workflow files alone (#6692)", () => {
     expect(triggeredBy("notes/example.yaml")).toEqual([]);

@@ -186,38 +186,45 @@ describe("DGX Station documentation ownership", () => {
     expect(docsIndex.match(/page: "Set Up vLLM on Two DGX Stations"/g)).toHaveLength(3);
   });
 
-  it("keeps the headless Station installer agent-aware in every generated guide", () => {
+  it.each(
+    Array.from(
+      [
+        ["openclaw", "openclaw"],
+        ["hermes", "hermes"],
+        ["deepagents", "langchain-deepagents-code"],
+      ] as const,
+      ([variant, agent]) => ({ variant, agent }),
+    ),
+  )("keeps the $variant headless Station installer aware of $agent", ({ variant, agent }) => {
     const source = fs.readFileSync(VLLM_SETUP, "utf-8");
-    const variants = [
-      ["openclaw", "openclaw"],
-      ["hermes", "hermes"],
-      ["deepagents", "langchain-deepagents-code"],
-    ] as const;
 
-    for (const [variant, agent] of variants) {
-      const rendered = renderAgentVariantPage(source, variant);
-      const stationDeepseekCommand = [
-        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
-        `  NEMOCLAW_AGENT=${agent} \\`,
-        "  bash -s -- --station-deepseek",
-      ].join("\n");
+    const rendered = renderAgentVariantPage(source, variant);
+    const stationDeepseekCommand = [
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
+      `  NEMOCLAW_AGENT=${agent} \\`,
+      "  bash -s -- --station-deepseek",
+    ].join("\n");
 
-      expect(rendered).toContain(stationDeepseekCommand);
-      expect(rendered).toContain(`NEMOCLAW_AGENT=${agent} \\`);
-      expect(rendered).toContain("NEMOCLAW_PROVIDER=install-vllm");
-      expect(rendered).not.toContain("<AgentOnly");
-    }
+    expect(rendered).toContain(stationDeepseekCommand);
+    expect(rendered).toContain(`NEMOCLAW_AGENT=${agent} \\`);
+    expect(rendered).toContain("NEMOCLAW_PROVIDER=install-vllm");
+    expect(rendered).not.toContain("<AgentOnly");
   });
 
-  it("keeps first-run dual-Station pair qualification inside the shell installer", () => {
-    const source = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
-    const variants = [
-      ["openclaw", "openclaw"],
-      ["hermes", "hermes"],
-      ["deepagents", "langchain-deepagents-code"],
-    ] as const;
+  it.each(
+    Array.from(
+      [
+        ["openclaw", "openclaw"],
+        ["hermes", "hermes"],
+        ["deepagents", "langchain-deepagents-code"],
+      ] as const,
+      ([variant, agent]) => ({ variant, agent }),
+    ),
+  )(
+    "keeps first-run $variant dual-Station pair qualification in the $agent installer",
+    ({ variant, agent }) => {
+      const source = fs.readFileSync(DUAL_STATION_VLLM_SETUP, "utf-8");
 
-    for (const [variant, agent] of variants) {
       const rendered = renderAgentVariantPage(source, variant);
       const pairCommand = [
         "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
@@ -234,8 +241,8 @@ describe("DGX Station documentation ownership", () => {
       expect(rendered).toContain("The installer qualifies the pair");
       expect(rendered).not.toContain("nemoclaw onboard --non-interactive");
       expect(rendered).not.toContain("<AgentOnly");
-    }
-  });
+    },
+  );
 
   function verifyRetiredPrerequisitesRedirects() {
     const redirects = (

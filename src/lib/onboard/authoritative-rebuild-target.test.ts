@@ -104,15 +104,17 @@ describe("authoritative rebuild gateway binding", () => {
     expect(() => resolve(options)).toThrow(/only together for an authoritative rebuild resume/);
   });
 
-  it("rejects a non-canonical name or invalid target port", () => {
-    expect(() =>
-      resolve({
-        authoritativeResumeConfig: true,
-        targetGatewayName: "nemoclaw-9090",
-        targetGatewayPort: 8081,
-      }),
-    ).toThrow(/does not match port 8081/);
-    for (const port of [0, 65536, 8081.5]) {
+  it.each([0, 65536, 8081.5])(
+    "rejects a non-canonical name or invalid target port [%s]",
+    (port) => {
+      expect(() =>
+        resolve({
+          authoritativeResumeConfig: true,
+          targetGatewayName: "nemoclaw-9090",
+          targetGatewayPort: 8081,
+        }),
+      ).toThrow(/does not match port 8081/);
+
       expect(() =>
         resolve({
           authoritativeResumeConfig: true,
@@ -120,8 +122,8 @@ describe("authoritative rebuild gateway binding", () => {
           targetGatewayPort: port,
         }),
       ).toThrow(/Invalid authoritative rebuild gateway port/);
-    }
-  });
+    },
+  );
 
   it("requires a complete authoritative target when the outer lifecycle owns the lock", () => {
     expect(() => resolve({ onboardLockAlreadyHeld: true })).toThrow(

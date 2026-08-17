@@ -31,7 +31,20 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     );
   });
 
-  it("patches every 0.1.34 mutation and credential boundary idempotently", () => {
+  it.each([
+    'args.sandbox = "none"',
+    "args.no_mcp = not has_managed_mcp",
+    "args.mcp_config = managed_mcp_config if has_managed_mcp else None",
+    "args.shell_allow_list = None",
+    'getattr(args, "update", False)',
+    'getattr(args, "auto_update", False)',
+    'getattr(args, "install", None)',
+    'getattr(args, "model_params", None)',
+    'getattr(args, "interpreter_tools", None)',
+    'getattr(args, "auto_approve", False)',
+    "_nemoclaw_assert_safe_runtime()",
+    'os.environ.pop("PYTHONPATH", None)',
+  ])("patches every 0.1.34 mutation and credential boundary idempotently [case %#]", (expected) => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
     patchFixture(tempDir);
@@ -66,22 +79,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
     }
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
-    for (const expected of [
-      'args.sandbox = "none"',
-      "args.no_mcp = not has_managed_mcp",
-      "args.mcp_config = managed_mcp_config if has_managed_mcp else None",
-      "args.shell_allow_list = None",
-      'getattr(args, "update", False)',
-      'getattr(args, "auto_update", False)',
-      'getattr(args, "install", None)',
-      'getattr(args, "model_params", None)',
-      'getattr(args, "interpreter_tools", None)',
-      'getattr(args, "auto_approve", False)',
-      "_nemoclaw_assert_safe_runtime()",
-      'os.environ.pop("PYTHONPATH", None)',
-    ]) {
-      expect(main).toContain(expected);
-    }
+
+    expect(main).toContain(expected);
   });
 
   it.each([
@@ -637,9 +636,9 @@ check("disabled", False)
     expect(symlinked.status).not.toBe(0);
   });
 
-  it.runIf(process.platform === "linux")(
-    "passes sealed and anonymous MCP snapshots through ServerProcess restart",
-    () => {
+  it.runIf(process.platform === "linux").each(["sealed-memfd", "anonymous-otmpfile"] as const)(
+    "passes sealed and anonymous MCP snapshots through ServerProcess restart [%s]",
+    (snapshotKind) => {
       const tempDir = createPackageFixture();
       patchFixture(tempDir);
       const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
@@ -654,14 +653,14 @@ check("disabled", False)
           },
         },
       };
-      for (const snapshotKind of ["sealed-memfd", "anonymous-otmpfile"] as const) {
-        fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
 
-        const result = spawnSync(
-          "python3",
-          [
-            "-c",
-            `
+      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          `
 import asyncio
 import errno
 import fcntl
@@ -777,27 +776,26 @@ print(json.dumps({
     "outputs": [json.loads(output) for output in server.outputs],
 }))
 `,
-            configPath,
-            snapshotKind,
-          ],
-          {
-            cwd: tempDir,
-            env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-            encoding: "utf8",
-          },
-        );
+          configPath,
+          snapshotKind,
+        ],
+        {
+          cwd: tempDir,
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+          encoding: "utf8",
+        },
+      );
 
-        expect(result.status, result.stderr).toBe(0);
-        const proof = JSON.parse(result.stdout) as {
-          path: string;
-          kind: string;
-          outputs: unknown[];
-        };
-        expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
-        expect(proof.kind).toBe(snapshotKind);
-        expect(proof.outputs).toEqual([managedConfig, managedConfig]);
-        expect(result.stdout).not.toContain("attacker");
-      }
+      expect(result.status, result.stderr).toBe(0);
+      const proof = JSON.parse(result.stdout) as {
+        path: string;
+        kind: string;
+        outputs: unknown[];
+      };
+      expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
+      expect(proof.kind).toBe(snapshotKind);
+      expect(proof.outputs).toEqual([managedConfig, managedConfig]);
+      expect(result.stdout).not.toContain("attacker");
     },
   );
 

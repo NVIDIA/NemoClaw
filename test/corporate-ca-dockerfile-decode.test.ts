@@ -73,7 +73,7 @@ afterEach(() => {
 
 describe("Deep Agents Code Dockerfile corporate CA validation", () => {
   it.each([...DEEP_AGENTS_DOCKERFILES])(
-    "requires CA:TRUE at every X.509 certificate parser [case %#] (#8119)",
+    "requires CA:TRUE at the X.509 certificate parser in %s (#8119)",
     (dockerfile) => {
       const source = readFileSync(dockerfile, "utf8");
       const parsedCertificates = source.match(/new X509Certificate\(/g) ?? [];
@@ -96,89 +96,87 @@ describe.skipIf(!canRunDecodeBlock)("Deep Agents Code corporate CA constraint", 
   });
 });
 
-for (const [label, dockerfile] of DOCKERFILES) {
-  describe.skipIf(!canRunDecodeBlock)(
-    `corporate CA Dockerfile decode guard — ${label} (#6210)`,
-    () => {
-      it("fails with a clear error on invalid base64", () => {
-        const res = runDockerfileCorporateCaDecode(dockerfile, "not_valid_base64_@@@", tmpDir());
-        expect(res.status).not.toBe(0);
-        expect(res.stderr).toContain("not valid base64");
-      });
+describe.skipIf(!canRunDecodeBlock).each(DOCKERFILES)(
+  "corporate CA Dockerfile decode guard — %s (#6210)",
+  (_label, dockerfile) => {
+    it("fails with a clear error on invalid base64", () => {
+      const res = runDockerfileCorporateCaDecode(dockerfile, "not_valid_base64_@@@", tmpDir());
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("not valid base64");
+    });
 
-      it("fails when the decoded content is not a valid certificate", () => {
-        const res = runDockerfileCorporateCaDecode(
-          dockerfile,
-          Buffer.from("just some text, not a PEM").toString("base64"),
-          tmpDir(),
-        );
-        expect(res.status).not.toBe(0);
-        expect(res.stderr).toContain("valid X.509 certificates");
-      });
+    it("fails when the decoded content is not a valid certificate", () => {
+      const res = runDockerfileCorporateCaDecode(
+        dockerfile,
+        Buffer.from("just some text, not a PEM").toString("base64"),
+        tmpDir(),
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("valid X.509 certificates");
+    });
 
-      it("fails when the payload is a certificate header wrapping non-certificate bytes", () => {
-        const fakePem =
-          "-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----\n";
-        const res = runDockerfileCorporateCaDecode(
-          dockerfile,
-          Buffer.from(fakePem).toString("base64"),
-          tmpDir(),
-        );
-        expect(res.status).not.toBe(0);
-        expect(res.stderr).toContain("valid X.509 certificates");
-      });
+    it("fails when the payload is a certificate header wrapping non-certificate bytes", () => {
+      const fakePem =
+        "-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----\n";
+      const res = runDockerfileCorporateCaDecode(
+        dockerfile,
+        Buffer.from(fakePem).toString("base64"),
+        tmpDir(),
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("valid X.509 certificates");
+    });
 
-      it("fails when a later certificate block in the bundle is corrupt", () => {
-        const corruptTail =
-          "-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----\n";
-        const res = runDockerfileCorporateCaDecode(
-          dockerfile,
-          Buffer.from(`${CERT_PEM}${corruptTail}`).toString("base64"),
-          tmpDir(),
-        );
-        expect(res.status).not.toBe(0);
-        expect(res.stderr).toContain("valid X.509 certificates");
-      });
+    it("fails when a later certificate block in the bundle is corrupt", () => {
+      const corruptTail =
+        "-----BEGIN CERTIFICATE-----\nnot a real certificate\n-----END CERTIFICATE-----\n";
+      const res = runDockerfileCorporateCaDecode(
+        dockerfile,
+        Buffer.from(`${CERT_PEM}${corruptTail}`).toString("base64"),
+        tmpDir(),
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("valid X.509 certificates");
+    });
 
-      it("rejects a PEM that is a certificate request, not a certificate", () => {
-        const csr =
-          "-----BEGIN CERTIFICATE REQUEST-----\nMIIBnjCCAQcCAQAwXjELMAk=\n-----END CERTIFICATE REQUEST-----\n";
-        const res = runDockerfileCorporateCaDecode(
-          dockerfile,
-          Buffer.from(csr).toString("base64"),
-          tmpDir(),
-        );
-        expect(res.status).not.toBe(0);
-        expect(res.stderr).toContain("valid X.509 certificates");
-      });
+    it("rejects a PEM that is a certificate request, not a certificate", () => {
+      const csr =
+        "-----BEGIN CERTIFICATE REQUEST-----\nMIIBnjCCAQcCAQAwXjELMAk=\n-----END CERTIFICATE REQUEST-----\n";
+      const res = runDockerfileCorporateCaDecode(
+        dockerfile,
+        Buffer.from(csr).toString("base64"),
+        tmpDir(),
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("valid X.509 certificates");
+    });
 
-      it("succeeds for a valid base64-encoded certificate", () => {
-        const dir = tmpDir();
-        const res = runDockerfileCorporateCaDecode(
-          dockerfile,
-          Buffer.from(CERT_PEM).toString("base64"),
-          dir,
-        );
-        expect(res.status).toBe(0);
-        expect(
-          readFileSync(join(dir, "ca-certificates/nemoclaw-corporate-ca-01.crt"), "utf-8"),
-        ).toBe(CERT_PEM);
-      });
+    it("succeeds for a valid base64-encoded certificate", () => {
+      const dir = tmpDir();
+      const res = runDockerfileCorporateCaDecode(
+        dockerfile,
+        Buffer.from(CERT_PEM).toString("base64"),
+        dir,
+      );
+      expect(res.status).toBe(0);
+      expect(readFileSync(join(dir, "ca-certificates/nemoclaw-corporate-ca-01.crt"), "utf-8")).toBe(
+        CERT_PEM,
+      );
+    });
 
-      it("strips trailing non-certificate content and bakes only the certificate", () => {
-        const dir = tmpDir();
-        const withTrailer = `${CERT_PEM}\n# a stray comment\n-----BEGIN CERTIFICATE REQUEST-----\nMIIBnjCCAQc=\n-----END CERTIFICATE REQUEST-----\n`;
-        const res = runDockerfileCorporateCaDecode(
-          dockerfile,
-          Buffer.from(withTrailer).toString("base64"),
-          dir,
-        );
-        expect(res.status).toBe(0);
-        const baked = readFileSync(join(dir, "corporate-ca.pem"), "utf-8");
-        expect(baked).toContain("-----BEGIN CERTIFICATE-----");
-        expect(baked).not.toContain("CERTIFICATE REQUEST");
-        expect(baked).not.toContain("stray comment");
-      });
-    },
-  );
-}
+    it("strips trailing non-certificate content and bakes only the certificate", () => {
+      const dir = tmpDir();
+      const withTrailer = `${CERT_PEM}\n# a stray comment\n-----BEGIN CERTIFICATE REQUEST-----\nMIIBnjCCAQc=\n-----END CERTIFICATE REQUEST-----\n`;
+      const res = runDockerfileCorporateCaDecode(
+        dockerfile,
+        Buffer.from(withTrailer).toString("base64"),
+        dir,
+      );
+      expect(res.status).toBe(0);
+      const baked = readFileSync(join(dir, "corporate-ca.pem"), "utf-8");
+      expect(baked).toContain("-----BEGIN CERTIFICATE-----");
+      expect(baked).not.toContain("CERTIFICATE REQUEST");
+      expect(baked).not.toContain("stray comment");
+    });
+  },
+);

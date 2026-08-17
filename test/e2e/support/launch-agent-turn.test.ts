@@ -722,22 +722,21 @@ it("does not qualify structured turns recorded before the baseline (#9160)", () 
   expect(qualification.status).toBe(1);
 });
 
-it("rejects malformed, empty, duplicated, extra, out-of-order, or cross-session records (#9160)", () => {
-  const cases: SessionRecords[] = [
-    { "session-a": [message("assistant"), message("user")] },
-    { "session-a": [message("user"), message("user"), message("assistant")] },
-    { "session-a": [message("user"), message("assistant"), message("assistant")] },
-    { "session-a": [message("user"), "not-json", message("assistant")] },
-    { "session-a": [emptyMessage("user"), message("assistant")] },
-    { "session-a": [message("user"), message("assistant")], "session-b": [message("user")] },
-  ];
-
-  for (const after of cases) {
+it.each([
+  { "session-a": [message("assistant"), message("user")] },
+  { "session-a": [message("user"), message("user"), message("assistant")] },
+  { "session-a": [message("user"), message("assistant"), message("assistant")] },
+  { "session-a": [message("user"), "not-json", message("assistant")] },
+  { "session-a": [emptyMessage("user"), message("assistant")] },
+  { "session-a": [message("user"), message("assistant")], "session-b": [message("user")] },
+] as SessionRecords[])(
+  "rejects malformed, empty, duplicated, extra, out-of-order, or cross-session records [case %#] (#9160)",
+  (after) => {
     const { baseline, qualification } = runEvidenceFixture({ after, expectedTurns: 1 });
     expect(baseline.status).toBe(0);
     expect(qualification.status).toBe(2);
-  }
-});
+  },
+);
 
 it("rejects an unterminated appended session record (#9160)", () => {
   const { baseline, qualification } = runEvidenceFixture({
@@ -822,54 +821,52 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it.runIf(process.platform === "linux")(
-  "sends two inputs and /exit through a real PTY, strips launch authority from OpenShell calls, and ignores terminal copy evidence (#9160)",
-  () => {
-    for (const terminalCopy of ["absent", "ansi", "reordered"] as const) {
-      const {
-        baselineRemoved,
-        hostSessionResidue,
-        openshellCalls,
-        orphanedTuiProcessIds,
-        ptyRecordReceipt,
-        ptyRecordRemoved,
-        result,
-        tuiProcessIds,
-        ttyObserved,
-      } = runLaunchSessionFixture("valid", terminalCopy);
+it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as const)(
+  "sends two inputs and /exit through a real PTY, strips launch authority from OpenShell calls, and ignores terminal copy evidence [%s] (#9160)",
+  (terminalCopy) => {
+    const {
+      baselineRemoved,
+      hostSessionResidue,
+      openshellCalls,
+      orphanedTuiProcessIds,
+      ptyRecordReceipt,
+      ptyRecordRemoved,
+      result,
+      tuiProcessIds,
+      ttyObserved,
+    } = runLaunchSessionFixture("valid", terminalCopy);
 
-      expect(ttyObserved, result.stderr).toBe(true);
-      expect(baselineRemoved).toBe(true);
-      expect(ptyRecordRemoved).toBe(true);
-      expect(hostSessionResidue).toEqual([]);
-      expect(openshellCalls.length).toBeGreaterThan(3);
-      expect(openshellCalls.every((call) => call.authorityNames.length === 0)).toBe(true);
-      expect(openshellCalls.some((call) => call.argv.includes("baseline"))).toBe(true);
-      expect(
-        openshellCalls.some((call) => call.argv.includes(OPENCLAW_PTY_RECORD_WRITER_SCRIPT)),
-      ).toBe(true);
-      expect(tuiProcessIds).toHaveLength(1);
-      expect(orphanedTuiProcessIds).toEqual([]);
-      expect(ptyRecordReceipt).toMatchObject({
-        recordMode: 0o600,
-        recordNlink: 1,
-        recordUid: process.getuid?.(),
-        rootMode: 0o700,
-        rootUid: process.getuid?.(),
-        temporaryExists: false,
-      });
-      expect(Object.keys(ptyRecordReceipt.record).sort()).toEqual([
-        "dev",
-        "ino",
-        "rdev",
-        "runId",
-        "schemaVersion",
-        "ttyPath",
-      ]);
-      expect(ptyRecordReceipt.record.ttyPath).toMatch(/^\/dev\/pts\/\d+$/);
-      expect(result.signal).toBeNull();
-      expect(result.status).toBe(0);
-    }
+    expect(ttyObserved, result.stderr).toBe(true);
+    expect(baselineRemoved).toBe(true);
+    expect(ptyRecordRemoved).toBe(true);
+    expect(hostSessionResidue).toEqual([]);
+    expect(openshellCalls.length).toBeGreaterThan(3);
+    expect(openshellCalls.every((call) => call.authorityNames.length === 0)).toBe(true);
+    expect(openshellCalls.some((call) => call.argv.includes("baseline"))).toBe(true);
+    expect(
+      openshellCalls.some((call) => call.argv.includes(OPENCLAW_PTY_RECORD_WRITER_SCRIPT)),
+    ).toBe(true);
+    expect(tuiProcessIds).toHaveLength(1);
+    expect(orphanedTuiProcessIds).toEqual([]);
+    expect(ptyRecordReceipt).toMatchObject({
+      recordMode: 0o600,
+      recordNlink: 1,
+      recordUid: process.getuid?.(),
+      rootMode: 0o700,
+      rootUid: process.getuid?.(),
+      temporaryExists: false,
+    });
+    expect(Object.keys(ptyRecordReceipt.record).sort()).toEqual([
+      "dev",
+      "ino",
+      "rdev",
+      "runId",
+      "schemaVersion",
+      "ttyPath",
+    ]);
+    expect(ptyRecordReceipt.record.ttyPath).toMatch(/^\/dev\/pts\/\d+$/);
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(0);
   },
 );
 
@@ -888,27 +885,41 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-for (const [mode, reason, behavior] of [
-  ["pty-record-invalid", "pty_record_invalid", "invalid PTY record"],
-  ["pty-record-permission", "pty_record_unavailable", "unreadable PTY record"],
-  ["pty-record-identity", "pty_identity_changed", "changed PTY device identity"],
-  ["pty-termios-unavailable", "pty_termios_unavailable", "unavailable PTY terminal state"],
-] as const) {
-  it.runIf(process.platform === "linux")(`rejects ${behavior} before PTY input (#9160)`, () => {
-    const { baselineRemoved, orphanedTuiProcessIds, result, ttyObserved } = runLaunchSessionFixture(
-      mode,
-      "absent",
-    );
-    const failureEvidence = `${mode}: ${result.stderr}`;
+it.runIf(process.platform === "linux").each([
+  {
+    mode: "pty-record-invalid",
+    reason: "pty_record_invalid",
+    behavior: "invalid PTY record",
+  },
+  {
+    mode: "pty-record-permission",
+    reason: "pty_record_unavailable",
+    behavior: "unreadable PTY record",
+  },
+  {
+    mode: "pty-record-identity",
+    reason: "pty_identity_changed",
+    behavior: "changed PTY device identity",
+  },
+  {
+    mode: "pty-termios-unavailable",
+    reason: "pty_termios_unavailable",
+    behavior: "unavailable PTY terminal state",
+  },
+] as const)("rejects $behavior before PTY input (#9160)", ({ mode, reason }) => {
+  const { baselineRemoved, orphanedTuiProcessIds, result, ttyObserved } = runLaunchSessionFixture(
+    mode,
+    "absent",
+  );
+  const failureEvidence = `${mode}: ${result.stderr}`;
 
-    expect(ttyObserved, failureEvidence).toBe(true);
-    expect(orphanedTuiProcessIds, failureEvidence).toEqual([]);
-    expect(baselineRemoved, failureEvidence).toBe(true);
-    expect(result.signal, failureEvidence).toBeNull();
-    expect(result.status, failureEvidence).toBe(1);
-    expect(result.stderr, failureEvidence).toContain(`"reason":"${reason}"`);
-  });
-}
+  expect(ttyObserved, failureEvidence).toBe(true);
+  expect(orphanedTuiProcessIds, failureEvidence).toEqual([]);
+  expect(baselineRemoved, failureEvidence).toBe(true);
+  expect(result.signal, failureEvidence).toBeNull();
+  expect(result.status, failureEvidence).toBe(1);
+  expect(result.stderr, failureEvidence).toContain(`"reason":"${reason}"`);
+});
 
 it.runIf(process.platform === "linux")(
   "submits each PTY turn once while structured recording is delayed (#9160)",
