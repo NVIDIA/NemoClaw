@@ -25,8 +25,8 @@ const HTTP2_RESET_STDERR =
   "source: tonic::transport::Error(Transport, hyper::Error(Http2, " +
   "Error { kind: Reset(StreamId(3), PROTOCOL_ERROR, Library) }))";
 
-/** gRPC status 9 (FAILED_PRECONDITION): OpenShell understood and refused. */
-const SEMANTIC_REJECTION_STDERR =
+/** Synthetic gRPC status 9 frame accepted by the classifier as a refusal. */
+const SYNTHETIC_REJECTION_FRAME =
   "Error: code: 'Failed precondition', message: 'network policy \"team-web\" rejected: " +
   'preset "slack" declares an egress host that conflicts with the sandbox baseline\', ' +
   "source: tonic::Status { code: FailedPrecondition, grpc_status: 9 }";
@@ -42,7 +42,7 @@ const NON_SUCCESS_STATUSES = [
 ] as const;
 
 const NON_SUCCESS_DIAGNOSTICS = [
-  { diagnosticLabel: "a semantic rejection", stderr: SEMANTIC_REJECTION_STDERR },
+  { diagnosticLabel: "an accepted synthetic refusal frame", stderr: SYNTHETIC_REJECTION_FRAME },
   { diagnosticLabel: "an HTTP/2 reset", stderr: HTTP2_RESET_STDERR },
   { diagnosticLabel: "empty stderr", stderr: "" },
   { diagnosticLabel: "absent stderr", stderr: null },
@@ -61,13 +61,13 @@ const NON_SUCCESS_CASES = NON_SUCCESS_STATUSES.flatMap(({ statusLabel, status })
   })),
 );
 
-describe("openshell policy set outcome classification", () => {
+describe("policy set outcome classification", () => {
   it("reports a clean exit with no error as applied (#9206)", () => {
     expect(classifyPolicySetResult({ status: 0 })).toEqual({ kind: "applied" });
   });
 
-  it("preserves the status and authoritative message of a semantic rejection (#9206)", () => {
-    const outcome = classifyPolicySetResult({ status: 1, stderr: SEMANTIC_REJECTION_STDERR });
+  it("preserves the status and message from an accepted synthetic refusal frame (#9206)", () => {
+    const outcome = classifyPolicySetResult({ status: 1, stderr: SYNTHETIC_REJECTION_FRAME });
 
     expect(outcome).toEqual({
       kind: "rejected",
@@ -131,7 +131,7 @@ describe("openshell policy set outcome classification", () => {
     },
   );
 
-  it("requires an authoritative refusal status before reporting the policy as refused (#9206)", () => {
+  it("requires an accepted synthetic refusal frame before reporting rejection (#9206)", () => {
     const withoutStatus = classifyPolicySetResult({
       status: 1,
       stderr: "Error: code: 'Unknown', message: 'network policy rejected'",
@@ -158,7 +158,7 @@ describe("openshell policy set outcome classification", () => {
     expect(outcome.kind).toBe("ambiguous");
   });
 
-  it("reads the refusal only from the diagnostic OpenShell reported first (#9206)", () => {
+  it("accepts a refusal only from a complete synthetic first-line frame (#9206)", () => {
     const outcome = classifyPolicySetResult({
       status: 1,
       stderr:

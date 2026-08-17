@@ -5,15 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { waitForPolicyMutation } from "./policy-preset-sync";
 
 /**
- * `waitForPolicyMutation` polls through `waitUntil(fn, 10, 2000)`: a 10-second
- * budget probed every 2 seconds. That admits attempts at 0s, 2s, 4s, 6s and 8s
- * before the budget expires.
+ * `waitForPolicyMutation` polls through `waitUntil(fn, 10, 2000)`. Only the
+ * explicit sandbox-not-found readiness condition reaches the 2-second poll.
  */
-const MUTATION_BUDGET_MS = 10_000;
 const MUTATION_POLL_INTERVAL_MS = 2_000;
-const MAX_MUTATION_ATTEMPTS = 5;
 
-/** Produced by `policySetFailure` when OpenShell returns an authoritative refusal. */
+/** Produced by `policySetFailure` for an accepted refusal result. */
 const REJECTION_ERROR_MESSAGE =
   "OpenShell rejected the policy for sandbox 'sb-9206' (exit 1): " +
   "unsupported field in network_policies.weather. The policy was not applied and " +
@@ -46,7 +43,7 @@ describe("waitForPolicyMutation", () => {
     });
   });
 
-  it("attempts a policy submission that OpenShell rejected exactly once (#9206)", () => {
+  it("attempts a rejected policy submission exactly once (#9206)", () => {
     let attempts = 0;
     const mutate = (): boolean => {
       attempts += 1;
@@ -96,8 +93,7 @@ describe("waitForPolicyMutation", () => {
     expect(sleptMs).toEqual([MUTATION_POLL_INTERVAL_MS, MUTATION_POLL_INTERVAL_MS]);
   });
 
-  it("bounds a readiness poll that keeps returning false (#9206)", () => {
-    const startedAtMs = clockMs;
+  it("attempts a policy mutation that returns false exactly once (#9206)", () => {
     let attempts = 0;
     const mutate = (): boolean => {
       attempts += 1;
@@ -107,8 +103,7 @@ describe("waitForPolicyMutation", () => {
     expect(() => waitForPolicyMutation("applyPreset(slack)", mutate)).toThrow(
       "applyPreset(slack) returned false",
     );
-    expect(attempts).toBe(MAX_MUTATION_ATTEMPTS);
-    expect(attempts).toBeLessThanOrEqual(MUTATION_BUDGET_MS / MUTATION_POLL_INTERVAL_MS);
-    expect(clockMs - startedAtMs).toBeLessThanOrEqual(MUTATION_BUDGET_MS);
+    expect(attempts).toBe(1);
+    expect(sleptMs).toEqual([]);
   });
 });
