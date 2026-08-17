@@ -323,6 +323,22 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(false);
   });
 
+  it("keeps a helper failure distinct from a missing interpreter (#8202)", () => {
+    const backupPath = createBackup();
+    writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
+    const wrapperRoot = mkdtempSync(join(tmpdir(), "nemoclaw-failing-python-"));
+    testDirectories.push(wrapperRoot);
+    const pythonWrapper = join(wrapperRoot, "python3");
+    writeFileSync(pythonWrapper, "#!/bin/sh\nexit 1\n");
+    chmodSync(pythonWrapper, 0o755);
+    setSnapshotSanitizerPythonPathForTest(pythonWrapper);
+
+    expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
+      "Credential sanitization failed; removed the incomplete backup",
+    );
+    expect(existsSync(backupPath)).toBe(false);
+  });
+
   it("reports the validated directory when backup cleanup throws (#8202)", () => {
     const backupPath = createBackup();
     const validatedPath = realpathSync(backupPath);
