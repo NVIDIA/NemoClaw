@@ -17,21 +17,10 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 
 describe("onboard inference smoke guard (#3253)", () => {
-  it.each(
-    Array.from(
-      [
-        /compatible-endpoint/i,
-        /broken-model/i,
-        /broken\.example\.invalid/i,
-        /Credential env: configured/i,
-        /503|upstream/i,
-      ],
-      (tableRow) => [tableRow] as const,
-    ),
-  )(
-    "rejects a configured OpenAI-compatible route when chat/completions returns 503 [case %#]",
+  it(
+    "rejects a configured OpenAI-compatible route when chat/completions returns 503",
     testTimeoutOptions(90_000),
-    (expectedDiagnostic) => {
+    () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-smoke-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "setup-inference-smoke-check.cjs");
@@ -164,10 +153,16 @@ const setupInference = createSetupInference({
           `setupInference accepted a configured route without proving chat/completions; output:\n${output}`,
         );
 
-        assert.match(
-          output,
-          expectedDiagnostic,
-          `onboard did not surface actionable inference smoke diagnostics; output:\n${output}`,
+        const expectedDiagnostics = [
+          /compatible-endpoint/i,
+          /broken-model/i,
+          /broken\.example\.invalid/i,
+          /Credential env: configured/i,
+          /503|upstream/i,
+        ];
+        assert.ok(
+          expectedDiagnostics.every((diagnostic) => diagnostic.test(output)),
+          `onboard did not surface all actionable inference smoke diagnostics; output:\n${output}`,
         );
 
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";

@@ -541,12 +541,7 @@ describe("dual-Station managed vLLM lifecycle", () => {
       expect(call.args).toContain(DUAL_STATION_VLLM_RUNTIME.image);
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
     }
-    expect(
-      Array.from(
-        [...fake.captureOptions, ...fake.rmOptions],
-        (options) => options?.env?.VLLM_API_KEY === undefined,
-      ),
-    ).not.toContain(false);
+    expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
   });
 
   it("does not mutate either daemon unless both exact pinned images are present", async () => {
@@ -623,12 +618,7 @@ describe("dual-Station managed vLLM lifecycle", () => {
       expect(call.options?.env?.VLLM_API_KEY).toBeUndefined();
       expect(call.args).not.toContain(API_KEY);
     }
-    expect(
-      Array.from(
-        [...fake.captureOptions, ...fake.rmOptions],
-        (options) => options?.env?.VLLM_API_KEY === undefined,
-      ),
-    ).not.toContain(false);
+    expect([...fake.captureOptions, ...fake.rmOptions].every((options) => options?.env?.VLLM_API_KEY === undefined)).toBe(true);
     expect(fake.buildRemoteDockerEnv).toHaveBeenCalledWith(sshFixture.binding);
   });
 

@@ -777,14 +777,11 @@ test(
       });
       expect(restartForwardList.exitCode, resultText(restartForwardList)).toBe(0);
       expect(forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect(
-        Array.from(hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : [], (dashboardPort) =>
+      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
           Object.is(
             forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, dashboardPort),
             true,
-          ),
-        ),
-      ).not.toContain(false);
+          ))).toBe(true);
 
       // Regression precondition for #5253: Hermes deliberately uses a Python
       // gateway, so its proxy-env and gateway process do not carry OpenClaw's
@@ -1250,14 +1247,11 @@ test(
       });
       expect(managedForwardList.exitCode, resultText(managedForwardList)).toBe(0);
       expect(forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect(
-        Array.from(hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : [], (dashboardPort) =>
+      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
           Object.is(
             forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, dashboardPort),
             true,
-          ),
-        ),
-      ).not.toContain(false);
+          ))).toBe(true);
     }
 
     expect(routingTopologyCaptures).toBe(2);

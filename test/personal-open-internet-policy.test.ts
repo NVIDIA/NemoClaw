@@ -83,9 +83,7 @@ describe("Personal open internet policy preset", () => {
       expect(endpoint.ports).toContain(port);
       const isAllowed = allowedAddressMatcher(endpoint.allowed_ips ?? []);
 
-      expect(
-        Array.from(
-          [
+      expect([
             "0.0.0.0",
             "127.0.0.1",
             "127.1.2.3",
@@ -97,16 +95,10 @@ describe("Personal open internet policy preset", () => {
             "::ffff:127.0.0.1",
             "0:0:0:0:0:ffff:7f00:1",
             "::ffff:169.254.169.254",
-          ],
-          (address) => Object.is(isAllowed(address), false),
-        ),
-      ).not.toContain(false);
+          ].every((address) => Object.is(isAllowed(address), false))).toBe(true);
 
-      expect(
-        Array.from(["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"], (address) =>
-          Object.is(isAllowed(address), true),
-        ),
-      ).not.toContain(false);
+      expect(["8.8.8.8", "10.0.0.1", "2001:4860:4860::8888", "fc00::1"].every((address) =>
+          Object.is(isAllowed(address), true))).toBe(true);
     },
   );
 

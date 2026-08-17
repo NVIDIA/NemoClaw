@@ -176,10 +176,10 @@ test(
 
       progress.phase("create receipt-owned and unrelated resources");
       expect(
-        Array.from(imageWasPresent.keys(), (image) =>
+        [...imageWasPresent.keys()].every((image) =>
           Object.is(engine.capture(["pull", image]).status, 0),
         ),
-      ).not.toContain(false);
+      ).toBe(true);
       await runCommand(shellProbe, openshellBin, sandboxCreateArgs(), {
         artifactName: "podman-uninstall-create-sandbox",
         env: cliEnv,
@@ -211,11 +211,8 @@ test(
       const registryContainerId = registryCreate.stdout.trim();
       expect(registryContainerId).toMatch(/^[a-f0-9]{64}$/u);
       createdContainerIds.push(registryContainerId);
-      expect(
-        Array.from(createdContainerIds, (containerId) =>
-          Object.is(engine.capture(["start", containerId]).status, 0),
-        ),
-      ).not.toContain(false);
+      expect(createdContainerIds.every((containerId) =>
+          Object.is(engine.capture(["start", containerId]).status, 0))).toBe(true);
 
       const runtimeAuthority = {
         schemaVersion: 1,

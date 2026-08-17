@@ -126,9 +126,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     }
   });
 
-  it.each([{ scenario: "sandbox directory" }, { scenario: "Hermes directory" }])(
-    "holds the mutation lock through begin, apply, verification, and finish [$scenario]",
-    ({ scenario }) => {
+  it("holds the mutation lock through begin, apply, verification, and finish", () => {
       const fixture = createRestartFixture();
       const expectedDigest = createHash("sha256").update(fixture.trustedConfig).digest("hex");
 
@@ -189,22 +187,19 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         expect(mode(fixture.sandboxDir)).toBe(0o1775);
         expect(strictHashIsValid(fixture)).toBe(true);
       } finally {
-        const pathname = (
-          {
-            "sandbox directory": fixture.sandboxDir,
-            "Hermes directory": fixture.hermesDir,
-          } as const
-        )[scenario]!;
-        try {
-          fs.chmodSync(pathname, 0o770);
-        } catch {
-          // A failed transition can remove the fixture directory.
-        }
+        const makeRemovable = (pathname: string) => {
+          try {
+            fs.chmodSync(pathname, 0o770);
+          } catch {
+            // A failed transition can remove the fixture directory.
+          }
+        };
+        makeRemovable(fixture.sandboxDir);
+        makeRemovable(fixture.hermesDir);
 
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
-    },
-  );
+    });
 
   it.each(["mutable", "locked"] as const)(
     "keeps weakening fan-out inaccessible and keeps monotonic lock fan-out readable [case %#]",

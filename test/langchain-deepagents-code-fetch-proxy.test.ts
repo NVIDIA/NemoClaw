@@ -130,7 +130,7 @@ print("root-owned-proxy-verification-ok")
   });
 
   it.each(
-    Array.from(["example.com", "169.254.169.254", "127.0.0.1"], (tableRow) => [tableRow] as const),
+    ["example.com", "169.254.169.254", "127.0.0.1"],
   )(
     "prepares read-only raw GitHub access without opening denied fetch targets [%s]",
     (deniedHost) => {

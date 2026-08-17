@@ -135,10 +135,7 @@ describe("host-side credential staging", () => {
   });
 
   it.each(
-    Array.from(
-      ["secret\nheader", "secret\rheader", "secret\0tail"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["secret\nheader", "secret\rheader", "secret\0tail"],
   )("scopes a runtime credential without exporting or enumerating it [%s]", async (value) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     try {

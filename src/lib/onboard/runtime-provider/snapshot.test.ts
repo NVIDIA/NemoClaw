@@ -502,8 +502,7 @@ describe("OpenShell snapshot observation", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         { status: 1, output: "not found", stdout: "", stderr: "" },
         {
           status: 0,
@@ -513,8 +512,6 @@ describe("OpenShell snapshot observation", () => {
           stderr: "",
         },
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("rejects mismatched provider, failed inspection, or missing generation [case %#]", (result) => {
     const capture = vi.fn();
     expect(() =>

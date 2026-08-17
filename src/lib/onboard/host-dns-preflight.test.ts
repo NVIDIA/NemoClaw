@@ -270,10 +270,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
   });
 
   it.each(
-    Array.from(
-      ["ollama", "openai", "anthropic", "vllm", "custom"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["ollama", "openai", "anthropic", "vllm", "custom"],
   )(
     "skips silently (no probe, no exit) when a non-NVIDIA provider is selected (codex P2) [%s]",
     (provider) => {
@@ -324,7 +321,7 @@ describe("assertHostDnsHealthy (#4784)", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it.each(Array.from(["build", "cloud", "routed"], (tableRow) => [tableRow] as const))(
+  it.each(["build", "cloud", "routed"])(
     "runs for explicit NVIDIA Endpoints provider keys (build/cloud/routed) in non-interactive mode [%s]",
     (provider) => {
       const exit = vi.fn();

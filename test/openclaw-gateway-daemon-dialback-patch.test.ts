@@ -144,7 +144,7 @@ describe("OpenClaw gateway daemon self-dialback patch", () => {
     },
   );
 
-  it.each(Array.from(["0", "false", " ", "sandbox-name"], (tableRow) => [tableRow] as const))(
+  it.each(["0", "false", " ", "sandbox-name"])(
     "uses loopback only for the OpenShell gateway daemon while descendants keep the private URL [%s]",
     async (openshell) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-runtime-"));

@@ -309,10 +309,7 @@ describe("PR review advisor", () => {
         noChangesReason: null,
       },
     ];
-    expect(
-      Array.from(invalidReceipts, (terminologyReview) =>
-        Object.is(validate({ ...result, terminologyReview }), false),
-      ),
-    ).not.toContain(false);
+    expect(invalidReceipts.every((terminologyReview) =>
+        Object.is(validate({ ...result, terminologyReview }), false))).toBe(true);
   });
 });

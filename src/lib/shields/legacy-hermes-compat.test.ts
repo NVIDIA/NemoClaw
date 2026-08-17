@@ -828,8 +828,7 @@ describe("legacy Hermes shields compatibility", () => {
     });
 
     it.each(
-      Array.from(
-        [
+      [
           "provider:mutable/locked",
           "verified-mutable",
           "policy",
@@ -837,8 +836,6 @@ describe("legacy Hermes shields compatibility", () => {
           "route",
           "audit",
         ],
-        (tableRow) => [tableRow] as const,
-      ),
     )(
       "completes a timed retained unlock once and leaves its retry side effects idempotent [%s]",
       (event) => {

@@ -1121,7 +1121,7 @@ it.runIf(process.platform === "linux")(
   },
 );
 
-it.each(Array.from(["", "relative-tmp", "/tmp/absolute-tmp"], (tableRow) => [tableRow] as const))(
+it.each(["", "relative-tmp", "/tmp/absolute-tmp"])(
   "passes an absolute host temporary root for empty, relative, or absolute TMPDIR input [%s] (#9160)",
   async (root) => {
     const platform = vi.spyOn(process, "platform", "get").mockReturnValue("linux");

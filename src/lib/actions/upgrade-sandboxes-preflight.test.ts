@@ -148,9 +148,7 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     await expect(upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
 
     const output = errorSpy.mock.calls.flat().join("\n");
-    expect(
-      Array.from(incompatibleNames, (name) => output.includes(JSON.stringify(name))),
-    ).not.toContain(false);
+    expect(incompatibleNames.every((name) => output.includes(JSON.stringify(name)))).toBe(true);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(mocks.captureNamedGatewaySandboxListReadOnly).not.toHaveBeenCalled();
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();

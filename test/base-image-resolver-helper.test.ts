@@ -592,7 +592,7 @@ exit 1`);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("[redacted]");
-    expect(Array.from(secrets, (secret) => !result.stdout.includes(secret))).not.toContain(false);
+    expect(secrets.every((secret) => !result.stdout.includes(secret))).toBe(true);
   });
 
   it("redacts a folded credential preceded by an invalid byte", () => {

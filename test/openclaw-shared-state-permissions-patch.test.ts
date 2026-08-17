@@ -611,21 +611,17 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = "1";
         const rootDir = path.join(fixture.root, "normal-private-store");
 
-        const result = (
-          {
-            "async store": runtime.fileStore({ rootDir, private: true }),
-            "sync store": runtime.fileStoreSync({ rootDir, private: true }),
-          } as const
-        )[scenario]!;
+        const store = scenario === "async store" ? runtime.fileStore : runtime.fileStoreSync;
+        const result = store({ rootDir, private: true });
         expect(result).toMatchObject({ dirMode: 0o700, mode: 0o600, privateMode: true });
 
-        expect(runtime.fileStore({ rootDir })).toMatchObject({
+        expect(store({ rootDir })).toMatchObject({
           dirMode: 0o700,
           mode: 0o600,
           privateMode: false,
         });
         expect(
-          runtime.fileStore({ rootDir, private: true, dirMode: 0o750, mode: 0o640 }),
+          store({ rootDir, private: true, dirMode: 0o750, mode: 0o640 }),
         ).toMatchObject({ dirMode: 0o750, mode: 0o640, privateMode: true });
       } finally {
         restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);

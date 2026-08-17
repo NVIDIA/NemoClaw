@@ -379,7 +379,7 @@ describe("CLI dispatch", () => {
         const output = stderr.join("\n");
         expect(output).toContain(`Unknown nemoclaw command: ${testCase.entered}`);
         expect(output).toContain(testCase.command);
-        expect(Array.from(testCase.notes, (note) => output.includes(note))).not.toContain(false);
+        expect(testCase.notes.every((note) => output.includes(note))).toBe(true);
         expect(output).not.toContain("Try: nemoclaw <sandbox-name> connect");
         expect(exitSpy).toHaveBeenCalledWith(1);
       }

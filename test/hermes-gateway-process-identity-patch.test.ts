@@ -121,9 +121,7 @@ function classify(statusPath: string, commandLine: string) {
 }
 
 describe("Hermes gateway process identity", () => {
-  it.each(Array.from([1, 2], (tableRow) => [tableRow] as const))(
-    "recognises the renamed entrypoint on both detection paths and stays idempotent [%s]",
-    (pass) => {
+  it("recognises the renamed entrypoint on both detection paths and stays idempotent", () => {
       const { statusPath, tmp } = writeFixture();
       try {
         // The unpatched matcher is what makes `hermes status` report a running
@@ -135,8 +133,10 @@ describe("Hermes gateway process identity", () => {
           runtime: false,
         });
 
-        const result = runPatcher(statusPath);
-        expect(result.status, `pass ${pass}: ${result.stderr}`).toBe(0);
+        const firstPatch = runPatcher(statusPath);
+        const secondPatch = runPatcher(statusPath);
+        expect(firstPatch.status, firstPatch.stderr).toBe(0);
+        expect(secondPatch.status, secondPatch.stderr).toBe(0);
 
         expect(classify(statusPath, RENAMED)).toEqual({
           subcommand: "run",
@@ -152,8 +152,7 @@ describe("Hermes gateway process identity", () => {
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
-    },
-  );
+    });
 
   it("keeps the upstream name and the subcommand grammar intact", () => {
     const { statusPath, tmp } = writeFixture();

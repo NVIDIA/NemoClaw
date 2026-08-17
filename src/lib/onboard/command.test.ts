@@ -1079,7 +1079,7 @@ describe("onboard command options", () => {
           runOnboard: vi.fn(),
         }),
       ).rejects.toThrow("--agents YAML parse error");
-      expect(Array.from(testCase.keys, (key) => env[key] === undefined)).not.toContain(false);
+      expect(testCase.keys.every((key) => env[key] === undefined)).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

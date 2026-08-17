@@ -137,10 +137,7 @@ function validateLoginProxyContract(
 
 describe("Deep Agents Code login-shell proxy contract", () => {
   it.each(
-    Array.from(
-      ["symlink", "writable", "wrong-user", "wrong-owner", "root-user"] as const,
-      (tableRow) => [tableRow] as const,
-    ),
+    ["symlink", "writable", "wrong-user", "wrong-owner", "root-user"] as const,
   )(
     "sources normalized proxy values and rejects runtime metadata drift [%s] (#6191)",
     (runtimeEnvMetadata) => {

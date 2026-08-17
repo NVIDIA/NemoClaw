@@ -181,9 +181,7 @@ describe("renderPresetScope (#7179)", () => {
 `;
 
     const lines = renderPresetScope(adversarial);
-    expect(
-      Array.from(lines, (line) => !/[\u0000-\u001f\u007f-\u009f\u202e]/u.test(line)),
-    ).not.toContain(false);
+    expect(lines.every((line) => !/[\u0000-\u001f\u007f-\u009f\u202e]/u.test(line))).toBe(true);
     const joined = lines.join("\n");
     expect(joined).toContain("name\\u{000d}spoof");
     expect(joined).toContain("safe.example\\u{001b}[H:443\\u{000a}FAKE");

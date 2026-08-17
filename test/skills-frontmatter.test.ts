@@ -159,16 +159,13 @@ describe("repo skill markdown files", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "unauthorized-github-write",
         "authorized-single-github-write",
         "adversarial-untrusted-issue-content",
         "configured-github-tool",
         "missing-github-tool",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("keeps issue planning read-only and capability-oriented [%s] (#8362)", (id) => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-plan-issue");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
@@ -248,10 +245,7 @@ describe("repo skill markdown files", () => {
   });
 
   it.each(
-    Array.from(
-      ["adversarial-issue-content", "configured-github-tool", "missing-github-tool"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["adversarial-issue-content", "configured-github-tool", "missing-github-tool"],
   )("keeps issue implementation local and evidence-based [%s] (#8363)", (id) => {
     const skillRoot = path.join(skillsRoot, "nemoclaw-contributor-implement-issue");
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
@@ -366,13 +360,8 @@ describe("repo skill markdown files", () => {
       fs.existsSync(path.join(skillsRoot, "nemoclaw-contributor-onboard-messaging-channel")),
     ).toBe(false);
 
-    expect(
-      Array.from(
-        listMarkdownFiles(skillsRoot),
-        (file) =>
-          !fs.readFileSync(file, "utf8").includes("nemoclaw-contributor-onboard-messaging-channel"),
-      ),
-    ).not.toContain(false);
+    expect(listMarkdownFiles(skillsRoot).every((file) =>
+          !fs.readFileSync(file, "utf8").includes("nemoclaw-contributor-onboard-messaging-channel"))).toBe(true);
 
     const packageGuide = fs.readFileSync(
       path.join(repoRoot, "src", "lib", "messaging", "AGENTS.md"),
@@ -482,8 +471,7 @@ describe("repo skill markdown files", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "nemoclaw-contributor-create-pr",
         "nemoclaw-contributor-implement-issue",
         "nemoclaw-contributor-onboard",
@@ -491,8 +479,6 @@ describe("repo skill markdown files", () => {
         "nemoclaw-contributor-update-dependencies",
         "nemoclaw-skills-guide",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("gives each contributor lifecycle stage one owner [%s] (#8364)", (name) => {
     const readSkill = (name: string) =>
       fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");

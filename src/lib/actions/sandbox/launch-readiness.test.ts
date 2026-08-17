@@ -1041,16 +1041,11 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(
-      Array.from(
-        mutations,
-        (mutation) =>
+    expect(mutations.every((mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ),
-      ),
-    ).not.toContain(false);
+          ))).toBe(true);
   });
 
   it("binds every host mount field without projecting the host source path (#8942)", () => {
@@ -1109,16 +1104,11 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(
-      Array.from(
-        mutations,
-        (mutation) =>
+    expect(mutations.every((mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ),
-      ),
-    ).not.toContain(false);
+          ))).toBe(true);
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         {
@@ -1163,10 +1153,7 @@ describe("launch readiness validation", () => {
       { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
       { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
     ];
-    expect(
-      Array.from(
-        mutations,
-        (mutation) =>
+    expect(mutations.every((mutation) =>
           !Object.is(
             launchReadinessDigest(
               buildLaunchReadinessRegistryProjection(
@@ -1175,9 +1162,7 @@ describe("launch readiness validation", () => {
               ),
             ),
             original,
-          ),
-      ),
-    ).not.toContain(false);
+          ))).toBe(true);
   });
 
   it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {

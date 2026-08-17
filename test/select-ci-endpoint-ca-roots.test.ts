@@ -332,7 +332,7 @@ describe("CI endpoint CA root selection", () => {
     expect(fs.statSync(output).mode & 0o777).toBe(0o604);
   });
 
-  it.skipIf(!hasOpenSsl).each(Array.from(CI_CA_ENDPOINTS, (tableRow) => [tableRow] as const))(
+  it.skipIf(!hasOpenSsl).each(CI_CA_ENDPOINTS)(
     "selects a self-signed system root when the server sends its cross-signed form [case %#]",
     (endpoint) => {
       const directory = tmpDir();

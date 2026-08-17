@@ -20,8 +20,7 @@ describe("auto-pair approval receipts (#4616)", () => {
     spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0;
 
   it.skipIf(pythonUnavailable).each(
-    Array.from(
-      [
+    [
         [{ NEMOCLAW_LIST_SLEEP_MS: "800" }, "list-timeout"],
         [
           { NEMOCLAW_LIST_EXIT_CODE: "1", NEMOCLAW_LIST_STDERR: "raw failure" },
@@ -52,12 +51,10 @@ describe("auto-pair approval receipts (#4616)", () => {
         [{ NEMOCLAW_LIST_STDOUT: "raw invalid json" }, "list-invalid-json"],
         [{ NEMOCLAW_LIST_STDOUT: "[]\n" }, "list-invalid-output"],
         [{ NEMOCLAW_LIST_STDOUT: "{}\n" }, "list-missing-pending"],
-      ] as const,
-      (tableRow) => [tableRow] as const,
-    ),
+    ] as const,
   )(
     "omits raw output from devices-list failure classifications [case %#]",
-    ([environment, receipt]) => {
+    (environment, receipt) => {
       const policy = readAutoPairApprovalPolicyModule();
       expect(policy).toBeTruthy();
       const script = buildAutoPairApprovalScript(

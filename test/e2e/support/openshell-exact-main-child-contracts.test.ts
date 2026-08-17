@@ -75,7 +75,7 @@ function fakeHost() {
 
 describe("OpenShell exact-main child contracts", () => {
   it.each(
-    Array.from([ENTRYPOINT_CHILD_PROBE, EXEC_CHILD_PROBE], (tableRow) => [tableRow] as const),
+    [ENTRYPOINT_CHILD_PROBE, EXEC_CHILD_PROBE],
   )("keeps every embedded child probe syntactically executable [case %#]", (source) => {
     const compiled = spawnSync(
       "python3",

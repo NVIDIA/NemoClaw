@@ -966,14 +966,9 @@ printf '\n'
     );
     expect(directProvider).toMatch(/STATUS_403|ERROR_/);
 
-    expect(
-      Array.from(["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"], (ip) =>
-        Object.is(isPrivateIp(ip), true),
-      ),
-    ).not.toContain(false);
-    expect(
-      Array.from(["8.8.8.8", "142.250.80.46"], (ip) => Object.is(isPrivateIp(ip), false)),
-    ).not.toContain(false);
+    expect(["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
+        Object.is(isPrivateIp(ip), true))).toBe(true);
+    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(true);
 
     progress.phase("exercise scoped host-gateway web fetch policy");
     const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";

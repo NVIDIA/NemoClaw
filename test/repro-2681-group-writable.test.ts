@@ -629,10 +629,7 @@ describe("mutable agent config permissions", () => {
   });
 
   it.each(
-    Array.from(
-      ["run-state-dir-transition", "apply-shields-transition", "finish-shields-transition"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["run-state-dir-transition", "apply-shields-transition", "finish-shields-transition"],
   )(
     "shields-down restores Hermes sticky group-writable config root without group-writable config files [%s]",
     (action) => {

@@ -524,13 +524,9 @@ describe("Podman host-local inference lifecycle", () => {
     expect(thrown).toContain("probe exited 22");
     expect(harness.failures.at(-1)).toMatchObject({ phase: "gpu" });
 
-    expect(
-      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !thrown.includes(secret)),
-    ).not.toContain(false);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !thrown.includes(secret))).toBe(true);
     const failureEvidence = harness.failures.map(({ message }) => message).join("\n");
-    expect(
-      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !failureEvidence.includes(secret)),
-    ).not.toContain(false);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !failureEvidence.includes(secret))).toBe(true);
 
     expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
     expect(harness.written).toHaveLength(0);
@@ -660,13 +656,9 @@ describe("Podman host-local inference lifecycle", () => {
 
     expect(thrown).toContain("probe exited 22");
 
-    expect(
-      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !thrown.includes(secret)),
-    ).not.toContain(false);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !thrown.includes(secret))).toBe(true);
     const failureEvidence = harness.failures.map(({ message }) => message).join("\n");
-    expect(
-      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !failureEvidence.includes(secret)),
-    ).not.toContain(false);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !failureEvidence.includes(secret))).toBe(true);
 
     expect(harness.probe()).toBeNull();
   });
@@ -809,9 +801,7 @@ describe("Podman host-local inference lifecycle", () => {
     expect(harness.failures).toHaveLength(1);
     const evidence = harness.failures[0]?.message ?? "";
 
-    expect(
-      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !evidence.includes(secret)),
-    ).not.toContain(false);
+    expect(PROVIDER_FAILURE_SECRETS.every((secret) => !evidence.includes(secret))).toBe(true);
 
     expect(evidence).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
     const evidenceIndex = harness.events.findIndex((event) => event === "evidence:inference");

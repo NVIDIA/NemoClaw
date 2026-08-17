@@ -132,15 +132,8 @@ describe("effective built-in policy contracts", () => {
       for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
         expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
         const endpoints = policy.endpoints ?? [];
-        expect(Array.from(endpoints, (endpoint) => !methods(endpoint).includes("*"))).not.toContain(
-          false,
-        );
-        expect(
-          Array.from(
-            endpoints.filter(({ protocol }) => protocol === "rest"),
-            (endpoint) => !Object.is(endpoint.tls, "terminate"),
-          ),
-        ).not.toContain(false);
+        expect(endpoints.every((endpoint) => !methods(endpoint).includes("*"))).toBe(true);
+        expect(endpoints.filter(({ protocol }) => protocol === "rest").every((endpoint) => !Object.is(endpoint.tls, "terminate"))).toBe(true);
       }
     },
   );
@@ -418,14 +411,11 @@ describe("effective built-in policy contracts", () => {
         (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
       );
       expect(JSON.stringify(broker), presetName).toContain(new URL(entry.envValue).pathname);
-      expect(
-        Array.from(vendorHosts, (host) =>
+      expect(vendorHosts.every((host) =>
           Object.is(
             (policy.endpoints ?? []).some((endpoint) => endpoint.host === host),
             false,
-          ),
-        ),
-      ).not.toContain(false);
+          ))).toBe(true);
       const browserHosts = (policy.endpoints ?? []).filter((endpoint) =>
         endpoint.host?.endsWith(".browser-use.com"),
       );

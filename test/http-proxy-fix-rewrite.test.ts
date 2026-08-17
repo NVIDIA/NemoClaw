@@ -128,8 +128,7 @@ describe("http-proxy-fix rewrite for a deepinfra-style failure (#2344)", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "Host",
         "host",
         "Proxy-Authorization",
@@ -142,8 +141,6 @@ describe("http-proxy-fix rewrite for a deepinfra-style failure (#2344)", () => {
         "Transfer-Encoding",
         "Upgrade",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "strips Host / Proxy-* / RFC-7230-§6.1 hop-by-hop headers; preserves target-intent headers [%s]",
     (k) => {

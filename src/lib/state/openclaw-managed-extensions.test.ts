@@ -184,7 +184,7 @@ describe("OpenClaw managed extension symlink policy", () => {
 });
 
 describe("OpenClaw managed extension cleanup", () => {
-  it.each(Array.from(EXPECTED_MANAGED_EXTENSIONS, (tableRow) => [tableRow] as const))(
+  it.each(EXPECTED_MANAGED_EXTENSIONS)(
     "removes ordinary state while preserving and validating managed extension directories [case %#]",
     (extensionName) => {
       const command = buildRestoreCleanupCommand(

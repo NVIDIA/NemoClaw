@@ -177,9 +177,7 @@ describe("plugin registration", () => {
 
     const bannerLines = output.split("\n").filter((line) => line.length > 0);
     expect(bannerLines.length).toBeGreaterThan(0);
-    expect(
-      Array.from(bannerLines, (line) => Object.is(line.startsWith("[gateway] "), true)),
-    ).not.toContain(false);
+    expect(bannerLines.every((line) => line.startsWith("[gateway] "))).toBe(true);
   });
 
   it("falls back to onboard config when openclaw.json has no primary model", () => {

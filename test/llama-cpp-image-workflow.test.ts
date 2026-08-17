@@ -137,9 +137,7 @@ describe("llama.cpp image PR workflow", () => {
       source_archive_sha256: "${{ steps.manifest.outputs.source_archive_sha256 }}",
       source_revision: "${{ steps.manifest.outputs.source_revision }}",
     });
-    expect(
-      Array.from(
-        [
+    expect([
           "publication_allowed_ref",
           "publication_anonymous_exact_digest_pull",
           "publication_candidate_tag_template",
@@ -159,10 +157,7 @@ describe("llama.cpp image PR workflow", () => {
           "publication_vulnerability_only_fixed",
           "publication_vulnerability_scanner",
           "publication_vulnerability_severity_cutoff",
-        ],
-        (output) => Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`),
-      ),
-    ).not.toContain(false);
+        ].every((output) => Object.is(config.outputs?.[output], `\${{ steps.manifest.outputs.${output} }}`))).toBe(true);
     expect(namedStep(config, "Compile image manifest").run).toBe(
       "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
@@ -171,9 +166,7 @@ describe("llama.cpp image PR workflow", () => {
     expect(build.strategy?.matrix).toBe("${{ fromJSON(needs.config.outputs.matrix) }}");
 
     const args = String(buildStep.with?.["build-args"] ?? "");
-    expect(
-      Array.from(
-        [
+    expect([
           "backend_directory",
           "compiler_c",
           "compiler_cuda_host_cxx",
@@ -184,10 +177,7 @@ describe("llama.cpp image PR workflow", () => {
           "runtime_uid",
           "source_archive_sha256",
           "source_revision",
-        ],
-        (output) => args.includes(`needs.config.outputs.${output}`),
-      ),
-    ).not.toContain(false);
+        ].every((output) => args.includes(`needs.config.outputs.${output}`))).toBe(true);
     expect(args).toContain("CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}");
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);

@@ -214,9 +214,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
         fs.readFileSync(path.join(path.dirname(wrapper.eventsPath), entry.name), "utf8"),
       )
       .join("\n");
-    expect(
-      Array.from(secretMarkers, (secretMarker) => !wrapperArtifacts.includes(secretMarker)),
-    ).not.toContain(false);
+    expect(secretMarkers.every((secretMarker) => !wrapperArtifacts.includes(secretMarker))).toBe(true);
     expect(wrapperArtifacts).not.toMatch(/(?:TOKEN|API_KEY|PASSWORD)=/u);
     // The fake delegate records a constant marker only; it never serializes argv.
     expect(fs.readFileSync(delegateMarkerLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([

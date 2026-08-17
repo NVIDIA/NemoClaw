@@ -196,10 +196,7 @@ describe("package-managed Docker-driver gateway env service", () => {
   });
 
   it.each(
-    Array.from(
-      ["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["signing_key_path", "public_key_path", "kid_path", "gateway_id", "ttl_secs"],
   )(
     "rejects incomplete gateway JWT config before writing env or starting the service [%s] (#6903)",
     (key) => {

@@ -414,14 +414,11 @@ describe("E2E workflow plan", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "Network: enforces network-policy rules",
         "Network: runs on ubuntu-latest",
         "Network: validates issue-2478 recovery",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "rejects malformed, implementation-derived, and duplicate display names [%s]",
     (displayName) => {

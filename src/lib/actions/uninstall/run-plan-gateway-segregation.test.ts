@@ -392,11 +392,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(otherEnv, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(false);
       expect(fs.existsSync(stateDir)).toBe(true);
-      expect(
-        Array.from(adapterStateEntries, (name) =>
-          Object.is(fs.existsSync(path.join(stateDir, name)), true),
-        ),
-      ).not.toContain(false);
+      expect(adapterStateEntries.every((name) =>
+          Object.is(fs.existsSync(path.join(stateDir, name)), true))).toBe(true);
       expect(kill).not.toHaveBeenCalled();
       expect(
         run.mock.calls.some(
@@ -917,11 +914,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
       expect(kill.mock.calls.every(([pid]) => pid !== 4242)).toBe(true);
-      expect(
-        Array.from(proxyStateEntries, (entry) =>
-          Object.is(fs.existsSync(path.join(shared, entry)), true),
-        ),
-      ).not.toContain(false);
+      expect(proxyStateEntries.every((entry) =>
+          Object.is(fs.existsSync(path.join(shared, entry)), true))).toBe(true);
       expect(logs).toContain(
         "Preserving the shared Ollama auth proxy for the remaining gateway ports",
       );
@@ -1321,11 +1315,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
       expect(proxyProcessIsRunning).toBe(true);
-      expect(
-        Array.from(proxyStateEntries, (entry) =>
-          Object.is(fs.existsSync(path.join(stateDir, entry)), true),
-        ),
-      ).not.toContain(false);
+      expect(proxyStateEntries.every((entry) =>
+          Object.is(fs.existsSync(path.join(stateDir, entry)), true))).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

@@ -319,8 +319,7 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "AS wechat-npm-cache",
         "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
         "RUN --network=none",
@@ -338,8 +337,6 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
         'rm -rf "$install_cache"',
         'test ! -e "$install_cache"',
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("keeps the image cache trusted and deletes the sandbox-writable copy [%s]", (fragment) => {
     const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 

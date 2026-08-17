@@ -154,15 +154,12 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 
 describe("LangChain Deep Agents Code image contracts", () => {
   it.each(
-    Array.from(
-      [
+    [
         "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
         "/usr/local/bin/dcode --version",
         "/usr/local/bin/dcode.real --version",
         "/usr/local/bin/deepagents-code --version",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("hardens copied NemoClaw blueprints against sandbox-user mutation [%s]", (probe) => {
     const dockerfile = readAgentFile("Dockerfile");
     const finalRuntimeRoot = [
@@ -411,9 +408,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
     expect(wrapper).toContain("assert_no_auth_store_credentials");
     expect(wrapper).toContain("assert_no_codex_auth_credentials");
-    expect(
-      Array.from(
-        [
+    expect([
           "export DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
           "export LANGSMITH_TRACING=false",
           "export DEEPAGENTS_CODE_OFFLINE=1",
@@ -424,13 +419,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
           'reject_managed_override "sandbox isolation"',
           'reject_managed_override "MCP posture"',
           'reject_managed_override "shell allow-list posture"',
-        ],
-        (s) => wrapper.includes(s),
-      ),
-    ).not.toContain(false);
-    expect(
-      Array.from(
-        [
+        ].every((s) => wrapper.includes(s))).toBe(true);
+    expect([
           "managed-dcode-runtime.py",
           "dcode-session-supervisor.py",
           "nemoclaw_observability.py",
@@ -454,10 +444,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
           "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
           "/opt/venv/bin/pip3 check",
           "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py",
-        ],
-        (s) => dockerfile.includes(s),
-      ),
-    ).not.toContain(false);
+        ].every((s) => dockerfile.includes(s))).toBe(true);
     expect(
       dockerfile
         .split("\n")
@@ -856,8 +843,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("ships live policy behavior checks for Deep Agents Code", verifyDeepAgentsLivePolicyChecks);
   it.each(
-    Array.from(
-      [
+    [
         'sandbox_exec "test -d /sandbox/.deepagents"',
         "command -v dcode",
         "dcode -n 'Reply with exactly one word: PONG' --json",
@@ -947,8 +933,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "find /sandbox/.deepagents -maxdepth 3 -type f",
         '-name "*.log"',
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("ships a headless inference acceptance check for Deep Agents Code [%s]", (expected) => {
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
     const wrapperContract = headlessCheck.match(
@@ -1066,9 +1050,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "ASIA" + "A".repeat(16),
     ];
 
-    expect(
-      Array.from(secretSamples, (sample) => Object.is(detectsSecret(sample), "secret")),
-    ).not.toContain(false);
+    expect(secretSamples.every((sample) => Object.is(detectsSecret(sample), "secret"))).toBe(true);
     expect(detectsSecret("managed-placeholder-key")).toBe("clean");
   });
 
@@ -1119,16 +1101,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         ["aiohttp", "3.14.3"],
         ["cryptography", "50.0.0"],
         ["deepagents-code", "0.1.34"],
         ["langgraph-checkpoint-sqlite", "3.1.1"],
-      ] as const,
-      (tableRow) => [tableRow] as const,
-    ),
-  )("records dependency advisory review for the lockfile [case %#]", ([name, expectedVersion]) => {
+    ] as const,
+  )("records dependency advisory review for the lockfile [case %#]", (name, expectedVersion) => {
     const review = readAgentFile("dependency-review.md");
     const requirementsLock = readAgentFile("requirements.lock");
     const adapterModule = readAgentFile(

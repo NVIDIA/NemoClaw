@@ -831,15 +831,13 @@ describe("dependency release ledger collector", () => {
       expect(invocation).not.toContain("attacker.invalid");
     }
     expect(invocations[0]).toContain("repos/acme/dependency");
-    expect(
-      Array.from(invocations.slice(1), (invocation) => {
+    expect(invocations.slice(1).every((invocation) => {
         const repositoryPath = invocation.find((argument) => argument.startsWith("repos/"));
         return (
           repositoryPath !== undefined &&
           /^(?:repos\/acme\/dependency|repos\/Acme\/Dependency\/)/u.test(repositoryPath)
         );
-      }),
-    ).not.toContain(false);
+      })).toBe(true);
     const paginatedInvocations = invocations.filter((invocation) =>
       invocation.some(
         (argument) =>

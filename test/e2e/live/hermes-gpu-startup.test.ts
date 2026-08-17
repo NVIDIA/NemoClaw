@@ -468,11 +468,8 @@ test(
         HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
       ]);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
-      expect(
-        Array.from(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS, (fragment) =>
-          resultText(install).includes(fragment),
-        ),
-      ).not.toContain(false);
+      expect(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
+          resultText(install).includes(fragment))).toBe(true);
     };
     await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 

@@ -265,9 +265,7 @@ describe("URL redaction", () => {
     expect(logResult).toContain("model=****&keep=yes");
     expect(logResult).not.toContain(encodedOpenAi);
     expect(logResult).not.toContain(secrets.openai);
-    expect(
-      Array.from(Object.values(secrets), (secret) => !redactedResult.includes(secret)),
-    ).not.toContain(false);
+    expect(Object.values(secrets).every((secret) => !redactedResult.includes(secret))).toBe(true);
   });
 
   it.each([

@@ -130,10 +130,10 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(turns).toHaveLength(16);
     expect(actualAnalysis).toEqual(expectedAnalysis);
     expect(
-      Array.from(turns.entries(), ([index, turn]) =>
+      [...turns.entries()].every(([index, turn]) =>
         turn.prompt.includes(`Turn ${index + 1}/${turns.length}`),
       ),
-    ).not.toContain(false);
+    ).toBe(true);
     const workingPrompts = analysisTurns.map((turn) => turn.prompt);
     expect(
       workingPrompts.filter((prompt) => prompt.includes("Do not produce final JSON")),

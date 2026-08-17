@@ -47,7 +47,7 @@ describe("retired shell E2E entrypoints", () => {
     expect(shellEntrypoints).toEqual([]);
   });
 
-  it.each(Array.from(FORBIDDEN_WORKFLOW_REFERENCES, (tableRow) => [tableRow] as const))(
+  it.each(FORBIDDEN_WORKFLOW_REFERENCES)(
     "keeps workflows from referencing retired shell lanes [case %#]",
     (reference) => {
       const workflowText = workflowFiles()
@@ -60,7 +60,7 @@ describe("retired shell E2E entrypoints", () => {
     },
   );
 
-  it.each(Array.from(FORBIDDEN_WORKFLOW_REFERENCES, (tableRow) => [tableRow] as const))(
+  it.each(FORBIDDEN_WORKFLOW_REFERENCES)(
     "keeps review-advisor configuration from recommending retired shell lanes [case %#]",
     (reference) => {
       const advisorText = REVIEW_ADVISOR_CONFIGS.map((file) => fs.readFileSync(file, "utf8")).join(

@@ -49,18 +49,15 @@ async function listen(server: Server): Promise<number> {
 
 describe("Google Chat webhook route proxy", () => {
   it.each(
-    Array.from(
-      [
+    [
         ["/", "POST"],
         ["/health", "POST"],
         ["/ws", "POST"],
         ["/googlechat", "GET"],
-      ] as const,
-      (tableRow) => [tableRow] as const,
-    ),
+    ] as const,
   )(
     "forwards only POST /googlechat and denies dashboard or control routes [case %#]",
-    async ([path, method]) => {
+    async (path, method) => {
       const received: Array<{ method?: string; url?: string; body: string }> = [];
       const upstream = createServer((request, response) => {
         const chunks: Buffer[] = [];

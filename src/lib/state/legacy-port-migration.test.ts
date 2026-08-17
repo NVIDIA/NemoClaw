@@ -254,10 +254,7 @@ describe("legacy non-default gateway state migration", () => {
   });
 
   it.each(
-    Array.from(
-      ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"],
   )("keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]", (entry) => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");

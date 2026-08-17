@@ -113,10 +113,7 @@ except ValueError as exc:
   });
 
   it.each(
-    Array.from(
-      ["non-list", "empty-list", "non-string-item", "empty-string-item", "whitespace-string-item"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["non-list", "empty-list", "non-string-item", "empty-string-item", "whitespace-string-item"],
   )("rejects malformed platform runtimes via the generator entry path [%s]", (label) => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     try {

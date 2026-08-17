@@ -44,7 +44,7 @@ function extractedFiles(root: string): string[] {
 }
 
 describe("compiled diagnostics CLI", () => {
-  it.each(Array.from(["dmesg", "log", "nvidia-smi"], (tableRow) => [tableRow] as const))(
+  it.each(["dmesg", "log", "nvidia-smi"])(
     "creates a scoped redacted archive and rejects unknown sandboxes without partial output [%s] (#7617)",
     (command) => {
       const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-contract-"));

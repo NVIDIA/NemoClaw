@@ -185,9 +185,9 @@ describe("OpenShell 0.0.99 migration review", () => {
     expect(launch?.authorityStore).toBe(authorityStore);
   });
 
-  it.each(Array.from(ranges, (tableRow) => [tableRow] as const))(
+  it.each(ranges)(
     "binds every adjacent range to its declared unique commit ledger [case %#] (#8497)",
-    ([from, to, paths, commitText]) => {
+    (from, to, paths, commitText) => {
       const ledger = parseLedger();
       const table = parseRangeTable();
 

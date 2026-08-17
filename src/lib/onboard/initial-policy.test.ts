@@ -205,8 +205,7 @@ describe("initial sandbox policy helpers", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "/sys/class",
         "/sys/class/net",
         "/sys/bus/pci/devices",
@@ -214,8 +213,6 @@ describe("initial sandbox policy helpers", () => {
         "/sys/fs",
         "/sys/kernel",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "scopes sysfs read access and lets OpenShell own /proc GPU enrichment [%s] (#7103)",
     (unrelatedPath) => {
@@ -257,7 +254,7 @@ describe("initial sandbox policy helpers", () => {
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
   });
 
-  it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (tableRow) => [tableRow] as const))(
+  it.each(STATION_GB300_SYSFS_READ_ONLY_PATHS)(
     "removes stale proc entries from GPU policy input [case %#] (#7103)",
     (sysfsPath) => {
       const gpuPolicy = buildDirectGpuPolicyYaml(
@@ -468,7 +465,7 @@ network_policies: {}
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
     for (const command of commands) {
-      expect(Array.from(command.args, (arg) => !/[\r\n]/.test(arg))).not.toContain(false);
+      expect(command.args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
     }
   });
 
@@ -604,9 +601,7 @@ network_policies: {}
     }
 
     expect(createdDirs).toHaveLength(2);
-    expect(Array.from(createdDirs, (dir) => Object.is(fs.existsSync(dir), false))).not.toContain(
-      false,
-    );
+    expect(createdDirs.every((dir) => Object.is(fs.existsSync(dir), false))).toBe(true);
   });
 
   it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled and the tier is known non-restricted", () => {

@@ -385,7 +385,7 @@ describe("managed image publication evidence verifier", () => {
     });
   });
 
-  it.each(Array.from(["curl", "docker"], (tableRow) => [tableRow] as const))(
+  it.each(["curl", "docker"])(
     "rejects a non-GHCR reference before invoking registry tools [%s] (#7744)",
     (tool) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-image-evidence-identity-"));

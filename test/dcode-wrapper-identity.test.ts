@@ -396,9 +396,7 @@ describe.skipIf(!canRun)(
           expect(run.status).toBe(0);
           expect(run.launched).toBe(false);
           expect(run.stdout).toContain("Agent:    agent (default)");
-          expect(
-            Array.from(testCase.rejected, (rejected) => !run.stdout.includes(rejected)),
-          ).not.toContain(false);
+          expect(testCase.rejected.every((rejected) => !run.stdout.includes(rejected))).toBe(true);
           expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
         }
       });

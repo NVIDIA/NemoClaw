@@ -745,10 +745,7 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it.each(
-    Array.from(
-      ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"],
   )(
     "preserves Hermes remote platform toolsets while keeping CLI defaults unpinned [%s]",
     async (platform) => {

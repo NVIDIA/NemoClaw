@@ -37,16 +37,10 @@ function supportProgress() {
 
 describe("fixture redaction entry point", () => {
   it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
-    expect(
-      Array.from(["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"], (key) =>
-        Object.is(isValidSecretEnvKey(key), true),
-      ),
-    ).not.toContain(false);
-    expect(
-      Array.from(["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"], (key) =>
-        Object.is(isValidSecretEnvKey(key), false),
-      ),
-    ).not.toContain(false);
+    expect(["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"].every((key) =>
+        Object.is(isValidSecretEnvKey(key), true))).toBe(true);
+    expect(["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"].every((key) =>
+        Object.is(isValidSecretEnvKey(key), false))).toBe(true);
 
     expect(
       buildChildEnv(

@@ -142,10 +142,7 @@ describe("buildGatewayLogScanScript", () => {
   });
 
   it.each(
-    Array.from(
-      ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"],
   )("isolates the current launch segment with awk before grepping [%s]", (token) => {
     // Without launch-segment isolation a stale channel mention from a
     // previous gateway run would still satisfy the probe even though the

@@ -478,8 +478,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
         { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
         { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
@@ -489,8 +488,6 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
           scopes: ["operator.write", "operator.write"],
         },
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "routes only a bounded CLI device-token scope mismatch into canonical pairing [case %#]",
     async (candidate) => {

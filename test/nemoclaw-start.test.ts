@@ -499,10 +499,7 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 
   it.each(
-    Array.from(
-      ["workspace", "memory", "credentials", "flows", "telegram", "media"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["workspace", "memory", "credentials", "flows", "telegram", "media"],
   )("repairs writable OpenClaw state directories in non-root mode [%s]", (dir) => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const match = src.match(/fix_openclaw_ownership\(\) \{([\s\S]*?)^\s*\}/m);
@@ -2358,10 +2355,7 @@ describe("NC-2227-01: legacy migration behavior", () => {
   });
 
   it.each(
-    Array.from(
-      ["workspace-existing", "workspace-main", "workspace-alpha", "workspace-beta"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["workspace-existing", "workspace-main", "workspace-alpha", "workspace-beta"],
   )(
     "provisions only canonical workspace paths from OpenClaw config [%s]",
     (name) => {
@@ -2469,12 +2463,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
     try {
       const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
       expect(result.status).toBe(0);
-      expect(
-        Array.from(
-          ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"],
-          (name) => fs.existsSync(path.join(workspaceDir, name)),
-        ),
-      ).not.toContain(false);
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
       expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
       expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
         "# SOUL.md template content\n",
@@ -2590,12 +2579,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
         env: { PATH: `${fakeBin}:${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
       });
       expect(result.status).toBe(0);
-      expect(
-        Array.from(
-          ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"],
-          (name) => !fs.existsSync(path.join(workspaceDir, name)),
-        ),
-      ).not.toContain(false);
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
       expect(result.stderr).toContain("openclaw workspace templates dir not found");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2723,12 +2707,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
       expect(result.stderr).toContain("skipping default workspace template seed");
-      expect(
-        Array.from(
-          ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"],
-          (name) => !fs.existsSync(path.join(workspaceDir, name)),
-        ),
-      ).not.toContain(false);
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -3253,16 +3232,13 @@ describe("provider placeholder refresh (#4251)", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "GITHUB_TOKEN",
         "AWS_SECRET_ACCESS_KEY",
         "NPM_TOKEN",
         "KUBECONFIG",
         "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "refuses arbitrary host secret names that do not extend a discovered provider envKey inside the sandbox [%s]",
     (blocked) => {
@@ -3864,7 +3840,7 @@ describe("write_auth_profile (#1332)", () => {
     try {
       expect(status).toBe(0);
       const profile = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-      expect(Array.from(Object.keys(profile), (key) => !/^nvidia:/.test(key))).not.toContain(false);
+      expect(Object.keys(profile).every((key) => !/^nvidia:/.test(key))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

@@ -653,9 +653,7 @@ describe("focused staging Brev Launchable lane", () => {
       const error = line.split("; error: ", 2)[1]?.replace(/\)$/u, "") ?? "";
       expect(Buffer.byteLength(error)).toBeLessThanOrEqual(512);
     }
-    expect(
-      Array.from(
-        [
+    expect([
           "brev-test-secret",
           "container-secret",
           "default-secret",
@@ -674,10 +672,7 @@ describe("focused staging Brev Launchable lane", () => {
           "203.0.113.20",
           "identityfile /hidden/private-key",
           "user hidden-user",
-        ],
-        (secretOrConfiguration) => !output.includes(secretOrConfiguration),
-      ),
-    ).not.toContain(false);
+        ].every((secretOrConfiguration) => !output.includes(secretOrConfiguration))).toBe(true);
     expect(fs.existsSync(state)).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(workDir, "cleanup.json"), "utf8"))).toMatchObject({
       status: "ABSENT",
@@ -773,10 +768,7 @@ describe("focused staging Brev Launchable lane", () => {
   });
 
   it.each(
-    Array.from(
-      ["brev exec host", "direct SSH container", "direct SSH host"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["brev exec host", "direct SSH container", "direct SSH host"],
   )(
     "caps blocking readiness and failure diagnostics by separate deadlines [%s]",
     (label) => {

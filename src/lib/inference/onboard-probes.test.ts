@@ -933,9 +933,7 @@ exit 0
       });
     });
 
-    it.each(Array.from(["1", "2"], (tableRow) => [tableRow] as const))(
-      "preserves query-param auth on doubled-timeout chat-completions retry [%s]",
-      (call) => {
+    it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
         const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
@@ -976,24 +974,24 @@ exit 0
 
             expect(result).toMatchObject({ ok: true, api: "openai-completions" });
             expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-            const observedConfigPaths = new Set<string>();
-
-            const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
-            expect(args).toContain("https://api.example.com/v1/chat/completions");
-            expect(args).not.toContain("?key=");
-            expect(args).not.toContain("Authorization: Bearer");
-            expect(args).not.toContain("secret key");
-            observedConfigPaths.add(captureAuthConfigPath(args.split("\n")));
+            const firstArgs = fs.readFileSync(path.join(tmpDir, "args-1.txt"), "utf8");
+            const retryArgs = fs.readFileSync(path.join(tmpDir, "args-2.txt"), "utf8");
+            const combinedArgs = `${firstArgs}\n${retryArgs}`;
+            expect(combinedArgs).toContain("https://api.example.com/v1/chat/completions");
+            expect(combinedArgs).not.toContain("?key=");
+            expect(combinedArgs).not.toContain("Authorization: Bearer");
+            expect(combinedArgs).not.toContain("secret key");
 
             // Both calls must reuse the same auth config tmpfile so a doubled-
             // timeout retry never spawns a second config write that could race
             // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
             // --config has a path value".
-            expect(observedConfigPaths.size).toBe(1);
+            expect(captureAuthConfigPath(firstArgs.split("\n"))).toBe(
+              captureAuthConfigPath(retryArgs.split("\n")),
+            );
           },
         );
-      },
-    );
+      });
 
     it("retries Local Ollama validation when HTTP 200 omits a structured tool call (#8714)", () => {
       const body = `n=$(cat "${HARNESS_COUNTER}")

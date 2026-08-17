@@ -464,18 +464,13 @@ print(json.dumps({"exit_code": module.main()}))
       expect(result.status, result.stdout).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
       expect(result.stderr).toContain("<REDACTED>");
-      expect(
-        Array.from(
-          [
+      expect([
             "SAFE_MCP_TOKEN",
             "runtime-secret-123",
             "second-secret-456",
             "password",
             "query-secret-789",
-          ],
-          (secret) => !result.stderr.includes(secret),
-        ),
-      ).not.toContain(false);
+          ].every((secret) => !result.stderr.includes(secret))).toBe(true);
       expect(result.stderr).not.toContain("\u001b");
       expect(result.stderr).not.toContain("\u202e");
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
@@ -500,9 +495,7 @@ print(json.dumps([
       expect(representations.status, representations.stderr).toBe(0);
       const sanitized = JSON.parse(representations.stdout) as string[];
       expect(sanitized).toHaveLength(4);
-      expect(Array.from(sanitized, (message) => message.includes("<REDACTED>"))).not.toContain(
-        false,
-      );
+      expect(sanitized.every((message) => message.includes("<REDACTED>"))).toBe(true);
 
       expect(sanitized.join("\n")).not.toContain(secret);
     },
@@ -750,14 +743,9 @@ print(json.dumps(results, sort_keys=True))
     for (const [name, scenario] of Object.entries(scenarios)) {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      expect(
-        Array.from(
-          Object.entries(scenario).filter(
+      expect(Object.entries(scenario).filter(
             ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
-          ),
-          ([property, value]) => Object.is(value, true),
-        ),
-      ).not.toContain(false);
+          ).every(([property, value]) => Object.is(value, true))).toBe(true);
     }
   });
 

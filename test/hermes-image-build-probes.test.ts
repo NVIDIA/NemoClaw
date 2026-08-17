@@ -30,7 +30,7 @@ const commands = [
 ] as const;
 
 describe("Hermes image build probes", () => {
-  it.each(Array.from(commands, (tableRow) => [tableRow] as const))(
+  it.each(commands)(
     "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
     (command) => {
       expect(dockerfile).not.toMatch(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/u);

@@ -587,7 +587,7 @@ install_exact_file_or_reuse "$HOME/source" "$HOME/target" 0644 test_repository_f
     expect(output).toMatch(/refusing to overwrite/);
   });
 
-  it.each(Array.from(["1000 0 644", "0 0 666"], (tableRow) => [tableRow] as const))(
+  it.each(["1000 0 644", "0 0 666"])(
     "rejects privileged files with unsafe ownership, mode, type, or parent metadata [%s]",
     (metadata) => {
       const { result, output } = runSourced(

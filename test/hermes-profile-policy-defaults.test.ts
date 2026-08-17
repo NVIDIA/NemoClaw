@@ -308,8 +308,7 @@ module._verify_session_reset_policy(reset_policy, expected)
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "172b78ecb923048859ca177d96f5b010b44ec74bb1d13553577ff49bde1a071d",
         "02b4a0a0c8fc8b204c8f818dff1dd64295a817e5543b8a643198bcedbfbbcba2",
         "7221ee05798566ca7cf570035615a9b29034cf92ce5a6eaa5eec0693040c08aa",
@@ -318,8 +317,6 @@ module._verify_session_reset_policy(reset_policy, expected)
         "85b7cb13d6e6306e75d5eec46f193433df680425533b7d35ee99e0f7eab9512a",
         "d6bf89a33fb708376a7ab354cff8081a3c3726dbfb91d84bbb679cd667db596c",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "hash-binds the reviewed source patch and probes a real config-less profile [%s]",
     (expectedSourceHash) => {

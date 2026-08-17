@@ -121,14 +121,9 @@ describe("DockerProbe secret hygiene", () => {
     },
   );
 
-  it.each([
-    { scenario: "result payload" },
-    { scenario: "stdout artifact" },
-    { scenario: "stderr artifact" },
-    { scenario: "combined artifact" },
-  ])(
-    "kills real-branch Docker output at the capture limit without retaining payload [$scenario] (#7101)",
-    async ({ scenario }) => {
+  it(
+    "kills real-branch Docker output at the capture limit without retaining payload (#7101)",
+    async () => {
       const secret = "DOCKER_OUTPUT_LIMIT_SECRET";
       const outputBytes = 10 * 1024 * 1024 + Buffer.byteLength(secret);
       const output = secret.repeat(Math.ceil(outputBytes / Buffer.byteLength(secret)));
@@ -168,10 +163,11 @@ describe("DockerProbe secret hygiene", () => {
         });
         return child;
       });
-      onTestFinished(() => {
+      onTestFinished(async () => {
         progress.stop();
         processKill.mockRestore();
         spawnMock.mockReset();
+        await fs.rm(artifactsRoot, { recursive: true, force: true });
       });
 
       const probe = new DockerProbe(artifacts, (text) => text, undefined, progress);
@@ -201,15 +197,9 @@ describe("DockerProbe secret hygiene", () => {
       expect(stdoutArtifact).toBe(marker);
       expect(stderrArtifact).toBe(marker);
       expect(JSON.parse(resultArtifactText)).toEqual(result);
-      const published = (
-        {
-          "result payload": JSON.stringify(result),
-          "stdout artifact": stdoutArtifact,
-          "stderr artifact": stderrArtifact,
-          "combined artifact": resultArtifactText,
-        } as const
-      )[scenario]!;
-      expect(published).not.toContain(secret);
+      expect(JSON.stringify({ result, stdoutArtifact, stderrArtifact, resultArtifactText })).not.toContain(
+        secret,
+      );
     },
   );
 

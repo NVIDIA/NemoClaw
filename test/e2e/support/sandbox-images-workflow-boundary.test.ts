@@ -632,10 +632,7 @@ describe("sandbox image workflow boundary", () => {
   });
 
   it.each(
-    Array.from(
-      ["build-hermes-sandbox-image", "messaging-plan-image-boundary"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["build-hermes-sandbox-image", "messaging-plan-image-boundary"],
   )("requires bounded swap before every hosted Hermes image export [%s]", (jobName) => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
 
@@ -715,7 +712,7 @@ describe("sandbox image workflow boundary", () => {
   });
 
   it.each(
-    Array.from(["Set up Node", "Install root dependencies"], (tableRow) => [tableRow] as const),
+    ["Set up Node", "Install root dependencies"],
   )(
     "rejects duplicate setup, rebuilding, or failing to reuse the Hermes image [%s]",
     (stepName) => {

@@ -460,15 +460,12 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
   });
 
   test.each(
-    Array.from(
-      [
+    [
         ["--network", "none"],
         ["--cap-drop", "ALL"],
         ["--security-opt", "no-new-privileges"],
-      ] as const,
-      (tableRow) => [tableRow] as const,
-    ),
-  )("uses an offline read-only least-privilege Docker boundary [case %#]", ([option, value]) => {
+    ] as const,
+  )("uses an offline read-only least-privilege Docker boundary [case %#]", (option, value) => {
     const args = secureDockerRunArgs("security-e2e", "candidate:local");
 
     const optionIndex = args.indexOf(option);

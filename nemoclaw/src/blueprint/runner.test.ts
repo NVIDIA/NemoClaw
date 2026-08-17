@@ -410,8 +410,7 @@ describe("runner", () => {
     });
 
     it.each(
-      Array.from(
-        [
+      [
           "credential_env",
           "credential_default",
           "SECRET_KEY",
@@ -420,8 +419,6 @@ describe("runner", () => {
           "future-token-value",
           "future-authorization",
         ],
-        (tableRow) => [tableRow] as const,
-      ),
     )(
       "does not expose credential field names or secret values in public plan output [%s]",
       async (leaked) => {

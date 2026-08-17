@@ -443,18 +443,15 @@ describe("Historical OpenClaw security revision container E2E contract (#7272)",
   );
 
   test.each(
-    Array.from(
-      [
+    [
         ["--user", "sandbox:sandbox"],
         ["--network", "bridge"],
         ["--cap-drop", "ALL"],
         ["--security-opt", "no-new-privileges"],
-      ] as const,
-      (tableRow) => [tableRow] as const,
-    ),
+    ] as const,
   )(
     "builds a bounded least-privilege Docker boundary without host networking [case %#]",
-    ([option, value]) => {
+    (option, value) => {
       const args = secureDockerRunArgs({
         container: "security-e2e",
         fixtureVolume: "security-e2e-fixture",

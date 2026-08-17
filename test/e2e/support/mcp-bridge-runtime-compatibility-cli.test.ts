@@ -214,7 +214,7 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
     }
   });
 
-  it.each(Array.from(["E2E_ARTIFACT_DIR", "GITHUB_OUTPUT"], (tableRow) => [tableRow] as const))(
+  it.each(["E2E_ARTIFACT_DIR", "GITHUB_OUTPUT"])(
     "reports missing workflow output paths without probing OpenShell [%s] (#6426)",
     (missingName) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-compat-cli-"));

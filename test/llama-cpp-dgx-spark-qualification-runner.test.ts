@@ -503,23 +503,18 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it.each(
-    Array.from(
-      [
-        ["--publish", "0.0.0.0:8081:8081"],
-        ["--publish=0.0.0.0:8081:8081"],
-        ["-p", "0.0.0.0:8081:8081"],
-        ["-p0.0.0.0:8081:8081"],
-        ["--publish-all"],
-        ["--publish-all=true"],
-        ["-P"],
-        ["-P=true"],
-      ],
-      (tableRow) => [tableRow] as const,
-    ),
-  )(
+  it.each([
+    { publishArgv: ["--publish", "0.0.0.0:8081:8081"] },
+    { publishArgv: ["--publish=0.0.0.0:8081:8081"] },
+    { publishArgv: ["-p", "0.0.0.0:8081:8081"] },
+    { publishArgv: ["-p0.0.0.0:8081:8081"] },
+    { publishArgv: ["--publish-all"] },
+    { publishArgv: ["--publish-all=true"] },
+    { publishArgv: ["-P"] },
+    { publishArgv: ["-P=true"] },
+  ])(
     "rejects Docker publish aliases before inserting one loopback mapping at the image boundary [case %#] (#8667)",
-    (publishArgv) => {
+    ({ publishArgv }) => {
       const imageReference = `localhost:5000/repo@sha256:${"d".repeat(64)}`;
       const containerPort = 9_081;
       const options = () => ({

@@ -236,7 +236,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     );
   });
 
-  it.each(Array.from(NO_IMAGE_E2E_JOBS, (tableRow) => [tableRow] as const))(
+  it.each(NO_IMAGE_E2E_JOBS)(
     "rejects alias, ordering, and no-image exemption drift [case %#]",
     (jobName) => {
       const errors = validateMutation((workflow) => {

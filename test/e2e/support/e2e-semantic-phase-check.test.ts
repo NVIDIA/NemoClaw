@@ -197,16 +197,16 @@ describe("semantic E2E phase checker", () => {
     );
   });
 
-  test.each(
-    Array.from(
-      [
-        [],
-        ["test/e2e/live/other.test.ts"],
-        ["test/e2e/live/launchable-smoke.test.ts", "test/e2e/live/other.test.ts"],
+  test.each([
+    { forwardedTestModules: [] },
+    { forwardedTestModules: ["test/e2e/live/other.test.ts"] },
+    {
+      forwardedTestModules: [
+        "test/e2e/live/launchable-smoke.test.ts",
+        "test/e2e/live/other.test.ts",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
-  )("accepts only the exact bootstrap forwarding alias [case %#]", (forwardedTestModules) => {
+    },
+  ])("accepts only the exact bootstrap forwarding alias [case %#]", ({ forwardedTestModules }) => {
     const forwardingModule = {
       relativeModuleId: "test/e2e/live/bootstrap-install-smoke.test.ts",
       errors: [],

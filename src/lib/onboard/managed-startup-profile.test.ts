@@ -522,11 +522,8 @@ describe("managed startup profile", () => {
           MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
         ).not.toContain(obligation.input);
       }
-      expect(
-        Array.from(obligation.supportedFor, (agent) =>
-          supportedAgents.some((supportedAgent) => supportedAgent === agent),
-        ),
-      ).not.toContain(false);
+      expect(obligation.supportedFor.every((agent) =>
+          supportedAgents.some((supportedAgent) => supportedAgent === agent))).toBe(true);
     },
   );
 

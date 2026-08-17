@@ -182,7 +182,7 @@ function runRecoveryHarness({
 }
 
 describe("OpenClaw PID 1 guard-chain recovery", () => {
-  it.each(Array.from(["safety", "proxy", "nemotron", "ciao"], (tableRow) => [tableRow] as const))(
+  it.each(["safety", "proxy", "nemotron", "ciao"])(
     "re-stages packaged guards identically across five recovery preparations [%s] (#7919)",
     (name) => {
       const attempts = 5;

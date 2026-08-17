@@ -446,16 +446,10 @@ describe("PR review advisor workflow boundary", () => {
     );
     expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
 
-    expect(
-      Array.from(["review", "publish"], (jobName) =>
-        workflow.jobs?.[jobName]?.if?.includes("github.event.action != 'edited'"),
-      ),
-    ).not.toContain(false);
-    expect(
-      Array.from(["review", "publish"], (jobName) =>
-        workflow.jobs?.[jobName]?.if?.includes("github.event.changes.base != null"),
-      ),
-    ).not.toContain(false);
+    expect(workflow.jobs?.review?.if).toContain("github.event.action != 'edited'");
+    expect(workflow.jobs?.publish?.if).toContain("github.event.action != 'edited'");
+    expect(workflow.jobs?.review?.if).toContain("github.event.changes.base != null");
+    expect(workflow.jobs?.publish?.if).toContain("github.event.changes.base != null");
 
     expect(noPrimary).toContain("advisor matrix must identify one primary artifact lane");
     expect(twoPrimaries).toContain("advisor matrix must identify one primary artifact lane");

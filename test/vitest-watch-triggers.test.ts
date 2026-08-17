@@ -87,15 +87,12 @@ function triggeredBy(relativePath: string): string[] {
 
 describe("Vitest opaque-input watch triggers", () => {
   it.each(
-    Array.from(
-      [
+    [
         ".github/actions/docker-auth-setup/action.yaml",
         ".github/actions/docker-auth-cleanup/action.yaml",
         ".github/scripts/docker-auth-setup.sh",
         ".github/scripts/docker-auth-cleanup.sh",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",

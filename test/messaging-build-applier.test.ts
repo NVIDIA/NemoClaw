@@ -881,8 +881,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         [
           "@openclaw/discord@2026.7.1",
           "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz",
@@ -908,12 +907,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
           "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
           "msteams-2026.7.1.tgz",
         ],
-      ] as const,
-      (tableRow) => [tableRow] as const,
-    ),
+    ] as const,
   )(
     "runs pinned installs during agent-install without doctor env injection [case %#]",
-    async ([packageSpec, tarballUrl, archiveName]) => {
+    async (packageSpec, tarballUrl, archiveName) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-message-plugins-"));
       const tracePath = path.join(tmp, "openclaw.trace");
       const fakeOpenclaw = path.join(tmp, "openclaw");

@@ -20,14 +20,11 @@ import {
 
 describe("CLI dispatch", () => {
   it.each(
-    Array.from(
-      [
+    [
         "inference set 2>&1",
         "inference set --provider nvidia-prod 2>&1",
         "inference set --model nvidia/model 2>&1",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "keeps `inference set` inside NemoClaw when provider or model is missing [%s]",
     (argv) => {

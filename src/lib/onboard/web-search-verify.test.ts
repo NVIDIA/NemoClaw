@@ -367,12 +367,8 @@ describe("verifyWebSearchInsideSandbox", () => {
       "sh",
       "-c",
     ]);
-    expect(
-      Array.from(
-        d.runCaptureOpenshell.mock.calls,
-        (call) => !call[0].includes("literal-secret-do-not-interpolate"),
-      ),
-    ).not.toContain(false);
+    const commandArguments = d.runCaptureOpenshell.mock.calls.flatMap(([args]) => args);
+    expect(commandArguments.join("\n")).not.toContain("literal-secret-do-not-interpolate");
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
     );
@@ -460,9 +456,7 @@ describe("verifyWebSearchInsideSandbox", () => {
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
 
-    expect(
-      Array.from(d.warn.mock.calls, (call) => !String(call[0] ?? "").includes("SECURITY")),
-    ).not.toContain(false);
+    expect(d.warn.mock.calls.every((call) => !String(call[0] ?? "").includes("SECURITY"))).toBe(true);
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 });

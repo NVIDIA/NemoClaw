@@ -139,9 +139,7 @@ exit 0
       expect(result.status).toBe(1);
       expect(result.stdout).toContain(`Could not restore Hermes host forward on port ${PORT}.`);
       expect(result.stdout).toContain("OpenShell reported:");
-      expect(Array.from(LISTENER_FAILURE, (line) => result.stdout.includes(line))).not.toContain(
-        false,
-      );
+      expect(LISTENER_FAILURE.every((line) => result.stdout.includes(line))).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

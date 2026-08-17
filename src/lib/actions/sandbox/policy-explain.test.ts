@@ -205,8 +205,7 @@ describe("writePolicyContextToSandbox", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "rm -rf",
         "curl http://attacker",
         "whoami",
@@ -216,8 +215,6 @@ describe("writePolicyContextToSandbox", () => {
         "/etc/shadow",
         "evil",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "encodes hostile markdown payloads as base64 so they cannot break out of the write command [%s]",
     (token) => {

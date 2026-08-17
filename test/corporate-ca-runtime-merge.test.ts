@@ -144,16 +144,13 @@ describe("corporate proxy CA trust-anchor rejection (#8650)", () => {
 
 describe("corporate proxy CA runtime merge (#6210)", () => {
   it.each(
-    Array.from(
-      [
+    [
         "SSL_CERT_FILE",
         "CURL_CA_BUNDLE",
         "REQUESTS_CA_BUNDLE",
         "GIT_SSL_CAINFO",
         "NODE_EXTRA_CA_CERTS",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "appends the corporate CA to the OpenShell bundle for OpenClaw and repoints all CA env [%s] (#6210)",
     (name) => {
@@ -204,16 +201,13 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "SSL_CERT_FILE",
         "CURL_CA_BUNDLE",
         "REQUESTS_CA_BUNDLE",
         "GIT_SSL_CAINFO",
         "NODE_EXTRA_CA_CERTS",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("appends the corporate CA and repoints all CA env for Hermes [%s] (#6210)", (name) => {
     const dir = tmpDir("nemoclaw-corp-merge-hermes-");
     const openshell = join(dir, "openshell-ca.pem");

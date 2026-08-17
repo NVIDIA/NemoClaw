@@ -100,12 +100,9 @@ const auditedCommits = [
 describe("OpenShell 0.0.85 migration review", () => {
   it("records every adjacent release range and all 67 audited commits", () => {
     expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(67);
-    expect(
-      Array.from(adjacentRanges, (range) =>
-        review.includes(`| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`),
-      ),
-    ).not.toContain(false);
-    expect(Array.from(auditedCommits, (commit) => review.includes(commit))).not.toContain(false);
+    expect(adjacentRanges.every((range) =>
+        review.includes(`| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`))).toBe(true);
+    expect(auditedCommits.every((commit) => review.includes(commit))).toBe(true);
     expect(review).toContain("283 distinct changed paths");
   });
 
@@ -328,9 +325,7 @@ describe("OpenShell 0.0.85 migration review", () => {
 
     for (const [relativePath, forbidden] of migratedConsumers) {
       const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
-      expect(
-        Array.from(forbidden, (obsoleteTransport) => !source.includes(obsoleteTransport)),
-      ).not.toContain(false);
+      expect(forbidden.every((obsoleteTransport) => !source.includes(obsoleteTransport))).toBe(true);
     }
 
     const phase6 = fs.readFileSync(
@@ -351,10 +346,7 @@ describe("OpenShell 0.0.85 migration review", () => {
   });
 
   it.each(
-    Array.from(
-      ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"],
   )("treats OpenShell TLS identity as supervisor-only in every managed agent [%s]", (name) => {
     const hermesBoundary = fs.readFileSync(
       path.join(repoRoot, "agents", "hermes", "validate-env-secret-boundary.py"),

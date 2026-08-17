@@ -118,7 +118,7 @@ describe("E2E host dependency action boundary (#6961)", () => {
     expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
   });
 
-  it.each(Array.from(["", "   ", "expect\ncurl", "curl"], (tableRow) => [tableRow] as const))(
+  it.each(["", "   ", "expect\ncurl", "curl"])(
     "executes the host helper with validated packages and bounded retries [%s] (#6961)",
     (invalidPackages) => {
       expect(fs.statSync(SCRIPT_PATH).mode & 0o111).not.toBe(0);

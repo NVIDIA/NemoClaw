@@ -495,25 +495,10 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(fs.existsSync(receipt)).toBe(false);
   });
 
-  it.each(
-    Array.from(
-      [
-        "NEMOCLAW_STATION_EXPRESS",
-        "NEMOCLAW_NON_INTERACTIVE",
-        "NEMOCLAW_YES",
-        "NEMOCLAW_POLICY_MODE",
-        "NEMOCLAW_SANDBOX_NAME",
-        "NEMOCLAW_PROVIDER",
-        "NEMOCLAW_VLLM_MODEL",
-        "NEMOCLAW_MODEL",
-        "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION",
-      ],
-      (tableRow) => [tableRow] as const,
-    ),
-  )(
-    "resumes a provider failure and persists its route-validated arbitrary alias [%s]",
+  it(
+    "resumes a provider failure and persists its route-validated arbitrary alias",
     testTimeoutOptions(15_000),
-    async (name) => {
+    async () => {
       const { prepareOnboardSession } = await import("../onboard/session-bootstrap");
       const { wrapOnboard } = await import("../onboard/station-express-resume");
       const { handleProviderInferenceState } =
@@ -597,7 +582,15 @@ describe("Station Express onboarding session state (#7048)", () => {
         steps: { provider_selection: { status: "failed" } },
       });
 
-      vi.stubEnv(name, "");
+      vi.stubEnv("NEMOCLAW_STATION_EXPRESS", "");
+      vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "");
+      vi.stubEnv("NEMOCLAW_YES", "");
+      vi.stubEnv("NEMOCLAW_POLICY_MODE", "");
+      vi.stubEnv("NEMOCLAW_SANDBOX_NAME", "");
+      vi.stubEnv("NEMOCLAW_PROVIDER", "");
+      vi.stubEnv("NEMOCLAW_VLLM_MODEL", "");
+      vi.stubEnv("NEMOCLAW_MODEL", "");
+      vi.stubEnv("NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION", "");
 
       const resumedSetup = vi.fn(async () => {
         expect(process.env).toMatchObject({

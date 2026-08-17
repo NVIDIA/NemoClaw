@@ -339,12 +339,7 @@ test(
           (marker) => `${DELEGATED_CAPABILITY_COMMENT_PREFIX}${marker}`,
         ),
       );
-      expect(
-        Array.from(
-          REQUIRED_OPENSHELL_MCP_FEATURES,
-          (marker) => wrapperSource.split(marker).length === 2,
-        ),
-      ).not.toContain(false);
+      expect(REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => wrapperSource.split(marker).length === 2)).toBe(true);
       expect(components).toEqual({
         cli: fs.realpathSync(delegate),
         gateway: fs.realpathSync(gateway),

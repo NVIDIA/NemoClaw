@@ -644,9 +644,9 @@ describe("service environment", () => {
       expect(noProxy).toContain("10.200.0.1");
     });
 
-    it.each(Array.from(["sh", "bash"], (tableRow) => [tableRow] as const))(
-      "entrypoint writes proxy-env.sh to writable data dir [%s]",
-      (shell) => {
+    it.each(["sh", "bash"])(
+      "entrypoint writes proxy-env.sh that can be sourced by %s",
+      (sourceShell) => {
         const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
         mkdirSync(fakeDataDir, { recursive: true });
         const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
@@ -680,7 +680,7 @@ describe("service environment", () => {
           expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
 
           const sourced = execFileSync(
-            shell,
+            sourceShell,
             [
               "-c",
               `unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_URL _nemoclaw_gateway_token; . '${join(fakeDataDir, "proxy-env.sh")}'; printf 'TOKEN=[%s] TEMP=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
@@ -739,7 +739,7 @@ describe("service environment", () => {
       },
     );
 
-    it.each(Array.from([".bashrc", ".profile"], (tableRow) => [tableRow] as const))(
+    it.each([".bashrc", ".profile"])(
       "removes legacy proxy-env.sh source shims from sandbox user rc files [%s]",
       (rcName) => {
         const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-test-"));

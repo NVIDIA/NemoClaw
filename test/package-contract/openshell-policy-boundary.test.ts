@@ -201,15 +201,12 @@ describe("OpenShell policy boundary package contract", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "managed-tool-gateway-matrix.json",
         "runtime-refresh-credentials.ts",
         "tool-gateway-broker.ts",
         "tool-gateway-control-contract.ts",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("ships the Hermes host broker with its canonical sandbox-name boundary [%s]", (file) => {
     expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
 

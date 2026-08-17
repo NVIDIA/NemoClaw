@@ -114,7 +114,7 @@ describe("assessAmbientRecreateEnv", () => {
 });
 
 describe("isolateAmbientRecreateEnv", () => {
-  it.each(Array.from(AMBIENT_RECREATE_ENV_VARS, (tableRow) => [tableRow] as const))(
+  it.each(AMBIENT_RECREATE_ENV_VARS)(
     "removes ambient selection vars and restores the originals (including unset) [case %#]",
     (name) => {
       const env: NodeJS.ProcessEnv = {

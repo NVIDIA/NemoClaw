@@ -96,7 +96,7 @@ describe("LangChain Deep Agents Code managed entrypoints", () => {
     },
   );
 
-  it.each(Array.from(TRACING_ENABLE_ENV_NAMES, (tableRow) => [tableRow] as const))(
+  it.each(TRACING_ENABLE_ENV_NAMES)(
     "forces every LangChain and LangSmith tracing flag off across image boundaries [case %#]",
     (name) => {
       const dockerfile = readAgentFile("Dockerfile");

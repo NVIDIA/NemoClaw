@@ -178,9 +178,8 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(rwCount).toBe(1);
     expect(roCount).toBe(1);
     const rwSet = new Set(result.filesystem_policy.read_write);
-    expect(
-      Array.from(result.filesystem_policy.read_only, (p) => Object.is(rwSet.has(p), false)),
-    ).not.toContain(false);
+    const readOnlyPaths = result.filesystem_policy.read_only as string[];
+    expect(readOnlyPaths.every((pathname) => !rwSet.has(pathname))).toBe(true);
   });
 
   it("returns the static base path when live policy is empty", () => {

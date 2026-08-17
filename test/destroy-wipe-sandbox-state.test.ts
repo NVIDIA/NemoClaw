@@ -470,13 +470,9 @@ describe("wipeSandboxState (#5449)", () => {
 
       const { script } = execCommand(runOpenshell);
       expect(script).toContain(`cd '${configDir}'`);
-      expect(Array.from(stateDirs, (dir) => script.includes(`'${dir}'`))).not.toContain(false);
-      expect(
-        Array.from(stateDirPrefixes, (prefix) => script.includes(`'${prefix}'*`)),
-      ).not.toContain(false);
-      expect(Array.from(stateFiles, (file) => script.includes(`'${file.path}'`))).not.toContain(
-        false,
-      );
+      expect(stateDirs.every((dir) => script.includes(`'${dir}'`))).toBe(true);
+      expect(stateDirPrefixes.every((prefix) => script.includes(`'${prefix}'*`))).toBe(true);
+      expect(stateFiles.every((file) => script.includes(`'${file.path}'`))).toBe(true);
     },
   );
 

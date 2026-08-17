@@ -22,7 +22,7 @@ const INVALID_KEY = "submitted-invalid-nvidia-key";
 const STACK_TRACE_PATTERNS = [/(^|\s)(TypeError|ReferenceError|SyntaxError):/m, /^\s+at /m];
 
 describe("compiled CLI invalid NVIDIA credential handling", () => {
-  it.each(Array.from(["curl", "docker", "openshell"], (tableRow) => [tableRow] as const))(
+  it.each(["curl", "docker", "openshell"])(
     "rejects the key without disclosure, a stack trace, external calls, or saved onboarding state [%s] (#7616)",
     (command) => {
       const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-key-contract-"));

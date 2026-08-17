@@ -130,7 +130,7 @@ describe("installer version stamping", () => {
     },
   );
 
-  it.each(Array.from([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER], (tableRow) => [tableRow] as const))(
+  it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
     "reports the stamped .version over a mismatched git describe [case %#] (#7474)",
     (installer) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-version-"));

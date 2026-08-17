@@ -31,9 +31,7 @@ describe("E2E fixture dependency review", () => {
       .filter(Boolean)
       .sort();
     expect(lockfiles.length).toBeGreaterThan(0);
-    expect(Array.from(lockfiles, (lockfile) => review.includes(`- \`${lockfile}\``))).not.toContain(
-      false,
-    );
+    expect(lockfiles.every((lockfile) => review.includes(`- \`${lockfile}\``))).toBe(true);
   });
 
   it.each([

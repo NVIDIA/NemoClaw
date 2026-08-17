@@ -1067,9 +1067,7 @@ fi
     expect(base.run).toContain('imagetools inspect "$platform_reference"');
 
     const contract = step(publisher, "Export validated managed image candidate");
-    expect(
-      Array.from(
-        [
+    expect([
           "--arg baseReference",
           "--arg digest",
           "--arg platform",
@@ -1084,10 +1082,7 @@ fi
           "publicationEvidence: $publicationEvidence[0]",
           "https://slsa.dev/provenance/v1",
           "https://spdx.dev/Document",
-        ],
-        (marker) => contract.run?.includes(marker) === true,
-      ),
-    ).not.toContain(false);
+        ].every((marker) => contract.run?.includes(marker) === true)).toBe(true);
     expect(step(publisher, "Upload validated managed image candidate").with).toMatchObject({
       name: "managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}",
       path: "${{ runner.temp }}/managed-image-candidate/contract.json",

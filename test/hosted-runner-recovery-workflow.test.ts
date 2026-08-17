@@ -74,8 +74,7 @@ describe("hosted-runner recovery workflow boundary", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "github.run_attempt == 1",
         "github.repository == 'NVIDIA/NemoClaw'",
         "github.event.workflow_run.run_attempt == 1",
@@ -85,8 +84,6 @@ describe("hosted-runner recovery workflow boundary", () => {
         "github.event.workflow_run.head_repository.full_name == 'NVIDIA/NemoClaw'",
         "github.event.workflow_run.path == '.github/workflows/platform-vitest-main.yaml'",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "fails closed on controller, source, repository, branch, event, and path [%s] (#7140)",
     (fragment) => {

@@ -38,7 +38,7 @@ function exportContract(output: string, agent: string, image: string, amd64 = am
 }
 
 describe("managed base image contract exporter", () => {
-  it.each(Array.from(agents, (tableRow) => [tableRow] as const))(
+  it.each(agents)(
     "binds both native platform digests for every managed agent [case %#] (#7744)",
     ({ agent, image }) => {
       const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-contract-"));

@@ -381,11 +381,8 @@ describe("probeLlamaCppAttachment", () => {
     expect(JSON.stringify(result)).not.toContain(token);
     for (const [argv, options] of probe.mock.calls) {
       expect(JSON.stringify(argv)).not.toContain(token);
-      expect(
-        Array.from(options?.trustedConfigFiles ?? [], (configPath) =>
-          Object.is(fs.existsSync(configPath), false),
-        ),
-      ).not.toContain(false);
+      expect((options?.trustedConfigFiles ?? []).every((configPath) =>
+          Object.is(fs.existsSync(configPath), false))).toBe(true);
     }
     expect(configModes).toEqual([0o600, 0o600, 0o600, 0o600]);
   });

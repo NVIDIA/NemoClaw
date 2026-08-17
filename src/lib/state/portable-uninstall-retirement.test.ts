@@ -113,15 +113,12 @@ describe("portable uninstall retirement state", () => {
         Buffer.from("bc"),
       ),
     );
-    expect(
-      Array.from(
-        [
+    expect(([
           [255, "09adecb5bfc2c496d9e1f4e737b4973699fa3f6f4a9027c0633bda893f7d9cfb"],
           [256, "a62d83f4aa319e94abbccbb75d1dea277e450e5167be6872d87eb52d2e7a8b30"],
           [65_535, "ab48f19398e2af46d86be80dea98e8326b67360e6cd8d3a171cc8c1a2b67a1b7"],
           [65_536, "e868451822f03cecc74591d7785d6799f01d6742a83082d45d9f033c970afdbd"],
-        ] as const,
-        ([size, vector]) =>
+        ] as const).every(([size, vector]) =>
           Object.is(
             portableRetirementFingerprint(
               "a".repeat(64),
@@ -130,9 +127,7 @@ describe("portable uninstall retirement state", () => {
               Buffer.alloc(size, 1),
             ),
             vector,
-          ),
-      ),
-    ).not.toContain(false);
+          ))).toBe(true);
     for (const input of [
       ["", "config", "containers.conf", Buffer.from("x")],
       [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
@@ -433,7 +428,7 @@ describe("portable uninstall retirement state", () => {
     expect(() => resumePortableEvidenceRetirement(staged.homeDir)).toThrow(/changed/);
   });
 
-  it.each(Array.from([false, true], (tableRow) => [tableRow] as const))(
+  it.each([false, true])(
     "rejects noncanonical record fields and incomplete supersession before retirement [%s] (#9189)",
     (extra) => {
       const invalidIdentity = fixture();

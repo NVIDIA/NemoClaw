@@ -163,24 +163,18 @@ describe("prepared provider reconfiguration handoff", () => {
   });
 
   it.each([
-    { scenario: "resume disabled" },
-    { scenario: "sandbox recreation disabled" },
-    { scenario: "onboard lock absent" },
+    { scenario: "resume disabled", override: { resume: false } },
+    { scenario: "sandbox recreation disabled", override: { recreateSandbox: false } },
+    { scenario: "onboard lock absent", override: { onboardLockAlreadyHeld: false } },
   ])(
     "authorizes incomplete-session recovery only for the locked rebuild context [$scenario]",
-    ({ scenario }) => {
+    ({ override }) => {
       const recoveryOptions = { ...authorizedOptions, rebuildProviderReconfigure: undefined };
       expect(rebuildProviderFlowOptions(recoveryOptions, providerTarget)).toMatchObject({
         authoritativeResumeConfig: true,
         forceInferenceSetup: false,
       });
-      const options = (
-        {
-          "resume disabled": { ...recoveryOptions, resume: false },
-          "sandbox recreation disabled": { ...recoveryOptions, recreateSandbox: false },
-          "onboard lock absent": { ...recoveryOptions, onboardLockAlreadyHeld: false },
-        } as const
-      )[scenario]!;
+      const options = { ...recoveryOptions, ...override };
       expect(() => rebuildProviderFlowOptions(options, providerTarget)).toThrow(
         "requires a preflighted locked rebuild resume",
       );

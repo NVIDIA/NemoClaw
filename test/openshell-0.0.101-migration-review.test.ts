@@ -164,7 +164,7 @@ function parseTableIds(pattern: RegExp): string[] {
 }
 
 describe("OpenShell 0.0.101 migration review", () => {
-  it.each(Array.from(RELEASE_IDENTITIES, (tableRow) => [tableRow] as const))(
+  it.each(RELEASE_IDENTITIES)(
     "binds the complete source and artifact review to exact v0.0.101 identities [case %#] (#8599)",
     (identity) => {
       const commitRows = parseTableIds(/^\| `([0-9a-f]{40})` \|/gmu);

@@ -948,10 +948,7 @@ fi
   });
 
   it.each(
-    Array.from(
-      ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
   )(
     "uses only deterministic rail candidates without trust enrollment or network discovery [%s]",
     (command) => {
@@ -1014,10 +1011,7 @@ fi
   );
 
   it.each(
-    Array.from(
-      ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
-      (tableRow) => [tableRow] as const,
-    ),
+    ["ssh-keyscan", "arp-scan", "avahi-browse", "dns-sd", "lldpctl", "nmap", "mdns-scan"],
   )(
     "keeps forbidden discovery and trust enrollment unreachable through pair qualification [%s]",
     (command) => {

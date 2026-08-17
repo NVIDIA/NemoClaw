@@ -550,9 +550,7 @@ test(
     await artifacts.writeJson("phase-3-session-summary.json", completeSessionSummary(complete));
     expect(complete.status).toBe("complete");
     expect(complete.provider).toBe("compatible-endpoint");
-    expect(
-      Array.from(
-        [
+    expect(([
           "preflight",
           "gateway",
           "sandbox",
@@ -561,10 +559,7 @@ test(
           "openclaw",
           "policies",
           "agent_setup",
-        ] as const,
-        (step) => ["complete", "skipped"].includes(complete.steps[step]?.status),
-      ),
-    ).not.toContain(false);
+        ] as const).every((step) => ["complete", "skipped"].includes(complete.steps[step]?.status))).toBe(true);
 
     // Assertion: registry-has-sandbox.
     expect(fs.existsSync(REGISTRY_FILE)).toBe(true);

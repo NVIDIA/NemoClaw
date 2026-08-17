@@ -687,17 +687,12 @@ describe("Deep Agents 0.1.34 progressive-disclosure build patch", () => {
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
 
-    expect(
-      Array.from(
-        fixture.sourcePaths.filter(
+    expect(fixture.sourcePaths.filter(
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
-        ),
-        (file) =>
+        ).every((file) =>
           (firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g"))
-            ?.length ?? 0) === 1,
-      ),
-    ).not.toContain(false);
+            ?.length ?? 0) === 1)).toBe(true);
     expect(
       firstBytes[fixture.agentPath].match(/NemoClaw-managed progressive tool disclosure\./g),
     ).toHaveLength(1);

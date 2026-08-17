@@ -283,13 +283,10 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(cacheRoot)).toBe(true);
     expect(recordedBuildInvocations()).toHaveLength(3);
 
-    expect(
-      Array.from(["openclaw", "hermes", "langchain-deepagents-code"], (agent) =>
+    expect(["openclaw", "hermes", "langchain-deepagents-code"].every((agent) =>
         recordedBuildInvocation(agent).includes(
           `--cache-to type=local,dest=${realpathSync(cacheRoot)}/${agent},mode=max`,
-        ),
-      ),
-    ).not.toContain(false);
+        ))).toBe(true);
 
     expect(readFileSync(seedLog, "utf8")).toContain(
       `materialize-locked-npm-cache-seed.mts export --lockfile ${REPO_ROOT}/nemoclaw/package-lock.json --output ${realpathSync(cacheRoot)}/npm-cache-seed`,
@@ -407,19 +404,13 @@ describe("protected managed-image build-cache boundary", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(recordedBuildInvocations()).toHaveLength(3);
-    expect(
-      Array.from(["openclaw", "hermes", "langchain-deepagents-code"], (agent) =>
-        recordedBuildInvocation(agent).includes("--network none"),
-      ),
-    ).not.toContain(false);
+    expect(["openclaw", "hermes", "langchain-deepagents-code"].every((agent) =>
+        recordedBuildInvocation(agent).includes("--network none"))).toBe(true);
     expect(recordedBuildInvocation("openclaw")).not.toContain("--cache-from");
-    expect(
-      Array.from(["hermes", "langchain-deepagents-code"], (agent) =>
+    expect(["hermes", "langchain-deepagents-code"].every((agent) =>
         recordedBuildInvocation(agent).includes(
           `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent}`,
-        ),
-      ),
-    ).not.toContain(false);
+        ))).toBe(true);
     expect(recordedBuildInvocation("openclaw").split(" ")).toContain("--no-cache");
     expect(recordedBuildInvocation("hermes").split(" ")).not.toContain("--no-cache");
     expect(recordedBuildInvocation("langchain-deepagents-code").split(" ")).not.toContain(

@@ -133,7 +133,7 @@ describe("portable onboarding environment scope", () => {
     expect(env.NEMOCLAW_EXPERIMENTAL_PROFILE).toBe("portable");
   });
 
-  it.each(Array.from(CLEARED_PORTABLE_RUNTIME_ENV_KEYS, (tableRow) => [tableRow] as const))(
+  it.each(CLEARED_PORTABLE_RUNTIME_ENV_KEYS)(
     "clears hostile runtime selectors and installs only canonical derived authority [case %#]",
     (key) => {
       const env: NodeJS.ProcessEnv = {
@@ -212,8 +212,7 @@ describe("portable onboarding environment scope", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         "NEMOCLAW_PROVIDER",
         "NEMOCLAW_MODEL",
         "NEMOCLAW_PROVIDER_MODEL",
@@ -222,8 +221,6 @@ describe("portable onboarding environment scope", () => {
         "NEMOCLAW_POLICY_TIER",
         "NEMOCLAW_TOOL_DISCLOSURE",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "clears ambient inference selectors while preserving an explicit resume policy list [%s] (#9035)",
     (key) => {

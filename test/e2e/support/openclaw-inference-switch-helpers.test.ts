@@ -20,7 +20,7 @@ describe("openclaw-inference-switch post-switch retry classification", () => {
     productMatched: false,
   };
 
-  it.each(Array.from([6, 7, 28, 35, 52, 56], (tableRow) => [tableRow] as const))(
+  it.each([6, 7, 28, 35, 52, 56])(
     "retries only explicit transport and HTTP failures [%s]",
     (exitCode) => {
       expect(

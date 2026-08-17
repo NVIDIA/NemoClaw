@@ -228,18 +228,11 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     const lines = result.stdout.trimEnd().split("\n");
     const managedProxy = "http://managed-proxy.internal:65535";
     const managedNoProxy = "localhost,127.0.0.1,::1,managed-proxy.internal";
-    expect(
-      Array.from(PROXY_URL_ENV_NAMES, (name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`)),
-    ).not.toContain(false);
+    expect(PROXY_URL_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=${managedProxy}`))).toBe(true);
     expect(lines).toContain(`LAUNCHER_${TRUSTED_FETCH_PROXY_ENV_NAME}=${managedProxy}`);
-    expect(
-      Array.from(NO_PROXY_ENV_NAMES, (name) =>
-        lines.includes(`LAUNCHER_${name}=${managedNoProxy}`),
-      ),
-    ).not.toContain(false);
-    expect(
-      Array.from(CLEARED_PROXY_ENV_NAMES, (name) => lines.includes(`LAUNCHER_${name}=__unset__`)),
-    ).not.toContain(false);
+    expect(NO_PROXY_ENV_NAMES.every((name) =>
+        lines.includes(`LAUNCHER_${name}=${managedNoProxy}`))).toBe(true);
+    expect(CLEARED_PROXY_ENV_NAMES.every((name) => lines.includes(`LAUNCHER_${name}=__unset__`))).toBe(true);
     const output = `${result.stdout}\n${result.stderr}`;
     expect(output).not.toContain("inference.local");
     expect(output).not.toContain("corp-proxy.example");
@@ -633,16 +626,13 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
   );
 
   it.each(
-    Array.from(
-      [
+    [
         "# Invalid state:",
         "# Source boundary:",
         "# Source-fix constraint:",
         "# Regression:",
         "# Removal condition:",
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )("documents the proxy-only source boundary and removal condition [%s] (#6191)", (marker) => {
     const start = readAgentFile("start.sh");
     const launcher = readAgentFile("dcode-launcher.sh");
@@ -679,12 +669,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       expect(result.status).not.toBe(0);
       expect(startResult.status).not.toBe(0);
       expect(result.stdout).not.toContain("LAUNCHER_");
-      expect(
-        Array.from(
-          Object.values(managedProxy),
-          (value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value),
-        ),
-      ).not.toContain(false);
+      expect(Object.values(managedProxy).every((value) => !`${result.stdout}\n${result.stderr}\n${startResult.stderr}`.includes(value))).toBe(true);
     },
   );
 });

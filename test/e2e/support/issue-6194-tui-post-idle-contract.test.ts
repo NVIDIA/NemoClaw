@@ -92,12 +92,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "connected_idle_after_status",
       "clean_exit",
     ];
-    expect(
-      Array.from(
-        markers,
-        (marker) => (script.match(new RegExp(`\\b${marker}\\b`, "gu")) ?? []).length === 1,
-      ),
-    ).not.toContain(false);
+    expect(markers.every((marker) => (script.match(new RegExp(`\\b${marker}\\b`, "gu")) ?? []).length === 1)).toBe(true);
     const order = markers.map((marker) => script.indexOf(marker));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);

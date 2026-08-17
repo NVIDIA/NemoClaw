@@ -185,7 +185,7 @@ describe("OpenShell gateway upgrade boundary", () => {
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
-  it.each(Array.from(["v0.0.55", "v0.0.74", "v0.0.89"], (tableRow) => [tableRow] as const))(
+  it.each(["v0.0.55", "v0.0.74", "v0.0.89"])(
     "waits through the historical install for each gateway network [%s]",
     (nemoclawRef) => {
       expect(legacyGatewayUpgradeHostFirewallOptions("v0.0.36")).toEqual({

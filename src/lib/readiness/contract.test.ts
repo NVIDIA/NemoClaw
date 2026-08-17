@@ -256,11 +256,8 @@ describe("system readiness contract", () => {
       },
     ];
 
-    expect(
-      Array.from(unresolvedReferences, ({ report, error }) =>
-        getSystemReadinessReferenceErrors(report).includes(error),
-      ),
-    ).not.toContain(false);
+    expect(unresolvedReferences.every(({ report, error }) =>
+        getSystemReadinessReferenceErrors(report).includes(error))).toBe(true);
   });
 
   it("rejects mutation and unbounded evidence (#7409)", async () => {

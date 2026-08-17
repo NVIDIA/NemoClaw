@@ -12,7 +12,7 @@ import {
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 describe("messaging build applier inactive channels", () => {
-  it.each(Array.from(["npm", "openclaw"], (tableRow) => [tableRow] as const))(
+  it.each(["npm", "openclaw"])(
     "does not install a plugin carried by a serialized inactive channel [%s]",
     (command) => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inactive-channel-plugin-"));

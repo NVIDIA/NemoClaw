@@ -236,14 +236,11 @@ describe("onboarding readiness admission (#7411)", () => {
   });
 
   it.each(
-    Array.from(
-      [
+    [
         ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
         ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
         ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
       ],
-      (tableRow) => [tableRow] as const,
-    ),
   )(
     "admits only the pre-mutation facts that portable host preparation can replace [case %#]",
     (id) => {
