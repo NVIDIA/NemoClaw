@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("gateway restart failure markers", () => {
-  it("keeps supervisor failure markers aligned with the classifier", () => {
+  function verifySupervisorFailureMarkers() {
     const expectedMarkers: Array<
       [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
     > = [
@@ -49,7 +49,9 @@ describe("gateway restart failure markers", () => {
         }),
       ).toMatchObject({ layer });
     }
-  });
+  }
+
+  it("keeps supervisor failure markers aligned with the classifier", verifySupervisorFailureMarkers);
 });
 
 describe("gateway restart failure classification precedence", () => {
