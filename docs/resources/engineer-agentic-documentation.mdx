@@ -44,10 +44,10 @@ A polished site with weak retrieval or verification is not agent-ready.
 Each push to `main` starts `Docs / Post-Merge Catch-Up` for the merged implementation, tests, and documentation from the latest reachable semver tag through the pushed commit.
 
 1. It authors documentation changes in a credential-free OpenShell sandbox.
-2. A separate read-only sandbox reviews the exact documentation candidate.
+2. A separate offline sandbox reviews the exact documentation candidate with a read-only repository checkout.
 3. For an approved nonempty patch, a publisher with no model credential creates a GitHub-verified commit and one SHA-specific draft PR.
 
-An approved empty patch creates no PR; repeat after each nonempty draft merges until a later cumulative exact-SHA run approves an empty patch.
+Each nonempty draft merge triggers another cumulative exact-SHA run until a later run approves an empty patch, which creates no PR.
 Code merges continue while their documentation changes remain pending.
 Required PR checks run `npm run docs` after any required approval.
 

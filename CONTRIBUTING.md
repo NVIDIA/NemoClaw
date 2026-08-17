@@ -474,8 +474,8 @@ Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**
 Each code PR must include required changes to owning repository guidance outside those paths.
 Direct documentation PRs still follow [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), run the applicable documentation validation, and receive an independent documentation writer review.
 
-Repository administrators provide the `POST_MERGE_DOCS_API_KEY` Actions secret. Only inference
-gateway configuration receives it; the sandboxes, artifacts, and publisher do not.
+Repository administrators retain the `POST_MERGE_DOCS_API_KEY` Actions secret until rotation or removal.
+GitHub exposes it only to the author job's `Configure isolated inference` step; hosted-runner teardown removes the gateway runtime copy, and sandboxes, artifacts, and publisher never receive it.
 
 ### Markdown Docs for AI Agents
 

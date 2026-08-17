@@ -30,6 +30,7 @@ export function validatePostMergeDocsWorkflowBoundary(value: unknown): string[] 
   const valid =
     isDeepStrictEqual(workflow.permissions, {}) &&
     Object.keys(jobs).sort().join(",") === "author,gate,publish" &&
+    Object.values(jobs).every((job) => !Object.hasOwn(object(job) ?? {}, "secrets")) &&
     isDeepStrictEqual(gate.permissions, { "pull-requests": "read" }) &&
     isDeepStrictEqual(author.permissions, { contents: "read" }) &&
     isDeepStrictEqual(publish.permissions, {

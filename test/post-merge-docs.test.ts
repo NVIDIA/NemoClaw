@@ -385,8 +385,7 @@ describe("post-merge documentation workflow boundary", () => {
     const mutations: Array<(candidate: Record<string, any>) => void> = [
       (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
       (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
-      (candidate) =>
-        (candidate.jobs.delegate = { secrets: "inherit", uses: "owner/repo/.github/workflows/x" }),
+      (candidate) => (candidate.jobs.gate.secrets = "inherit"),
       (candidate) =>
         (candidate.jobs.author.steps.find(
           (step: Record<string, any>) => step.env?.OPENAI_API_KEY,
@@ -403,7 +402,7 @@ describe("post-merge documentation workflow boundary", () => {
     }
   });
 
-  it("keeps the independent reviewer read-only and offline", () => {
+  it("keeps the independent reviewer's repository read-only and offline", () => {
     expect(policy.filesystem_policy.read_write).toEqual(["/dev", "/sandbox/output"]);
     expect(policy.filesystem_policy.read_only).toContain("/sandbox/repo");
     expect(policy.landlock).toEqual({ compatibility: "hard_requirement" });
