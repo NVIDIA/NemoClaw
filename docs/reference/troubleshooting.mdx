@@ -1631,21 +1631,23 @@ $$nemoclaw <name> snapshot create
 $$nemoclaw <name> rebuild
 ```
 
-### Snapshot Creation Reports a Required Python Interpreter
+### Snapshot Creation Requires a Verified Python Interpreter
 
-Commands that write a host-side snapshot stop with this message when no verified interpreter resolves:
+Snapshot creation stops when NemoClaw cannot resolve a verified `python3` interpreter.
+The error begins with this text:
 
 ```text
 python3 is required for snapshot sanitization; install python3 and retry
 ```
 
 NemoClaw removes credentials from copied state with an isolated `python3` helper, and it fails closed when that helper cannot run.
-The message covers these commands:
+These operations can report the error:
 
 - `$$nemoclaw <name> snapshot create`
-- `$$nemoclaw <name> rebuild`
-- The backup that maintenance takes before it changes sandbox state
-- The backup that NemoClaw takes for a stopped sandbox
+- `$$nemoclaw <name> rebuild`, including rebuilds started by `$$nemoclaw upgrade-sandboxes`
+- `$$nemoclaw backup-all`, including the installer's pre-upgrade backup and an eligible stopped Docker-driver sandbox
+
+NemoClaw appends the cleanup result when it removes the incomplete snapshot or cleanup fails.
 
 A host that already has `python3` can still report this message.
 NemoClaw does not search `PATH` for this credential-bearing helper.
