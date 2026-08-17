@@ -33,12 +33,13 @@ describe("vllm model registry", () => {
     expect(command).toMatch(/^pip install vllm\[fastsafetensors\] && vllm serve/u);
   });
 
-  it("records a finite positive Hugging Face file size for every model", () => {
-    for (const model of VLLM_MODELS) {
+  it.each(VLLM_MODELS)(
+    "records a finite positive Hugging Face file size for every model [case %#]",
+    (model) => {
       expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
       expect(model.downloadSizeBytes).toBeGreaterThan(0);
-    }
-  });
+    },
+  );
 
   it("pins the Hugging Face repository file totals used by storage preflight (#6858)", () => {
     expect(

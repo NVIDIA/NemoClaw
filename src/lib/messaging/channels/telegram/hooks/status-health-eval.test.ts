@@ -71,14 +71,15 @@ describe("evaluateTelegramDiagnostics verdict", () => {
     ).toBe(true);
   });
 
-  it("reports unreachable for a definitive Bot API startup HTTP error", () => {
-    for (const status of [403, 429, 500, 502, 503]) {
+  it.each([403, 429, 500, 502, 503])(
+    "reports unreachable for a definitive Bot API startup HTTP error [case %#]",
+    (status) => {
       const report = evaluateTelegramDiagnostics(
         baseInput({ breadcrumbs: breadcrumbs({ startupHttpError: status }) }),
       );
       expect(report.verdict).toBe("unreachable");
-    }
-  });
+    },
+  );
 
   it("keeps provider-ready ahead of a stale Bot API startup error", () => {
     const idle = evaluateTelegramDiagnostics(

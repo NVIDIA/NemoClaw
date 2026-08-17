@@ -758,16 +758,18 @@ it("rejects an unterminated appended session record (#9160)", () => {
   expect(qualification.status).toBe(2);
 });
 
-it("rejects an invalid baseline or a removed, rewritten, or truncated session (#9160)", () => {
-  for (const mutation of ["invalid", "removed", "rewritten", "truncated"] as const) {
+it.each(["invalid", "removed", "rewritten", "truncated"] as const)(
+  "rejects an invalid baseline or a removed, rewritten, or truncated session [case %#] (#9160)",
+  (mutation) => {
     const { baseline, qualification } = runBaselineMutationFixture(mutation);
     expect(baseline.status).toBe(0);
     expect(qualification.status).toBe(2);
-  }
-});
+  },
+);
 
-it("intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments (#9160)", () => {
-  for (const gatewayArgs of [[], ["-g", "fixture-gateway"]]) {
+it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as const))(
+  "intercepts one OpenClaw launch, preserves pass-through argv, and strips launch authority from filtered and inherited environments [case %#] (#9160)",
+  (gatewayArgs) => {
     const fixture = runOpenShellShimFixture(gatewayArgs);
     const separator = fixture.exactArgv.indexOf("--");
     const expectedRemote = fixture.exactArgv.slice(separator + 1);
@@ -795,8 +797,8 @@ it("intercepts one OpenClaw launch, preserves pass-through argv, and strips laun
       fixture.recordRoot,
       ...expectedRemote,
     ]);
-  }
-});
+  },
+);
 
 it.runIf(process.platform === "linux")(
   "rejects a record writer whose standard input is not a PTY (#9160)",

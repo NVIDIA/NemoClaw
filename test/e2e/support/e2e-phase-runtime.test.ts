@@ -353,8 +353,9 @@ describe("runtime phase fixture", () => {
     });
   });
 
-  it("rejects invalid curl max time values before runtime probe execution", async () => {
-    for (const curlMaxTimeSeconds of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid curl max time values before runtime probe execution [case %#]",
+    async (curlMaxTimeSeconds) => {
       const runner = new FakeRunner();
 
       await expect(
@@ -363,8 +364,8 @@ describe("runtime phase fixture", () => {
         }),
       ).rejects.toThrow("inference request curlMaxTimeSeconds must be a finite positive number");
       expect(runner.calls).toEqual([]);
-    }
-  });
+    },
+  );
 
   it("rejects provider model probes without compatible model data", async () => {
     const runner = new FakeRunner();
