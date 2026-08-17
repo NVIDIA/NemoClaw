@@ -163,37 +163,43 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     ).toThrow(/authority is invalid/u);
   });
 
-  it("accepts only the canonical digest-bound declarative execution plan (#8260)", () => {
-    expect(plan.contractVersion).toBe(1);
-    expect(plan.recipe.id).toBe("llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1");
-    expect(() => validateQualificationPlan(planSource, `sha256:${"0".repeat(64)}`)).toThrow(
-      /digest mismatch/u,
-    );
+  it.each(
+    Array.from(
+      [
+        (value: Record<string, any>) => {
+          value.untrusted = true;
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.platform.platform = "linux/amd64";
+        },
+        (value: Record<string, any>) => {
+          value.imageBuild.cuda.runtimeBase = "docker.io/nvidia/cuda:latest";
+        },
+        (value: Record<string, any>) => {
+          value.recipe.runtime.gpu.cpuFallback = "allow";
+        },
+        (value: Record<string, any>) => {
+          value.recipe.surfaces.ui = "enabled";
+        },
+      ],
+      (value) => [value],
+    ),
+  )(
+    "accepts only the canonical digest-bound declarative execution plan [case %#] (#8260)",
+    (mutate) => {
+      expect(plan.contractVersion).toBe(1);
+      expect(plan.recipe.id).toBe("llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1");
+      expect(() => validateQualificationPlan(planSource, `sha256:${"0".repeat(64)}`)).toThrow(
+        /digest mismatch/u,
+      );
 
-    const spaced = `${planSource}\n`;
-    expect(() => validateQualificationPlan(spaced, sha256Text(spaced))).toThrow(/canonical/u);
+      const spaced = `${planSource}\n`;
+      expect(() => validateQualificationPlan(spaced, sha256Text(spaced))).toThrow(/canonical/u);
 
-    for (const mutate of [
-      (value: Record<string, any>) => {
-        value.untrusted = true;
-      },
-      (value: Record<string, any>) => {
-        value.imageBuild.platform.platform = "linux/amd64";
-      },
-      (value: Record<string, any>) => {
-        value.imageBuild.cuda.runtimeBase = "docker.io/nvidia/cuda:latest";
-      },
-      (value: Record<string, any>) => {
-        value.recipe.runtime.gpu.cpuFallback = "allow";
-      },
-      (value: Record<string, any>) => {
-        value.recipe.surfaces.ui = "enabled";
-      },
-    ]) {
       const [source, digest] = mutatedPlan(mutate);
       expect(() => validateQualificationPlan(source, digest)).toThrow();
-    }
-  });
+    },
+  );
 
   it("binds normal and cleanup invocations to the trusted workflow run (#8260)", () => {
     expect(parsedInvocation()).toEqual({
@@ -245,37 +251,43 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     });
   });
 
-  it("rejects hostile CLI fields, paths, ownership, and workflow identity (#8260)", () => {
-    const unknown = [...invocationArguments(), "--extra", "value"];
-    expect(() => parseQualificationInvocation(unknown, trustedEnvironment())).toThrow();
+  it.each(
+    Array.from(
+      [
+        trustedEnvironment({ GITHUB_REPOSITORY: "attacker/fork" }),
+        trustedEnvironment({ GITHUB_REF: "refs/pull/1/merge" }),
+        trustedEnvironment({ GITHUB_EVENT_NAME: "pull_request_target" }),
+        trustedEnvironment({ GITHUB_ACTOR: "untrusted user" }),
+        trustedEnvironment({ GITHUB_ACTOR_ID: "0" }),
+        trustedEnvironment({ GITHUB_RUN_ATTEMPT: "3" }),
+        trustedEnvironment({ GITHUB_RUN_ID: "43" }),
+        trustedEnvironment({ GITHUB_SHA: HEAD_SHA }),
+        trustedEnvironment({
+          GITHUB_WORKFLOW_REF: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/feature",
+        }),
+      ],
+      (value) => [value],
+    ),
+  )(
+    "rejects hostile CLI fields, paths, ownership, and workflow identity [case %#] (#8260)",
+    (environment) => {
+      const unknown = [...invocationArguments(), "--extra", "value"];
+      expect(() => parseQualificationInvocation(unknown, trustedEnvironment())).toThrow();
 
-    const duplicate = [...invocationArguments(), "--run-id", RUN_ID];
-    expect(() => parseQualificationInvocation(duplicate, trustedEnvironment())).toThrow();
+      const duplicate = [...invocationArguments(), "--run-id", RUN_ID];
+      expect(() => parseQualificationInvocation(duplicate, trustedEnvironment())).toThrow();
 
-    const traversal = invocationArguments();
-    traversal[traversal.indexOf("--candidate-root") + 1] = "/work/../candidate";
-    expect(() => parseQualificationInvocation(traversal, trustedEnvironment())).toThrow();
+      const traversal = invocationArguments();
+      traversal[traversal.indexOf("--candidate-root") + 1] = "/work/../candidate";
+      expect(() => parseQualificationInvocation(traversal, trustedEnvironment())).toThrow();
 
-    const wrongRegistry = invocationArguments();
-    wrongRegistry[wrongRegistry.indexOf("--registry-name") + 1] = "nemoclaw-llama-cpp-999-1";
-    expect(() => parseQualificationInvocation(wrongRegistry, trustedEnvironment())).toThrow();
+      const wrongRegistry = invocationArguments();
+      wrongRegistry[wrongRegistry.indexOf("--registry-name") + 1] = "nemoclaw-llama-cpp-999-1";
+      expect(() => parseQualificationInvocation(wrongRegistry, trustedEnvironment())).toThrow();
 
-    for (const environment of [
-      trustedEnvironment({ GITHUB_REPOSITORY: "attacker/fork" }),
-      trustedEnvironment({ GITHUB_REF: "refs/pull/1/merge" }),
-      trustedEnvironment({ GITHUB_EVENT_NAME: "pull_request_target" }),
-      trustedEnvironment({ GITHUB_ACTOR: "untrusted user" }),
-      trustedEnvironment({ GITHUB_ACTOR_ID: "0" }),
-      trustedEnvironment({ GITHUB_RUN_ATTEMPT: "3" }),
-      trustedEnvironment({ GITHUB_RUN_ID: "43" }),
-      trustedEnvironment({ GITHUB_SHA: HEAD_SHA }),
-      trustedEnvironment({
-        GITHUB_WORKFLOW_REF: "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/feature",
-      }),
-    ]) {
       expect(() => parseQualificationInvocation(invocationArguments(), environment)).toThrow();
-    }
-  });
+    },
+  );
 
   it("builds the exact ARM64 candidate plan from the trusted image context (#8260)", () => {
     const argv = buildCandidateImageArgv(plan, parsedInvocation(), "/work/tmp/metadata.json");
@@ -586,21 +598,23 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     );
   });
 
-  it("requires unambiguous full GPU offload and rejects CPU fallback warnings (#8260)", () => {
-    expect(validateStartupLog("llama_model_loader: offloaded 57/57 layers to GPU\n")).toEqual({
-      offloadedLayers: 57,
-      totalLayers: 57,
-    });
-    for (const log of [
-      "llama_model_loader: offloaded 56/57 layers to GPU",
-      "warning: no usable GPU found, --gpu-layers option will be ignored",
-      "CPU fallback enabled\noffloaded 57/57 layers to GPU",
-      "server is listening",
-      "offloaded 57/57 layers to GPU\noffloaded 58/58 layers to GPU",
-    ]) {
+  it.each([
+    "llama_model_loader: offloaded 56/57 layers to GPU",
+    "warning: no usable GPU found, --gpu-layers option will be ignored",
+    "CPU fallback enabled\noffloaded 57/57 layers to GPU",
+    "server is listening",
+    "offloaded 57/57 layers to GPU\noffloaded 58/58 layers to GPU",
+  ])(
+    "requires unambiguous full GPU offload and rejects CPU fallback warnings [%s] (#8260)",
+    (log) => {
+      expect(validateStartupLog("llama_model_loader: offloaded 57/57 layers to GPU\n")).toEqual({
+        offloadedLayers: 57,
+        totalLayers: 57,
+      });
+
       expect(() => validateStartupLog(log)).toThrow();
-    }
-  });
+    },
+  );
 
   it("rejects every runner-derived credential, model path, prompt, and response in bounded runtime logs (#8144)", () => {
     const apiKey = "a".repeat(64);
@@ -641,20 +655,22 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("accepts only one NVIDIA GB10 at or above the declarative driver floor (#8260)", () => {
-    expect(parseNvidiaSmi("NVIDIA GB10, 580.65.06\n", "580.65.06")).toEqual({
-      count: 1,
-      driverVersion: "580.65.06",
-      name: "NVIDIA GB10",
-    });
-    for (const output of [
-      "NVIDIA GB10, 580.65.05",
-      "NVIDIA H100 80GB HBM3, 580.65.06",
-      "NVIDIA GB10, 580.65.06\nNVIDIA GB10, 580.65.06",
-    ]) {
+  it.each([
+    "NVIDIA GB10, 580.65.05",
+    "NVIDIA H100 80GB HBM3, 580.65.06",
+    "NVIDIA GB10, 580.65.06\nNVIDIA GB10, 580.65.06",
+  ])(
+    "accepts only one NVIDIA GB10 at or above the declarative driver floor [%s] (#8260)",
+    (output) => {
+      expect(parseNvidiaSmi("NVIDIA GB10, 580.65.06\n", "580.65.06")).toEqual({
+        count: 1,
+        driverVersion: "580.65.06",
+        name: "NVIDIA GB10",
+      });
+
       expect(() => parseNvidiaSmi(output, "580.65.06")).toThrow();
-    }
-  });
+    },
+  );
 
   it("validates exact served-model and authenticated completion response shapes (#8260)", () => {
     expect(() =>

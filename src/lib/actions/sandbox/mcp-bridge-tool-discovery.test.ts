@@ -34,37 +34,39 @@ function framedResult(value: unknown) {
 }
 
 describe("MCP tool discovery host boundary (#6901)", () => {
-  it("launches the same shared runtime below every adapter policy ancestor", () => {
-    const expectedAncestor: Record<AgentMcpAdapter, string> = {
-      mcporter: "nemoclaw-start node -e",
-      "hermes-config": "/opt/hermes/.venv/bin/python -I -c",
-      "deepagents-config": "/opt/venv/bin/python3 -I -c",
-    };
+  it.each(["HTTP_PROXY", "HTTPS_PROXY", "NODE_EXTRA_CA_CERTS"])(
+    "launches the same shared runtime below every adapter policy ancestor [%s]",
+    (preserved) => {
+      const expectedAncestor: Record<AgentMcpAdapter, string> = {
+        mcporter: "nemoclaw-start node -e",
+        "hermes-config": "/opt/hermes/.venv/bin/python -I -c",
+        "deepagents-config": "/opt/venv/bin/python3 -I -c",
+      };
 
-    for (const adapter of Object.keys(expectedAncestor) as AgentMcpAdapter[]) {
-      const built = buildMcpToolDiscoveryCommand(entry, adapter);
-      expect(built).not.toBeNull();
-      expect(built?.command).toContain(expectedAncestor[adapter]);
-      expect(built?.command).toContain("/usr/local/bin/node");
-      expect(built?.command).toContain(MCP_TOOL_DISCOVERY_RUNTIME_PATH);
-      expect(MCP_TOOL_DISCOVERY_RUNTIME_PATH).toMatch(/\.mjs$/u);
-      expect(built?.command).not.toContain("--experimental-strip-types");
-      expect(built?.command).not.toContain("node_modules");
-      expect(built?.command).not.toContain("--authorization");
-      expect(built?.command).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
-      expect(built?.command).toContain("--credential-env");
-      expect(built?.command).toContain("GITHUB_TOKEN");
-      expect(built?.command).not.toContain("tools/call");
-      expect(built?.command).toContain("rebuild the sandbox");
-      expect(built?.command).toContain(`unset ${MCP_RUNTIME_SANITIZED_ENV_VARS.join(" ")}`);
-    }
-    expect(MCP_RUNTIME_SANITIZED_ENV_VARS).toEqual(
-      expect.arrayContaining(["LD_PRELOAD", "NODE_OPTIONS", "NODE_PATH", "PYTHONPATH"]),
-    );
-    for (const preserved of ["HTTP_PROXY", "HTTPS_PROXY", "NODE_EXTRA_CA_CERTS"]) {
+      for (const adapter of Object.keys(expectedAncestor) as AgentMcpAdapter[]) {
+        const built = buildMcpToolDiscoveryCommand(entry, adapter);
+        expect(built).not.toBeNull();
+        expect(built?.command).toContain(expectedAncestor[adapter]);
+        expect(built?.command).toContain("/usr/local/bin/node");
+        expect(built?.command).toContain(MCP_TOOL_DISCOVERY_RUNTIME_PATH);
+        expect(MCP_TOOL_DISCOVERY_RUNTIME_PATH).toMatch(/\.mjs$/u);
+        expect(built?.command).not.toContain("--experimental-strip-types");
+        expect(built?.command).not.toContain("node_modules");
+        expect(built?.command).not.toContain("--authorization");
+        expect(built?.command).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
+        expect(built?.command).toContain("--credential-env");
+        expect(built?.command).toContain("GITHUB_TOKEN");
+        expect(built?.command).not.toContain("tools/call");
+        expect(built?.command).toContain("rebuild the sandbox");
+        expect(built?.command).toContain(`unset ${MCP_RUNTIME_SANITIZED_ENV_VARS.join(" ")}`);
+      }
+      expect(MCP_RUNTIME_SANITIZED_ENV_VARS).toEqual(
+        expect.arrayContaining(["LD_PRELOAD", "NODE_OPTIONS", "NODE_PATH", "PYTHONPATH"]),
+      );
+
       expect(MCP_RUNTIME_SANITIZED_ENV_VARS).not.toContain(preserved);
-    }
-  });
+    },
+  );
 
   it("isolates Python adapter wrappers from a sandbox-controlled subprocess module", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-python-isolation-"));
@@ -168,59 +170,57 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     });
   });
 
-  it("fails closed on malformed, duplicate, unsorted, or unframed results", () => {
-    for (const result of [
-      framedResult({ protocol: 1, ok: true, count: 1, tools: ["bad\nname"], truncated: false }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["bad\ud800name"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["safe\u202eevil"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["safe\u2066evil"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["safe\u2028evil"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 2,
-        tools: ["same", "same"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 2,
-        tools: ["zeta", "alpha"],
-        truncated: false,
-      }),
-      { status: 0, stdout: JSON.stringify({ protocol: 1 }), stderr: "" },
-    ]) {
-      expect(classifyMcpToolDiscoveryResult(result, entry, marker)).toMatchObject({
-        ok: false,
-        count: 0,
-        tools: [],
-      });
-    }
+  it.each([
+    framedResult({ protocol: 1, ok: true, count: 1, tools: ["bad\nname"], truncated: false }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["bad\ud800name"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["safe\u202eevil"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["safe\u2066evil"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["safe\u2028evil"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 2,
+      tools: ["same", "same"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 2,
+      tools: ["zeta", "alpha"],
+      truncated: false,
+    }),
+    { status: 0, stdout: JSON.stringify({ protocol: 1 }), stderr: "" },
+  ])("fails closed on malformed, duplicate, unsorted, or unframed results [case %#]", (result) => {
+    expect(classifyMcpToolDiscoveryResult(result, entry, marker)).toMatchObject({
+      ok: false,
+      count: 0,
+      tools: [],
+    });
   });
 
   it("does not surface process output when the image runtime cannot start", () => {

@@ -180,6 +180,8 @@ It skips the generic Docker availability probe and all generic Docker container,
 It does not remove the user's Podman installation, storage, networks, or unrelated containers.
 It does not disable a user-managed socket.
 On every successful portable cleanup, the final retirement operation removes the exact portable lifecycle receipts, their matching `sandboxes.json` rows, and `~/.config/nemoclaw/portable/containers.conf`, regardless of `--destroy-user-data`.
+After NemoClaw removes `containers.conf`, it removes `~/.config/nemoclaw/portable/` and `~/.config/nemoclaw/` only when each directory is empty.
+NemoClaw preserves either directory when it contains an unrelated entry.
 Other preserved user data follows the normal `--destroy-user-data` behavior.
 After NemoClaw releases the locks, later uninstall-plan cleanup never recursively revisits the canonical receipt, sandbox registry, or `~/.config/nemoclaw/portable/containers.conf` paths.
 This preserves any new lifecycle generation published after lock release.

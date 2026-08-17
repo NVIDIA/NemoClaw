@@ -107,8 +107,9 @@ describe("installer git checkout", () => {
 describe("installer version stamping", () => {
   const extract = (stdout: string) => stdout.match(/START([\s\S]*?)STOP/)?.[1] ?? null;
 
-  it("stamps a requested version tag and defers mutable refs to describe (#7474)", () => {
-    for (const installer of [INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER]) {
+  it.each([INSTALLER_PAYLOAD, CURL_PIPE_INSTALLER])(
+    "stamps a requested version tag and defers mutable refs to describe [case %#] (#7474)",
+    (installer) => {
       const stamp = (ref: string) => {
         const result = spawnSync(
           "bash",
@@ -126,8 +127,8 @@ describe("installer version stamping", () => {
       expect(stamp("lkg")).toBe("");
       expect(stamp("latest")).toBe("");
       expect(stamp("main")).toBe("");
-    }
-  });
+    },
+  );
 
   it("reports the stamped .version over a mismatched git describe (#7474)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-version-"));

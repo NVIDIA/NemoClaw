@@ -324,39 +324,41 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("uses max_completion_tokens for GPT-5 family and reasoning models (#6642)", () => {
-    for (const model of ["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"]) {
+  it.each(["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"])(
+    "uses max_completion_tokens for GPT-5 family and reasoning models [case %#] (#6642)",
+    (model) => {
       expect(getChatCompletionsProbePayload(model)).toEqual({
         model,
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
         max_completion_tokens: 16,
       });
-    }
-  });
+    },
+  );
 
   // Some hosted endpoints reject a reply budget below 16 with HTTP 400 even
   // though discovery succeeds and normal inference works, so a bounded probe
   // that undershoots that floor fails a valid route. Whichever field a model
   // uses, the budget must clear the floor (#7939).
-  it("requests a reply budget hosted endpoints accept, in whichever field the model uses (#7939)", () => {
-    const endpointMinimumReplyTokens = 16;
+  it.each([
+    "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/nvidia/nemotron-3-ultra",
+    "openai/openai/gpt-5.6-sol",
+    "moonshotai/kimi-k2.6",
+    "deepseek-ai/deepseek-v4-pro",
+    "gpt-5.4",
+    "o3-mini",
+  ])(
+    "requests a reply budget hosted endpoints accept, in whichever field the model uses [%s] (#7939)",
+    (model) => {
+      const endpointMinimumReplyTokens = 16;
 
-    for (const model of [
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia/nvidia/nemotron-3-ultra",
-      "openai/openai/gpt-5.6-sol",
-      "moonshotai/kimi-k2.6",
-      "deepseek-ai/deepseek-v4-pro",
-      "gpt-5.4",
-      "o3-mini",
-    ]) {
       const payload = getChatCompletionsProbePayload(model);
       const budget = payload.max_completion_tokens ?? payload.max_tokens;
 
       expect(typeof budget, `${model} states a reply budget`).toBe("number");
       expect(budget, model).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
-    }
-  });
+    },
+  );
 
   it("uses an extended validation budget for DeepSeek V4 Flash", () => {
     const args = getChatCompletionsProbeCurlArgs({

@@ -11,11 +11,8 @@ import {
 } from "./feature";
 
 describe("CUA framework activation (#7750)", () => {
-  it("is disabled unless the dedicated CUA flag is exactly 1", () => {
+  it("uses the dedicated CUA framework flag", () => {
     expect(CUA_FRAMEWORK_FEATURE_ENV).toBe("NEMOCLAW_CUA_ENABLED");
-    for (const value of [undefined, "", "true", "0", "01", " 1", "1 "]) {
-      expect(isCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: value })).toBe(false);
-    }
     expect(isCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).toBe(true);
     expect(() => requireCuaFrameworkEnabled({})).toThrow(
       "use the controlled Brev Launchable activation",
@@ -23,17 +20,16 @@ describe("CUA framework activation (#7750)", () => {
     expect(() => requireCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: "1" })).not.toThrow();
   });
 
-  it("requires a second explicit opt-in for candidate qualification", () => {
+  it.each([[undefined], [""], ["true"], ["0"], ["01"], [" 1"], ["1 "]])(
+    "keeps CUA disabled for the flag value %j",
+    (value) => {
+      expect(isCuaFrameworkEnabled({ NEMOCLAW_CUA_ENABLED: value })).toBe(false);
+    },
+  );
+
+  it("requires the framework flag before candidate qualification", () => {
     expect(CUA_QUALIFICATION_FEATURE_ENV).toBe("NEMOCLAW_CUA_QUALIFICATION");
     expect(isCuaQualificationEnabled({ NEMOCLAW_CUA_QUALIFICATION: "1" })).toBe(false);
-    for (const value of [undefined, "", "true", "0", "01", " 1", "1 "]) {
-      expect(
-        isCuaQualificationEnabled({
-          NEMOCLAW_CUA_ENABLED: "1",
-          NEMOCLAW_CUA_QUALIFICATION: value,
-        }),
-      ).toBe(false);
-    }
     expect(
       isCuaQualificationEnabled({
         NEMOCLAW_CUA_ENABLED: "1",
@@ -41,4 +37,16 @@ describe("CUA framework activation (#7750)", () => {
       }),
     ).toBe(true);
   });
+
+  it.each([[undefined], [""], ["true"], ["0"], ["01"], [" 1"], ["1 "]])(
+    "keeps candidate qualification disabled for the flag value %j",
+    (value) => {
+      expect(
+        isCuaQualificationEnabled({
+          NEMOCLAW_CUA_ENABLED: "1",
+          NEMOCLAW_CUA_QUALIFICATION: value,
+        }),
+      ).toBe(false);
+    },
+  );
 });

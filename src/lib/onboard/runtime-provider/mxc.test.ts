@@ -32,30 +32,32 @@ function candidateBundle() {
 }
 
 describe("inactive OpenShell MXC runtime provider", () => {
-  it("registers one identity-consistent candidate without entering production selection (#8178)", () => {
-    const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
-    const provider = providers.mxc!;
+  it.each([
+    "plan",
+    "capabilities",
+    "preflightDoctor",
+    "gateway",
+    "workload",
+    "lifecycle",
+    "mutationAuthority",
+    "stateMutation",
+    "bootstrap",
+    "snapshot",
+    "recovery",
+    "cleanup",
+    "containerEngine",
+  ] as const)(
+    "registers one identity-consistent candidate without entering production selection [%s] (#8178)",
+    (surface) => {
+      const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
+      const provider = providers.mxc!;
 
-    expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
-    expect(provider.identity).toMatchObject({ id: "mxc", displayName: "OpenShell MXC" });
-    for (const surface of [
-      "plan",
-      "capabilities",
-      "preflightDoctor",
-      "gateway",
-      "workload",
-      "lifecycle",
-      "mutationAuthority",
-      "stateMutation",
-      "bootstrap",
-      "snapshot",
-      "recovery",
-      "cleanup",
-      "containerEngine",
-    ] as const) {
+      expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
+      expect(provider.identity).toMatchObject({ id: "mxc", displayName: "OpenShell MXC" });
+
       expect(provider[surface].providerId, surface).toBe("mxc");
-    }
-  });
+    },
+  );
 
   it("accepts only a validated OpenClaw Windows native-artifact receipt (#8178)", () => {
     const provider = candidateBundle();

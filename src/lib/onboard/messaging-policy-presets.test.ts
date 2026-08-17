@@ -10,6 +10,7 @@ import {
   mergeEnabledMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
+  messagingChannelsForPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -18,6 +19,14 @@ describe("messaging policy presets", () => {
   it("maps Slack messaging to the Slack network policy preset", () => {
     expect(requiredMessagingChannelPolicyPresets(["slack"])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets([" Slack "])).toEqual(["slack"]);
+  });
+
+  it("names the channel behind an applied network policy preset (#9283)", () => {
+    expect(messagingChannelsForPolicyPresets(["npm", "pypi", "discord"])).toEqual(["discord"]);
+    expect(messagingChannelsForPolicyPresets([" Slack "])).toEqual(["slack"]);
+    expect(messagingChannelsForPolicyPresets(["npm", "pypi"])).toEqual([]);
+    expect(messagingChannelsForPolicyPresets([])).toEqual([]);
+    expect(messagingChannelsForPolicyPresets(null)).toEqual([]);
   });
 
   it("merges required messaging presets into an existing selection", () => {
@@ -164,9 +173,10 @@ describe("messaging policy presets", () => {
   // and several call sites assume a channel's egress preset shares its name.
   // Pin that 1:1 mapping for every shipped channel so a future preset rename
   // (which would silently desync suggestions from finalization) fails here.
-  it("maps each messaging channel to a same-named egress preset (#5967)", () => {
-    for (const channel of ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"]) {
+  it.each(["slack", "discord", "telegram", "teams", "whatsapp", "wechat"])(
+    "maps each messaging channel to a same-named egress preset [case %#] (#5967)",
+    (channel) => {
       expect(allMessagingChannelPolicyPresets([channel])).toEqual([channel]);
-    }
-  });
+    },
+  );
 });

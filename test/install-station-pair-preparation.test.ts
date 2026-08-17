@@ -282,16 +282,15 @@ describe("deterministic dual-DGX Station peer discovery", () => {
     expect(deriveDiscoveryCandidates(stationHost("local"))).toEqual(["10.10.0.2", "10.10.0.6"]);
   });
 
-  it.each([
-    "DGX-Station",
-    "P3830",
-    "NVIDIA Station GB300",
-  ])("accepts an existing Station firmware product identifier: %s", (productName) => {
-    const host = stationHost("local");
-    host.productName = productName;
+  it.each(["DGX-Station", "P3830", "NVIDIA Station GB300"])(
+    "accepts an existing Station firmware product identifier: %s",
+    (productName) => {
+      const host = stationHost("local");
+      host.productName = productName;
 
-    expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
-  });
+      expect(deriveDiscoveryCandidates(host)).toEqual(["10.10.0.2", "10.10.0.6"]);
+    },
+  );
 
   it("rejects extra rails, duplicate identities, and non-jumbo links", () => {
     const extraRail = stationHost("local");
@@ -584,49 +583,48 @@ describe("dual-DGX Station reboot resume and reuse", () => {
       "remote:10.10.0.2:--verify",
     ]);
   });
-  it("rejects revision, helper, host-key, GPU, and rail substitution on resume", () => {
-    const scenarios: Array<{
-      name: string;
-      configure(harness: PreparationHarness): void;
-      options?: ReturnType<typeof preparationOptions>;
-      expected: RegExp;
-    }> = [
-      {
-        name: "revision",
-        configure: () => undefined,
-        options: { revision: "d".repeat(40), helperSha256: HELPER_SHA256 },
-        expected: /requires NemoClaw revision/,
+  it.each([
+    {
+      name: "revision",
+      configure: () => undefined,
+      options: { revision: "d".repeat(40), helperSha256: HELPER_SHA256 },
+      expected: /requires NemoClaw revision/,
+    },
+    {
+      name: "helper",
+      configure: () => undefined,
+      options: { revision: REVISION, helperSha256: "d".repeat(64) },
+      expected: /helper changed/,
+    },
+    {
+      name: "host key",
+      configure: (harness) => {
+        harness.trusted.set("10.10.0.2", sshBinding("10.10.0.2", "AAAAC3NzaChangedKey"));
       },
-      {
-        name: "helper",
-        configure: () => undefined,
-        options: { revision: REVISION, helperSha256: "d".repeat(64) },
-        expected: /helper changed/,
+      expected: /host-key identity changed/,
+    },
+    {
+      name: "GPU",
+      configure: (harness) => {
+        harness.peer.gpus[0].uuid = "GPU-SUBSTITUTED-0003";
       },
-      {
-        name: "host key",
-        configure: (harness) => {
-          harness.trusted.set("10.10.0.2", sshBinding("10.10.0.2", "AAAAC3NzaChangedKey"));
-        },
-        expected: /host-key identity changed/,
+      expected: /physical dual-Station pair changed/,
+    },
+    {
+      name: "rail",
+      configure: (harness) => {
+        harness.peer.rails[0].macAddress = "02:00:00:00:00:12";
       },
-      {
-        name: "GPU",
-        configure: (harness) => {
-          harness.peer.gpus[0].uuid = "GPU-SUBSTITUTED-0003";
-        },
-        expected: /physical dual-Station pair changed/,
-      },
-      {
-        name: "rail",
-        configure: (harness) => {
-          harness.peer.rails[0].macAddress = "02:00:00:00:00:12";
-        },
-        expected: /physical dual-Station pair changed/,
-      },
-    ];
-
-    for (const scenario of scenarios) {
+      expected: /physical dual-Station pair changed/,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    configure: (harness: PreparationHarness) => void;
+    options?: ReturnType<typeof preparationOptions>;
+    expected: RegExp;
+  }>)(
+    "rejects revision, helper, host-key, GPU, and rail substitution on resume [$name]",
+    (scenario) => {
       const harness = new PreparationHarness();
       harness.resume = readyState();
       trustFirstRail(harness);
@@ -639,8 +637,8 @@ describe("dual-DGX Station reboot resume and reuse", () => {
         harness.calls.some((call) => call.startsWith("remote:")),
         scenario.name,
       ).toBe(false);
-    }
-  });
+    },
+  );
 
   it("preserves a remote mismatch as a pinned fail-closed state", () => {
     const harness = new PreparationHarness();
@@ -816,40 +814,35 @@ describe.sequential("dual-DGX Station trust and resume-state boundaries", () => 
     );
   });
 
-  it("does not expose ambient credentials or shell-loader variables to probes and helpers", () => {
-    const env = buildStationPrepSubprocessEnv({
-      HOME: "/home/operator",
-      PATH: "/usr/bin:/bin",
-      SSH_AUTH_SOCK: "/run/user/1000/agent",
-      HTTPS_PROXY: "http://proxy.example:8080",
-      LC_CTYPE: "en_US.UTF-8",
-      NVIDIA_API_KEY: "secret",
-      HF_TOKEN: "secret",
-      BASH_ENV: "/tmp/evil",
-      ENV: "/tmp/evil",
-      LD_PRELOAD: "/tmp/evil.so",
-      SSH_ASKPASS: "/tmp/evil",
-    });
-    expect(env).toMatchObject({
-      HOME: "/home/operator",
-      PATH: "/usr/bin:/bin",
-      SSH_AUTH_SOCK: "/run/user/1000/agent",
-      HTTPS_PROXY: "http://proxy.example:8080",
-      LC_ALL: "C",
-      LC_CTYPE: "en_US.UTF-8",
-      LANG: "C",
-    });
-    for (const forbidden of [
-      "NVIDIA_API_KEY",
-      "HF_TOKEN",
-      "BASH_ENV",
-      "ENV",
-      "LD_PRELOAD",
-      "SSH_ASKPASS",
-    ]) {
+  it.each(["NVIDIA_API_KEY", "HF_TOKEN", "BASH_ENV", "ENV", "LD_PRELOAD", "SSH_ASKPASS"])(
+    "does not expose ambient credentials or shell-loader variables to probes and helpers [case %#]",
+    (forbidden) => {
+      const env = buildStationPrepSubprocessEnv({
+        HOME: "/home/operator",
+        PATH: "/usr/bin:/bin",
+        SSH_AUTH_SOCK: "/run/user/1000/agent",
+        HTTPS_PROXY: "http://proxy.example:8080",
+        LC_CTYPE: "en_US.UTF-8",
+        NVIDIA_API_KEY: "secret",
+        HF_TOKEN: "secret",
+        BASH_ENV: "/tmp/evil",
+        ENV: "/tmp/evil",
+        LD_PRELOAD: "/tmp/evil.so",
+        SSH_ASKPASS: "/tmp/evil",
+      });
+      expect(env).toMatchObject({
+        HOME: "/home/operator",
+        PATH: "/usr/bin:/bin",
+        SSH_AUTH_SOCK: "/run/user/1000/agent",
+        HTTPS_PROXY: "http://proxy.example:8080",
+        LC_ALL: "C",
+        LC_CTYPE: "en_US.UTF-8",
+        LANG: "C",
+      });
+
       expect(env).not.toHaveProperty(forbidden);
-    }
-  });
+    },
+  );
 
   it("forces every remote helper sudo call through noninteractive mode", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pair-sudo-"));

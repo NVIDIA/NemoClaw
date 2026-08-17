@@ -281,9 +281,11 @@ network_policies:
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
   });
 
-  it("preserves an existing broad read-only sysfs policy without expansion (#7103)", () => {
-    const gpuPolicy = buildDirectGpuPolicyYaml(
-      `
+  it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
+    "preserves an existing broad read-only sysfs policy without expanding %s (#7103)",
+    (sysfsPath) => {
+      const gpuPolicy = buildDirectGpuPolicyYaml(
+        `
 version: 1
 filesystem_policy:
   read_only:
@@ -293,20 +295,22 @@ filesystem_policy:
     - /tmp
 network_policies: {}
 `,
-      { sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS },
-    );
-    const gpuDoc = YAML.parse(gpuPolicy);
+        { sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS },
+      );
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toContain("/usr");
-    expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, "/sys");
-    for (const sysfsPath of STATION_GB300_SYSFS_READ_ONLY_PATHS) {
+      expect(gpuDoc.filesystem_policy.read_only).toContain("/usr");
+      expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, "/sys");
+
       expect(gpuDoc.filesystem_policy.read_only).not.toContain(sysfsPath);
-    }
-  });
+    },
+  );
 
-  it("preserves an existing broad writable sysfs policy without expansion (#7103)", () => {
-    const gpuPolicy = buildDirectGpuPolicyYaml(
-      `
+  it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
+    "preserves an existing broad writable sysfs policy without expanding %s (#7103)",
+    (sysfsPath) => {
+      const gpuPolicy = buildDirectGpuPolicyYaml(
+        `
 version: 1
 filesystem_policy:
   read_only:
@@ -316,17 +320,17 @@ filesystem_policy:
     - /sys
 network_policies: {}
 `,
-      { sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS },
-    );
-    const gpuDoc = YAML.parse(gpuPolicy);
+        { sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS },
+      );
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
-    expect(gpuDoc.filesystem_policy.read_write).toContain("/tmp");
-    expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/sys");
-    for (const sysfsPath of STATION_GB300_SYSFS_READ_ONLY_PATHS) {
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
+      expect(gpuDoc.filesystem_policy.read_write).toContain("/tmp");
+      expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/sys");
+
       expect(gpuDoc.filesystem_policy.read_only).not.toContain(sysfsPath);
-    }
-  });
+    },
+  );
 
   it("deduplicates scoped sysfs paths and lets exact read-write entries win (#7103)", () => {
     const writablePath = "/sys/bus/pci/devices/0009:06:00.0";
@@ -359,15 +363,17 @@ network_policies: {}
     }
   });
 
-  it("keeps non-Station direct GPU policies at the pre-issue sysfs boundary (#7103)", () => {
-    const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
-    const gpuDoc = YAML.parse(gpuPolicy);
+  it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
+    "keeps %s outside the non-Station direct GPU policy (#7103)",
+    (sysfsPath) => {
+      const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
-    for (const sysfsPath of STATION_GB300_SYSFS_READ_ONLY_PATHS) {
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
+
       expect(gpuDoc.filesystem_policy.read_only).not.toContain(sysfsPath);
-    }
-  });
+    },
+  );
 
   it("preserves best-effort Landlock for missing Station sysfs paths (#7103)", () => {
     const sysfsRoot = tmpSysfsRoot();

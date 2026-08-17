@@ -198,8 +198,9 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     }
   });
 
-  it("keeps weakening fan-out inaccessible and keeps monotonic lock fan-out readable", () => {
-    for (const targetMode of ["mutable", "locked"] as const) {
+  it.each(["mutable", "locked"] as const)(
+    "keeps weakening fan-out inaccessible and keeps monotonic lock fan-out readable [case %#]",
+    (targetMode) => {
       const fixture = createRestartFixture();
       try {
         const begun = runShieldsTransactionAction(fixture, "begin-shields-transition", {
@@ -230,8 +231,8 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
-    }
-  });
+    },
+  );
 
   it("retains the 0500 recursive clamp and resumes the same lock transaction", () => {
     const fixture = createRestartFixture();

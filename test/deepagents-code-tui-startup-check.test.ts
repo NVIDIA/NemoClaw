@@ -525,224 +525,234 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     }
   });
 
-  it("detects and redacts every canonical secret family in TUI startup artifacts", () => {
-    const detectsSecret = (token: string) =>
-      runTuiStartupCheckHelper(
-        'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
-        { TOKEN: token },
-      );
-    const redactsSecret = (token: string) =>
-      runTuiStartupCheckHelper('printf "%s" "$TOKEN" | redact_secrets', { TOKEN: token });
-    const langsmithPt = `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`;
-    const langsmithSk = `lsv2_sk_${"a".repeat(36)}_${"c".repeat(10)}`;
-    const canonicalSamples = new Map<string, { name: string; sample: string; rawSecret?: string }>([
-      [fingerprint(TOKEN_PREFIX_PATTERNS[0]), { name: "nvapi", sample: "nvapi-abcdefghijklmnop" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[1]), { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[2]), { name: "ghp", sample: "ghp_abcdefghijklmnopqr" }],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[3]),
-        { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
-      ],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[4]), { name: "sk_proj", sample: "sk-proj-abcdefghij" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[5]), { name: "sk_ant", sample: "sk-ant-abcdefghijk" }],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[6]),
-        { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
-      ],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[7]),
-        { name: "xoxb", sample: secretFixture("xox", "b", "-", "1234567890") },
-      ],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+  it.each([
+    "plain startup text",
+    "COMPASS=opaqueNonSecretPayload123",
+    "BYPASS=allowedValue123",
+    "TOPSECRET=opaqueNonSecretPayload123",
+    "SUBTOKEN=opaqueNonSecretPayload123",
+    "publicKey=opaqueVerificationMaterial123",
+    "customKey=opaqueNonSecretPayload123",
+    "public-key=opaqueVerificationMaterial123",
+    "custom-key=opaqueNonSecretPayload123",
+    '{"key":"agent:main:main"}',
+    '{"correlationMarker":"reply-correlation-marker-123"}',
+  ])(
+    "detects and redacts every canonical secret family in TUI startup artifacts [case %#]",
+    (benign) => {
+      const detectsSecret = (token: string) =>
+        runTuiStartupCheckHelper(
+          'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
+          { TOKEN: token },
+        );
+      const redactsSecret = (token: string) =>
+        runTuiStartupCheckHelper('printf "%s" "$TOKEN" | redact_secrets', { TOKEN: token });
+      const langsmithPt = `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`;
+      const langsmithSk = `lsv2_sk_${"a".repeat(36)}_${"c".repeat(10)}`;
+      const canonicalSamples = new Map<
+        string,
+        { name: string; sample: string; rawSecret?: string }
+      >([
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[0]),
+          { name: "nvapi", sample: "nvapi-abcdefghijklmnop" },
+        ],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[1]), { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" }],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[2]), { name: "ghp", sample: "ghp_abcdefghijklmnopqr" }],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[3]),
+          { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
+        ],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[4]), { name: "sk_proj", sample: "sk-proj-abcdefghij" }],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[5]), { name: "sk_ant", sample: "sk-ant-abcdefghijk" }],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[6]),
+          { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
+        ],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[7]),
+          { name: "xoxb", sample: secretFixture("xox", "b", "-", "1234567890") },
+        ],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+          { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
+        ],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+          { name: "asia", sample: secretFixture("AS", "IA", "ABCDEFGHIJKLMNOP") },
+        ],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[9]), { name: "hf", sample: "hf_abcdefghijklmnopq" }],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[10]), { name: "glpat", sample: "glpat-abcdefghijklmn" }],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[11]), { name: "gsk", sample: "gsk_abcdefghijklmnop" }],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[12]), { name: "pypi", sample: "pypi-abcdefghijklmnop" }],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[13]),
+          { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+        ],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[14]),
+          { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+        ],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[15]),
+          {
+            name: "discord",
+            sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+          },
+        ],
+        [fingerprint(TOKEN_PREFIX_PATTERNS[16]), { name: "tvly", sample: "tvly-abcdefghijklmnop" }],
+        [
+          fingerprint(TOKEN_PREFIX_PATTERNS[17]),
+          {
+            name: "langsmith_pt",
+            sample: langsmithPt,
+          },
+        ],
+        [
+          fingerprint(CONTEXT_PATTERNS[0]),
+          {
+            name: "bearer_context",
+            sample: "Authorization: Bearer abcdefghijklmnopqrst",
+            rawSecret: "abcdefghijklmnopqrst",
+          },
+        ],
+        [
+          fingerprint(CONTEXT_PATTERNS[1]),
+          {
+            name: "api_key_context",
+            sample: "API_KEY=abcdefghijklmnopqrst",
+            rawSecret: "abcdefghijklmnopqrst",
+          },
+        ],
+        [
+          fingerprint(CONTEXT_PATTERNS[2]),
+          {
+            name: "camel_secret_context",
+            sample: "clientSecret=opaqueCredentialPayloadZ1234567890",
+            rawSecret: "opaqueCredentialPayloadZ1234567890",
+          },
+        ],
+        [
+          fingerprint(CONTEXT_PATTERNS[3]),
+          {
+            name: "uppercase_key_context",
+            sample: "KEY=opaqueCredentialPayloadZ1234567890",
+            rawSecret: "opaqueCredentialPayloadZ1234567890",
+          },
+        ],
+        [
+          fingerprint(SECRET_BLOCK_PATTERNS[0]),
+          {
+            name: "private_key_block",
+            sample:
+              "-----BEGIN TEST PRIVATE KEY-----\nopaque-test-body\n-----END TEST PRIVATE KEY-----",
+          },
+        ],
+      ]);
+      const extraSamples = [
         { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
-      ],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[8]),
-        { name: "asia", sample: secretFixture("AS", "IA", "ABCDEFGHIJKLMNOP") },
-      ],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[9]), { name: "hf", sample: "hf_abcdefghijklmnopq" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[10]), { name: "glpat", sample: "glpat-abcdefghijklmn" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[11]), { name: "gsk", sample: "gsk_abcdefghijklmnop" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[12]), { name: "pypi", sample: "pypi-abcdefghijklmnop" }],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[13]),
-        { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-      ],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[14]),
-        { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-      ],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[15]),
+        { name: "xoxp", sample: secretFixture("xox", "p", "-", "1234567890") },
+        { name: "xoxa", sample: secretFixture("xox", "a", "-", "1234567890") },
+        { name: "xoxs", sample: secretFixture("xox", "s", "-", "1234567890") },
         {
-          name: "discord",
-          sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+          name: "xapp",
+          sample: secretFixture("x", "app", "-", "1", "-", "A1B2C3", "-", "12345", "-", "abcde"),
         },
-      ],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[16]), { name: "tvly", sample: "tvly-abcdefghijklmnop" }],
-      [
-        fingerprint(TOKEN_PREFIX_PATTERNS[17]),
         {
-          name: "langsmith_pt",
-          sample: langsmithPt,
+          name: "langsmith_sk",
+          sample: langsmithSk,
         },
-      ],
-      [
-        fingerprint(CONTEXT_PATTERNS[0]),
         {
-          name: "bearer_context",
-          sample: "Authorization: Bearer abcdefghijklmnopqrst",
+          name: "token_context",
+          sample: "TOKEN=abcdefghijklmnopqrst",
           rawSecret: "abcdefghijklmnopqrst",
         },
-      ],
-      [
-        fingerprint(CONTEXT_PATTERNS[1]),
         {
-          name: "api_key_context",
-          sample: "API_KEY=abcdefghijklmnopqrst",
+          name: "secret_context",
+          sample: "SECRET=abcdefghijklmnopqrst",
           rawSecret: "abcdefghijklmnopqrst",
         },
-      ],
-      [
-        fingerprint(CONTEXT_PATTERNS[2]),
         {
-          name: "camel_secret_context",
-          sample: "clientSecret=opaqueCredentialPayloadZ1234567890",
+          name: "password_context",
+          sample: "PASSWORD=abcdefghijklmnopqrst",
+          rawSecret: "abcdefghijklmnopqrst",
+        },
+        {
+          name: "credential_context",
+          sample: "CREDENTIAL=abcdefghijklmnopqrst",
+          rawSecret: "abcdefghijklmnopqrst",
+        },
+        {
+          name: "suffix_key_context",
+          sample: "SERVICE_KEY=abcdefghijklmnopqrst",
+          rawSecret: "abcdefghijklmnopqrst",
+        },
+        {
+          name: "pass_punctuation_context",
+          sample: "CUSTOM_PASS=!OpaquePassword123",
+          rawSecret: "!OpaquePassword123",
+        },
+        {
+          name: "quoted_json_pass_context",
+          sample: '{"PASS":"opaqueCredentialPayloadZ1234567890"}',
           rawSecret: "opaqueCredentialPayloadZ1234567890",
         },
-      ],
-      [
-        fingerprint(CONTEXT_PATTERNS[3]),
         {
-          name: "uppercase_key_context",
-          sample: "KEY=opaqueCredentialPayloadZ1234567890",
+          name: "spaced_pass_context",
+          sample: "PASS = opaqueCredentialPayloadZ1234567890",
           rawSecret: "opaqueCredentialPayloadZ1234567890",
         },
-      ],
-      [
-        fingerprint(SECRET_BLOCK_PATTERNS[0]),
         {
-          name: "private_key_block",
-          sample:
-            "-----BEGIN TEST PRIVATE KEY-----\nopaque-test-body\n-----END TEST PRIVATE KEY-----",
+          name: "generic_punctuation_context",
+          sample: "API_KEY=,OpaqueCredentialPayloadZ1234567890",
+          rawSecret: ",OpaqueCredentialPayloadZ1234567890",
         },
-      ],
-    ]);
-    const extraSamples = [
-      { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
-      { name: "xoxp", sample: secretFixture("xox", "p", "-", "1234567890") },
-      { name: "xoxa", sample: secretFixture("xox", "a", "-", "1234567890") },
-      { name: "xoxs", sample: secretFixture("xox", "s", "-", "1234567890") },
-      {
-        name: "xapp",
-        sample: secretFixture("x", "app", "-", "1", "-", "A1B2C3", "-", "12345", "-", "abcde"),
-      },
-      {
-        name: "langsmith_sk",
-        sample: langsmithSk,
-      },
-      {
-        name: "token_context",
-        sample: "TOKEN=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "secret_context",
-        sample: "SECRET=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "password_context",
-        sample: "PASSWORD=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "credential_context",
-        sample: "CREDENTIAL=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "suffix_key_context",
-        sample: "SERVICE_KEY=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "pass_punctuation_context",
-        sample: "CUSTOM_PASS=!OpaquePassword123",
-        rawSecret: "!OpaquePassword123",
-      },
-      {
-        name: "quoted_json_pass_context",
-        sample: '{"PASS":"opaqueCredentialPayloadZ1234567890"}',
-        rawSecret: "opaqueCredentialPayloadZ1234567890",
-      },
-      {
-        name: "spaced_pass_context",
-        sample: "PASS = opaqueCredentialPayloadZ1234567890",
-        rawSecret: "opaqueCredentialPayloadZ1234567890",
-      },
-      {
-        name: "generic_punctuation_context",
-        sample: "API_KEY=,OpaqueCredentialPayloadZ1234567890",
-        rawSecret: ",OpaqueCredentialPayloadZ1234567890",
-      },
-      {
-        name: "hyphenated_api_key_context",
-        sample: "X-Api-Key=opaqueCredentialPayloadZ1234567890",
-        rawSecret: "opaqueCredentialPayloadZ1234567890",
-      },
-      {
-        name: "reply_token_context",
-        sample: '{"replyToken":"opaqueCredentialPayloadZ1234567890"}',
-        rawSecret: "opaqueCredentialPayloadZ1234567890",
-      },
-      {
-        name: "python_extra_next_line_context",
-        sample: "API_KEY=12345\u00856789012345",
-        rawSecret: "12345\u00856789012345",
-      },
-      {
-        name: "python_extra_file_separator_context",
-        sample: "API_KEY=12345\u001c6789012345",
-        rawSecret: "12345\u001c6789012345",
-      },
-    ];
+        {
+          name: "hyphenated_api_key_context",
+          sample: "X-Api-Key=opaqueCredentialPayloadZ1234567890",
+          rawSecret: "opaqueCredentialPayloadZ1234567890",
+        },
+        {
+          name: "reply_token_context",
+          sample: '{"replyToken":"opaqueCredentialPayloadZ1234567890"}',
+          rawSecret: "opaqueCredentialPayloadZ1234567890",
+        },
+        {
+          name: "python_extra_next_line_context",
+          sample: "API_KEY=12345\u00856789012345",
+          rawSecret: "12345\u00856789012345",
+        },
+        {
+          name: "python_extra_file_separator_context",
+          sample: "API_KEY=12345\u001c6789012345",
+          rawSecret: "12345\u001c6789012345",
+        },
+      ];
 
-    const canonicalFingerprints = [
-      ...TOKEN_PREFIX_PATTERNS,
-      ...CONTEXT_PATTERNS,
-      ...SECRET_BLOCK_PATTERNS,
-    ].map(fingerprint);
-    expect([...canonicalSamples.keys()]).toEqual(canonicalFingerprints);
+      const canonicalFingerprints = [
+        ...TOKEN_PREFIX_PATTERNS,
+        ...CONTEXT_PATTERNS,
+        ...SECRET_BLOCK_PATTERNS,
+      ].map(fingerprint);
+      expect([...canonicalSamples.keys()]).toEqual(canonicalFingerprints);
 
-    for (const { name, sample, rawSecret } of [...canonicalSamples.values(), ...extraSamples]) {
-      expect(detectsSecret(sample), `${name} should be detected`).toBe("secret");
-      const redacted = redactsSecret(sample);
-      expect(redacted, `${name} should include a redaction marker`).toContain("[REDACTED_SECRET]");
-      expect(redacted, `${name} should not retain the raw secret`).not.toContain(
-        rawSecret ?? sample,
-      );
-    }
-    expect(redactsSecret(langsmithPt)).toBe("[REDACTED_SECRET]");
-    expect(redactsSecret(langsmithSk)).toBe("[REDACTED_SECRET]");
-    for (const benign of [
-      "plain startup text",
-      "COMPASS=opaqueNonSecretPayload123",
-      "BYPASS=allowedValue123",
-      "TOPSECRET=opaqueNonSecretPayload123",
-      "SUBTOKEN=opaqueNonSecretPayload123",
-      "publicKey=opaqueVerificationMaterial123",
-      "customKey=opaqueNonSecretPayload123",
-      "public-key=opaqueVerificationMaterial123",
-      "custom-key=opaqueNonSecretPayload123",
-      '{"key":"agent:main:main"}',
-      '{"correlationMarker":"reply-correlation-marker-123"}',
-    ]) {
+      for (const { name, sample, rawSecret } of [...canonicalSamples.values(), ...extraSamples]) {
+        expect(detectsSecret(sample), `${name} should be detected`).toBe("secret");
+        const redacted = redactsSecret(sample);
+        expect(redacted, `${name} should include a redaction marker`).toContain(
+          "[REDACTED_SECRET]",
+        );
+        expect(redacted, `${name} should not retain the raw secret`).not.toContain(
+          rawSecret ?? sample,
+        );
+      }
+      expect(redactsSecret(langsmithPt)).toBe("[REDACTED_SECRET]");
+      expect(redactsSecret(langsmithSk)).toBe("[REDACTED_SECRET]");
+
       expect(detectsSecret(benign), benign).toBe("clean");
       expect(redactsSecret(benign), benign).toBe(benign);
-    }
-  });
+    },
+  );
 
   it("removes raw TUI startup artifacts after writing the sanitized capture", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-"));

@@ -88,21 +88,22 @@ describe("snapshot commands live env helper", () => {
     expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
   });
 
-  it("never exposes an ambient hosted NVIDIA inference credential to the child env", () => {
-    process.env[HOSTED_FLAG] = "1";
-    for (const name of HOSTED_CREDENTIAL_ENVS) {
-      process.env[name] = "nvapi-ambient-credential-that-must-not-leak";
-    }
+  it.each(Array.from(HOSTED_CREDENTIAL_ENVS, (value) => [value]))(
+    "never exposes ambient hosted credential %s to the child env",
+    (name) => {
+      process.env[HOSTED_FLAG] = "1";
+      for (const name of HOSTED_CREDENTIAL_ENVS) {
+        process.env[name] = "nvapi-ambient-credential-that-must-not-leak";
+      }
 
-    const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
+      const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
 
-    for (const name of HOSTED_CREDENTIAL_ENVS) {
       // Guard against the assertion below going vacuous: the credential really
       // is present in the ambient env this helper builds from.
       expect(process.env[name]).toBe("nvapi-ambient-credential-that-must-not-leak");
       expect(env[name]).toBeUndefined();
-    }
-  });
+    },
+  );
 });
 
 describe("snapshot restored-gateway probe classification", () => {

@@ -496,35 +496,33 @@ describe("openclaw-config-guard", () => {
       fs.closeSync(staleHashFd);
     }
   });
-  it("rejects external symlink, hardlink, and special-file substitutions", () => {
-    for (const attack of ["symlink", "hardlink", "fifo"] as const) {
-      const { root, configDir, configPath, hashPath } = fixture();
-      const external = path.join(root, "external.json");
-      fs.writeFileSync(external, "outside\n");
-      fs.rmSync(configPath);
-      const arrangeAttack = {
-        symlink: () => fs.symlinkSync(external, configPath),
-        hardlink: () => fs.linkSync(external, configPath),
-        fifo: () => expect(spawnSync("mkfifo", [configPath]).status).toBe(0),
-      } satisfies Record<typeof attack, () => void>;
-      arrangeAttack[attack]();
+  it.each(["symlink", "hardlink", "fifo"] as const)("rejects external %s config", (attack) => {
+    const { root, configDir, configPath, hashPath } = fixture();
+    const external = path.join(root, "external.json");
+    fs.writeFileSync(external, "outside\n");
+    fs.rmSync(configPath);
+    const arrangeAttack = {
+      symlink: () => fs.symlinkSync(external, configPath),
+      hardlink: () => fs.linkSync(external, configPath),
+      fifo: () => expect(spawnSync("mkfifo", [configPath]).status).toBe(0),
+    } satisfies Record<typeof attack, () => void>;
+    arrangeAttack[attack]();
 
-      const beforeHash = fs.readFileSync(hashPath);
-      const result = runGuard("preflight", configDir);
+    const beforeHash = fs.readFileSync(hashPath);
+    const result = runGuard("preflight", configDir);
 
-      expect(result.status).toBe(1);
-      expect(result.lines).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: "issue",
-            code: attack === "hardlink" ? "hardlinked-config-file" : "unsafe-config-file",
-            path: configPath,
-          }),
-        ]),
-      );
-      expect(fs.readFileSync(external, "utf-8")).toBe("outside\n");
-      expect(fs.readFileSync(hashPath)).toEqual(beforeHash);
-    }
+    expect(result.status).toBe(1);
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: attack === "hardlink" ? "hardlinked-config-file" : "unsafe-config-file",
+          path: configPath,
+        }),
+      ]),
+    );
+    expect(fs.readFileSync(external, "utf-8")).toBe("outside\n");
+    expect(fs.readFileSync(hashPath)).toEqual(beforeHash);
   });
   it("fail-closes a rename-swapped config namespace and leaves the external tree untouched", () => {
     const { root, configDir } = fixture();

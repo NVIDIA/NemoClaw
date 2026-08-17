@@ -137,6 +137,31 @@ describe("source architecture budget (#7692)", () => {
     expect(report.fanIn).toMatchObject({ "bin/b.js": 1, "src/b.ts": 1 });
   });
 
+  test("reports repository-relative paths through an aliased repository root (#7692)", ({
+    resources,
+  }) => {
+    const root = resources.temporaryDirectory("nemoclaw-architecture-canonical-root-");
+    const aliasRoot = path.join(
+      resources.temporaryDirectory("nemoclaw-architecture-root-alias-"),
+      "repo",
+    );
+    writeModule(root, "src/a.ts", 'import "./b";\n');
+    writeModule(root, "src/b.ts", "export {};\n");
+    fs.symlinkSync(root, aliasRoot, process.platform === "win32" ? "junction" : "dir");
+
+    const report = analyzeSourceArchitecture(aliasRoot, {
+      scanRoots: ["src"],
+      rootFileDirectories: ["src"],
+    });
+
+    expect(report).toMatchObject({
+      files: ["src/a.ts", "src/b.ts"],
+      fanIn: { "src/a.ts": 0, "src/b.ts": 1 },
+      fanOut: { "src/a.ts": 1, "src/b.ts": 0 },
+      rootFiles: { src: 2 },
+    });
+  });
+
   test("ignores type-only dependency cycles", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-architecture-types-");
     writeModule(root, "src/a.ts", 'import type { B } from "./b";\nexport type A = B;\n');

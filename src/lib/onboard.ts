@@ -3013,11 +3013,7 @@ async function preflightAuthoritativeRebuildTarget(
         bindGatewayAuthority: () => bindGatewayOwner(getGatewayOwner()),
         runFatalRuntimePreflight: async () =>
           onboardPreflightGatewayAuthority.runRuntimePreflight(
-            {
-              sandboxGpu: opts.sandboxGpu,
-              sandboxGpuDevice: opts.sandboxGpuDevice,
-              noGpu: opts.noGpu,
-            },
+            authoritativeRebuildTarget.authoritativeRebuildRuntimePreflightOptions(opts),
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),
         ensureOpenshell: () =>
@@ -3298,6 +3294,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
       gpuRequested: opts.gpu === true,
       noGpu: opts.noGpu === true,
+      allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
       env: process.env,
       recordedGpuPassthroughBeforePreflight,
       commitSelectedAgentTransition: selectedAgentTransition.commit,

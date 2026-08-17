@@ -34,88 +34,83 @@ function markStep(session: Session, name: string, status: "complete" | "failed")
 }
 
 describe("rewindSessionForRebuildResume", () => {
-  it("normalizes stale recreate snapshots to the pre-sandbox resume boundary without data loss", () => {
-    const session = createSession({
-      sandboxName: "old-name",
-      provider: "old-provider",
-      model: "old-model",
-      endpointUrl: "https://old-provider.example/v1",
-      credentialEnv: "OLD_PROVIDER_KEY",
-      lastCompletedStep: "inference",
-      lastStepStarted: "openclaw",
-      resumable: false,
-      status: "failed",
-      failure: {
-        step: "openclaw",
-        message: "stale recreate failed",
-        recordedAt: "2026-06-01T00:02:00.000Z",
-      },
-      agent: "stale-agent",
-      machine: {
+  it.each(["provider_selection", "inference", "sandbox", "openclaw", "agent_setup", "policies"])(
+    "normalizes stale recreate snapshots to the pre-sandbox resume boundary without data loss [%s]",
+    (stepName) => {
+      const session = createSession({
+        sandboxName: "old-name",
+        provider: "old-provider",
+        model: "old-model",
+        endpointUrl: "https://old-provider.example/v1",
+        credentialEnv: "OLD_PROVIDER_KEY",
+        lastCompletedStep: "inference",
+        lastStepStarted: "openclaw",
+        resumable: false,
+        status: "failed",
+        failure: {
+          step: "openclaw",
+          message: "stale recreate failed",
+          recordedAt: "2026-06-01T00:02:00.000Z",
+        },
+        agent: "stale-agent",
+        machine: {
+          version: MACHINE_SNAPSHOT_VERSION,
+          state: "openclaw",
+          stateEnteredAt: "2026-06-01T00:01:00.000Z",
+          revision: 7,
+        },
+      });
+      session.metadata.fromDockerfile = "/tmp/reviewed.Dockerfile";
+      session.migratedLegacyValueHashes = { OLD_PROVIDER_KEY: "abc123" };
+      markStep(session, "gateway", "complete");
+      markStep(session, "inference", "complete");
+      markStep(session, "openclaw", "failed");
+
+      const originalSessionId = session.sessionId;
+      const rewound = rewindSessionForRebuildResume(session, {
+        sandboxName: "alpha",
+        rebuildAgent: "openclaw",
+        rebuildMessagingPlan: null,
+        rebuildsHermesSandbox: false,
+        rebuildHermesToolGateways: ["stale-gateway"],
+        resumeConfig: createResumeConfig(),
+      });
+
+      expect(rewound).toBe(session);
+      expect(rewound.sessionId).toBe(originalSessionId);
+      expect(rewound.metadata.fromDockerfile).toBe("/tmp/reviewed.Dockerfile");
+      expect(rewound.migratedLegacyValueHashes).toEqual({ OLD_PROVIDER_KEY: "abc123" });
+      expect(rewound).toMatchObject({
+        sandboxName: "alpha",
+        resumable: true,
+        status: "in_progress",
+        failure: null,
+        lastCompletedStep: "gateway",
+        lastStepStarted: "gateway",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/nemotron-3",
+        endpointUrl: "https://new-provider.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai",
+        compatibleEndpointReasoning: "true",
+        compatibleEndpointReasoningEffort: null,
+        hermesToolGateways: [],
+      });
+      expect(rewound.machine).toMatchObject({
         version: MACHINE_SNAPSHOT_VERSION,
-        state: "openclaw",
-        stateEnteredAt: "2026-06-01T00:01:00.000Z",
-        revision: 7,
-      },
-    });
-    session.metadata.fromDockerfile = "/tmp/reviewed.Dockerfile";
-    session.migratedLegacyValueHashes = { OLD_PROVIDER_KEY: "abc123" };
-    markStep(session, "gateway", "complete");
-    markStep(session, "inference", "complete");
-    markStep(session, "openclaw", "failed");
+        state: "complete",
+        revision: 8,
+      });
 
-    const originalSessionId = session.sessionId;
-    const rewound = rewindSessionForRebuildResume(session, {
-      sandboxName: "alpha",
-      rebuildAgent: "openclaw",
-      rebuildMessagingPlan: null,
-      rebuildsHermesSandbox: false,
-      rebuildHermesToolGateways: ["stale-gateway"],
-      resumeConfig: createResumeConfig(),
-    });
-
-    expect(rewound).toBe(session);
-    expect(rewound.sessionId).toBe(originalSessionId);
-    expect(rewound.metadata.fromDockerfile).toBe("/tmp/reviewed.Dockerfile");
-    expect(rewound.migratedLegacyValueHashes).toEqual({ OLD_PROVIDER_KEY: "abc123" });
-    expect(rewound).toMatchObject({
-      sandboxName: "alpha",
-      resumable: true,
-      status: "in_progress",
-      failure: null,
-      lastCompletedStep: "gateway",
-      lastStepStarted: "gateway",
-      agent: "openclaw",
-      provider: "compatible-endpoint",
-      model: "nvidia/nemotron-3",
-      endpointUrl: "https://new-provider.example/v1",
-      credentialEnv: "COMPATIBLE_API_KEY",
-      preferredInferenceApi: "openai",
-      compatibleEndpointReasoning: "true",
-      compatibleEndpointReasoningEffort: null,
-      hermesToolGateways: [],
-    });
-    expect(rewound.machine).toMatchObject({
-      version: MACHINE_SNAPSHOT_VERSION,
-      state: "complete",
-      revision: 8,
-    });
-    for (const stepName of [
-      "provider_selection",
-      "inference",
-      "sandbox",
-      "openclaw",
-      "agent_setup",
-      "policies",
-    ]) {
       expect(rewound.steps[stepName]).toEqual({
         status: "pending",
         startedAt: null,
         completedAt: null,
         error: null,
       });
-    }
-  });
+    },
+  );
 
   it("clears reasoning state that came from an unrelated session", () => {
     const session = createSession({

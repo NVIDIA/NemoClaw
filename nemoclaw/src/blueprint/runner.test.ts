@@ -848,7 +848,15 @@ describe("runner", () => {
       expect(plan.timestamp).toBeDefined();
     });
 
-    it("persists only the explicit safe plan schema", async () => {
+    it.each([
+      "credential_env",
+      "credential_default",
+      "SECRET_KEY",
+      "default-secret-value",
+      "real-secret",
+      "future-token-value",
+      "future-authorization",
+    ])("persists only the explicit safe plan schema [%s]", async (leaked) => {
       const bp = {
         components: {
           inference: {
@@ -902,17 +910,8 @@ describe("runner", () => {
         endpoint: "https://api.example.com",
         model: "gpt-4",
       });
-      for (const leaked of [
-        "credential_env",
-        "credential_default",
-        "SECRET_KEY",
-        "default-secret-value",
-        "real-secret",
-        "future-token-value",
-        "future-authorization",
-      ]) {
-        expect(entry.content).not.toContain(leaked);
-      }
+
+      expect(entry.content).not.toContain(leaked);
     });
 
     it("emits all progress milestones", async () => {
@@ -1184,7 +1183,19 @@ describe("runner", () => {
       expect(stdoutText()).toContain('"nc-run-1"');
     });
 
-    it("re-renders only safe allowlisted fields from plan.json", () => {
+    it.each([
+      "credential_env",
+      "credential_default",
+      "SECRET_KEY",
+      "default-secret-value",
+      "future-token-value",
+      "future-authorization",
+      "sandbox-token-value",
+      "router-authorization",
+      "top-level-token-value",
+      "top-level-authorization",
+      "future-api-key",
+    ])("re-renders only safe allowlisted fields from plan.json [%s]", (leaked) => {
       const rid = "nc-run-sensitive";
       addDir(`${RUNS_DIR}/${rid}`);
       addFile(
@@ -1253,21 +1264,8 @@ describe("runner", () => {
         dry_run: false,
       });
       const out = stdoutText();
-      for (const leaked of [
-        "credential_env",
-        "credential_default",
-        "SECRET_KEY",
-        "default-secret-value",
-        "future-token-value",
-        "future-authorization",
-        "sandbox-token-value",
-        "router-authorization",
-        "top-level-token-value",
-        "top-level-authorization",
-        "future-api-key",
-      ]) {
-        expect(out).not.toContain(leaked);
-      }
+
+      expect(out).not.toContain(leaked);
     });
 
     it("prints unknown status when plan.json is missing", () => {
@@ -1288,17 +1286,14 @@ describe("runner", () => {
 
     // ── Path traversal rejection ──────────────────────────────────
 
-    it.each([
-      "../../etc",
-      "../tmp",
-      "valid.with.dots",
-      "foo\x00bar",
-      "/absolute/path",
-    ])("rejects malicious run ID: %j", (rid) => {
-      expect(() => {
-        actionStatus(rid);
-      }).toThrow(/Invalid run ID/);
-    });
+    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path"])(
+      "rejects malicious run ID: %j",
+      (rid) => {
+        expect(() => {
+          actionStatus(rid);
+        }).toThrow(/Invalid run ID/);
+      },
+    );
 
     it("accepts a legitimate hyphenated run ID", () => {
       const rid = "nc-20260406-abc12345";
@@ -1354,16 +1349,12 @@ describe("runner", () => {
 
     // ── Path traversal rejection ──────────────────────────────────
 
-    it.each([
-      "../../etc",
-      "../tmp",
-      "valid.with.dots",
-      "foo\x00bar",
-      "/absolute/path",
-      "",
-    ])("rejects malicious run ID: %j", async (rid) => {
-      await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
-    });
+    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path", ""])(
+      "rejects malicious run ID: %j",
+      async (rid) => {
+        await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
+      },
+    );
 
     it("throws when rollback plan has no sandbox_name", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;
