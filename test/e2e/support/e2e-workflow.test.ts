@@ -96,6 +96,14 @@ if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '20
   return Object.assign(result, { permissionChecks });
 }
 
+function expectCatalogueOwningPathsToExist(): void {
+  for (const target of E2E_TARGET_CATALOGUE) {
+    for (const owner of target.owningPaths) {
+      expect(fs.existsSync(path.join(REPO_ROOT, owner)), `${target.id}: ${owner}`).toBe(true);
+    }
+  }
+}
+
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
     expect(() => assertChannelsStopStartSandboxName("personal-dev", "openclaw")).toThrow(
@@ -588,11 +596,7 @@ describe("e2e workflow boundary", () => {
   });
 
   it("keeps every catalogue owning path bound to a repository file or directory", () => {
-    for (const target of E2E_TARGET_CATALOGUE) {
-      for (const owner of target.owningPaths) {
-        expect(fs.existsSync(path.join(REPO_ROOT, owner)), `${target.id}: ${owner}`).toBe(true);
-      }
-    }
+    expectCatalogueOwningPathsToExist();
   });
 
   it.each(
