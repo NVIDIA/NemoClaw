@@ -872,15 +872,16 @@ describe("onboard policy preset suggestions", () => {
       return union;
     }
 
-    it("includes every env-gated OpenClaw agent-required preset in the restricted suppression list", () => {
-      const additionsUnion = unionAdditionsAcrossOtelStates();
-      const restrictedSet = new Set(suppressedAgentRequiredPresets("restricted", "openclaw"));
-      for (const preset of additionsUnion) {
+    it.each(Array.from(unionAdditionsAcrossOtelStates(), (value) => [value]))(
+      "includes env-gated preset %s in the restricted suppression list",
+      (preset) => {
+        const restrictedSet = new Set(suppressedAgentRequiredPresets("restricted", "openclaw"));
+
         expect(
           restrictedSet.has(preset),
           `addition '${preset}' missing from restricted suppression list`,
         ).toBe(true);
-      }
-    });
+      },
+    );
   });
 });

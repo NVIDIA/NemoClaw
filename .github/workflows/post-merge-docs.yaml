@@ -1,0 +1,141 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Docs / Post-Merge Catch-Up
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+concurrency:
+  group: post-merge-docs-main
+
+jobs:
+  gate:
+    name: Check for an active documentation PR
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+    outputs:
+      pending: ${{ steps.scan.outputs.pending }}
+    steps:
+      - id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pending="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&per_page=100" | jq --slurp 'any(.[][]; (.head.ref | startswith("automation/post-merge-docs-")) and .head.repo.full_name == "NVIDIA/NemoClaw")')"
+          [[ "$pending" == true || "$pending" == false ]]
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
+
+  author:
+    name: Author and review documentation catch-up
+    needs: gate
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
+      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
+      POST_MERGE_DOCS_CONFIG_DIR: ${{ github.workspace }}/config
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - name: Checkout exact main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: trusted
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Find the documentation range
+        working-directory: trusted
+        run: |
+          set -euo pipefail
+          while IFS= read -r candidate; do
+            [[ "$candidate" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] || continue
+            tag="$candidate"
+            break
+          done < <(git tag --merged "$GITHUB_SHA" --list 'v*' --sort=-version:refname)
+          [[ -n "${tag:-}" ]]
+          sha="$(git rev-list -n 1 "$tag")"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "RANGE_START_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RANGE_START_SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Install OpenShell
+        run: env -u GITHUB_TOKEN -u GH_TOKEN -u OPENAI_API_KEY -u POST_MERGE_DOCS_API_KEY NEMOCLAW_NON_INTERACTIVE=1 bash "$TRUSTED_CHECKOUT/scripts/install-openshell.sh"
+
+      - name: Configure isolated inference
+        env:
+          OPENAI_API_KEY: ${{ secrets.POST_MERGE_DOCS_API_KEY }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" configure
+
+      - name: Author the documentation
+        env:
+          POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/candidate
+          POST_MERGE_DOCS_PHASE: author
+          POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/author
+          SANDBOX_NAME: docs-main-author
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+
+      - name: Independently review the candidate
+        env:
+          POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/approved
+          POST_MERGE_DOCS_CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          POST_MERGE_DOCS_PHASE: review
+          POST_MERGE_DOCS_WORKDIR: ${{ github.workspace }}/review
+          SANDBOX_NAME: docs-main-review
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
+
+      - id: upload
+        name: Upload the approved patch
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: post-merge-docs-approved
+          overwrite: true
+          path: ${{ github.workspace }}/approved/
+          retention-days: 3
+
+  publish:
+    name: Publish documentation catch-up
+    needs: author
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    env:
+      POST_MERGE_DOCS_ARTIFACT_DIR: ${{ github.workspace }}/approved
+      TRUSTED_CHECKOUT: ${{ github.workspace }}/trusted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.author.outputs.artifact_id }}
+          path: approved
+
+      - name: Publish the reviewed patch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/publish.mts"

@@ -101,29 +101,23 @@ describe("native OpenClaw artifact workload contract", () => {
     expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
   });
 
-  it.each([
-    "../agent",
-    "agent/../work",
-    "agent//work",
-    "agent/work.",
-    "agent/work ",
-  ])("rejects non-canonical working directory %j (#8178)", (workingDirectory) => {
-    const value = receipt();
-    launch(value).workingDirectory = workingDirectory;
-    expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
-  });
+  it.each(["../agent", "agent/../work", "agent//work", "agent/work.", "agent/work "])(
+    "rejects non-canonical working directory %j (#8178)",
+    (workingDirectory) => {
+      const value = receipt();
+      launch(value).workingDirectory = workingDirectory;
+      expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
+    },
+  );
 
-  it.each([
-    "bin/claw.exe.",
-    "bin/claw.exe ",
-    "bin/CON",
-    "bin/nul.txt",
-    "COM1/runtime",
-  ])("rejects Windows-normalizing executable path %j (#8178)", (relativePath) => {
-    const value = receipt();
-    executable(value).relativePath = relativePath;
-    expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
-  });
+  it.each(["bin/claw.exe.", "bin/claw.exe ", "bin/CON", "bin/nul.txt", "COM1/runtime"])(
+    "rejects Windows-normalizing executable path %j (#8178)",
+    (relativePath) => {
+      const value = receipt();
+      executable(value).relativePath = relativePath;
+      expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
+    },
+  );
 
   it("records environment-variable names without accepting literal assignments (#8178)", () => {
     const value = receipt();
@@ -175,23 +169,25 @@ describe("native OpenClaw artifact workload contract", () => {
     );
   });
 
-  it("rejects OCI image and mutable download fields (#8178)", () => {
-    for (const extra of ["image", "imageDigest", "downloadUrl"]) {
+  it.each(["image", "imageDigest", "downloadUrl"])(
+    "rejects OCI image and mutable download fields [case %#] (#8178)",
+    (extra) => {
       const value = receipt();
       value[extra] = "unexpected";
       expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(
         /contract must contain exactly/u,
       );
-    }
-  });
+    },
+  );
 
-  it("requires credential proxy replay and the shared artifact flag (#8178)", () => {
-    for (const field of ["credentialProxyReplayRequired", "shared"] as const) {
+  it.each(["credentialProxyReplayRequired", "shared"] as const)(
+    "requires credential proxy replay and the shared artifact flag [case %#] (#8178)",
+    (field) => {
       const value = receipt();
       value[field] = false;
       expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(
         new RegExp(`contract\\.${field} must be true`, "u"),
       );
-    }
-  });
+    },
+  );
 });

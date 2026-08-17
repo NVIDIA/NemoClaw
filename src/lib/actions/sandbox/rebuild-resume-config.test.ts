@@ -151,14 +151,11 @@ describe("getRebuildEndpointFromRegistry", () => {
     expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1\u2029"),
     ).toEqual({ known: false });
-    expect(getRebuildEndpointFromRegistry("compatible-endpoint", "http://@example.test/v1")).toEqual(
-      { known: false },
-    );
     expect(
-      getRebuildEndpointFromRegistry(
-        "compatible-endpoint",
-        "https:user:password@example.test/v1",
-      ),
+      getRebuildEndpointFromRegistry("compatible-endpoint", "http://@example.test/v1"),
+    ).toEqual({ known: false });
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "https:user:password@example.test/v1"),
     ).toEqual({ known: false });
     expect(
       getRebuildEndpointFromRegistry("compatible-endpoint", "https://example.test/v1#frag"),
@@ -522,19 +519,19 @@ describe("prepareRebuildResumeConfig", () => {
     }
   });
 
-  it("rejects explicit target endpoints that do not exactly match the target boundary", () => {
-    const cases = [
-      { name: "wrong sandbox", sandboxName: "beta" },
-      { name: "wrong provider", provider: "openai" },
-      { name: "unknown provider", provider: "compatible-endpoint-alias" },
-      { name: "missing model", model: "" },
-      { name: "wrong model", model: "other-model" },
-      { name: "unsupported url", endpointUrl: "file:///tmp/x" },
-      { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },
-      { name: "query url", endpointUrl: "https://example.test/v1?x=1" },
-      { name: "fragment url", endpointUrl: "https://example.test/v1#frag" },
-    ];
-    for (const testCase of cases) {
+  it.each([
+    { name: "wrong sandbox", sandboxName: "beta" },
+    { name: "wrong provider", provider: "openai" },
+    { name: "unknown provider", provider: "compatible-endpoint-alias" },
+    { name: "missing model", model: "" },
+    { name: "wrong model", model: "other-model" },
+    { name: "unsupported url", endpointUrl: "file:///tmp/x" },
+    { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },
+    { name: "query url", endpointUrl: "https://example.test/v1?x=1" },
+    { name: "fragment url", endpointUrl: "https://example.test/v1#frag" },
+  ])(
+    "rejects explicit target endpoints that do not exactly match the target boundary [$name]",
+    (testCase) => {
       vi.restoreAllMocks();
       vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
       const restore = snapshotEnv([
@@ -560,8 +557,8 @@ describe("prepareRebuildResumeConfig", () => {
       } finally {
         restore();
       }
-    }
-  });
+    },
+  );
 
   it("does not use an explicit endpoint when its sandbox name targets another sandbox", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });

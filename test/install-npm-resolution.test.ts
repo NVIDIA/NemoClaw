@@ -192,58 +192,60 @@ describe("installer npm resolution", () => {
     expect(result.stdout.trim().split("\n").at(-1)).toBe(initialPath);
   });
 
-  it("creates user-local shims for every packaged CLI alias during the default install path", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-package-shims-"));
-    const fakeBin = path.join(tmp, "bin");
-    const prefix = path.join(tmp, "prefix");
-    const prefixBin = path.join(prefix, "bin");
+  it.each(["nemoclaw", "nemohermes", "nemo-deepagents"])(
+    "creates user-local shims for every packaged CLI alias during the default install path [%s]",
+    (cliBin) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-package-shims-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const prefixBin = path.join(prefix, "bin");
 
-    fs.mkdirSync(fakeBin);
-    fs.mkdirSync(prefixBin, { recursive: true });
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(prefixBin, { recursive: true });
 
-    writeExecutable(
-      path.join(fakeBin, "node"),
-      `#!/usr/bin/env bash
+      writeExecutable(
+        path.join(fakeBin, "node"),
+        `#!/usr/bin/env bash
 exit 0
 `,
-    );
-    writeExecutable(
-      path.join(fakeBin, "npm"),
-      `#!/usr/bin/env bash
+      );
+      writeExecutable(
+        path.join(fakeBin, "npm"),
+        `#!/usr/bin/env bash
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then
   echo "$ACTIVE_NPM_PREFIX"
   exit 0
 fi
 exit 99
 `,
-    );
-    for (const cliBin of ["nemoclaw", "nemohermes", "nemo-deepagents"]) {
-      writeExecutable(
-        path.join(prefixBin, cliBin),
-        `#!/usr/bin/env bash
+      );
+      for (const cliBin of ["nemoclaw", "nemohermes", "nemo-deepagents"]) {
+        writeExecutable(
+          path.join(prefixBin, cliBin),
+          `#!/usr/bin/env bash
 echo "${cliBin} v0.1.0"
 `,
+        );
+      }
+
+      const result = runInstallerFunction(
+        '_CLI_BIN=nemoclaw; ensure_nemoclaw_shim; for name in nemoclaw nemohermes nemo-deepagents; do test -x "$NEMOCLAW_SHIM_DIR/$name"; done',
+        fakeBin,
+        {
+          ACTIVE_NPM_PREFIX: prefix,
+          HOME: tmp,
+        },
       );
-    }
 
-    const result = runInstallerFunction(
-      '_CLI_BIN=nemoclaw; ensure_nemoclaw_shim; for name in nemoclaw nemohermes nemo-deepagents; do test -x "$NEMOCLAW_SHIM_DIR/$name"; done',
-      fakeBin,
-      {
-        ACTIVE_NPM_PREFIX: prefix,
-        HOME: tmp,
-      },
-    );
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    for (const cliBin of ["nemoclaw", "nemohermes", "nemo-deepagents"]) {
       expect(
         normalizeShellPathForAssert(
           fs.readFileSync(path.join(tmp, ".local", "bin", cliBin), "utf-8"),
         ),
       ).toContain(normalizeShellPathForAssert(path.join(prefixBin, cliBin)));
-    }
-  });
+    },
+  );
 
   it("keeps PATH stable only when the generated shim resolves its selected Node", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stable-shim-path-"));

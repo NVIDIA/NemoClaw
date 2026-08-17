@@ -457,7 +457,7 @@ print(block)
   // credential-boundary invariants. Each test reads the actual matrix and
   // docs at the PR head, not a fixture, so a future edit that breaks the
   // invariant fails this suite before the change ships.
-  it("every documented `--agent <id>` selector resolves through production agent selection", () => {
+  function verifyDocumentedAgentSelectors() {
     const repoRoot = path.join(import.meta.dirname, "..");
     const matrix = JSON.parse(
       readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
@@ -487,5 +487,10 @@ print(block)
       ).not.toBeNull();
       expect(loadAgent(canonicalId ?? id).name).toBe(canonicalId);
     }
-  });
+  }
+
+  it(
+    "every documented `--agent <id>` selector resolves through production agent selection",
+    verifyDocumentedAgentSelectors,
+  );
 });

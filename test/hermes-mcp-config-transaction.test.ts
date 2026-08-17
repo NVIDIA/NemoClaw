@@ -427,8 +427,17 @@ print(json.dumps({"results": results, "null_result": null_result}))
     expect(payload.null_result.writes).toBe(1);
   });
 
-  it("emits bounded one-line errors with payload and runtime secrets redacted", () => {
-    const result = runPython(`
+  it.each([
+    "raw-secret-1",
+    "raw-secret-2",
+    "runtime secret with spaces",
+    "comma-secret",
+    "quoted bearer secret",
+    "suffix-secret",
+  ])(
+    "emits bounded one-line errors with payload and runtime secrets redacted [case %#]",
+    (secret) => {
+      const result = runPython(`
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -452,24 +461,24 @@ sys.argv = [sys.argv[1], "add", "--payload", json.dumps(payload)]
 print(json.dumps({"exit_code": module.main()}))
 `);
 
-    expect(result.status, result.stdout).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
-    expect(result.stderr).toContain("<REDACTED>");
-    for (const secret of [
-      "SAFE_MCP_TOKEN",
-      "runtime-secret-123",
-      "second-secret-456",
-      "password",
-      "query-secret-789",
-    ]) {
-      expect(result.stderr).not.toContain(secret);
-    }
-    expect(result.stderr).not.toContain("\u001b");
-    expect(result.stderr).not.toContain("\u202e");
-    expect(result.stderr.trim().split("\n")).toHaveLength(1);
-    expect(result.stderr.trim().length).toBeLessThanOrEqual(512);
+      expect(result.status, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
+      expect(result.stderr).toContain("<REDACTED>");
+      for (const secret of [
+        "SAFE_MCP_TOKEN",
+        "runtime-secret-123",
+        "second-secret-456",
+        "password",
+        "query-secret-789",
+      ]) {
+        expect(result.stderr).not.toContain(secret);
+      }
+      expect(result.stderr).not.toContain("\u001b");
+      expect(result.stderr).not.toContain("\u202e");
+      expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      expect(result.stderr.trim().length).toBeLessThanOrEqual(512);
 
-    const representations = runPython(`
+      const representations = runPython(`
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
@@ -485,21 +494,14 @@ print(json.dumps([
     module._sanitize_error_message(RuntimeError(message)) for message in messages
 ]))
 `);
-    expect(representations.status, representations.stderr).toBe(0);
-    const sanitized = JSON.parse(representations.stdout) as string[];
-    expect(sanitized).toHaveLength(4);
-    for (const message of sanitized) expect(message).toContain("<REDACTED>");
-    for (const secret of [
-      "raw-secret-1",
-      "raw-secret-2",
-      "runtime secret with spaces",
-      "comma-secret",
-      "quoted bearer secret",
-      "suffix-secret",
-    ]) {
+      expect(representations.status, representations.stderr).toBe(0);
+      const sanitized = JSON.parse(representations.stdout) as string[];
+      expect(sanitized).toHaveLength(4);
+      for (const message of sanitized) expect(message).toContain("<REDACTED>");
+
       expect(sanitized.join("\n")).not.toContain(secret);
-    }
-  });
+    },
+  );
 
   it("refuses a locked config snapshot", () => {
     const result = runPython(`

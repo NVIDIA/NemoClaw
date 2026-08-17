@@ -196,10 +196,8 @@ Missing anchors can still be real even when the page route exists.
 
 ## Step 8: Run an Independent Docs Review
 
-Run the independent documentation-writer review required by the
-[Documentation Writer Review Receipt](../../../CONTRIBUTING.md#documentation-writer-review-receipt)
-procedure.
-In addition to its required inputs, give the reviewer the old-to-new ownership map.
+Run an independent documentation writer review of the completed documentation-only change. Give
+the reviewer the old-to-new ownership map.
 Ask it to check for content loss, duplicate ownership, variant drift, bad redirects, oversized
 paragraph blocks, generated paragraph joins, and style regressions without telling it the expected
 verdict.

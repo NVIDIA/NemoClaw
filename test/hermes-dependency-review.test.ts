@@ -150,7 +150,7 @@ describe("Hermes 0.19.0 dependency review", () => {
     ).toBe(1);
   });
 
-  it("ships the reviewed Python dependency remediations and records residual debt", () => {
+  function verifyReviewedHermesDependencyRemediations() {
     expect(dockerfileBase).toContain(
       "COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch",
     );
@@ -292,7 +292,12 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`tornado==6.5.7`");
     expect(review).toContain("checksum-pinned Node.js `24.18.1`");
     expect(review).toContain("exact uv `0.11.33`");
-  });
+  }
+
+  it(
+    "ships the reviewed Python dependency remediations and records residual debt",
+    verifyReviewedHermesDependencyRemediations,
+  );
 
   it("rejects an altered Hindsight wheel before the compatibility import", () => {
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hindsight-hash-"));

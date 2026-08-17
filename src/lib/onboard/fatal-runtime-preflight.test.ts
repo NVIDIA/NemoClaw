@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 describe("report-backed runtime readiness (#7411)", () => {
-  it("requires explicit managed-vLLM intent for the Deferred N1x readiness exception (#8574)", () => {
+  it("requires explicit managed-vLLM intent and lets rebuild reject ambient intent (#9292)", () => {
     const readiness: SystemReadinessReport = {
       schemaVersion: "1.1.0",
       status: "incompatible",
@@ -137,6 +137,14 @@ describe("report-backed runtime readiness (#7411)", () => {
       }),
     ).toThrow("exit");
 
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        allowDeferredN1xManagedVllm: true,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+
     vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
     expect(
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
@@ -144,6 +152,14 @@ describe("report-backed runtime readiness (#7411)", () => {
         exitProcess: exit as never,
       }),
     ).toBe(readiness);
+
+    expect(() =>
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        allowDeferredN1xManagedVllm: false,
+        exitProcess: exit as never,
+      }),
+    ).toThrow("exit");
   });
 
   it("rejects ambiguous gateway ownership before the caller can run effects", () => {

@@ -70,6 +70,9 @@ const OPAQUE_INPUTS = [
   ".github/scripts/docker-auth-cleanup.sh",
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
+  ".github/workflows/post-merge-docs.yaml",
+  "tools/post-merge-docs/review-policy.yaml",
+  "tools/post-merge-docs/artifact.mts",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
@@ -181,6 +184,15 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/post-merge-docs.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/review-policy.yaml")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
+    expect(triggeredBy("tools/post-merge-docs/artifact.mts")).toEqual([
+      "test/post-merge-docs.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",
       "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
@@ -205,20 +217,22 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
-  it("returns only concrete test files that exist (#6692)", () => {
-    const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
+  it.each(Array.from(vitestWatchTriggerPatterns, (value) => [value]))(
+    "returns only concrete test files that exist [case %#] (#6692)",
+    (trigger) => {
+      const triggeredTests = new Set(OPAQUE_INPUTS.flatMap(triggeredBy));
 
-    expect(triggeredTests.size).toBeGreaterThan(0);
-    for (const testFile of triggeredTests) {
-      expect(testFile).toMatch(/\.test\.ts$/);
-      expect(testFile).not.toMatch(/[?*{}[\]]/);
-      expect(fs.existsSync(testFile), testFile).toBe(true);
-    }
-    for (const trigger of vitestWatchTriggerPatterns) {
+      expect(triggeredTests.size).toBeGreaterThan(0);
+      for (const testFile of triggeredTests) {
+        expect(testFile).toMatch(/\.test\.ts$/);
+        expect(testFile).not.toMatch(/[?*{}[\]]/);
+        expect(fs.existsSync(testFile), testFile).toBe(true);
+      }
+
       expect(trigger.pattern.global).toBe(false);
       expect(trigger.pattern.sticky).toBe(false);
-    }
-  });
+    },
+  );
 
   it("leaves unrelated YAML, shell, Python, and workflow files alone (#6692)", () => {
     expect(triggeredBy("notes/example.yaml")).toEqual([]);
