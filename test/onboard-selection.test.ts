@@ -2851,12 +2851,12 @@ reportChildScenario(async () => {
 
   const secretCredentialBackScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS.slice(1, -1);
 
-  for (const scenario of secretCredentialBackScenarios) {
-    const action = scenario.expectedOutcome === "exit" ? "exit" : "back";
-    it(`lets users type ${action} at the ${scenario.name} secret credential prompt`, () => {
-      runCredentialBackScenarioProcess(scenario);
-    });
-  }
+  it.each(secretCredentialBackScenarios.map((scenario) => ({
+    ...scenario,
+    action: scenario.expectedOutcome === "exit" ? "exit" : "back",
+  })))("lets users type $action at the $name secret credential prompt", (scenario) => {
+    runCredentialBackScenarioProcess(scenario);
+  });
 
   it("lets users type back at the Local NIM NGC API key secret credential prompt", () => {
     runCredentialBackScenarioProcess(PROCESS_CREDENTIAL_BACK_SCENARIOS.at(-1)!);
