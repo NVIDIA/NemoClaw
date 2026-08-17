@@ -216,6 +216,7 @@ const {
 } = require("./onboard/ollama-install-menu");
 const {
   detectInferenceProviderHostState,
+  detectWindowsDaemonOnWslLoopback,
 }: typeof import("./onboard/provider-host-state") = require("./onboard/provider-host-state");
 const {
   ensureOllamaAuthProxy,
@@ -3424,6 +3425,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
           ...reasoningMode.compatibleEndpointReasoningClearDeps,
           repairLocalInferenceSystemdOverrideOrExit,
+          detectWindowsDaemonOnWslLoopback,
           isNonInteractive,
           getOpenshellBinary,
           needsBedrockRuntimeAdapter: (providerName, url) => providerName === "compatible-anthropic-endpoint" && bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),

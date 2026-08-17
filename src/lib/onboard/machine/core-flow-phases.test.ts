@@ -116,6 +116,7 @@ function createPhases(
     },
     deps: {
       checkGatewayRouteCompatibility: () => ({ ok: true }),
+      detectWindowsDaemonOnWslLoopback: () => false,
       preflightGatewayRouteDiscovery: () => ({
         ok: true,
         requiredModel: null,

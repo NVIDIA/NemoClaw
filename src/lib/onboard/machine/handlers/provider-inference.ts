@@ -245,6 +245,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     repairLocalInferenceSystemdOverrideOrExit(
       options: RepairLocalInferenceSystemdOverrideOptions,
     ): void;
+    detectWindowsDaemonOnWslLoopback(): boolean;
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
@@ -846,7 +847,9 @@ async function configureResumeReasoning(
 
 type LocalInferenceRepairDeps = Pick<
   ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
-  "recordRepairEvent" | "repairLocalInferenceSystemdOverrideOrExit"
+  | "recordRepairEvent"
+  | "repairLocalInferenceSystemdOverrideOrExit"
+  | "detectWindowsDaemonOnWslLoopback"
 >;
 
 async function repairResumedLocalInference(
@@ -860,6 +863,9 @@ async function repairResumedLocalInference(
     model,
     contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
     isNonInteractive: () => false,
+    // A recorded route carries no daemon topology, so resume re-detects it and
+    // skips Linux service repair for a mirrored Windows-host daemon (#9300).
+    detectWindowsDaemonOnWslLoopbackImpl: deps.detectWindowsDaemonOnWslLoopback,
   };
   if (provider !== "ollama-local") {
     deps.repairLocalInferenceSystemdOverrideOrExit(options);

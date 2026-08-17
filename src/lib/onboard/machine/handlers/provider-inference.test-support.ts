@@ -199,6 +199,7 @@ export function createDeps(
       },
       clearCompatibleEndpointReasoningEffort: () => null,
       repairLocalInferenceSystemdOverrideOrExit: calls.repair,
+      detectWindowsDaemonOnWslLoopback: () => false,
       isNonInteractive: () => true,
       getOpenshellBinary: () => "/usr/bin/openshell",
       needsBedrockRuntimeAdapter: () => false,

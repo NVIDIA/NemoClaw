@@ -22,6 +22,7 @@ import { runCapture as defaultRunCapture } from "../runner";
 import {
   getContainerRuntime as defaultGetContainerRuntime,
   getWindowsHostOllamaDockerRequirement,
+  isWindowsDaemonOnWslLoopback,
   type WindowsHostOllamaDockerRequirement,
 } from "./local-inference-topology";
 import { warnAboutArm64NimImageCompatibility } from "./nim-image-compat-warning";
@@ -163,32 +164,32 @@ function probeWindowsOllamaReachable(input: {
 }
 
 /**
- * True when the daemon answering WSL loopback is the Windows host's own
- * Ollama.
- *
- * Mirrored WSL networking shares one loopback interface between Windows and
- * the distro, so a single process owns `:11434` for both. `127.0.0.1` and
- * `host.docker.internal` therefore cannot reach two different daemons, and a
- * valid Ollama answer through the Windows-side probe identifies the process
- * that loopback discovery already selected. `maybeWarnAboutDuplicateOllamaDaemons`
- * relies on the same reasoning to suppress its duplicate-daemon warning.
+ * Resolve the same topology from scratch, for callers holding no provider host
+ * snapshot. Resume repair is one: it reads a recorded `ollama-local` route,
+ * which records no topology (#9300). Each probe short-circuits, so a non-WSL
+ * host costs one `isWsl` check.
  */
-function isWindowsDaemonOnWslLoopback(input: {
-  isWsl: boolean;
-  ollamaHost: string | null;
-  windowsOllamaReachable: boolean;
-  runCapture: RunCapture;
-}): boolean {
-  if (!input.isWsl || input.ollamaHost !== "127.0.0.1" || !input.windowsOllamaReachable) {
-    return false;
-  }
-  return (
-    input
-      .runCapture(["wslinfo", "--networking-mode"], {
-        ignoreError: true,
-      })
-      .trim() === "mirrored"
-  );
+export function detectWindowsDaemonOnWslLoopback(
+  overrides: Partial<DetectInferenceProviderHostStateDeps> = {},
+): boolean {
+  const deps = buildDeps(overrides);
+  if (!deps.isWsl()) return false;
+  const ollamaHost = deps.findReachableOllamaHost();
+  if (ollamaHost !== "127.0.0.1") return false;
+  const windowsOllamaReachable = probeWindowsOllamaReachable({
+    isWsl: true,
+    isWindowsHostOllama: false,
+    dockerRequirementSupported: deps.getWindowsHostOllamaDockerRequirement(
+      deps.getContainerRuntime(),
+    ).supported,
+    dockerCapture: deps.dockerCapture,
+  });
+  return isWindowsDaemonOnWslLoopback({
+    isWsl: true,
+    ollamaHost,
+    windowsOllamaReachable,
+    runCapture: deps.runCapture,
+  });
 }
 
 function maybeWarnAboutDuplicateOllamaDaemons(input: {

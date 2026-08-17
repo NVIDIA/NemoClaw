@@ -124,6 +124,26 @@ describe("repairLocalInferenceSystemdOverrideOrExit (#6760)", () => {
     });
   }
 
+  it("skips Linux service repair for a mirrored Windows daemon on WSL loopback (#9300)", () => {
+    mockedFindReachableHost.mockReturnValue("127.0.0.1");
+    mockedValidateModel.mockReturnValue({ ok: true });
+    mockedApplyRuntimeContext.mockReturnValue({ ok: true });
+
+    repairLocalInferenceSystemdOverrideOrExit({
+      provider: "ollama-local",
+      model: recordedModel,
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+      isNonInteractive,
+      detectWindowsDaemonOnWslLoopbackImpl: () => true,
+    });
+
+    // The recorded route points at the Windows daemon, which has no Linux
+    // service to repair. Model warm-up and validation still run.
+    expect(mockedEnsureSystemdOverride).not.toHaveBeenCalled();
+    expect(mockedValidateModel).toHaveBeenCalledWith(recordedModel);
+    expect(mockedApplyRuntimeContext).toHaveBeenCalled();
+  });
+
   function expectFailure(run: () => void, message: string): void {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {

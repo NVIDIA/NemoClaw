@@ -462,6 +462,7 @@ describe("handleProviderInferenceState", () => {
       model: "llama3.1",
       contextWindowFloor: 16_384,
       isNonInteractive: deps.isNonInteractive,
+      detectWindowsDaemonOnWslLoopbackImpl: deps.detectWindowsDaemonOnWslLoopback,
     });
     expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
       state: "provider_selection",

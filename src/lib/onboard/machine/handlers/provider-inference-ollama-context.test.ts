@@ -31,6 +31,7 @@ describe("handleProviderInferenceState Ollama context resume (#6760)", () => {
       model: "qwen3.5:35b",
       contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
       isNonInteractive: deps.isNonInteractive,
+      detectWindowsDaemonOnWslLoopbackImpl: deps.detectWindowsDaemonOnWslLoopback,
     });
     expect(calls.setupNim).not.toHaveBeenCalled();
     expect(routeReady).toHaveBeenCalledWith("nemoclaw", "ollama-local", "qwen3.5:35b");

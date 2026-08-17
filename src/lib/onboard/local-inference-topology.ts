@@ -16,6 +16,37 @@ import {
 import { type ContainerRuntime, containerCanReachHostLoopback } from "../platform";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
+type TopologyRunCapture = (args: string[], options?: { ignoreError?: boolean }) => string;
+
+/**
+ * True when the daemon answering WSL loopback is the Windows host's own
+ * Ollama.
+ *
+ * Mirrored WSL networking shares one loopback interface between Windows and
+ * the distro, so a single process owns `:11434` for both. `127.0.0.1` and
+ * `host.docker.internal` therefore cannot reach two different daemons, and a
+ * valid Ollama answer through the Windows-side probe identifies the process
+ * that loopback discovery already selected. Neither the Linux installer nor
+ * Linux service management applies to that daemon (#9300).
+ */
+export function isWindowsDaemonOnWslLoopback(input: {
+  isWsl: boolean;
+  ollamaHost: string | null;
+  windowsOllamaReachable: boolean;
+  runCapture: TopologyRunCapture;
+}): boolean {
+  if (!input.isWsl || input.ollamaHost !== "127.0.0.1" || !input.windowsOllamaReachable) {
+    return false;
+  }
+  return (
+    input
+      .runCapture(["wslinfo", "--networking-mode"], {
+        ignoreError: true,
+      })
+      .trim() === "mirrored"
+  );
+}
+
 export function getContainerRuntime(): ContainerRuntime {
   return detectContainerRuntimeFromDockerInfo();
 }
@@ -156,6 +187,9 @@ export interface RepairLocalInferenceSystemdOverrideOptions {
   model: string | null | undefined;
   contextWindowFloor: number;
   isNonInteractive: () => boolean;
+  /** Resolve the recorded route's daemon topology. Defaults to false, which
+   *  keeps Linux service repair; `onboard.ts` wires the real detector. */
+  detectWindowsDaemonOnWslLoopbackImpl?: () => boolean;
 }
 
 function failOllamaResumeRepair(message: string): never {
@@ -173,11 +207,18 @@ export function repairLocalInferenceSystemdOverrideOrExit(
   const { provider, model, isNonInteractive } = options;
   if (provider !== "ollama-local") return;
   const contextWindowFloor = resolveOllamaContextWindowFloor(options.contextWindowFloor);
-  const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
-  if (state === "failed") {
-    failOllamaResumeRepair(
-      "Ollama systemd restart did not recover after applying the loopback override.",
-    );
+  // A recorded `ollama-local` route carries no topology, so re-detect it. The
+  // Windows daemon that mirrored WSL networking exposes on loopback has no
+  // Linux service to repair, and touching a residual `ollama.service` would
+  // ask for sudo and could take the port from the recorded route (#9300).
+  const detectTopology = options.detectWindowsDaemonOnWslLoopbackImpl ?? (() => false);
+  if (!detectTopology()) {
+    const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive, contextWindowFloor });
+    if (state === "failed") {
+      failOllamaResumeRepair(
+        "Ollama systemd restart did not recover after applying the loopback override.",
+      );
+    }
   }
   if (contextWindowFloor <= MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW) return;
   if (!model) {
