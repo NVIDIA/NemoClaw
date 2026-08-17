@@ -352,6 +352,10 @@ jobs:
             }
             local permission_json
             permission_json="$(read_collaborator_permission "$maintainer")"
+            if [[ "$(jq -r '.user.login // ""' <<< "$permission_json" | tr '[:upper:]' '[:lower:]')" != "$(tr '[:upper:]' '[:lower:]' <<< "$maintainer")" ]]; then
+              echo "::error::Manual PR E2E permission response did not match the actor" >&2
+              exit 1
+            fi
             case "$(jq -r '.role_name // ""' <<< "$permission_json")" in
               maintain | admin) ;;
               *) echo "::error::Manual PR E2E requires a repository maintainer or administrator" >&2; exit 1 ;;

@@ -12,12 +12,14 @@ import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type AuthorizationStep = {
   deniedMessage: string;
+  mismatchMessage: string;
   name: string;
 };
 
 type PermissionScenario =
   | "denied"
   | "malformed-success"
+  | "mismatched-actor"
   | "terminal-http"
   | "transient-then-success"
   | "transport-exhaustion";
@@ -25,14 +27,17 @@ type PermissionScenario =
 const AUTHORIZATION_STEPS: AuthorizationStep[] = [
   {
     deniedMessage: "Manual PR E2E requires a repository maintainer or administrator",
+    mismatchMessage: "Manual PR E2E permission response did not match the actor",
     name: "Authenticate manual PR dispatch",
   },
   {
     deniedMessage: "Release qualification waiver requires a repository administrator",
+    mismatchMessage: "Release qualification waiver permission response did not match the actor",
     name: "Authorize release qualification waiver",
   },
   {
     deniedMessage: "Launchable image publication requires a repository maintainer or administrator",
+    mismatchMessage: "Launchable image publication permission response did not match the actor",
     name: "Authorize Launchable image publication",
   },
 ];
@@ -82,8 +87,7 @@ done
 if [[ "$url" == *"/collaborators/"*"/permission" ]]; then
   actor="\${url%/permission}"
   actor="\${actor##*/}"
-  attempt=0
-  if [[ -f "$PERMISSION_ATTEMPT_FILE" ]]; then read -r attempt <"$PERMISSION_ATTEMPT_FILE"; fi
+  attempt="$(cat "$PERMISSION_ATTEMPT_FILE" 2>/dev/null || printf '0')"
   attempt=$((attempt + 1))
   printf '%s\n' "$attempt" >"$PERMISSION_ATTEMPT_FILE"
   printf '%s\n' "permission" >>"$CURL_LOG"
@@ -97,6 +101,7 @@ if [[ "$url" == *"/collaborators/"*"/permission" ]]; then
     transport-exhaustion) status=000; curl_exit=7; body="" ;;
     terminal-http) status="$PERMISSION_TEST_STATUS"; body="private-response-body" ;;
     malformed-success) body="private-response-body" ;;
+    mismatched-actor) body='{"user":{"login":"different-user"},"role_name":"admin"}' ;;
     denied) printf -v body '{"user":{"login":"%s"},"role_name":"write"}' "$actor" ;;
   esac
   if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; else printf '%s' "$body"; fi
@@ -169,7 +174,7 @@ printf '%s\n' "$1" >>"$SLEEP_LOG"
 
 describe.each(AUTHORIZATION_STEPS)(
   "$name collaborator permission read",
-  ({ deniedMessage, name }) => {
+  ({ deniedMessage, mismatchMessage, name }) => {
     it.each(["408", "429", "503"])(
       "retries HTTP %s once before authorization succeeds (#9337)",
       (status) => {
@@ -235,6 +240,16 @@ describe.each(AUTHORIZATION_STEPS)(
       expect(result.sleeps).toEqual([]);
       expect(result.curlOperations).toEqual(["permission"]);
       expect(result.stderr).toContain(deniedMessage);
+    });
+
+    it("does not retry a permission response for a different actor (#9337)", () => {
+      const result = runAuthorization(name, "mismatched-actor");
+
+      expect(result.status).not.toBe(0);
+      expect(result.permissionAttempts).toBe(1);
+      expect(result.sleeps).toEqual([]);
+      expect(result.curlOperations).toEqual(["permission"]);
+      expect(result.stderr).toContain(mismatchMessage);
     });
 
     it("rejects an invalid actor before the permission read (#9337)", () => {
