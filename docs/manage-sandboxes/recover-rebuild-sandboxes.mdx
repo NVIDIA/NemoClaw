@@ -262,7 +262,7 @@ $$nemoclaw <sandbox-name> rebuild
 
 ### Resolve Rebuild Preflight Stops
 
-Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, policy, MCP, agent, and operation-lock state.
+Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, inference route, policy, MCP, agent, and operation-lock state.
 When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`.
 At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
 
@@ -274,6 +274,10 @@ Use the recovery guidance that matches the reported check:
 - Resolve an incomplete MCP destroy transaction before retrying.
 - Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
 - Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
+- Set the live OpenShell inference route to the sandbox's recorded provider and model when rebuild reports route drift.
+
+A gateway that reports no live inference route does not stop the rebuild.
+Replacement onboarding configures and verifies the recorded route before it recreates the sandbox.
 
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.

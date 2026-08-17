@@ -929,6 +929,7 @@ const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAM
 const {
   verifyInferenceRoute,
   isInferenceRouteReady,
+  readInferenceRouteState,
   checkGatewayRouteCompatibility,
   preflightGatewayRouteDiscovery,
 } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -3024,7 +3025,7 @@ async function preflightAuthoritativeRebuildTarget(
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
         assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
-        inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
+        inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
         checkPort: (port) => checkPortAvailable(port),
       },

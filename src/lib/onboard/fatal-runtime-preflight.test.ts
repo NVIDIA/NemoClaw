@@ -553,9 +553,11 @@ describe("readiness-gated runtime preflight", () => {
       "gateway-admission",
       "host-observation",
       "gpu-observation",
+      "gateway-admission",
       "gpu-runtime-proof",
       "gateway-admission",
       "host-observation",
+      "gateway-admission",
       "gpu-validation",
       "bridge-dns",
     ]);
@@ -638,7 +640,16 @@ describe("readiness-gated runtime preflight", () => {
       },
     );
 
-    expect(calls).toEqual(["gateway", "host", "gateway", "host", "gpu", "bridge"]);
+    expect(calls).toEqual([
+      "gateway",
+      "host",
+      "gateway",
+      "host",
+      "gateway",
+      "gateway",
+      "gpu",
+      "bridge",
+    ]);
   });
 
   it("uses the already-qualified portable host facts for runtime probe effects", async () => {
@@ -664,7 +675,16 @@ describe("readiness-gated runtime preflight", () => {
       },
     );
 
-    expect(calls).toEqual(["gateway", "host", "gateway", "host", "gpu", "bridge"]);
+    expect(calls).toEqual([
+      "gateway",
+      "host",
+      "gateway",
+      "host",
+      "gateway",
+      "gateway",
+      "gpu",
+      "bridge",
+    ]);
     expect(mocks.preparePortableExperimentalHost).not.toHaveBeenCalled();
   });
 

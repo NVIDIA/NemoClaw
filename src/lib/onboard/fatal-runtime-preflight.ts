@@ -6,7 +6,6 @@ import { detectGpu, type GpuDetection } from "../inference/nim";
 import {
   createGatewayReadinessProjection,
   type GatewayReadinessProjection,
-  refreshGatewayReadinessProjection,
 } from "../readiness/gateway";
 import {
   createProductionGatewayReadinessDependencies,
@@ -360,10 +359,11 @@ export async function runReadinessGatedRuntimePreflight(
   let gatewayReadiness = await context.collectGatewayReadiness();
   assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
   let managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-  // Gateway collection can be slow. Replace the earlier host observation so
-  // the composite gate never stamps an old assessment with a fresh timestamp.
+  // Gateway collection can be slow. Replace both observations so the composite
+  // gate never stamps an old assessment with a fresh timestamp, and never
+  // condemns the run over facts it could have observed again.
   let refreshedResult = refreshOnboardHostReadiness(options, context, managedGatewayReadiness);
-  gatewayReadiness = refreshGatewayReadinessProjection(gatewayReadiness);
+  gatewayReadiness = await context.collectGatewayReadiness();
   assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
   managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
   let readinessReport = composeSystemReadinessReport(
@@ -413,7 +413,7 @@ export async function runReadinessGatedRuntimePreflight(
         : {}),
     };
   }
-  gatewayReadiness = refreshGatewayReadinessProjection(gatewayReadiness);
+  gatewayReadiness = await context.collectGatewayReadiness();
   assertOnboardGatewayReadiness(gatewayReadiness, exitProcess);
   managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
   readinessReport = composeSystemReadinessReport(refreshedResult.readinessReport, gatewayReadiness);
