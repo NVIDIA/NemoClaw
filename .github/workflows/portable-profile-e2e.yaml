@@ -68,6 +68,13 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          package_podman="/usr/bin/podman"
+          test -x "$package_podman"
+          runtime_bin="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-rootless-runtime.XXXXXX")"
+          ln -s "$package_podman" "$runtime_bin/podman"
+          export PATH="$runtime_bin:$PATH"
+          printf '%s\n' "$runtime_bin" >> "$GITHUB_PATH"
+          test "$(readlink -f "$(command -v podman)")" = "$package_podman"
           runtime_dir="/run/user/$(id -u)"
           sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
           if ! grep -q "^${USER}:" /etc/subuid; then

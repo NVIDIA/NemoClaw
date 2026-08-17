@@ -50,21 +50,17 @@ describe("secret redaction consistency (#1736)", () => {
   const TEST_TOKENS = [...LITERAL_PREFIX_TOKENS, ...MESSAGING_TOKENS];
 
   describe("runner.ts redacts all token types", () => {
-    for (const { name, token } of TEST_TOKENS) {
-      it(`redacts ${name}`, () => {
-        const text = runnerRedact(`error: authentication failed with ${token}`);
-        expect(text).not.toContain(token);
-      });
-    }
+    it.each(TEST_TOKENS)("redacts $name", ({ token }) => {
+      const text = runnerRedact(`error: authentication failed with ${token}`);
+      expect(text).not.toContain(token);
+    });
   });
 
   describe("debug.ts redacts all token types", () => {
-    for (const { name, token } of TEST_TOKENS) {
-      it(`redacts ${name}`, () => {
-        const text = debugRedact(`error: authentication failed with ${token}`);
-        expect(text).not.toContain(token);
-      });
-    }
+    it.each(TEST_TOKENS)("redacts $name", ({ token }) => {
+      const text = debugRedact(`error: authentication failed with ${token}`);
+      expect(text).not.toContain(token);
+    });
   });
 
   describe("redactor consistency (#2381)", () => {
@@ -176,12 +172,10 @@ describe("secret redaction consistency (#1736)", () => {
   });
 
   describe("onboard-session redactSensitiveText (#2336)", () => {
-    for (const { name, token } of TEST_TOKENS) {
-      it(`redacts ${name} from persisted failure messages`, () => {
-        const text = redactSensitiveText(`onboard step failed: provider returned ${token}`);
-        expect(text).not.toContain(token);
-      });
-    }
+    it.each(TEST_TOKENS)("redacts $name from persisted failure messages", ({ token }) => {
+      const text = redactSensitiveText(`onboard step failed: provider returned ${token}`);
+      expect(text).not.toContain(token);
+    });
 
     it("redacts Telegram token embedded in API URL path", () => {
       const token = "1234567890:" + "A".repeat(35);

@@ -158,14 +158,13 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/e2e-standard-profile.yaml")).toEqual([
       "test/e2e/support/standard-profile-workflow-boundary.test.ts",
     ]);
-    for (const portableProfilePath of [
-      ".github/workflows/portable-profile-e2e.yaml",
-      "test/e2e/fixtures/portable-profile-systemctl-shim.sh",
-    ]) {
-      expect(triggeredBy(portableProfilePath)).toEqual([
-        "test/e2e/support/portable-profile-systemctl-shim.test.ts",
-      ]);
-    }
+    expect(triggeredBy(".github/workflows/portable-profile-e2e.yaml")).toEqual([
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
+    expect(triggeredBy("test/e2e/fixtures/portable-profile-systemctl-shim.sh")).toEqual([
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ]);
     for (const authPath of [
       ".github/actions/docker-auth-setup/action.yaml",
       ".github/actions/docker-auth-cleanup/action.yaml",
