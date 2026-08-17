@@ -373,6 +373,7 @@ async function selectionFromMessagingSetup<Agent>(
   );
 }
 
+/** Reconcile checkpoint channels against current host inputs before reuse. */
 function selectionFromRecordedChannels<Agent>(
   recordedChannels: string[],
   envPlan: SandboxMessagingPlan | null,
