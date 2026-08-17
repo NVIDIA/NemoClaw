@@ -87,9 +87,20 @@ export interface OnboardDashboardDeps {
   ): void;
 }
 
+/** Agent fields the deployment-verification chain reads. */
+export type VerifyChainAgent = {
+  name?: string;
+  dashboard?: { healthPath?: string } | null;
+  healthProbe?: { url?: string; port?: number } | null;
+};
+
 export interface OnboardDashboardHelpers {
   buildChain: typeof buildChain;
-  resolveVerifyAgentApiPort: typeof resolveVerifyAgentApiPort;
+  buildAgentVerifyChain(
+    chatUiUrl: string,
+    sandboxName: string,
+    agent: VerifyChainAgent | null | undefined,
+  ): ReturnType<typeof buildChain>;
   buildControlUiUrls: typeof buildControlUiUrls;
   buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
@@ -223,6 +234,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return dashboardAccess.getWslHostAddress({
       ...options,
       runCapture: options.runCapture || runCapture,
+    });
+  }
+
+  /**
+   * Build the delivery chain deployment verification probes for `sandboxName`.
+   *
+   * Resolves the agent's OpenAI-compatible API port for this sandbox rather
+   * than the agent manifest default, so verification probes the port this
+   * sandbox actually publishes on the host (#9290).
+   */
+  function buildAgentVerifyChain(
+    chatUiUrl: string,
+    sandboxName: string,
+    agent: VerifyChainAgent | null | undefined,
+  ): ReturnType<typeof buildChain> {
+    return buildChain({
+      chatUiUrl,
+      isWsl: deps.isWsl(),
+      wslHostAddress: getWslHostAddress(),
+      dashboardHealthEndpoint: agent?.dashboard?.healthPath,
+      gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent),
+      gatewayHealthEndpoint: agent?.healthProbe?.url,
     });
   }
 
@@ -632,7 +665,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   return {
     buildChain,
-    resolveVerifyAgentApiPort,
+    buildAgentVerifyChain,
     buildControlUiUrls,
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,

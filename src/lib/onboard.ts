@@ -2906,7 +2906,7 @@ const setupOpenclaw = createOpenclawSetup({
 
 const {
   buildChain,
-  resolveVerifyAgentApiPort,
+  buildAgentVerifyChain,
   buildControlUiUrls,
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
@@ -3645,8 +3645,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
-        buildVerifyChain: (chatUiUrl, verifiedSandboxName) =>
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: resolveVerifyAgentApiPort(verifiedSandboxName, agent), gatewayHealthEndpoint: agent?.healthProbe?.url }),
+        buildVerifyChain: (chatUiUrl, name) => buildAgentVerifyChain(chatUiUrl, name, agent),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");
