@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type CaptureOpenshellResult, stripAnsi } from "../adapters/openshell/client";
+import { retryUntilAsync } from "../core/retry";
 import {
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
@@ -20,9 +21,61 @@ import {
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
+import type {
+  SandboxInferenceInvocationInput,
+  SandboxInferenceInvocationResult,
+} from "./sandbox/inference-invocation-probe";
 
 export type { RuntimeProviderBundleRegistry };
 export { RuntimeProviderSelectionError };
+
+export type InferenceSetSandboxRouteProbe = (
+  input: SandboxInferenceInvocationInput,
+) => SandboxInferenceInvocationResult;
+
+const ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+
+export function sleepInferenceSetRouteConvergence(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export function probeInferenceSetSandboxRoute(
+  input: SandboxInferenceInvocationInput,
+): SandboxInferenceInvocationResult {
+  const probe: typeof import("./sandbox/inference-invocation-probe") = require(
+    "./sandbox/inference-invocation-probe",
+  );
+  return probe.probeSandboxInferenceInvocation(
+    input,
+    {},
+    probe.READINESS_INFERENCE_INVOCATION_TIMEOUT_MS,
+  );
+}
+
+export async function probeInferenceSetSandboxRouteUntilConverged(
+  options: {
+    input: SandboxInferenceInvocationInput;
+    previousInferenceApi: string | null;
+    targetInferenceApi: string | null;
+  },
+  deps: {
+    probe: InferenceSetSandboxRouteProbe;
+    sleep: (milliseconds: number) => Promise<void>;
+  } = {
+    probe: probeInferenceSetSandboxRoute,
+    sleep: sleepInferenceSetRouteConvergence,
+  },
+): Promise<SandboxInferenceInvocationResult> {
+  const inferenceApiChanged = options.previousInferenceApi !== options.targetInferenceApi;
+  return await retryUntilAsync(() => deps.probe(options.input), {
+    accept: (result) =>
+      result.ok ||
+      !inferenceApiChanged ||
+      (result.httpStatus !== 400 && result.httpStatus !== 404),
+    retryDelaysMs: ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS,
+    sleep: deps.sleep,
+  });
+}
 
 export function requireInferenceSetRuntimeAuthority(
   entry: SandboxEntry,

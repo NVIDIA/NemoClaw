@@ -245,16 +245,14 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     ).toMatchObject({ kind: "reject", reason: expect.stringContaining("endpoint identity") });
   });
 
-  it("rejects mismatched recovered provider and model combinations", () => {
-    for (const override of [
-      { recoveredProvider: "another-provider" },
-      { recoveredModel: "another-model" },
-    ]) {
+  it.each([{ recoveredProvider: "another-provider" }, { recoveredModel: "another-model" }])(
+    "rejects mismatched recovered provider and model combinations [case %#]",
+    (override) => {
       expect(
         assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("rejects an unsupported API for the recovered provider type", () => {
     expect(

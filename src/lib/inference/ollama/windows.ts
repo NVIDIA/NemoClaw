@@ -5,7 +5,7 @@
 // Windows-host Ollama actions invoked from WSL via PowerShell interop.
 // Detection lives in onboard.ts; this module owns the action side.
 
-const { spawn, spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 const { dockerCapture } = require("../../adapters/docker/command");
 const { run, runCapture } = require("../../runner");
 const {
@@ -15,8 +15,15 @@ const {
 } = require("../local");
 const { OLLAMA_PORT } = require("../../core/ports");
 
+// Avoid starting a subprocess for each fixed readiness delay.
+// The supported Windows-host Ollama path runs through WSL PowerShell interop.
+// Native Windows activation remains gated by #8178.
+const sleepBuffer = new SharedArrayBuffer(4);
+const sleepArray = new Int32Array(sleepBuffer);
+
 function sleep(seconds: number): void {
-  spawnSync("sleep", [String(seconds)]);
+  if (seconds <= 0) return;
+  Atomics.wait(sleepArray, 0, 0, seconds * 1000);
 }
 
 function psSingleQuote(value: string): string {
@@ -223,6 +230,7 @@ module.exports = {
   installOllamaOnWindowsHost,
   awaitWindowsOllamaReady,
   setupWindowsOllamaWith0000Binding,
+  sleep,
   switchToWindowsOllamaHost,
   printWindowsOllamaTimeoutDiagnostics,
 };

@@ -266,7 +266,10 @@ function applicationBindings(input: {
     providerEnvKey: binding.providerEnvKey,
     source: "messaging",
   }));
-  if (input.profile.agentConfig.agent !== "langchain-deepagents-code") {
+  if (
+    input.profile.agentConfig.agent === "openclaw" ||
+    input.profile.agentConfig.agent === "hermes"
+  ) {
     const webSearch = input.profile.agentConfig.webSearch;
     if (webSearch.enabled) {
       bindings.push({

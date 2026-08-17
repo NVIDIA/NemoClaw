@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { llamaCppHostLocalInferenceReceipt } from "../../../../../test/helpers/host-local-inference-receipt";
 import { createSession } from "../../../state/onboard-session";
 import type { HostLocalInferenceReceipt } from "../../runtime-provider/host-local-inference";
 import type {
@@ -144,12 +145,10 @@ function hostLocalPublishedResumeSelection(
   recoveredToolCallingRequired = true,
 ): HostLocalInferenceStartupSelection {
   const selected = hostLocalStartupSelection(input, service, recoveredToolCallingRequired);
-  const managedRequest =
-    selected.request.service === "ollama"
-      ? (() => {
-          throw new Error("managed published-resume test selection unexpectedly resolved Ollama");
-        })()
-      : selected.request;
+  const managedRequest = selected.request as Extract<
+    HostLocalInferenceStartupSelection["request"],
+    { service: "nim" | "vllm" }
+  >;
   return {
     ...selected,
     request: {
@@ -173,7 +172,156 @@ function expectedOllamaSelection(
   >;
 }
 
+function llamaCppLifecycleSelection(
+  input: HostLocalInferenceStartupSelectionInput,
+  publishedRoute: boolean,
+): HostLocalInferenceStartupSelection {
+  const value = llamaCppHostLocalInferenceReceipt("mxc");
+  return {
+    runtimeProviderId: "mxc",
+    request: {
+      application: input.application,
+      service: "llama-cpp",
+      adapter: {
+        gatewayPort: 8080,
+        runtimeOwnerSandboxName: "llama-owner",
+        model: input.model,
+        operation: {} as never,
+        receipt: value,
+        runtime: {} as never,
+        prepareStartup: vi.fn() as never,
+      },
+      requireToolCalling: input.requireToolCalling ?? true,
+      publishedRoute,
+    },
+    resolveRuntimeProvider: () => null,
+    prepareGatewayMutation: async () => ({
+      commit: () => {},
+      rollback: () => {},
+    }),
+  };
+}
+
 describe("provider inference host-local startup selection", () => {
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "dispatches a published %s llama.cpp route through the common lifecycle exactly once",
+    async (application) => {
+      const model = "llama-cpp-model";
+      const session = createSession({
+        provider: "llama-cpp-local",
+        model,
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "complete";
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        llamaCppLifecycleSelection(input, true),
+      );
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
+      const options = baseOptions(deps, session);
+
+      const result = await handleProviderInferenceState({
+        ...options,
+        agent: { name: application },
+        initial: { ...options.initial, endpointSource: "inference-set" },
+        resume: true,
+        sandboxName: `${application}-sandbox`,
+      });
+
+      expect(resolver).toHaveBeenCalledOnce();
+      expect(calls.recoverManagedLlamaCpp).not.toHaveBeenCalled();
+      expect(calls.setupInference).toHaveBeenCalledOnce();
+      expect(calls.setupInference.mock.calls[0]?.[7]).toEqual(
+        expect.objectContaining({
+          hostLocalInference: expect.objectContaining({
+            request: expect.objectContaining({
+              service: "llama-cpp",
+              publishedRoute: true,
+            }),
+          }),
+        }),
+      );
+      expect(result.hostLocalInferenceSandboxProofAuthority).toEqual(
+        expect.objectContaining({ service: "llama-cpp", directHostPort: 8081 }),
+      );
+    },
+  );
+
+  it("keeps an unselected managed llama.cpp resume on the unchanged legacy dispatcher", async () => {
+    const model = "llama-cpp-model";
+    const session = createSession({
+      provider: "llama-cpp-local",
+      model,
+      endpointUrl: "http://127.0.0.1:8081/v1",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      resolveHostLocalInferenceStartupSelection: vi.fn(() => null),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "legacy-llama",
+    });
+
+    expect(calls.recoverManagedLlamaCpp).toHaveBeenCalledOnce();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
+    "dispatches an authoritative %s llama.cpp rebuild through the common lifecycle exactly once",
+    async (application) => {
+      const model = "llama-cpp-model";
+      const session = createSession({
+        provider: "llama-cpp-local",
+        model,
+        endpointUrl: "https://inference.local/v1",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: "openai-completions",
+      });
+      session.steps.provider_selection.status = "pending";
+      const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
+        llamaCppLifecycleSelection(input, true),
+      );
+      const { deps, calls } = createDeps({
+        isInferenceRouteReady: vi.fn(() => true),
+        resolveHostLocalInferenceStartupSelection: resolver,
+      });
+      const options = baseOptions(deps, session);
+
+      await handleProviderInferenceState({
+        ...options,
+        agent: { name: application },
+        authoritativeResumeConfig: true,
+        initial: { ...options.initial, endpointSource: "inference-set" },
+        resume: true,
+        sandboxName: `${application}-sandbox`,
+      });
+
+      expect(resolver).toHaveBeenCalledOnce();
+      expect(calls.recoverManagedLlamaCpp).not.toHaveBeenCalled();
+      expect(calls.setupInference).toHaveBeenCalledOnce();
+      expect(calls.setupInference.mock.calls[0]?.[7]).toEqual(
+        expect.objectContaining({
+          hostLocalInference: expect.objectContaining({
+            request: expect.objectContaining({
+              service: "llama-cpp",
+              publishedRoute: true,
+            }),
+          }),
+        }),
+      );
+    },
+  );
+
   it("rejects reuse of cached startup authority for a different sandbox", () => {
     const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
       hostLocalStartupSelection(input),

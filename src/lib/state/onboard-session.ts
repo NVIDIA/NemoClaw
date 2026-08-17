@@ -520,13 +520,11 @@ function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetad
         !hasUnsafeHostMountTerminalText(candidate.target) &&
         candidate.readOnly === true,
     )
-      ? value.hostMounts.map(
-          (candidate): SandboxHostMount => ({
-            source: (candidate as { source: string }).source,
-            target: (candidate as { target: string }).target,
-            readOnly: true,
-          }),
-        )
+      ? value.hostMounts.map((candidate): SandboxHostMount => ({
+          source: (candidate as { source: string }).source,
+          target: (candidate as { target: string }).target,
+          readOnly: true,
+        }))
       : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
@@ -907,13 +905,19 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     const providerBound = Boolean(
       intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
+    const incompleteProviderStateValid =
+      (normalized.provider === null && normalized.model === null) ||
+      (intent.kind === "spark" &&
+        normalized.provider === "vllm-local" &&
+        normalized.model !== null &&
+        normalized.model.trim().length > 0);
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
         (intent.kind === "spark" ||
           normalized.provider !== "vllm-local" ||
           normalized.model !== intent.servedModel)) ||
-      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+      (!providerComplete && !incompleteProviderStateValid)
     ) {
       return null;
     }
@@ -1481,6 +1485,36 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   const current = loadSession() || createSession();
   const next = typeof mutator === "function" ? mutator(current) || current : current;
   return saveSession(next);
+}
+
+export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
+
+/**
+ * Mutate the current session while this process owns the onboarding lock.
+ *
+ * Reuse the process-local `LOCK_FILE` lock when the caller already holds it.
+ * Otherwise, acquire the lock without waiting and return `busy` when another
+ * onboarding writer owns it.
+ */
+export function compareAndSwapSession(
+  matches: (session: Session) => boolean,
+  mutator: (session: Session) => Session | void,
+  command = "nemoclaw session compare-and-swap",
+): CompareAndSwapSessionResult {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) return "busy";
+  }
+  try {
+    const current = loadSession();
+    if (!current || !matches(current)) return "mismatch";
+    const next = mutator(current) || current;
+    saveSession(next);
+    return "updated";
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
 }
 
 export function markStepStarted(stepName: string): Session {

@@ -284,8 +284,9 @@ describe("generate-openclaw-config :: agents manifest", () => {
     expect(config.agents.defaults.subagents).toEqual({ maxSpawnDepth: 3 });
   });
 
-  it("rejects defaults.subagents.maxSpawnDepth outside OpenClaw's 1..5 range", () => {
-    for (const depth of [0, 6, -1, 1.5]) {
+  it.each([0, 6, -1, 1.5])(
+    "rejects defaults.subagents.maxSpawnDepth outside OpenClaw's 1..5 range [case %#]",
+    (depth) => {
       expectBuildConfigError(
         {
           NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({
@@ -295,8 +296,8 @@ describe("generate-openclaw-config :: agents manifest", () => {
         },
         /maxSpawnDepth must be an integer between 1 and 5/,
       );
-    }
-  });
+    },
+  );
 
   it("merges main.subagents and main.tools onto the canonical main entry", () => {
     const mainTools = { profile: "minimal", allow: ["read", "write"] };

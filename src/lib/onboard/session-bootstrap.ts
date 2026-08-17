@@ -24,6 +24,7 @@ import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import { EXPERIMENTAL_PROFILE_ENV } from "./docker-driver-platform";
 import type { PortableInferenceActivation } from "./experimental/portable-inference-descriptor";
+import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 import {
@@ -44,6 +45,7 @@ export {
   reportReadOnlyHostMounts,
   verifyReadOnlyHostMountSources,
 } from "./host-mount";
+export { requireReadOnlyHostMountRuntimeSupport };
 export {
   isOnboardResumeIntentRaceError,
   OnboardResumeIntentError,
@@ -91,6 +93,7 @@ const PORTABLE_DEFAULT_ENV_KEYS = [
   TOOL_DISCLOSURE_ENV,
   "NEMOCLAW_PROVIDER",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_PROVIDER_MODEL",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_OLLAMA_NO_AUTOSTART",
@@ -103,6 +106,8 @@ const PORTABLE_OWNED_ENV_KEYS = [
   ...PORTABLE_RUNTIME_ENV_KEYS,
   ...PORTABLE_DEFAULT_ENV_KEYS,
 ] as const;
+
+const PORTABLE_DEFAULT_POLICY_PRESETS = "weather,public-reference,github";
 
 interface PreviousEnvironmentValue {
   readonly present: boolean;
@@ -216,12 +221,15 @@ export function createPortableOnboardEnvironmentScope(
     env.NEMOCLAW_PREFERRED_API = "openai-completions";
   }
   if (!options.resume) {
+    const requestedModel = previous.get("NEMOCLAW_MODEL")?.value?.trim();
+    const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value;
     env[TOOL_DISCLOSURE_ENV] = "direct";
     env.NEMOCLAW_PROVIDER = activation ? "custom" : "ollama";
-    env.NEMOCLAW_MODEL = activation?.model ?? "qwen3-vl:4b";
+    env.NEMOCLAW_MODEL = activation?.model ?? (requestedModel || "qwen3-vl:4b");
     env.NEMOCLAW_POLICY_MODE = "custom";
-    env.NEMOCLAW_POLICY_PRESETS =
-      previous.get("NEMOCLAW_POLICY_PRESETS")?.value ?? "personal-open-internet";
+    env.NEMOCLAW_POLICY_PRESETS = requestedPolicyPresets?.trim()
+      ? requestedPolicyPresets
+      : PORTABLE_DEFAULT_POLICY_PRESETS;
     env.NEMOCLAW_POLICY_TIER = "personal";
   } else {
     const requestedPolicyPresets = previous.get("NEMOCLAW_POLICY_PRESETS")?.value?.trim();
@@ -295,6 +303,10 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
+  requireHostMountRuntimeSupport(
+    mounts: readonly import("../state/registry/types").SandboxHostMount[] | undefined,
+    checkpointProfile?: CheckpointOnboardProfile,
+  ): void;
   resolveResumeCheckpoint(): CheckpointLoadResult;
 }
 
@@ -475,6 +487,10 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  deps.requireHostMountRuntimeSupport(
+    input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
+    input.checkpointProfile,
+  );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
@@ -521,6 +537,7 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
   }
@@ -559,10 +576,17 @@ export async function prepareOnboardSession(
 
 export function prepareOnboardSessionValidated(
   input: OnboardSessionBootstrapInput,
-  deps: Omit<OnboardSessionBootstrapDeps, "resolveResumeCheckpoint">,
+  deps: Omit<
+    OnboardSessionBootstrapDeps,
+    "requireHostMountRuntimeSupport" | "resolveResumeCheckpoint"
+  >,
 ): Promise<OnboardSessionBootstrapResult> {
   return prepareOnboardSession(input, {
     ...deps,
+    requireHostMountRuntimeSupport: (mounts, checkpointProfile) =>
+      requireReadOnlyHostMountRuntimeSupport(mounts, {
+        experimentalProfile: checkpointProfile === "portable" ? "portable" : null,
+      }),
     resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
   });
 }

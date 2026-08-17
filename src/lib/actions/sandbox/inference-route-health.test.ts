@@ -14,8 +14,9 @@ describe("sandbox inference route health", () => {
     async () =>
       ({ status, output }) as never;
 
-  it("reports a reachable route for final HTTP responses", async () => {
-    for (const httpStatus of [200, 401, 403]) {
+  it.each([200, 401, 403])(
+    "reports a reachable route for final HTTP responses [case %#]",
+    async (httpStatus) => {
       const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {
         captureOpenshellImpl: makeCapture(`OK ${httpStatus}`),
       });
@@ -26,8 +27,8 @@ describe("sandbox inference route health", () => {
         endpoint: "https://inference.local/v1/models",
       });
       expect(result?.detail).toContain("full chain reachable");
-    }
-  });
+    },
+  );
 
   it("reports HTTP 5xx as an unhealthy authoritative route (#6192)", async () => {
     const result = await probeSandboxInferenceGatewayHealth("my-sandbox", {

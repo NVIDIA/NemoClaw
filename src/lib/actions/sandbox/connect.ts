@@ -3,12 +3,9 @@
 
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
-  captureOpenshell,
-  getOpenshellBinary,
-  runOpenshell,
-} from "../../adapters/openshell/runtime";
-import {
+
   OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -17,9 +14,12 @@ import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { retryUntil } from "../../core/retry";
+
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
@@ -127,6 +127,7 @@ type SandboxListProbe = {
   output: string;
 };
 
+
 export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
@@ -134,14 +135,14 @@ export type SandboxInferenceRouteProbe = {
   detail: string;
 };
 
-type SandboxInferenceRouteEnsureResult = {
-  sandbox: SandboxEntry | null;
-  routeHealthy: boolean | null;
-};
-
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+};
+
+type SandboxInferenceRouteEnsureResult = {
+  sandbox: SandboxEntry | null;
+  routeHealthy: boolean | null;
 };
 
 export type SandboxInferenceRouteRepairResult = {
@@ -351,15 +352,6 @@ async function runSandboxConnectProbe(sandboxName: string): Promise<void> {
   process.exit(1);
 }
 
-function sleepSync(ms: number): void {
-  if (ms <= 0) return;
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms})`], {
-    stdio: "ignore",
-    timeout: ms + 1_000,
-  });
-}
-
 const GATEWAY_UNAVAILABLE_RE =
   /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
 
@@ -382,11 +374,8 @@ function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutpu
     printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
   }
   console.error("  Recovery:");
-  console.error(
-    `    1. Run: openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}`,
-  );
-  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
-  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  console.error(`    1. ${gatewayStartGuidance(getSandboxTargetGatewayName(sandboxName))}`);
+  console.error(`    2. Retry: ${CLI_NAME} ${sandboxName} connect`);
   process.exit(1);
 }
 
@@ -414,42 +403,48 @@ function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   }
 }
 
-function probeSandboxInferenceRoute(
+
+function sleepSync(milliseconds: number): void {
+  if (milliseconds <= 0) return;
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${milliseconds})`], {
+    stdio: "ignore",
+    timeout: milliseconds + 1_000,
+  });
+}
+
+export function probeSandboxInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   { attempts = 1, delayMs = 0 }: InferenceRouteProbeOptions = {},
 ): SandboxInferenceRouteProbe {
-  let lastProbe: SandboxInferenceRouteProbe | null = null;
-  const boundedAttempts = Math.max(1, attempts);
-
-  for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
-    // Keep the shell string inside the sandbox: curl write-out, body capture,
-    // and status classification must run as one bounded probe. sandboxName
-    // remains an argv value, so no user input is interpolated into the script.
-    const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
-      ignoreError: true,
-      includeStreams: true,
-      timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
-    });
-    const parsed = parseSandboxInferenceRouteProbeResult(probe);
-    lastProbe = {
-      healthy: parsed.healthy,
-      broken: parsed.broken,
-      httpStatus: parsed.httpStatus,
-      detail: parsed.detail,
-    };
-    if (lastProbe.healthy || attempt === boundedAttempts) return lastProbe;
-    sleepSync(delayMs);
-  }
-
-  return (
-    lastProbe ?? {
-      healthy: false,
-      broken: false,
-      detail: "inference route probe did not run",
-    }
+  const attemptCount = Math.max(1, Math.floor(attempts));
+  return retryUntil(
+    () => {
+      // Keep the shell string inside the sandbox: curl write-out, body capture,
+      // and status classification must run as one bounded probe. sandboxName
+      // remains an argv value, so no user input is interpolated into the script.
+      const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
+        ignoreError: true,
+        includeStreams: true,
+        timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+      });
+      const parsed = parseSandboxInferenceRouteProbeResult(probe);
+      return {
+        healthy: parsed.healthy,
+        broken: parsed.broken,
+        httpStatus: parsed.httpStatus,
+        detail: parsed.detail,
+      };
+    },
+    {
+      accept: (result) => result.healthy,
+      retryDelaysMs: Array.from({ length: attemptCount - 1 }, () => delayMs),
+      sleep: sleepSync,
+    },
   );
 }
+
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
@@ -1290,11 +1285,19 @@ export async function connectSandbox(
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return;
       }
-      if (readiness.fenceFailed && readiness.authorityUnsupported !== true) {
+      // Refuse recovery only when a prior epoch might exist and could not be
+      // durably rotated. When the authority and receipt are both securely
+      // absent but new authority creation fails (fenceFailed without
+      // recoveryBlocked), the documented contract runs the complete preflight
+      // and recovery and reports the publication failure afterwards, exactly
+      // as `launch` does for the same decision (#9280).
+      if (
+        readiness.fenceFailed &&
+        readiness.authorityUnsupported !== true &&
+        readiness.recoveryBlocked
+      ) {
         console.error(
-          readiness.recoveryBlocked
-            ? "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry."
-            : "  Probe failed: no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
+          "  Probe failed: complete probe and recovery did not run because prior launch-readiness evidence could not be fenced. Repair the current user's secure OS runtime authority and NemoClaw state permissions, then retry.",
         );
         process.exit(1);
       }
@@ -1337,10 +1340,19 @@ export async function connectSandbox(
     }
     if (publication.kind === "evidence-failed") {
       if (!requireLaunchReadinessPublication) return;
+      // A platform without a per-user runtime authority (macOS) can never
+      // store launch-readiness evidence. The probe and recovery still
+      // succeeded, and `launch` runs the complete preflight without the
+      // evidence, so a permanent platform gap must not turn a successful
+      // probe into a nonzero exit (#9278).
+      if (readiness.kind === "fallback" && readiness.authorityUnsupported === true) {
+        console.log(
+          "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
+        );
+        return;
+      }
       console.error(
-        readiness.kind === "fallback" && readiness.authorityUnsupported === true
-          ? "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform."
-          : "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
+        "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
       );
       process.exit(1);
     }

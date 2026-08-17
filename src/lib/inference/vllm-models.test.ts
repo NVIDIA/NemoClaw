@@ -33,12 +33,13 @@ describe("vllm model registry", () => {
     expect(command).toMatch(/^pip install vllm\[fastsafetensors\] && vllm serve/u);
   });
 
-  it("records a finite positive Hugging Face file size for every model", () => {
-    for (const model of VLLM_MODELS) {
+  it.each(VLLM_MODELS)(
+    "records a finite positive Hugging Face file size for every model [case %#]",
+    (model) => {
       expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
       expect(model.downloadSizeBytes).toBeGreaterThan(0);
-    }
-  });
+    },
+  );
 
   it("pins the Hugging Face repository file totals used by storage preflight (#6858)", () => {
     expect(
@@ -465,8 +466,8 @@ describe("vllm model registry", () => {
       managedBearerAuth: true,
       runtime: {
         image:
-          "vllm/vllm-openai@sha256:ab0f5fc3bb81b9257a9aee801abcb0eeb94bb0523b57b2bb79349dc61e7c1e25",
-        imageDownloadSizeBytes: 10_507_991_780,
+          "vllm/vllm-openai@sha256:677afd5bf3b4bb9881f91e107af7098f8410726b4c05b25cb4a815900b398204",
+        imageDownloadSizeBytes: 9_699_710_136,
         modelDownloadSizeBytes: 25_447_097_878,
       },
     });

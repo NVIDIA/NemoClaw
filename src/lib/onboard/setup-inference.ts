@@ -14,12 +14,20 @@ import {
   formatGatewayRouteImpactWarning,
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
-import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
+import {
+  withGatewayRouteMutationLock,
+  withModelRouterPortLifecycleLock,
+} from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
+import {
+  type OllamaModelHolder,
+  supersededOllamaModel,
+} from "../inference/ollama/model-ownership";
 import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
+  withOllamaModelOwnershipLock,
 } from "../inference/ollama/proxy";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
@@ -28,7 +36,9 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
+import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
+import { resolveModelRouterPort } from "./model-router";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -119,8 +129,13 @@ import {
 import {
   type HostLocalInferenceGatewayMutation,
   type HostLocalInferenceStartupRoute,
+  hostLocalInferenceGatewayPort,
+  hostLocalInferenceGatewayProvider,
   hostLocalInferenceOperationEnvironment,
   prepareHostLocalInferenceStartup,
+  hostLocalInferenceRequestModel,
+  hostLocalInferenceRequestToolCalling,
+  hostLocalInferenceRuntimeOwnerSandboxName,
 } from "./runtime-provider/host-local-inference-routing";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "./runtime-provider/registry";
 
@@ -174,6 +189,8 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
+  withModelRouterPortLifecycleLock?: typeof withModelRouterPortLifecycleLock;
+  getModelRouterPort?: () => number;
   withSandboxMutationLock: typeof withSandboxMutationLock;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
@@ -190,6 +207,12 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   providerExistsInGateway: (name: string, gatewayName: string) => boolean;
   run: typeof import("../runner").run;
   updateSandbox: typeof import("../state/registry").reserveSandboxInferenceRoute;
+  // #9110 optional GPU-release seams; omitted by test literals that build deps
+  // by hand, so every read below must stay optional-chained.
+  getSandbox?: typeof import("../state/registry").getSandbox;
+  listSandboxes?: typeof import("../state/registry").listSandboxes;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
+  withOllamaModelOwnershipLock?: typeof withOllamaModelOwnershipLock;
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
   getManagedVllmProviderBinding?: () => {
@@ -388,7 +411,7 @@ function resolveHostLocalInferenceRoute(
   selection: NonNullable<ProviderInferenceSetupOptions["hostLocalInference"]>,
 ): HostLocalInferenceStartupRoute {
   const { request } = selection;
-  const expectedProvider = request.service === "ollama" ? "ollama-local" : "vllm-local";
+  const expectedProvider = hostLocalInferenceGatewayProvider(request);
   if (expectedProvider !== provider) {
     throw new Error(`Host-local ${request.service} cannot configure provider '${provider}'.`);
   }
@@ -398,14 +421,13 @@ function resolveHostLocalInferenceRoute(
   if (!RUNTIME_PROVIDER_ID.test(selection.runtimeProviderId)) {
     throw new Error("Host-local inference selected a malformed runtime-provider identity.");
   }
-  const providerInput = request.service === "ollama" ? request.endpoint : request.managed;
   const selectedModel =
     request.service === "ollama" ? normalizeHostLocalOllamaModelRef(model) : model;
-  const requestedModel =
-    request.service === "ollama"
-      ? normalizeHostLocalOllamaModelRef(providerInput.model)
-      : providerInput.model;
-  if (requestedModel !== selectedModel || providerInput.requireToolCalling !== requireToolCalling) {
+  const requestedModel = hostLocalInferenceRequestModel(request);
+  if (
+    requestedModel !== selectedModel ||
+    hostLocalInferenceRequestToolCalling(request) !== requireToolCalling
+  ) {
     throw new Error("Host-local inference request drifted from the accepted model proof.");
   }
   const providerBundle = selection.resolveRuntimeProvider(sandboxName);
@@ -415,14 +437,19 @@ function resolveHostLocalInferenceRoute(
   if (providerBundle.identity.id !== selection.runtimeProviderId) {
     throw new Error("Sandbox-bound host-local inference runtime-provider identity drifted.");
   }
-  const operation = requireRuntimeProviderHostLocalInferenceOperation(
-    providerBundle,
-    request.service,
-    {
-      env: hostLocalInferenceOperationEnvironment(request.service),
-      acceleration: request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
-    },
-  );
+  const operation =
+    request.service === "llama-cpp"
+      ? requireRuntimeProviderHostLocalInferenceOperation(
+          providerBundle,
+          request.service,
+          { env: hostLocalInferenceOperationEnvironment(request.service) },
+          request.adapter.operation,
+        )
+      : requireRuntimeProviderHostLocalInferenceOperation(providerBundle, request.service, {
+          env: hostLocalInferenceOperationEnvironment(request.service),
+          acceleration:
+            request.service === "ollama" ? request.endpoint.acceleration : "nvidia-gpu",
+        });
   return prepareHostLocalInferenceStartup(operation, request);
 }
 
@@ -436,6 +463,38 @@ export type SetupInference = (
   hermesToolGateways?: string[],
   options?: ProviderInferenceSetupOptions,
 ) => Promise<SetupInferenceResult>;
+
+/**
+ * Release the GPU memory an Ollama-backed sandbox held before this onboarding
+ * moved it to a different model (#9110).
+ *
+ * Runs after the route mutation, so the new route is already proven by
+ * `verifyOnboardInferenceSmoke` before the old memory is freed. Best-effort:
+ * the route is committed by this point, so GPU cleanup must never change the
+ * result or the exit code.
+ */
+function releaseSupersededOllamaModel(
+  previous: OllamaModelHolder | null,
+  nextModel: string,
+  result: SetupInferenceResult,
+  deps: SetupInferenceDeps,
+): void {
+  // A reselection retry left the recorded route untouched, so the sandbox
+  // still owns its model.
+  if (!previous || result.retry) return;
+  try {
+    const withOwnershipLock =
+      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    withOwnershipLock(() => {
+      const peers = deps.listSandboxes?.().sandboxes ?? [];
+      const superseded = supersededOllamaModel(previous, nextModel, peers);
+      if (!superseded) return;
+      deps.unloadOllamaModels?.([superseded]);
+    });
+  } catch {
+    /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
+  }
+}
 
 export function createSetupInference(
   defaults: SetupInferenceDeps,
@@ -456,9 +515,18 @@ export function createSetupInference(
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
+    const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
+    const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
+      deps.withGatewayRouteMutationLock(gatewayName, () => {
+        if (!routedProvider) return operation();
+        const withRouterPortLock =
+          deps.withModelRouterPortLifecycleLock ?? withModelRouterPortLifecycleLock;
+        const port = (deps.getModelRouterPort ?? resolveModelRouterPort)();
+        return withRouterPortLock(port, operation);
+      });
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
-      deps.withGatewayRouteMutationLock(gatewayName, async () => {
+      withInferenceMutationLocks(async () => {
         if (
           options.isRecordedProviderRecoveryAuthorized &&
           !options.isRecordedProviderRecoveryAuthorized()
@@ -537,6 +605,12 @@ export function createSetupInference(
         const hostLocalProviderErrors: string[] = [];
         const hostLocalSelection = options.hostLocalInference;
         let routeReserved = false;
+        let hostLocalInferenceReceipt: string | null = null;
+        let hostLocalInferenceProvenance:
+          | import("../state/registry/types").SandboxEntry["hostLocalInferenceProvenance"]
+          | undefined;
+        let hostLocalInferenceGatewayPortAuthority: number | undefined;
+        let hostLocalInferenceRuntimeProviderId: string | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
           const reserved = deps.updateSandbox(name, {
@@ -548,6 +622,14 @@ export function createSetupInference(
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
             reservationSessionId: options.reservationSessionId,
+            hostLocalInferenceReceipt,
+            ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceGatewayPortAuthority !== undefined
+              ? { gatewayPort: hostLocalInferenceGatewayPortAuthority }
+              : {}),
+            ...(hostLocalInferenceProvenance && hostLocalInferenceRuntimeProviderId
+              ? { openshellDriver: hostLocalInferenceRuntimeProviderId }
+              : {}),
           });
           routeReserved = reserved;
           return reserved;
@@ -597,6 +679,20 @@ export function createSetupInference(
               options.allowToolsIncompatible !== true,
               options.hostLocalInference,
             );
+            hostLocalInferenceReceipt = serializeHostLocalInferenceReceipt(hostLocalRoute.receipt);
+            if (options.hostLocalInference.request.service === "llama-cpp") {
+              hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
+                hostLocalInferenceRuntimeOwnerSandboxName(
+                  options.hostLocalInference.request,
+                  sandboxName!,
+                ),
+                hostLocalInferenceReceipt,
+              );
+              hostLocalInferenceGatewayPortAuthority = hostLocalInferenceGatewayPort(
+                options.hostLocalInference.request,
+              );
+              hostLocalInferenceRuntimeProviderId = options.hostLocalInference.runtimeProviderId;
+            }
             hostLocalGatewayMutation = await options.hostLocalInference.prepareGatewayMutation({
               gatewayName,
               sandboxName: sandboxName!,
@@ -802,7 +898,7 @@ export function createSetupInference(
               }
               return outcome.result;
             }
-          } else if (deps.isRoutedInferenceProvider(provider)) {
+          } else if (routedProvider) {
             await inferenceProviders.setupRoutedInference(
               { model, provider, endpointUrl, credentialEnv },
               {
@@ -928,8 +1024,26 @@ export function createSetupInference(
           return deps.exitProcess(error instanceof HostLocalInferenceBranchExit ? error.code : 1);
         }
       });
+    // Both the prior-route read and the GPU release stay inside the sandbox
+    // mutation lock: the read happens before `reserveRoute` rewrites the row
+    // (after which the previous selection is unrecoverable), and the release
+    // happens before the lock opens, so a serialized re-onboard can neither
+    // replace the row under the read nor select the captured model before
+    // this cleanup runs.
+    const mutateGatewayRouteAndReleaseSupersededModel =
+      async (): Promise<SetupInferenceResult> => {
+        let previousSandbox: OllamaModelHolder | null = null;
+        try {
+          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+        } catch {
+          /* An unreadable registry skips GPU release; it must not fail onboarding. */
+        }
+        const result = await mutateGatewayRoute();
+        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
+        return result;
+      };
     return sandboxName
-      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRoute)
-      : mutateGatewayRoute();
+      ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
+      : mutateGatewayRouteAndReleaseSupersededModel();
   };
 }

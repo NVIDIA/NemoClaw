@@ -27,11 +27,14 @@ import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/path
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
-  agentReplyContainsToken,
+  classifyHermesAgentAssertion,
+  classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   COMMON_EGRESS_TEST_TIMEOUT_MS,
   parseChatContent,
   parseOpenClawAgentText,
+  runHermesAgentAssertionRetry,
+  runOpenClawAgentAssertionRetry,
 } from "./common-egress-agent-helpers.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
@@ -116,22 +119,6 @@ function httpBodyFromResponse(raw: string): string {
     .filter((line) => !line.startsWith("__NEMOCLAW_HTTP_STATUS__="))
     .join("\n")
     .trim();
-}
-
-function isOpenClawPolicyBlock(output: string): boolean {
-  return /SsrFBlockedError|Blocked hostname/i.test(output);
-}
-
-function isOpenClawScopeUpgradePending(output: string): boolean {
-  return /scope upgrade pending approval|pairing required: device is asking for more scopes/i.test(
-    output,
-  );
-}
-
-function isOpenClawTransientAgentError(output: string): boolean {
-  return /ECONNREFUSED|EAI_AGAIN|ECONNRESET|ETIMEDOUT|gateway unavailable|network connection error|DNS error|fetch failed|LLM request timed out|FailoverError|inference service unavailable|rawError=503/i.test(
-    output,
-  );
 }
 
 function isMissingSandboxOutput(output: string): boolean {
@@ -446,72 +433,73 @@ async function runOpenClawAgentAssertion(
   );
 
   let lastFailure = "";
-  for (let attempt = 1; attempt <= OPENCLAW_AGENT_ATTEMPTS; attempt += 1) {
-    const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
-    const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
-    const remoteCommand = [
-      `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl.lock`)} ${shellQuote(
-        `${sessionRoot}/${sessionId}.trajectory.jsonl`,
-      )} 2>/dev/null || true`,
-      `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
-        sessionId,
-      )} -m ${shellQuote(args.prompt)}`,
-    ].join("; ");
-    const agent = await host.command(
-      "ssh",
-      [
-        "-F",
-        sshConfigPath,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "LogLevel=ERROR",
-        `openshell-${args.sandboxName}.default`,
-        remoteCommand,
-      ],
-      {
-        artifactName: `${args.label}-openclaw-agent-attempt-${attempt}`,
-        env: commandEnv(),
-        redactionValues: [args.apiKey],
-        timeoutMs: AGENT_TURN_TIMEOUT_MS,
-      },
-    );
-    const combined = text(agent);
-    if (isOpenClawPolicyBlock(combined)) {
-      throw new Error(`${args.label}: agent hit policy block: ${combined.slice(0, 600)}`);
-    }
-
-    const reply = parseOpenClawAgentText(agent.stdout);
-    if (agent.exitCode === 0 && agentReplyContainsToken(reply, args.expected)) {
-      return;
-    }
-    lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
-      0,
-      240,
-    )}' stderr='${agent.stderr.slice(0, 240)}'`;
-
-    if (attempt < OPENCLAW_AGENT_ATTEMPTS && isOpenClawScopeUpgradePending(combined)) {
-      await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
-        artifactName: `${args.label}-recover-after-attempt-${attempt}`,
+  const execution = await runOpenClawAgentAssertionRetry({
+    attempts: OPENCLAW_AGENT_ATTEMPTS,
+    delayMs: (attempt) => attempt * 15_000,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
+    },
+    run: async (attempt) => {
+      const sessionId = `e2e-common-egress-${Date.now()}-${process.pid}-${attempt}`;
+      const sessionRoot = "/sandbox/.openclaw/agents/main/sessions";
+      const remoteCommand = [
+        `rm -f ${shellQuote(`${sessionRoot}/${sessionId}.jsonl.lock`)} ${shellQuote(
+          `${sessionRoot}/${sessionId}.trajectory.jsonl`,
+        )} 2>/dev/null || true`,
+        `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
+          sessionId,
+        )} -m ${shellQuote(args.prompt)}`,
+      ].join("; ");
+      const agent = await host.command(
+        "ssh",
+        [
+          "-F",
+          sshConfigPath,
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "UserKnownHostsFile=/dev/null",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "LogLevel=ERROR",
+          `openshell-${args.sandboxName}.default`,
+          remoteCommand,
+        ],
+        {
+          artifactName: `${args.label}-openclaw-agent-attempt-${attempt}`,
+          env: commandEnv(),
+          redactionValues: [args.apiKey],
+          timeoutMs: AGENT_TURN_TIMEOUT_MS,
+        },
+      );
+      const combined = text(agent);
+      const reply = parseOpenClawAgentText(agent.stdout);
+      lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
+        0,
+        240,
+      )}' stderr='${agent.stderr.slice(0, 240)}'`;
+      return classifyOpenClawAgentAssertion({
+        exitCode: agent.exitCode,
+        expected: args.expected,
+        reply,
+        response: combined,
+      });
+    },
+    recover: async (_attempt, attemptNumber) => {
+      const recover = await host.command("node", [CLI_ENTRYPOINT, args.sandboxName, "recover"], {
+        artifactName: `${args.label}-recover-after-attempt-${attemptNumber}`,
         env: commandEnv(),
         timeoutMs: 120_000,
       });
-      await sleep(attempt * 15_000);
-      continue;
-    }
-
-    if (attempt < OPENCLAW_AGENT_ATTEMPTS && isOpenClawTransientAgentError(combined)) {
-      await sleep(attempt * 15_000);
-      continue;
-    }
-
-    if (attempt < OPENCLAW_AGENT_ATTEMPTS) await sleep(5_000);
-  }
-
+      if (recover.exitCode !== 0) {
+        lastFailure = `recovery exit=${recover.exitCode}`;
+        return false;
+      }
+      return true;
+    },
+  });
+  if (execution.outcome === "passed") return;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
@@ -532,6 +520,7 @@ After the command completes, reply exactly HERMES_REFERENCE_AGENT_OK if that exa
 
 async function runHermesAgentAssertion(
   sandbox: SandboxClient,
+  artifacts: ArtifactSink,
   args: {
     expected: string;
     label: string;
@@ -562,35 +551,41 @@ async function runHermesAgentAssertion(
   ].join("; ");
 
   let lastFailure = "";
-  for (let attempt = 1; attempt <= HERMES_AGENT_ATTEMPTS; attempt += 1) {
-    const agent = await sandbox.execShell(args.sandboxName, trustedSandboxShellScript(remote), {
-      artifactName: `${args.label}-hermes-agent-attempt-${attempt}`,
-      env: commandEnv(),
-      timeoutMs: HERMES_AGENT_TIMEOUT_MS,
-    });
-    const response = text(agent);
-    const httpStatus = httpStatusFromResponse(response);
-    const body = httpBodyFromResponse(response);
-    let reply = "";
-    try {
-      reply = parseChatContent(body);
-    } catch {
-      reply = "";
-    }
-    if (
-      agent.exitCode === 0 &&
-      httpStatus === "200" &&
-      agentReplyContainsToken(reply, args.expected)
-    ) {
-      return;
-    }
-    lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
-      0,
-      240,
-    )}' body='${body.slice(0, 240)}'`;
-    if (attempt < HERMES_AGENT_ATTEMPTS) await sleep(5_000);
-  }
-
+  const execution = await runHermesAgentAssertionRetry({
+    attempts: HERMES_AGENT_ATTEMPTS,
+    delayMs: () => 5_000,
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson(`retry/${args.label}-agent-retry-evidence.json`, evidence);
+    },
+    run: async (attempt) => {
+      const agent = await sandbox.execShell(args.sandboxName, trustedSandboxShellScript(remote), {
+        artifactName: `${args.label}-hermes-agent-attempt-${attempt}`,
+        env: commandEnv(),
+        timeoutMs: HERMES_AGENT_TIMEOUT_MS,
+      });
+      const response = text(agent);
+      const httpStatus = httpStatusFromResponse(response);
+      const body = httpBodyFromResponse(response);
+      let reply = "";
+      try {
+        reply = parseChatContent(body);
+      } catch {
+        reply = "";
+      }
+      lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
+        0,
+        240,
+      )}' body='${body.slice(0, 240)}'`;
+      return classifyHermesAgentAssertion({
+        exitCode: agent.exitCode,
+        expected: args.expected,
+        httpStatus,
+        reply,
+        response,
+      });
+    },
+  });
+  if (execution.outcome === "passed") return;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
 }
 
@@ -849,7 +844,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
         "/modal",
       ]);
       progress.phase("fetch Wikidata with Hermes agent");
-      await runHermesAgentAssertion(sandbox, {
+      await runHermesAgentAssertion(sandbox, artifacts, {
         expected: "HERMES_REFERENCE_AGENT_OK",
         label: "c3-agent-reference",
         prompt: buildHermesReferencePrompt(),

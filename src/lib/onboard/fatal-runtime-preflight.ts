@@ -46,6 +46,8 @@ export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
 > & {
+  /** Explicit false prevents ambient provider intent from crossing a rebuild boundary. */
+  allowDeferredN1xManagedVllm?: boolean;
   optedOutGpuPassthrough?: boolean;
 };
 
@@ -106,6 +108,7 @@ export interface OnboardHostReadinessOptions {
   resuming?: boolean;
   allowStorageRemediation?: boolean;
   allowPortableHostPreparation?: boolean;
+  allowDeferredN1xManagedVllm?: boolean;
   exitProcess?: (code: number) => never;
   observedAt?: string;
   now?: () => Date;
@@ -153,7 +156,9 @@ export function assertOnboardSystemReadiness(
       isPortableExperimentalProfile() || !isLinuxDockerDriverGatewayEnabled(),
     allowStorageRemediation: options.allowStorageRemediation === true,
     allowPortableHostPreparation: options.allowPortableHostPreparation,
-    allowDeferredN1xManagedVllm: process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
+    allowDeferredN1xManagedVllm:
+      options.allowDeferredN1xManagedVllm ??
+      process.env.NEMOCLAW_PROVIDER === MANAGED_VLLM_PROVIDER_KEY,
   });
   if (admission.admitted) return readinessReport;
   const jetsonRuntimeMissing = admission.findingIds.includes("host.gpu.nvidia_runtime_missing");
@@ -262,6 +267,7 @@ function refreshOnboardHostReadiness(
     wslDockerDesktopGpuProofPassed: runtimeGpu?.wslDockerDesktopGpuProofPassed,
     resuming: context.resuming,
     allowStorageRemediation,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess: context.exitProcess,
     observedAt,
     now,
@@ -375,6 +381,7 @@ export async function runReadinessGatedRuntimePreflight(
       refreshedResult.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
     resuming: context.resuming,
     allowStorageRemediation: managedGatewayReadiness,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess,
   });
   // The only GPU detection path that may pull or start a container is delayed
@@ -422,6 +429,7 @@ export async function runReadinessGatedRuntimePreflight(
       refreshedResult.sandboxGpuConfig.mode === "0" || options.optedOutGpuPassthrough === true,
     resuming: context.resuming,
     allowStorageRemediation: managedGatewayReadiness,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess,
   });
   const gatedResult = {
@@ -456,6 +464,7 @@ export function runFatalOnboardRuntimePreflight(
     explicitlyOptedOutGpuPassthrough,
     resuming: context.resuming,
     allowStorageRemediation: context.allowStorageRemediation,
+    allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
     exitProcess,
     observedAt,
     now,

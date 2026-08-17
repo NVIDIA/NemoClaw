@@ -64,6 +64,44 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("runs routed teardown under the gateway and host router-port locks (#9098)", async () => {
+    const harness = createDestroyHarness({ provider: "nvidia-router" });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
+    expect(harness.withModelRouterPortLifecycleLockSpy).toHaveBeenCalledWith(
+      4000,
+      expect.any(Function),
+    );
+  });
+
+  it("leaves an active same-name replacement onboarding session unchanged", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      replaceSessionAfterRegistryRemoval: true,
+      sessionRouterPid: 4242,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.compareAndSwapSessionSpy).not.toHaveBeenCalled();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+    expect(harness.sessionState).toMatchObject({
+      sessionId: "replacement-session",
+      sandboxName: "alpha",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      routerPid: 6262,
+      routerCredentialHash: "replacement-hash",
+    });
+    expect(harness.warnSpy).toHaveBeenCalledWith(expect.stringContaining("owns the session lock"));
+  });
+
   it("revokes the prior HTTPS-pin route only after confirmed deletion and registry removal", async () => {
     const routeId = "a".repeat(64);
     const harness = createDestroyHarness({
@@ -76,6 +114,41 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.revokeHttpsPinRuntimeAdapterRouteSpy.mock.invocationCallOrder[0],
     );
+  });
+
+  it("stops the routed sandbox proxy after registry removal under the gateway route lock (#9098)", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      expect.any(Function),
+    );
+    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.withGatewayRouteMutationLockSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.withGatewayRouteMutationLockSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.stopModelRouterForDestroyedSandboxSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not stop the routed sandbox proxy when registry removal does not complete (#9098)", async () => {
+    const harness = createDestroyHarness({
+      provider: "nvidia-router",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      removeSandboxResult: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -115,6 +188,8 @@ describe("destroySandbox flow", () => {
 
     expectFailedDeletePreservesHostState(harness, exitSpy);
     expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+    expect(harness.withGatewayRouteMutationLockSpy).not.toHaveBeenCalled();
+    expect(harness.stopModelRouterForDestroyedSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("refuses before destructive work when Docker identity cannot be inspected", async () => {
@@ -365,18 +440,19 @@ describe("destroySandbox flow", () => {
   it("keeps the final exact probe immediately adjacent to sandbox delete", async () => {
     const managed = { status: 0, stdout: "aaaa000000000000\topenshell\tdefault\tsb-alpha" };
     const trace: string[] = [];
+    let identityProbeCalls = 0;
     const harness = createDestroyHarness({
       dockerRunResult: managed,
-      onDockerRun: (call) => trace.push(`probe:${String(call)}`),
+      onDockerRun: (call) => {
+        identityProbeCalls = call;
+        trace.push(`probe:${String(call)}`);
+      },
     });
     traceDestroyBoundaryCalls(harness, trace);
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(trace.slice(-2)).toEqual([
-      `probe:${String(harness.dockerRunSpy.mock.calls.length)}`,
-      "delete",
-    ]);
+    expect(trace.slice(-2)).toEqual([`probe:${String(identityProbeCalls)}`, "delete"]);
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {
@@ -439,7 +515,8 @@ describe("destroySandbox flow", () => {
       timeout: 30_000,
     });
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Sandbox 'alpha' destroyed",
     );
@@ -485,6 +562,122 @@ describe("destroySandbox flow", () => {
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
     });
+  });
+
+  it("removes the exact Docker container when OpenShell reports the sandbox absent (#9073)", async () => {
+    const containerId = "a".repeat(64);
+    const harness = createDestroyHarness({
+      sandboxPresent: false,
+      dockerOrphanIds: [containerId],
+      dockerRunResult: {
+        status: 0,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("preserves registry state when the absent sandbox has a replacement Docker identity (#9073)", async () => {
+    const expectedContainerId = "a".repeat(64);
+    const replacementContainerId = "b".repeat(64);
+    const harness = createDestroyHarness({
+      sandboxPresent: false,
+      dockerOrphanIds: [replacementContainerId],
+      dockerRunResult: {
+        status: 0,
+        stdout: `${expectedContainerId}\topenshell\tdefault\tsb-alpha`,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
+      ["rm", "-f", replacementContainerId],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves registry state until exact Docker container removal succeeds on retry (#9073)", async () => {
+    const containerId = "a".repeat(64);
+    const options = {
+      sandboxPresent: false,
+      dockerOrphanIds: [containerId],
+      dockerRemoveStatus: 1,
+      dockerRunResult: {
+        status: 0,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+      },
+    };
+    const harness = createDestroyHarness(options);
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+
+    options.dockerRemoveStatus = 0;
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("preserves registry state when exact Docker container inspection fails (#9073)", async () => {
+    const containerId = "a".repeat(64);
+    const harness = createDestroyHarness({
+      sandboxPresent: false,
+      dockerOrphanIds: [containerId],
+      dockerOrphanQueryStatus: 1,
+      dockerRunResult: {
+        status: 0,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.retirePortableLifecycleReceiptSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not remove the Docker container during forced local cleanup (#9073)", async () => {
+    const containerId = "a".repeat(64);
+    const harness = createDestroyHarness({
+      deleteStatus: 1,
+      deleteOutput: "error trying to connect: connection refused",
+      dockerOrphanIds: [containerId],
+      dockerRunResult: {
+        status: 0,
+        stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+
+    expect(harness.events).toContain("delete");
+    expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
+      ["rm", "-f", containerId],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
@@ -688,7 +881,8 @@ describe("destroySandbox flow", () => {
     });
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledTimes(2);
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
       "nemoclaw-19080",
       harness.runOpenshellSpy,

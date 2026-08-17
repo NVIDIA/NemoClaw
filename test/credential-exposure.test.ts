@@ -104,8 +104,9 @@ describe("credential exposure in process arguments", () => {
     }
   });
 
-  it("subprocess-env NO_PROXY local hosts are in sync for CLI and plugin", () => {
-    for (const withLocalNoProxy of [withCliLocalNoProxy, withPluginLocalNoProxy]) {
+  it.each([withCliLocalNoProxy, withPluginLocalNoProxy])(
+    "subprocess-env NO_PROXY local hosts are in sync for CLI and plugin [case %#]",
+    (withLocalNoProxy) => {
       const env: Record<string, string> = {
         HTTP_PROXY: "http://proxy.example.com:8888",
         NO_PROXY: "corp.internal,localhost",
@@ -120,8 +121,8 @@ describe("credential exposure in process arguments", () => {
       expect(env.no_proxy).toBe(
         "corp.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
       );
-    }
-  });
+    },
+  );
 
   it("subprocess env builder does not spread full process.env into subprocesses", () => {
     const previous = {

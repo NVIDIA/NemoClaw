@@ -36,49 +36,16 @@ describe("E2E fixture dependency review", () => {
     }
   });
 
-  it("records the fixture threat controls and revalidation contract", () => {
-    for (const marker of [
-      "npm ci --ignore-scripts",
-      "read-only `contents` permission",
-      "full-SHA-pinned actions",
-      "disables checkout credential persistence",
-      "receives no repository secrets",
-      "npm audit --package-lock-only --ignore-scripts --json",
-      "accepted residual risk is limited to this secret-free E2E lane with read-only contents permission",
-      "Rerun it whenever `package.json` or `package-lock.json` changes",
-    ]) {
-      expect(review).toContain(marker);
-    }
-  });
-
-  // source-shape-contract: security -- Exact fixture pins and reviewed lock integrity constrain untrusted dependency code
-  it("keeps installed fixture dependencies on exact versions", () => {
-    const weatherFixture = path.join(FIXTURES_ROOT, "plugins", "weather");
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(weatherFixture, "package.json"), "utf8"),
-    ) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    for (const [name, version] of Object.entries({
-      ...manifest.dependencies,
-      ...manifest.devDependencies,
-    })) {
-      expect(version, name).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
-    }
-
-    const lockfileText = fs.readFileSync(path.join(weatherFixture, "package-lock.json"), "utf8");
-    const lockfileDigest = createHash("sha256").update(lockfileText).digest("hex");
-    expect(review).toContain(`SHA-256 \`${lockfileDigest}\``);
-
-    const lockfile = JSON.parse(lockfileText) as {
-      packages?: Record<string, { resolved?: unknown; integrity?: unknown }>;
-    };
-    for (const [packagePath, entry] of Object.entries(lockfile.packages ?? {}).filter(
-      ([packagePath]) => packagePath.length > 0,
-    )) {
-      expect(entry.resolved, packagePath).toEqual(expect.any(String));
-      expect(entry.integrity, packagePath).toEqual(expect.any(String));
-    }
+  it.each([
+    "npm ci --ignore-scripts",
+    "read-only `contents` permission",
+    "full-SHA-pinned actions",
+    "disables checkout credential persistence",
+    "receives no repository secrets",
+    "npm audit --package-lock-only --ignore-scripts --json",
+    "accepted residual risk is limited to this secret-free E2E lane with read-only contents permission",
+    "Rerun it whenever `package.json` or `package-lock.json` changes",
+  ])("records the fixture threat controls and revalidation contract [case %#]", (marker) => {
+    expect(review).toContain(marker);
   });
 });

@@ -11,8 +11,12 @@ import type { PodmanSocketAuthority } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { createPortableOnboardEnvironmentScope } from "../session-bootstrap";
 import {
+  cpuDelegationControllerPaths,
+  inspectPortableCpuDelegation,
+} from "./portable-cpu-delegation-preflight";
+import {
   portableHostPreparationInternals,
-  preparePortableExperimentalHost,
+  preparePortableExperimentalHost as preparePortableExperimentalHostUnchecked,
 } from "./portable-host-preparation";
 
 type SpawnResult = ReturnType<typeof spawnSync>;
@@ -48,6 +52,43 @@ function socketAuthority(socketPath = "/run/user/1001/podman/podman.sock"): Podm
   };
 }
 
+function successfulReadiness(home: string) {
+  return {
+    uid: 1001,
+    home,
+    hardenSocketDirectory: vi.fn(),
+    captureSocketAuthority: (socketPath: string) => socketAuthority(socketPath),
+    assertSocketAuthority: vi.fn(),
+    podmanCapture: () => ({
+      status: 0,
+      stdout: JSON.stringify({ Server: { Version: "5.6.1" } }),
+      stderr: "",
+    }),
+  };
+}
+
+function preparePortableExperimentalHost(
+  env: NodeJS.ProcessEnv,
+  deps: Parameters<typeof preparePortableExperimentalHostUnchecked>[1] = {},
+  expectedAuthority?: CheckpointPortableRuntimeAuthority | null,
+) {
+  return preparePortableExperimentalHostUnchecked(
+    env,
+    {
+      ...deps,
+      // Tests run on hosts without the /sys/fs/cgroup hierarchy the portable
+      // CPU-delegation preflight reads; default to a passing stub and inject
+      // explicit results for the preflight wiring tests below.
+      cpuDelegationPreflight:
+        deps.cpuDelegationPreflight ?? (() => ({ ok: true, detail: "stubbed in tests" })),
+      runtimeReadiness:
+        deps.runtimeReadiness ??
+        successfulReadiness(deps.home ?? expectedAuthority?.homeDir ?? os.userInfo().homedir),
+    },
+    expectedAuthority,
+  );
+}
+
 describe("preparePortableExperimentalHost", () => {
   const tempDirs: string[] = [];
 
@@ -68,12 +109,115 @@ describe("preparePortableExperimentalHost", () => {
     expect(docker).not.toHaveBeenCalled();
   });
 
+  it("fails the portable preflight when the user hierarchy cannot enforce the CPU limit (#9188)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn<
+      (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult
+    >(() => result());
+    const docker = vi.fn();
+    const env: NodeJS.ProcessEnv = {
+      HOME: home,
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    };
+    const cpuDelegationPreflight = () => ({
+      ok: false,
+      failure: "systemd-user-delegation-missing" as const,
+      detail: "systemd did not delegate the cpu controller to the current user's manager.",
+    });
+
+    expect(() =>
+      preparePortableExperimentalHost(env, {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl,
+        docker,
+        cpuDelegationPreflight,
+      }),
+    ).toThrow(/Portable CPU-delegation preflight failed/);
+
+    // The gate must fire before any config write or service activation.
+    expect(systemctl).not.toHaveBeenCalled();
+    expect(docker).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed controller evidence before portable host effects (#9188)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn();
+    const docker = vi.fn();
+    const validateConfigAuthority = vi.fn();
+    const paths = cpuDelegationControllerPaths(1001);
+    const readControllerFileSync = vi.fn(() => Buffer.from("cpu memory\0Delegate=cpu"));
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { HOME: home, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        {
+          platform: "linux",
+          home,
+          uid: 1001,
+          systemctl,
+          docker,
+          validateConfigAuthority,
+          cpuDelegationPreflight: (deps) =>
+            inspectPortableCpuDelegation({ ...deps, readControllerFileSync }),
+        },
+      ),
+    ).toThrow(/controller evidence.*malformed/u);
+
+    expect(validateConfigAuthority).not.toHaveBeenCalled();
+    expect(readControllerFileSync).toHaveBeenCalledOnce();
+    expect(readControllerFileSync).toHaveBeenCalledWith(paths.root, 4097);
+    expect(systemctl).not.toHaveBeenCalled();
+    expect(docker).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(home, ".config"))).toBe(false);
+  });
+
+  it("passes portable host preparation when the CPU-delegation preflight succeeds (#9188)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn<
+      (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult
+    >(() => result());
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result()) // --version probe
+      .mockReturnValueOnce(result(1)) // inspect: registry not present
+      .mockReturnValueOnce(result()); // run
+    const podman = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
+      result(0, "/run/user/1001/custom/podman.sock\n"),
+    );
+    const hardenSocketDirectory = vi.fn();
+    const env: NodeJS.ProcessEnv = {
+      HOME: home,
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    };
+    const cpuDelegationPreflight = () => ({ ok: true, detail: "cpu delegated" });
+
+    const prepared = preparePortableExperimentalHost(env, {
+      platform: "linux",
+      home,
+      uid: 1001,
+      systemctl,
+      podman,
+      docker,
+      hardenSocketDirectory,
+      validateConfigAuthority: vi.fn(),
+      cpuDelegationPreflight,
+    });
+
+    expect(prepared).not.toBeNull();
+    expect(prepared?.authority.uid).toBe(1001);
+  });
+
   it("prepares the rootless socket and managed loopback registry deterministically", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
-    const systemctl = vi.fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>(() =>
-      result(),
-    );
+    const systemctl = vi.fn<
+      (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult
+    >(() => result());
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result()) // --version probe: docker-compatible CLI present
@@ -95,16 +239,20 @@ describe("preparePortableExperimentalHost", () => {
       NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
     };
 
-    preparePortableExperimentalHost(env, {
-      platform: "linux",
-      home,
-      uid: 1001,
-      systemctl,
-      podman,
-      docker,
-      hardenSocketDirectory,
-      validateConfigAuthority: vi.fn(),
-    });
+    preparePortableExperimentalHost(
+      env,
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl,
+        podman,
+        docker,
+        hardenSocketDirectory,
+        validateConfigAuthority: vi.fn(),
+      },
+      runtimeAuthority(home, "/run/user/1001/custom/podman.sock"),
+    );
 
     expect(env).toMatchObject({
       CONTAINERS_CONF: path.join(home, ".config/nemoclaw/portable/containers.conf"),
@@ -121,17 +269,10 @@ describe("preparePortableExperimentalHost", () => {
         `CONTAINERS_CONF=${path.join(home, ".config/nemoclaw/portable/containers.conf")}`,
       ],
       ["--user", "try-restart", "podman.service"],
-      ["--user", "enable", "--now", "podman.socket"],
+      ["--user", "is-active", "--quiet", "podman.service"],
     ]);
-    expect(podman).toHaveBeenCalledTimes(2);
-    for (const [args, commandEnv] of podman.mock.calls) {
-      expect(args).toEqual(["info", "--format", "{{.Host.RemoteSocket.Path}}"]);
-      expect(commandEnv).not.toMatchObject({
-        CONTAINER_CONNECTION: expect.anything(),
-        CONTAINER_HOST: expect.anything(),
-        CONTAINER_SSHKEY: expect.anything(),
-      });
-    }
+    expect(systemctl.mock.calls[2]?.[2]).toBe(10_000);
+    expect(podman).not.toHaveBeenCalled();
     for (const [, commandEnv] of docker.mock.calls) {
       expect(commandEnv).not.toHaveProperty("CONTAINER_CONNECTION");
       expect(commandEnv).not.toHaveProperty("CONTAINER_HOST");
@@ -168,6 +309,48 @@ describe("preparePortableExperimentalHost", () => {
     );
     expect(fs.readFileSync(containersConf, "utf-8")).toContain('env = ["NETAVARK_FW=iptables"]');
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
+  });
+
+  it("forwards readiness deadlines to injected host command adapters (#9070)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const systemctl = vi.fn<
+      (args: readonly string[], env: NodeJS.ProcessEnv, timeoutMs?: number) => SpawnResult
+    >(() => result());
+    const podman = vi.fn((_args: readonly string[], _env: NodeJS.ProcessEnv, _timeoutMs?: number) =>
+      result(0, JSON.stringify({ Server: { Version: "5.6.1" } })),
+    );
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result());
+
+    preparePortableExperimentalHost(
+      { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl,
+        podman,
+        docker,
+        captureSocketAuthority: (socketPath) => socketAuthority(socketPath),
+        validateConfigAuthority: vi.fn(),
+        runtimeReadiness: {
+          uid: 1001,
+          home,
+          now: () => 0,
+          hardenSocketDirectory: vi.fn(),
+          captureSocketAuthority: (socketPath) => socketAuthority(socketPath),
+          assertSocketAuthority: vi.fn(),
+        },
+      },
+      runtimeAuthority(home),
+    );
+
+    expect(systemctl.mock.calls[2]?.[2]).toBe(10_000);
+    expect(podman.mock.calls[0]?.[2]).toBe(10_000);
   });
 
   it("keeps the portable firewall driver in the Podman default search path (#8441)", () => {
@@ -264,7 +447,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(docker).toHaveBeenCalledTimes(2);
   });
 
-  it("fails closed when Podman does not report an absolute local socket", () => {
+  it("fails closed when the recorded authority is not an absolute local socket", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
 
@@ -276,12 +459,13 @@ describe("preparePortableExperimentalHost", () => {
           home,
           uid: 1001,
           systemctl: () => result(),
-          podman: () => result(0, "tcp://127.0.0.1:1234"),
+          podman: vi.fn(),
           docker: vi.fn(),
           validateConfigAuthority: vi.fn(),
         },
+        runtimeAuthority(home, "tcp://127.0.0.1:1234"),
       ),
-    ).toThrow(/invalid socket path/);
+    ).toThrow(/socket path/);
   });
 
   it("names podman-docker and creates the registry only after a successful retry (#8453)", () => {
@@ -480,7 +664,7 @@ describe("preparePortableExperimentalHost", () => {
     expect(fs.existsSync(path.join(home, ".config"))).toBe(false);
   });
 
-  it("rejects a missing mismatched endpoint before portable effects (#9083)", () => {
+  it("keeps a missing recorded endpoint bound through activation (#9070)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const staleSocket = "/run/user/1001/stale/podman.sock";
@@ -518,34 +702,24 @@ describe("preparePortableExperimentalHost", () => {
         },
         runtimeAuthority(home, staleSocket),
       ),
-    ).toThrow(/socket path does not match the onboarding checkpoint/);
+    ).toThrow(/socket authority/);
     expect(captureSocketAuthority).toHaveBeenCalledWith(staleSocket, 1001);
-    expect(podman).toHaveBeenCalledOnce();
-    expect(podman).toHaveBeenCalledWith(
-      ["info", "--format", "{{.Host.RemoteSocket.Path}}"],
-      expect.not.objectContaining({
-        CONTAINER_CONNECTION: expect.anything(),
-        CONTAINER_HOST: expect.anything(),
-        CONTAINER_SSHKEY: expect.anything(),
-      }),
-    );
-    expect(systemctl).not.toHaveBeenCalled();
+    expect(podman).not.toHaveBeenCalled();
+    expect(systemctl).toHaveBeenCalledTimes(3);
     expect(docker).not.toHaveBeenCalled();
-    expect(hardenSocketDirectory).not.toHaveBeenCalled();
+    expect(hardenSocketDirectory).toHaveBeenCalledWith(staleSocket, 1001);
     expect(qualifyPodman).not.toHaveBeenCalled();
-    expect(env.NETAVARK_FW).toBeUndefined();
-    expect(env.CONTAINERS_CONF).toBeUndefined();
-    expect(fs.existsSync(path.join(home, ".config"))).toBe(false);
+    expect(env.NETAVARK_FW).toBe("iptables");
+    expect(env.CONTAINERS_CONF).toBe(path.join(home, ".config/nemoclaw/portable/containers.conf"));
+    expect(fs.existsSync(path.join(home, ".config"))).toBe(true);
   });
 
-  it("stops a failed admission discovery before portable effects (#9083)", () => {
+  it("stops an authority outside the current-user runtime before portable effects (#9083)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const systemctl = vi.fn(() => result());
     const docker = vi.fn(() => result());
-    const podman = vi.fn(
-      () => ({ status: 1, stdout: "", stderr: "Podman discovery failed" }) as SpawnResult,
-    );
+    const podman = vi.fn();
 
     expect(() =>
       preparePortableExperimentalHost(
@@ -562,15 +736,15 @@ describe("preparePortableExperimentalHost", () => {
           }),
           validateConfigAuthority: vi.fn(),
         },
-        runtimeAuthority(home),
+        runtimeAuthority(home, "/run/user/2002/podman/podman.sock"),
       ),
-    ).toThrow(/Resolving the rootless Podman API socket failed: Podman discovery failed/);
+    ).toThrow(/outside the current user runtime directory/);
     expect(systemctl).not.toHaveBeenCalled();
     expect(docker).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(home, ".config"))).toBe(false);
   });
 
-  it("rejects a post-activation endpoint mismatch before qualification or registry work (#9083)", () => {
+  it("rejects an unavailable recorded endpoint after activation (#9070)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
     tempDirs.push(home);
     const expectedSocket = "/run/user/1001/custom/podman.sock";
@@ -602,10 +776,10 @@ describe("preparePortableExperimentalHost", () => {
         },
         runtimeAuthority(home, expectedSocket),
       ),
-    ).toThrow(/socket path does not match the onboarding checkpoint/);
+    ).toThrow(/socket authority/);
     expect(systemctl).toHaveBeenCalledTimes(3);
-    expect(podman).toHaveBeenCalledTimes(2);
-    expect(hardenSocketDirectory).not.toHaveBeenCalled();
+    expect(podman).not.toHaveBeenCalled();
+    expect(hardenSocketDirectory).toHaveBeenCalledWith(expectedSocket, 1001);
     expect(qualifyPodman).not.toHaveBeenCalled();
     expect(docker).not.toHaveBeenCalled();
   });
@@ -743,7 +917,7 @@ describe("preparePortableExperimentalHost", () => {
         socketPath: null,
         uid: process.getuid?.() ?? -1,
       }),
-    ).toThrow(/not a real directory/);
+    ).toThrow(/not a real directory|unsafe write permissions/);
   });
 
   it("rejects writable portable configuration authority (#9035)", () => {

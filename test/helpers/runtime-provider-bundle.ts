@@ -94,6 +94,10 @@ export function createInMemoryRuntimeProviderBundle({
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: "The in-memory runtime does not implement host-directory sharing.",
+      },
     },
     preflightDoctor: {
       providerId,

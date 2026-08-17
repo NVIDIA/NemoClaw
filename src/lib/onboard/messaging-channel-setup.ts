@@ -116,6 +116,47 @@ export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = n
     .map((manifest) => manifest.id);
 }
 
+/**
+ * Detect which channels a reused sandbox still carries in its messaging plan
+ * even though the operator no longer configures them. A channel qualifies only
+ * when the current selection omits it and the environment no longer configures
+ * it under the same manifest input rules as
+ * {@link detectMessagingChannelsFromEnv}, so a channel that still has some but
+ * not all of its required inputs also qualifies. `handlePoliciesState` then
+ * drops that channel's network-egress preset instead of carrying it forward.
+ * A channel enrolled inside the sandbox (`in-sandbox-qr`) never qualifies: the
+ * host environment holds no value that reports whether the channel is still
+ * paired. {@link resolveMessagingManifestSeed} exempts the same channels when
+ * it seeds a selection.
+ */
+export function detectUnconfiguredMessagingChannels(
+  planChannels: readonly string[],
+  selectedChannels: readonly string[],
+  agent: AgentDefinition | null = null,
+): string[] {
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
+  const manifestById = new Map(
+    manifestRegistry
+      .listAvailable(availabilityContext)
+      .map((manifest) => [manifest.id, manifest] as const),
+  );
+  const selected = new Set(selectedChannels);
+  const unconfigured: string[] = [];
+  for (const channelId of planChannels) {
+    if (selected.has(channelId) || unconfigured.includes(channelId)) continue;
+    const manifest = manifestById.get(channelId);
+    if (!manifest) continue;
+    if (manifest.auth.mode === "in-sandbox-qr") continue;
+    if (hasMessagingManifestConfiguredInputs(manifest, getMessagingInputValue)) continue;
+    unconfigured.push(channelId);
+  }
+  return unconfigured;
+}
+
 export async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,

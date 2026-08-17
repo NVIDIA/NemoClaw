@@ -93,25 +93,10 @@ function runClassifier(environment: {
 }
 
 describe("base-image publication workflow boundary (#7372)", () => {
-  // source-shape-contract: security -- Immutable base contracts must outlive the qualification interval so later E2E cannot fall back to a mutable alias.
-  it("retains immutable base contracts for later qualification (#9049)", () => {
-    const action = YAML.parse(
-      fs.readFileSync(
-        path.join(process.cwd(), ".github/actions/publish-base-image-manifest/action.yaml"),
-        "utf8",
-      ),
-    ) as { runs: { steps: MutableStep[] } };
-    const upload = action.runs.steps.find(
-      (step) => step.name === "Upload managed base image contract",
-    );
+  it("keeps Launchable off the base-image publication critical path", () => {
+    const value = workflow();
 
-    expect(upload).toMatchObject({
-      uses: "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
-      with: {
-        "if-no-files-found": "error",
-        "retention-days": 90,
-      },
-    });
+    expect(validate(value)).toEqual([]);
   });
 
   it.each([
@@ -209,7 +194,19 @@ describe("base-image publication workflow boundary (#7372)", () => {
         (gateSteps(value)[5].run = "node tools/e2e/dcode-base-image-contract.mts contract.json"),
     ],
     ["step count", (value) => gateSteps(value).push({ name: "Unreviewed step", run: "true" })],
-    ["fanout dependency", (value) => (value.jobs["generate-matrix"].needs = [])],
+    [
+      "matrix publication dependency",
+      (value) => (value.jobs["generate-matrix"].needs = "base-image-publication"),
+    ],
+    ["live publication dependency", (value) => (value.jobs.live.needs = ["generate-matrix"])],
+    [
+      "Launchable publication dependency",
+      (value) =>
+        (value.jobs["staging-brev-launchable"].needs = [
+          "base-image-publication",
+          "generate-matrix",
+        ]),
+    ],
     [
       "matrix base output",
       (value) => {

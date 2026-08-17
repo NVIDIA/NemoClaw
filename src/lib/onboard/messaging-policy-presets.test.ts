@@ -164,9 +164,10 @@ describe("messaging policy presets", () => {
   // and several call sites assume a channel's egress preset shares its name.
   // Pin that 1:1 mapping for every shipped channel so a future preset rename
   // (which would silently desync suggestions from finalization) fails here.
-  it("maps each messaging channel to a same-named egress preset (#5967)", () => {
-    for (const channel of ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"]) {
+  it.each(["slack", "discord", "telegram", "teams", "whatsapp", "wechat"])(
+    "maps each messaging channel to a same-named egress preset [case %#] (#5967)",
+    (channel) => {
       expect(allMessagingChannelPolicyPresets([channel])).toEqual([channel]);
-    }
-  });
+    },
+  );
 });

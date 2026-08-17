@@ -19,6 +19,8 @@ readonly -a production_dockerfiles=(
   "${repo_root}/agents/hermes/Dockerfile.base"
   "${repo_root}/agents/langchain-deepagents-code/Dockerfile"
   "${repo_root}/agents/langchain-deepagents-code/Dockerfile.base"
+  "${repo_root}/agents/pi/Dockerfile"
+  "${repo_root}/agents/pi/Dockerfile.base"
 )
 
 fail_legacy_fixture() {

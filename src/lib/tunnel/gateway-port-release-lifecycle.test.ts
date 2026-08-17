@@ -187,7 +187,7 @@ describe("releaseManagedGatewayPort lifecycle (#5968)", () => {
     expect(stop.lastOptions()?.usePidFile).toBe(false);
   });
 
-  it("warns with sudo remediation when the port stays bound after stop", () => {
+  it("requires fresh identity proof when the port stays bound after stop", () => {
     // lsof keeps reporting a listener even after the stop attempt — the orphan
     // could not be reaped (e.g. a privileged process).
     const lsof = lsofResponder(ok("333\n"));
@@ -207,7 +207,11 @@ describe("releaseManagedGatewayPort lifecycle (#5968)", () => {
 
     expect(result.released).toBe(false);
     expect(result.remaining).toEqual([333]);
-    expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain("sudo kill -9 333");
+    const warning = warn.mock.calls.map((c) => c[0]).join("\n");
+    expect(warning).toContain("Do not signal a PID from this saved output");
+    expect(warning).toContain("exact gateway on port 8080");
+    expect(warning).toContain("PID file, runtime marker, and loaded sandbox namespace");
+    expect(warning).not.toContain("kill -9");
   });
 
   it("leaves a non-matching listener alone without sudo pkill remediation", () => {

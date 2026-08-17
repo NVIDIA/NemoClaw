@@ -22,10 +22,14 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildPreContractExternalProviderSkipEvidence,
+  classifyCloudChatFailure,
   classifyPreContractExternalProviderFailure,
+  cloudChatWriteOutArg,
+  parseCloudChatResponse,
   type PreContractExternalProviderFailure,
 } from "./cloud-inference-provider-skip.ts";
 
@@ -59,18 +63,27 @@ const INSTALL_TIMEOUT_MS = 25 * 60_000;
 const CHAT_TIMEOUT_MS = 120_000;
 const SANDBOX_PROBE_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 40 * 60_000;
-const MAX_ATTEMPTS = positiveInteger(process.env.E2E_PHASE_5B_MAX_ATTEMPTS, 3);
-const RETRY_SLEEP_MS = positiveInteger(process.env.E2E_PHASE_5B_RETRY_SLEEP_SEC, 5) * 1_000;
+const MAX_ATTEMPTS = boundedPositiveInteger(
+  "E2E_PHASE_5B_MAX_ATTEMPTS",
+  process.env.E2E_PHASE_5B_MAX_ATTEMPTS,
+  3,
+);
+const RETRY_SLEEP_MS =
+  boundedPositiveInteger(
+    "E2E_PHASE_5B_RETRY_SLEEP_SEC",
+    process.env.E2E_PHASE_5B_RETRY_SLEEP_SEC,
+    5,
+  ) * 1_000;
 
 validateSandboxName(SANDBOX_NAME);
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (!value || !/^[1-9][0-9]*$/.test(value)) return fallback;
-  return Number.parseInt(value, 10);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Read a bounded retry setting and name invalid configuration in CI output. */
+function boundedPositiveInteger(name: string, value: string | undefined, fallback: number): number {
+  const parsed = value === undefined ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 10) {
+    throw new Error(`${name} must be an integer between 1 and 10; got ${value}`);
+  }
+  return parsed;
 }
 
 async function writePreContractExternalProviderSkip(
@@ -172,58 +185,98 @@ async function expectCliOnPath(host: HostCliClient, home: string): Promise<void>
 
 async function expectLiveChatPong(
   sandbox: SandboxClient,
+  artifacts: ArtifactSink,
   home: string,
   apiKey: string,
 ): Promise<{ attempt: number; content: string }> {
+  type ChatAttempt = {
+    content: string;
+    failure: string;
+    httpStatus: string;
+    response: ShellProbeResult;
+  };
   const payload = JSON.stringify({
     model: CLOUD_MODEL,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
     max_tokens: 100,
   });
-  let lastFailure = "chat completion was not attempted";
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const response = await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "curl",
-        "-sS",
-        "--max-time",
-        "90",
-        "https://inference.local/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "--data-raw",
-        payload,
-      ],
-      {
-        artifactName: `phase-2-inference-local-chat-attempt-${attempt}`,
-        env: testEnv(home),
-        redactionValues: [apiKey],
-        timeoutMs: CHAT_TIMEOUT_MS,
-      },
-    );
-
-    if (response.exitCode !== 0) {
-      lastFailure = `ssh/curl failed (exit ${response.exitCode}): ${resultText(response).slice(0, 500)}`;
-    } else if (!response.stdout.trim()) {
-      lastFailure = "empty response from inference.local";
-    } else {
+  const execution = await runBoundedRetry<ChatAttempt>({
+    operation: "cloud-inference.chat",
+    owner: "inference-provider",
+    idempotence: "read-only",
+    maxAttempts: MAX_ATTEMPTS,
+    delayMs: RETRY_SLEEP_MS,
+    run: async (attempt) => {
+      const response = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "curl",
+          "-sS",
+          "--max-time",
+          "90",
+          "--write-out",
+          cloudChatWriteOutArg(),
+          "https://inference.local/v1/chat/completions",
+          "-H",
+          "Content-Type: application/json",
+          "--data-raw",
+          payload,
+        ],
+        {
+          artifactName: `phase-2-inference-local-chat-attempt-${attempt}`,
+          env: testEnv(home),
+          redactionValues: [apiKey],
+          timeoutMs: CHAT_TIMEOUT_MS,
+        },
+      );
+      const parsed = parseCloudChatResponse(response.stdout);
+      let content = "";
+      let failure = parsed.body.trim() ? "" : "empty response from inference.local";
       try {
-        const content = openAiChatContent(response.stdout);
-        if (/pong/i.test(content)) return { attempt, content };
-        lastFailure = `expected PONG, got: ${content.slice(0, 300)}`;
-      } catch (error) {
-        lastFailure = `response was not parseable JSON: ${
-          error instanceof Error ? error.message : String(error)
-        }; body: ${response.stdout.slice(0, 500)}`;
+        content = parsed.body.trim() ? openAiChatContent(parsed.body) : "";
+      } catch {
+        failure = "response was not parseable JSON";
       }
-    }
-
-    if (attempt < MAX_ATTEMPTS) await sleep(RETRY_SLEEP_MS);
+      if (!failure && !/pong/iu.test(content)) {
+        failure = `expected PONG, got: ${content.slice(0, 300)}`;
+      }
+      return { content, failure, httpStatus: parsed.httpStatus, response };
+    },
+    classify: (value, error) => {
+      if (!value) {
+        return {
+          outcome: "failed",
+          failureClass: classifyCloudChatFailure("", "", "", error),
+        };
+      }
+      const { content, failure, httpStatus, response } = value;
+      if (response.exitCode === 0 && /^2\d{2}$/u.test(httpStatus) && /pong/iu.test(content)) {
+        return { outcome: "passed" };
+      }
+      return {
+        outcome: "failed",
+        failureClass: classifyCloudChatFailure(
+          httpStatus,
+          response.stderr,
+          failure,
+          error,
+          response.timedOut,
+        ),
+      };
+    },
+    onEvidence: async (evidence) => {
+      await artifacts.writeJson("phase-2-inference-local-chat-retry.json", evidence);
+    },
+  });
+  if (execution.outcome === "passed") {
+    return { attempt: execution.evidence.attempts.length, content: execution.value.content };
   }
-
-  throw new Error(`Live chat failed after ${MAX_ATTEMPTS} attempt(s): ${lastFailure}`);
+  const value = execution.value;
+  throw new Error(
+    `Live chat failed after ${execution.evidence.attempts.length} attempt(s): ${
+      value?.failure || `exit ${value?.response.exitCode ?? "unknown"}`
+    }`,
+  );
 }
 
 async function expectSandboxCredentialBoundary(
@@ -412,7 +465,7 @@ test(
     await expectCliOnPath(host, home);
 
     progress.phase("exercise managed inference.local chat");
-    const chat = await expectLiveChatPong(sandbox, home, apiKey);
+    const chat = await expectLiveChatPong(sandbox, artifacts, home, apiKey);
     await artifacts.writeJson("phase-2-chat-result.json", {
       model: CLOUD_MODEL,
       attempt: chat.attempt,

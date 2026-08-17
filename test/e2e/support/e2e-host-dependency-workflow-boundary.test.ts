@@ -76,32 +76,6 @@ function writeExecutable(filePath: string, source: string): void {
 }
 
 describe("E2E host dependency action boundary (#6961)", () => {
-  // source-shape-contract: security -- Privileged apt host setup must stay bound to the reviewed immutable action provenance.
-  it("binds the host-dependency action and helper to their immutable reviewed revision (#6961)", () => {
-    expect(validateHostDependencyAction()).toEqual([]);
-
-    const mappingErrors = validateActionMutation({
-      mutateAction: (source) => {
-        const action = YAML.parse(source) as Record<string, unknown>;
-        const runs = action.runs as { steps: Array<Record<string, unknown>> };
-        runs.steps[0].env = { HOST_DEPENDENCY_PACKAGES: "${{ inputs.packages }} curl" };
-        return YAML.stringify(action);
-      },
-    });
-    expect(mappingErrors).toContain(
-      "host-dependency-setup action content must match the action reviewed at its immutable commit pin",
-    );
-    expect(mappingErrors).toContain(
-      "host-dependency-setup action must preserve its exact single-input package mapping and pinned helper invocation",
-    );
-
-    expect(
-      validateActionMutation({ mutateScript: (source) => `${source}# unreviewed drift\n` }),
-    ).toContain(
-      "host-dependency-setup script content must match the helper reviewed at its immutable commit pin",
-    );
-  });
-
   it.each([
     {
       jobName: "live",

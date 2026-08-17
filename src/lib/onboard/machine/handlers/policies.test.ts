@@ -77,6 +77,60 @@ describe("handlePoliciesState", () => {
     );
   });
 
+  it("drops a no-longer-configured channel from the enabled set so its preset is not re-applied", async () => {
+    const session = createSession({ messagingPlan: makeMessagingPlan({ channels: ["discord"] }) });
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["discord"]),
+    });
+    setSession(session);
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(deps.detectUnconfiguredMessagingChannels).toHaveBeenCalledWith(
+      ["discord", "discord"],
+      [],
+      null,
+    );
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: [], disabledChannels: ["discord"] }),
+    );
+  });
+
+  it("keeps a still-configured channel enabled", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: ["discord"] });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ enabledChannels: ["discord"], disabledChannels: [] }),
+    );
+  });
+
+  it("reports a no-longer-configured channel to the resume check so resume reconciles instead of skipping", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["discord"] }) },
+      })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["discord"]),
+    });
+
+    await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
+
+    expect(calls.prepareResume).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ disabledChannels: ["discord"], enabledChannels: [] }),
+    );
+  });
+
   it("resumes policies when all recorded presets are already applied", async () => {
     const session = createSession({ policyPresets: ["npm"] });
     const { deps, calls, setSession } = createDeps({

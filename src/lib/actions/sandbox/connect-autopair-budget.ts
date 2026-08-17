@@ -6,7 +6,10 @@
 // so tests can import and assert the invariant on the real values without
 // pulling in connect.ts's heavy transitive requires (#4504).
 
-export const CONNECT_AUTO_PAIR_MAX_APPROVALS = 1;
+// Fresh OpenClaw finalization can observe the initial CLI pairing request and
+// its immediately following operator.write upgrade in the same pass. Keep the
+// budget at those two bounded transitions so neither request is left pending.
+export const CONNECT_AUTO_PAIR_MAX_APPROVALS = 2;
 // `openclaw devices list` budget (seconds), interpolated into the in-sandbox
 // script so the invariant below is asserted on real values, not source text.
 // A cold OpenClaw 2026.6.10 CLI can take just over 2s to load its runtime
@@ -30,4 +33,4 @@ export const CONNECT_AUTO_PAIR_POST_TIMEOUT_OBSERVE_S = 4;
 // sources the proxy environment and launches Python. Keep 10s beyond the longer
 // inner path so the outer timer cannot terminate a legitimate approval before
 // its fixed receipt is returned.
-export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 25_000;
+export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 35_000;

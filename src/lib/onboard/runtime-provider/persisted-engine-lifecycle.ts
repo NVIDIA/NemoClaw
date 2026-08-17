@@ -68,8 +68,7 @@ export interface PersistedEngineStateMutationIntentInput {
   readonly nonce: string;
 }
 
-export interface PersistedEngineStateMutationIntent
-  extends PersistedEngineStateMutationIntentInput {
+export interface PersistedEngineStateMutationIntent extends PersistedEngineStateMutationIntentInput {
   readonly schemaVersion: typeof PERSISTED_ENGINE_STATE_MUTATION_INTENT_SCHEMA_VERSION;
   readonly transactionId: string;
 }
@@ -348,8 +347,11 @@ export function normalizePersistedEngineLifecycleRecord(
     fail("completion result digest does not match the phase");
   }
   const engineAuthority = normalizePersistedEngineAuthority(record.engineAuthority);
-  if (engineAuthority.operation !== "sandbox-lifecycle") {
-    fail("lifecycle authority must use the sandbox-lifecycle engine scope");
+  if (
+    engineAuthority.operation !== "sandbox-lifecycle" &&
+    !(action === "state-mutation" && engineAuthority.operation === "state-mutation")
+  ) {
+    fail("lifecycle authority does not match the lifecycle action");
   }
   return Object.freeze({
     schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,
@@ -1821,12 +1823,14 @@ function requireCurrentEngineAuthority(
   engine: ContainerEngine,
   bindingSha256: string,
 ): PersistedEngineAuthority {
-  if (engine.operation !== "sandbox-lifecycle") {
-    throw new Error("Persisted lifecycle requires a sandbox-lifecycle container engine.");
+  if (engine.operation !== "sandbox-lifecycle" && engine.operation !== "state-mutation") {
+    throw new Error(
+      "Persisted lifecycle requires a sandbox-lifecycle or state-mutation container engine.",
+    );
   }
-  const current = engineAuthorityStore.load("sandbox-lifecycle");
+  const current = engineAuthorityStore.load(engine.operation);
   if (!current) {
-    throw new Error("Persisted sandbox-lifecycle engine authority is missing.");
+    throw new Error(`Persisted ${engine.operation} engine authority is missing.`);
   }
   requirePersistedEngineAuthority(current, providerId, engine, bindingSha256);
   if (
@@ -1841,8 +1845,16 @@ function requireCurrentEngineAuthority(
 function expectedRecord(
   input: PreparePersistedEngineLifecycleInput,
 ): PersistedEngineLifecycleRecord {
-  const authority = input.engineAuthorityStore.load("sandbox-lifecycle");
-  if (!authority) throw new Error("Persisted sandbox-lifecycle engine authority is missing.");
+  if (
+    input.engine.operation !== "sandbox-lifecycle" &&
+    !(input.action === "state-mutation" && input.engine.operation === "state-mutation")
+  ) {
+    throw new Error("Persisted lifecycle engine operation does not match its action.");
+  }
+  const authority = input.engineAuthorityStore.load(input.engine.operation);
+  if (!authority) {
+    throw new Error(`Persisted ${input.engine.operation} engine authority is missing.`);
+  }
   requirePersistedEngineAuthority(authority, input.providerId, input.engine, input.bindingSha256);
   return normalizePersistedEngineLifecycleRecord({
     schemaVersion: PERSISTED_ENGINE_LIFECYCLE_SCHEMA_VERSION,

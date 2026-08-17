@@ -123,23 +123,25 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("stops after an unknown recreated-runtime probe failure (#9050)", () => {
+  it("stops after an unknown durable-identity probe failure (#9050)", () => {
     const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
 
-    expect(
-      waitForCreatedSandboxReadyWithTrace({
-        sandboxName: NAME,
-        timeoutSecs: 30,
-        runCaptureOpenshell,
-        isSandboxReady,
-        checkReadyIdentity: () => "probe_failed",
-        sleep,
-      }),
-    ).toEqual({
+    const readiness = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 30,
+      runCaptureOpenshell,
+      isSandboxReady,
+      checkReadyIdentity: () => "probe_failed",
+      sleep,
+    });
+    expect(readiness).toEqual({
       ready: false,
       reason: "identity_probe_failed",
       failurePhase: null,
     });
+    expect(formatCreatedSandboxReadinessFailureMessage(NAME, readiness, 30)).toBe(
+      `  NemoClaw could not verify that sandbox '${NAME}' returned a durable ID and accepted commands.`,
+    );
     expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });

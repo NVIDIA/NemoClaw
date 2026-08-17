@@ -15,8 +15,9 @@ import {
 } from "./helpers/hermes-restart-config-seal-fixture";
 
 describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal", () => {
-  for (const oversizedName of ["config.yaml", ".env"] as const) {
-    it(`contains an oversized sparse ${oversizedName} without reading its logical payload`, () => {
+  it.each(["config.yaml", ".env"] as const)(
+    "contains an oversized sparse %s without reading its logical payload",
+    (oversizedName) => {
       const fixture = createRestartFixture();
       const oversizedPath = oversizedName === "config.yaml" ? fixture.configPath : fixture.envPath;
       fs.truncateSync(
@@ -41,8 +42,8 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         fs.chmodSync(fixture.hermesDir, 0o700);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
-    });
-  }
+    },
+  );
 
   it("fresh-seals a hardlinked input and revokes the external writable inode", () => {
     const fixture = createRestartFixture();
@@ -82,8 +83,9 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     }
   });
 
-  for (const hostileKind of ["symlink", "fifo"] as const) {
-    it(`seals a hostile ${hostileKind} config entry into a root-only unavailable posture`, () => {
+  it.each(["symlink", "fifo"] as const)(
+    "seals a hostile %s config entry into a root-only unavailable posture",
+    (hostileKind) => {
       const fixture = createRestartFixture();
       fs.unlinkSync(fixture.configPath);
       const arrangeHostileConfig = {
@@ -119,11 +121,12 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         fs.chmodSync(fixture.hermesDir, 0o700);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
-    });
-  }
+    },
+  );
 
-  for (const hostileKind of ["symlink", "fifo"] as const) {
-    it(`quarantines an outer .hermes ${hostileKind} only after freezing /sandbox`, () => {
+  it.each(["symlink", "fifo"] as const)(
+    "quarantines an outer .hermes %s only after freezing /sandbox",
+    (hostileKind) => {
       const fixture = createRestartFixture();
       fs.rmSync(fixture.hermesDir, { recursive: true, force: true });
       const victim = path.join(fixture.root, "outer-victim");
@@ -154,8 +157,8 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
         fs.chmodSync(fixture.hermesDir, 0o700);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
-    });
-  }
+    },
+  );
 
   it("re-seals an applied mutable transition before recursive rollback", () => {
     const fixture = createRestartFixture();

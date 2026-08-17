@@ -22,11 +22,12 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 ## Release-Prep Docs
 
-Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
-The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx`.
-Use the required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
-This dated file is the release history for all documentation variants. Ordinary documentation pages and the post-tag Announcement do not replace it.
-Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
+During the evening flow, continue the managed documentation PR when one exists; otherwise open a
+direct documentation-only PR. Add `docs/changelog/YYYY-MM-DD.mdx` with its required `## vX.Y.Z`
+heading, parser-safe MDX SPDX comment, summary, and detailed bullets. Merge it before the final plan.
+
+Require the exact candidate's successful no-change `Docs / Post-Merge Catch-Up` publisher job.
+At plan generation and tag cut, no managed documentation PR may be open and no branch may exist for the exact candidate.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
 ## Cutoff
@@ -38,7 +39,7 @@ At cutoff:
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Confirm the merged release-note docs PR contains the dated changelog entry for the target version, or record an explicit waiver that names the missing entry.
+4. Complete [Release-Prep Docs](#release-prep-docs) for the exact candidate.
 5. Generate QA handoff from merged PRs.
 6. Generate the release plan to capture the candidate commit. Merges may continue; a late drift check advances the candidate and invalidates evidence for the older SHA.
 7. Review the candidate commit's pre-tag E2E evidence.
@@ -51,9 +52,25 @@ The release candidate is the full `origin/main` commit SHA captured by the gener
 
 Before asking for the release confirmation phrase, require a completed, successful `Release qualification` check from a pre-tag manual run at that SHA.
 
+### Temporary Staging Launchable Qualification Policy
+
+Issue #8924 temporarily limits the trusted staging Launchable job to exact image publication.
+NemoClaw maintainers own this policy while that issue remains open.
+For each release candidate, the required automated evidence is a successful `Publish staging Brev Launchable image` job and its `launchable-image.json` artifact, bound to the exact candidate SHA through the successful `Release qualification` check.
+GitHub retains the workflow logs and artifact under the repository's normal Actions retention policy.
+An image-publication failure still blocks release qualification unless a repository administrator uses the existing documented job-waiver mechanism.
+
+The temporary risk acceptance permits a release tag without automated or manual proof of the staging Launchable web deployment, environment access, exact booted image, baked runtime, inference, or workspace cleanup.
+Manual validation remains advisory, and a missing, partial, or failed result needs no per-release waiver.
+It must not be reported as an automated E2E pass.
+
+Restore the automated deployment lane when a published Brev CLI release contains the Launchable image-forwarding fix and the host-route fix tracked by #8924.
+NemoClaw must checksum-pin that release and complete a trusted `main` run that verifies deployment, environment access, exact image and runtime identity, hosted and sandbox inference, and workspace cleanup.
+That successful run is the reactivation evidence; closing #8924 records the end of this temporary policy.
+
 - `.github/workflows/e2e.yaml` derives the release-required jobs from its E2E metadata. Do not copy them into a second release test list.
 - Push runs publish `Relevant E2E`; only full manual runs dispatched against `main` with empty selectors publish `Release qualification`.
-- By default, the check requires every default-required workflow E2E result to succeed, including `Exact staging Brev Launchable`.
+- By default, the check requires every default-required workflow result to succeed, including `Publish staging Brev Launchable image`.
 - A repository administrator may waive one or more release-required E2E execution jobs with `release_qualification_waived_jobs` and `release_qualification_waiver_reason`.
 - `release_qualification_waived_jobs` is a comma-separated list of requested job IDs.
 - The reason must begin with an ASCII letter or digit and contain 10-500 characters chosen from ASCII letters, digits, spaces, and `.,:;/_()'-`.
@@ -68,7 +85,8 @@ Before asking for the release confirmation phrase, require a completed, successf
 - A normal full run must conclude with `success`.
 - An administrator-waived full run may conclude with `failure` when a waived execution job fails, `Release qualification` succeeds, and the waiver artifact binds that failure to the candidate, run, actors, reason, and canonical waived job IDs.
 - `jetson-nvmap-gpu`, `llama-cpp-dgx-spark-plan`, and `llama-cpp-dgx-spark-qualification` remain separate opt-in work and do not block this check.
-- A successful Launchable job proves the candidate checkout, in-guest full E2E result, and cleanup. Its artifacts are diagnostic evidence, not a second status ledger.
+- A successful Launchable image job proves that the producer published the exact candidate image to the staging family. Its `launchable-image.json` artifact records Launchable, runtime, and inference validation as not run.
+- Manual staging Launchable validation is advisory while issue #8924 blocks the automated deployment path. A missing, partial, or failed manual result does not block the release tag and must not be reported as an automated E2E pass.
 - A skipped, queued, in-progress, cancelled, or failed `Release qualification` check is not release evidence.
 - A check from another commit SHA is not release evidence.
 - Use an existing qualifying pre-tag run for the candidate SHA; run `nemoclaw-maintainer-e2e` in full mode when none exists, with an administrator-authorized job waiver when required.

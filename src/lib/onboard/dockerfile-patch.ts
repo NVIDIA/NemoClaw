@@ -37,6 +37,7 @@ import {
   type DcodeAutoApprovalMode,
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
+import { isValidDcodeUpstreamProvider } from "./managed-startup/dcode-upstream-provider";
 import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
 import {
   type DockerfileInstruction,
@@ -322,6 +323,14 @@ export function patchStagedDockerfile(
   // etc.) rather than the proxy-routing key. The replace is a silent no-op
   // when the staged Dockerfile predates this ARG (e.g. OpenClaw).
   const upstreamProvider = provider && provider.trim() ? provider : providerKey;
+  if (
+    options.agentName === "langchain-deepagents-code" &&
+    !isValidDcodeUpstreamProvider(upstreamProvider)
+  ) {
+    throw new Error(
+      "NEMOCLAW_UPSTREAM_PROVIDER must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode.",
+    );
+  }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_UPSTREAM_PROVIDER=.*$/m,
     `ARG NEMOCLAW_UPSTREAM_PROVIDER=${sanitizeDockerArg(upstreamProvider)}`,

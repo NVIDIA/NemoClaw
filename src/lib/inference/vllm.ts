@@ -1407,10 +1407,15 @@ async function managedStorageAccepted(
       );
       return false;
     }
+    // Confirmed (not merely inconclusive) shortfalls are a known quantity: the
+    // pull or download would run the target filesystem to its limit, taking
+    // the whole host down with it (#9105). Unlike the "unknown" branch above,
+    // there is nothing advisory about a statfs-confirmed deficit, so
+    // non-interactive setup must stop the same way an interactive "n" would.
     console.error(
-      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
+      "  Non-interactive setup stops because confirmed available storage is insufficient. Free space or expand storage, then retry.",
     );
-    return true;
+    return false;
   }
   if (!isAffirmativeAnswer(await opts.promptFn("  Continue with the download anyway? [y/N]: "))) {
     return false;

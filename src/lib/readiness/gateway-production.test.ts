@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import type { AddressInfo } from "node:net";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -33,6 +35,8 @@ import {
   classifyManagedGatewayVersionDrift,
   classifyManagedGatewayVersionSource,
   createProductionGatewayReadinessDependencies,
+  describeGatewayPortOwners,
+  gatewayPortConflictDetail,
   gatewayProcessIdentityMatchesTrustedBinary,
   gatewayProcessSamplesMatchTrustedBinary,
   parseDarwinLsofExecutable,
@@ -492,5 +496,137 @@ describe("managed gateway port readiness (#7411)", () => {
       resetTraceForTests();
       fs.rmSync(traceDir, { force: true, recursive: true });
     }
+  });
+
+  it("names the foreign listener and requires a fresh check before stopping it (#9118)", async () => {
+    const foreignListener = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      foreignListener.once("error", reject);
+      foreignListener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (foreignListener.address() as AddressInfo).port;
+    subprocess.spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      const resolvesListener = command === "lsof" && args.includes("-ti");
+      const resolvesName = command === "ps" && args.includes("comm=");
+      return resolvesListener
+        ? commandResult(`${process.pid}\n`, 0)
+        : resolvesName
+          ? commandResult("python3\n", 0)
+          : commandResult();
+    });
+
+    try {
+      const deps = createProductionGatewayReadinessDependencies({
+        gatewayName: () => "nemoclaw-readiness-test",
+        gatewayPort: () => gatewayPort,
+      });
+
+      const observed = await deps.observeManagedGateway(managedOwner(gatewayPort));
+
+      expect(observed.portConflictState).not.toBe("none");
+      expect(observed.portConflictDetail).toContain(`python3 (PID ${process.pid})`);
+      expect(observed.portConflictDetail).toContain(
+        `sudo lsof -i :${gatewayPort} -sTCP:LISTEN -P -n`,
+      );
+      expect(observed.portConflictDetail).toContain("matching PID from that fresh result");
+      expect(observed.portConflictDetail).not.toContain(`sudo kill ${process.pid}`);
+      expect(observed.portConflictDetail).not.toContain("occupied by unknown");
+    } finally {
+      await new Promise<void>((resolve) => foreignListener.close(() => resolve()));
+    }
+  });
+
+  it("offers an inspection command when no listener could be resolved (#9118)", () => {
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "occupied",
+      { stopPids: [], text: null },
+    );
+
+    expect(detail).toContain("is occupied by an unknown listener");
+    expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+  });
+
+  it("lists every listener and requires a fresh check before stopping an unverified listener (#9118)", () => {
+    const processNames = new Map([
+      [100, "openshell-gateway"],
+      [200, "python3"],
+    ]);
+    const owners = describeGatewayPortOwners(
+      { pids: [100], unverifiedPids: [200] },
+      (pid) => processNames.get(pid) ?? null,
+    );
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "multiple-owners",
+      owners,
+    );
+
+    expect(detail).toContain("openshell-gateway (PID 100), python3 (PID 200)");
+    expect(detail).toContain("Confirm PID 200 is not another NemoClaw gateway");
+    expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+    expect(detail).toContain("signal only the matching PID from that fresh result");
+    expect(detail).not.toContain("sudo kill 200");
+    expect(detail).not.toContain("sudo kill 100");
+  });
+
+  it("requires fresh proof for every unverified listener before stopping multiple processes (#9118)", () => {
+    const processNames = new Map([
+      [200, "python3"],
+      [300, "node"],
+    ]);
+    const owners = describeGatewayPortOwners(
+      { pids: [], unverifiedPids: [200, 300] },
+      (pid) => processNames.get(pid) ?? null,
+    );
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "multiple-owners",
+      owners,
+    );
+
+    expect(detail).toContain("python3 (PID 200), node (PID 300)");
+    expect(detail).toContain("Confirm PIDs 200, 300 are not another NemoClaw gateway");
+    expect(detail).toContain("sudo lsof -i :8080 -sTCP:LISTEN -P -n");
+    expect(detail).toContain("signal only the matching PIDs from that fresh result");
+    expect(detail).not.toContain("sudo kill");
+  });
+
+  it("recommends releasing a verified gateway environment without a process stop command (#9118)", () => {
+    const owners = describeGatewayPortOwners(
+      { pids: [100], unverifiedPids: [] },
+      () => "openshell-gateway",
+    );
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "owner-mismatch",
+      owners,
+    );
+
+    expect(detail).toContain("openshell-gateway (PID 100)");
+    expect(detail).toContain("NEMOCLAW_GATEWAY_PORT=8080 nemoclaw uninstall");
+    expect(detail).not.toContain("sudo kill");
+  });
+
+  it("uses the invoked CLI name in verified gateway release guidance (#9118)", () => {
+    vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
+    const owners = describeGatewayPortOwners(
+      { pids: [100], unverifiedPids: [] },
+      () => "openshell-gateway",
+    );
+
+    const detail = gatewayPortConflictDetail(
+      8080,
+      { ok: false, process: "unknown", pid: null, reason: "port 8080 is in use (EADDRINUSE)" },
+      "owner-mismatch",
+      owners,
+    );
+
+    expect(detail).toContain("NEMOCLAW_GATEWAY_PORT=8080 nemohermes uninstall");
+    expect(detail).not.toContain("nemoclaw uninstall");
   });
 });

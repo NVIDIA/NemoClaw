@@ -69,6 +69,7 @@ RUN set -eu; \
 FROM scratch AS hermes-npm-patch-payload
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
@@ -96,6 +97,7 @@ FROM scratch AS hermes-runtime-payload
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/corporate-ca-runtime.sh
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
@@ -370,7 +372,8 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/hermes-managed-route.ts /src/lib/tool-disclosure.ts \
-    && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/openclaw-npm-remediation.mts \
+    && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/bundled-npm-package.mts \
+        /scripts/lib/openclaw-npm-remediation.mts \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/lib/patch-bundled-npm-ip-address.mts \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
@@ -1153,9 +1156,13 @@ RUN set -eu; \
 # uv creates the Hermes virtual environment without pip. Seed pip from Python's
 # bundled ensurepip payload while this layer is still root, then verify the
 # sandbox can read but cannot modify the virtual environment used by the lazy
-# installer. The Hermes lazy installer still installs the approved dependency
-# as the sandbox user.
-RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
+# installer. Dockerfile.base separately installs and imports the official
+# Hindsight client. This layer uses a build-only wheel with the same package
+# identity to isolate the lazy-installer and durable-target contract from PyPI.
+# The nested write-denial shell returns success after every prohibited mutation
+# fails. Create the wheel before resetting the target so the sandbox installer
+# is the next Python process to use it.
+RUN --network=none /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && /opt/hermes/.venv/bin/python -I -m pip --version \
     && chmod 644 /opt/hermes/.venv/.lock \
     && test "$(stat -c '%U:%G %a' /opt/hermes/.venv/.lock)" = "root:root 644" \
@@ -1192,28 +1199,43 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
             if printf "" >> /opt/hermes/.venv/lib/python3.13/site-packages/pip/__init__.py 2>/dev/null; then exit 1; fi; \
             if printf "" >> /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
             if printf "" > /opt/hermes/.venv/lib64/.nemoclaw-sandbox-write-probe 2>/dev/null; then exit 1; fi; \
-            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi' \
+            if ln -sf /usr/bin/false /opt/hermes/.venv/bin/python 2>/dev/null; then exit 1; fi; \
+            exit 0' \
     && test ! -e /opt/hermes/.venv/lib/.nemoclaw-sandbox-write-probe \
+    && install -d -o root -g root -m 0755 /tmp/nemoclaw-hindsight-probe \
+    && /opt/hermes/.venv/bin/python -I -c \
+        "import zipfile; entries = {'hindsight_client/__init__.py': 'NEMOCLAW_BUILD_PROBE_FIXTURE = True\n', 'hindsight_client-0.6.1.dist-info/METADATA': 'Metadata-Version: 2.4\nName: hindsight-client\nVersion: 0.6.1\nSummary: NemoClaw offline lazy-installer build probe\n\n', 'hindsight_client-0.6.1.dist-info/WHEEL': 'Wheel-Version: 1.0\nGenerator: NemoClaw build probe\nRoot-Is-Purelib: true\nTag: py3-none-any\n', 'hindsight_client-0.6.1.dist-info/RECORD': 'hindsight_client/__init__.py,,\nhindsight_client-0.6.1.dist-info/METADATA,,\nhindsight_client-0.6.1.dist-info/WHEEL,,\nhindsight_client-0.6.1.dist-info/RECORD,,\n'}; wheel = zipfile.ZipFile('/tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl', 'w', compression=zipfile.ZIP_DEFLATED); [wheel.writestr(name, data) for name, data in entries.items()]; wheel.close()" \
+    && chown root:root /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
+    && chmod 0444 /tmp/nemoclaw-hindsight-probe/hindsight_client-0.6.1-py3-none-any.whl \
+    && rm -rf /sandbox/.hermes/lazy-packages \
+    && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)" \
     && HOME=/sandbox \
+        PIP_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
+        PIP_NO_INDEX=1 \
         UV_CACHE_DIR=/sandbox/.hermes/cache/uv \
+        UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe \
         UV_NO_CACHE=1 \
+        UV_OFFLINE=1 \
         HERMES_HOME=/sandbox/.hermes \
         HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
         "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
+    && rm -rf /tmp/nemoclaw-hindsight-probe \
     && HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import importlib.metadata as m; assert m.version('hindsight-client') == '0.6.1'" \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/sandbox/.hermes/lazy-packages').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
     && lazy_plan='{"version":1,"readOnlyRoots":["lazy-packages"],"confidentialRoots":[],"readOnlyPrefixes":[],"confidentialPrefixes":[],"writableSubpaths":[]}' \
     && /usr/local/lib/nemoclaw/state-dir-guard.py lock \
         --config-dir /sandbox/.hermes --plan-json "$lazy_plan" \
     && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client" \
+        "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client; from pathlib import Path; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(Path('/sandbox/.hermes/lazy-packages').resolve())" \
     && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
         echo "ERROR: gateway can modify locked Hermes lazy packages" >&2; exit 1; \
@@ -1230,7 +1252,9 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-unlock-probe \
     && rm -rf /sandbox/.hermes/lazy-packages \
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages \
+    && chmod u=rwx,g=rx,o=,g-s /sandbox/.hermes/lazy-packages \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750" \
+    && rm -rf /sandbox/.cache \
     && chown sandbox:sandbox /sandbox/.hermes \
     && chmod 3770 /sandbox/.hermes \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"
@@ -1365,6 +1389,7 @@ RUN check_metadata() { \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-drain.json \
     && check_absent /sandbox/.nemoclaw/hermes-cron-restore-release-recovery.json \
     && check_metadata /sandbox/.nemoclaw 'root:root 1755' \
+    && check_metadata /scripts/lib/bundled-npm-package.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444' \
     && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root 444' \

@@ -78,6 +78,9 @@ function adaptersFor(order: string[] = []): {
     "langchain-deepagents-code": vi.fn(async () => {
       order.push("apply:langchain-deepagents-code");
     }),
+    pi: vi.fn(async () => {
+      order.push("apply:pi");
+    }),
   };
   return {
     adapters: [
@@ -87,6 +90,7 @@ function adaptersFor(order: string[] = []): {
         agent: "langchain-deepagents-code",
         apply: applyByAgent["langchain-deepagents-code"],
       },
+      { agent: "pi", apply: applyByAgent.pi },
     ],
     applyByAgent,
   };

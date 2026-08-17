@@ -144,6 +144,35 @@ describe("Podman container engine command adapter", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
+  it("pins socket and executable authority for state-mutation retries", () => {
+    const assertSocketAuthority = vi.fn();
+    const capture = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const readFile = vi.fn(() => PODMAN_BYTES);
+    const engine = createPodmanContainerEngine({
+      operation: "state-mutation",
+      socketAuthority: AUTHORITY,
+      executable: "/usr/bin/podman",
+      executableAuthorityDeps: executableAuthorityDeps(PODMAN_BYTES, { readFile }),
+      assertAuthority: assertSocketAuthority,
+      capture,
+    });
+
+    engine.assertAuthority();
+    engine.capture(["container", "inspect", "a".repeat(64)]);
+
+    expect(engine.operation).toBe("state-mutation");
+    expect(readFile).toHaveBeenCalledTimes(2);
+    expect(assertSocketAuthority).toHaveBeenCalledTimes(3);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      "/usr/bin/podman",
+      ["--url", "unix:///run/user/1000/podman/podman.sock", "container", "inspect", "a".repeat(64)],
+      15_000,
+    );
+    expect(() => engine.captureHost(["info"])).toThrow(
+      "Podman state-mutation forbids ambient host command capture",
+    );
+  });
+
   it("shares only socket authority across real operation-scoped engines", () => {
     const common = {
       socketAuthority: AUTHORITY,

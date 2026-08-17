@@ -114,8 +114,26 @@ export function finalizeSandboxBaseImageResolution(
   key: string,
   resolution: SandboxBaseImageResolution,
 ): SandboxBaseImageResolution {
-  const metadata = createSandboxBaseImageResolutionMetadata(options, key, resolution);
-  return metadata ? { ...resolution, metadata } : resolution;
+  let locallyProvenResolution = resolution;
+  if (resolution.digest) {
+    const inspected = inspectLocalImageMetadata(resolution.ref);
+    const expectedRepoDigest = `${options.imageName}@${resolution.digest}`;
+    const matchingRepoDigests = Array.isArray(inspected?.RepoDigests)
+      ? inspected.RepoDigests.map(String).filter((entry) =>
+          entry.startsWith(`${options.imageName}@sha256:`),
+        )
+      : [];
+    if (!matchingRepoDigests.includes(expectedRepoDigest) && matchingRepoDigests.length === 1) {
+      const ref = matchingRepoDigests[0];
+      locallyProvenResolution = {
+        ...resolution,
+        ref,
+        digest: ref.slice(ref.indexOf("@") + 1),
+      };
+    }
+  }
+  const metadata = createSandboxBaseImageResolutionMetadata(options, key, locallyProvenResolution);
+  return metadata ? { ...locallyProvenResolution, metadata } : resolution;
 }
 
 export function reuseSandboxBaseImageResolutionHint(

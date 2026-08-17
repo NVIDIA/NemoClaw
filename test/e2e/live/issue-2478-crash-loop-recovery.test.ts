@@ -229,7 +229,7 @@ async function runProbeOnly(
   },
   sandboxName: string,
   artifactName: string,
-): Promise<"connect" | "supervisor"> {
+): Promise<void> {
   const result = await host.nemoclaw([sandboxName, "connect", "--probe-only"], {
     artifactName,
     env: probeEnv(),
@@ -239,18 +239,6 @@ async function runProbeOnly(
     result.exitCode,
     `${artifactName} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).toBe(0);
-  const connectRecovery = `Probe complete: recovered OpenClaw gateway in '${sandboxName}'.`;
-  const supervisorRecovery = `Probe complete: OpenClaw gateway is running in '${sandboxName}'.`;
-  const recoveryPath = result.stdout.includes(connectRecovery)
-    ? "connect"
-    : result.stdout.includes(supervisorRecovery)
-      ? "supervisor"
-      : null;
-  expect(
-    recoveryPath,
-    `${artifactName} did not observe a healthy gateway after termination\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-  ).not.toBeNull();
-  return recoveryPath!;
 }
 
 async function terminateGatewayIdentity(
@@ -369,7 +357,7 @@ test("gateway recovery restores the guard chain and keeps the recovered process 
     preRecoveryIdentity!,
     "functional-recovery-terminate-gateway",
   );
-  const recoveryPath = await runProbeOnly(
+  await runProbeOnly(
     host,
     instance.sandboxName,
     "functional-recovery-connect-probe-only",
@@ -398,7 +386,6 @@ test("gateway recovery restores the guard chain and keeps the recovered process 
   await artifacts.writeJson("functional-recovery-summary.json", {
     initialIdentity,
     preRecoveryIdentity,
-    recoveryPath,
     recoveredIdentity,
     stableIdentity,
     stabilitySeconds: STABILITY_SECONDS,

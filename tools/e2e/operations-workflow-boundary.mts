@@ -15,7 +15,14 @@ import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
-const META_JOBS = new Set(["release-qualification", "relevant-e2e", "report-to-pr", "scorecard"]);
+const META_JOBS = new Set([
+  "native-runtime-qualification-podman-toolchain",
+  "native-runtime-qualification-producer-plan",
+  "release-qualification",
+  "relevant-e2e",
+  "report-to-pr",
+  "scorecard",
+]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
@@ -47,6 +54,12 @@ const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
 const GENERIC_GITHUB_WRITE_SURFACE =
   /github\s*(?:(?:\?\.|\.)\s*(?:graphql|request)\b|\[\s*["'](?:graphql|request)["']\s*\])|\b(?:const|let|var)\s+(?:[A-Za-z_$][\w$]*\s*=\s*github\b|\{[^}]*\b(?:graphql|request)\b[^}]*\}\s*=\s*github(?:\.rest)?\b)|\bfetch\b|\bgh\s+api\b/u;
+const GH_API_WRITE_METHOD =
+  /\bgh\s+api\b[\s\S]{0,160}?(?:(?:--method|-X)\s+(?:POST|PUT|PATCH|DELETE)\b|graphql\b[\s\S]{0,160}?\bmutation\b)/iu;
+const NATIVE_RUNTIME_QUALIFICATION_READ_JOBS = new Set([
+  "native-runtime-qualification-producer-plan",
+  "native-runtime-qualification-producer-aggregate",
+]);
 const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
@@ -310,10 +323,12 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const acceptedJobCases = [
     "::false:false",
     ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS.map((jobId) => `${jobId}::false:false`),
+    "native-runtime-qualification-producer::false:false",
     ":jetson-nvmap-gpu:false:true",
   ].join(" | ");
   const acceptedNames = [
     ...PR_E2E_MANUAL_CONTROLLER_JOB_IDS,
+    "native-runtime-qualification-producer",
     "jetson-nvmap-gpu with its dispatch flag",
   ];
   const acceptedJobNames = `${acceptedNames.slice(0, -1).join(", ")}, or ${acceptedNames.at(-1)}`;
@@ -341,9 +356,29 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
       errors.push(`Manual PR authentication must retain ${fragment}`);
   }
 
+  const qualificationPlanName = "native-runtime-qualification-producer-plan";
+  const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
+  const trustedMainPlanCondition =
+    "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+  if (qualificationPlan.if !== trustedMainPlanCondition) {
+    errors.push("Native runtime qualification producer plan must execute only from trusted main");
+  }
+  for (const jobName of [
+    "native-runtime-qualification-podman-toolchain",
+    "native-runtime-qualification-producer",
+    "native-runtime-qualification-producer-aggregate",
+  ]) {
+    if (!needs(workflow.jobs[jobName] ?? {}).includes(qualificationPlanName)) {
+      errors.push(`${jobName} must depend on the trusted-main qualification producer plan`);
+    }
+  }
+
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
-  if (validation.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("Manual PR checkout validation must be activated only by checkout_sha");
+  if (
+    validation.if !==
+    "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}"
+  ) {
+    errors.push("Manual PR checkout validation must skip qualification producer dispatches");
   }
   const validationSource = String(validation.run ?? "");
   for (const fragment of [
@@ -362,10 +397,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const credentialAuthorization =
     credentialAuthorizationIndex >= 0 ? steps[credentialAuthorizationIndex] : {};
   if (
-    matrixJob.outputs?.e2e_credentials_allowed !==
-      "${{ steps.e2e_credentials.outputs.allowed }}" ||
+    matrixJob.outputs?.e2e_credentials_allowed !== "${{ steps.e2e_credentials.outputs.allowed }}" ||
     credentialAuthorization.id !== "e2e_credentials" ||
-    credentialAuthorization.if !== "${{ inputs.checkout_sha != '' }}" ||
+    credentialAuthorization.if !==
+      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
     credentialAuthorization.shell !== "bash"
   ) {
     errors.push("Manual PR credential authorization must expose only the authorization result");
@@ -379,12 +414,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     WORKFLOW_REPOSITORY: "${{ github.repository }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
-  if (
-    !isDeepStrictEqual(
-      credentialAuthorization.env,
-      expectedCredentialAuthorizationEnvironment,
-    )
-  ) {
+  if (!isDeepStrictEqual(credentialAuthorization.env, expectedCredentialAuthorizationEnvironment)) {
     errors.push(
       "Manual PR credential authorization must bind the workflow and checkout identities",
     );
@@ -462,6 +492,42 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.repository === "${{ github.repository }}" &&
         step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}" &&
         step.with?.path === ".trusted-openshell-dev-artifact";
+      const nativeRuntimeQualificationCheckout =
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Podman source" &&
+          step.with?.repository === "podman-container-tools/podman" &&
+          step.with?.ref === "cade97a52ebdf9dbf9e81de8009015776837a074" &&
+          step.with?.path === ".podman-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Netavark source" &&
+          step.with?.repository === "containers/netavark" &&
+          step.with?.ref === "8e91ad1d947ed325327b638f0cb906bea1f7d0ab" &&
+          step.with?.path === ".netavark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-podman-toolchain" &&
+          step.name === "Check out the pinned Aardvark DNS source" &&
+          step.with?.repository === "containers/aardvark-dns" &&
+          step.with?.ref === "cd7417681229219059939bdd9f0b3bd9ac9abb08" &&
+          step.with?.path === ".aardvark-source" &&
+          step.with?.["fetch-depth"] === 1 &&
+          step.with?.["persist-credentials"] === false) ||
+        (jobName === "native-runtime-qualification-producer-plan" &&
+          step.name === "Check out the trusted qualification producer" &&
+          step.with?.ref === "${{ github.workflow_sha }}") ||
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the trusted qualification harness" &&
+          step.with?.ref === "${{ matrix.source.workflowSha }}") ||
+        (jobName === "native-runtime-qualification-producer" &&
+          step.name === "Check out the candidate commit" &&
+          step.with?.repository === "${{ matrix.source.candidateRepository }}" &&
+          step.with?.ref === "${{ matrix.source.candidateSha }}") ||
+        (jobName === "native-runtime-qualification-producer-aggregate" &&
+          step.name === "Check out the qualification aggregator" &&
+          step.with?.repository === "${{ github.repository }}" &&
+          step.with?.ref === "${{ github.workflow_sha }}");
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
@@ -473,6 +539,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedLlamaCppPlanCheckout ||
         trustedLlamaCppQualificationCheckout ||
         trustedJetsonControllerCheckout ||
+        nativeRuntimeQualificationCheckout ||
         trustedOpenShellDevToolingCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
@@ -578,21 +645,21 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       "base-image-publication job must preserve its exact trusted-mode classifier, minimal permissions, pinned checkout, and verifier boundary",
     );
   }
-  if (!needs(workflow.jobs["generate-matrix"] ?? {}).includes("base-image-publication")) {
-    errors.push("generate-matrix must wait for base-image-publication");
+  const matrix = workflow.jobs["generate-matrix"] ?? {};
+  if (needs(matrix).includes("base-image-publication")) {
+    errors.push("generate-matrix must not wait for base-image-publication");
   }
-  const matrixOutputs = workflow.jobs["generate-matrix"]?.outputs ?? {};
-  if (
-    matrixOutputs.dcode_base_contract !==
-      "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
-    matrixOutputs.dcode_base_ref !== "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
-  ) {
-    errors.push("generate-matrix must preserve the immutable Deep Agents Code base outputs");
+  const matrixOutputs = matrix.outputs ?? {};
+  if ("dcode_base_contract" in matrixOutputs || "dcode_base_ref" in matrixOutputs) {
+    errors.push("generate-matrix must not relay Deep Agents Code base outputs");
   }
   const live = workflow.jobs.live ?? {};
+  if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
+    errors.push("live E2E must wait for matrix generation and base-image publication");
+  }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.generate-matrix.outputs.dcode_base_ref }}"
+    "${{ needs.base-image-publication.outputs.dcode_base_ref }}"
   ) {
     errors.push("live DCode must use the selected immutable base reference");
   }
@@ -601,12 +668,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const liveSteps = live.steps ?? [];
   if (
     evidence.if !== "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}" ||
-    evidence.env?.BASE_CONTRACT !== "${{ needs.generate-matrix.outputs.dcode_base_contract }}" ||
+    evidence.env?.BASE_CONTRACT !==
+      "${{ needs.base-image-publication.outputs.dcode_base_contract }}" ||
     !String(evidence.run ?? "").includes("dcode-base-image.json") ||
     liveSteps.indexOf(evidence) >= liveSteps.indexOf(findStep(live, "Run live E2E tests")) ||
     !String(upload.with?.path ?? "").includes("dcode-base-image.json")
   ) {
     errors.push("live DCode must record its immutable base contract before E2E execution");
+  }
+  if (!sameMembers(needs(workflow.jobs["staging-brev-launchable"] ?? {}), ["generate-matrix"])) {
+    errors.push("staging-brev-launchable must wait only for generate-matrix");
   }
   return errors;
 }
@@ -887,6 +958,21 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       name === "scorecard"
         ? jobSource.replace(/\bfetch\s*\(\s*webhookUrl\s*,/u, "validatedSlackFetch(")
         : jobSource;
+    const trustedQualificationReadJob = NATIVE_RUNTIME_QUALIFICATION_READ_JOBS.has(name);
+    if (
+      trustedQualificationReadJob &&
+      (!isDeepStrictEqual(permissions, {
+        actions: "read",
+        contents: "read",
+        "pull-requests": "read",
+      }) ||
+        GH_API_WRITE_METHOD.test(jobSource))
+    ) {
+      errors.push(`${name} must limit GitHub API access to the reviewed read-only contract`);
+    }
+    const sourceWithoutReviewedReads = trustedQualificationReadJob
+      ? sourceWithoutSlackPublisher.replace(/\bgh\s+api\b/gu, "validatedGhRead")
+      : sourceWithoutSlackPublisher;
 
     if (
       ISSUE_API_REFERENCE.test(jobSource) ||
@@ -895,7 +981,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
     ) {
       errors.push(`${name} must not mutate GitHub issues`);
     }
-    if (GENERIC_GITHUB_WRITE_SURFACE.test(sourceWithoutSlackPublisher)) {
+    if (GENERIC_GITHUB_WRITE_SURFACE.test(sourceWithoutReviewedReads)) {
       errors.push(`${name} must not use unvalidated generic write surfaces`);
     }
   }

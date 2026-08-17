@@ -102,13 +102,13 @@ def plan(projection, intent="protection-transition"):
         "projectionSha256": projection,
     }
 
-def acquire_value(nonce="d" * 64, selected_plan=None, lifecycle_generation="generation:7"):
+def acquire_value(nonce="d" * 64, selected_plan=None, lifecycle_generation="generation:7", provider_id="docker"):
     projection = "b" * 64
     selected = plan(projection) if selected_plan is None else selected_plan
     serialized = control._json_bytes(selected).decode()
     request = control.AcquireRequest(
         "0" * 64,
-        "docker",
+        provider_id,
         "alpha",
         lifecycle_generation,
         "3" * 64,
@@ -131,7 +131,7 @@ def acquire_value(nonce="d" * 64, selected_plan=None, lifecycle_generation="gene
         "schemaVersion": 1,
         "action": "acquire",
         "transactionId": transaction,
-        "providerId": "docker",
+        "providerId": provider_id,
         "sandboxName": "alpha",
         "lifecycleGeneration": lifecycle_generation,
         "engineBindingSha256": "3" * 64,
@@ -154,7 +154,7 @@ def status_value(action, acquire, provider_handle=None, activation_handle=None, 
         "schemaVersion": 1,
         "action": action,
         "transactionId": acquire["transactionId"],
-        "providerId": "docker",
+        "providerId": acquire["providerId"],
         "sandboxName": "alpha",
         "lifecycleGeneration": "generation:7",
         "engineBindingSha256": "3" * 64,
@@ -274,6 +274,16 @@ results["state_transition_preserves_identity"] = (
 )
 canonical_value = acquire_value()
 results["canonical"] = parse("acquire", canonical_value).plan_sha256
+podman_value = acquire_value(provider_id="podman")
+results["podman_provider"] = parse("acquire", podman_value).provider_id
+podman_handle = "podman-state-mutation-v1:" + podman_value["transactionId"] + ":" + "f" * 64
+results["podman_handle"] = parse(
+    "assert", status_value("assert", podman_value, podman_handle)
+).provider_handle
+docker_handle = "docker-state-mutation-v1:" + podman_value["transactionId"] + ":" + "f" * 64
+results["cross_provider_handle"] = code(
+    lambda: parse("assert", status_value("assert", podman_value, docker_handle))
+)
 results["noncanonical"] = code(
     lambda: control._parse_request(
         "acquire",
@@ -1257,6 +1267,9 @@ describe("runtime state mutation controller", () => {
       unsorted_selectors: "plan-selector-order",
       plus_generation: "generation+7",
       punctuation_generation: "lifecycle-generation",
+      podman_provider: "podman",
+      podman_handle: expect.stringMatching(/^podman-state-mutation-v1:/u),
+      cross_provider_handle: "provider-handle",
     });
   });
 

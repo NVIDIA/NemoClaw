@@ -62,6 +62,7 @@ Each active preset includes a `verification` value:
 | `verified` | The registry lists the preset, and the gateway confirms enforcement. |
 | `registry-only` | The registry lists the preset, but the gateway does not enforce it. Treat the allowed hosts as unverified. |
 | `gateway-only` | The gateway enforces a preset that the registry does not list. |
+| `agent-base` | The gateway enforces this preset because it belongs to the agent's own base policy (`agents/<agent>/policy-additions.yaml`), not because the operator applied it. It is active, not drift. `policy add` is unnecessary and would record the preset as operator-applied. |
 | `gateway-unavailable` | NemoClaw could not probe the gateway. Treat the report as advisory until the gateway is reachable. |
 
 ## Classify a Failed Request
@@ -81,7 +82,7 @@ The classifier evaluates conditions in this order:
 
 Network-block error codes include `EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, and `EAI_AGAIN`.
 A block code on a host from a `registry-only` or `gateway-unavailable` preset produces a low-confidence policy verdict.
-A block code on a host from a verified preset stays `unknown` because the gateway already confirmed enforcement.
+A block code on a host from a `verified`, `gateway-only`, or `agent-base` preset stays `unknown` with high confidence because the gateway confirmed enforcement.
 
 Each verdict includes `confidence` set to `high` or `low`.
 Low confidence means the agent must report multiple possibilities instead of treating one next step as authoritative.

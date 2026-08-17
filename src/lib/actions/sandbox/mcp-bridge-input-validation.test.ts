@@ -16,6 +16,23 @@ import {
 } from "./mcp-bridge";
 import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.101.json";
 
+const CHILD_VISIBLE_CREDENTIAL_CASES = [
+  {
+    names: childVisibleCredentialManifest.rawChildValueKeys,
+    error: /materialized as a raw child-process value|preserve the host-only credential boundary/,
+  },
+  {
+    names: childVisibleCredentialManifest.rewrittenChildValueKeys,
+    error: /rewritten by OpenShell's Google Cloud metadata compatibility path/,
+  },
+].flatMap(({ names, error }) =>
+  names.flatMap((name) => [
+    { name, form: "--env NAME", envArgs: ["--env", name], error },
+    { name, form: "-e NAME", envArgs: ["-e", name], error },
+    { name, form: "--env=NAME", envArgs: [`--env=${name}`], error },
+  ]),
+);
+
 describe("MCP CLI input validation", () => {
   it("parses server, URL, and env references", () => {
     const parsed = parseMcpAddArgs([
@@ -97,8 +114,9 @@ describe("MCP CLI input validation", () => {
     ).toThrow(/process arguments and shell history/);
   });
 
-  it("rejects OpenShell revisioned placeholder names as MCP credentials (#6379)", () => {
-    for (const name of ["v1_TOKEN", "v999999_very_unlikely", "v0_1"]) {
+  it.each(["v1_TOKEN", "v999999_very_unlikely", "v0_1"])(
+    "rejects OpenShell revisioned placeholder name %s as an MCP credential (#6379)",
+    (name) => {
       expect(() =>
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
       ).toThrow(/reserved for OpenShell credential revisions/);
@@ -110,104 +128,72 @@ describe("MCP CLI input validation", () => {
           [name]: "host-only-secret",
         }),
       ).toThrow(/reserved for OpenShell credential revisions/);
-    }
+    },
+  );
 
-    for (const name of ["v_TOKEN", "v10_", "versioned_token", "V10_TOKEN"]) {
+  it.each(["v_TOKEN", "v10_", "versioned_token", "V10_TOKEN"])(
+    "accepts non-revisioned MCP credential name %s (#6379)",
+    (name) => {
       expect(() =>
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
       ).not.toThrow();
-    }
-  });
+    },
+  );
 
-  // source-shape-contract: compatibility -- Pinned OpenShell child-visible keys must drive credential rejection through every MCP boundary
-  it("rejects OpenShell child-environment compatibility keys as MCP credentials", () => {
-    for (const name of childVisibleCredentialManifest.rawChildValueKeys) {
+  it.each(CHILD_VISIBLE_CREDENTIAL_CASES)(
+    "rejects $name from $form at every MCP credential boundary",
+    ({ name, envArgs, error }) => {
       expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/materialized as a raw child-process value/);
-      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
-        /preserve the host-only credential boundary/,
-      );
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", ...envArgs]),
+      ).toThrow(error);
+      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(error);
       expect(() =>
         buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
           [name]: "host-only-secret",
         }),
-      ).toThrow(/materialized as a raw child-process value/);
-    }
+      ).toThrow(error);
+    },
+  );
 
-    for (const name of childVisibleCredentialManifest.rewrittenChildValueKeys) {
-      expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/rewritten by OpenShell's Google Cloud metadata compatibility path/);
-    }
-  });
-
-  // source-shape-contract: compatibility -- Host subprocess controls must stay synchronized with the pinned OpenShell child environment boundary
-  it("rejects host subprocess control and allowlist names as MCP credentials", () => {
-    for (const name of SUBPROCESS_ENV_ALLOWED_NAMES) {
-      expect(childVisibleCredentialManifest.runtimeControlKeys).toContain(name);
-    }
-    for (const prefix of SUBPROCESS_ENV_ALLOWED_PREFIXES) {
-      expect(childVisibleCredentialManifest.runtimeControlPrefixes).toContain(prefix);
-    }
-    for (const name of [
-      "PATH",
-      "HOME",
-      "HTTP_PROXY",
-      "SSL_CERT_FILE",
-      "KUBECONFIG",
-      "LC_ALL",
-      "XDG_CONFIG_HOME",
-      "OPENSHELL_GATEWAY",
-      "GRPC_TRACE",
-    ]) {
-      expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/reserved for host subprocess control/);
-    }
-  });
-
-  it("rejects sandbox runtime-control names as MCP credentials", () => {
-    for (const name of [
-      "BASH_ENV",
-      "ALL_PROXY",
-      "all_proxy",
-      "API_SERVER_KEY",
-      "DENO_CERT",
-      "grpc_proxy",
-      "NEMOCLAW_DASHBOARD_PORT",
-      "OPENCLAW_GATEWAY_URL",
-      "OPENAI_BASE_URL",
-      "HERMES_HOME",
-      "DEEPAGENTS_CONFIG_PATH",
-      "LANGCHAIN_TRACING_V2",
-      "ENV",
-      "LD_PRELOAD",
-      "DYLD_INSERT_LIBRARIES",
-      "GLIBC_TUNABLES",
-      "NODE_OPTIONS",
-      "PYTHONHOME",
-      "PYTHONPATH",
-      "RUBYOPT",
-      "PERL5OPT",
-      "JAVA_TOOL_OPTIONS",
-      "_JAVA_OPTIONS",
-      "CLASSPATH",
-      "VIRTUAL_ENV",
-      "UV_PROJECT_ENVIRONMENT",
-    ]) {
-      expect(() =>
-        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
-      ).toThrow(/reserved for sandbox runtime control/);
-      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
-        /could alter or prevent agent commands/,
-      );
-      expect(() =>
-        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
-          [name]: "host-only-secret",
-        }),
-      ).toThrow(/reserved for sandbox runtime control/);
-    }
+  it.each([
+    "BASH_ENV",
+    "ALL_PROXY",
+    "all_proxy",
+    "API_SERVER_KEY",
+    "DENO_CERT",
+    "grpc_proxy",
+    "NEMOCLAW_DASHBOARD_PORT",
+    "OPENCLAW_GATEWAY_URL",
+    "OPENAI_BASE_URL",
+    "HERMES_HOME",
+    "DEEPAGENTS_CONFIG_PATH",
+    "LANGCHAIN_TRACING_V2",
+    "ENV",
+    "LD_PRELOAD",
+    "DYLD_INSERT_LIBRARIES",
+    "GLIBC_TUNABLES",
+    "NODE_OPTIONS",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "RUBYOPT",
+    "PERL5OPT",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "CLASSPATH",
+    "VIRTUAL_ENV",
+    "UV_PROJECT_ENVIRONMENT",
+  ])("rejects sandbox runtime-control name %s as an MCP credential", (name) => {
+    expect(() =>
+      parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+    ).toThrow(/reserved for sandbox runtime control/);
+    expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
+      /could alter or prevent agent commands/,
+    );
+    expect(() =>
+      buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
+        [name]: "host-only-secret",
+      }),
+    ).toThrow(/reserved for sandbox runtime control/);
   });
 
   it("rejects host stdio commands", () => {
@@ -228,7 +214,7 @@ describe("MCP CLI input validation", () => {
     expect(() => parseMcpAddArgs(["github", "--url", "stdio://github"])).toThrow(/https/);
   });
 
-  it("normalizes URLs without persisting credentials", () => {
+  function verifyCredentialFreeUrlNormalization() {
     expect(normalizeMcpServerUrl("https://mcp.example.test")).toBe("https://mcp.example.test/");
     expect(() => normalizeMcpServerUrl("https://user:pass@mcp.example.test/mcp")).toThrow(
       /must not embed credentials/,
@@ -303,9 +289,17 @@ describe("MCP CLI input validation", () => {
         /literal and canonical/,
       );
     }
-  });
+  }
 
-  it("rejects a malformed credential-bearing URL without echoing it (#8698)", () => {
+  it("normalizes URLs without persisting credentials", verifyCredentialFreeUrlNormalization);
+
+  it.each([
+    "https://qa-user:qa-pass-123@/mcp",
+    "//qa-user:qa-pass-123@/mcp",
+    "https:/qa-user:qa-pass-123@/mcp",
+    "https://qa-user:qa-pass-123 extra@/mcp",
+    "https://qa-user:qa-pass-123@/mcp/qa-pass-123",
+  ])("rejects malformed credential-bearing URL vector %# without echoing it (#8698)", (rawUrl) => {
     const user = "qa-user";
     const password = "qa-pass-123";
     const captureMessage = (rawUrl: string): string => {
@@ -316,19 +310,12 @@ describe("MCP CLI input validation", () => {
         return (error as Error).message;
       }
     };
-    for (const rawUrl of [
-      `https://${user}:${password}@/mcp`,
-      `//${user}:${password}@/mcp`,
-      `https:/${user}:${password}@/mcp`,
-      `https://${user}:${password} extra@/mcp`,
-      `https://${user}:${password}@/mcp/${password}`,
-    ]) {
-      const message = captureMessage(rawUrl);
-      expect(message).toMatch(/must be an absolute https:\/\/ URL/);
-      expect(message).not.toContain(user);
-      expect(message).not.toContain(password);
-      expect(message).not.toContain("/mcp");
-    }
+
+    const message = captureMessage(rawUrl);
+    expect(message).toMatch(/must be an absolute https:\/\/ URL/);
+    expect(message).not.toContain(user);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain("/mcp");
   });
 
   it("bounds persisted MCP endpoint URLs consistently across adapters", () => {

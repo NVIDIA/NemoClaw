@@ -61,6 +61,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern:
+      /(?:^|\/)(?:agents\/pi\/(?:Dockerfile(?:\.base)?|dependency-review\.md|generate-config\.ts|manifest\.yaml|policy-additions\.yaml|start\.sh|pi-runtime\/package(?:-lock)?\.json)|\.github\/workflows\/(?:managed-images|base-image)\.yaml)$/,
+    testsToRun: runTests("test/pi-candidate-runtime-artifacts.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)src\/lib\/messaging\/channels\/[^/]+\/policy\/(?:hermes|openclaw)\.yaml$/,
     testsToRun: runTests("src/lib/messaging/channels/policy.test.ts"),
   },
@@ -135,16 +140,23 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/e2e-manifests.test.ts"),
   },
   {
-    pattern: /(?:^|\/)test\/e2e\/docs\/parity-inventory\.generated\.json$/,
-    testsToRun: runTests("test/e2e/support/e2e-migration-policy.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-standard-profile\.yaml$/,
     testsToRun: runTests("test/e2e/support/standard-profile-workflow-boundary.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/portable-profile-e2e\.yaml$/,
+    testsToRun: runTests(
+      "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts",
+      "test/e2e/support/portable-profile-systemctl-shim.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)test\/e2e\/fixtures\/portable-profile-systemctl-shim\.sh$/,
+    testsToRun: runTests("test/e2e/support/portable-profile-systemctl-shim.test.ts"),
   },
   {
     pattern:
@@ -164,6 +176,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/pr-merge-conflict-fixer-workflow-boundary.test.ts"),
   },
   {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/post-merge-docs\.yaml|tools\/post-merge-docs\/(?:review-policy\.yaml|[^/]+\.mts))$/,
+    testsToRun: runTests("test/post-merge-docs.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
     testsToRun: runTests(
       "test/pr-review-advisor-workflow-boundary.test.ts",
@@ -179,8 +196,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e-main-retry-workflow.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
+    pattern: /(?:^|\/)\.github\/workflows\/(?:hosted-runner-recovery|platform-vitest-main)\.yaml$/,
     testsToRun: runTests("test/hosted-runner-recovery-workflow.test.ts"),
   },
   {

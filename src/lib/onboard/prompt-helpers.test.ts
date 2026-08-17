@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
-import { promptOrDefault, selectFromNumberedMenuOrExit } from "./prompt-helpers";
+import {
+  promptOnboardConfigurationReview,
+  promptOrDefault,
+  selectFromNumberedMenuOrExit,
+} from "./prompt-helpers";
 
 function makeDeps(promptReply: string) {
   return {
@@ -27,6 +31,41 @@ describe("promptOrDefault interactive default fallback (#4387)", () => {
   it("returns the user's reply verbatim when non-empty", async () => {
     const deps = makeDeps("3");
     expect(await promptOrDefault(deps, "  Choose [6]: ", null, "6")).toBe("3");
+  });
+});
+
+describe("onboarding configuration review actions (#6005)", () => {
+  function createReviewDeps(...answers: string[]) {
+    return {
+      prompt: vi.fn(async () => answers.shift() ?? ""),
+      log: vi.fn(),
+    };
+  }
+
+  it.each([
+    ["", "apply"],
+    ["apply", "apply"],
+    ["2", "edit-inference"],
+    ["model", "edit-inference"],
+    ["3", "edit-sandbox"],
+    ["name", "edit-sandbox"],
+    ["4", "exit"],
+    ["quit", "exit"],
+  ] as const)("returns action %s as %s (#6005)", async (answer, expected) => {
+    await expect(promptOnboardConfigurationReview(createReviewDeps(answer))).resolves.toBe(
+      expected,
+    );
+  });
+
+  it("re-prompts after an unknown action", async () => {
+    const deps = createReviewDeps("unknown", "1");
+
+    await expect(promptOnboardConfigurationReview(deps)).resolves.toBe("apply");
+
+    expect(deps.prompt).toHaveBeenCalledTimes(2);
+    expect(deps.log).toHaveBeenCalledWith(
+      "  Choose Apply, Edit inference, Edit sandbox name, or Exit onboarding.",
+    );
   });
 });
 
