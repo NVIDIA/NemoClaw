@@ -46,21 +46,24 @@ const OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS = 30_000;
 const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX = "nemoclaw-openclaw-config-capture:";
 const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES = 128;
 const OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES = 1024;
-const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
+const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
+const OPENCLAW_CONFIG_NAME = "openclaw.json";
+export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
-directory = "/sandbox/.openclaw"
-name = "openclaw.json"
+directory = sys.argv[1]
+name = sys.argv[2]
 protocol = "${OPENCLAW_CONFIG_CAPTURE_PROTOCOL_PREFIX}"
 def fail(status, reason):
     print(protocol + reason, file=sys.stderr)
     raise SystemExit(status)
-directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
 try:
     directory_fd = os.open(directory, directory_flags)
 except OSError:
     fail(10, "directory-unavailable")
 try:
+    directory_before = os.fstat(directory_fd)
     try:
         file_fd = os.open(name, file_flags, dir_fd=directory_fd)
     except FileNotFoundError:
@@ -88,6 +91,9 @@ try:
         identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
         if identity(before) != identity(after) or identity(before) != identity(current) or not stat.S_ISREG(current.st_mode):
             fail(13, "file-changed-during-read")
+        directory_current = os.stat(directory, follow_symlinks=False)
+        if (directory_before.st_dev, directory_before.st_ino) != (directory_current.st_dev, directory_current.st_ino) or not stat.S_ISDIR(directory_current.st_mode):
+            fail(13, "directory-changed-during-read")
         sys.stdout.buffer.write(b"".join(chunks))
     finally:
         os.close(file_fd)
@@ -101,7 +107,8 @@ type OpenClawConfigCaptureFailure =
   | "file-unavailable"
   | "unsafe-file-metadata"
   | "size-limit-exceeded"
-  | "file-changed-during-read";
+  | "file-changed-during-read"
+  | "directory-changed-during-read";
 
 function captureFailureProtocol(stderr: unknown): OpenClawConfigCaptureFailure | null {
   if (
@@ -128,6 +135,7 @@ function captureFailureProtocol(stderr: unknown): OpenClawConfigCaptureFailure |
     case "unsafe-file-metadata":
     case "size-limit-exceeded":
     case "file-changed-during-read":
+    case "directory-changed-during-read":
       return reason;
     default:
       return null;
@@ -164,7 +172,15 @@ export function captureOpenClawStateFile(
       () => {
         const argv = privilegedSandboxExecArgv(
           sandboxName,
-          ["/usr/bin/python3", "-I", "-S", "-c", OPENCLAW_CONFIG_CAPTURE_SCRIPT],
+          [
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-c",
+            OPENCLAW_CONFIG_CAPTURE_SCRIPT,
+            OPENCLAW_CONFIG_DIRECTORY,
+            OPENCLAW_CONFIG_NAME,
+          ],
           false,
           true,
         );
