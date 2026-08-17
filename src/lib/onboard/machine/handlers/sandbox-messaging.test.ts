@@ -396,7 +396,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv },
+      { clearPlanEnv, note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -417,7 +417,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -432,7 +432,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn() },
+      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -693,6 +693,9 @@ describe("reconcileSandboxMessaging plan authority", () => {
     // input; a channel the environment no longer configures must not re-enter
     // the selection, or its egress preset is re-applied.
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure discord"));
+    expect(deps.clearPlanEnv).toHaveBeenCalledOnce();
+    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: null, selectedChannels: [] });
   });
 
