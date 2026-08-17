@@ -55,9 +55,7 @@ export function resolveTrustedSnapshotSanitizerPythonPath(): string | null {
 }
 
 /** @visibleForTesting Install an explicit helper substitute without weakening production lookup. */
-export function setSnapshotSanitizerPythonPathForTest(
-  pythonPath: string | null | undefined,
-): void {
+export function setSnapshotSanitizerPythonPathForTest(pythonPath: string | null | undefined): void {
   if (process.env.VITEST !== "true") {
     throw new Error("Snapshot sanitizer Python substitution is only available under Vitest");
   }
@@ -771,9 +769,7 @@ export function scanDescriptorSnapshotResult(
   );
   if (result.status !== 0 || result.error) return { ok: false, reason: "helper-failed" };
   const scan = parseScanResult(result.stdout);
-  return scan === null
-    ? { ok: false, reason: "helper-failed" }
-    : { ok: true, value: scan };
+  return scan === null ? { ok: false, reason: "helper-failed" } : { ok: true, value: scan };
 }
 
 /** Read a bounded snapshot tree through pinned directory descriptors. */
