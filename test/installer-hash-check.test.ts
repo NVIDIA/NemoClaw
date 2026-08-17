@@ -39,6 +39,10 @@ const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
   "utf8",
 );
+const TRUSTED_PARSER_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
+  "utf8",
+);
 const ASSET_DIGESTS = new Map([
   [
     "openshell-x86_64-unknown-linux-musl.tar.gz",
@@ -518,6 +522,28 @@ const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>>
 };
 const tempDirs: string[] = [];
 
+function trustedPinArray(name: string): string {
+  const start = TRUSTED_PARSER_TEMPLATE.indexOf(`const ${name}`);
+  const end = TRUSTED_PARSER_TEMPLATE.indexOf("\n];", start);
+  expect(start, `${name} start`).not.toBe(-1);
+  expect(end, `${name} end`).not.toBe(-1);
+  return TRUSTED_PARSER_TEMPLATE.slice(start, end);
+}
+
+function trustedSandboxBuildDigests(version: string): readonly [string, string] | undefined {
+  const entries = trustedPinArray("TRUSTED_SANDBOX_BUILD_PINS");
+  const digests = [...entries.matchAll(/sha256:\s*"([a-f0-9]{64})"[\s\S]*?version:\s*"([0-9.]+)"/g)]
+    .filter((match) => match[2] === version)
+    .map((match) => match[1]!);
+  return digests.length === 2 ? (digests as [string, string]) : undefined;
+}
+
+function trustedSupervisorManifestDigest(version: string): string | undefined {
+  const entries = trustedPinArray("TRUSTED_SUPERVISOR_MANIFEST_PINS");
+  return [...entries.matchAll(/manifestDigest:\s*"(sha256:[a-f0-9]{64})"[\s\S]*?version:\s*"([0-9.]+)"/g)]
+    .find((match) => match[2] === version)?.[1];
+}
+
 afterEach(() => {
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -609,7 +635,6 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
   expect(sandboxFunctionStart, "sandbox build map template start").not.toBe(-1);
   expect(sandboxFunctionEnd, "sandbox build map template end").not.toBe(-1);
   const sandboxFunction = withPinFunction.slice(sandboxFunctionStart, sandboxFunctionEnd);
-  const hasSandboxBuild = sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`);
   const selectedDigests =
     openshellVersion === "0.0.101"
       ? V00101_SANDBOX_BUILD_DIGESTS
@@ -619,7 +644,10 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
           ? V00106_SANDBOX_BUILD_DIGESTS
         : openshellVersion === "9.9.9"
           ? SYNTHETIC_SANDBOX_BUILD_DIGESTS
-          : undefined;
+          : trustedSandboxBuildDigests(openshellVersion);
+  const hasSandboxBuild = selectedDigests
+    ? selectedDigests.every((digest) => sandboxFunction.includes(digest))
+    : sandboxFunction.includes(`printf '%s\\n' "${openshellVersion}"`);
   expect(hasSandboxBuild || selectedDigests, `sandbox fixture ${openshellVersion}`).toBeTruthy();
   return hasSandboxBuild
     ? withPinFunction
@@ -640,9 +668,6 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
 }
 
 function renderSupervisorRuntime(openshellVersion: string): string {
-  const hasManifestIdentity = SUPERVISOR_RUNTIME_TEMPLATE.includes(
-    `  "${openshellVersion}": "sha256:`,
-  );
   const manifestDigest =
     openshellVersion === "0.0.103"
       ? V00103_SUPERVISOR_MANIFEST_DIGEST
@@ -650,14 +675,22 @@ function renderSupervisorRuntime(openshellVersion: string): string {
         ? V00106_SUPERVISOR_MANIFEST_DIGEST
       : openshellVersion === "9.9.9"
         ? SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST
-        : undefined;
+        : trustedSupervisorManifestDigest(openshellVersion);
+  const hasManifestIdentity = manifestDigest
+    ? SUPERVISOR_RUNTIME_TEMPLATE.includes(`  "${openshellVersion}": "${manifestDigest}"`)
+    : SUPERVISOR_RUNTIME_TEMPLATE.includes(`  "${openshellVersion}": "sha256:`);
   expect(
     hasManifestIdentity || manifestDigest,
     `supervisor fixture ${openshellVersion}`,
   ).toBeTruthy();
-  return hasManifestIdentity
-    ? SUPERVISOR_RUNTIME_TEMPLATE
-    : SUPERVISOR_RUNTIME_TEMPLATE.replace(
+  if (hasManifestIdentity) return SUPERVISOR_RUNTIME_TEMPLATE;
+  const existingIdentity = new RegExp(
+    `("${openshellVersion.replaceAll(".", "\\.")}":\\s*)"sha256:[a-f0-9]{64}"`,
+  );
+  if (existingIdentity.test(SUPERVISOR_RUNTIME_TEMPLATE)) {
+    return SUPERVISOR_RUNTIME_TEMPLATE.replace(existingIdentity, `$1"${manifestDigest}"`);
+  }
+  return SUPERVISOR_RUNTIME_TEMPLATE.replace(
         "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
         `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
   "${openshellVersion}": "${manifestDigest}",
