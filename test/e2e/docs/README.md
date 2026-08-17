@@ -69,6 +69,35 @@ harness or runner. Vitest remains the only test harness.
 `suiteIds` remain metadata for reporting and migration planning. They do not
 dispatch shell validation suites.
 
+## Selecting One Target
+
+`.github/workflows/e2e.yaml` runs one matrix target by passing its id through
+`TARGET_ID` and selecting the matching test with `-t "^${TARGET_ID}$"`. The
+selector performs the restriction; `TARGET_ID` alone does not limit which
+targets run.
+
+The `generate-matrix` job resolves dispatch input through `requireTargets`, so
+an unknown id fails there before any target job starts.
+
+`test/e2e/live/registry-targets.test.ts` resolves `TARGET_ID` through the same
+registry at module load, which covers a run that sets it another way. An ID no
+target declares fails collection with `Unknown target '<id>'. Available
+targets: ...`, and an empty ID fails with `Selected target ID '' is not safe
+...`. Without those checks, either ID would build a selector that matches
+nothing and can exit 0 without executing a target. An unsafe ID also fails with
+`Selected target ID '<id>' is not safe ...`; regex-shaped IDs can otherwise
+broaden the selector and run unintended live targets. This module-load guard
+protects the registry-target catalogue when collection includes
+`registry-targets.test.ts`. Both `npm run test:live-e2e` and
+`npm run test:e2e-phases:check` include that file, but a collection command that
+omits it does not run this guard.
+
+A declared target that is not wired for live fixtures still collects. The
+typed-registry matrix reports it as skipped with its `[not wired]` reason and
+exits 0. That exit-0 skip is specific to the typed-registry matrix; the
+catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
+when its selection runs no tests.
+
 ## How To Run
 
 ```bash
@@ -261,7 +290,7 @@ test/e2e/
   allowed jobs, targets, and Launchable combination before candidate checkout.
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `Exact staging Brev Launchable`, every catalogue target in the
+  E2E except `Publish staging Brev Launchable image`, every catalogue target in the
   `standard` profile, all shared credential-free tests, and these
   controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,
@@ -321,9 +350,10 @@ test/e2e/
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
-- The `staging-brev-launchable` job validates the exact baked candidate in
-  preinstalled mode. Generic Brev VMs with source overlays are not a
-  qualification boundary.
+- The `staging-brev-launchable` job verifies the exact image-producer receipt,
+  records the concrete staging image in `launchable-image.json`, and stops before deployment.
+  Use `nemoclaw-maintainer-validate-launchable` for advisory deployment, runtime,
+  inference, and cleanup validation while issue #8924 blocks automation.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
   shards include `e2e-support` for code changes; they never opt into live

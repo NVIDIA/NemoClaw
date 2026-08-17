@@ -51,14 +51,117 @@ function isSafeExpectedFile(expectedFile: string): boolean {
     !expectedFile.endsWith("/") &&
     !expectedFile.includes("\\") &&
     !expectedFile.includes("\0") &&
-    segments.every((segment) => segment !== "" && segment !== "." && segment !== "..")
+    segments.every(
+      (segment) => segment !== "" && segment !== "." && segment !== "..",
+    )
   );
 }
 
 /**
- * Reads the exact bytes of one safe relative file from a GitHub artifact ZIP
- * without extracting paths to disk. Duplicate targets, links, encryption,
- * split archives, ZIP64, excess entries, and oversized payloads are rejected.
+ * Lists structurally validated regular-file entries from a GitHub artifact
+ * ZIP without extracting or inflating their contents. Relative names must not
+ * contain empty, dot, parent, backslash, NUL, absolute, or trailing-slash
+ * segments. Links, encryption, split archives, ZIP64, duplicate names,
+ * unsupported compression, inconsistent headers, and excess entries are
+ * rejected before callers select an allowlisted evidence file.
+ */
+export function listValidatedArtifactZipEntries(
+  archive: Buffer,
+  options: { maxEntries?: number },
+): string[] | null {
+  const maxEntries = options.maxEntries ?? 1000;
+  if (maxEntries < 1) return null;
+  const endOffset = findZipEndOfCentralDirectory(archive);
+  if (endOffset < 0) return null;
+  const entriesOnDisk = archive.readUInt16LE(endOffset + 8);
+  const totalEntries = archive.readUInt16LE(endOffset + 10);
+  const centralDirectorySize = archive.readUInt32LE(endOffset + 12);
+  const centralDirectoryOffset = archive.readUInt32LE(endOffset + 16);
+  if (
+    archive.readUInt16LE(endOffset + 4) !== 0 ||
+    archive.readUInt16LE(endOffset + 6) !== 0 ||
+    entriesOnDisk !== totalEntries ||
+    totalEntries < 1 ||
+    totalEntries > maxEntries ||
+    centralDirectoryOffset + centralDirectorySize !== endOffset
+  ) {
+    return null;
+  }
+
+  const names: string[] = [];
+  const seen = new Set<string>();
+  let offset = centralDirectoryOffset;
+  for (let index = 0; index < totalEntries; index += 1) {
+    if (
+      offset + 46 > endOffset ||
+      archive.readUInt32LE(offset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
+    ) {
+      return null;
+    }
+    const creatorSystem = archive.readUInt8(offset + 5);
+    const flags = archive.readUInt16LE(offset + 8);
+    const compressionMethod = archive.readUInt16LE(offset + 10);
+    const compressedSize = archive.readUInt32LE(offset + 20);
+    const fileNameLength = archive.readUInt16LE(offset + 28);
+    const extraLength = archive.readUInt16LE(offset + 30);
+    const commentLength = archive.readUInt16LE(offset + 32);
+    const diskStart = archive.readUInt16LE(offset + 34);
+    const externalAttributes = archive.readUInt32LE(offset + 38);
+    const localHeaderOffset = archive.readUInt32LE(offset + 42);
+    const entryEnd = offset + 46 + fileNameLength + extraLength + commentLength;
+    if (entryEnd > endOffset) return null;
+    const nameBytes = archive.subarray(
+      offset + 46,
+      offset + 46 + fileNameLength,
+    );
+    let name: string;
+    try {
+      name = new TextDecoder("utf-8", { fatal: true }).decode(nameBytes);
+    } catch {
+      return null;
+    }
+    const unixFileType = (externalAttributes >>> 16) & 0xf000;
+    if (
+      !isSafeExpectedFile(name) ||
+      seen.has(name) ||
+      diskStart !== 0 ||
+      (flags & 0x1) !== 0 ||
+      (compressionMethod !== 0 && compressionMethod !== 8) ||
+      (creatorSystem !== 0 && creatorSystem !== 3) ||
+      (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
+      localHeaderOffset + 30 > centralDirectoryOffset ||
+      archive.readUInt32LE(localHeaderOffset) !== ZIP_LOCAL_FILE_SIGNATURE
+    ) {
+      return null;
+    }
+    const localFlags = archive.readUInt16LE(localHeaderOffset + 6);
+    const localCompressionMethod = archive.readUInt16LE(localHeaderOffset + 8);
+    const localNameLength = archive.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28);
+    const localNameEnd = localHeaderOffset + 30 + localNameLength;
+    const dataEnd = localNameEnd + localExtraLength + compressedSize;
+    if (
+      localNameEnd > centralDirectoryOffset ||
+      dataEnd > centralDirectoryOffset ||
+      localFlags !== flags ||
+      localCompressionMethod !== compressionMethod ||
+      !archive.subarray(localHeaderOffset + 30, localNameEnd).equals(nameBytes)
+    ) {
+      return null;
+    }
+    seen.add(name);
+    names.push(name);
+    offset = entryEnd;
+  }
+  return offset === endOffset ? names.sort() : null;
+}
+
+/**
+ * Reads the exact bytes of one structurally validated relative regular-file
+ * entry from a GitHub artifact ZIP without extracting paths to disk. The same
+ * name, archive-layout, file-type, encryption, split/ZIP64, compression,
+ * header-consistency, entry-count, compressed-size, inflated-size, and CRC
+ * constraints used by the entry validator are enforced before bytes return.
  */
 export function readValidatedArtifactZipEntryBytes(
   archive: Buffer,
@@ -67,7 +170,11 @@ export function readValidatedArtifactZipEntryBytes(
 ): Buffer | null {
   const maxEntries = options.maxEntries ?? 1000;
   const expectedFileName = Buffer.from(expectedFile, "utf8");
-  if (!isSafeExpectedFile(expectedFile) || options.maxBytes < 1 || maxEntries < 1) {
+  if (
+    !isSafeExpectedFile(expectedFile) ||
+    options.maxBytes < 1 ||
+    maxEntries < 1
+  ) {
     return null;
   }
 
@@ -96,14 +203,16 @@ export function readValidatedArtifactZipEntryBytes(
   for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
     if (
       centralEntryOffset + 46 > endOffset ||
-      archive.readUInt32LE(centralEntryOffset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
+      archive.readUInt32LE(centralEntryOffset) !==
+        ZIP_CENTRAL_DIRECTORY_SIGNATURE
     ) {
       return null;
     }
     const fileNameLength = archive.readUInt16LE(centralEntryOffset + 28);
     const extraLength = archive.readUInt16LE(centralEntryOffset + 30);
     const commentLength = archive.readUInt16LE(centralEntryOffset + 32);
-    const centralEntryEnd = centralEntryOffset + 46 + fileNameLength + extraLength + commentLength;
+    const centralEntryEnd =
+      centralEntryOffset + 46 + fileNameLength + extraLength + commentLength;
     if (centralEntryEnd > endOffset) return null;
     const fileName = archive.subarray(
       centralEntryOffset + 46,
@@ -164,23 +273,31 @@ export function readValidatedArtifactZipEntryBytes(
     localFileNameEnd > centralDirectoryOffset ||
     localFlags !== flags ||
     localCompressionMethod !== compressionMethod ||
-    !archive.subarray(localHeaderOffset + 30, localFileNameEnd).equals(expectedFileName) ||
+    !archive
+      .subarray(localHeaderOffset + 30, localFileNameEnd)
+      .equals(expectedFileName) ||
     compressedDataEnd > centralDirectoryOffset
   ) {
     return null;
   }
 
-  const compressedData = archive.subarray(compressedDataOffset, compressedDataEnd);
+  const compressedData = archive.subarray(
+    compressedDataOffset,
+    compressedDataEnd,
+  );
   let contents: Buffer;
   try {
     contents =
       compressionMethod === 0
         ? Buffer.from(compressedData)
-        : zlib.inflateRawSync(compressedData, { maxOutputLength: options.maxBytes });
+        : zlib.inflateRawSync(compressedData, {
+            maxOutputLength: options.maxBytes,
+          });
   } catch {
     return null;
   }
-  if (contents.length !== uncompressedSize || crc32(contents) !== expectedCrc) return null;
+  if (contents.length !== uncompressedSize || crc32(contents) !== expectedCrc)
+    return null;
   return contents;
 }
 
@@ -190,5 +307,11 @@ export function readValidatedArtifactZipEntry(
   expectedFile: string,
   options: { maxBytes: number; maxEntries?: number },
 ): string | null {
-  return readValidatedArtifactZipEntryBytes(archive, expectedFile, options)?.toString("utf8") ?? null;
+  return (
+    readValidatedArtifactZipEntryBytes(
+      archive,
+      expectedFile,
+      options,
+    )?.toString("utf8") ?? null
+  );
 }

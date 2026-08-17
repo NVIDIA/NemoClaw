@@ -63,16 +63,37 @@ function collectRollbackDiagnostics(
 }
 
 describe("finalizeDockerGpuPatchBackup", () => {
-  it("removes the backup container when supervisor reconnect succeeded", () => {
+  it("makes the replacement restart the final lifecycle event after removing the backup", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: true },
-      { dockerRm },
+      { dockerStop, dockerRm, dockerStart },
     );
-    expect(outcome).toEqual({ backupRemoved: true, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: true,
+    });
+    expect(dockerStop).toHaveBeenCalledWith(
+      "new-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
     expect(dockerRm).toHaveBeenCalledWith(
       "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
       expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStart).toHaveBeenCalledWith(
+      "new-container-id",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
+      dockerRm.mock.invocationCallOrder[0],
+    );
+    expect(dockerRm.mock.invocationCallOrder[0]).toBeLessThan(
+      dockerStart.mock.invocationCallOrder[0],
     );
   });
 
@@ -171,15 +192,22 @@ describe("finalizeDockerGpuPatchBackup", () => {
   });
 
   it("reports backupRemoved=false when supervisor reconnect succeeded but docker rm of the backup failed", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({
       status: 1,
       stderr: "Error response from daemon: container is in use",
     }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: true },
-      { dockerRm },
+      { dockerStop, dockerRm, dockerStart },
     );
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: true,
+    });
     expect(dockerRm).toHaveBeenCalledWith(
       "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
       expect.objectContaining({ ignoreError: true }),
@@ -187,12 +215,56 @@ describe("finalizeDockerGpuPatchBackup", () => {
   });
 
   it("fails closed when backup removal has no exit status", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn((_name: string) => ({ status: null, stderr: "timed out" }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: true },
-      { dockerRm },
+      { dockerStop, dockerRm, dockerStart },
     );
-    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: true,
+    });
+  });
+
+  it("retains the backup when the replacement cannot be stopped for the final handoff", () => {
+    const dockerStop = vi.fn(() => ({ status: 1 }));
+    const dockerRm = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: true },
+      { dockerStop, dockerRm, dockerStart },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      replacementStoppedForCommit: false,
+    });
+    expect(dockerRm).not.toHaveBeenCalled();
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed replacement restart after the backup is removed", () => {
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: true },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 1 })),
+      },
+    );
+
+    expect(outcome).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      replacementStoppedForCommit: true,
+      replacementRestarted: false,
+    });
   });
 
   it("records a remaining exact-ID replacement when removal fails (#7996)", () => {

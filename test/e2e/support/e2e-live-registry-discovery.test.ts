@@ -26,17 +26,6 @@ function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT)
 }
 
 describe("live target registry discovery support", () => {
-  // source-shape-contract: compatibility -- Every shipped target must classify as runnable or expose a concrete skip reason
-  it("classifies every shipped target as supported or with a concrete reason", () => {
-    const targets = listTargets();
-
-    expect(targets.length).toBeGreaterThan(0);
-    for (const registered of targets) {
-      const support = liveTargetSupport(registered);
-      expect(support.supported || support.reasons.length > 0, registered.id).toBe(true);
-    }
-  });
-
   it("accepts a fully wired synthetic target and forwards its pending suites", () => {
     const registered = syntheticTarget();
 

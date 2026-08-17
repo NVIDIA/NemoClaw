@@ -107,6 +107,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          hasPortableRuntimeCleanup: () => false,
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,

@@ -69,6 +69,15 @@ describe("growth-guardrails workflow trust boundary", () => {
       /must invoke the trusted tool: .*test-conditionals\.mts/,
     ],
     [
+      "a dropped test-loop tool invocation",
+      (s: string) =>
+        s.replace(
+          "node --experimental-strip-types tools/growth-guardrails/test-loops.mts",
+          "echo skip loops",
+        ),
+      /must invoke the trusted tool: .*test-loops\.mts/,
+    ],
+    [
       "a resurrected inline node heredoc",
       (s: string) =>
         s.replace(
@@ -102,7 +111,7 @@ describe("growth-guardrails workflow trust boundary", () => {
           "      - name: Check out the trusted base revision",
           "      - name: Execute an untrusted action\n        uses: attacker/payload@main\n\n      - name: Check out the trusted base revision",
         ),
-      /must contain exactly 6 approved steps, not 7/,
+      /must contain exactly 7 approved steps, not 8/,
     ],
     [
       "a non-approved shell field",

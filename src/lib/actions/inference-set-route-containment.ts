@@ -73,6 +73,13 @@ export interface HttpsPinProviderBinding extends InferenceSetProviderBinding {
   routeId: string;
 }
 
+/** OpenShell's host verifier cannot resolve routes exposed only on its sandbox bridge. */
+export function isSandboxBridgeProviderBinding(
+  binding: InferenceSetProviderBinding | null,
+): boolean {
+  return binding !== null && isAllowedOpenShellSandboxBridgeUrl(new URL(binding.baseUrl));
+}
+
 type EnsureHttpsPinAdapterRoute = (endpointUrl: string) => Promise<string>;
 
 export interface PreparedInferenceSetRoute {

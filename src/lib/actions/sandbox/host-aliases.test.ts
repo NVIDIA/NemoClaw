@@ -40,8 +40,9 @@ function expectHostAliasError(action: () => void): HostAliasesCommandError {
 }
 
 describe("host alias legacy gateway support checks", () => {
-  for (const driver of ["docker", "vm"] as const) {
-    it(`rejects ${driver} driver sandboxes before probing Docker`, () => {
+  it.each(["docker", "vm"] as const)(
+    "rejects %s driver sandboxes before probing Docker",
+    (driver) => {
       const probeLegacyGatewayContainer = vi.fn(() => ({ state: "present" as const }));
 
       const error = expectHostAliasError(() =>
@@ -56,8 +57,8 @@ describe("host alias legacy gateway support checks", () => {
       );
       expect(error.message).toContain(`which the ${driver} driver does not run`);
       expect(probeLegacyGatewayContainer).not.toHaveBeenCalled();
-    });
-  }
+    },
+  );
 
   it("reports a missing legacy gateway distinctly from Docker probe failures", () => {
     const error = expectHostAliasError(() =>

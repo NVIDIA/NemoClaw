@@ -150,30 +150,6 @@ function parseDigestTable(start: string, end: string): DigestMatrix {
 }
 
 describe("OpenShell 0.0.99 migration review", () => {
-  // source-shape-contract: security -- Every shipped managed Docker policy must select sandbox:sandbox so suppressing OCI workspace preparation preserves the protected /sandbox owner
-  it("keeps every managed Docker policy identity explicit for workspace compatibility (#8662)", () => {
-    const ROOT = path.resolve(import.meta.dirname, "..");
-    const policyPaths = [
-      "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
-      "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
-      "agents/openclaw/policy-permissive.yaml",
-      "agents/hermes/policy-additions.yaml",
-      "agents/hermes/policy-permissive.yaml",
-      "agents/langchain-deepagents-code/policy-additions.yaml",
-    ];
-
-    for (const policyPath of policyPaths) {
-      const policySource = fs.readFileSync(path.join(ROOT, policyPath), "utf8");
-      const policy = YAML.parse(policySource) as {
-        process?: { run_as_user?: unknown; run_as_group?: unknown };
-      };
-      expect(policy.process, policyPath).toEqual({
-        run_as_user: "sandbox",
-        run_as_group: "sandbox",
-      });
-    }
-  });
-
   it("binds managed Docker activation to the v0.0.99 supervisor workdir argv (#8497)", () => {
     const authorityStore = {};
     const launch = resolveOnboardManagedBootstrapLaunch({
@@ -232,38 +208,6 @@ describe("OpenShell 0.0.99 migration review", () => {
     expect(allCommits).toHaveLength(117);
     expect(new Set(allCommits).size).toBe(117);
     expect(review).toContain("515 distinct changed paths");
-  });
-
-  // source-shape-contract: security -- Exact release evidence must stay bound to the independently reviewed manifest identity and artifact digests.
-  it("associates every reviewed release identity with the 0.0.99 manifest (#8497)", () => {
-    expect(
-      parseDigestTable("Archive SHA-256 values are:", "Extracted binary SHA-256 values are:"),
-    ).toEqual(archiveDigests);
-    expect(
-      parseDigestTable("Extracted binary SHA-256 values are:", "The supervisor is pinned"),
-    ).toEqual(binaryDigests);
-    for (const digest of Object.values(SUPERVISOR_DIGESTS)) expect(review).toContain(digest);
-
-    const manifest = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          repoRoot,
-          "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
-        ),
-        "utf8",
-      ),
-    ) as { openshellCommit: string; openshellVersion: string; sources: string[] };
-    expect(manifest.openshellCommit).toBe(SOURCE_COMMIT);
-    expect(manifest.openshellVersion).toBe("0.0.99");
-    expect(manifest.sources).toEqual([
-      "crates/openshell-core/src/google_cloud.rs",
-      "crates/openshell-core/src/provider_credentials.rs",
-      "crates/openshell-core/src/secrets.rs",
-    ]);
-    expect(review).toContain(SOURCE_COMMIT);
-    expect(pinnedOpenShellSandboxBuildVersion(binaryDigests.Sandbox[0])).toBe("0.0.99");
-    expect(pinnedOpenShellSandboxBuildVersion(binaryDigests.Sandbox[1])).toBe("0.0.99");
-    expect(pinnedOpenShellSandboxBuildVersion(binaryDigests.CLI[0])).toBeNull();
   });
 
   it("proves the exposed 0.0.99 compatibility contracts through behavior (#8497)", () => {

@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runShellLines, sliceBlock } from "./helpers/corporate-ca-support";
+import { runCorporateCaHelperGuard, runShellLines, sliceBlock } from "./helpers/corporate-ca-support";
 
 const OPENCLAW_START = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
 const HERMES_START = join(import.meta.dirname, "../agents/hermes/start.sh");
@@ -41,6 +41,26 @@ function mergeBlock(scriptPath: string, endMarker: string, corpCa: string, merge
 
 const OPENCLAW_END = "# Git TLS CA bundle fix (NemoClaw#2270).";
 const HERMES_END = "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.";
+
+describe("corporate proxy CA runtime helper guard (#8292)", () => {
+  it.each([
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END, mode: "missing" as const },
+    { agent: "OpenClaw", script: OPENCLAW_START, end: OPENCLAW_END, mode: "symlink" as const },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END, mode: "missing" as const },
+    { agent: "Hermes", script: HERMES_START, end: HERMES_END, mode: "symlink" as const },
+  ])(
+    "exits $agent before sourcing or merging when the deployed helper is $mode and fallback is unavailable",
+    ({ agent, script, end, mode }) => {
+      const dir = tmpDir(`nemoclaw-${agent.toLowerCase()}-helper-${mode}-`);
+      const result = runCorporateCaHelperGuard(script, dir, mode, end);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("required corporate CA runtime helper is missing or unsafe");
+      expect(result.stderr).not.toContain(result.secret);
+      expect(existsSync(result.mergedPath)).toBe(false);
+    },
+  );
+});
 
 /**
  * Run a merge block whose stderr is captured to a file, and return that

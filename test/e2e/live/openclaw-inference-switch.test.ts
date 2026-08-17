@@ -30,7 +30,6 @@ import {
   compatibleAnthropicMockEndpointUrl,
   compatibleAnthropicSwitchBinding,
   compatibleAnthropicSwitchEnv,
-  installGatewayHostVerificationAlias,
   requireCompatibleAnthropicProviderAbsent,
 } from "../fixtures/compatible-anthropic-switch.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -1093,7 +1092,6 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
     mockProvider = await startMockAnthropicProvider();
-    await installGatewayHostVerificationAlias(host, cleanup, home);
     await artifacts.writeJson("mock-anthropic-provider.json", {
       endpointUrl: mockProvider.endpointUrl,
     });

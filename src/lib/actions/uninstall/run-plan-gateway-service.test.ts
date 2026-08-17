@@ -129,6 +129,7 @@ function uninstall(
     withProvenManagedGatewayProcess({
       env: test.env,
       existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
+      hasPortableRuntimeCleanup: () => false,
       isPortFree: () => true,
       isTty: false,
       platform: "linux",

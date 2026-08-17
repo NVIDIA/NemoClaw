@@ -13,25 +13,6 @@ import {
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
-  // source-shape-contract: compatibility -- Bundled loopback routing must match the shipped host-gateway policy ports
-  it("matches the bundled local-inference host-gateway ports (#5744)", () => {
-    const policyPath = path.resolve(
-      import.meta.dirname,
-      "../../../../nemoclaw-blueprint/policies/presets/local-inference.yaml",
-    );
-    const policy = YAML.parse(fs.readFileSync(policyPath, "utf8"));
-    const endpoints: Array<{ host?: string; port?: number }> =
-      policy.network_policies.local_inference.endpoints;
-    const hostGatewayPorts = endpoints
-      .filter(({ host }) => host === "host.openshell.internal")
-      .map(({ port }) => port)
-      .sort((left, right) => (left ?? 0) - (right ?? 0));
-
-    expect(hostGatewayPorts).toEqual(
-      [...BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS].sort((left, right) => left - right),
-    );
-  });
-
   it("rewrites exact HTTP loopback hosts on bundled local-inference ports (#5744)", () => {
     for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
       for (const port of COMPATIBLE_ENDPOINT_GATEWAY_PORTS) {

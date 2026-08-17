@@ -135,6 +135,7 @@ export function createDeps(options: {
   resolveCredentialValue?: InferenceSetDeps["resolveCredentialValue"];
   ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute?: InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"];
+  probeSandboxRoute?: InferenceSetDeps["probeSandboxRoute"];
   updateSandbox?: InferenceSetDeps["updateSandbox"];
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
@@ -158,6 +159,8 @@ export function createDeps(options: {
     resolveCredentialValue: ReturnType<typeof vi.fn>;
     ensureHttpsPinRuntimeAdapter: ReturnType<typeof vi.fn>;
     revokeHttpsPinRuntimeAdapterRoute: ReturnType<typeof vi.fn>;
+    probeSandboxRoute: ReturnType<typeof vi.fn>;
+    sleep: ReturnType<typeof vi.fn>;
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
@@ -218,6 +221,8 @@ export function createDeps(options: {
     revokeHttpsPinRuntimeAdapterRoute: vi.fn(
       options.revokeHttpsPinRuntimeAdapterRoute ?? (async () => true),
     ),
+    probeSandboxRoute: vi.fn(options.probeSandboxRoute ?? (() => ({ ok: true }) as const)),
+    sleep: vi.fn(async () => {}),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
         ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
@@ -262,6 +267,8 @@ export function createDeps(options: {
       calls.ensureHttpsPinRuntimeAdapter as unknown as EnsureHttpsPinRuntimeAdapterFn,
     revokeHttpsPinRuntimeAdapterRoute:
       calls.revokeHttpsPinRuntimeAdapterRoute as InferenceSetDeps["revokeHttpsPinRuntimeAdapterRoute"],
+    probeSandboxRoute: calls.probeSandboxRoute as InferenceSetDeps["probeSandboxRoute"],
+    sleep: calls.sleep,
     withGatewayRouteMutationLock:
       calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
     restartSandboxGateway: calls.restartSandboxGateway,

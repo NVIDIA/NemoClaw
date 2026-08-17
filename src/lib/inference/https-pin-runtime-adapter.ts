@@ -55,6 +55,7 @@ import {
   VLLM_PORT,
   validateHttpsPinRuntimeAdapterPort,
 } from "../core/ports";
+import { retryUntilAsync } from "../core/retry";
 import { getVersion } from "../core/version";
 import { ROOT, run, runCapture } from "../runner";
 import { buildMinimalCredentialAdapterEnv } from "../subprocess-env";
@@ -843,13 +844,15 @@ async function waitForAdapterProcessExit(
 ): Promise<boolean> {
   const isRunning = options.isRunning || ((candidatePid: number) => isAdapterProcess(candidatePid));
   const sleep = options.sleep || sleepMs;
-  const attempts = options.attempts || PROCESS_EXIT_WAIT_ATTEMPTS;
+  const attempts = options.attempts ?? PROCESS_EXIT_WAIT_ATTEMPTS;
   const intervalMs = options.intervalMs || PROCESS_EXIT_WAIT_MS;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (!isRunning(pid)) return true;
-    if (attempt + 1 < attempts) await sleep(intervalMs);
-  }
-  return false;
+  if (attempts <= 0) return false;
+
+  return retryUntilAsync(() => !isRunning(pid), {
+    accept: (exited) => exited,
+    retryDelaysMs: Array.from({ length: Math.ceil(attempts) - 1 }, () => intervalMs),
+    sleep,
+  });
 }
 
 async function killStaleAdapter(): Promise<void> {
@@ -1380,11 +1383,11 @@ async function revokeRouteLocked(
   const allowedSourceCidrs = deps.readAllowedSourceCidrs();
   const authenticatedLiveAdapter = Boolean(
     controlToken &&
-      allowedSourceCidrs &&
-      (await deps.probeHealth({
-        controlToken: controlToken as string,
-        expectedSourceCidrs: allowedSourceCidrs,
-      })),
+    allowedSourceCidrs &&
+    (await deps.probeHealth({
+      controlToken: controlToken as string,
+      expectedSourceCidrs: allowedSourceCidrs,
+    })),
   );
   if (authenticatedLiveAdapter && controlToken) {
     await deps.deleteRoute(controlToken, routeId);

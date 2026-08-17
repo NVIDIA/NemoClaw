@@ -115,6 +115,7 @@ RUN managed_runtime_assertion_failed() { \
     && install -d -o root -g root -m 0755 /run/nemoclaw
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
