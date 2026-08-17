@@ -258,17 +258,20 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   );
 
   try {
-    if (mode === "evidence-command-failure") {
-      writeFileSync(
-        fakeTimeout,
-        String.raw`#!/usr/bin/env bash
+    const setupFixtureMode: Partial<Record<FixtureMode, () => void>> = {
+      "evidence-command-failure": () => {
+        writeFileSync(
+          fakeTimeout,
+          String.raw`#!/usr/bin/env bash
 [[ "$1" == --kill-after=* ]] && shift
 shift
 exec "$@"
 `,
-      );
-      chmodSync(fakeTimeout, 0o755);
-    }
+        );
+        chmodSync(fakeTimeout, 0o755);
+      },
+    };
+    setupFixtureMode[mode]?.();
     writeFileSync(
       fakeStty,
       String.raw`#!/usr/bin/env bash
