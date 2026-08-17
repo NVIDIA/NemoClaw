@@ -94,7 +94,7 @@ describe("growth-guardrails executable entrypoints (#6953)", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      "PASS: changed test files did not add table-test candidate loops (0 at the latest PR commit vs 0 at base).",
+      "PASS: no changed test file increased its test-loop count (0 total at the latest PR commit vs 0 at base).",
     );
   });
 
@@ -106,9 +106,12 @@ describe("growth-guardrails executable entrypoints (#6953)", () => {
     ]);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("FAIL: changed test files add table-test candidate loops.");
+    expect(result.stderr).toContain("FAIL: changed test files increase test-loop counts.");
     expect(result.stderr).toContain(
-      "test/a.test.ts: 1 table-test candidate loop(s), up from 0",
+      "test/a.test.ts: 1 test loop(s), up from 0",
+    );
+    expect(result.stderr).toContain(
+      "Move iteration needed for one behavior into a named helper outside the test callback. Use it.each or test.each when loop rows are independent cases.",
     );
   });
 

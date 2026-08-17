@@ -655,19 +655,32 @@ evidence_dir="$(mktemp -d)"
 chmod 700 "$evidence_dir"
 npm run e2e:unit-gaps -- \
   --days 7 \
+  --cache-dir "$evidence_dir/cache" \
   --output "$evidence_dir/unit-test-gaps.md" \
   --json-output "$evidence_dir/unit-test-gaps.json"
 ```
 
 The command reads push runs from `e2e.yaml` and `portable-profile-e2e.yaml` on
-`main`. It keeps failed logs in memory, applies the shared full secret redactor,
-removes volatile identifiers, paths, URLs, sandbox names, and durations from
-each selected cause candidate, and writes report files with mode `0600` in the
-mode-`0700` directory. Treat the reports as credential-bearing until a human
-reviews them; redaction reduces exposure but does not prove that a report is
-credential-free. The command exits nonzero when a selected run is unfinished or
-failed-run evidence is unavailable. Do not accept a partial report as the
-weekly ledger.
+`main`. Online collection requires `--cache-dir`. The command creates the cache
+directory with mode `0700` and writes normalized job-and-signature JSON files
+with mode `0600`. Each cache entry binds sanitized evidence to one GitHub run ID
+and attempt. A later seven-day run with the same cache directory reuses matching
+entries. Each invocation reads logs for at most 50 uncached failed runs. When
+more failed runs remain, the command saves normalized job names and sanitized
+signatures for that batch. The command then exits nonzero. Rerun the command
+with the same cache directory. Repeat until the command completes; each rerun
+reuses prior batches and collects the next one. The command reports cache hits
+and planned failed-log reads.
+
+The command extracts signatures in memory and does not retain raw GitHub logs.
+It applies the shared full secret redactor and removes volatile identifiers,
+paths, URLs, sandbox names, and durations from each selected cause candidate.
+Treat the cache and reports as credential-bearing until a human reviews them;
+redaction reduces exposure but does not prove that a file is credential-free.
+
+The command stops on GitHub authentication, authorization, and rate-limit
+failures. It exits nonzero when a selected run is unfinished or failed-run
+evidence is unavailable. Do not accept a partial report as the weekly ledger.
 Every GitHub read names `NVIDIA/NemoClaw`, so a fork or different checkout remote
 cannot substitute another repository's run data.
 The command also stops when a workflow reaches the 1,000-run collection limit.
@@ -692,10 +705,10 @@ The Markdown and JSON reports start each row with review status `open` and no
 regression test. During review, record the test file and complete test title in
 the row and change the status only after the test fails without the fix and
 passes with it. A cause candidate is complete when that test evidence and a
-later passing run of the linked E2E target are both recorded. Delete the report
-directory after publishing only the reviewed, credential-free conclusions in
-the owning issue or pull request. Raw logs remain in process memory only until
-the command exits. Remove the named directory and confirm its absence:
+later passing run of the linked E2E target are both recorded. Delete the
+evidence directory after publishing only the reviewed, credential-free
+conclusions in the owning issue or pull request. Remove the named directory and
+confirm its absence:
 
 ```bash
 rm -rf -- "$evidence_dir"
