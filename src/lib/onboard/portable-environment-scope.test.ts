@@ -40,6 +40,17 @@ describe("portable onboarding environment scope", () => {
     expect(env).toEqual({});
   });
 
+  it("uses qwen3-vl:4b and restores empty fresh portable model intent (#9200)", () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_PROVIDER).toBe("ollama");
+    expect(env.NEMOCLAW_MODEL).toBe("qwen3-vl:4b");
+
+    scope.restore();
+    expect(env).toEqual({ NEMOCLAW_MODEL: "" });
+  });
+
   it("uses the activation model instead of ambient fresh model intent (#9200)", () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "ambient/model" };
     const scope = createPortableOnboardEnvironmentScope(env, {
