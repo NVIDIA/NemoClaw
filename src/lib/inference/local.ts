@@ -1239,6 +1239,13 @@ function containerRuntimeFailureDiagnostic(text: string): ContainerDiagnostic {
  * probe image. Credential-helper failures land here (#9308) — a remote login
  * session can lose access to Docker Desktop's credential store, so the pull
  * fails and every probe run produces empty stdout.
+ *
+ * Image-absent-after-run-attempts proves the pull failed: `docker run` pulls
+ * an absent image before it creates the container, and `--add-host`, policy,
+ * and seccomp failures all happen after that pull. Five runs precede this
+ * check (three probes, two diagnostics), so a pullable image would be in the
+ * cache by now and a run that failed for any post-pull reason keeps the
+ * generic runtime diagnostic.
  */
 function classifyContainerRunFailure(
   dockerCommand: string[],
