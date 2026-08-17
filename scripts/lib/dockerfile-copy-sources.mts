@@ -105,6 +105,9 @@ function parseDirectCopyOperands(
   }
 
   const operands = tokens.slice(operandIndex);
+  if (operands[0]?.startsWith("[")) {
+    unsupportedDirectCopyForm(instruction, dockerfileLabel);
+  }
   if (operands.length < 2 || operands.some((operand) => operand.startsWith("--"))) {
     unsupportedDirectCopyForm(instruction, dockerfileLabel);
   }
@@ -146,7 +149,7 @@ export function directDockerfileCopySources(
 
     const copyForm = instructionMatch[2].trim();
     const tokens = copyForm.split(/\s+/u).filter(Boolean);
-    if (!copyForm || copyForm.startsWith("[")) {
+    if (!copyForm) {
       unsupportedDirectCopyForm(instruction, dockerfileLabel);
     }
 

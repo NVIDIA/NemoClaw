@@ -104,6 +104,7 @@ describe("optimized build-context Dockerfile sources", () => {
 
   it.each([
     ["JSON array", 'COPY ["scripts/lib/sandbox-init.sh", "/tmp/"]'],
+    ["build-stage JSON array", 'COPY --from=build ["out", "/target"]'],
     ["heredoc", "COPY <<EOF /tmp/generated"],
     ["unhandled direct flag", "COPY --exclude=*.md scripts/lib/sandbox-init.sh /tmp/"],
     ["unhandled build-stage flag", "COPY --from=build --exclude=*.md /out/runtime /tmp/runtime"],
