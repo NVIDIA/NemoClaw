@@ -794,6 +794,44 @@ describe("onboard command options", () => {
     expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
   });
 
+  it("rejects an unmapped backend on the resume path too (#9313)", () => {
+    // Explicit --profile, the installer path, and resume all converge on the
+    // same environment application, so the check lives at the end of the
+    // lifecycle rather than on the explicit path alone. Resume replays a
+    // recorded profile: a backend with no provider must be reported instead of
+    // resuming into the provider menu.
+    const catalog = loadServingCatalog();
+    // Retarget preset and recipe together; provenance requires them to agree.
+    const patchedCatalog = {
+      ...catalog,
+      presets: catalog.presets.map((preset) => ({
+        ...preset,
+        spec: { ...preset.spec, plan: { ...preset.spec.plan, backend: "future-backend" } },
+      })),
+      recipes: catalog.recipes.map((recipe) => ({
+        ...recipe,
+        spec: { ...recipe.spec, backend: "future-backend" },
+      })),
+    };
+    const recorded = servingProfileProvenance(
+      patchedCatalog as never,
+      catalog.presets[0]!.metadata.id,
+    );
+    const errors: string[] = [];
+
+    expect(() =>
+      resolve(
+        { resume: true },
+        {
+          loadServingCatalog: () => patchedCatalog as never,
+          loadSession: () => ({ servingProfileProvenance: recorded }) as never,
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("which onboarding cannot configure");
+  });
+
   it("maps each serving backend to the provider that can run it (#9313)", () => {
     // A backend with no provider returns null, which `resolveServingProfile`
     // reports instead of accepting the flag and then asking for a provider.

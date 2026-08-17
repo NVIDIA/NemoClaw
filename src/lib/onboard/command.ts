@@ -275,16 +275,7 @@ function resolveServingProfile(
     throw error;
   }
   validateServingProfileConflicts(selectedProfileId, deps);
-  const provenance = servingProfileProvenance(catalog, selectedProfileId);
-  if (!servingProfileProviderKey(provenance)) {
-    // Reporting this beats the old behaviour of accepting the flag and then
-    // asking which provider to use, which left the profile silently unapplied.
-    fail(
-      deps,
-      `  Serving profile '${selectedProfileId}' uses backend '${provenance.recipe.backend}', which onboarding cannot configure with --profile.`,
-    );
-  }
-  return provenance;
+  return servingProfileProvenance(catalog, selectedProfileId);
 }
 
 function resolveInstallerServingProfile(
@@ -323,8 +314,26 @@ function resolveServingProfileLifecycle(
     );
   }
   const requested = explicit ?? installerProfile;
-  if (!resume) return requested;
-  return resolveResumedServingProfile(requested, deps);
+  const settled = resume ? resolveResumedServingProfile(requested, deps) : requested;
+  // Check the profile the run will actually apply, not just an explicit
+  // --profile: the installer and resume paths reach the same environment
+  // application, and an unmapped backend there would set the preset while
+  // leaving the provider unresolved — the silent fall-through to the provider
+  // menu this fixes (#9313).
+  return assertServingProfileProviderSupported(settled, deps);
+}
+
+function assertServingProfileProviderSupported(
+  provenance: ServingProfileProvenance | null,
+  deps: ResolveOnboardOptionsDeps,
+): ServingProfileProvenance | null {
+  const unsupported = provenance !== null && servingProfileProviderKey(provenance) === null;
+  return unsupported
+    ? fail(
+        deps,
+        `  Serving profile '${provenance.preset.id}' uses backend '${provenance.recipe.backend}', which onboarding cannot configure.`,
+      )
+    : provenance;
 }
 
 function activeServingProfileId(provenance: ServingProfileProvenance | null): string | null {
