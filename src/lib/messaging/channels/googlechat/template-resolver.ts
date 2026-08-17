@@ -43,6 +43,17 @@ export const resolveGooglechatTemplateReference: BuiltInRenderTemplateResolver =
         nonEmptyString(stateValue(context, "googlechatConfig.appPrincipal")) ??
           APP_PRINCIPAL_DISCOVERY_SENTINEL,
       );
+    // Hermes Pub/Sub pull config, rendered into ~/.hermes/.env. Undefined when
+    // unset so the render engine drops the line entirely rather than emitting a
+    // literal "{{...}}" placeholder for the adapter to read as a subscription.
+    case "googlechatConfig.projectId":
+      return resolvedRenderTemplateReference(
+        nonEmptyString(stateValue(context, "googlechatConfig.projectId")),
+      );
+    case "googlechatConfig.subscriptionName":
+      return resolvedRenderTemplateReference(
+        nonEmptyString(stateValue(context, "googlechatConfig.subscriptionName")),
+      );
     default:
       break;
   }
@@ -51,7 +62,7 @@ export const resolveGooglechatTemplateReference: BuiltInRenderTemplateResolver =
   // `allowFrom` key; `dmPolicy` resolving to undefined drops `dm.policy`. When
   // both drop, the empty `dm` object is removed by the render engine and
   // OpenClaw falls back to its default (pairing) DM policy.
-  const allowReference = reference.match(/^allowedIds[.]googlechat[.](values|dmPolicy)$/);
+  const allowReference = reference.match(/^allowedIds[.]googlechat[.](values|dmPolicy|csv)$/);
   if (!allowReference?.[1]) return undefined;
   const ids = allowedIds(context, "googlechat");
   switch (allowReference[1]) {
@@ -59,6 +70,11 @@ export const resolveGooglechatTemplateReference: BuiltInRenderTemplateResolver =
       return resolvedRenderTemplateReference(nonEmptyArray(ids));
     case "dmPolicy":
       return resolvedRenderTemplateReference(ids.length > 0 ? "allowlist" : undefined);
+    case "csv":
+      // Hermes reads GOOGLE_CHAT_ALLOWED_USERS as a comma-separated env value.
+      // Undefined when empty so the line drops and the adapter's own default-deny
+      // (unknown senders rejected) governs, not an empty allowlist string.
+      return resolvedRenderTemplateReference(ids.length > 0 ? ids.join(",") : undefined);
     default:
       return undefined;
   }

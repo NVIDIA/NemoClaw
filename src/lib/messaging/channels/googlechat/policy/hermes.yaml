@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: googlechat
+  description: "Hermes Google Chat: Pub/Sub REST pull for inbound events + Chat REST reply; the bot token is minted gateway-side (chat.bot + pubsub), never in the sandbox"
+
+network_policies:
+  googlechat_hermes:
+    name: googlechat_hermes
+    endpoints:
+      # Inbound: pull Chat events from the Pub/Sub subscription over the REST
+      # unary API (:pull, :acknowledge, :modifyAckDeadline). Not gRPC
+      # StreamingPull — REST keeps the egress L7-inspectable so the
+      # gateway-minted token is injected by the proxy (keyless). The
+      # subscription lives under /v1/projects/{project}/subscriptions/{sub}.
+      - host: pubsub.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          # Pub/Sub REST pull uses Google custom-method verbs with a colon suffix:
+          # `/v1/projects/{p}/subscriptions/{s}:pull` / `:acknowledge` /
+          # `:modifyAckDeadline`. Match the whole /v1 tree so the `:verb` suffix
+          # is covered (a `/v1/projects/**` glob can miss the trailing `:pull`).
+          - allow: { method: POST, path: "/v1/**" }
+      # Outbound reply: send/update/delete messages in Chat spaces. Same rule
+      # shape as the OpenClaw preset — writes scoped to the Chat `spaces` tree,
+      # reads across the Chat REST v1 tree.
+      - host: chat.googleapis.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/**" }
+          - allow: { method: POST, path: "/v1/spaces/**" }
+          - allow: { method: PATCH, path: "/v1/spaces/**" }
+          - allow: { method: DELETE, path: "/v1/spaces/**" }
+    # OpenShell matches the egressing binary by its resolved realpath and
+    # compares exactly (no glob). Hermes' venv python is a symlink chain
+    # `/opt/hermes/.venv/bin/python` -> `/usr/bin/python3` -> `/usr/bin/python3.13`,
+    # so the concrete interpreter `/usr/bin/python3.13` must be listed or the
+    # egress is denied. Mirrors the provider-profile binary list. Revisit the
+    # minor version when the Hermes base image bumps Python.
+    binaries:
+      - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.13 }

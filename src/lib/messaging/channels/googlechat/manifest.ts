@@ -31,7 +31,7 @@ export const googlechatManifest = {
     "┃          GOOGLECHAT_APP_PRINCIPAL=<N> nemoclaw <sandbox> channels add googlechat",
     "┃          nemoclaw <sandbox> rebuild --yes",
   ],
-  supportedAgents: ["openclaw"],
+  supportedAgents: ["openclaw", "hermes"],
   auth: {
     mode: "token-paste",
   },
@@ -106,9 +106,46 @@ export const googlechatManifest = {
       envKey: "GOOGLECHAT_ALLOWED_USERS",
       statePath: "allowedIds.googlechat",
       prompt: {
-        label: "Google Chat DM allowlist (comma-separated user IDs)",
-        help: "Optional: restrict who can DM the bot. Enter Google Chat user IDs (users/NNN) — NOT emails: the bot matches IDs only by default, so an email entry is ignored. Leave blank to require pairing (recommended).",
+        label: "Google Chat DM allowlist (comma-separated)",
+        help: [
+          "Optional: restrict who can DM the bot.",
+          "    OpenClaw:  users/NNN   (emails ignored)",
+          "    Hermes:    email       (users/NNN ignored)",
+          "    Blank:     pairing mode (recommended) — OpenClaw's pairing reply shows your users/NNN",
+          "  Filling this switches DM policy to allowlist — a wrong-form entry is dropped silently, with no pairing code.",
+        ].join("\n"),
         emptyValueMessage: "bot will require manual pairing",
+      },
+    },
+    // ── Hermes-only Pub/Sub pull config ──
+    // OpenClaw receives Chat events on an inbound webhook and never reads these.
+    // Hermes' adapter also supports an inbound HTTP-events webhook, but NemoClaw
+    // runs it in Pub/Sub pull mode instead: pulling needs no public inbound URL.
+    // It PULLS events from a Pub/Sub subscription bound to the Chat topic, so it
+    // needs the project + subscription. Prompted only under the hermes-gated
+    // hook and rendered only into ~/.hermes/.env.
+    {
+      id: "projectId",
+      kind: "config",
+      required: false,
+      envKey: "GOOGLE_CHAT_PROJECT_ID",
+      statePath: "googlechatConfig.projectId",
+      prompt: {
+        label: "Google Chat GCP project ID (Hermes Pub/Sub pull)",
+        help: "The Google Cloud project that owns the Pub/Sub subscription Hermes pulls Chat events from. OpenClaw ignores this.",
+        emptyValueMessage: "required for the Hermes Google Chat channel",
+      },
+    },
+    {
+      id: "subscriptionName",
+      kind: "config",
+      required: false,
+      envKey: "GOOGLE_CHAT_SUBSCRIPTION_NAME",
+      statePath: "googlechatConfig.subscriptionName",
+      prompt: {
+        label: "Google Chat Pub/Sub subscription (projects/<p>/subscriptions/<s>)",
+        help: "The pull subscription bound to the Chat events topic. Hermes pulls from it over the Pub/Sub REST API; the gateway-minted token is scoped to both chat.bot and pubsub.",
+        emptyValueMessage: "required for the Hermes Google Chat channel",
       },
     },
   ],
@@ -129,7 +166,18 @@ export const googlechatManifest = {
   // clears only per-channel sandbox tokens and is intentionally a no-op for a bridge
   // channel, so an empty `credentials` does not leave the service account behind.
   credentials: [],
-  policyPresets: [{ name: "googlechat", policyKeys: ["googlechat"] }],
+  policyPresets: [
+    {
+      name: "googlechat",
+      policyKeys: ["googlechat"],
+      // Hermes reaches Google Chat over Pub/Sub REST pull + Chat REST reply — a
+      // different egress shape from OpenClaw's inbound webhook — so it resolves a
+      // distinct concrete policy key backed by policy/hermes.yaml.
+      agentPolicyKeys: {
+        hermes: ["googlechat_hermes"],
+      },
+    },
+  ],
   render: [
     {
       id: "googlechat-openclaw-channel",
@@ -198,6 +246,36 @@ export const googlechatManifest = {
         path: "gateway.reload",
         value: {
           mode: "off",
+        },
+      },
+    },
+    // ── Hermes render ──
+    // No SA JSON and no access-token env are delivered: the keyless Google Chat
+    // bridge provider (provider-profile/hermes.yaml) mints a chat.bot+pubsub
+    // token gateway-side, and the NemoClaw Google Chat adapter override emits the
+    // `openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN` placeholder on both the
+    // Pub/Sub :pull and the Chat reply, which the L7 proxy swaps for the minted
+    // bearer. Only non-secret pull config + the allowlist reach the sandbox here.
+    {
+      id: "googlechat-hermes-env",
+      kind: "env-lines",
+      agent: "hermes",
+      target: "~/.hermes/.env",
+      lines: [
+        "GOOGLE_CHAT_PROJECT_ID={{googlechatConfig.projectId}}",
+        "GOOGLE_CHAT_SUBSCRIPTION_NAME={{googlechatConfig.subscriptionName}}",
+        "GOOGLE_CHAT_ALLOWED_USERS={{allowedIds.googlechat.csv}}",
+      ],
+    },
+    {
+      id: "googlechat-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.google_chat",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -275,12 +353,45 @@ export const googlechatManifest = {
       },
       required: true,
     },
+    // Hermes keyless REST-pull adapter: the inherited connect() constructs a
+    // (never-subscribed) Pub/Sub SubscriberClient and the reply path uses
+    // google-auth, so the managed image must ship these. The base image has
+    // aiohttp (used by the REST :pull loop) but not the google-* SDKs.
+    // The adapter override itself is Hermes-side runtime code and lives in
+    // agents/hermes/plugin/googlechat_sandbox_adapter.py, loaded by that
+    // plugin only when GOOGLE_CHAT_SUBSCRIPTION_NAME is rendered below.
+    {
+      id: "hermesGooglePubsubPackage",
+      agent: "hermes",
+      manager: "hermes-uv-pip",
+      spec: "google-cloud-pubsub==2.39.0",
+      required: true,
+    },
+    {
+      id: "hermesGoogleApiClientPackage",
+      agent: "hermes",
+      manager: "hermes-uv-pip",
+      spec: "google-api-python-client==2.194.0",
+      required: true,
+    },
+    {
+      id: "hermesGoogleAuthPackage",
+      agent: "hermes",
+      manager: "hermes-uv-pip",
+      spec: "google-auth==2.55.1",
+      required: true,
+    },
   ],
   hooks: [
     {
+      // OpenClaw-only: this gates the inbound webhook audience. NemoClaw runs
+      // Hermes in Pub/Sub pull mode, which serves no inbound webhook, so this
+      // skip-channel gate must not run for Hermes (it would otherwise skip the
+      // channel and drop its policy preset).
       id: "googlechat-tunnel-audience-gate",
       phase: "enroll",
       handler: "googlechat.tunnelAudienceGate",
+      agents: ["openclaw"],
       inputs: ["audienceType", "audience"],
       outputs: [
         {
@@ -309,11 +420,38 @@ export const googlechatManifest = {
       handler: "common.configPrompt",
       outputs: [
         {
+          id: "allowFrom",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      // OpenClaw-only: appPrincipal is the add-on's OAuth principal for inbound
+      // webhook verification — meaningless to Hermes pull mode.
+      id: "googlechat-openclaw-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      agents: ["openclaw"],
+      outputs: [
+        {
           id: "appPrincipal",
           kind: "config",
         },
+      ],
+    },
+    {
+      // Hermes-only: collect the Pub/Sub project + subscription for pull mode.
+      id: "googlechat-hermes-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      agents: ["hermes"],
+      outputs: [
         {
-          id: "allowFrom",
+          id: "projectId",
+          kind: "config",
+        },
+        {
+          id: "subscriptionName",
           kind: "config",
         },
       ],

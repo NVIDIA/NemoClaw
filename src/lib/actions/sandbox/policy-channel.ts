@@ -855,8 +855,10 @@ async function applyChannelAddToGatewayAndRegistry(
   // nothing for them. Their provider must be created HERE (same seam onboarding
   // uses): the pasted secret is env-only and gone once this process exits, so a
   // deferred rebuild cannot configure it.
+  const bridgeAgent = registry.getSandbox(sandboxName)?.agent === "hermes" ? "hermes" : "openclaw";
   const bridgeDefs = collectMessagingBridgeTokenDefs({
     sandboxName,
+    agent: bridgeAgent,
     enabledChannels: [channelName],
     disabledChannelNames: new Set<string>(),
     getCredential,

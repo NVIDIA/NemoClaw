@@ -141,6 +141,7 @@ export function prepareCreateSandboxMessaging(
   messagingTokenDefs.push(
     ...collectMessagingBridgeTokenDefs({
       sandboxName: input.sandboxName,
+      agent: input.agentName?.trim().toLowerCase() === "hermes" ? "hermes" : "openclaw",
       getCredential: input.getCredential,
       env: input.env,
       normalizeCredentialValue: input.normalizeCredentialValue,

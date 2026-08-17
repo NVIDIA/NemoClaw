@@ -57,6 +57,14 @@ const ALL_CHANNEL_ENV = {
   MSTEAMS_TENANT_ID: "teams-tenant-id",
   TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
   MSTEAMS_PORT: "3978",
+  // The service-account validator only requires non-empty client_email and
+  // private_key, so keep the fixture free of PEM markers: a real-looking key
+  // block trips the detect-private-key pre-commit hook.
+  GOOGLECHAT_SERVICE_ACCOUNT:
+    '{"client_email":"bot@demo.iam.gserviceaccount.com","private_key":"test-key-material","project_id":"demo"}',
+  GOOGLE_CHAT_PROJECT_ID: "demo",
+  GOOGLE_CHAT_SUBSCRIPTION_NAME: "projects/demo/subscriptions/hermes-chat-events-sub",
+  GOOGLECHAT_ALLOWED_USERS: "user@example.com",
 } as const;
 
 const ALL_CHANNELS = createBuiltInChannelManifestRegistry()
@@ -621,6 +629,7 @@ describe("MessagingSetupApplier", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat_hermes",
     ]);
     expect(renderResult.appliedTargets).toEqual([
       "/sandbox/.hermes/.env",

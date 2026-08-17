@@ -17,7 +17,6 @@ describe("built-in channel manifests", () => {
   it("registers every known channel for supported gateway agents", () => {
     const registry = createBuiltInChannelManifestRegistry();
     const channelNames = knownChannelNames();
-    const hermesChannelNames = channelNames.filter((channelName) => channelName !== "googlechat");
 
     expect(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id)).toEqual(channelNames);
     expect(registry.list().map((manifest) => manifest.id)).toEqual(channelNames);
@@ -25,7 +24,7 @@ describe("built-in channel manifests", () => {
       channelNames,
     );
     expect(registry.listAvailable({ agent: "hermes" }).map((manifest) => manifest.id)).toEqual(
-      hermesChannelNames,
+      channelNames,
     );
   });
 

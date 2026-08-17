@@ -48,6 +48,7 @@ function collectInput(
 ) {
   return {
     sandboxName: "sbx",
+    agent: GC_PROFILE.agent,
     getCredential: () => null,
     enabledChannels: ["googlechat"],
     disabledChannelNames: new Set<string>(),

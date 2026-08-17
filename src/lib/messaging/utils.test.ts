@@ -42,6 +42,7 @@ describe("listSupportedMessagingChannelIdsForAgent", () => {
       "slack",
       "whatsapp",
       "teams",
+      "googlechat",
     ]);
   });
 });

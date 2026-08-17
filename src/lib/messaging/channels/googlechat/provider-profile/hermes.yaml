@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Google Chat outbound + Pub/Sub-pull bridge provider profile (Hermes, keyless).
+#
+# Hermes reaches Google Chat over the Pub/Sub REST pull API (inbound events) and
+# the Chat REST API (outbound replies). The OpenShell gateway MINTS one bot access
+# token from the service-account key (ProviderCredentialRefreshStrategy
+# google_service_account_jwt) scoped to BOTH chat.bot and pubsub, and injects it as
+# `Authorization: Bearer <token>` on pubsub.googleapis.com AND chat.googleapis.com.
+# The service-account private key stays gateway-side; the sandbox only ever sees the
+# `openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN` placeholder, which the L7 proxy
+# rewrites to the minted token.
+#
+# Paired with the NemoClaw Google Chat adapter override (agents/hermes/plugin), which
+# returns that placeholder for both the :pull and the Chat reply instead of signing a
+# JWT in-process, so no service-account key ever enters the sandbox.
+#
+# The refresh material VALUES are supplied at onboard/rebuild time by
+# src/lib/onboard/messaging-bridge-provider.ts. Non-secret values use `--material`;
+# the private key uses `--secret-material-env` so it never appears in argv. The block
+# below declares their shape so the gateway knows which keys are secret.
+id: google-chat-hermes-bridge
+display_name: Google Chat Bridge (Hermes)
+description: Gateway-minted Google Chat bot token (chat.bot + pubsub) for Hermes Pub/Sub pull + Chat reply
+category: agent
+credentials:
+  - name: access_token
+    description: Google Chat bot OAuth access token (gateway-minted via service-account JWT; chat.bot + pubsub)
+    env_vars:
+      - GOOGLE_CHAT_ACCESS_TOKEN
+    required: true
+    auth_style: bearer
+    header_name: Authorization
+    query_param: ''
+    refresh:
+      strategy: google-service-account-jwt
+      scopes:
+        - https://www.googleapis.com/auth/chat.bot
+        - https://www.googleapis.com/auth/pubsub
+      material:
+        - name: client_email
+          description: Service-account client email (JWT issuer)
+          required: true
+        - name: private_key
+          description: Service-account RSA private key (PEM); signs the JWT assertion
+          required: true
+          secret: true
+        - name: scope
+          description: OAuth scope(s) to mint the token for
+endpoints:
+  - host: pubsub.googleapis.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+  - host: chat.googleapis.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+# OpenShell resolves the egressing process to its REAL interpreter via
+# /proc/pid/exe, not the launched path. Hermes' venv python is a symlink chain
+# `/opt/hermes/.venv/bin/python` -> `/usr/bin/python3` -> `/usr/bin/python3.13`,
+# so the credential-reach gate sees `/usr/bin/python3.13`. The gate matches
+# binaries EXACTLY: a `/usr/bin/python3*` glob does NOT cover `python3.13`
+# (OpenShell's prover re-drafts it as a pending `credential_reach_expansion`
+# and 403s the CONNECT), and the venv symlink is resolved away before the
+# match. So the concrete interpreter path must be listed. `/usr/bin/python3` is
+# the symlink OpenShell resolves FROM; `/usr/bin/python3.13` is the realpath it
+# resolves TO and matches on. Revisit the minor version when the Hermes base
+# image bumps Python.
+binaries:
+  - /opt/hermes/.venv/bin/python
+  - /usr/bin/python3
+  - /usr/bin/python3.13
+inference_capable: false

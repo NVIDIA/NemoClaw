@@ -87,6 +87,13 @@ export interface MessagingBridgeSecretResolveDeps {
 
 export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSecretResolveDeps {
   readonly sandboxName: string;
+  /**
+   * Sandbox agent. Bridge profiles are per-agent (`provider-profile/<agent>.yaml`),
+   * and a channel can ship both openclaw and hermes profiles (Google Chat does), so
+   * only the profile matching this sandbox's agent must produce a bridge — otherwise
+   * an openclaw sandbox would also mint the hermes bridge under the same name.
+   */
+  readonly agent: MessagingAgentId;
   readonly enabledChannels: readonly string[] | null;
   readonly disabledChannelNames: ReadonlySet<string>;
   /** Injected for tests; defaults to convention discovery. */
@@ -258,6 +265,7 @@ export function collectMessagingBridgeTokenDefs(
   const profiles = input.profiles ?? listMessagingBridgeProfiles();
   const defs: { name: string; envKey: string; token: string; providerType: string }[] = [];
   for (const profile of profiles) {
+    if (profile.agent !== input.agent) continue;
     if (input.disabledChannelNames.has(profile.channelId)) continue;
     if (input.enabledChannels != null && !input.enabledChannels.includes(profile.channelId))
       continue;
@@ -399,8 +407,15 @@ function buildRefreshMaterial(
       { key: "client_email", value: clientEmail },
       { key: "private_key", value: privateKey },
     ];
-    // Scope comes from the profile's declared refresh scopes (single source of truth).
-    if (profile.scopes[0]) material.push({ key: "scope", value: profile.scopes[0] });
+    // Scope comes from the profile's declared refresh scopes (single source of
+    // truth). Join all of them space-separated so ONE minted token carries every
+    // scope — a Google service-account JWT mints a multi-scope token from a
+    // space-separated `scope` claim. Hermes Google Chat needs chat.bot AND pubsub
+    // in a single credential (reply + Pub/Sub REST pull); taking only scopes[0]
+    // dropped pubsub and made `:pull` fail with 403 "insufficient scopes".
+    if (profile.scopes.length > 0) {
+      material.push({ key: "scope", value: profile.scopes.join(" ") });
+    }
     // This strategy always emits private_key as material, so force it into the
     // secret set (delivered via --secret-material-env, never argv) regardless of
     // what the profile declares. A profile whose secretMaterialKeys omitted it
