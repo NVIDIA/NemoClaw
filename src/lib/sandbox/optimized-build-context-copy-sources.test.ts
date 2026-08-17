@@ -102,24 +102,20 @@ describe("optimized build-context Dockerfile sources", () => {
     expect(missingDockerfileCopySources(dockerfilePath, directory)).toEqual([]);
   });
 
-  it("rejects unsupported COPY forms instead of omitting their sources", () => {
-    const unsupportedForms = [
-      'COPY ["scripts/lib/sandbox-init.sh", "/tmp/"]',
-      "COPY <<EOF /tmp/generated",
-      "COPY --exclude=*.md scripts/lib/sandbox-init.sh /tmp/",
-      "COPY --from=build --exclude=*.md /out/runtime /tmp/runtime",
-      "COPY scripts/$SOURCE /tmp/source",
-      "COPY /etc/passwd /tmp/passwd",
-      "COPY ../outside /tmp/outside",
-    ];
+  it.each([
+    ["JSON array", 'COPY ["scripts/lib/sandbox-init.sh", "/tmp/"]'],
+    ["heredoc", "COPY <<EOF /tmp/generated"],
+    ["unhandled direct flag", "COPY --exclude=*.md scripts/lib/sandbox-init.sh /tmp/"],
+    ["unhandled build-stage flag", "COPY --from=build --exclude=*.md /out/runtime /tmp/runtime"],
+    ["variable source", "COPY scripts/$SOURCE /tmp/source"],
+    ["absolute source", "COPY /etc/passwd /tmp/passwd"],
+    ["parent traversal", "COPY ../outside /tmp/outside"],
+  ])("rejects the %s COPY form instead of omitting its sources", (_form, dockerfile) => {
+    const directory = makeTemporaryDirectory();
+    const dockerfilePath = writeDockerfile(directory, dockerfile);
 
-    for (const dockerfile of unsupportedForms) {
-      const directory = makeTemporaryDirectory();
-      const dockerfilePath = writeDockerfile(directory, dockerfile);
-
-      expect(() => directDockerfileCopySources(dockerfilePath), dockerfile).toThrow(
-        /Unsupported (?:direct )?Dockerfile (?:COPY (?:form|source)|heredoc instruction)/u,
-      );
-    }
+    expect(() => directDockerfileCopySources(dockerfilePath), dockerfile).toThrow(
+      /Unsupported (?:direct )?Dockerfile (?:COPY (?:form|source)|heredoc instruction)/u,
+    );
   });
 });
