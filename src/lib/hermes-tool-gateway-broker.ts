@@ -63,6 +63,8 @@ const HERMES_TOOL_GATEWAY_CONTROL_CONTRACT_PATH = path.join(
 );
 const HERMES_TOOL_GATEWAY_RUNTIME_MISMATCH_RECOVERY =
   "Reauthorize every managed-tool Hermes sandbox, then retry.";
+const HERMES_TOOL_GATEWAY_UNOWNED_LISTENER_RECOVERY =
+  "Stop the process holding that port, then retry.";
 const HERMES_TOOL_GATEWAY_CONTROL_CLIENT_SOURCE = [
   'const http = require("node:http");',
   "const [socketPath, route, timeoutValue] = process.argv.slice(1);",
@@ -730,6 +732,36 @@ function planHermesToolGatewayBrokerRefresh({
   return "start-or-restart";
 }
 
+/**
+ * Decide whether the listener already on HERMES_TOOL_GATEWAY_PORT may be
+ * adopted as this run's broker.
+ *
+ * sourceOfTruth: This is the only place that converts broker reachability into
+ * a reuse decision for the no-credential path.
+ * invalidState: `/health` is unauthenticated and binds a fixed port, so a
+ * reachable endpoint proves liveness only. Ownership must come from the pid
+ * file or from a broker this process started; reachability must never stand in
+ * for identity, and must never latch `brokerStartedThisRun` for later callers.
+ * regressionTest: test/hermes-tool-gateway-broker-unowned-listener.test.ts.
+ * removalCondition: remove the "refuse-unowned-listener" outcome only when the
+ * broker authenticates `/health` with the per-sandbox broker token, so that a
+ * probe can prove identity instead of reachability.
+ */
+function planHermesToolGatewayBrokerReuse({
+  brokerHealthy,
+  currentBrokerOwned,
+  forceRestart = false,
+  hashMatches,
+}) {
+  if (brokerHealthy && !currentBrokerOwned) {
+    return "refuse-unowned-listener";
+  }
+  if (!forceRestart && hashMatches && brokerHealthy) {
+    return "reuse-current";
+  }
+  return "no-usable-broker";
+}
+
 function ensureHermesToolGatewayBroker(options = {}) {
   const refreshToken =
     typeof options.refreshToken === "string" && options.refreshToken.trim()
@@ -739,7 +771,27 @@ function ensureHermesToolGatewayBroker(options = {}) {
   const hashMatches = readBrokerHash() === desiredHash;
   const pid = readPid();
   const currentBrokerOwned = isHermesToolGatewayBrokerProcess(pid) || brokerStartedThisRun;
-  const currentBrokerHealthy = currentBrokerOwned && isHermesToolGatewayBrokerHealthy();
+  const brokerHealthy = isHermesToolGatewayBrokerHealthy();
+  const currentBrokerHealthy = currentBrokerOwned && brokerHealthy;
+  const reusePlan = planHermesToolGatewayBrokerReuse({
+    brokerHealthy,
+    currentBrokerOwned,
+    forceRestart: options.forceRestart,
+    hashMatches,
+  });
+  // Refuse before any path can adopt, restart around, or stage credentials
+  // against a listener NemoClaw cannot prove it owns. The clone preflight
+  // already rejects this state; every entry point has to agree, because a
+  // single adopting path latches `brokerStartedThisRun` and thereby satisfies
+  // the ownership test for the rest of the process.
+  if (reusePlan === "refuse-unowned-listener") {
+    console.error(
+      "Hermes managed-tool broker health endpoint is not owned by NemoClaw; " +
+        `refusing to reuse the listener on port ${HERMES_TOOL_GATEWAY_PORT}. ` +
+        HERMES_TOOL_GATEWAY_UNOWNED_LISTENER_RECOVERY,
+    );
+    return false;
+  }
   if (options.startWithoutCredential) {
     if (currentBrokerHealthy) {
       return hashMatches && fs.existsSync(HERMES_TOOL_GATEWAY_CONTROL_SOCKET_PATH);
@@ -799,24 +851,10 @@ function ensureHermesToolGatewayBroker(options = {}) {
     return false;
   }
 
-  if (
-    !options.forceRestart &&
-    hashMatches &&
-    brokerStartedThisRun &&
-    isHermesToolGatewayBrokerHealthy()
-  ) {
-    return true;
-  }
-  if (
-    !options.forceRestart &&
-    hashMatches &&
-    isHermesToolGatewayBrokerProcess(pid) &&
-    isHermesToolGatewayBrokerHealthy()
-  ) {
-    brokerStartedThisRun = true;
-    return true;
-  }
-  if (!options.forceRestart && hashMatches && isHermesToolGatewayBrokerHealthy()) {
+  // `currentBrokerOwned` already covers both ownership proofs the three former
+  // branches tested separately (`brokerStartedThisRun` and a live broker pid),
+  // and the unowned case returned above, so reuse is one decision.
+  if (reusePlan === "reuse-current") {
     brokerStartedThisRun = true;
     return true;
   }
@@ -913,6 +951,7 @@ module.exports = {
   discardHermesToolGatewayCloneBinding,
   bindHermesToolGatewayCloneProviderState,
   planHermesToolGatewayBrokerRefresh,
+  planHermesToolGatewayBrokerReuse,
   isHermesToolGatewayBrokerHealthy,
   killStaleHermesToolGatewayBroker,
   ensureHermesToolGatewayBroker,
