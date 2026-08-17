@@ -61,6 +61,7 @@ def verify(
     checked_identity=identity,
     root_mode=0o755,
     file_mode=0o600,
+    nested_directory_mode=0o755,
 ):
     with tempfile.TemporaryDirectory() as temp_root:
         root_path = os.path.join(temp_root, root_name)
@@ -70,6 +71,9 @@ def verify(
         with open(record_path, "w", encoding="utf-8") as record:
             record.write("{}")
         os.chmod(record_path, file_mode)
+        nested_path = os.path.join(root_path, "nested")
+        os.mkdir(nested_path, nested_directory_mode)
+        os.chmod(nested_path, nested_directory_mode)
         root_fd = os.open(root_path, os.O_RDONLY | os.O_DIRECTORY)
         try:
             context = module.TraversalContext(
@@ -123,6 +127,9 @@ print(json.dumps({
     "devices-private-directory": verify(
         "/sandbox/.openclaw", "devices", "unlock", root_mode=0o700
     ),
+    "devices-nested-private-directory": verify(
+        "/sandbox/.openclaw", "devices", "unlock", nested_directory_mode=0o700
+    ),
     "devices-normal-directory": verify_native_metadata("directory", 0o2770),
     "devices-normal-file": verify_native_metadata("file", 0o660),
     "other-root-unlock": verify("/sandbox/.openclaw", "skills", "unlock"),
@@ -165,6 +172,7 @@ describe("state directory guard verification", () => {
     const outcomes = JSON.parse(result.stdout) as Record<string, Array<{ code: string }> | null>;
     expect(outcomes["devices-unlock"]).toEqual([]);
     expect(outcomes["devices-private-directory"]).toEqual([]);
+    expect(outcomes["devices-nested-private-directory"]).toEqual([]);
     expect(outcomes["devices-normal-directory"]).toBeNull();
     expect(outcomes["devices-normal-file"]).toBeNull();
     expect(outcomes["other-root-unlock"]).toContainEqual(
