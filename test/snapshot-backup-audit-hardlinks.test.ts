@@ -31,6 +31,13 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
+/** Restore an env var without branching, mirroring the sibling snapshot tests. */
+function restoreEnv(name: string, value: string | undefined): void {
+  value === undefined
+    ? Reflect.deleteProperty(process.env, name)
+    : Reflect.set(process.env, name, value);
+}
+
 function writeRegistry(sandboxName: string): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
@@ -117,19 +124,14 @@ process.exit(0);
     process.env.PATH = `${binDir}:${oldPath || ""}`;
     return sandboxState.backupSandboxState("alpha");
   } finally {
-    if (oldOpenshell === undefined) {
-      delete process.env.NEMOCLAW_OPENSHELL_BIN;
-    } else {
-      process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-    }
-    process.env.PATH = oldPath;
+    restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+    restoreEnv("PATH", oldPath);
     fs.rmSync(fixture, { recursive: true, force: true });
   }
 }
 
 afterAll(() => {
-  if (ORIGINAL_HOME === undefined) delete process.env.HOME;
-  else process.env.HOME = ORIGINAL_HOME;
+  restoreEnv("HOME", ORIGINAL_HOME);
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
