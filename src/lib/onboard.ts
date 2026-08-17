@@ -3016,6 +3016,7 @@ async function preflightAuthoritativeRebuildTarget(
               sandboxGpu: opts.sandboxGpu,
               sandboxGpuDevice: opts.sandboxGpuDevice,
               noGpu: opts.noGpu,
+              allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm,
             },
             (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
           ),

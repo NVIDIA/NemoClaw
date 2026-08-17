@@ -6,6 +6,7 @@ import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import { parseHostLocalInferenceReceipt } from "../../onboard/runtime-provider/host-local-inference";
 import {
   createRebuildProviderReconfigureHandoff,
   mintProviderRecoveryReceipt,
@@ -81,6 +82,24 @@ export function stageRegistryProviderRecoveryReceipt(
       expiresAtMs: Date.now() + PROVIDER_RECOVERY_RECEIPT_TTL_MS,
     },
   );
+}
+
+/** Reuse only the canonical managed-vLLM selection recorded by onboarding. */
+export function stageRecordedManagedVllmIntent(
+  recreateOptions: Pick<RebuildRecreateOnboardOpts, "allowDeferredN1xManagedVllm">,
+  sandboxEntry: Pick<RebuildSandboxEntry, "provider" | "hostLocalInferenceReceipt">,
+  provider: string,
+): void {
+  if (provider !== "vllm-local" || sandboxEntry.provider !== "vllm-local") return;
+  const serialized = sandboxEntry.hostLocalInferenceReceipt;
+  if (!serialized) return;
+  try {
+    if (parseHostLocalInferenceReceipt(serialized).service === "vllm") {
+      recreateOptions.allowDeferredN1xManagedVllm = true;
+    }
+  } catch {
+    // Malformed durable state must not grant the narrow N1x readiness exception.
+  }
 }
 
 export interface RebuildPreparedTarget {
@@ -233,6 +252,7 @@ export async function prepareRebuildTargetPreflights(args: {
   recreateOptions.observabilityEnabled =
     requestedObservabilityEnabled ?? recreateOptions.observabilityEnabled;
   recreateOptions.observabilityRequestedExplicitly = requestedObservabilityEnabled !== undefined;
+  stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, resumeConfig.provider);
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

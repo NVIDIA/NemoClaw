@@ -21,7 +21,11 @@ export type AuthoritativeGatewayOptions = Pick<
 
 export type AuthoritativeRebuildPreflightOptions = Pick<
   OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
+  | "sandboxGpu"
+  | "sandboxGpuDevice"
+  | "noGpu"
+  | "controlUiPort"
+  | "allowDeferredN1xManagedVllm"
 > & {
   authoritativeResumeConfig: true;
   /** Internal prepared-backup recovery defers route repair to authoritative onboard. */

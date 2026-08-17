@@ -3,6 +3,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  serializedHostLocalInferenceReceipt,
+  serializedLlamaCppHostLocalInferenceReceipt,
+} from "../../../../test/helpers/host-local-inference-receipt";
 import type {
   ProviderRecoveryReceipt,
   RegistryInferenceRoute,
@@ -12,6 +16,7 @@ import {
   pinRebuildTargetGatewayForReadiness,
   runRebuildGatewayRecoveryAfterReadiness,
   stageRebuildBaseImageResolutionHandoff,
+  stageRecordedManagedVllmIntent,
   stageRegistryProviderRecoveryReceipt,
 } from "./rebuild-preflight-target-phase";
 
@@ -118,6 +123,66 @@ describe("stageRegistryProviderRecoveryReceipt", () => {
       expiresAtMs: 1_000,
       sessionId: null,
     });
+  });
+});
+
+describe("stageRecordedManagedVllmIntent", () => {
+  it("carries a canonical recorded managed-vLLM selection into both rebuild readiness gates (#9292)", () => {
+    const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
+
+    stageRecordedManagedVllmIntent(
+      recreateOptions,
+      {
+        provider: "vllm-local",
+        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
+      },
+      "vllm-local",
+    );
+
+    expect(recreateOptions.allowDeferredN1xManagedVllm).toBe(true);
+  });
+
+  it.each([
+    {
+      caseName: "missing receipt",
+      sandboxEntry: { provider: "vllm-local" },
+      provider: "vllm-local",
+    },
+    {
+      caseName: "malformed receipt",
+      sandboxEntry: { provider: "vllm-local", hostLocalInferenceReceipt: "not-json" },
+      provider: "vllm-local",
+    },
+    {
+      caseName: "different host-local service",
+      sandboxEntry: {
+        provider: "vllm-local",
+        hostLocalInferenceReceipt: serializedLlamaCppHostLocalInferenceReceipt(),
+      },
+      provider: "vllm-local",
+    },
+    {
+      caseName: "different rebuild route",
+      sandboxEntry: {
+        provider: "vllm-local",
+        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
+      },
+      provider: "compatible-endpoint",
+    },
+    {
+      caseName: "different recorded route",
+      sandboxEntry: {
+        provider: "compatible-endpoint",
+        hostLocalInferenceReceipt: serializedHostLocalInferenceReceipt(),
+      },
+      provider: "vllm-local",
+    },
+  ])("does not infer managed-vLLM intent from a $caseName (#9292)", ({ sandboxEntry, provider }) => {
+    const recreateOptions: { allowDeferredN1xManagedVllm?: true } = {};
+
+    stageRecordedManagedVllmIntent(recreateOptions, sandboxEntry, provider);
+
+    expect(recreateOptions).not.toHaveProperty("allowDeferredN1xManagedVllm");
   });
 });
 

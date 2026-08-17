@@ -371,6 +371,11 @@ Accepting the preview prompt sets explicit managed-vLLM intent for the narrow pe
 Declining the prompt or setting only `NEMOCLAW_NO_EXPRESS=1` stops the installer before onboarding; neither path opens interactive provider selection.
 Set `NEMOCLAW_PROVIDER=install-vllm` when you need to bypass the prompt with the same explicit preview intent.
 
+After successful preview onboarding, `rebuild` reuses the recorded `vllm-local` provider and managed-vLLM receipt as explicit preview intent.
+You do not need to set `NEMOCLAW_PROVIDER` again for that rebuild.
+If the provider or receipt is missing, malformed, or does not describe managed vLLM, readiness preflight stops before NemoClaw deletes the existing sandbox.
+This reuse waives only the pending physical-validation finding and does not change the Deferred status.
+
 <Warning title="N1x Express Qualification Pending">
 Physical CUDA and CDI checks passed on one N1x host.
 The full NemoClaw Express E2E test is still pending, so the N1x platform status remains Deferred.

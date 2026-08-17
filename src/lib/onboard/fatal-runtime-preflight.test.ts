@@ -137,6 +137,14 @@ describe("report-backed runtime readiness (#7411)", () => {
       }),
     ).toThrow("exit");
 
+    expect(
+      assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
+        explicitlyOptedOutGpuPassthrough: false,
+        allowDeferredN1xManagedVllm: true,
+        exitProcess: exit as never,
+      }),
+    ).toBe(readiness);
+
     vi.stubEnv("NEMOCLAW_PROVIDER", "install-vllm");
     expect(
       assertOnboardSystemReadiness(readiness, hostWithRuntime("docker"), {
