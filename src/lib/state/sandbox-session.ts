@@ -14,7 +14,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { parseOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
+import { createOpenshellSandboxIdReader } from "../adapters/openshell/sandbox-identity";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 
 // ---------------------------------------------------------------------------
@@ -339,34 +339,13 @@ export function createSystemDeps(openshellBinary: string): SessionDetectionDeps 
       }
     },
     getSshProcesses: querySshProcesses,
-    resolveSandboxId: createOpenshellSandboxIdResolver(openshellBinary),
-  };
-}
-
-/**
- * Read a sandbox's durable ID via `openshell sandbox get`, memoized per process
- * and failing soft. Detection stays on SSH-host matching when the lookup fails,
- * so an unavailable OpenShell client never breaks the surrounding command.
- */
-function createOpenshellSandboxIdResolver(
-  openshellBinary: string,
-): (sandboxName: string) => string | null {
-  const cache = new Map<string, string | null>();
-  return (sandboxName: string): string | null => {
-    const cached = cache.get(sandboxName);
-    if (cached !== undefined) return cached;
-    let resolved: string | null = null;
-    try {
-      const result = spawnSync(openshellBinary, ["sandbox", "get", sandboxName], {
+    resolveSandboxId: createOpenshellSandboxIdReader(openshellBinary, (binary, args) => {
+      const result = spawnSync(binary, args, {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 5000,
       });
-      resolved = result.status === 0 ? parseOpenShellSandboxId(result.stdout || "") : null;
-    } catch {
-      resolved = null;
-    }
-    cache.set(sandboxName, resolved);
-    return resolved;
+      return { status: result.status, stdout: result.stdout || "" };
+    }),
   };
 }
