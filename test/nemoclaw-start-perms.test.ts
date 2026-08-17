@@ -28,9 +28,10 @@ function extractShellFunction(name: string): string {
   return `${name}() {${body}\n}`;
 }
 
-function runBash(script: string) {
+function runBash(script: string, env: NodeJS.ProcessEnv = process.env) {
   return spawnSync("bash", ["-c", script], {
     encoding: "utf-8",
+    env,
     timeout: 10_000,
   });
 }
@@ -59,19 +60,39 @@ describe("nemoclaw-start config guard output permissions", () => {
     fs.mkdirSync(runtimeDir, { mode: 0o700 });
     fs.writeFileSync(caBundle, "corporate CA\n", { mode: 0o444 });
 
-    const testFunction = configGuardFunction
-      .replaceAll("/run/nemoclaw", runtimeDir)
-      .replaceAll("install -d -o root -g root -m", "install -d -m");
+    let testFunction = configGuardFunction.replaceAll(
+      "install -d -o root -g root -m",
+      "install -d -m",
+    );
+    testFunction = replaceRequired(
+      testFunction,
+      "install -d -m 755 /run/nemoclaw || return 1",
+      'install -d -m 755 "$NEMOCLAW_TEST_RUNTIME_DIR" || return 1',
+    );
+    testFunction = replaceRequired(
+      testFunction,
+      "install -d -m 700 /run/nemoclaw/openclaw-config-guard || return 1",
+      'install -d -m 700 "$NEMOCLAW_TEST_RUNTIME_DIR/openclaw-config-guard" || return 1',
+    );
+    testFunction = replaceRequired(
+      testFunction,
+      'output_file="/run/nemoclaw/openclaw-config-guard/.$$.output"',
+      'output_file="$NEMOCLAW_TEST_RUNTIME_DIR/openclaw-config-guard/.$$.output"',
+    );
     const script = [
       "set -euo pipefail",
-      `python3() { find ${JSON.stringify(runtimeDir)} -type f -name '.*.output' -print >${JSON.stringify(observedOutput)}; printf 'private guard output\\n'; }`,
+      'python3() { find "$NEMOCLAW_TEST_RUNTIME_DIR" -type f -name \'.*.output\' -print >"$NEMOCLAW_TEST_OBSERVED_OUTPUT"; printf \'private guard output\\n\'; }',
       "_OPENCLAW_CONFIG_GUARD=/tmp/openclaw-config-guard.py",
       testFunction,
       "run_openclaw_config_guard publish-startup-ready --startup-owner",
     ].join("\n");
 
     try {
-      const result = runBash(script);
+      const result = runBash(script, {
+        ...process.env,
+        NEMOCLAW_TEST_OBSERVED_OUTPUT: observedOutput,
+        NEMOCLAW_TEST_RUNTIME_DIR: runtimeDir,
+      });
       expect(result.status, result.stderr).toBe(0);
       expect(mode(runtimeDir)).toBe(0o755);
       expect(fs.readFileSync(caBundle, "utf-8")).toBe("corporate CA\n");
