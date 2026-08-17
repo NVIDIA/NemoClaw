@@ -40,10 +40,10 @@ import {
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import {
-  type E2eSemanticExecutionRow,
-  validateE2eSemanticExecutionRows,
-  validateE2eSemanticMetadata,
-} from "./semantic-coverage.mts";
+  type E2eExecutionRow,
+  validateE2eExecutionRows,
+  validateE2eExecutionMetadata,
+} from "./execution-coverage.mts";
 import { validateStandardProfileWorkflowBoundary } from "./standard-profile-workflow-boundary.mts";
 import {
   validateTrustedHermesSwapHelperSource,
@@ -119,7 +119,7 @@ export interface FreeStandingJobsInventory {
   freeStandingTargets: string[];
   targetToJob: Map<string, string>;
   liveTestToJobs: Map<string, string[]>;
-  semanticRows: E2eSemanticExecutionRow[];
+  coverageRows: E2eExecutionRow[];
 }
 
 export interface FocusedE2eJob {
@@ -160,10 +160,17 @@ const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
-const SEMANTIC_AGENT_RUNTIME_MARKER = "E2E_SEMANTIC_AGENT_RUNTIME";
-const SEMANTIC_OUTCOME_MARKER = "E2E_SEMANTIC_OBSERVABLE_OUTCOME";
-const SEMANTIC_ENVIRONMENT_MARKER = "E2E_SEMANTIC_ENVIRONMENT_OR_INFERENCE_ENDPOINT";
-const SEMANTIC_UNRESOLVED_MARKER = "E2E_SEMANTIC_UNRESOLVED_REASON";
+const AGENT_RUNTIME_MARKER = "E2E_AGENT_RUNTIME";
+const OUTCOME_MARKER = "E2E_OBSERVABLE_OUTCOME";
+const ENVIRONMENT_MARKER = "E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT";
+const UNRESOLVED_MARKER = "E2E_UNRESOLVED_REASON";
+const COVERAGE_MATRIX_KEYS = [
+  "agent_runtime",
+  "observable_outcome",
+  "environment_or_inference_endpoint",
+  "unresolved_reason",
+  "coverage_variant",
+] as const;
 const STAGING_BREV_JOB_ID = "staging-brev-launchable";
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
@@ -460,44 +467,38 @@ function findDuplicates(values: readonly string[]): string[] {
   return [...duplicates].sort();
 }
 
-function workflowSemanticRows(jobId: string, job: WorkflowRecord): E2eSemanticExecutionRow[] {
+function workflowCoverageRows(jobId: string, job: WorkflowRecord): E2eExecutionRow[] {
   const env = asRecord(job.env);
   const matrix = asRecord(asRecord(job.strategy).matrix);
   const includes = Array.isArray(matrix.include)
     ? matrix.include
         .map(asRecord)
-        .filter((entry) => Object.keys(entry).some((key) => key.startsWith("semantic_")))
+        .filter((entry) => COVERAGE_MATRIX_KEYS.some((key) => Object.hasOwn(entry, key)))
     : [];
   const hasEnvironmentMetadata = [
-    SEMANTIC_AGENT_RUNTIME_MARKER,
-    SEMANTIC_OUTCOME_MARKER,
-    SEMANTIC_ENVIRONMENT_MARKER,
-    SEMANTIC_UNRESOLVED_MARKER,
+    AGENT_RUNTIME_MARKER,
+    OUTCOME_MARKER,
+    ENVIRONMENT_MARKER,
+    UNRESOLVED_MARKER,
   ].some((key) => Object.hasOwn(env, key));
   if (!hasEnvironmentMetadata && includes.length === 0) return [];
 
   const candidates = includes.length > 0 ? includes : [{}];
   return candidates.map((entry) => {
-    const metadata = validateE2eSemanticMetadata(
+    const metadata = validateE2eExecutionMetadata(
       {
-        agentRuntime: stringValue(
-          entry.semantic_agent_runtime || env[SEMANTIC_AGENT_RUNTIME_MARKER],
-        ),
-        observableOutcome: stringValue(
-          entry.semantic_observable_outcome || env[SEMANTIC_OUTCOME_MARKER],
-        ),
+        agentRuntime: stringValue(entry.agent_runtime || env[AGENT_RUNTIME_MARKER]),
+        observableOutcome: stringValue(entry.observable_outcome || env[OUTCOME_MARKER]),
         environmentOrInferenceEndpoint: stringValue(
-          entry.semantic_environment_or_inference_endpoint || env[SEMANTIC_ENVIRONMENT_MARKER],
+          entry.environment_or_inference_endpoint || env[ENVIRONMENT_MARKER],
         ),
-        unresolvedReason: stringValue(
-          entry.semantic_unresolved_reason || env[SEMANTIC_UNRESOLVED_MARKER],
-        ),
-      } as Parameters<typeof validateE2eSemanticMetadata>[0],
+        unresolvedReason: stringValue(entry.unresolved_reason || env[UNRESOLVED_MARKER]),
+      } as Parameters<typeof validateE2eExecutionMetadata>[0],
       `E2E workflow job ${jobId}`,
     );
     return {
       id: jobId,
-      variant: stringValue(entry.semantic_variant),
+      variant: stringValue(entry.coverage_variant),
       source: jobId === STAGING_BREV_JOB_ID ? "staging" : "retained-workflow",
       ...metadata,
     };
@@ -515,13 +516,13 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   const freeStandingTargets: string[] = [];
   const targetToJob = new Map<string, string>();
   const liveTestToJobs = new Map<string, string[]>();
-  const semanticRows: E2eSemanticExecutionRow[] = [];
+  const coverageRows: E2eExecutionRow[] = [];
 
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
     const env = asRecord(job.env);
     try {
-      semanticRows.push(...workflowSemanticRows(jobId, job));
+      coverageRows.push(...workflowCoverageRows(jobId, job));
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
@@ -594,18 +595,18 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
     errors.push(`free-standing workflow metadata repeats target id: ${duplicate}`);
   }
   for (const jobId of workflowJobs) {
-    if (jobId !== SHARED_E2E_JOB_ID && !semanticRows.some((row) => row.id === jobId)) {
-      errors.push(`${jobId} job requires semantic coverage metadata`);
+    if (jobId !== SHARED_E2E_JOB_ID && !coverageRows.some((row) => row.id === jobId)) {
+      errors.push(`${jobId} job requires execution coverage metadata`);
     }
   }
   if (
     Object.hasOwn(jobs, STAGING_BREV_JOB_ID) &&
-    !semanticRows.some((row) => row.source === "staging")
+    !coverageRows.some((row) => row.source === "staging")
   ) {
-    errors.push(`${STAGING_BREV_JOB_ID} job requires semantic coverage metadata`);
+    errors.push(`${STAGING_BREV_JOB_ID} job requires execution coverage metadata`);
   }
   try {
-    validateE2eSemanticExecutionRows(semanticRows);
+    validateE2eExecutionRows(coverageRows);
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error));
   }
@@ -618,7 +619,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       explicitOnlyJobs,
       freeStandingTargets,
       targetToJob,
-      semanticRows,
+      coverageRows,
       liveTestToJobs: new Map(
         [...liveTestToJobs]
           .sort(([left], [right]) => left.localeCompare(right))
@@ -646,7 +647,7 @@ function cloneFreeStandingJobsInventory(
     explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
-    semanticRows: inventory.semanticRows.map((row) => ({ ...row })),
+    coverageRows: inventory.coverageRows.map((row) => ({ ...row })),
     liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
   };
 }
@@ -1947,7 +1948,9 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     checkoutWith.ref !== "${{ github.workflow_sha }}" ||
     checkoutWith["persist-credentials"] !== false
   ) {
-    errors.push("staging-brev-launchable must check out trusted workflow source without credentials");
+    errors.push(
+      "staging-brev-launchable must check out trusted workflow source without credentials",
+    );
   }
   const prepare = requireStep(errors, steps, "Prepare the trusted lane");
   const prepareEnv = asRecord(prepare?.env);
@@ -1997,7 +2000,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
   const prepareRun = stringValue(prepare?.run);
   if (
     !prepareRun.includes("sha256sum -c -") ||
-    !prepareRun.includes("brev login --api-key \"$BREV_API_KEY\" --org-id \"$BREV_ORG_ID\"")
+    !prepareRun.includes('brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"')
   ) {
     errors.push("staging-brev-launchable must verify and authenticate the pinned Brev CLI");
   }

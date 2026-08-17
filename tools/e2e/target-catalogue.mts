@@ -7,7 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
-import { type E2eAgentRuntime, validateE2eSemanticMetadata } from "./semantic-coverage.mts";
+import { type E2eAgentRuntime, validateE2eExecutionMetadata } from "./execution-coverage.mts";
 
 export const E2E_EXECUTION_PROFILES = [
   "standard",
@@ -1582,7 +1582,7 @@ export function validateE2eTargetCatalogue(
         throw new Error(`E2E target ${entry.id} has an invalid environment entry`);
       }
     }
-    validateE2eSemanticMetadata(entry, `E2E target ${entry.id}`);
+    validateE2eExecutionMetadata(entry, `E2E target ${entry.id}`);
     if (entry.observableOutcome !== entry.displayName) {
       throw new Error(`E2E target ${entry.id} must use its display name as its observable outcome`);
     }

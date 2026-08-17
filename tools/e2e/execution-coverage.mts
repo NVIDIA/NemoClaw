@@ -14,14 +14,14 @@ export const E2E_AGENT_RUNTIMES = [
 
 export type E2eAgentRuntime = (typeof E2E_AGENT_RUNTIMES)[number];
 
-export interface E2eSemanticMetadata {
+export interface E2eExecutionMetadata {
   agentRuntime: E2eAgentRuntime;
   observableOutcome: string;
   environmentOrInferenceEndpoint: string;
   unresolvedReason: string;
 }
 
-export const E2E_SEMANTIC_EXECUTION_SOURCES = [
+export const E2E_EXECUTION_SOURCES = [
   "catalogue",
   "typed-registry",
   "shared-e2e",
@@ -29,21 +29,21 @@ export const E2E_SEMANTIC_EXECUTION_SOURCES = [
   "staging",
 ] as const;
 
-export type E2eSemanticExecutionSource = (typeof E2E_SEMANTIC_EXECUTION_SOURCES)[number];
+export type E2eExecutionSource = (typeof E2E_EXECUTION_SOURCES)[number];
 
-export interface E2eSemanticExecutionRow extends E2eSemanticMetadata {
+export interface E2eExecutionRow extends E2eExecutionMetadata {
   id: string;
   variant: string;
-  source: E2eSemanticExecutionSource;
+  source: E2eExecutionSource;
 }
 
 const SELECTOR_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const SEMANTIC_TEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 .,+()/:;_-]{0,199}$/u;
+const COVERAGE_TEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 .,+()/:;_-]{0,199}$/u;
 
-export function validateE2eSemanticMetadata(
-  metadata: E2eSemanticMetadata,
+export function validateE2eExecutionMetadata(
+  metadata: E2eExecutionMetadata,
   context: string,
-): E2eSemanticMetadata {
+): E2eExecutionMetadata {
   if (!E2E_AGENT_RUNTIMES.includes(metadata.agentRuntime)) {
     throw new Error(`${context} has an invalid agent runtime`);
   }
@@ -51,7 +51,7 @@ export function validateE2eSemanticMetadata(
     ["observable outcome", metadata.observableOutcome],
     ["environment or inference endpoint", metadata.environmentOrInferenceEndpoint],
   ] as const) {
-    if (!SEMANTIC_TEXT_PATTERN.test(value)) {
+    if (!COVERAGE_TEXT_PATTERN.test(value)) {
       throw new Error(`${context} has an invalid ${field}`);
     }
   }
@@ -61,34 +61,34 @@ export function validateE2eSemanticMetadata(
     metadata.environmentOrInferenceEndpoint === "unresolved";
   if (unresolved !== (metadata.unresolvedReason !== "")) {
     throw new Error(
-      `${context} must declare an unresolved reason exactly when a semantic field is unresolved`,
+      `${context} must declare an unresolved reason exactly when a coverage field is unresolved`,
     );
   }
-  if (metadata.unresolvedReason !== "" && !SEMANTIC_TEXT_PATTERN.test(metadata.unresolvedReason)) {
+  if (metadata.unresolvedReason !== "" && !COVERAGE_TEXT_PATTERN.test(metadata.unresolvedReason)) {
     throw new Error(`${context} has an invalid unresolved reason`);
   }
   return metadata;
 }
 
-export function validateE2eSemanticExecutionRows(
-  rows: readonly E2eSemanticExecutionRow[],
-): readonly E2eSemanticExecutionRow[] {
+export function validateE2eExecutionRows(
+  rows: readonly E2eExecutionRow[],
+): readonly E2eExecutionRow[] {
   const keys = new Set<string>();
-  const semanticEvidence = new Map<string, string>();
+  const coverageEvidence = new Map<string, string>();
   for (const row of rows) {
     if (!SELECTOR_ID_PATTERN.test(row.id)) {
-      throw new Error(`E2E semantic coverage contains an invalid ID: ${row.id}`);
+      throw new Error(`E2E execution coverage contains an invalid ID: ${row.id}`);
     }
     if (row.variant !== "" && !SELECTOR_ID_PATTERN.test(row.variant)) {
-      throw new Error(`E2E semantic coverage ${row.id} has an invalid variant`);
+      throw new Error(`E2E execution coverage ${row.id} has an invalid variant`);
     }
-    if (!E2E_SEMANTIC_EXECUTION_SOURCES.includes(row.source)) {
-      throw new Error(`E2E semantic coverage ${row.id} has an invalid source`);
+    if (!E2E_EXECUTION_SOURCES.includes(row.source)) {
+      throw new Error(`E2E execution coverage ${row.id} has an invalid source`);
     }
-    validateE2eSemanticMetadata(row, `E2E semantic coverage ${row.id}`);
+    validateE2eExecutionMetadata(row, `E2E execution coverage ${row.id}`);
     const key = `${row.source}:${row.id}:${row.variant}`;
     if (keys.has(key)) {
-      throw new Error(`E2E semantic coverage contains a duplicate row: ${key}`);
+      throw new Error(`E2E execution coverage contains a duplicate row: ${key}`);
     }
     keys.add(key);
     if (
@@ -101,18 +101,18 @@ export function validateE2eSemanticExecutionRows(
         row.observableOutcome,
         row.environmentOrInferenceEndpoint,
       ].join("\u0000");
-      const previous = semanticEvidence.get(evidenceKey);
+      const previous = coverageEvidence.get(evidenceKey);
       if (previous) {
         throw new Error(
-          `E2E semantic coverage duplicates evidence between ${previous} and ${e2eSemanticExecutionLabel(row)}`,
+          `E2E execution coverage duplicates evidence between ${previous} and ${e2eExecutionLabel(row)}`,
         );
       }
-      semanticEvidence.set(evidenceKey, e2eSemanticExecutionLabel(row));
+      coverageEvidence.set(evidenceKey, e2eExecutionLabel(row));
     }
   }
   return rows;
 }
 
-export function e2eSemanticExecutionLabel(row: E2eSemanticExecutionRow): string {
+export function e2eExecutionLabel(row: E2eExecutionRow): string {
   return row.variant === "" ? row.id : `${row.id} / ${row.variant}`;
 }

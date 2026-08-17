@@ -82,10 +82,18 @@ function prCandidatePlan(
   return {
     ...plan,
     catalogueMatrices,
-    semanticMatrix: plan.semanticMatrix.filter(
+    coverageMatrix: plan.coverageMatrix.filter(
       (row) => row.source !== "catalogue" || catalogueIds.has(row.id),
     ),
   };
+}
+
+function expectExplicitCatalogueCoverage(): void {
+  for (const target of E2E_TARGET_CATALOGUE) {
+    expect(target.observableOutcome).toBe(target.displayName);
+    expect(target.agentRuntime).not.toBe("");
+    expect(target.environmentOrInferenceEndpoint).not.toBe("");
+  }
 }
 
 describe("E2E workflow plan", () => {
@@ -95,9 +103,9 @@ describe("E2E workflow plan", () => {
     expect(plan.matrix).toEqual(buildLiveTargetMatrix());
     expect(plan.testMatrix).toEqual(discoverCredentialFreeTests());
     expect(Object.values(plan.catalogueMatrices).flat()).toHaveLength(E2E_TARGET_CATALOGUE.length);
-    expect(plan.semanticMatrix).toHaveLength(90);
+    expect(plan.coverageMatrix).toHaveLength(90);
     expect(
-      plan.semanticMatrix.reduce<Record<string, number>>((counts, row) => {
+      plan.coverageMatrix.reduce<Record<string, number>>((counts, row) => {
         counts[row.source] = (counts[row.source] ?? 0) + 1;
         return counts;
       }, {}),
@@ -108,7 +116,7 @@ describe("E2E workflow plan", () => {
       "retained-workflow": 19,
       staging: 1,
     });
-    expect(plan.semanticMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
+    expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([
       expect.objectContaining({
         id: "spark-install",
         agentRuntime: "unresolved",
@@ -128,7 +136,7 @@ describe("E2E workflow plan", () => {
 
     expect(plan.matrix).toHaveLength(2);
     expect(plan.matrix.every((row) => !row.supported)).toBe(true);
-    expect(plan.semanticMatrix).toEqual([
+    expect(plan.coverageMatrix).toEqual([
       expect.objectContaining({ id: "ubuntu-repo-cloud-hermes", agentRuntime: "unresolved" }),
       expect.objectContaining({
         id: "ubuntu-repo-cloud-hermes-slack",
@@ -142,20 +150,20 @@ describe("E2E workflow plan", () => {
     const stagingPlan = buildE2eWorkflowPlan({ jobs: "staging-brev-launchable" });
 
     expect(stagingPlan.selectedJobs).toEqual(["staging-brev-launchable"]);
-    expect(stagingPlan.semanticMatrix).toEqual([
+    expect(stagingPlan.coverageMatrix).toEqual([
       expect.objectContaining({ id: "staging-brev-launchable", source: "staging" }),
     ]);
 
     const hermesPlan = buildE2eWorkflowPlan({ jobs: "hermes-e2e" });
-    const stagingRow = buildE2eWorkflowPlan().semanticMatrix.find(
+    const stagingRow = buildE2eWorkflowPlan().coverageMatrix.find(
       (row) => row.id === "staging-brev-launchable",
     )!;
     expect(() =>
       validateE2eWorkflowPlan({
         ...hermesPlan,
-        semanticMatrix: [stagingRow, ...hermesPlan.semanticMatrix],
+        coverageMatrix: [stagingRow, ...hermesPlan.coverageMatrix],
       }),
-    ).toThrow("semantic coverage that does not match its execution plan");
+    ).toThrow("execution coverage that does not match its execution plan");
   });
 
   it("waives only named release-required E2E jobs", () => {
@@ -458,13 +466,9 @@ describe("E2E workflow plan", () => {
     expect(catalogueTarget(id)).toMatchObject(contract);
   });
 
-  it("requires explicit semantic coverage for every catalogue target (#9167)", () => {
+  it("requires explicit execution coverage for every catalogue target (#9167)", () => {
     expect(E2E_TARGET_CATALOGUE).toHaveLength(64);
-    for (const target of E2E_TARGET_CATALOGUE) {
-      expect(target.observableOutcome).toBe(target.displayName);
-      expect(target.agentRuntime).not.toBe("");
-      expect(target.environmentOrInferenceEndpoint).not.toBe("");
-    }
+    expectExplicitCatalogueCoverage();
 
     const target = catalogueTarget("cloud-inference");
     expect(() =>
@@ -818,7 +822,7 @@ describe("E2E workflow plan", () => {
           "github-read": [],
           "brave-nvidia-inference": [],
         },
-        semanticMatrix: [],
+        coverageMatrix: [],
         selectedJobs: [],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -861,7 +865,7 @@ describe("E2E workflow plan", () => {
           "github-read": [],
           "brave-nvidia-inference": [],
         },
-        semanticMatrix: [],
+        coverageMatrix: [],
         selectedJobs: ["jetson-nvmap-gpu"],
         hermesSelected: false,
         explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -883,7 +887,7 @@ describe("E2E workflow plan", () => {
         "github-read": [],
         "brave-nvidia-inference": [],
       },
-      semanticMatrix: [],
+      coverageMatrix: [],
       selectedJobs: [],
       hermesSelected: false,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
@@ -965,10 +969,10 @@ describe("E2E workflow plan", () => {
     const validPlan = buildE2eWorkflowPlan();
     const [registryRow] = validPlan.matrix;
     const [testRow] = validPlan.testMatrix;
-    const [semanticRow] = validPlan.semanticMatrix;
+    const [coverageRow] = validPlan.coverageMatrix;
     expect(registryRow).toBeDefined();
     expect(testRow).toBeDefined();
-    expect(semanticRow).toBeDefined();
+    expect(coverageRow).toBeDefined();
     const { explicitOnlyJobs: _omitted, ...missingField } = validPlan;
     const malformedPlans = [
       missingField,
@@ -979,12 +983,12 @@ describe("E2E workflow plan", () => {
         testMatrix: [{ ...testRow, project: "e2e-live", file: "test/e2e/live/../secret.test.ts" }],
       },
       { ...validPlan, testMatrix: [{ ...testRow, id: registryRow.id }] },
-      { ...validPlan, semanticMatrix: [...validPlan.semanticMatrix, { ...semanticRow }] },
+      { ...validPlan, coverageMatrix: [...validPlan.coverageMatrix, { ...coverageRow }] },
       {
         ...validPlan,
-        semanticMatrix: [
-          { ...semanticRow, observableOutcome: "Injected | Markdown row" },
-          ...validPlan.semanticMatrix.slice(1),
+        coverageMatrix: [
+          { ...coverageRow, observableOutcome: "Injected | Markdown row" },
+          ...validPlan.coverageMatrix.slice(1),
         ],
       },
       { ...validPlan, hermesSelected: "false" },
@@ -997,14 +1001,14 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("rejects semantic coverage that differs from its execution owner (#9167)", () => {
+  it("rejects execution coverage that differs from its execution owner (#9167)", () => {
     const plan = buildE2eWorkflowPlan({ jobs: "cloud-inference" });
-    const semanticMatrix = plan.semanticMatrix.map((row) =>
+    const coverageMatrix = plan.coverageMatrix.map((row) =>
       row.id === "cloud-inference" ? { ...row, observableOutcome: "Different valid outcome" } : row,
     );
 
-    expect(() => validateE2eWorkflowPlan({ ...plan, semanticMatrix })).toThrow(
-      "semantic coverage that does not match its execution plan",
+    expect(() => validateE2eWorkflowPlan({ ...plan, coverageMatrix })).toThrow(
+      "execution coverage that does not match its execution plan",
     );
   });
 
@@ -1088,7 +1092,7 @@ describe("E2E workflow plan", () => {
       "selectedJobs",
       "hermesSelected",
       "explicitOnlyJobs",
-      "semanticMatrix",
+      "coverageMatrix",
     ]);
     expect(output).toBe(`${JSON.stringify(parsed)}\n`);
   });

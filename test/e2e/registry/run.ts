@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   type E2eAgentRuntime,
-  validateE2eSemanticMetadata,
-} from "../../../tools/e2e/semantic-coverage.mts";
+  validateE2eExecutionMetadata,
+} from "../../../tools/e2e/execution-coverage.mts";
 
 import { listTargets, requireTargets } from "./registry.ts";
 import { resolveRunnerForTarget } from "./runner-routing.ts";
@@ -101,11 +101,13 @@ function liveMatrixEntry(
   support: LiveTargetSupport,
 ): LiveTargetMatrixEntry {
   const { runner } = resolveRunnerForTarget(target);
-  if (support.supported && !target.semanticCoverage) {
-    throw new Error(`Executable typed E2E target ${target.id} requires semantic coverage metadata`);
+  if (support.supported && !target.executionCoverage) {
+    throw new Error(
+      `Executable typed E2E target ${target.id} requires execution coverage metadata`,
+    );
   }
-  const semanticCoverage = validateE2eSemanticMetadata(
-    target.semanticCoverage ?? {
+  const executionCoverage = validateE2eExecutionMetadata(
+    target.executionCoverage ?? {
       agentRuntime: "unresolved",
       observableOutcome: "unresolved",
       environmentOrInferenceEndpoint: "unresolved",
@@ -115,7 +117,7 @@ function liveMatrixEntry(
   );
   return {
     id: target.id,
-    ...semanticCoverage,
+    ...executionCoverage,
     runner,
     label: buildLabel(target),
     platform: target.environment?.platform ?? "unknown",

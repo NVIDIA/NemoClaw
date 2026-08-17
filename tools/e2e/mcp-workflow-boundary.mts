@@ -885,10 +885,10 @@ function validateCredentialWindowJob(
   const expectedEnv = {
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
-    E2E_SEMANTIC_AGENT_RUNTIME: "openclaw",
-    E2E_SEMANTIC_OBSERVABLE_OUTCOME:
+    E2E_AGENT_RUNTIME: "openclaw",
+    E2E_OBSERVABLE_OUTCOME:
       "Credential expiry rotation detach and rebuild preserve the intended access window",
-    E2E_SEMANTIC_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
+    E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT:
       "Ubuntu Docker host; local compatible inference and MCP endpoint",
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/${CREDENTIAL_WINDOW_ARTIFACT_DIR}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",

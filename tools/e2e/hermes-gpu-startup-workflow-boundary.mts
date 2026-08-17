@@ -138,21 +138,20 @@ export function validateHermesGpuStartupWorkflow(
         {
           scenario: "native",
           sandbox_name: "e2e-hgpu-native",
-          semantic_observable_outcome: "Native GPU startup reaches the stable Ready route",
-          semantic_variant: "native",
+          observable_outcome: "Native GPU startup reaches the stable Ready route",
+          coverage_variant: "native",
         },
         {
           scenario: "fallback",
           sandbox_name: "e2e-hgpu-fallback",
-          semantic_observable_outcome: "Fallback GPU startup reaches the stable Ready route",
-          semantic_variant: "fallback",
+          observable_outcome: "Fallback GPU startup reaches the stable Ready route",
+          coverage_variant: "fallback",
         },
         {
           scenario: "compatibility-only",
           sandbox_name: "e2e-hgpu-compat",
-          semantic_observable_outcome:
-            "Compatibility-only GPU startup reaches the stable Ready route",
-          semantic_variant: "compatibility-only",
+          observable_outcome: "Compatibility-only GPU startup reaches the stable Ready route",
+          coverage_variant: "compatibility-only",
         },
       ])
   ) {

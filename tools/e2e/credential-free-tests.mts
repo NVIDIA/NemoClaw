@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { moduleTagDeclarations, stripModuleTagDeclarations } from "./module-tags.mts";
-import { type E2eSemanticMetadata, validateE2eSemanticMetadata } from "./semantic-coverage.mts";
+import { type E2eExecutionMetadata, validateE2eExecutionMetadata } from "./execution-coverage.mts";
 
 export const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
 export const SHARED_E2E_JOB_ID = "shared-e2e";
@@ -39,7 +39,7 @@ const E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN =
 const INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN =
   /^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/;
 const SUPPORTED_PROJECTS = new Set<CredentialFreeTestProject>(["e2e-live", "integration"]);
-const CREDENTIAL_FREE_TEST_SEMANTICS = {
+const CREDENTIAL_FREE_TEST_COVERAGE = {
   "onboard-managed-image-buildless-e2e": {
     agentRuntime: "none",
     observableOutcome: "Buildless onboarding selects exact managed images for every agent",
@@ -52,16 +52,16 @@ const CREDENTIAL_FREE_TEST_SEMANTICS = {
     environmentOrInferenceEndpoint: "Native Linux Docker host; no inference endpoint",
     unresolvedReason: "",
   },
-} as const satisfies Readonly<Record<string, E2eSemanticMetadata>>;
+} as const satisfies Readonly<Record<string, E2eExecutionMetadata>>;
 
-export function credentialFreeTestSemantics(id: string): E2eSemanticMetadata {
+export function credentialFreeTestCoverage(id: string): E2eExecutionMetadata {
   const metadata = (
-    CREDENTIAL_FREE_TEST_SEMANTICS as Readonly<Record<string, E2eSemanticMetadata>>
+    CREDENTIAL_FREE_TEST_COVERAGE as Readonly<Record<string, E2eExecutionMetadata>>
   )[id];
   if (!metadata) {
-    throw new Error(`Credential-free test ${id} requires semantic coverage metadata`);
+    throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
   }
-  return validateE2eSemanticMetadata(metadata, `Credential-free test ${id}`);
+  return validateE2eExecutionMetadata(metadata, `Credential-free test ${id}`);
 }
 
 export function credentialFreeTestProjectForFile(
