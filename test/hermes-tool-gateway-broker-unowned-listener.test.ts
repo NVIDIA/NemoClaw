@@ -36,14 +36,54 @@ const UNOWNED_LISTENER_CASES = [
 
 /** Every reuse input that resolves to an ordinary restart when the port is dead. */
 const UNREACHABLE_PORT_CASES = [
-  { label: "an unowned broker and a matching hash", currentBrokerOwned: false, forceRestart: false, hashMatches: true },
-  { label: "an unowned broker and a mismatched hash", currentBrokerOwned: false, forceRestart: false, hashMatches: false },
-  { label: "an unowned broker and a restart request", currentBrokerOwned: false, forceRestart: true, hashMatches: true },
-  { label: "an unowned broker, a restart request, and a mismatched hash", currentBrokerOwned: false, forceRestart: true, hashMatches: false },
-  { label: "an owned broker and a matching hash", currentBrokerOwned: true, forceRestart: false, hashMatches: true },
-  { label: "an owned broker and a mismatched hash", currentBrokerOwned: true, forceRestart: false, hashMatches: false },
-  { label: "an owned broker and a restart request", currentBrokerOwned: true, forceRestart: true, hashMatches: true },
-  { label: "an owned broker, a restart request, and a mismatched hash", currentBrokerOwned: true, forceRestart: true, hashMatches: false },
+  {
+    label: "an unowned broker and a matching hash",
+    currentBrokerOwned: false,
+    forceRestart: false,
+    hashMatches: true,
+  },
+  {
+    label: "an unowned broker and a mismatched hash",
+    currentBrokerOwned: false,
+    forceRestart: false,
+    hashMatches: false,
+  },
+  {
+    label: "an unowned broker and a restart request",
+    currentBrokerOwned: false,
+    forceRestart: true,
+    hashMatches: true,
+  },
+  {
+    label: "an unowned broker, a restart request, and a mismatched hash",
+    currentBrokerOwned: false,
+    forceRestart: true,
+    hashMatches: false,
+  },
+  {
+    label: "an owned broker and a matching hash",
+    currentBrokerOwned: true,
+    forceRestart: false,
+    hashMatches: true,
+  },
+  {
+    label: "an owned broker and a mismatched hash",
+    currentBrokerOwned: true,
+    forceRestart: false,
+    hashMatches: false,
+  },
+  {
+    label: "an owned broker and a restart request",
+    currentBrokerOwned: true,
+    forceRestart: true,
+    hashMatches: true,
+  },
+  {
+    label: "an owned broker, a restart request, and a mismatched hash",
+    currentBrokerOwned: true,
+    forceRestart: true,
+    hashMatches: false,
+  },
 ];
 
 function loadBrokerWithHome(home: string) {
