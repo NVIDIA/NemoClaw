@@ -86,20 +86,19 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
   }
 }
 
-/**
- * Return the prerequisite error when the interpreter is still unresolved.
- *
- * Every helper reports an unresolved interpreter and a helper that ran and
- * failed as the same value, so this reads the interpreter again after the
- * call. A host that gains or loses its interpreter between the call and this
- * read reports the other failure, which is what the caller reported before
- * this check existed.
- */
+export type SnapshotSanitizerHelperFailure = "python-unavailable" | "helper-failed";
+
+export type SnapshotSanitizerHelperResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly reason: SnapshotSanitizerHelperFailure };
+
+/** Map the helper attempt's recorded failure without probing the host again. */
 export function snapshotSanitizerFailure(
+  reason: SnapshotSanitizerHelperFailure,
   message: string,
   validatedSnapshotPath: string,
 ): Error {
-  return snapshotSanitizerPythonPath() === null
+  return reason === "python-unavailable"
     ? new SnapshotSanitizerPrerequisiteError(validatedSnapshotPath)
     : new Error(message);
 }
@@ -742,15 +741,15 @@ export function inspectDescriptorSnapshotRoot(rootPath: string): DescriptorSnaps
   };
 }
 
-/** Read a bounded snapshot tree through pinned directory descriptors. */
-export function scanDescriptorSnapshot(
+/** Read a bounded snapshot tree and retain why the helper could not run. */
+export function scanDescriptorSnapshotResult(
   root: DescriptorSnapshotRoot,
   sensitiveNames: ReadonlySet<string>,
   targetName?: string,
-): DescriptorSnapshotScan | null {
+): SnapshotSanitizerHelperResult<DescriptorSnapshotScan> {
   const mode = targetName === undefined ? "scan-tree" : "scan-file";
   const pythonPath = snapshotSanitizerPythonPath();
-  if (pythonPath === null) return null;
+  if (pythonPath === null) return { ok: false, reason: "python-unavailable" };
   const result = spawnSync(
     pythonPath,
     [
@@ -770,19 +769,32 @@ export function scanDescriptorSnapshot(
       timeout: HELPER_TIMEOUT_MS,
     },
   );
-  if (result.status !== 0 || result.error) return null;
-  return parseScanResult(result.stdout);
+  if (result.status !== 0 || result.error) return { ok: false, reason: "helper-failed" };
+  const scan = parseScanResult(result.stdout);
+  return scan === null
+    ? { ok: false, reason: "helper-failed" }
+    : { ok: true, value: scan };
 }
 
-/** Install or remove sanitized artifacts through their pinned parent descriptors. */
-export function applyDescriptorSnapshotActions(
+/** Read a bounded snapshot tree through pinned directory descriptors. */
+export function scanDescriptorSnapshot(
+  root: DescriptorSnapshotRoot,
+  sensitiveNames: ReadonlySet<string>,
+  targetName?: string,
+): DescriptorSnapshotScan | null {
+  const result = scanDescriptorSnapshotResult(root, sensitiveNames, targetName);
+  return result.ok ? result.value : null;
+}
+
+/** Apply sanitized artifacts and retain why the helper could not run. */
+export function applyDescriptorSnapshotActionsResult(
   root: DescriptorSnapshotRoot,
   scan: DescriptorSnapshotScan,
   actions: readonly SnapshotSanitizationAction[],
-): boolean {
-  if (actions.length === 0) return true;
+): SnapshotSanitizerHelperResult<void> {
+  if (actions.length === 0) return { ok: true, value: undefined };
   const pythonPath = snapshotSanitizerPythonPath();
-  if (pythonPath === null) return false;
+  if (pythonPath === null) return { ok: false, reason: "python-unavailable" };
   const result = spawnSync(
     pythonPath,
     ["-I", "-c", SNAPSHOT_SANITIZER_PYTHON, "apply", root.canonicalPath],
@@ -794,7 +806,18 @@ export function applyDescriptorSnapshotActions(
       timeout: HELPER_TIMEOUT_MS,
     },
   );
-  return result.status === 0 && !result.error;
+  return result.status === 0 && !result.error
+    ? { ok: true, value: undefined }
+    : { ok: false, reason: "helper-failed" };
+}
+
+/** Install or remove sanitized artifacts through their pinned parent descriptors. */
+export function applyDescriptorSnapshotActions(
+  root: DescriptorSnapshotRoot,
+  scan: DescriptorSnapshotScan,
+  actions: readonly SnapshotSanitizationAction[],
+): boolean {
+  return applyDescriptorSnapshotActionsResult(root, scan, actions).ok;
 }
 
 /** Create one direct child through a pinned directory descriptor without replacing an entry. */

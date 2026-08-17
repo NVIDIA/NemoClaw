@@ -17,13 +17,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyDescriptorSnapshotActions,
+  applyDescriptorSnapshotActionsResult,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
   resolveTrustedSnapshotSanitizerPythonPath,
+  SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
   setSnapshotSanitizerPythonPathForTest,
+  snapshotSanitizerFailure,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
@@ -104,6 +107,28 @@ describe("migration snapshot sanitizer fallbacks", () => {
         { kind: "remove", path: "config.json", metadata: identity },
       ]),
     ).toBe(false);
+  });
+
+  it("reports the interpreter state recorded by the apply attempt (#8202)", () => {
+    const rootPath = makeRoot();
+    const configPath = path.join(rootPath, "config.json");
+    writeFileSync(configPath, "original");
+    const root = inspectDescriptorSnapshotRoot(rootPath)!;
+    const scan = scanDescriptorSnapshot(root, new Set())!;
+    const config = scan.files.find((file) => file.path === "config.json")!;
+    const python = requireTrustedPython();
+    setSnapshotSanitizerPythonPathForTest(null);
+
+    const result = applyDescriptorSnapshotActionsResult(root, scan, [
+      { kind: "remove", path: config.path, metadata: config.metadata },
+    ]);
+    expect(result).toEqual({ ok: false, reason: "python-unavailable" });
+
+    setSnapshotSanitizerPythonPathForTest(python);
+    if (result.ok) throw new Error("Expected the apply helper to fail");
+    expect(
+      snapshotSanitizerFailure(result.reason, "generic helper failure", root.canonicalPath),
+    ).toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
   });
 
   it("fails closed when the descriptor install helper is unavailable", () => {

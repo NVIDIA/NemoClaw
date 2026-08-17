@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveTrustedSnapshotSanitizerPythonPath,
   setSnapshotSanitizerPythonPathForTest,
+  SnapshotSanitizerPrerequisiteError,
 } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeBackupDirectory } from "./sandbox.js";
 
@@ -326,15 +327,27 @@ describe("rebuild backup credential sanitization", () => {
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
     setSnapshotSanitizerPythonPathForTest(null);
 
-    expect(() =>
+    const cleanupError = new Error("injected cleanup failure");
+    let received: unknown;
+    try {
       sanitizeBackupDirectory(backupPath, {
         removeBackup: () => {
-          throw new Error("injected cleanup failure");
+          throw cleanupError;
         },
-      }),
-    ).toThrow(
+      });
+    } catch (error) {
+      received = error;
+    }
+
+    expect(received).toBeInstanceOf(Error);
+    expect((received as Error).message).toBe(
       `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${backupPath}`,
     );
+    expect((received as Error).cause).toBeInstanceOf(AggregateError);
+    expect(((received as Error).cause as AggregateError).errors).toEqual([
+      expect.any(SnapshotSanitizerPrerequisiteError),
+      cleanupError,
+    ]);
     expect(existsSync(backupPath)).toBe(true);
   });
 

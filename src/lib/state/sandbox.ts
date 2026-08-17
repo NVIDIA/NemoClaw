@@ -770,7 +770,12 @@ export function sanitizeBackupDirectory(
           : `; the incomplete backup may remain at ${validatedSnapshotPath}`;
       throw new Error(
         `${prerequisite}Credential sanitization failed and backup cleanup failed${retainedPath}`,
-        { cause: cleanupError },
+        {
+          cause: new AggregateError(
+            [error, cleanupError],
+            "Snapshot sanitization and backup cleanup both failed",
+          ),
+        },
       );
     }
     if (operations.backupExists(dirPath)) {

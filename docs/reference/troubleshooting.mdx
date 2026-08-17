@@ -1631,9 +1631,9 @@ $$nemoclaw <name> snapshot create
 $$nemoclaw <name> rebuild
 ```
 
-### Snapshot Creation Requires a Verified Python Interpreter
+### Snapshot Sanitization Requires a Verified Python Interpreter
 
-Snapshot creation stops when NemoClaw cannot resolve a verified `python3` interpreter.
+An operation that writes a host-side snapshot stops when no verified interpreter resolves.
 The error begins with this text:
 
 ```text
