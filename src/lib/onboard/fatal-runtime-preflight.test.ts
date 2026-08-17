@@ -10,10 +10,7 @@ vi.mock("./experimental/portable-host-preparation", () => ({
 }));
 
 import type { DetectGpuDeps, GpuDetection } from "../inference/nim";
-import type {
-  GatewayObservationSnapshot,
-  GatewayReadinessProjection,
-} from "../readiness/gateway";
+import type { GatewayObservationSnapshot, GatewayReadinessProjection } from "../readiness/gateway";
 import type { SystemReadinessReport } from "../readiness/types";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import {
@@ -89,7 +86,9 @@ function managedGatewayReadiness(
   };
 }
 
-function managedGatewaySnapshot(completedAt = new Date().toISOString()): GatewayObservationSnapshot {
+function managedGatewaySnapshot(
+  completedAt = new Date().toISOString(),
+): GatewayObservationSnapshot {
   return {
     observedAt: completedAt,
     completedAt,
@@ -495,7 +494,7 @@ describe("readiness-gated runtime preflight", () => {
     const bridge = vi.fn();
     const validateGpu = vi.fn();
     const assessHost = vi.fn(() => hostWithRuntime("docker"));
-    let gatewayCollections = 0;
+    const gatewayCollectionDelays = [0, 0, 30_001];
 
     const result = await runReadinessGatedRuntimePreflight(
       {},
@@ -503,8 +502,7 @@ describe("readiness-gated runtime preflight", () => {
         nonInteractive: true,
         now: () => new Date(currentTime),
         collectGatewayReadiness: async () => {
-          gatewayCollections += 1;
-          if (gatewayCollections === 3) currentTime += 30_001;
+          currentTime += gatewayCollectionDelays.shift() ?? 0;
           return collectedGatewayReadiness(
             managedGatewayReadiness(),
             new Date(currentTime).toISOString(),
@@ -525,44 +523,44 @@ describe("readiness-gated runtime preflight", () => {
     expect(validateGpu).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when refreshing the host expires the paired gateway facts (#7411)", async () => {
+  it("recollects gateway facts when refreshing the host expires the paired snapshot (#7411)", async () => {
     let currentTime = Date.parse("2026-08-07T12:00:00.000Z");
     const bridge = vi.fn();
     const validateGpu = vi.fn();
-    const exitProcess = vi.fn((_code: number): never => {
-      throw new Error("stale gateway blocked");
+    const gatewayCollectionDelays = [0, 0, 30_001];
+    const hostCollectionDelays = [0, 0, 30_001];
+    const collectGatewayReadiness = vi.fn(async () => {
+      currentTime += gatewayCollectionDelays.shift() ?? 0;
+      return collectedGatewayReadiness(
+        managedGatewayReadiness(),
+        new Date(currentTime).toISOString(),
+      );
     });
-    let gatewayCollections = 0;
-    let hostCollections = 0;
+    const assessHost = vi.fn(() => {
+      currentTime += hostCollectionDelays.shift() ?? 0;
+      return hostWithRuntime("docker");
+    });
 
-    await expect(
-      runReadinessGatedRuntimePreflight(
-        {},
-        {
-          nonInteractive: true,
-          now: () => new Date(currentTime),
-          collectGatewayReadiness: async () => {
-            gatewayCollections += 1;
-            if (gatewayCollections === 3) currentTime += 30_001;
-            return collectedGatewayReadiness(
-              managedGatewayReadiness(),
-              new Date(currentTime).toISOString(),
-            );
-          },
-          assessHost: () => {
-            hostCollections += 1;
-            if (hostCollections === 3) currentTime += 30_001;
-            return hostWithRuntime("docker");
-          },
-          detectGpu: () => null,
-          assertDockerBridgeAndContainerDnsHealthy: bridge,
-          validateSandboxGpuPreflight: validateGpu,
-          exitProcess,
-        },
-      ),
-    ).rejects.toThrow("stale gateway blocked");
-    expect(bridge).not.toHaveBeenCalled();
-    expect(validateGpu).not.toHaveBeenCalled();
+    const result = await runReadinessGatedRuntimePreflight(
+      {},
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        collectGatewayReadiness,
+        assessHost,
+        detectGpu: () => null,
+        assertDockerBridgeAndContainerDnsHealthy: bridge,
+        validateSandboxGpuPreflight: validateGpu,
+      },
+    );
+
+    expect(assessHost).toHaveBeenCalledTimes(3);
+    expect(collectGatewayReadiness).toHaveBeenCalledTimes(5);
+    expect(result.gatewayReadiness.evidence).not.toContainEqual(
+      expect.objectContaining({ id: "gateway.probe.stale" }),
+    );
+    expect(bridge).toHaveBeenCalledOnce();
+    expect(validateGpu).toHaveBeenCalledOnce();
   });
 
   it("rejects the initial gateway snapshot before collecting host facts", async () => {
@@ -830,7 +828,10 @@ describe("readiness-gated runtime preflight", () => {
 });
 
 describe("GPU trust-gate rejection reason propagation (#9000)", () => {
-  const gatedContext = (detectGpu: (deps?: DetectGpuDeps) => GpuDetection | null, host: HostAssessment) => ({
+  const gatedContext = (
+    detectGpu: (deps?: DetectGpuDeps) => GpuDetection | null,
+    host: HostAssessment,
+  ) => ({
     nonInteractive: true,
     collectGatewayReadiness: async () => collectedGatewayReadiness(),
     assessHost: () => host,

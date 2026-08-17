@@ -350,7 +350,7 @@ async function collectAdmittedReadinessPair(
 }> {
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   const now = context.now ?? (() => new Date());
-  const collectedGateway = await context.collectGatewayReadiness();
+  let collectedGateway = await context.collectGatewayReadiness();
   assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
 
   let evaluatedAt = now();
@@ -365,6 +365,8 @@ async function collectAdmittedReadinessPair(
       isManagedGatewayReadiness(gateway),
       runtimeGpu,
     );
+    collectedGateway = await context.collectGatewayReadiness();
+    assertOnboardGatewayReadiness(collectedGateway.projection, exitProcess);
     evaluatedAt = now();
     gateway = projectGatewayReadiness(collectedGateway.snapshot, { now: () => evaluatedAt });
     assertOnboardGatewayReadiness(gateway, exitProcess);

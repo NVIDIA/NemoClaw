@@ -143,6 +143,11 @@ describe("preflight gateway authority", () => {
         exitProcess,
       },
     );
+    const passedCollector = runRuntimePreflight.mock.calls[0]![1].collectGatewayReadiness;
+    await expect(passedCollector()).resolves.toEqual({
+      projection: gatewayReadiness,
+      snapshot: gatewaySnapshot,
+    });
 
     await expect(authority.prepareGatewayAuthority()).resolves.toEqual({
       externallySupervised: false,
@@ -150,6 +155,8 @@ describe("preflight gateway authority", () => {
     });
 
     expect(events).toEqual([
+      "collect readiness",
+      "read gateway port",
       "read gateway port",
       "ensure openshell",
       "update session",
@@ -161,8 +168,9 @@ describe("preflight gateway authority", () => {
       "select named gateway",
       "refresh reuse state",
     ]);
-    expect(deps.getGatewayOwnerDeps).toHaveBeenCalledOnce();
-    expect(deps.gatewayPort).toHaveBeenCalledTimes(2);
+    expect(deps.getGatewayOwnerDeps).toHaveBeenCalledTimes(2);
+    expect(deps.gatewayPort).toHaveBeenCalledTimes(3);
+    expect(collectReadiness).toHaveBeenCalledTimes(2);
     expect(collectReadiness).toHaveBeenCalledWith(
       expect.objectContaining({ gatewayName: deps.gatewayName, gatewayPort: deps.gatewayPort }),
     );
