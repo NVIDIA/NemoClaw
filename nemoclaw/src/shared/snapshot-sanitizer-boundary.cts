@@ -84,11 +84,13 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
 }
 
 /**
- * Return the prerequisite error when no interpreter resolved.
+ * Return the prerequisite error when the interpreter is still unresolved.
  *
  * Every helper reports an unresolved interpreter and a helper that ran and
- * failed the same way, so this separates them before the caller reports a
- * generic failure.
+ * failed as the same value, so this reads the interpreter again after the
+ * call. A host that gains or loses its interpreter between the call and this
+ * read reports the other failure, which is what the caller reported before
+ * this check existed.
  */
 export function snapshotSanitizerFailure(message: string): Error {
   return snapshotSanitizerPythonPath() === null

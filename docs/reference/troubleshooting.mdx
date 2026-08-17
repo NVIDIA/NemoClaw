@@ -1631,7 +1631,7 @@ $$nemoclaw <name> snapshot create
 $$nemoclaw <name> rebuild
 ```
 
-### Snapshot creation reports that `python3` is required
+### Snapshot Creation Reports a Required Python Interpreter
 
 Commands that write a host-side snapshot stop with this message when no verified interpreter resolves:
 
@@ -1639,13 +1639,18 @@ Commands that write a host-side snapshot stop with this message when no verified
 python3 is required for snapshot sanitization; install python3 and retry
 ```
 
-The message covers `$$nemoclaw <name> snapshot create`, `$$nemoclaw <name> rebuild`, and the automatic backups that NemoClaw takes before maintenance and before it backs up a stopped sandbox.
 NemoClaw removes credentials from copied state with an isolated `python3` helper, and it fails closed when that helper cannot run.
+The message covers these commands:
+
+- `$$nemoclaw <name> snapshot create`
+- `$$nemoclaw <name> rebuild`
+- The backup that maintenance takes before it changes sandbox state
+- The backup that NemoClaw takes for a stopped sandbox
 
 A host that already has `python3` can still report this message.
-NemoClaw does not resolve this credential-bearing helper through `PATH`, so an interpreter from a version manager or a virtual environment does not qualify.
-Install `python3` at one of the accepted locations in [Prerequisites](../get-started/prerequisites).
-Then run the command again.
+NemoClaw does not search `PATH` for this credential-bearing helper.
+It accepts only a verified executable at one of the fixed locations listed in [Prerequisites](../get-started/prerequisites), and it rejects a candidate that fails its ownership, permission, or executable checks.
+Install or repair `python3` at one of those locations, then run the command again.
 
 ### Sandbox shows as stopped
 

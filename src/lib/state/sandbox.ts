@@ -772,9 +772,12 @@ export function sanitizeBackupDirectory(
         { cause: error },
       );
     }
-    throw new Error(`${prerequisite}Credential sanitization failed; removed the incomplete backup`, {
-      cause: error,
-    });
+    throw new Error(
+      `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 
