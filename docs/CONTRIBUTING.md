@@ -86,7 +86,7 @@ Fern publishes Markdown routes for AI agents from the same source pages.
 The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
 The end-of-day flow merges the planned release entry.
-The tag skill then requires a successful no-change publisher job for the exact `origin/main` commit, no open managed documentation PR, and no branch for that candidate.
+The tag skill then requires the `Publish documentation catch-up` job to succeed for an independently approved empty patch at the exact `origin/main` commit, with no open managed documentation PR or branch for that candidate.
 
 For each release:
 
