@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -324,6 +325,7 @@ describe("rebuild backup credential sanitization", () => {
 
   it("reports the validated directory when backup cleanup throws (#8202)", () => {
     const backupPath = createBackup();
+    const validatedPath = realpathSync(backupPath);
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
     setSnapshotSanitizerPythonPathForTest(null);
 
@@ -341,7 +343,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(received).toBeInstanceOf(Error);
     expect((received as Error).message).toBe(
-      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${backupPath}`,
+      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${validatedPath}`,
     );
     expect((received as Error).cause).toBeInstanceOf(AggregateError);
     expect(((received as Error).cause as AggregateError).errors).toEqual([
@@ -353,6 +355,7 @@ describe("rebuild backup credential sanitization", () => {
 
   it("reports only the validated directory when failed cleanup retains a snapshot (#8202)", () => {
     const backupPath = createBackup();
+    const validatedPath = realpathSync(backupPath);
     const unvalidatedPath = `${backupPath}/.`;
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
     setSnapshotSanitizerPythonPathForTest(null);
@@ -371,7 +374,7 @@ describe("rebuild backup credential sanitization", () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe(
-      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and the incomplete backup remains at ${backupPath}`,
+      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and the incomplete backup remains at ${validatedPath}`,
     );
     expect((thrown as Error).message).not.toContain(unvalidatedPath);
     expect(removeBackup).toHaveBeenCalledWith(unvalidatedPath);
