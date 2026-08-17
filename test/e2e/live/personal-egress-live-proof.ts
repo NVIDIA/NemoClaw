@@ -7,11 +7,21 @@ import path from "node:path";
 import YAML from "yaml";
 
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { SecretStore } from "../fixtures/secrets.ts";
 import { text } from "./common-egress-agent-helpers.ts";
+import {
+  runPersonalStockAgentAssertion,
+  type PersonalStockAssertionResult,
+} from "./openclaw-agent-assertion.ts";
+
+export const PERSONAL_STOCK_PR_TARGET = "ubuntu-repo-cloud-openclaw";
 
 interface NetworkPolicyEntry {
   binaries?: Array<{ path?: string }>;
@@ -33,6 +43,48 @@ export interface PersonalRuntimeEgressEvidence {
   publicFetchTools: ["curl", "python3"];
   webPorts: [80, 443];
   wildcardBinary: "/**";
+}
+
+export interface PersonalStockFetchEvidence {
+  egress: PersonalRuntimeEgressEvidence;
+  stock: PersonalStockAssertionResult;
+}
+
+export function requireRegistryTargetSecrets(
+  targetId: string,
+  requiredSecrets: readonly string[],
+  secrets: SecretStore,
+): void {
+  for (const secret of requiredSecrets) {
+    if (targetId === PERSONAL_STOCK_PR_TARGET && !secrets.optional(secret)) {
+      throw new Error(`target '${targetId}' requires E2E secret '${secret}'`);
+    }
+    secrets.required(secret);
+  }
+}
+
+export async function verifyPersonalStockFetchForTarget(
+  targetId: string,
+  policyTier: string | undefined,
+  agent: string,
+  sandbox: SandboxClient,
+  host: HostCliClient,
+  artifacts: ArtifactSink,
+  secrets: SecretStore,
+  sandboxName: string,
+  announcePhase: () => void,
+): Promise<PersonalStockFetchEvidence | undefined> {
+  if (targetId !== PERSONAL_STOCK_PR_TARGET) return undefined;
+  expect(policyTier).toBe("personal");
+  expect(agent).toBe("openclaw");
+  announcePhase();
+  const egress = await assertPersonalRuntimeEgress(sandbox, sandboxName, "registry-personal");
+  const stock = await runPersonalStockAgentAssertion(host, sandbox, artifacts, {
+    apiKey: secrets.required(HOSTED_INFERENCE_SECRET),
+    label: "registry-personal-stock",
+    sandboxName,
+  });
+  return { egress, stock };
 }
 
 function commandEnv(): NodeJS.ProcessEnv {
