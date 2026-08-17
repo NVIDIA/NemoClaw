@@ -169,7 +169,13 @@ describe("nemoclaw-start config guard output permissions", () => {
         expect(fs.statSync(caBundle).uid).toBe(0);
         expect(mode(privateDir)).toBe(0o700);
         expect(fs.statSync(privateDir).uid).toBe(0);
-        expect(fs.readdirSync(privateDir)).toEqual([]);
+        const remainingOutput = spawnSync(
+          "sudo",
+          ["-n", "/usr/bin/find", privateDir, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit"],
+          { encoding: "utf-8" },
+        );
+        expect(remainingOutput.status, remainingOutput.stderr).toBe(0);
+        expect(remainingOutput.stdout).toBe("");
       } finally {
         const cleanup = spawnSync("sudo", ["-n", "/usr/bin/rm", "-rf", "--", root], {
           encoding: "utf-8",
