@@ -110,6 +110,39 @@ describe("codebase growth guardrail test support", () => {
     );
   });
 
+  it("asks for a stale legacy budget to be removed when its test is deleted", async () => {
+    const budget = '{"defaultMaxLines":1500,"legacyMaxLines":{"test/legacy.test.ts":1}}';
+    const diff = fixtureDiff(
+      [{ filename: "test/legacy.test.ts", status: "removed" }],
+      {
+        "ci/test-file-size-budget.json": budget,
+        "test/legacy.test.ts": "legacy\n",
+      },
+      { "ci/test-file-size-budget.json": budget },
+    );
+    expect(await testSizeViolations(diff)).toEqual([
+      "test/legacy.test.ts no longer exists; remove its legacy budget 1",
+    ]);
+  });
+
+  it("reports an oversized changed legacy test once", async () => {
+    const budget = '{"defaultMaxLines":1500,"legacyMaxLines":{"test/legacy.test.ts":1}}';
+    const diff = fixtureDiff(
+      [{ filename: "test/legacy.test.ts", status: "modified" }],
+      {
+        "ci/test-file-size-budget.json": budget,
+        "test/legacy.test.ts": "legacy\n",
+      },
+      {
+        "ci/test-file-size-budget.json": budget,
+        "test/legacy.test.ts": "legacy\ngrowth\n",
+      },
+    );
+    expect(await testSizeViolations(diff)).toEqual([
+      "test/legacy.test.ts has 2 lines, above its budget 1",
+    ]);
+  });
+
   it("rejects a new if statement in a changed test file", async () => {
     const diff = fixtureDiff(
       [{ filename: "test/example.test.ts", status: "modified" }],

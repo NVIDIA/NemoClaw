@@ -249,7 +249,12 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
     if (baseMax !== undefined && headMax > baseMax) {
       violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
     }
-    const lines = countLines(head.get(file) ?? null);
+    const source = head.get(file);
+    if (source === null || source === undefined) {
+      violations.push(`${file} no longer exists; remove its legacy budget ${headMax}`);
+      continue;
+    }
+    const lines = countLines(source);
     if (lines > headMax) violations.push(`${file} has ${lines} lines, above its budget ${headMax}`);
     if (lines < headMax) violations.push(`${file} has ${lines} lines; lower its budget ${headMax}`);
   }
@@ -267,6 +272,7 @@ export async function testSizeViolations(diff: GrowthGuardrailDiff): Promise<str
     }
   }
   for (const file of changedTests) {
+    if (headBudget.legacyMaxLines[file] !== undefined) continue;
     const source = head.get(file);
     if (source === null || source === undefined) {
       violations.push(`${file} was not found at the change head`);

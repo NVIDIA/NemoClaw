@@ -92,7 +92,7 @@ function loadLocalDiff(): GrowthGuardrailDiff {
   return {
     files,
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(baseRef, file));
+      return readFiles(paths, (file) => readGitFile(mergeBase, file));
     },
     async readHead(paths) {
       return readFiles(paths, readWorktreeFile);
