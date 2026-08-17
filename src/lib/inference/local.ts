@@ -83,6 +83,7 @@ export function resetOllamaContainerPortCache(): void {
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
+export { OLLAMA_PORT };
 
 // These tags are convenience aliases for callers that want to refer to a
 // specific bootstrap model by role rather than by string. The canonical
