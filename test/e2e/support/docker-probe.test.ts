@@ -84,40 +84,42 @@ describe("DockerProbe secret hygiene", () => {
     expect(result.error).toContain("[REDACTED]");
   });
 
-  it("writes DockerProbe stdout, stderr, and result artifacts after redaction", async () => {
-    const secret = "docker-probe-artifact-secret";
-    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-artifacts-"));
-    const artifacts = new ArtifactSink(artifactsRoot);
-    const secrets = new SecretStore({ NEMOCLAW_TOKEN: secret }, (message) => {
-      throw new Error(message ?? "unexpected skip");
-    });
-    const probe = new DockerProbe(
-      artifacts,
-      (text, extraValues) => secrets.redact(text, extraValues),
-      (_command, args) => ({
-        pid: 123,
-        output: [null, `stdout ${secret} ${args.join(" ")}`, `stderr ${secret}`],
-        stdout: `stdout ${secret} ${args.join(" ")}`,
-        stderr: `stderr ${secret}`,
-        status: 17,
-        signal: null,
-        error: new Error(`error ${secret}`),
-      }),
-    );
+  it.each([
+    "docker/001-diag-hermes-logs.stdout.txt",
+    "docker/001-diag-hermes-logs.stderr.txt",
+    "docker/001-diag-hermes-logs.result.json",
+  ])(
+    "writes DockerProbe stdout, stderr, and result artifacts after redaction [case %#]",
+    async (relativePath) => {
+      const secret = "docker-probe-artifact-secret";
+      const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-artifacts-"));
+      const artifacts = new ArtifactSink(artifactsRoot);
+      const secrets = new SecretStore({ NEMOCLAW_TOKEN: secret }, (message) => {
+        throw new Error(message ?? "unexpected skip");
+      });
+      const probe = new DockerProbe(
+        artifacts,
+        (text, extraValues) => secrets.redact(text, extraValues),
+        (_command, args) => ({
+          pid: 123,
+          output: [null, `stdout ${secret} ${args.join(" ")}`, `stderr ${secret}`],
+          stdout: `stdout ${secret} ${args.join(" ")}`,
+          stderr: `stderr ${secret}`,
+          status: 17,
+          signal: null,
+          error: new Error(`error ${secret}`),
+        }),
+      );
 
-    const result = await probe.run(["logs", "hermes"], { artifactName: "diag-hermes-logs" });
+      const result = await probe.run(["logs", "hermes"], { artifactName: "diag-hermes-logs" });
 
-    expect(JSON.stringify(result)).not.toContain(secret);
-    for (const relativePath of [
-      "docker/001-diag-hermes-logs.stdout.txt",
-      "docker/001-diag-hermes-logs.stderr.txt",
-      "docker/001-diag-hermes-logs.result.json",
-    ]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+
       const artifact = await readArtifact(artifactsRoot, relativePath);
       expect(artifact).not.toContain(secret);
       expect(artifact).toContain("[REDACTED]");
-    }
-  });
+    },
+  );
 
   it("kills real-branch Docker output at the capture limit without retaining payload (#7101)", async () => {
     const secret = "DOCKER_OUTPUT_LIMIT_SECRET";
@@ -202,47 +204,49 @@ describe("DockerProbe secret hygiene", () => {
     }
   });
 
-  it("can return raw Docker output for leak assertions while writing only redacted artifacts", async () => {
-    const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";
-    const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-raw-output-"));
-    const artifacts = new ArtifactSink(artifactsRoot);
-    const secrets = new SecretStore({}, (message) => {
-      throw new Error(message ?? "unexpected skip");
-    });
-    const probe = new DockerProbe(
-      artifacts,
-      (text, extraValues) => secrets.redact(text, extraValues),
-      () => ({
-        pid: 123,
-        output: [null, "", `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`],
-        stdout: "",
-        stderr: `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`,
-        status: 1,
-        signal: null,
-      }),
-    );
+  it.each([
+    "docker/001-startup-rejects-env-file-devtest-api-token.stderr.txt",
+    "docker/001-startup-rejects-env-file-devtest-api-token.result.json",
+  ])(
+    "can return raw Docker output for leak assertions while writing only redacted artifacts [case %#]",
+    async (relativePath) => {
+      const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";
+      const artifactsRoot = await fs.mkdtemp(path.join(os.tmpdir(), "docker-probe-raw-output-"));
+      const artifacts = new ArtifactSink(artifactsRoot);
+      const secrets = new SecretStore({}, (message) => {
+        throw new Error(message ?? "unexpected skip");
+      });
+      const probe = new DockerProbe(
+        artifacts,
+        (text, extraValues) => secrets.redact(text, extraValues),
+        () => ({
+          pid: 123,
+          output: [null, "", `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`],
+          stdout: "",
+          stderr: `startup rejected DEVTEST_API_TOKEN=${leakedSecret}`,
+          status: 1,
+          signal: null,
+        }),
+      );
 
-    const result = await probe.run(["run", "hermes"], {
-      artifactName: "startup-rejects-env-file-devtest-api-token",
-      artifactRedactionValues: [leakedSecret],
-      returnRaw: true,
-    });
+      const result = await probe.run(["run", "hermes"], {
+        artifactName: "startup-rejects-env-file-devtest-api-token",
+        artifactRedactionValues: [leakedSecret],
+        returnRaw: true,
+      });
 
-    expect(result.stderr).toContain(leakedSecret);
-    const stdoutArtifact = await readArtifact(
-      artifactsRoot,
-      "docker/001-startup-rejects-env-file-devtest-api-token.stdout.txt",
-    );
-    expect(stdoutArtifact).not.toContain(leakedSecret);
-    for (const relativePath of [
-      "docker/001-startup-rejects-env-file-devtest-api-token.stderr.txt",
-      "docker/001-startup-rejects-env-file-devtest-api-token.result.json",
-    ]) {
+      expect(result.stderr).toContain(leakedSecret);
+      const stdoutArtifact = await readArtifact(
+        artifactsRoot,
+        "docker/001-startup-rejects-env-file-devtest-api-token.stdout.txt",
+      );
+      expect(stdoutArtifact).not.toContain(leakedSecret);
+
       const artifact = await readArtifact(artifactsRoot, relativePath);
       expect(artifact).not.toContain(leakedSecret);
       expect(artifact).toContain("[REDACTED]");
-    }
-  });
+    },
+  );
 
   it("rejects raw Docker output from expect to keep thrown diagnostics redacted", async () => {
     const leakedSecret = "SENTINEL_RAW_SECRET_VALUE";

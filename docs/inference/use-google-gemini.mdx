@@ -74,6 +74,11 @@ Model validation can fail with these messages:
   The validation request failed.
   The output shows the provider, model, and API base URL.
   Compare these values with your configuration.
+- `Validation probe summary: Chat Completions API: HTTP 404.`
+  This result comes from Google's OpenAI-compatible `/v1beta/openai/chat/completions` runtime route, not the native `/v1beta/models` catalog.
+  A model appearing in the native catalog does not prove that the runtime route can serve it.
+  NemoClaw stops because the sandbox uses the Chat Completions route for inference.
+  Retry the request, then verify that the same key and model can invoke Google's OpenAI-compatible Chat Completions endpoint.
 
 ## Related Topics
 

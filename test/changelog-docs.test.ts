@@ -165,6 +165,14 @@ describe("Fern changelog documentation", () => {
     expect(source.match(/^```bash$/gm)?.length ?? 0, "v0.0.34 must retain its examples").toBe(3);
   });
 
+  it("requires the approved empty-patch publisher result before release", () => {
+    const guide = fs.readFileSync(path.join(docsDir, "CONTRIBUTING.md"), "utf8");
+
+    expect(guide).toContain(
+      "The tag skill then requires the `Publish documentation catch-up` job to succeed for an independently approved empty patch at the exact `origin/main` commit",
+    );
+  });
+
   it("sorts complete semantic versions newest first", () => {
     expect(["v0.0.99", "v0.1.0", "v1.0.0"].sort(compareVersionsDesc)).toEqual([
       "v1.0.0",

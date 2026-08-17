@@ -451,8 +451,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const workflowSha = "c".repeat(40);
       const prefix = [
         "curl() {",
-        '  case "${@: -1}" in',
-        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
+        '  local url="${@: -1}" output_file="" previous="" argument body',
+        '  for argument in "$@"; do',
+        '    if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi',
+        '    previous="$argument"',
+        "  done",
+        '  case "$url" in',
+        `    *collaborators*) body='{"user":{"login":"maintainer"},"role_name":"${role}"}'; if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi ;;`,
         `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",

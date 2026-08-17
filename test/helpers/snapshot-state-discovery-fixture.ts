@@ -36,7 +36,7 @@ if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
 if (cmd.includes("find ")) {
   process.exit(0);
 }
-if (cmd.includes("tar -cf -")) {
+if (cmd.includes("-cf -")) {
   const stagingDirs = fs.readdirSync(${JSON.stringify(stagingRoot)});
   const archivePaths = stagingDirs
     .map((entry) => require("node:path").join(${JSON.stringify(stagingRoot)}, entry, "archive.tar"))

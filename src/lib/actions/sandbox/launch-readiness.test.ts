@@ -375,27 +375,48 @@ describe("launch readiness validation", () => {
     });
   });
 
-  it("falls back when any exact OpenClaw pairing qualification value changes (#9023)", async () => {
+  it.each([
+    {
+      field: "OpenClaw version",
+      change: (qualification: LaunchReadinessOpenClawSessionQualification) => ({
+        ...qualification,
+        openclawVersion: "1.0.1",
+      }),
+    },
+    {
+      field: "device identity",
+      change: (qualification: LaunchReadinessOpenClawSessionQualification) => ({
+        ...qualification,
+        deviceIdentitySha256: "2".repeat(64),
+      }),
+    },
+    {
+      field: "pairing state",
+      change: (qualification: LaunchReadinessOpenClawSessionQualification) => ({
+        ...qualification,
+        pairingStateSha256: "3".repeat(64),
+      }),
+    },
+    {
+      field: "policy",
+      change: (qualification: LaunchReadinessOpenClawSessionQualification) => ({
+        ...qualification,
+        policySha256: "4".repeat(64),
+      }),
+    },
+  ])("falls back when the OpenClaw $field qualification changes (#9023)", async ({ change }) => {
     const currentDeps = await createAcceptedLease();
     const stored = publishedIdentity?.session;
     expect(stored).toMatchObject({ kind: "openclaw-pairing" });
     const qualification = stored as LaunchReadinessOpenClawSessionQualification;
-    const changedQualifications: LaunchReadinessOpenClawSessionQualification[] = [
-      { ...qualification, openclawVersion: "1.0.1" },
-      { ...qualification, deviceIdentitySha256: "2".repeat(64) },
-      { ...qualification, pairingStateSha256: "3".repeat(64) },
-      { ...qualification, policySha256: "4".repeat(64) },
-    ];
+    currentDeps.observeOpenClawPairingQualification = () => change(qualification);
 
-    for (const changed of changedQualifications) {
-      currentDeps.observeOpenClawPairingQualification = () => changed;
-      await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
-        kind: "fallback",
-        category: "session",
-        fence: { epochId: EPOCH },
-        recoveryBlocked: false,
-      });
-    }
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "session",
+      fence: { epochId: EPOCH },
+      recoveryBlocked: false,
+    });
   });
 
   it("falls back when the OpenClaw gateway or lifecycle binding changes (#9023)", async () => {
@@ -625,60 +646,57 @@ describe("launch readiness validation", () => {
     );
   });
 
-  it("fences config, policy, live identity, and health changes before fallback", async () => {
-    const currentDeps = await createAcceptedLease();
-    const cases: Array<{
-      category: "config" | "identity" | "health";
-      mutate: () => void;
-      restore: () => void;
-    }> = [
-      {
-        category: "config",
-        mutate: () => {
-          sandbox = { ...sandbox, policyTier: "strict" };
-        },
-        restore: () => {
-          sandbox = { ...sandbox, policyTier: "standard" };
-        },
+  it.each([
+    {
+      category: "config",
+      mutate: () => {
+        sandbox = { ...sandbox, policyTier: "strict" };
       },
-      {
-        category: "config",
-        mutate: () => {
-          policy = POLICY_B;
-        },
-        restore: () => {
-          policy = POLICY_A;
-        },
+      restore: () => {
+        sandbox = { ...sandbox, policyTier: "standard" };
       },
-      {
-        category: "identity",
-        mutate: () => {
-          observedFingerprint = DIGEST;
-        },
-        restore: () => {
-          observedFingerprint = FINGERPRINT;
-        },
+    },
+    {
+      category: "config",
+      mutate: () => {
+        policy = POLICY_B;
       },
-      {
-        category: "health",
-        mutate: () => {
-          runtimeHealthy = false;
-        },
-        restore: () => {
-          runtimeHealthy = true;
-        },
+      restore: () => {
+        policy = POLICY_A;
       },
-      {
-        category: "health",
-        mutate: () => {
-          forwardsHealthy = false;
-        },
-        restore: () => {
-          forwardsHealthy = true;
-        },
+    },
+    {
+      category: "identity",
+      mutate: () => {
+        observedFingerprint = DIGEST;
       },
-    ];
-    for (const testCase of cases) {
+      restore: () => {
+        observedFingerprint = FINGERPRINT;
+      },
+    },
+    {
+      category: "health",
+      mutate: () => {
+        runtimeHealthy = false;
+      },
+      restore: () => {
+        runtimeHealthy = true;
+      },
+    },
+    {
+      category: "health",
+      mutate: () => {
+        forwardsHealthy = false;
+      },
+      restore: () => {
+        forwardsHealthy = true;
+      },
+    },
+  ])(
+    "fences config, policy, live identity, and health changes before fallback [case %#]",
+    async (testCase) => {
+      const currentDeps = await createAcceptedLease();
+
       testCase.mutate();
       const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
       expect(decision).toMatchObject({
@@ -688,8 +706,8 @@ describe("launch readiness validation", () => {
         fenceFailed: false,
       });
       testCase.restore();
-    }
-  });
+    },
+  );
 
   it("requires exact owning-gateway policy, inference route, and semantic health", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");

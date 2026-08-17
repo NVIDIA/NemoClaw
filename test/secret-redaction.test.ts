@@ -70,14 +70,16 @@ describe("secret redaction consistency (#1736)", () => {
       expect(debugRedact(text)).not.toContain("nvapi-");
     });
 
-    it("redacts complete multi-segment LangSmith keys without exposing their tails", () => {
-      const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
-      for (const redactor of [runnerRedact, debugRedact, redactSensitiveText]) {
+    it.each(Array.from([runnerRedact, debugRedact, redactSensitiveText], (value) => [value]))(
+      "redacts complete multi-segment LangSmith keys without exposing their tails [case %#]",
+      (redactor) => {
+        const token = `lsv2_pt_${"a".repeat(36)}_${"tail".repeat(3)}`;
+
         const redacted = redactor(`provider failed with ${token}`);
         expect(redacted).not.toContain(token);
         expect(redacted).not.toContain("_tailtailtail");
-      }
-    });
+      },
+    );
   });
 
   describe("debug.sh delegates to node when available (#2381)", () => {

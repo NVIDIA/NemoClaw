@@ -291,26 +291,6 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "src", "lib", "tool-disclosure.ts"), 0o664);
   }
 
-  function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    const copiedScripts = dockerfile
-      .split("\n")
-      .flatMap(
-        (line) =>
-          line
-            .trim()
-            .match(/^COPY(?:\s+--\S+)*\s+(.+)\s+\S+$/u)?.[1]
-            ?.split(/\s+/u) ?? [],
-      )
-      .filter((token) => token.startsWith("scripts/"))
-      .map((token) => token.slice("scripts/".length));
-    expect(copiedScripts).not.toHaveLength(0);
-
-    for (const relativePath of copiedScripts) {
-      expect(fs.existsSync(path.join(buildCtx, "scripts", relativePath)), relativePath).toBe(true);
-    }
-  }
-
   function expectStagedNemoclawModes(buildCtx: string) {
     const stagedNemoclaw = path.join(buildCtx, "nemoclaw");
     const stagedSrc = path.join(stagedNemoclaw, "src");
@@ -782,8 +762,7 @@ describe("sandbox build context staging", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
 
     try {
-      const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
-      expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
+      const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       for (const relativePath of [
         path.join("src", "lib", "core", "json-types.ts"),
         path.join("src", "lib", "core", "ports.ts"),

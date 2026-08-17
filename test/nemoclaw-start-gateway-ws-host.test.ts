@@ -571,17 +571,19 @@ describe("gateway dial-back base policy", () => {
     return dialback?.endpoints ?? [];
   }
 
-  it("allowlists the sandbox interface gateway endpoints as raw L4 tunnels", () => {
-    const endpoints = dialbackEndpoints();
-    const byPort = Object.fromEntries(endpoints.map((e) => [e.port as number, e]));
-    for (const port of [18789, 18790]) {
+  it.each([18789, 18790])(
+    "allowlists the sandbox interface gateway endpoints as raw L4 tunnels [%s]",
+    (port) => {
+      const endpoints = dialbackEndpoints();
+      const byPort = Object.fromEntries(endpoints.map((e) => [e.port as number, e]));
+
       expect(byPort[port], `endpoint for port ${port}`).toBeTruthy();
       expect(byPort[port].host).toBe("10.200.0.2");
       // Raw L4 tunnel — a rest endpoint would break the 101 WS upgrade.
       expect(byPort[port].access).toBe("full");
       expect(byPort[port].allowed_ips).toContain("10.200.0.2");
-    }
-  });
+    },
+  );
 
   it("never targets loopback — the proxy always blocks loopback regardless of policy", () => {
     const endpoints = dialbackEndpoints();

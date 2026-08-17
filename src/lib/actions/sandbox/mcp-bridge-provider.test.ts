@@ -98,38 +98,41 @@ alpha-mcp-slack   generic  1                 0
     );
   });
 
-  it("emits only bounded credential revision observations", () => {
+  it.each([
+    { value: undefined, observation: "absent" },
+    { value: "openshell:resolve:env:GITHUB_TOKEN", observation: "canonical" },
+    { value: "openshell:resolve:env:v11_GITHUB_TOKEN", observation: "v11" },
+    { value: "openshell:resolve:env:v0_GITHUB_TOKEN", observation: "v0" },
+  ] as const)("emits the bounded $observation credential revision", ({ value, observation }) => {
     const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
-    for (const [value, observation] of [
-      [undefined, "absent"],
-      ["openshell:resolve:env:GITHUB_TOKEN", "canonical"],
-      ["openshell:resolve:env:v11_GITHUB_TOKEN", "v11"],
-      ["openshell:resolve:env:v0_GITHUB_TOKEN", "v0"],
-    ] as const) {
-      const result = spawnSync("/bin/sh", ["-c", command], {
-        encoding: "utf8",
-        env: value === undefined ? {} : { GITHUB_TOKEN: value },
-      });
-      expect(result.status, value).toBe(0);
-      expect(result.stdout.trim()).toBe(observation);
-      expect(result.stderr).toBe("");
-    }
+    const result = spawnSync("/bin/sh", ["-c", command], {
+      encoding: "utf8",
+      env: value === undefined ? {} : { GITHUB_TOKEN: value },
+    });
+    expect(result.status, value).toBe(0);
+    expect(result.stdout.trim()).toBe(observation);
+    expect(result.stderr).toBe("");
+  });
 
-    for (const value of [
-      "raw-secret",
-      "openshell:resolve:env:v_GITHUB_TOKEN",
-      "openshell:resolve:env:v11_OTHER_TOKEN",
-      "openshell:resolve:env:v11x_GITHUB_TOKEN",
-      `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
-    ]) {
-      const result = spawnSync("/bin/sh", ["-c", command], {
-        encoding: "utf8",
-        env: { GITHUB_TOKEN: value },
-      });
-      expect(result.status, value).not.toBe(0);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toBe("");
-    }
+  it.each([
+    "raw-secret",
+    "openshell:resolve:env:v_GITHUB_TOKEN",
+    "openshell:resolve:env:v11_OTHER_TOKEN",
+    "openshell:resolve:env:v11x_GITHUB_TOKEN",
+    `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_TOKEN`,
+  ])("rejects an unbounded credential revision [case %#]", (value) => {
+    const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
+    const result = spawnSync("/bin/sh", ["-c", command], {
+      encoding: "utf8",
+      env: { GITHUB_TOKEN: value },
+    });
+    expect(result.status, value).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+  });
+
+  it("keeps credential revision observation in memory", () => {
+    const command = buildMcpCredentialRevisionObservationCommand("GITHUB_TOKEN");
     expect(command).not.toMatch(/\/tmp|snapshot|cat\s|exec\s+[0-9]*>/);
   });
 

@@ -136,15 +136,12 @@ describe("agent definitions", () => {
     expect(manifest.expected_version).toBe("0.84.1");
     expect(manifest.runtime.kind).toBe("terminal");
     expect(manifest.config.dir).toBe("/sandbox/.pi/agent");
-    expect(manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path)).toEqual([
-      "sessions",
-      "prompts",
-      "themes",
-    ]);
-    expect(manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path)).toEqual([
-      "tools",
-      "bin",
-    ]);
+    expect(
+      manifest.state_dirs.filter(({ backup }) => backup !== false).map(({ path }) => path),
+    ).toEqual(["sessions", "prompts", "themes"]);
+    expect(
+      manifest.state_dirs.filter(({ backup }) => backup === false).map(({ path }) => path),
+    ).toEqual(["tools", "bin"]);
     expect(manifest.state_files.map((file) => file.path)).toEqual(["settings.json"]);
     const restore = manifest.state_files[0]?.restore as {
       merge?: string;
@@ -294,18 +291,16 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/config\.shields_files/);
   });
 
-  it("rejects invalid forward_ports values in manifests", () => {
-    for (const port of [1023, 70000]) {
-      const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
-      writeTempAgentManifest(
-        agentName,
-        [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", `  - ${port}`].join(
-          "\n",
-        ),
-      );
+  it.each([1023, 70000])("rejects invalid forward_ports value %s in manifests", (port) => {
+    const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", `  - ${port}`].join(
+        "\n",
+      ),
+    );
 
-      expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
-    }
+    expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
   });
 
   it("rejects invalid health_probe.port values in manifests", () => {
@@ -407,23 +402,23 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
   });
 
-  it.each([
-    "42",
-    '"bad model"',
-  ])("rejects invalid inference default models in manifests (%s)", (defaultModel) => {
-    const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
-    writeTempAgentManifest(
-      agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Broken Inference Default",
-        "inference:",
-        `  default_model: ${defaultModel}`,
-      ].join("\n"),
-    );
+  it.each(["42", '"bad model"'])(
+    "rejects invalid inference default models in manifests (%s)",
+    (defaultModel) => {
+      const agentName = `invalid-inference-default-model-${String(Date.now())}-${defaultModel.length}`;
+      writeTempAgentManifest(
+        agentName,
+        [
+          `name: ${agentName}`,
+          "display_name: Broken Inference Default",
+          "inference:",
+          `  default_model: ${defaultModel}`,
+        ].join("\n"),
+      );
 
-    expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
-  });
+      expect(() => loadAgent(agentName)).toThrow(/inference\.default_model/);
+    },
+  );
 
   it("rejects invalid MCP bridge adapter declarations in manifests", () => {
     const agentName = `invalid-mcp-adapter-${String(Date.now())}`;
