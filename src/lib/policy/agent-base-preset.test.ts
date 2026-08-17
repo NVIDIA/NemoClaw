@@ -67,7 +67,7 @@ describe("agent base preset detection", () => {
     expect(isAgentBasePreset("hermes", "pypi")).toBe(true);
   });
 
-  it("keeps a catalog preset outside the Pi baseline so external access stays an explicit choice (#7924)", () => {
+  it("reports pypi and github as non-baseline presets for the Pi policy (#7924)", () => {
     const piPolicy = fs.readFileSync(path.join(AGENTS_DIR, "pi", "policy-additions.yaml"), "utf8");
     const agent = createAgentFixture(piPolicy);
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "pi", agent } as never);

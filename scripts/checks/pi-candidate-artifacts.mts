@@ -12,11 +12,17 @@
  * candidate contract artifact name stays outside the all-agent cohort download
  * pattern.
  *
- * It also binds the accepted Pi trust boundary: the baseline permits only the
- * managed inference route from root-owned image binaries, writable paths stay
- * on the declared sandbox state, non-interactive runs keep passing the flag
- * that ignores project-local resources, and neither the project-trust store nor
- * the project-trust setting can travel through backup and restore.
+ * It also binds the accepted Pi trust boundary:
+ *
+ * - The baseline network policy permits only the managed inference route, and
+ *   only root-owned image binaries carry network capability.
+ * - The read-write paths stay /dev/null, /sandbox, /sandbox/.pi, and /tmp, and
+ *   Landlock stays strict so filesystem policy fails closed.
+ * - Pi runs as the sandbox user and group.
+ * - The headless command passes the flag that ignores project-local resources,
+ *   MCP stays disabled, and device pairing stays off.
+ * - Neither the project-trust store nor the project-trust setting is declared
+ *   in the manifest state that backup and restore carry.
  */
 
 import { createHash } from "node:crypto";
@@ -324,7 +330,7 @@ function verifyFilesystemBoundary(policy: LooseRecord): string[] {
   const readWrite = sortedStrings(filesystem.read_write);
   if (!sameSet(readWrite, APPROVED_READ_WRITE_PATHS)) {
     failures.push(
-      `${PI_POLICY_PATH}: writable paths must stay ${APPROVED_READ_WRITE_PATHS.join(", ")}, found ${readWrite.join(", ") || "none"}`,
+      `${PI_POLICY_PATH}: read-write paths must stay ${APPROVED_READ_WRITE_PATHS.join(", ")}, found ${readWrite.join(", ") || "none"}`,
     );
   }
   if (asRecord(policy.landlock).compatibility !== REQUIRED_LANDLOCK_COMPATIBILITY) {
@@ -352,10 +358,10 @@ function verifyApprovalBoundary(manifest: LooseRecord): string[] {
     );
   }
   if (asRecord(manifest.mcp).support !== "disabled") {
-    failures.push(`${PI_MANIFEST_PATH}: mcp.support must stay disabled for the accepted v1 surface`);
+    failures.push(`${PI_MANIFEST_PATH}: mcp.support must stay disabled`);
   }
   if (manifest.device_pairing !== false) {
-    failures.push(`${PI_MANIFEST_PATH}: device_pairing must stay false for the accepted v1 surface`);
+    failures.push(`${PI_MANIFEST_PATH}: device_pairing must stay false`);
   }
   return failures;
 }

@@ -207,11 +207,11 @@ describe("Pi candidate contract validation", () => {
 });
 
 describe("Pi runtime boundaries", () => {
-  it("accepts the trust boundary committed in this repository (#7924)", () => {
+  it("accepts the Pi trust boundary committed in this repository (#7924)", () => {
     expect(verifyPiTrustBoundary(currentSources())).toEqual([]);
   });
 
-  it("denies a direct provider endpoint added beside the managed route (#7924)", () => {
+  it("rejects a direct provider endpoint added beside the managed route (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.network_policies.managed_inference.endpoints.push({
         host: "api.openai.com",
@@ -221,12 +221,13 @@ describe("Pi runtime boundaries", () => {
         rules: [{ allow: { method: "POST", path: "/v1/chat/completions" } }],
       });
     });
-    expect(verifyPiTrustBoundary(sources)).toContain(
+    expect(verifyPiTrustBoundary(sources)).toEqual([
+      "agents/pi/policy-additions.yaml: managed_inference must declare exactly one endpoint",
       "agents/pi/policy-additions.yaml: the baseline permits only inference.local:443",
-    );
+    ]);
   });
 
-  it("denies a package registry policy the baseline never selected (#7924)", () => {
+  it("rejects a package registry policy added to the Pi baseline (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.network_policies.npm_registry = {
         name: "npm_registry",
@@ -238,7 +239,7 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies network capability to a binary the agent can write (#7924)", () => {
+  it("rejects an agent-writable binary in the network policy (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.network_policies.managed_inference.binaries.push({ path: "/sandbox/agent-proxy" });
     });
@@ -247,7 +248,7 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies a rule that widens the managed route beyond its versioned paths (#7924)", () => {
+  it("rejects a managed inference rule that allows a path outside /v1/ (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.network_policies.managed_inference.endpoints[0].rules.push({
         allow: { method: "GET", path: "/**" },
@@ -258,16 +259,34 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies a container-runtime socket added to the writable paths (#7924)", () => {
+  it("rejects a managed inference endpoint that is observed instead of enforced (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].enforcement = "observe";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: inference.local must stay enforced, not observed",
+    );
+  });
+
+  it("rejects a manifest that enables device pairing (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.device_pairing = true;
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: device_pairing must stay false",
+    );
+  });
+
+  it("rejects a container-runtime socket added to the read-write paths (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.filesystem_policy.read_write.push("/var/run/docker.sock");
     });
     expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
-      "writable paths must stay /dev/null, /sandbox, /sandbox/.pi, /tmp",
+      "read-write paths must stay /dev/null, /sandbox, /sandbox/.pi, /tmp",
     );
   });
 
-  it("denies a relaxed Landlock compatibility that would start with policy unenforced (#7924)", () => {
+  it("rejects a Landlock compatibility that does not fail closed (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.landlock.compatibility = "best-effort";
     });
@@ -276,7 +295,7 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies host control by refusing a privileged process identity (#7924)", () => {
+  it("rejects a root process identity in the Pi policy (#7924)", () => {
     const sources = withPolicy((policy) => {
       policy.process.run_as_user = "root";
     });
@@ -285,7 +304,7 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies a non-interactive command that stops ignoring project-local resources (#7924)", () => {
+  it("rejects a headless command that omits --no-approve (#7924)", () => {
     const sources = withManifest((manifest) => {
       manifest.runtime.headless_command = "pi --print";
     });
@@ -294,16 +313,16 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies an MCP surface the accepted v1 scope excludes (#7924)", () => {
+  it("rejects an enabled MCP surface in the Pi manifest (#7924)", () => {
     const sources = withManifest((manifest) => {
       manifest.mcp.support = "enabled";
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/manifest.yaml: mcp.support must stay disabled for the accepted v1 surface",
+      "agents/pi/manifest.yaml: mcp.support must stay disabled",
     );
   });
 
-  it("denies a project-trust store that a restore could carry into a new sandbox (#7924)", () => {
+  it("rejects a manifest that declares the trust.json project-trust store (#7924)", () => {
     const sources = withManifest((manifest) => {
       manifest.state_files.push({ path: "trust.json" });
     });
@@ -312,7 +331,7 @@ describe("Pi runtime boundaries", () => {
     );
   });
 
-  it("denies a restore allowlist that could widen project trust (#7924)", () => {
+  it("rejects defaultProjectTrust in the restore allowlist (#7924)", () => {
     const sources = withManifest((manifest) => {
       manifest.state_files[0].restore.user_keys.push({
         key: "defaultProjectTrust",
