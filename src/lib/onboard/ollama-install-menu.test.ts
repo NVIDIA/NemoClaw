@@ -15,11 +15,25 @@ function captureOllamaVersions(
   daemonVersion: string | null,
   binaryVersion: string | null,
 ): (command: readonly string[]) => string {
-  const responses = new Map([
-    ["curl", daemonVersion ? JSON.stringify({ version: daemonVersion }) : ""],
-    ["ollama", binaryVersion ? `ollama version is ${binaryVersion}` : ""],
+  const responses = new Map<string, string>([
+    [
+      JSON.stringify([
+        "curl",
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        "http://127.0.0.1:11434/api/version",
+      ]),
+      daemonVersion ? JSON.stringify({ version: daemonVersion }) : "",
+    ],
+    [
+      JSON.stringify(["ollama", "--version"]),
+      binaryVersion ? `ollama version is ${binaryVersion}` : "",
+    ],
   ]);
-  return (command) => responses.get(command[0] ?? "") ?? "";
+  return (command) => responses.get(JSON.stringify(command)) ?? "";
 }
 
 describe("resolveRunningOllamaMenuEntry", () => {
