@@ -131,6 +131,13 @@ describe("migration snapshot sanitizer fallbacks", () => {
     ).toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
   });
 
+  it("keeps the generic error when the helper ran and failed (#8202)", () => {
+    const error = snapshotSanitizerFailure("helper-failed", "generic helper failure");
+
+    expect(error).not.toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
+    expect(error.message).toBe("generic helper failure");
+  });
+
   it("fails closed when the descriptor install helper is unavailable", () => {
     const root = inspectDescriptorSnapshotRoot(makeRoot());
     expect(root).not.toBeNull();
