@@ -573,16 +573,17 @@ describe("portable demo sandbox lifecycle", () => {
     expect(fs.existsSync(receiptPath)).toBe(false);
   });
 
-  it("refuses missing or duplicate portable containers before privileged exec (#8584)", () => {
-    for (const matches of [[], [CONTAINER_ID, "b".repeat(64)]]) {
+  it.each([[], [CONTAINER_ID, "b".repeat(64)]].map((matches) => [matches] as const))(
+    "refuses missing or duplicate portable containers before privileged exec [case %#] (#8584)",
+    (matches) => {
       const stateDir = temporaryStateDir();
       const runtime = createPodman();
       installReceipt(stateDir, runtime.podman);
       runtime.setMatches(matches);
 
       expect(() => resolveTarget(stateDir, runtime)).toThrow(`found ${matches.length}`);
-    }
-  });
+    },
+  );
 
   it("refuses renamed or relabeled portable containers before privileged exec (#8584)", () => {
     const stateDir = temporaryStateDir();
