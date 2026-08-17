@@ -1876,8 +1876,9 @@ An empty body, malformed JSON, provider-error envelope, or wrong response shape 
 The probe captures at most 64 KiB and does not include the response body in diagnostics.
 The route probe treats any final HTTP status from `200` through `499` as reachable, so a route with an invalidated provider credential answers HTTP `401` while the route is up.
 The request uses the live gateway route's provider and model, and falls back to the recorded values when the live route is unreadable.
-When the live provider and model match the recorded route, the request also uses the sandbox's recorded API family, including `openai-responses`.
-During route drift, NemoClaw does not carry the sandbox's recorded API family to the live provider and model.
+When the live provider matches the recorded provider, the request uses the sandbox's recorded API family, even when only the model differs.
+This includes `openai-responses`.
+When the live provider differs, NemoClaw does not carry the recorded API family to the live provider.
 An ordinary run sends one 16-token request through the stored provider credential, with a 30-second timeout, and consumes provider tokens on a hosted route.
 When the same `status` run recovers a managed gateway, it retries the route and inference request together up to three total attempts, with a two-second delay between failed attempts.
 Each attempt can consume another 16 tokens on a hosted route.

@@ -190,13 +190,12 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
   });
 
   /**
-   * Capture the route the in-sandbox invocation probe is asked to exercise.
-   * The probe reports the health that decides `status --json`'s exit code.
+   * The probe stub rejects a request that does not contain every expected route field.
    */
-  async function captureInvocationRoute(
+  async function collectInferenceHealth(
     entry: Partial<SandboxEntry>,
-  ): Promise<Record<string, unknown> | null> {
-    let seen: Record<string, unknown> | null = null;
+    expectedRoute: Record<string, unknown>,
+  ) {
     const sandbox = {
       name: "alpha",
       agent: "openclaw",
@@ -204,7 +203,7 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
       gatewayName: "nemoclaw",
       ...entry,
     } as SandboxEntry;
-    await collectSandboxStatusSnapshot("alpha", {
+    const snapshot = await collectSandboxStatusSnapshot("alpha", {
       deps: {
         getSandbox: () => sandbox,
         listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
@@ -217,12 +216,14 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
           httpStatus: 200,
         }),
         probeSandboxInferenceInvocationImpl: (input: Record<string, unknown>) => {
-          seen = input;
-          return { ok: true };
+          const accepted = Object.entries(expectedRoute).every(
+            ([key, value]) => input[key] === value,
+          );
+          return accepted ? { ok: true } : { ok: false, reason: "unexpected invocation route" };
         },
       },
     } as never);
-    return seen;
+    return snapshot.inferenceHealth;
   }
 
   const recorded = {
@@ -234,36 +235,43 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
   } satisfies Partial<SandboxEntry>;
 
   it("keeps the recorded API family when only the model drifted", async () => {
-    // The recorded family describes the provider, which has not changed, so
+    // The recorded API family describes the provider, which has not changed, so
     // dropping it would probe /v1/chat/completions against a responses-only
     // endpoint and report a healthy route as unhealthy.
     liveGatewayInference("compatible-endpoint", "live/model");
 
-    expect(await captureInvocationRoute(recorded)).toMatchObject({
-      provider: "compatible-endpoint",
-      model: "live/model",
-      preferredInferenceApi: "openai-responses",
-    });
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "compatible-endpoint",
+        model: "live/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ).toMatchObject({ ok: true, probed: true });
   });
 
   it("keeps the recorded API family when the route is aligned", async () => {
     liveGatewayInference("compatible-endpoint", "recorded/model");
 
-    expect(await captureInvocationRoute(recorded)).toMatchObject({
-      model: "recorded/model",
-      preferredInferenceApi: "openai-responses",
-    });
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "compatible-endpoint",
+        model: "recorded/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ).toMatchObject({ ok: true, probed: true });
   });
 
   it("drops the recorded API family when the provider itself drifted", async () => {
-    // Regression lock: one provider's family must never be carried onto
-    // another that may have no such endpoint.
+    // A provider change must remove the recorded API family because the live
+    // provider might not implement it.
     liveGatewayInference("nvidia-prod", "nvidia/nemotron");
 
-    expect(await captureInvocationRoute(recorded)).toMatchObject({
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron",
-      preferredInferenceApi: null,
-    });
+    expect(
+      await collectInferenceHealth(recorded, {
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron",
+        preferredInferenceApi: null,
+      }),
+    ).toMatchObject({ ok: true, probed: true });
   });
 });
