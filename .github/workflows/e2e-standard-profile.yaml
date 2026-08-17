@@ -12,6 +12,9 @@ on:
       candidate_sha:
         required: true
         type: string
+      managed_image_revision:
+        required: true
+        type: string
       risk_signal_expected_sha:
         required: true
         type: string
@@ -107,6 +110,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
       NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.risk_signal_correlation_id }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
       NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: ${{ inputs.risk_signal_expected_sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}
     steps:

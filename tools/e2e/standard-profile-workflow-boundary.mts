@@ -144,6 +144,8 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
     for (const [name, expected] of Object.entries({
       candidate_repository: "${{ inputs.checkout_repository || github.repository }}",
       candidate_sha: "${{ inputs.checkout_sha || github.sha }}",
+      managed_image_revision:
+        "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}",
       risk_signal_expected_sha:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}",
       risk_signal_correlation_id:
@@ -193,6 +195,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const requiredInputs = {
     candidate_repository: "string",
     candidate_sha: "string",
+    managed_image_revision: "string",
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
@@ -267,6 +270,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
+    E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
     NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: "${{ inputs.risk_signal_expected_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: "${{ inputs.candidate_sha }}",
   };

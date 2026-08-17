@@ -109,6 +109,12 @@ export function shouldActivateStockManagedRuntime(input: {
   return !input.portableLifecycle && isShippedManagedImageAgent(input.agentName);
 }
 
+function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): string | null {
+  if (environment.GITHUB_ACTIONS !== "true") return null;
+  const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  return revision ? revision : null;
+}
+
 export function assertPortableManagedBootstrapNotSelected(
   portableLifecycle: boolean,
   managedBootstrapSelected: boolean,
@@ -180,6 +186,7 @@ export function createManagedWorkloadOnboardRuntime(
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
           catalogPath: input.tempManagedRuntimeCatalog,
+          catalogRevision: liveE2eManagedImageRevision(input.startupProfile.environment),
           acceptedCandidateContract: isCandidateAgent(input.agentName)
             ? readCandidateQualificationReceipt(input.agentName)
             : null,

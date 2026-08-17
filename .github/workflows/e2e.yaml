@@ -79,7 +79,7 @@ on:
         default: ""
         type: string
       base_sha:
-        description: Optional lowercase PR base SHA for manual exact-revision E2E.
+        description: Optional lowercase PR base SHA for manual exact-revision E2E or an existing managed-image cohort for direct branch qualification.
         required: false
         default: ""
         type: string
@@ -107,6 +107,7 @@ concurrency:
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
+  E2E_MANAGED_IMAGE_REVISION: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}
   NEMOCLAW_E2E_SHARD: default
 
 jobs:
@@ -538,6 +539,22 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate branch managed-image revision
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha != '' }}
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" ]] || { echo "::error::managed-image qualification must run in NVIDIA/NemoClaw" >&2; exit 1; }
+          [[ "$REF" == refs/heads/* ]] || { echo "::error::managed-image qualification must run from a branch" >&2; exit 1; }
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::managed-image qualification requires exact commit SHAs" >&2; exit 1; }
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] || { echo "::error::managed-image qualification checkout changed" >&2; exit 1; }
+          git merge-base --is-ancestor "$BASE_SHA" "$CANDIDATE_SHA" || { echo "::error::managed-image qualification revision is not an ancestor of the branch" >&2; exit 1; }
 
       - name: Validate manual PR checkout
         if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
@@ -2850,6 +2867,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -2889,6 +2907,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -2929,6 +2948,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -2969,6 +2989,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
@@ -3009,6 +3030,7 @@ jobs:
     with:
       candidate_repository: ${{ inputs.checkout_repository || github.repository }}
       candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      managed_image_revision: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || '' }}
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
