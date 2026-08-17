@@ -16,6 +16,7 @@ import {
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { setupMessagingChannels } from "../../messaging-channel-setup";
+import { getActiveChannelsFromPlan } from "../../messaging-plan-session";
 import {
   hasMessagingCredentialDrift,
   reconcileReusedSandboxMessaging,
@@ -183,6 +184,21 @@ function discordPlan(credentialHash: string): SandboxMessagingPlan {
         credentialHash,
       },
     ],
+  };
+}
+
+function withChannelDisabled(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+): SandboxMessagingPlan {
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) =>
+      channel.channelId === channelId
+        ? { ...channel, active: false, selected: false, disabled: true }
+        : channel,
+    ),
+    disabledChannels: [...new Set([...plan.disabledChannels, channelId])],
   };
 }
 
@@ -480,7 +496,84 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
 
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
-    expect(result).toEqual({ plan: registryPlan, selectedChannels: [] });
+    expect(result).toEqual({
+      plan: withChannelDisabled(registryPlan, "discord"),
+      selectedChannels: [],
+    });
+  });
+
+  it("records the removal in the plan so a later reader cannot re-enable it (#9283)", async () => {
+    const registryPlan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(getActiveChannelsFromPlan(result.plan)).toEqual([]);
+    expect(result.plan?.disabledChannels).toEqual(["discord"]);
+    expect(deps.note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
+  });
+
+  it("omits a removed host-backed channel from a lifecycle-workflow registry plan (#9283)", async () => {
+    const registryPlan = {
+      ...discordPlan(hashCredential("previous-discord-token") ?? ""),
+      workflow: "add-channel" as const,
+    };
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      plan: withChannelDisabled(registryPlan, "discord"),
+      selectedChannels: [],
+    });
+  });
+
+  it("keeps a still-configured channel in a lifecycle-workflow registry plan (#9283)", async () => {
+    const token = "still-configured-discord-token";
+    const registryPlan = {
+      ...discordPlan(hashCredential(token) ?? ""),
+      workflow: "add-channel" as const,
+    };
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", token);
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(result.selectedChannels).toEqual(["discord"]);
+    expect(result.plan?.disabledChannels).toEqual([]);
   });
 
   it("omits a removed host-backed channel from a completed registry resume (#9109)", async () => {
@@ -501,7 +594,10 @@ describe("reconcileSandboxMessaging plan authority", () => {
     });
 
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
-    expect(result).toEqual({ plan: registryPlan, selectedChannels: [] });
+    expect(result).toEqual({
+      plan: withChannelDisabled(registryPlan, "discord"),
+      selectedChannels: [],
+    });
   });
 
   it("keeps an in-sandbox QR channel in a completed registry resume (#9109)", async () => {

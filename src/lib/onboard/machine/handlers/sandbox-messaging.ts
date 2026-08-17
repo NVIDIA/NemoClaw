@@ -225,6 +225,7 @@ function selectionFromReusablePlan<Agent>(
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
+  note?: (message: string) => void,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -238,11 +239,37 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     ),
   );
   if (unconfiguredChannels.size === 0) return selection;
+  note?.(
+    `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
+  );
   return {
-    ...selection,
+    plan: disableChannelsInPlan(selection.plan, unconfiguredChannels),
     selectedChannels: selection.selectedChannels.filter(
       (channelId) => !unconfiguredChannels.has(channelId),
     ),
+  };
+}
+
+/**
+ * Record the removal in the plan itself, not only in the selection derived from
+ * it. The plan is what reaches the registry and the next run, so a selection
+ * that alone drops the channel leaves every later reader to rediscover the
+ * removal from host inputs — and a reader that cannot, keeps the channel's
+ * network egress applied.
+ */
+function disableChannelsInPlan(
+  plan: SandboxMessagingPlan | null,
+  channelIds: ReadonlySet<string>,
+): SandboxMessagingPlan | null {
+  if (!plan) return null;
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) =>
+      channelIds.has(channel.channelId)
+        ? { ...channel, active: false, selected: false, disabled: true }
+        : channel,
+    ),
+    disabledChannels: [...new Set([...plan.disabledChannels, ...channelIds])],
   };
 }
 
@@ -385,7 +412,14 @@ async function selectionFromRegistryPlan<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
   if (registryPlanRecordsLifecycleSelection(registryPlan)) {
-    return selectionFromReusablePlan(registryPlan, options.agent, true, options.deps);
+    // A lifecycle command owns which channels the operator asked for, but not
+    // whether the host still configures them. Onboarding re-reads the host
+    // either way, so the same removal check applies here.
+    return filterUnconfiguredHostChannelsFromSelection(
+      selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
+      options.agent,
+      options.deps.note,
+    );
   }
   const activeChannels = filterChannelNamesForCurrentAgent(
     getActiveChannelsFromPlan(registryPlan),
@@ -412,6 +446,7 @@ async function selectionFromRegistryPlan<Agent>(
     return filterUnconfiguredHostChannelsFromSelection(
       selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
       options.agent,
+      options.deps.note,
     );
   }
   options.deps.note(
@@ -607,7 +642,11 @@ async function selectionFromRegistryAuthority<Agent>(
       authority.plan,
       false,
     );
-    return filterUnconfiguredHostChannelsFromSelection(selection, options.agent);
+    return filterUnconfiguredHostChannelsFromSelection(
+      selection,
+      options.agent,
+      options.deps.note,
+    );
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);
   options.deps.clearPlanEnv();
