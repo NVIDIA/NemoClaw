@@ -301,17 +301,20 @@ test/e2e/
   the administrator must review and authorize the exact commit, including the
   workflow and every action or script that the commit loads.
 
-  The candidate workflow commit can access each repository secret granted to
-  the workflow. The runner-only privileged preparation step receives the
-  long-lived `NVIDIA_API_KEY` repository secret in its environment. It
-  uses the key to create runner-local registry authentication and pull pinned
-  GPU images. The step then deletes the registry authentication and unsets the
-  environment variable before it downloads public model files or runs candidate
-  code. These actions remove runner-local access but do not revoke the key. The
-  key remains valid in the issuing NVIDIA service until it expires or that
-  service revokes it. If exposure occurs or cleanup cannot be confirmed, revoke
-  or rotate the key in the issuing NVIDIA service. Verify that the old value is
-  invalid.
+  On the source-branch path, every repository secret received by the
+  workflow is accessible to candidate workflow code. In the reviewed workflow,
+  the host-side preparation step receives the long-lived `NVIDIA_API_KEY`
+  repository secret in its environment. It creates runner-local registry
+  authentication and pulls pinned GPU images. It then deletes the registry
+  authentication file and unsets the variable before the separate candidate
+  installer or live-test process starts. The preparation step is itself
+  candidate-controlled workflow code on this path. It can read or copy the key
+  before cleanup, so cleanup does not prevent exposure. Cleanup removes
+  runner-local registry authentication but does not revoke the key. The key
+  remains valid in the issuing NVIDIA service until it expires or that service
+  revokes it. If exposure occurs or cleanup cannot be confirmed, revoke the key
+  in the issuing NVIDIA service. Alternatively, rotate the key and invalidate
+  the old value. Verify that the old value is invalid.
 
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
