@@ -60,6 +60,13 @@ function gateSteps(value: MutableWorkflow): MutableStep[] {
   );
 }
 
+function gateStep(value: MutableWorkflow, name: string): MutableStep {
+  return required(
+    gateSteps(value).find((step) => step.name === name),
+    `base-image-publication test fixture is missing step ${name}`,
+  );
+}
+
 function runClassifier(environment: {
   checkoutSha: string;
   eventName: string;
@@ -180,10 +187,18 @@ describe("base-image publication workflow boundary (#7372)", () => {
         gateSteps(value)[3].run = "node tools/e2e/base-image-publication.mts";
       },
     ],
-    ["contract download command", (value) => (gateSteps(value)[4].run = "node unreviewed.mts")],
+    [
+      "contract download command",
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").run =
+          "node unreviewed.mts"),
+    ],
     [
       "contract run binding",
-      (value) => (gateSteps(value)[4].env!.PUBLICATION_RUN_ID = "${{ github.run_id }}"),
+      (value) =>
+        (gateStep(value, "Download immutable Deep Agents Code base contract").env![
+          "PUBLICATION_RUN_ID"
+        ] = "${{ github.run_id }}"),
     ],
     [
       "contract validation",

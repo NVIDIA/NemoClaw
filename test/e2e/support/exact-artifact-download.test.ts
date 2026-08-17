@@ -73,15 +73,27 @@ describe("exact artifact download (#9340)", () => {
   });
 
   it.each([
-    ["expired", { expired: true }],
-    ["artifact id", { id: 9002 }],
-    ["name", { name: "another-artifact" }],
-    ["digest", { digest: "sha256:invalid" }],
-    ["run", { workflow_run: { id: 7002, head_sha: EXPECTED.headSha } }],
-    ["head", { workflow_run: { id: EXPECTED.runId, head_sha: "b".repeat(40) } }],
-    ["archive URL", { archive_download_url: "https://example.com/artifact.zip" }],
-  ])("rejects %s identity drift", (_field, overrides) => {
-    expect(() => bindExactArtifact(metadata(archive(), overrides), EXPECTED)).toThrow();
+    ["expired", { expired: true }, "non-expired"],
+    ["artifact id URL", { id: 9002 }, "archive URL does not match artifact id"],
+    ["name", { name: "another-artifact" }, "missing or ambiguous"],
+    ["digest", { digest: "sha256:invalid" }, "digest is invalid"],
+    [
+      "run",
+      { workflow_run: { id: 7002, head_sha: EXPECTED.headSha } },
+      "producer run does not match",
+    ],
+    [
+      "head",
+      { workflow_run: { id: EXPECTED.runId, head_sha: "b".repeat(40) } },
+      "producer head does not match",
+    ],
+    [
+      "archive URL",
+      { archive_download_url: "https://example.com/artifact.zip" },
+      "archive URL does not match artifact id",
+    ],
+  ])("rejects %s identity drift", (_field, overrides, message) => {
+    expect(() => bindExactArtifact(metadata(archive(), overrides), EXPECTED)).toThrow(message);
   });
 
   it("rejects ambiguous artifact metadata", () => {
@@ -176,6 +188,54 @@ describe("exact artifact download (#9340)", () => {
       downloadBoundArtifact(identity(expectedBytes), "token", { fetchImpl }),
     ).rejects.toThrow("digest");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a content-length mismatch", async () => {
+    const bytes = archive();
+    const fetchImpl = vi
+      .fn<(input: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(new Uint8Array(bytes), {
+          headers: { "content-length": String(bytes.length + 1) },
+        }),
+      );
+    await expect(downloadBoundArtifact(identity(bytes), "token", { fetchImpl })).rejects.toThrow(
+      "content length",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops an unbounded response stream before retaining oversized content", async () => {
+    const bytes = archive();
+    const fetchImpl = vi
+      .fn<(input: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(new Response(new Uint8Array(Buffer.concat([bytes, Buffer.from("x")]))));
+    await expect(downloadBoundArtifact(identity(bytes), "token", { fetchImpl })).rejects.toThrow(
+      "content size",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [{ attempts: 0 }, "attempts must be between"],
+    [{ attempts: 4 }, "attempts must be between"],
+    [{ timeoutMs: 0 }, "timeout must be between"],
+    [{ timeoutMs: 20_001 }, "timeout must be between"],
+  ])("rejects invalid download bounds without a request", async (options, message) => {
+    const fetchImpl = vi.fn<(input: string, init: RequestInit) => Promise<Response>>();
+    await expect(
+      downloadBoundArtifact(identity(), "token", { ...options, fetchImpl }),
+    ).rejects.toThrow(message);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a multiline token without exposing or sending it", async () => {
+    const fetchImpl = vi.fn<(input: string, init: RequestInit) => Promise<Response>>();
+    const token = "secret-token\nsecond-line";
+    const failure = downloadBoundArtifact(identity(), token, { fetchImpl });
+    await expect(failure).rejects.toThrow("single-line value");
+    await expect(failure).rejects.not.toThrow(/secret-token|second-line/u);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("rejects malformed archives before writing a contract", () => {

@@ -25,6 +25,8 @@ const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 type JsonRecord = Record<string, unknown>;
 
+class TerminalArtifactContentError extends Error {}
+
 export interface ExactArtifactExpectation {
   headSha: string;
   runAttempt: number;
@@ -48,6 +50,7 @@ export interface ArtifactDownloadOptions {
   timeoutMs?: number;
 }
 
+/** Require an untrusted metadata value to be a plain JSON record. */
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a JSON object`);
@@ -55,6 +58,7 @@ function record(value: unknown, label: string): JsonRecord {
   return value as JsonRecord;
 }
 
+/** Parse a positive safe integer from untrusted metadata. */
 function positiveInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) {
     throw new Error(`${label} must be a positive integer`);
@@ -62,14 +66,20 @@ function positiveInteger(value: unknown, label: string): number {
   return Number(value);
 }
 
+/** Derive the immutable contract artifact name for one publication attempt. */
 export function exactArtifactName(expected: ExactArtifactExpectation): string {
   return `managed-base-${expected.runId}-${expected.runAttempt}-langchain-deepagents-code`;
 }
 
+/** Bind exactly one artifact and validate every immutable producer attribute. */
 export function bindExactArtifact(
   value: unknown,
   expected: ExactArtifactExpectation,
 ): BoundArtifactIdentity {
+  positiveInteger(expected.runId, "expected run id");
+  positiveInteger(expected.runAttempt, "expected run attempt");
+  if (!SHA_PATTERN.test(expected.headSha)) throw new Error("expected head SHA is invalid");
+
   const page = record(value, "artifact response");
   if (!Array.isArray(page.artifacts)) throw new Error("artifact response must contain artifacts");
   const expectedName = exactArtifactName(expected);
@@ -91,20 +101,15 @@ export function bindExactArtifact(
   } catch {
     throw new Error("artifact archive URL is invalid");
   }
-  if (
-    expected.runId !== positiveInteger(expected.runId, "expected run id") ||
-    expected.runAttempt !== positiveInteger(expected.runAttempt, "expected run attempt") ||
-    !SHA_PATTERN.test(expected.headSha) ||
-    artifact.expired !== false ||
-    run.id !== expected.runId ||
-    run.head_sha !== expected.headSha ||
-    typeof artifact.digest !== "string" ||
-    !DIGEST_PATTERN.test(artifact.digest) ||
-    size > MAX_ARCHIVE_BYTES ||
-    archiveUrl.origin !== API_ROOT ||
-    archiveUrl.pathname !== archivePath
-  ) {
-    throw new Error("exact artifact identity is invalid");
+  if (artifact.expired !== false) throw new Error("artifact must be non-expired");
+  if (run.id !== expected.runId) throw new Error("artifact producer run does not match");
+  if (run.head_sha !== expected.headSha) throw new Error("artifact producer head does not match");
+  if (typeof artifact.digest !== "string" || !DIGEST_PATTERN.test(artifact.digest)) {
+    throw new Error("artifact digest is invalid");
+  }
+  if (size > MAX_ARCHIVE_BYTES) throw new Error("artifact size exceeds the archive limit");
+  if (archiveUrl.origin !== API_ROOT || archiveUrl.pathname !== archivePath) {
+    throw new Error("artifact archive URL does not match artifact id");
   }
   return {
     ...expected,
@@ -116,6 +121,7 @@ export function bindExactArtifact(
   };
 }
 
+/** Calculate bounded server-directed or linear retry delay. */
 function retryDelay(response: Response, attempt: number, now: () => number): number {
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter && /^(0|[1-9][0-9]*)$/u.test(retryAfter)) {
@@ -130,10 +136,37 @@ function retryDelay(response: Response, attempt: number, now: () => number): num
   return Math.min(attempt * 1000, MAX_RETRY_DELAY_MS);
 }
 
+/** Classify the narrow HTTP status allowlist eligible for content retry. */
 function isTransientStatus(status: number): boolean {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+/** Read one response stream without retaining bytes beyond the bound identity size. */
+async function readBoundedResponseBody(response: Response, expectedSize: number): Promise<Buffer> {
+  if (!response.body) throw new TerminalArtifactContentError("artifact response body is missing");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > expectedSize || total > MAX_ARCHIVE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new TerminalArtifactContentError(
+          "artifact content size does not match the bound identity",
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+/** Download a bound artifact with narrow retries and fail-closed integrity checks. */
 export async function downloadBoundArtifact(
   identity: BoundArtifactIdentity,
   token: string,
@@ -202,8 +235,9 @@ export async function downloadBoundArtifact(
     }
     let archive: Buffer;
     try {
-      archive = Buffer.from(await response.arrayBuffer());
-    } catch {
+      archive = await readBoundedResponseBody(response, identity.size);
+    } catch (error) {
+      if (error instanceof TerminalArtifactContentError) throw error;
       const terminal = attempt === attempts;
       log(
         `artifact-content-read attempt=${attempt} class=transport outcome=${terminal ? "exhausted" : "retry"}`,
@@ -228,6 +262,7 @@ export async function downloadBoundArtifact(
   throw new Error("artifact content read failed unexpectedly");
 }
 
+/** Extract the sole bounded contract file from a validated artifact ZIP. */
 export function materializeContractArchive(archive: Buffer, outputDirectory: string): string {
   const entries = listValidatedArtifactZipEntries(archive, { maxEntries: 2 });
   if (JSON.stringify(entries) !== JSON.stringify([CONTRACT_FILE])) {
@@ -245,11 +280,13 @@ export function materializeContractArchive(archive: Buffer, outputDirectory: str
   return contractPath;
 }
 
+/** Read one required positive integer environment value. */
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
 }
 
+/** Resolve, download, and materialize the exact publication contract artifact. */
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
   if (argv.length !== 1) throw new Error("expected one artifact output directory");
   const token = env.GITHUB_TOKEN ?? "";
