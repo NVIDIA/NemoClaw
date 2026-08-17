@@ -180,8 +180,10 @@ setupNim(null).then(
         assert.equal(result.status, 0, result.stderr);
         assert.deepEqual(JSON.parse(result.stdout.trim()), { exitCode: 1 });
         assert.match(result.stderr, expectedMessage);
-        // The rejection must not echo the unsafe input back to the terminal.
+        // The rejection must not echo the unsafe input back to the terminal,
+        // including through JSON-style escaping of control characters.
         assert.ok(!result.stderr.includes(endpointUrl));
+        assert.ok(!result.stderr.includes(JSON.stringify(endpointUrl).slice(1, -1)));
         // The QA contract (#9301): rejection fires before any network request
         // or persistent state write, so the environment stays unchanged.
         assert.ok(!fs.existsSync(curlMarkerPath));
