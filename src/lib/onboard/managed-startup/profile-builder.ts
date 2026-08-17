@@ -67,7 +67,7 @@ const EXPECTED_AFFORDANCE_INVENTORY_SHA256 = {
   openclaw: "9b722441e33f0b0d7580f74cd185c0174979de9c1a784556ff56ff931b2c9904",
   hermes: "26c2dc3750274e5c2a79bf382a4b18b3cf26c0ef64938e91b694427aa23756e8",
   "langchain-deepagents-code": "08c75cf22495ec93a090bc5b70544eac65970e658b10fba057dea5ffef502e4a",
-  pi: "195e7f361cf83f2fee7b896579c3ceb680498645368920b42e3b951244e5e08a",
+  pi: "6302d387182c596fd67ad18577ecf82107bad6271aeeb5e69714115f91557abb",
 } as const satisfies Record<ManagedStartupAgent, string>;
 
 const INVENTORY_INPUTS = new Set(
@@ -207,9 +207,9 @@ function parseOpenClawOtelEnabled(environment: NodeJS.ProcessEnv): boolean {
   return raw !== null && !FALSE_VALUES.has(raw.toLowerCase());
 }
 
-function parseReasoning(environment: NodeJS.ProcessEnv): boolean {
+function parseReasoning(environment: NodeJS.ProcessEnv): boolean | null {
   const raw = presentEnvironmentValue(environment, "NEMOCLAW_REASONING");
-  if (raw === null) return false;
+  if (raw === null) return null;
   if (raw === "true") return true;
   if (raw === "false") return false;
   fail('NEMOCLAW_REASONING must be "true" or "false"');
@@ -529,6 +529,20 @@ function assertAgentSpecificInput(input: ManagedStartupProfileBuilderInput): voi
       input.observabilityEnabled !== null
     ) {
       fail("Hermes input contains state owned by another agent");
+    }
+    return;
+  }
+  if (input.agent === "pi") {
+    if (
+      input.webSearch !== null ||
+      input.hermesToolGateways.length > 0 ||
+      input.messagingPlan !== null ||
+      input.inference.compatibility !== null ||
+      input.inference.upstreamEndpointUrl !== null ||
+      input.dcodeAutoApprovalMode !== null ||
+      input.observabilityEnabled !== null
+    ) {
+      fail("Pi input contains state owned by another agent");
     }
     return;
   }
@@ -897,7 +911,7 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
           "NEMOCLAW_MAX_TOKENS",
           DEFAULT_OPENCLAW_MAX_TOKENS,
         ) ?? DEFAULT_OPENCLAW_MAX_TOKENS,
-      reasoning: parseReasoning(input.environment),
+      reasoning: parseReasoning(input.environment) ?? false,
       reasoningEffort: parseReasoningEffort(input.environment),
     };
   } else if (input.agent === "hermes") {
@@ -915,9 +929,11 @@ function buildCandidate(input: ManagedStartupProfileBuilderInput): {
   } else if (input.agent === "pi") {
     agentConfig = { agent: "pi" };
     tuning = {
-      contextWindow: null,
-      maxTokens: null,
-      reasoning: null,
+      contextWindow: parsePositiveInteger(input.environment, "NEMOCLAW_CONTEXT_WINDOW", null, {
+        maximum: MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+      }),
+      maxTokens: parsePositiveInteger(input.environment, "NEMOCLAW_MAX_TOKENS", null),
+      reasoning: parseReasoning(input.environment),
       reasoningEffort: null,
     };
   } else {
