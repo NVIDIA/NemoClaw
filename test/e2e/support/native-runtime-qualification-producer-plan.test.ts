@@ -98,16 +98,16 @@ describe("native runtime qualification producer plan", () => {
     ).toBe(true);
   });
 
-  it("accepts an exact candidate workflow SHA for administrator-authorized execution", () => {
+  it("rejects a candidate workflow SHA as qualification authority", () => {
     const baseInput = input();
     const candidateWorkflow = {
       ...baseInput,
       source: { ...baseInput.source, workflowSha: CANDIDATE_SHA },
     } satisfies NativeRuntimeQualificationProducerPlanInput;
-    const plan = buildNativeRuntimeQualificationProducerPlan(candidateWorkflow);
 
-    expect(plan.include).toHaveLength(24);
-    expect(plan.include.every((entry) => entry.source.workflowSha === CANDIDATE_SHA)).toBe(true);
+    expect(() => buildNativeRuntimeQualificationProducerPlan(candidateWorkflow)).toThrow(
+      "Native runtime qualification producer source is invalid",
+    );
   });
 
   it.each([

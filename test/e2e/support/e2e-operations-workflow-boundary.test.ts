@@ -492,61 +492,19 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     },
   );
 
-  it.each([
-    ["admin", "refs/heads/feat/native", 0, ""],
-    ["maintain", "refs/heads/feat/native", 1, "requires a repository administrator"],
-    ["admin", "refs/heads/feat/other", 1, "must match the PR source branch"],
-  ])(
-    "requires the latest commit on an administrator-authorized PR source branch for %s on %s",
-    (role, workflowRef, expectedStatus, expectedStderr) => {
-      const workflow = readE2eOperationsWorkflow();
-      const authentication = workflow.jobs["generate-matrix"].steps!.find(
-        (step) => step.name === "Authenticate manual PR dispatch",
-      )!;
-      const headSha = "a".repeat(40);
-      const baseSha = "b".repeat(40);
-      const prefix = [
-        "curl() {",
-        '  case "${@: -1}" in',
-        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
-        `    *pulls/42) printf '%s' '{"state":"open","head":{"ref":"feat/native","repo":{"full_name":"NVIDIA/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
-        "    *) return 1 ;;",
-        "  esac",
-        "}",
-      ].join("\n");
-      const result = spawnSync(
-        "bash",
-        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            ACTOR: "administrator",
-            ALLOW_JETSON_DISPATCH: "false",
-            BASE_SHA: baseSha,
-            CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
-            CHECKOUT_SHA: headSha,
-            EXPECTED_WORKFLOW_SHA: headSha,
-            GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-            GITHUB_TOKEN: "token",
-            INCLUDE_LAUNCHABLE: "false",
-            JOBS: "native-runtime-qualification-producer",
-            PR_NUMBER: "42",
-            REVIEW_REASON: "Administrator candidate execution",
-            RUN_ATTEMPT: "1",
-            TARGETS: "",
-            TRIGGERING_ACTOR: "administrator",
-            WORKFLOW_EVENT: "workflow_dispatch",
-            WORKFLOW_REF: workflowRef,
-            WORKFLOW_SHA: headSha,
-          },
-        },
-      );
+  it("rejects candidate-workflow qualification when a downstream job receives a repository secret", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const plan = workflow.jobs["native-runtime-qualification-producer-plan"];
+    const producer = workflow.jobs["native-runtime-qualification-producer"];
 
-      expect(result.status, result.stderr).toBe(expectedStatus);
-      expect(result.stderr).toContain(expectedStderr);
-    },
-  );
+    expect(JSON.stringify(producer)).toContain("${{ secrets.NVIDIA_API_KEY }}");
+    plan.if =
+      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && (github.ref == 'refs/heads/main' || github.workflow_sha == inputs.checkout_sha) && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Native runtime qualification producer plan must execute only from trusted main",
+    );
+  });
 
   it("uses central maintainer authorization for protected managed-image qualification", () => {
     const workflow = readE2eOperationsWorkflow();

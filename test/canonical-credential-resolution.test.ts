@@ -99,8 +99,9 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
     },
   ];
 
-  for (const { name, credentialEnv, value } of providers) {
-    it(`resolves ${credentialEnv} (${name}) from credentials.json when not in env`, async () => {
+  it.each(providers)(
+    "resolves $credentialEnv ($name) from credentials.json when not in env",
+    async ({ credentialEnv, value }) => {
       const tmpDir = createFixtureHome(credentialEnv, value);
       // Ensure env does NOT have the key
       vi.stubEnv(credentialEnv, "");
@@ -111,8 +112,8 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
 
       expect(result).toBe(value);
       expect(process.env[credentialEnv]).toBe(value);
-    });
-  }
+    },
+  );
 
   it("returns env value when only in process.env", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2306-envonly-"));

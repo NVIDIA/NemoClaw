@@ -35,16 +35,6 @@ const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.requi
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
-    'if [[ "$REPOSITORY" == "NVIDIA/NemoClaw" &&',
-    '      "$REF" != "refs/heads/main" &&',
-    '      "$EVENT_NAME" == "workflow_dispatch" &&',
-    '      "$JOBS" == "native-runtime-qualification-producer" &&',
-    '      -n "$CHECKOUT_SHA" &&',
-    '      "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]]; then',
-    "  required=0",
-    '  printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
-    "  exit 0",
-    "fi",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
     "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
     "    required=1",
@@ -344,7 +334,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const acceptedJobNames = `${acceptedNames.slice(0, -1).join(", ")}, or ${acceptedNames.at(-1)}`;
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
-    '"$WORKFLOW_REF" != "refs/heads/main"',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
     '"$RUN_ATTEMPT" == "1"',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '"$CHECKOUT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$',
@@ -355,10 +345,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     "${#REVIEW_REASON} <= 500",
     '"$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA"',
     "Manual PR E2E requires a repository maintainer or administrator",
-    "Candidate-workflow native runtime qualification requires a repository administrator",
-    '"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"',
-    '"$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA"',
-    '"$WORKFLOW_REF" == "refs/heads/${pr_source_ref}"',
     `${acceptedJobCases}) ;;`,
     `Manual PR E2E accepts only empty selectors, ${acceptedJobNames}`,
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
@@ -368,6 +354,23 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   ]) {
     if (!authSource.includes(fragment))
       errors.push(`Manual PR authentication must retain ${fragment}`);
+  }
+
+  const qualificationPlanName = "native-runtime-qualification-producer-plan";
+  const qualificationPlan = workflow.jobs[qualificationPlanName] ?? {};
+  const trustedMainPlanCondition =
+    "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+  if (qualificationPlan.if !== trustedMainPlanCondition) {
+    errors.push("Native runtime qualification producer plan must execute only from trusted main");
+  }
+  for (const jobName of [
+    "native-runtime-qualification-podman-toolchain",
+    "native-runtime-qualification-producer",
+    "native-runtime-qualification-producer-aggregate",
+  ]) {
+    if (!needs(workflow.jobs[jobName] ?? {}).includes(qualificationPlanName)) {
+      errors.push(`${jobName} must depend on the trusted-main qualification producer plan`);
+    }
   }
 
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
@@ -512,10 +515,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
           step.with?.["fetch-depth"] === 1 &&
           step.with?.["persist-credentials"] === false) ||
         (jobName === "native-runtime-qualification-producer-plan" &&
-          step.name === "Check out the qualification producer" &&
+          step.name === "Check out the trusted qualification producer" &&
           step.with?.ref === "${{ github.workflow_sha }}") ||
         (jobName === "native-runtime-qualification-producer" &&
-          step.name === "Check out the qualification harness" &&
+          step.name === "Check out the trusted qualification harness" &&
           step.with?.ref === "${{ matrix.source.workflowSha }}") ||
         (jobName === "native-runtime-qualification-producer" &&
           step.name === "Check out the candidate commit" &&
@@ -577,10 +580,8 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         env: {
           CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
           EVENT_NAME: "${{ github.event_name }}",
-          JOBS: "${{ inputs.jobs }}",
           REF: "${{ github.ref }}",
           REPOSITORY: "${{ github.repository }}",
-          WORKFLOW_SHA: "${{ github.workflow_sha }}",
         },
         shell: "bash",
         run: PUBLICATION_CLASSIFIER_SCRIPT,

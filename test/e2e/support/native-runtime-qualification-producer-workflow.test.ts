@@ -66,19 +66,20 @@ describe("native runtime qualification producer workflow", () => {
   it("compiles the matrix only from authenticated source and repository-owned runner policy", () => {
     const plan = job("native-runtime-qualification-producer-plan");
     const authenticate = step(plan, "Authenticate the candidate and dispatch artifact");
-    const compile = step(plan, "Compile the qualification producer matrix");
+    const compile = step(plan, "Compile the trusted qualification producer matrix");
 
-    expect(plan.if).toContain("github.ref == 'refs/heads/main'");
-    expect(plan.if).toContain("inputs.jobs == 'native-runtime-qualification-producer'");
+    expect(plan.if).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}",
+    );
     expect(plan.permissions).toEqual({
       actions: "read",
       contents: "read",
       "pull-requests": "read",
     });
     expect(authenticate.run).toContain('"$CANDIDATE_REPOSITORY" == "NVIDIA/NemoClaw"');
-    expect(authenticate.run).toContain('"$WORKFLOW_SHA" == "$BASE_SHA"');
-    expect(authenticate.run).toContain('"$WORKFLOW_SHA" == "$CANDIDATE_SHA"');
-    expect(authenticate.env?.DISPATCH_WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
+    expect(authenticate.run).toContain('"$BASE_SHA" == "$WORKFLOW_SHA"');
+    expect(authenticate.run).toContain('"$CANDIDATE_SHA" != "$WORKFLOW_SHA"');
+    expect(authenticate.run).not.toContain('"$WORKFLOW_SHA" == "$CANDIDATE_SHA"');
     expect(authenticate.run).toContain(".head.sha == $candidateSha");
     expect(authenticate.run).toContain(".base.sha == $baseSha");
     expect(authenticate.run).toContain(".total_count == 1");
@@ -89,25 +90,18 @@ describe("native runtime qualification producer workflow", () => {
     );
     expect(compile.run).toContain("native-runtime-qualification-producer-plan.mts --ci-output");
     expect(JSON.stringify(plan)).not.toContain("linux-arm64-gpu-dgx-spark-gb10-protected-1");
-    const producerCheckout = step(plan, "Check out the qualification producer");
+    const producerCheckout = step(plan, "Check out the trusted qualification producer");
     expect(producerCheckout.with?.["sparse-checkout"]).toContain(
       "src/lib/onboard/runtime-provider/native-qualification-authority.ts",
     );
   });
 
-  it("limits candidate-workflow protected execution to the latest commit on an administrator-authorized PR source branch", () => {
-    const generate = job("generate-matrix");
-    const authenticate = step(generate, "Authenticate manual PR dispatch");
-    const source = authenticate.run ?? "";
+  it("keeps secret-bearing GPU preparation downstream of the trusted-main plan", () => {
+    const producer = job("native-runtime-qualification-producer");
+    const gpuResources = step(producer, "Materialize exact credential-free GPU resources");
 
-    expect(source).toContain(
-      "Candidate-workflow native runtime qualification requires a repository administrator",
-    );
-    expect(source).toContain(
-      '"$CHECKOUT_REPOSITORY" == "$GITHUB_REPOSITORY" && "$WORKFLOW_SHA" == "$CHECKOUT_SHA" && "$BASE_SHA" != "$CHECKOUT_SHA"',
-    );
-    expect(source).toContain('"$WORKFLOW_REF" == "refs/heads/${pr_source_ref}"');
-    expect(source).toContain('"$JOBS" == "native-runtime-qualification-producer" && -z "$TARGETS"');
+    expect(producer.needs).toContain("native-runtime-qualification-producer-plan");
+    expect(gpuResources.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
   });
 
   it("builds one pinned Podman 6 toolchain for each qualified architecture", () => {
@@ -219,7 +213,7 @@ describe("native runtime qualification producer workflow", () => {
 
   it("runs each candidate case in an isolated account and emits one bounded evidence artifact", () => {
     const producer = job("native-runtime-qualification-producer");
-    const harness = step(producer, "Check out the qualification harness");
+    const harness = step(producer, "Check out the trusted qualification harness");
     const podmanHost = step(producer, "Require a reviewed Ubuntu runtime host");
     const podmanDownload = step(producer, "Download the pinned native Podman toolchain");
     const podman = step(

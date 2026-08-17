@@ -74,9 +74,11 @@ import {
   type InferenceSetSandboxRouteProbe,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
+  probeInferenceSetSandboxRouteUntilConverged,
   type RuntimeProviderBundleRegistry,
   RuntimeProviderSelectionError,
   requireInferenceSetRuntimeAuthority,
+  sleepInferenceSetRouteConvergence,
 } from "./inference-set-provider";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
@@ -167,6 +169,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   revokeHttpsPinRuntimeAdapterRoute: (routeId: string) => Promise<boolean>;
   probeSandboxRoute: InferenceSetSandboxRouteProbe;
+  sleep: (milliseconds: number) => Promise<void>;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
 }
 
@@ -273,6 +276,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureHttpsPinRuntimeAdapter,
     revokeHttpsPinRuntimeAdapterRoute,
     probeSandboxRoute: probeInferenceSetSandboxRoute,
+    sleep: sleepInferenceSetRouteConvergence,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
@@ -1003,6 +1007,14 @@ async function runInferenceSetWithoutHostLock(
       sandboxName,
       session,
     });
+  const previousInferenceApi = resolveRuntimeInferenceApi({
+    agentName,
+    config,
+    currentProvider: entry.provider,
+    provider: entry.provider ?? "",
+    sandboxName,
+    session,
+  });
   assertReasoningEffortRoute(reasoningEffortRequest, provider, preMutationInferenceApi);
   const previousProvider = typeof entry.provider === "string" ? entry.provider.trim() : "";
   const previousModel = typeof entry.model === "string" ? entry.model.trim() : "";
@@ -1145,12 +1157,22 @@ async function runInferenceSetWithoutHostLock(
     if (probeDirectSandboxBridge) {
       let probe: ReturnType<InferenceSetSandboxRouteProbe>;
       try {
-        probe = deps.probeSandboxRoute({
-          sandboxName,
-          provider,
-          model,
-          preferredInferenceApi: preMutationInferenceApi,
-        });
+        probe = await probeInferenceSetSandboxRouteUntilConverged(
+          {
+            input: {
+              sandboxName,
+              provider,
+              model,
+              preferredInferenceApi: preMutationInferenceApi,
+            },
+            previousInferenceApi,
+            targetInferenceApi: preMutationInferenceApi,
+          },
+          {
+            probe: deps.probeSandboxRoute,
+            sleep: deps.sleep,
+          },
+        );
       } catch (probeError) {
         const probeFailureDetail =
           probeError instanceof Error && probeError.message

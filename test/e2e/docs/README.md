@@ -290,31 +290,14 @@ test/e2e/
   combination before candidate checkout.
   A trusted `main` native runtime producer run requires the executing workflow
   commit and `workflow_sha` input to equal the exact PR-recorded base commit.
-  The `native-runtime-qualification-producer` job also accepts an
-  administrator-only PR source-branch workflow dispatch for a same-repository
-  PR. That path requires the first workflow attempt, the PR source branch as
-  the workflow ref, and the same latest PR commit SHA for `checkout_sha` and
-  `workflow_sha`. Candidate workflow code controls the administrator check
-  that the source-branch workflow runs. NemoClaw repository policy permits only
-  a repository administrator to dispatch this path. The administrator check is
-  defense in depth, not an independent authorization boundary. Before dispatch,
-  the administrator must review and authorize the exact commit, including the
-  workflow and every action or script that the commit loads.
-
-  On the source-branch path, every repository secret received by the
-  workflow is accessible to candidate workflow code. In the reviewed workflow,
-  the host-side preparation step receives the long-lived `NVIDIA_API_KEY`
+  The producer accepts only a same-repository PR and the first workflow attempt.
+  The host-side preparation step receives the long-lived `NVIDIA_API_KEY`
   repository secret in its environment. It creates runner-local registry
   authentication and pulls pinned GPU images. It then deletes the registry
   authentication file and unsets the variable before the separate candidate
-  installer or live-test process starts. The preparation step is itself
-  candidate-controlled workflow code on this path. It can read or copy the key
-  before cleanup, so cleanup does not prevent exposure. Cleanup removes
-  runner-local registry authentication but does not revoke the key. The key
-  remains valid in the issuing NVIDIA service until it expires or that service
-  revokes it. If exposure occurs or cleanup cannot be confirmed, revoke the key
-  in the issuing NVIDIA service. Alternatively, rotate the key and invalidate
-  the old value. Verify that the old value is invalid.
+  installer or live-test process starts. Cleanup removes runner-local registry
+  authentication but does not revoke the key. The key remains valid in the
+  issuing NVIDIA service until it expires or that service revokes it.
 
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
@@ -330,9 +313,7 @@ test/e2e/
   An authorized environment reviewer must approve it before qualification starts.
   Accepted nonempty `jobs` values are `inference-routing`,
   `managed-image-protected-runtime`, and
-  `native-runtime-qualification-producer`. Only the native runtime producer
-  accepts the administrator-only PR source-branch workflow path. The
-  `jetson-nvmap-gpu` target is also accepted when
+  `native-runtime-qualification-producer`. The `jetson-nvmap-gpu` target is also accepted when
   `allow_jetson_dispatch` is `true`.
   Refer to [NemoClaw E2E CI](../README.md).
 

@@ -1148,17 +1148,12 @@ After a failure, inspect the workflow artifacts and remove resources that target
 
 For `managed-image-protected-runtime`, the workflow supplies the long-lived `NVIDIA_API_KEY` repository secret only to the trusted qualification step. Trusted host code uses it for NGC login and passes it as `NGC_API_KEY` and `NIM_NGC_API_KEY` to the temporary, cohort-owned NIM container. Candidate managed sandboxes receive generated local route tokens instead of this key. Before starting NIM or vLLM, the live fixture rejects a pre-existing cohort container name. It records the full container ID, requested image, immutable image ID, cohort owner, and provider label, then removes only that exact container after revalidating every field. Missing, ambiguous, name-reused, drifted, or indeterminate cleanup evidence fails the test, as does any retained exact ID or name. A fail-closed refusal can leave the secret-bearing NIM container alive until runner teardown; inspect the redacted artifacts and remove only the verified container. The final workflow step removes the job's isolated Docker credential directory and fails if that removal does not complete. The workflow does not revoke the NVIDIA API key. Revoke it, or rotate it and disable the old value, in the issuing NVIDIA service. Verify that the exposed key is no longer valid.
 
-For `native-runtime-qualification-producer`, use a same-repository open PR and the first workflow attempt. A trusted `main` workflow dispatch requires the executing workflow commit to equal the exact PR-recorded base commit. The administrator-only PR source-branch workflow path instead requires the PR source branch as the workflow ref and the same latest PR commit SHA for the candidate and workflow. The actor must have repository `admin` permission. If `github.triggering_actor` differs from the actor, it must also have repository `admin` permission.
+For `native-runtime-qualification-producer`, dispatch the workflow from trusted `main` for a same-repository open PR and the first workflow attempt. The executing workflow commit and `workflow_sha` input must equal the exact PR-recorded base commit. The actor must have repository `maintain` or `admin` permission. If `github.triggering_actor` differs from the actor, it must also have one of those permissions.
 
-Candidate workflow code controls the administrator check that the source-branch workflow runs. NemoClaw repository policy permits only a repository administrator to dispatch this path. The administrator check is defense in depth, not an independent authorization boundary. Before dispatch, the administrator must review and authorize the exact commit, including the workflow and every action or script that the commit loads.
-
-Both paths bind the candidate commit, base commit, workflow commit, repository, PR, run, attempt, and 24-case plan.
-On the source-branch path, every repository secret received by the workflow is accessible to candidate workflow code.
-In the reviewed workflow, the host-side preparation step receives the long-lived `NVIDIA_API_KEY` repository secret in its environment.
+The trusted workflow binds the candidate commit, base commit, workflow commit, repository, PR, run, attempt, and 24-case plan.
+The host-side preparation step receives the long-lived `NVIDIA_API_KEY` repository secret in its environment.
 It creates runner-local registry authentication and pulls pinned GPU images.
 It then deletes the registry authentication file and unsets the variable before the separate candidate installer or live-test process starts.
-The preparation step is itself candidate-controlled workflow code on this path.
-It can read or copy the key before cleanup, so cleanup does not prevent exposure.
 Cleanup removes runner-local registry authentication but does not revoke the key.
 The key remains valid in the issuing NVIDIA service until it expires or that service revokes it.
 If exposure occurs or cleanup cannot be confirmed, revoke the key in the issuing NVIDIA service.
@@ -1178,7 +1173,7 @@ This qualification does not register or select Podman in production and does not
 
 Before candidate execution, the producer stops Docker, masks its service and socket, removes Docker sockets, and rejects a usable `docker` command. It uploads one evidence artifact for each planned case. Cleanup terminates processes owned by the candidate account and removes that account. If cleanup fails or the runner becomes unavailable, inspect the host and remove the ephemeral runner from service. Recover or replace the runner before dispatching a new run. Do not rerun the same workflow attempt; the producer rejects attempts after the first. Dispatch a new run after recovery.
 
-For a manual PR run, provide the current PR number, lowercase 40-character candidate commit SHA, PR source repository, lowercase 40-character base commit SHA, exact executing workflow SHA, and a review reason containing 10 to 500 printable characters. For a trusted `main` native runtime producer run, the executing workflow SHA and `workflow_sha` input must both equal the PR-recorded base SHA. For an administrator-only native runtime PR source-branch workflow run, the executing workflow SHA and `workflow_sha` input must both equal the candidate commit SHA, and the dispatch must use the PR source branch.
+For a manual PR run, provide the current PR number, lowercase 40-character candidate commit SHA, PR source repository, lowercase 40-character base commit SHA, exact trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters. For a native runtime producer run, the executing workflow SHA and `workflow_sha` input must both equal the PR-recorded base SHA.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
@@ -1190,7 +1185,7 @@ The exact candidate must contain `ci/protected-managed-image-multiarch-activatio
 To select native-runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
-A trusted `main` workflow pre-checkout step requires current `maintain` or `admin` permission. The native runtime PR source-branch workflow path requires `admin` permission for the actor and any different triggering actor. Both paths validate the exact open PR and selected mode before candidate code runs.
+A trusted `main` workflow pre-checkout step requires current `maintain` or `admin` permission. The workflow validates the exact open PR and selected mode before candidate code runs.
 A second validation after checkout rejects a changed candidate commit, base commit, or PR source repository before preparation.
 
 The Actions run is advisory for the pull request and is not a required merge context.
