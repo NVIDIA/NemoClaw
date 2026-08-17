@@ -11,6 +11,12 @@
  * one exact package version and integrity value, and verifies that the
  * candidate contract artifact name stays outside the all-agent cohort download
  * pattern.
+ *
+ * It also binds the accepted Pi trust boundary: the baseline permits only the
+ * managed inference route from root-owned image binaries, writable paths stay
+ * on the declared sandbox state, non-interactive runs keep passing the flag
+ * that ignores project-local resources, and neither the project-trust store nor
+ * the project-trust setting can travel through backup and restore.
  */
 
 import { createHash } from "node:crypto";
@@ -24,6 +30,23 @@ const MANAGED_IMAGE_CONTRACT_PATH = "src/lib/onboard/managed-image/contract.ts";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 const COHORT_CONTRACT_ARTIFACT_PREFIX = "managed-pr-contract-";
 const CANDIDATE_CONTRACT_ARTIFACT_PREFIX = "managed-candidate-contract-";
+const PI_MANIFEST_PATH = "agents/pi/manifest.yaml";
+const PI_POLICY_PATH = "agents/pi/policy-additions.yaml";
+
+const MANAGED_INFERENCE_POLICY = "managed_inference";
+const MANAGED_INFERENCE_HOST = "inference.local";
+const MANAGED_INFERENCE_PORT = 443;
+const APPROVED_NETWORK_BINARIES = [
+  "/usr/local/bin/node",
+  "/usr/local/bin/pi",
+  "/usr/local/lib/nemoclaw/pi-runtime/**",
+];
+const APPROVED_READ_WRITE_PATHS = ["/dev/null", "/sandbox", "/sandbox/.pi", "/tmp"];
+const REQUIRED_LANDLOCK_COMPATIBILITY = "strict";
+const REQUIRED_SANDBOX_IDENTITY = "sandbox";
+const NON_INTERACTIVE_APPROVAL_FLAG = "--no-approve";
+const PROJECT_TRUST_STORE = "trust.json";
+const PROJECT_TRUST_SETTING = "defaultProjectTrust";
 
 const REQUIRED_ARTIFACTS = [
   "agents/pi/Dockerfile",
@@ -46,6 +69,7 @@ export type PiArtifactSources = Readonly<{
   managedImagesWorkflow: string;
   manifest: string;
   packageJson: string;
+  policyAdditions: string;
 }>;
 
 function readDockerfileArg(source: string, name: string): string | null {
@@ -228,12 +252,156 @@ function verifyCohortSeparation(workflow: string): string[] {
   return failures;
 }
 
+type LooseRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): LooseRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as LooseRecord)
+    : {};
+}
+
+function sortedStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string").sort();
+}
+
+function sameSet(actual: readonly string[], approved: readonly string[]): boolean {
+  return actual.length === approved.length && actual.every((entry, index) => entry === approved[index]);
+}
+
+function verifyNetworkBoundary(policy: LooseRecord): string[] {
+  const failures: string[] = [];
+  const networkPolicies = asRecord(policy.network_policies);
+  const declared = Object.keys(networkPolicies).sort();
+  if (!sameSet(declared, [MANAGED_INFERENCE_POLICY])) {
+    failures.push(
+      `${PI_POLICY_PATH}: the baseline must declare only ${MANAGED_INFERENCE_POLICY}, found ${declared.join(", ") || "none"}`,
+    );
+    return failures;
+  }
+  const managed = asRecord(networkPolicies[MANAGED_INFERENCE_POLICY]);
+  const endpoints = Array.isArray(managed.endpoints) ? managed.endpoints : [];
+  if (endpoints.length !== 1) {
+    failures.push(`${PI_POLICY_PATH}: ${MANAGED_INFERENCE_POLICY} must declare exactly one endpoint`);
+  }
+  for (const entry of endpoints) {
+    const endpoint = asRecord(entry);
+    if (endpoint.host !== MANAGED_INFERENCE_HOST || endpoint.port !== MANAGED_INFERENCE_PORT) {
+      failures.push(
+        `${PI_POLICY_PATH}: the baseline permits only ${MANAGED_INFERENCE_HOST}:${String(MANAGED_INFERENCE_PORT)}`,
+      );
+    }
+    if (endpoint.enforcement !== "enforce") {
+      failures.push(`${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must stay enforced, not observed`);
+    }
+    const rules = Array.isArray(endpoint.rules) ? endpoint.rules : [];
+    for (const rule of rules) {
+      const allow = asRecord(asRecord(rule).allow);
+      const rulePath = typeof allow.path === "string" ? allow.path : "";
+      if (!Object.hasOwn(asRecord(rule), "allow") || !rulePath.startsWith("/v1/")) {
+        failures.push(
+          `${PI_POLICY_PATH}: every managed inference rule must allow an explicit /v1/ route, found ${rulePath || "an unreadable rule"}`,
+        );
+      }
+    }
+  }
+  const binaries = sortedStrings(
+    Array.isArray(managed.binaries)
+      ? managed.binaries.map((entry) => asRecord(entry).path)
+      : [],
+  );
+  if (!sameSet(binaries, APPROVED_NETWORK_BINARIES)) {
+    failures.push(
+      `${PI_POLICY_PATH}: network capability must stay on the root-owned image binaries ${APPROVED_NETWORK_BINARIES.join(", ")}`,
+    );
+  }
+  return failures;
+}
+
+function verifyFilesystemBoundary(policy: LooseRecord): string[] {
+  const failures: string[] = [];
+  const filesystem = asRecord(policy.filesystem_policy);
+  const readWrite = sortedStrings(filesystem.read_write);
+  if (!sameSet(readWrite, APPROVED_READ_WRITE_PATHS)) {
+    failures.push(
+      `${PI_POLICY_PATH}: writable paths must stay ${APPROVED_READ_WRITE_PATHS.join(", ")}, found ${readWrite.join(", ") || "none"}`,
+    );
+  }
+  if (asRecord(policy.landlock).compatibility !== REQUIRED_LANDLOCK_COMPATIBILITY) {
+    failures.push(
+      `${PI_POLICY_PATH}: landlock.compatibility must be ${REQUIRED_LANDLOCK_COMPATIBILITY} so filesystem policy fails closed`,
+    );
+  }
+  const process = asRecord(policy.process);
+  if (
+    process.run_as_user !== REQUIRED_SANDBOX_IDENTITY ||
+    process.run_as_group !== REQUIRED_SANDBOX_IDENTITY
+  ) {
+    failures.push(`${PI_POLICY_PATH}: Pi must run as the ${REQUIRED_SANDBOX_IDENTITY} user and group`);
+  }
+  return failures;
+}
+
+function verifyApprovalBoundary(manifest: LooseRecord): string[] {
+  const failures: string[] = [];
+  const runtime = asRecord(manifest.runtime);
+  const headless = typeof runtime.headless_command === "string" ? runtime.headless_command : "";
+  if (!headless.split(/\s+/u).includes(NON_INTERACTIVE_APPROVAL_FLAG)) {
+    failures.push(
+      `${PI_MANIFEST_PATH}: runtime.headless_command must pass ${NON_INTERACTIVE_APPROVAL_FLAG} so non-interactive runs ignore project-local resources`,
+    );
+  }
+  if (asRecord(manifest.mcp).support !== "disabled") {
+    failures.push(`${PI_MANIFEST_PATH}: mcp.support must stay disabled for the accepted v1 surface`);
+  }
+  if (manifest.device_pairing !== false) {
+    failures.push(`${PI_MANIFEST_PATH}: device_pairing must stay false for the accepted v1 surface`);
+  }
+  return failures;
+}
+
+function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
+  const failures: string[] = [];
+  const stateDirs = Array.isArray(manifest.state_dirs) ? manifest.state_dirs : [];
+  const stateFiles = Array.isArray(manifest.state_files) ? manifest.state_files : [];
+  const declared = [...stateDirs, ...stateFiles].map((entry) => asRecord(entry).path);
+  if (declared.includes(PROJECT_TRUST_STORE)) {
+    failures.push(
+      `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_STORE} must stay undeclared so a restore cannot carry a project-trust decision`,
+    );
+  }
+  for (const entry of stateFiles) {
+    const stateFile = asRecord(entry);
+    const userKeys = Array.isArray(asRecord(stateFile.restore).user_keys)
+      ? (asRecord(stateFile.restore).user_keys as unknown[])
+      : [];
+    if (userKeys.map((key) => asRecord(key).key).includes(PROJECT_TRUST_SETTING)) {
+      failures.push(
+        `${PI_MANIFEST_PATH}: ${PROJECT_TRUST_SETTING} must stay outside the restore allowlist so a backup cannot widen project trust`,
+      );
+    }
+  }
+  return failures;
+}
+
+export function verifyPiTrustBoundary(sources: PiArtifactSources): string[] {
+  const policy = asRecord(parseYaml(sources.policyAdditions));
+  const manifest = asRecord(parseYaml(sources.manifest));
+  return [
+    ...verifyNetworkBoundary(policy),
+    ...verifyFilesystemBoundary(policy),
+    ...verifyApprovalBoundary(manifest),
+    ...verifyProjectTrustBoundary(manifest),
+  ];
+}
+
 export function verifyPiCandidateArtifacts(sources: PiArtifactSources): string[] {
   return [
     ...verifyPinnedIdentity(sources),
     ...verifyCandidateRegistration(sources.managedImageContract),
     ...verifyCohortSeparation(sources.managedImagesWorkflow),
     ...verifyManagedImageDeclaration(sources),
+    ...verifyPiTrustBoundary(sources),
   ];
 }
 
@@ -256,8 +424,9 @@ function main(): void {
     lock: readRepoFile("agents/pi/pi-runtime/package-lock.json"),
     managedImageContract: readRepoFile(MANAGED_IMAGE_CONTRACT_PATH),
     managedImagesWorkflow: readRepoFile(".github/workflows/managed-images.yaml"),
-    manifest: readRepoFile("agents/pi/manifest.yaml"),
+    manifest: readRepoFile(PI_MANIFEST_PATH),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
+    policyAdditions: readRepoFile(PI_POLICY_PATH),
   });
   if (failures.length > 0) {
     console.error(failures.join("\n"));

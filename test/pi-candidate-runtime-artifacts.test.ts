@@ -11,6 +11,7 @@ import YAML from "yaml";
 import {
   type PiArtifactSources,
   verifyPiCandidateArtifacts,
+  verifyPiTrustBoundary,
 } from "../scripts/checks/pi-candidate-artifacts.mts";
 import {
   CANDIDATE_MANAGED_IMAGE_AGENTS,
@@ -34,7 +35,22 @@ function currentSources(): PiArtifactSources {
     managedImagesWorkflow: readRepoFile(".github/workflows/managed-images.yaml"),
     manifest: readRepoFile("agents/pi/manifest.yaml"),
     packageJson: readRepoFile("agents/pi/pi-runtime/package.json"),
+    policyAdditions: readRepoFile("agents/pi/policy-additions.yaml"),
   };
+}
+
+function withPolicy(mutate: (policy: Record<string, any>) => void): PiArtifactSources {
+  const sources = currentSources();
+  const policy = YAML.parse(sources.policyAdditions);
+  mutate(policy);
+  return { ...sources, policyAdditions: YAML.stringify(policy) };
+}
+
+function withManifest(mutate: (manifest: Record<string, any>) => void): PiArtifactSources {
+  const sources = currentSources();
+  const manifest = YAML.parse(sources.manifest);
+  mutate(manifest);
+  return { ...sources, manifest: YAML.stringify(manifest) };
 }
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -191,17 +207,123 @@ describe("Pi candidate contract validation", () => {
 });
 
 describe("Pi runtime boundaries", () => {
-  const APPROVED_MANAGED_INFERENCE_BINARY_PATHS = [
-    "/usr/local/bin/pi",
-    "/usr/local/bin/node",
-    "/usr/local/lib/nemoclaw/pi-runtime/**",
-  ];
-
-  it("excludes an agent-writable binary path from the approved allowlist", () => {
-    expect(APPROVED_MANAGED_INFERENCE_BINARY_PATHS).not.toContain("/tmp/agent-proxy");
-    expect(APPROVED_MANAGED_INFERENCE_BINARY_PATHS).not.toContain("/sandbox/agent-proxy");
+  it("accepts the trust boundary committed in this repository (#7924)", () => {
+    expect(verifyPiTrustBoundary(currentSources())).toEqual([]);
   });
 
+  it("denies a direct provider endpoint added beside the managed route (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints.push({
+        host: "api.openai.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        rules: [{ allow: { method: "POST", path: "/v1/chat/completions" } }],
+      });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the baseline permits only inference.local:443",
+    );
+  });
+
+  it("denies a package registry policy the baseline never selected (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.npm_registry = {
+        name: "npm_registry",
+        endpoints: [{ host: "registry.npmjs.org", port: 443, enforcement: "enforce", rules: [] }],
+      };
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: the baseline must declare only managed_inference, found managed_inference, npm_registry",
+    );
+  });
+
+  it("denies network capability to a binary the agent can write (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.binaries.push({ path: "/sandbox/agent-proxy" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: network capability must stay on the root-owned image binaries /usr/local/bin/node, /usr/local/bin/pi, /usr/local/lib/nemoclaw/pi-runtime/**",
+    );
+  });
+
+  it("denies a rule that widens the managed route beyond its versioned paths (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.network_policies.managed_inference.endpoints[0].rules.push({
+        allow: { method: "GET", path: "/**" },
+      });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: every managed inference rule must allow an explicit /v1/ route, found /**",
+    );
+  });
+
+  it("denies a container-runtime socket added to the writable paths (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.filesystem_policy.read_write.push("/var/run/docker.sock");
+    });
+    expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
+      "writable paths must stay /dev/null, /sandbox, /sandbox/.pi, /tmp",
+    );
+  });
+
+  it("denies a relaxed Landlock compatibility that would start with policy unenforced (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.landlock.compatibility = "best-effort";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: landlock.compatibility must be strict so filesystem policy fails closed",
+    );
+  });
+
+  it("denies host control by refusing a privileged process identity (#7924)", () => {
+    const sources = withPolicy((policy) => {
+      policy.process.run_as_user = "root";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/policy-additions.yaml: Pi must run as the sandbox user and group",
+    );
+  });
+
+  it("denies a non-interactive command that stops ignoring project-local resources (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.runtime.headless_command = "pi --print";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: runtime.headless_command must pass --no-approve so non-interactive runs ignore project-local resources",
+    );
+  });
+
+  it("denies an MCP surface the accepted v1 scope excludes (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.mcp.support = "enabled";
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: mcp.support must stay disabled for the accepted v1 surface",
+    );
+  });
+
+  it("denies a project-trust store that a restore could carry into a new sandbox (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files.push({ path: "trust.json" });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: trust.json must stay undeclared so a restore cannot carry a project-trust decision",
+    );
+  });
+
+  it("denies a restore allowlist that could widen project trust (#7924)", () => {
+    const sources = withManifest((manifest) => {
+      manifest.state_files[0].restore.user_keys.push({
+        key: "defaultProjectTrust",
+        type: "enum",
+        values: ["ask", "always", "never"],
+      });
+    });
+    expect(verifyPiTrustBoundary(sources)).toContain(
+      "agents/pi/manifest.yaml: defaultProjectTrust must stay outside the restore allowlist so a backup cannot widen project trust",
+    );
+  });
 });
 
 describe("Pi managed model catalog generation", () => {
