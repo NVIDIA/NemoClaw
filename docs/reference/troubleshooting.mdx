@@ -1238,7 +1238,6 @@ Could not confirm the policy update for sandbox 'my-assistant': <transport or co
 The gateway state is unknown, so read the sandbox policy with `policy list` before you retry.
 `policy list` compares the sandbox registry with the live gateway policy and flags a preset that is applied in one place but not the other.
 The failed mutation does not update the sandbox registry.
-If the gateway applied an unconfirmed mutation, the affected preset appears as a disagreement.
 
 The same connection problem that made the result unconfirmed can also stop `policy list` from reaching the gateway.
 When that happens, `policy list` prints `⚠ Could not query gateway — showing local state only.` and still exits 0.
@@ -1246,7 +1245,17 @@ If the container runtime is down, it prints that runtime's recovery guidance ins
 Stop while `policy list` reports local state only because that output does not show whether the gateway applied the mutation.
 Restore gateway access and run `policy list` again before you resume or restart onboarding.
 
-After you know the live policy, follow [Previous onboarding session failed](#previous-onboarding-session-failed) to resume or restart onboarding.
+After `policy list` reads the live gateway policy, follow the result below.
+The [failed-session recovery steps](#previous-onboarding-session-failed) provide the resume and fresh onboarding commands.
+
+- If an affected preset reports `active on gateway, missing from local state`, resume the failed session.
+  The gateway completed the addition, and resume can record the applied preset locally without submitting that policy change again.
+- If an affected preset reports `recorded locally, not active on gateway`, do not resume or start fresh onboarding.
+  The gateway may have completed the removal while the sandbox registry retained the preset.
+  Preserve the original unconfirmed error and the complete `policy list` output for support.
+- If `policy list` reports no disagreement for the failed mutation, compare the live preset set with the selection in the failed session.
+  Resume only if the live policy still requires the failed addition or removal to match that selection.
+  Otherwise, start fresh onboarding and select the exact preset set that `policy list` reports as active.
 
 ### Previous onboarding session failed
 
