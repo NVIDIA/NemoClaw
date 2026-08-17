@@ -53,10 +53,12 @@ const PUBLICATION_VERIFIER_SCRIPT =
   [
     "set -euo pipefail",
     '[[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base-image publication requires exact commit SHAs" >&2; exit 1; }',
+    '[[ "$GITHUB_REF" == "$CANDIDATE_REF" ]] || { echo "::error::base-image publication ref changed" >&2; exit 1; }',
     '[[ "$GITHUB_SHA" == "$CANDIDATE_SHA" ]] || { echo "::error::base-image publication candidate changed" >&2; exit 1; }',
     '[[ "$(git rev-parse --verify HEAD)" == "$EXPECTED_SHA" ]] || { echo "::error::base-image publication checkout changed" >&2; exit 1; }',
     'if [[ "$EXPECTED_SHA" != "$CANDIDATE_SHA" ]]; then',
     '  git merge-base --is-ancestor "$EXPECTED_SHA" "$CANDIDATE_SHA" || { echo "::error::base-image publication revision is not an ancestor of the branch" >&2; exit 1; }',
+    "  export GITHUB_REF=refs/heads/main",
     "fi",
     'export GITHUB_SHA="$EXPECTED_SHA"',
     "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
@@ -622,6 +624,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         name: "Verify applicable base-image publication",
         if: PUBLICATION_REQUIRED_CONDITION,
         env: {
+          CANDIDATE_REF: "${{ github.ref }}",
           CANDIDATE_SHA: "${{ github.sha }}",
           EXPECTED_SHA:
             "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && inputs.base_sha || github.sha }}",
