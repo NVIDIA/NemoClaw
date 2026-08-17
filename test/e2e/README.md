@@ -1167,8 +1167,9 @@ The trusted workflow binds the candidate commit, base commit, workflow commit, r
 The unprivileged installer and live-test processes run with `env -i` under a temporary account.
 They receive no GitHub, inference provider, API, or messaging credential.
 Docker is unavailable to these processes.
-Configure `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL=enabled` before dispatch.
-The ARM64 GPU cases also require `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL`; the workflow provides no fallback runner.
+For each self-hosted qualification runner, set the GitHub Actions repository variable `NATIVE_RUNTIME_EPHEMERAL_RUNNER_POOL` to `enabled`.
+Set the repository variable `NATIVE_RUNTIME_ARM64_GPU_RUNNER_LABEL` to the reviewed ARM64 GPU runner label.
+The workflow provides no ARM64 GPU fallback runner.
 The candidate must contain `test/e2e/live/native-runtime-qualification-case.test.ts`.
 Each successful case uploads the validated installer, runtime, operation, and optional NVIDIA CDI receipts.
 The workflow does not upload the candidate `execution.json` or `case-evidence.json` staging files.
@@ -1187,7 +1188,16 @@ Dispatch a new run after recovery.
 If a case fails, use the GitHub Actions job log.
 Inspect a case artifact only when its upload step completed.
 
-For a manual PR run, provide the current PR number, lowercase 40-character candidate commit SHA, PR source repository, lowercase 40-character base commit SHA, exact trusted `main` workflow SHA, and a review reason containing 10 to 500 printable characters. For a native runtime producer run, the executing workflow SHA and `workflow_sha` input must both equal the PR-recorded base SHA.
+For a manual PR run, provide these inputs:
+
+- The current PR number.
+- The lowercase 40-character SHA of the latest PR commit.
+- The PR source repository.
+- The lowercase 40-character PR base SHA.
+- The exact SHA of the trusted workflow commit on `main`.
+- A review reason containing 10 to 500 printable characters.
+
+For a native runtime producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
