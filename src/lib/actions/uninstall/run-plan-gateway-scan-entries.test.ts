@@ -55,6 +55,12 @@ function okWithKnownGatewayList(command: string, args: readonly string[]): RunRe
     : ok();
 }
 
+function okWithSiblingGatewayList(command: string, args: readonly string[]): RunResult {
+  return command === "openshell" && args[0] === "gateway" && args[1] === "list"
+    ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9123" }]))
+    : ok();
+}
+
 const SCOPED_RETENTION_LOG =
   "Sibling gateways remain; kept the shared NemoClaw CLI and shell shims.";
 const SCOPED_PACKAGE_RETENTION_LOG =
@@ -126,7 +132,9 @@ function writeScopedGatewayState(home: string, port = 8080): void {
 function uninstall(
   home: string,
   shims: readonly string[],
-  options: Pick<UninstallRunOptions, "destroyUserData"> = {},
+  options: Pick<UninstallRunOptions, "destroyUserData"> & {
+    run?: (command: string, args: readonly string[]) => RunResult;
+  } = {},
 ) {
   const logs: string[] = [];
   const result = runUninstallPlan(
@@ -147,7 +155,7 @@ function uninstall(
       rmSync: vi.fn((target: fs.PathLike, rmOptions?: fs.RmOptions) => {
         String(target).startsWith(home) ? fs.rmSync(target, rmOptions) : undefined;
       }),
-      run: vi.fn(okWithKnownGatewayList),
+      run: vi.fn(options.run ?? okWithKnownGatewayList),
       runDocker: () => ok(""),
     },
   );
@@ -259,6 +267,26 @@ describe("uninstall gateway-directory scan", () => {
       expect(logs).not.toContain(DESTROY_SHIM_CLEANUP_LOG);
       expect(logs).not.toContain(SCOPED_RETENTION_LOG);
       expect(logs.some((line) => line.includes("not an installer-managed shim"))).toBe(true);
+      expect(survivors).toEqual(shims);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps managed CLI shims with --destroy-user-data when a confirmed sibling gateway remains (#9277)", () => {
+    const { home, shims } = makeHome("nemoclaw-uninstall-destroy-sibling-", []);
+    writeScopedGatewayState(home);
+
+    try {
+      const { result, logs, survivors } = uninstall(home, shims, {
+        destroyUserData: true,
+        run: okWithSiblingGatewayList,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(logs).toContain(SCOPED_RETENTION_LOG);
+      expect(logs).not.toContain(DESTROY_SHIM_CLEANUP_LOG);
+      expect(logs).not.toContain(SCOPED_PACKAGE_RETENTION_LOG);
       expect(survivors).toEqual(shims);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

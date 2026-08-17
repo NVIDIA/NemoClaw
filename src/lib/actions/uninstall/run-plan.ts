@@ -2617,6 +2617,7 @@ function executePlan(
   preserveUnderStateDir: readonly string[],
   scopedToSelectedGateway: boolean,
   sharedRegistryMustBePreserved: boolean,
+  otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -2759,12 +2760,12 @@ function executePlan(
       }
     } else if (step.name === "NemoClaw CLI") {
       if (scopedToSelectedGateway) {
-        // Sibling-scoped cleanup keeps the shared npm CLI package. With
-        // `--destroy-user-data`, also delete installer-managed user-local shims
-        // when `removePath` succeeds so a destructive uninstall does not leave
-        // them on PATH (#9277). Foreign files of those names stay; the summary
-        // log runs only when at least one managed shim was removed.
-        if (options.destroyUserData) {
+        // Confirmed sibling gateway ports share ~/.local/bin shims. Only the
+        // unidentified / unproven scoped path (#9277 false positives: odd
+        // gateways/ entries, unreadable gateway list, etc.) may drop managed
+        // shims on `--destroy-user-data` while keeping the shared npm package.
+        const confirmedSiblingPortsRemain = otherGatewayPorts.length > 0;
+        if (options.destroyUserData && !confirmedSiblingPortsRemain) {
           runtime.log("Sibling gateways remain; kept the shared NemoClaw CLI package.");
           const removedShims = removeManagedCliShims(paths, runtime);
           if (removedShims > 0) {
@@ -3082,6 +3083,7 @@ export function runUninstallPlan(
       preserveUnderStateDir,
       scopedToSelectedGateway,
       gatewayInspection.sharedRegistryMustBePreserved,
+      gatewayInspection.otherGatewayPorts,
       sandboxNames,
       teardownAuthority,
       portableRuntimeCleanup,
