@@ -49,6 +49,27 @@ function replaceRequired(source: string, target: string, replacement: string): s
 const oneShotFunction = extractShellFunction("run_oneshot_command");
 const resolveNormalizerFunction = extractShellFunction("resolve_mutable_config_normalizer");
 const configGuardFunction = extractShellFunction("run_openclaw_config_guard");
+const canRunPrivilegedPermissionFixture =
+  process.platform === "linux" &&
+  spawnSync("sudo", ["-n", "test", "-x", "/usr/bin/setpriv"], { stdio: "ignore" }).status === 0;
+
+function useTestRuntimeDirectory(source: string): string {
+  let result = replaceRequired(
+    source,
+    " /run/nemoclaw || return 1",
+    ' "$NEMOCLAW_TEST_RUNTIME_DIR" || return 1',
+  );
+  result = replaceRequired(
+    result,
+    " /run/nemoclaw/openclaw-config-guard || return 1",
+    ' "$NEMOCLAW_TEST_RUNTIME_DIR/openclaw-config-guard" || return 1',
+  );
+  return replaceRequired(
+    result,
+    'output_file="/run/nemoclaw/openclaw-config-guard/.$$.output"',
+    'output_file="$NEMOCLAW_TEST_RUNTIME_DIR/openclaw-config-guard/.$$.output"',
+  );
+}
 
 describe("nemoclaw-start config guard output permissions", () => {
   it("keeps the shared runtime path traversable while startup-owner output stays private (#9357)", () => {
@@ -60,28 +81,12 @@ describe("nemoclaw-start config guard output permissions", () => {
     fs.mkdirSync(runtimeDir, { mode: 0o700 });
     fs.writeFileSync(caBundle, "corporate CA\n", { mode: 0o444 });
 
-    let testFunction = configGuardFunction.replaceAll(
-      "install -d -o root -g root -m",
-      "install -d -m",
-    );
-    testFunction = replaceRequired(
-      testFunction,
-      "install -d -m 755 /run/nemoclaw || return 1",
-      'install -d -m 755 "$NEMOCLAW_TEST_RUNTIME_DIR" || return 1',
-    );
-    testFunction = replaceRequired(
-      testFunction,
-      "install -d -m 700 /run/nemoclaw/openclaw-config-guard || return 1",
-      'install -d -m 700 "$NEMOCLAW_TEST_RUNTIME_DIR/openclaw-config-guard" || return 1',
-    );
-    testFunction = replaceRequired(
-      testFunction,
-      'output_file="/run/nemoclaw/openclaw-config-guard/.$$.output"',
-      'output_file="$NEMOCLAW_TEST_RUNTIME_DIR/openclaw-config-guard/.$$.output"',
+    const testFunction = useTestRuntimeDirectory(
+      configGuardFunction.replaceAll("install -d -o root -g root -m", "install -d -m"),
     );
     const script = [
       "set -euo pipefail",
-      'python3() { find "$NEMOCLAW_TEST_RUNTIME_DIR" -type f -name \'.*.output\' -print >"$NEMOCLAW_TEST_OBSERVED_OUTPUT"; printf \'private guard output\\n\'; }',
+      "python3() { find \"$NEMOCLAW_TEST_RUNTIME_DIR\" -type f -name '.*.output' -print >\"$NEMOCLAW_TEST_OBSERVED_OUTPUT\"; printf 'private guard output\\n'; }",
       "_OPENCLAW_CONFIG_GUARD=/tmp/openclaw-config-guard.py",
       testFunction,
       "run_openclaw_config_guard publish-startup-ready --startup-owner",
@@ -105,6 +110,74 @@ describe("nemoclaw-start config guard output permissions", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it.runIf(canRunPrivilegedPermissionFixture)(
+    "keeps the CA readable while denying a distinct unprivileged user access to live guard output (#9357)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-guard-root-output-"));
+      const runtimeDir = path.join(root, "nemoclaw");
+      const privateDir = path.join(runtimeDir, "openclaw-config-guard");
+      const caBundle = path.join(runtimeDir, "managed-startup-ca-bundle.pem");
+      const observedAccess = path.join(root, "observed-access");
+      const nobodyUid = spawnSync("id", ["-u", "nobody"], { encoding: "utf-8" }).stdout.trim();
+      const nobodyGid = spawnSync("id", ["-g", "nobody"], { encoding: "utf-8" }).stdout.trim();
+      fs.chmodSync(root, 0o755);
+      fs.mkdirSync(runtimeDir, { mode: 0o700 });
+      fs.writeFileSync(caBundle, "corporate CA\n", { mode: 0o444 });
+
+      const testFunction = useTestRuntimeDirectory(configGuardFunction);
+      const script = [
+        "set -euo pipefail",
+        "python3() {",
+        '  local output_path=""',
+        '  output_path="$(find "$NEMOCLAW_TEST_PRIVATE_DIR" -maxdepth 1 -type f -name \'.*.output\' -print -quit)"',
+        '  test -n "$output_path"',
+        '  /usr/bin/setpriv --reuid="$NEMOCLAW_TEST_NOBODY_UID" --regid="$NEMOCLAW_TEST_NOBODY_GID" --clear-groups -- sh -eu -c \'test ! -r "$1"; ! ls -A "$2" >/dev/null 2>&1; grep -Fqx "corporate CA" "$3"\' sh "$output_path" "$NEMOCLAW_TEST_PRIVATE_DIR" "$NEMOCLAW_TEST_CA_BUNDLE"',
+        "  printf 'denied\\n' >\"$NEMOCLAW_TEST_OBSERVED_ACCESS\"",
+        "  printf 'private guard output\\n'",
+        "}",
+        'chown root:root "$NEMOCLAW_TEST_CA_BUNDLE"',
+        "_OPENCLAW_CONFIG_GUARD=/tmp/openclaw-config-guard.py",
+        testFunction,
+        "run_openclaw_config_guard publish-startup-ready --startup-owner",
+      ].join("\n");
+
+      try {
+        const result = spawnSync(
+          "sudo",
+          [
+            "-n",
+            "env",
+            `PATH=${process.env.PATH ?? "/usr/bin:/bin"}`,
+            `NEMOCLAW_TEST_CA_BUNDLE=${caBundle}`,
+            `NEMOCLAW_TEST_NOBODY_GID=${nobodyGid}`,
+            `NEMOCLAW_TEST_NOBODY_UID=${nobodyUid}`,
+            `NEMOCLAW_TEST_OBSERVED_ACCESS=${observedAccess}`,
+            `NEMOCLAW_TEST_PRIVATE_DIR=${privateDir}`,
+            `NEMOCLAW_TEST_RUNTIME_DIR=${runtimeDir}`,
+            "bash",
+            "-c",
+            script,
+          ],
+          { encoding: "utf-8", timeout: 10_000 },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.readFileSync(observedAccess, "utf-8")).toBe("denied\n");
+        expect(mode(runtimeDir)).toBe(0o755);
+        expect(fs.statSync(runtimeDir).uid).toBe(0);
+        expect(mode(caBundle)).toBe(0o444);
+        expect(fs.statSync(caBundle).uid).toBe(0);
+        expect(mode(privateDir)).toBe(0o700);
+        expect(fs.statSync(privateDir).uid).toBe(0);
+        expect(fs.readdirSync(privateDir)).toEqual([]);
+      } finally {
+        const cleanup = spawnSync("sudo", ["-n", "/usr/bin/rm", "-rf", "--", root], {
+          encoding: "utf-8",
+        });
+        expect(cleanup.status, cleanup.stderr).toBe(0);
+      }
+    },
+  );
 });
 
 describe("nemoclaw-start one-shot command lifecycle", () => {
