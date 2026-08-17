@@ -759,16 +759,25 @@ export function sanitizeBackupDirectory(
     // would otherwise survive only as `cause` and never reach the operator. (#8202)
     const prerequisite =
       error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
+    const validatedSnapshotPath =
+      error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error(`${prerequisite}Credential sanitization failed and backup cleanup failed`, {
-        cause: cleanupError,
-      });
+      const retainedPath =
+        validatedSnapshotPath === null
+          ? ""
+          : `; the incomplete backup may remain at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and backup cleanup failed${retainedPath}`,
+        { cause: cleanupError },
+      );
     }
     if (operations.backupExists(dirPath)) {
+      const retainedPath =
+        validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
       throw new Error(
-        `${prerequisite}Credential sanitization failed and the incomplete backup remains`,
+        `${prerequisite}Credential sanitization failed and the incomplete backup remains${retainedPath}`,
         { cause: error },
       );
     }

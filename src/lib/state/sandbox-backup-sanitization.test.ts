@@ -310,18 +310,18 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(false);
   });
 
-  it("names the python3 prerequisite when the backup sanitizer finds no interpreter (#8202)", () => {
+  it("permits a rerun after removing a snapshot that the sanitizer could not inspect (#8202)", () => {
     const backupPath = createBackup();
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
     setSnapshotSanitizerPythonPathForTest(null);
 
     expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
-      "python3 is required for snapshot sanitization; install python3 and retry. Credential sanitization failed; removed the incomplete backup",
+      "python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed; removed the incomplete backup",
     );
     expect(existsSync(backupPath)).toBe(false);
   });
 
-  it("names the python3 prerequisite when backup cleanup also fails (#8202)", () => {
+  it("reports the validated directory when backup cleanup throws (#8202)", () => {
     const backupPath = createBackup();
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
     setSnapshotSanitizerPythonPathForTest(null);
@@ -333,23 +333,36 @@ describe("rebuild backup credential sanitization", () => {
         },
       }),
     ).toThrow(
-      "python3 is required for snapshot sanitization; install python3 and retry. Credential sanitization failed and backup cleanup failed",
+      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and backup cleanup failed; the incomplete backup may remain at ${backupPath}`,
     );
+    expect(existsSync(backupPath)).toBe(true);
   });
 
-  it("names the python3 prerequisite when the incomplete backup remains (#8202)", () => {
+  it("reports only the validated directory when failed cleanup retains a snapshot (#8202)", () => {
     const backupPath = createBackup();
+    const unvalidatedPath = `${backupPath}/.`;
     writeFileSync(join(backupPath, "state", "config.json"), '{"apiKey":"sk-secret-value"}');
     setSnapshotSanitizerPythonPathForTest(null);
+    const removeBackup = vi.fn();
+    const backupExists = vi.fn(() => true);
 
-    expect(() =>
-      sanitizeBackupDirectory(backupPath, {
-        removeBackup: () => undefined,
-        backupExists: () => true,
-      }),
-    ).toThrow(
-      "python3 is required for snapshot sanitization; install python3 and retry. Credential sanitization failed and the incomplete backup remains",
+    let thrown: unknown;
+    try {
+      sanitizeBackupDirectory(unvalidatedPath, {
+        removeBackup,
+        backupExists,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe(
+      `python3 is required for snapshot sanitization; install python3 and rerun. Credential sanitization failed and the incomplete backup remains at ${backupPath}`,
     );
+    expect((thrown as Error).message).not.toContain(unvalidatedPath);
+    expect(removeBackup).toHaveBeenCalledWith(unvalidatedPath);
+    expect(backupExists).toHaveBeenCalledWith(unvalidatedPath);
     expect(existsSync(backupPath)).toBe(true);
   });
 

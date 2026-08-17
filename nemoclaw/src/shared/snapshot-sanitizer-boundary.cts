@@ -77,9 +77,12 @@ function snapshotSanitizerPythonPath(): string | null {
 
 /** No trusted python3 interpreter resolved, so no descriptor-relative helper can run. (#8202) */
 export class SnapshotSanitizerPrerequisiteError extends Error {
-  constructor() {
-    super("python3 is required for snapshot sanitization; install python3 and retry");
+  readonly snapshotPath: string;
+
+  constructor(snapshotPath: string) {
+    super("python3 is required for snapshot sanitization; install python3 and rerun");
     this.name = "SnapshotSanitizerPrerequisiteError";
+    this.snapshotPath = snapshotPath;
   }
 }
 
@@ -92,9 +95,12 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
  * read reports the other failure, which is what the caller reported before
  * this check existed.
  */
-export function snapshotSanitizerFailure(message: string): Error {
+export function snapshotSanitizerFailure(
+  message: string,
+  validatedSnapshotPath: string,
+): Error {
   return snapshotSanitizerPythonPath() === null
-    ? new SnapshotSanitizerPrerequisiteError()
+    ? new SnapshotSanitizerPrerequisiteError(validatedSnapshotPath)
     : new Error(message);
 }
 

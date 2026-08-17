@@ -190,14 +190,20 @@ export function sanitizeSnapshotDirectory(rootPath: string): void {
 
     const scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES);
     if (scan === null) {
-      throw snapshotSanitizerFailure(`Failed to inspect snapshot artifacts safely: ${rootPath}`);
+      throw snapshotSanitizerFailure(
+        `Failed to inspect snapshot artifacts safely: ${rootPath}`,
+        root.canonicalPath,
+      );
     }
     const actions = scan.files
       .map((file) => actionForScannedFile(file))
       .filter((action): action is SnapshotSanitizationAction => action !== null);
     if (actions.length === 0) return;
     if (!applyDescriptorSnapshotActions(root, scan, actions)) {
-      throw snapshotSanitizerFailure(`Failed to sanitize snapshot artifacts safely: ${rootPath}`);
+      throw snapshotSanitizerFailure(
+        `Failed to sanitize snapshot artifacts safely: ${rootPath}`,
+        root.canonicalPath,
+      );
     }
   }
   throw new Error(`Snapshot artifacts did not reach a stable sanitized state: ${rootPath}`);
