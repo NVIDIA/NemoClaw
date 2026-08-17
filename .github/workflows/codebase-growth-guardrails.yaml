@@ -21,92 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Block newly added JavaScript files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
-            --jq '.[] | select((.filename | test("\\.(js|cjs|mjs)$")) and (.status == "added" or (.status == "renamed" and ((.previous_filename // "") | test("\\.(js|cjs|mjs)$") | not)))) | [.status, .filename, (.previous_filename // "")] | @tsv')"
-
-          if [ -z "$rows" ]; then
-            echo "PASS: no newly added .js, .cjs, or .mjs files."
-            exit 0
-          fi
-
-          cat <<'EOF'
-          FAIL: this PR adds JavaScript source files.
-
-          NemoClaw is standardizing on TypeScript for new Node.js code. Please
-          use .ts for new source, test, and script files instead of .js, .cjs,
-          or .mjs. Existing JavaScript files may still be modified or deleted.
-
-          Blocked files:
-          EOF
-          while IFS=$'\t' read -r file_status file_path previous_path; do
-            if [ -n "$previous_path" ]; then
-              echo "          - ${file_path} (${file_status} from ${previous_path})"
-            else
-              echo "          - ${file_path} (${file_status})"
-            fi
-          done <<< "$rows"
-          exit 1
-
-      - name: Require src/lib/onboard.ts to be net-neutral or smaller
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          TARGET_FILE: src/lib/onboard.ts
-          EXTRACTION_DIR: src/lib/onboard/
-        run: |
-          set -euo pipefail
-
-          # Intentionally hard-code TARGET_FILE in the jq expression. gh's jq
-          # filter does not accept shell variables directly, and missing
-          # previous_filename values must not match every file.
-          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
-            --jq '.[] | select(.filename == "src/lib/onboard.ts" or .previous_filename == "src/lib/onboard.ts") | [.additions, .deletions, .filename] | @tsv')"
-
-          if [ -z "$rows" ]; then
-            echo "${TARGET_FILE} was not changed. New modules under ${EXTRACTION_DIR} are allowed."
-            exit 0
-          fi
-
-          additions=0
-          deletions=0
-          while IFS=$'\t' read -r file_additions file_deletions _file_path; do
-            if [ -z "${file_additions:-}" ]; then
-              continue
-            fi
-            additions=$((additions + file_additions))
-            deletions=$((deletions + file_deletions))
-          done <<< "$rows"
-
-          net=$((additions - deletions))
-          echo "${TARGET_FILE}: +${additions}/-${deletions} (net ${net})"
-          echo "Growth under ${EXTRACTION_DIR} is allowed; this budget applies only to ${TARGET_FILE}."
-
-          if [ "$additions" -le "$deletions" ]; then
-            echo "PASS: ${TARGET_FILE} is net-neutral or smaller."
-            exit 0
-          fi
-
-          cat <<EOF
-          FAIL: ${TARGET_FILE} grew by ${net} line(s).
-
-          ${TARGET_FILE} is already about 12k lines. Please move new logic into
-          focused modules under ${EXTRACTION_DIR}, or reduce ${TARGET_FILE} by at
-          least as many lines as this PR adds there.
-
-          This check allows src/lib/onboard/** to grow. It only blocks net growth
-          in the top-level onboard entrypoint.
-          EOF
-          exit 1
-
       - name: Check out the trusted base revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -116,8 +30,9 @@ jobs:
       - name: Install trusted dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Require changed test files to stay within size budget
+      - name: Test codebase growth guardrails
         env:
+          NEMOCLAW_GROWTH_PR: "1"
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
@@ -126,28 +41,4 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts
-
-      - name: Require changed test files not to add if statements
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts
-
-      - name: Require changed test files not to increase test-loop counts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          node --experimental-strip-types tools/growth-guardrails/test-loops.mts
+          npx vitest run --project integration test/growth-guardrails.test.ts
