@@ -120,12 +120,16 @@ describe("E2E fixture primitives", () => {
 
       expect(shellResult.exitCode).toBe(0);
 
-      for (const file of allowlistedFiles) {
-        expect(fs.existsSync(path.join(artifactParent, targetId, file))).toBe(true);
-      }
-      for (const file of shellEvidenceFiles) {
-        expect(fs.existsSync(path.join(artifactParent, targetId, file))).toBe(true);
-      }
+      expect(
+        Array.from(allowlistedFiles, (file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).not.toContain(false);
+      expect(
+        Array.from(shellEvidenceFiles, (file) =>
+          Object.is(fs.existsSync(path.join(artifactParent, targetId, file)), true),
+        ),
+      ).not.toContain(false);
       expect(fs.existsSync(path.join(artifactParent, targetId, targetId, "run-plan.json"))).toBe(
         false,
       );

@@ -210,10 +210,12 @@ describe("probeUserManagedFiles", () => {
     probeUserManagedFiles("alpha");
     expect(tempSshFiles.size).toBeGreaterThan(0);
     const tmpdir = path.resolve(os.tmpdir());
-    for (const dir of tempSshFiles) {
-      const resolved = path.resolve(dir);
-      expect(resolved.startsWith(tmpdir + path.sep) || resolved === tmpdir).toBe(true);
-    }
+    expect(
+      Array.from([...tempSshFiles], (dir) => {
+        const resolved = path.resolve(dir);
+        return resolved.startsWith(tmpdir + path.sep) || resolved === tmpdir;
+      }),
+    ).not.toContain(false);
   });
 
   it("shell-quotes unusual but permitted filenames safely", () => {

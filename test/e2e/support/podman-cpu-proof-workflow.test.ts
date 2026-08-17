@@ -527,8 +527,12 @@ describe("native Podman CPU proof workflow", () => {
         [fixture.runner.envAtCreate.get(delegationTemp), "E2E_CPU_DELEGATION_DROP_IN_TEMP_CREATED"],
         [fixture.runner.envAtCreate.get(userSliceTemp), "E2E_USER_SLICE_DROP_IN_TEMP_CREATED"],
       ] as const;
-      for (const [environment, name] of records)
-        expect(environment).toContain(`${name}=unrecorded\n`);
+      expect(
+        Array.from(
+          records,
+          ([environment, name]) => environment?.includes(`${name}=unrecorded\n`) === true,
+        ),
+      ).not.toContain(false);
       expect(fixture.runner.envAtCreate.get(appTemp)).toContain(
         `E2E_APP_SLICE_DROP_IN_TEMP=${appTemp}\n`,
       );

@@ -933,8 +933,10 @@ exit 0
       });
     });
 
-    it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
-      const script = `#!/usr/bin/env bash
+    it.each(Array.from(["1", "2"], (tableRow) => [tableRow] as const))(
+      "preserves query-param auth on doubled-timeout chat-completions retry [%s]",
+      (call) => {
+        const script = `#!/usr/bin/env bash
 outfile=""
 n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
@@ -962,35 +964,36 @@ fi
 printf '200'
 exit 0
 `;
-      withFakeCurlProbe(
-        { script, dirPrefix: "nemoclaw-query-retry-probe-" },
-        ({ counter, tmpDir }) => {
-          const result = probeOpenAiLikeEndpoint(
-            "https://api.example.com/v1",
-            "test-model",
-            "secret key",
-            { skipResponsesProbe: true, authMode: "query-param" },
-          );
+        withFakeCurlProbe(
+          { script, dirPrefix: "nemoclaw-query-retry-probe-" },
+          ({ counter, tmpDir }) => {
+            const result = probeOpenAiLikeEndpoint(
+              "https://api.example.com/v1",
+              "test-model",
+              "secret key",
+              { skipResponsesProbe: true, authMode: "query-param" },
+            );
 
-          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-          const observedConfigPaths = new Set<string>();
-          for (const call of ["1", "2"]) {
+            expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+            expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+            const observedConfigPaths = new Set<string>();
+
             const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
             expect(args).toContain("https://api.example.com/v1/chat/completions");
             expect(args).not.toContain("?key=");
             expect(args).not.toContain("Authorization: Bearer");
             expect(args).not.toContain("secret key");
             observedConfigPaths.add(captureAuthConfigPath(args.split("\n")));
-          }
-          // Both calls must reuse the same auth config tmpfile so a doubled-
-          // timeout retry never spawns a second config write that could race
-          // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
-          // --config has a path value".
-          expect(observedConfigPaths.size).toBe(1);
-        },
-      );
-    });
+
+            // Both calls must reuse the same auth config tmpfile so a doubled-
+            // timeout retry never spawns a second config write that could race
+            // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
+            // --config has a path value".
+            expect(observedConfigPaths.size).toBe(1);
+          },
+        );
+      },
+    );
 
     it("retries Local Ollama validation when HTTP 200 omits a structured tool call (#8714)", () => {
       const body = `n=$(cat "${HARNESS_COUNTER}")

@@ -109,12 +109,16 @@ describe("stable CLI coverage sharding", () => {
     ]);
     const withRemoval = assignmentOwners(entries.slice(1));
 
-    for (const entry of entries) {
-      expect(withAddition.get(entry.key), entry.key).toBe(baseline.get(entry.key));
-    }
-    for (const entry of entries.slice(1)) {
-      expect(withRemoval.get(entry.key), entry.key).toBe(baseline.get(entry.key));
-    }
+    expect(
+      Array.from(entries, (entry) =>
+        Object.is(withAddition.get(entry.key), baseline.get(entry.key)),
+      ),
+    ).not.toContain(false);
+    expect(
+      Array.from(entries.slice(1), (entry) =>
+        Object.is(withRemoval.get(entry.key), baseline.get(entry.key)),
+      ),
+    ).not.toContain(false);
   });
 
   it("keeps recorded project and path keys on their stable shards", () => {

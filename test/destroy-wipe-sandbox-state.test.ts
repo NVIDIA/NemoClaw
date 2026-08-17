@@ -453,37 +453,32 @@ describe("wipeSandboxState (#5449)", () => {
       stateFiles: [{ path: "config.toml" }],
       label: "langchain-deepagents-code",
     },
-  ])("wipes the shipped $label manifest shape under its own /sandbox/<agent> dir for Ultra PRA-2 (#5455)", ({
-    agent,
-    configDir,
-    stateDirs,
-    stateDirPrefixes,
-    stateFiles,
-  }) => {
-    const { deps, runOpenshell } = buildDeps({
-      getSandbox: vi.fn(() => ({ agent }) as never),
-      loadAgent: vi.fn(() => ({
-        configPaths: { dir: configDir },
-        stateDirs,
-        stateDirPrefixes,
-        stateFiles,
-      })),
-    });
+  ])(
+    "wipes the shipped $label manifest shape under its own /sandbox/<agent> dir for Ultra PRA-2 (#5455)",
+    ({ agent, configDir, stateDirs, stateDirPrefixes, stateFiles }) => {
+      const { deps, runOpenshell } = buildDeps({
+        getSandbox: vi.fn(() => ({ agent }) as never),
+        loadAgent: vi.fn(() => ({
+          configPaths: { dir: configDir },
+          stateDirs,
+          stateDirPrefixes,
+          stateFiles,
+        })),
+      });
 
-    destroy.wipeSandboxState("test-sb", deps as never);
+      destroy.wipeSandboxState("test-sb", deps as never);
 
-    const { script } = execCommand(runOpenshell);
-    expect(script).toContain(`cd '${configDir}'`);
-    for (const dir of stateDirs) {
-      expect(script).toContain(`'${dir}'`);
-    }
-    for (const prefix of stateDirPrefixes) {
-      expect(script).toContain(`'${prefix}'*`);
-    }
-    for (const file of stateFiles) {
-      expect(script).toContain(`'${file.path}'`);
-    }
-  });
+      const { script } = execCommand(runOpenshell);
+      expect(script).toContain(`cd '${configDir}'`);
+      expect(Array.from(stateDirs, (dir) => script.includes(`'${dir}'`))).not.toContain(false);
+      expect(
+        Array.from(stateDirPrefixes, (prefix) => script.includes(`'${prefix}'*`)),
+      ).not.toContain(false);
+      expect(Array.from(stateFiles, (file) => script.includes(`'${file.path}'`))).not.toContain(
+        false,
+      );
+    },
+  );
 
   // Ultra advisor PRA-2 on #5455 (empty exact state dirs): a manifest with
   // only a declared prefix must still issue a syntactically valid wipe.

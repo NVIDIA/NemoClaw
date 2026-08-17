@@ -893,18 +893,7 @@ describe("onboard command options", () => {
       env,
       loadPortableInferenceDescriptor: async () => null,
       runOnboard: async () => {
-        for (const key of [
-          "NEMOCLAW_EXPERIMENTAL_PROFILE",
-          "NEMOCLAW_PROVIDER",
-          "NEMOCLAW_MODEL",
-          "NEMOCLAW_OLLAMA_NO_AUTOSTART",
-          "NEMOCLAW_POLICY_MODE",
-          "NEMOCLAW_POLICY_PRESETS",
-          "NEMOCLAW_POLICY_TIER",
-          "NEMOCLAW_TOOL_DISCLOSURE",
-        ]) {
-          observed[key] = env[key];
-        }
+        Object.assign(observed, env);
       },
     });
 
@@ -1090,7 +1079,7 @@ describe("onboard command options", () => {
           runOnboard: vi.fn(),
         }),
       ).rejects.toThrow("--agents YAML parse error");
-      for (const key of testCase.keys) expect(env[key]).toBeUndefined();
+      expect(Array.from(testCase.keys, (key) => env[key] === undefined)).not.toContain(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

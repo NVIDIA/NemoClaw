@@ -100,14 +100,12 @@ const auditedCommits = [
 describe("OpenShell 0.0.85 migration review", () => {
   it("records every adjacent release range and all 67 audited commits", () => {
     expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(67);
-    for (const range of adjacentRanges) {
-      expect(review).toContain(
-        `| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`,
-      );
-    }
-    for (const commit of auditedCommits) {
-      expect(review, `missing audited OpenShell commit ${commit}`).toContain(commit);
-    }
+    expect(
+      Array.from(adjacentRanges, (range) =>
+        review.includes(`| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`),
+      ),
+    ).not.toContain(false);
+    expect(Array.from(auditedCommits, (commit) => review.includes(commit))).not.toContain(false);
     expect(review).toContain("283 distinct changed paths");
   });
 
@@ -330,11 +328,9 @@ describe("OpenShell 0.0.85 migration review", () => {
 
     for (const [relativePath, forbidden] of migratedConsumers) {
       const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
-      for (const obsoleteTransport of forbidden) {
-        expect(source, `${relativePath} still contains ${obsoleteTransport}`).not.toContain(
-          obsoleteTransport,
-        );
-      }
+      expect(
+        Array.from(forbidden, (obsoleteTransport) => !source.includes(obsoleteTransport)),
+      ).not.toContain(false);
     }
 
     const phase6 = fs.readFileSync(
@@ -354,7 +350,12 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(pythonEgress).toContain("NATIVE_MULTILINE_ARGV");
   });
 
-  it("treats OpenShell TLS identity as supervisor-only in every managed agent", () => {
+  it.each(
+    Array.from(
+      ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"],
+      (tableRow) => [tableRow] as const,
+    ),
+  )("treats OpenShell TLS identity as supervisor-only in every managed agent [%s]", (name) => {
     const hermesBoundary = fs.readFileSync(
       path.join(repoRoot, "agents", "hermes", "validate-env-secret-boundary.py"),
       "utf8",
@@ -369,12 +370,11 @@ describe("OpenShell 0.0.85 migration review", () => {
     );
     const boundaries = [hermesBoundary, dcodeWrapper, dcodeRuntime];
 
-    for (const name of ["OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"]) {
-      expect(
-        boundaries.every((source) => source.includes(name)),
-        name,
-      ).toBe(true);
-    }
+    expect(
+      boundaries.every((source) => source.includes(name)),
+      name,
+    ).toBe(true);
+
     expect(hermesBoundary).not.toContain("RUNTIME_ALLOWED_PLATFORM_PATH_VALUES");
     expect(dcodeWrapper).not.toContain("is_allowed_openshell_runtime_value");
     expect(dcodeRuntime).not.toContain("/etc/openshell/tls/client/tls.key");

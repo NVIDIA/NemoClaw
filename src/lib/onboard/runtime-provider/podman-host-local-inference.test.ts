@@ -17,6 +17,13 @@ import { qualifyPodmanInferenceAuthority } from "./podman-preflight";
 
 const OLLAMA_MODEL_SIZE = 8 * 1024 ** 3;
 const OLLAMA_MODEL_DIGEST = "7".repeat(64);
+const PROVIDER_FAILURE_SECRETS = [
+  "nvapi-1234567890abcdef",
+  "bearer-secret-1234",
+  "environment-secret",
+  "user:pass",
+  "query-secret",
+] as const;
 
 function ollamaPsModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -516,16 +523,15 @@ describe("Podman host-local inference lifecycle", () => {
 
     expect(thrown).toContain("probe exited 22");
     expect(harness.failures.at(-1)).toMatchObject({ phase: "gpu" });
-    for (const secret of [
-      "nvapi-1234567890abcdef",
-      "bearer-secret-1234",
-      "environment-secret",
-      "user:pass",
-      "query-secret",
-    ]) {
-      expect(thrown).not.toContain(secret);
-      expect(harness.failures.map(({ message }) => message).join("\n")).not.toContain(secret);
-    }
+
+    expect(
+      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !thrown.includes(secret)),
+    ).not.toContain(false);
+    const failureEvidence = harness.failures.map(({ message }) => message).join("\n");
+    expect(
+      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !failureEvidence.includes(secret)),
+    ).not.toContain(false);
+
     expect(harness.routeAuthorityStore.load("ollama")).toBeNull();
     expect(harness.written).toHaveLength(0);
   });
@@ -653,16 +659,15 @@ describe("Podman host-local inference lifecycle", () => {
     }
 
     expect(thrown).toContain("probe exited 22");
-    for (const secret of [
-      "nvapi-1234567890abcdef",
-      "bearer-secret-1234",
-      "environment-secret",
-      "user:pass",
-      "query-secret",
-    ]) {
-      expect(thrown).not.toContain(secret);
-      expect(harness.failures.map(({ message }) => message).join("\n")).not.toContain(secret);
-    }
+
+    expect(
+      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !thrown.includes(secret)),
+    ).not.toContain(false);
+    const failureEvidence = harness.failures.map(({ message }) => message).join("\n");
+    expect(
+      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !failureEvidence.includes(secret)),
+    ).not.toContain(false);
+
     expect(harness.probe()).toBeNull();
   });
 
@@ -803,15 +808,11 @@ describe("Podman host-local inference lifecycle", () => {
     expect(() => runtime.startManaged(harness.input, harness.writer)).toThrow("<REDACTED>");
     expect(harness.failures).toHaveLength(1);
     const evidence = harness.failures[0]?.message ?? "";
-    for (const secret of [
-      "nvapi-1234567890abcdef",
-      "bearer-secret-1234",
-      "environment-secret",
-      "user:pass",
-      "query-secret",
-    ]) {
-      expect(evidence).not.toContain(secret);
-    }
+
+    expect(
+      Array.from(PROVIDER_FAILURE_SECRETS, (secret) => !evidence.includes(secret)),
+    ).not.toContain(false);
+
     expect(evidence).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
     const evidenceIndex = harness.events.findIndex((event) => event === "evidence:inference");
     const removeIndex = harness.events.reduce(

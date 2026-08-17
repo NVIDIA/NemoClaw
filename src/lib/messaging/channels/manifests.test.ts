@@ -117,9 +117,9 @@ describe("built-in channel manifests", () => {
       ];
 
       const source = readFileSync(manifestPath, "utf8");
-      for (const forbiddenImport of forbiddenImports) {
-        expect(source).not.toContain(forbiddenImport);
-      }
+      expect(
+        Array.from(forbiddenImports, (forbiddenImport) => !source.includes(forbiddenImport)),
+      ).not.toContain(false);
     },
   );
 });

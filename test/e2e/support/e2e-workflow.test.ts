@@ -543,19 +543,30 @@ describe("e2e workflow boundary", () => {
     );
   });
 
-  it("rejects credential-backed provider smokes in the PR-safe inference-routing target", () => {
-    const target = catalogueTarget("inference-routing");
+  it.each([
+    { scenario: "credential-backed profile" },
+    { scenario: "provider smoke test" },
+    { scenario: "cloudflared disabled" },
+  ])(
+    "rejects credential-backed provider smokes in the PR-safe inference-routing target [$scenario]",
+    ({ scenario }) => {
+      const target = catalogueTarget("inference-routing");
 
-    for (const mutation of [
-      { ...target, profile: "nvidia-inference" as const },
-      { ...target, testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts" },
-      { ...target, cloudflared: false },
-    ]) {
+      const mutation = (
+        {
+          "credential-backed profile": { ...target, profile: "nvidia-inference" as const },
+          "provider smoke test": {
+            ...target,
+            testFile: "test/e2e/live/inference-routing-provider-smoke.test.ts",
+          },
+          "cloudflared disabled": { ...target, cloudflared: false },
+        } as const
+      )[scenario]!;
       expect(() => validateE2eTargetCatalogue([mutation])).toThrow(
         "E2E target inference-routing must remain credential-free with reviewed cloudflared",
       );
-    }
-  });
+    },
+  );
 
   it.each(
     Array.from([["hermes-dashboard", "hermes-e2e"]] as const, ([legacy, canonical]) => ({

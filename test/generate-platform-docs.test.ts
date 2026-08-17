@@ -112,7 +112,12 @@ except ValueError as exc:
     expect(output).not.toContain("NO_ERROR");
   });
 
-  it("rejects malformed platform runtimes via the generator entry path", () => {
+  it.each(
+    Array.from(
+      ["non-list", "empty-list", "non-string-item", "empty-string-item", "whitespace-string-item"],
+      (tableRow) => [tableRow] as const,
+    ),
+  )("rejects malformed platform runtimes via the generator entry path [%s]", (label) => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     try {
       const cases = [
@@ -163,15 +168,9 @@ module.main()
       const output = outputs.join("\n");
       const expected =
         "Error: ci/platform-matrix.json: platforms[0].runtimes must be a non-empty list of non-empty strings";
-      for (const label of [
-        "non-list",
-        "empty-list",
-        "non-string-item",
-        "empty-string-item",
-        "whitespace-string-item",
-      ]) {
-        expect(output).toContain(`${label}:${expected}`);
-      }
+
+      expect(output).toContain(`${label}:${expected}`);
+
       expect(output).not.toContain("NO_ERROR");
     } finally {
       rmSync(tmp, { recursive: true, force: true });

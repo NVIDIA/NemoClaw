@@ -163,9 +163,9 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
     // What reached stderr is the redacted form, with the two-space prefix ...
     expect(errorSpy).toHaveBeenCalledWith(`  ${redacted}`);
     // ... and the raw secret never surfaced.
-    for (const call of errorSpy.mock.calls) {
-      expect(String(call[0])).not.toContain("SUPERSECRETTOKEN123");
-    }
+    expect(
+      Array.from(errorSpy.mock.calls, (call) => !String(call[0]).includes("SUPERSECRETTOKEN123")),
+    ).not.toContain(false);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

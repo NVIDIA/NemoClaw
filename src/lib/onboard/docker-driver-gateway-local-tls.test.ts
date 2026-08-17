@@ -266,9 +266,11 @@ describe("docker-driver-gateway-local-tls", () => {
 
       expect(bundle.localTlsDir).toBe(path.join(stateDir, "tls"));
       expect(certgenCalls).toBe(0);
-      for (const [filePath, content] of Object.entries(contents)) {
-        expect(fs.readFileSync(filePath, "utf-8")).toBe(content);
-      }
+      expect(
+        Array.from(Object.entries(contents), ([filePath, content]) =>
+          Object.is(fs.readFileSync(filePath, "utf-8"), content),
+        ),
+      ).not.toContain(false);
       expect(fs.statSync(paths.serverKeyPath).mode & 0o777).toBe(0o600);
       expect(fs.statSync(paths.clientKeyPath).mode & 0o777).toBe(0o600);
     } finally {

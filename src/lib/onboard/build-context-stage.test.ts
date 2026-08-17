@@ -169,9 +169,11 @@ describe("stageCreateSandboxBuildContext", () => {
     tmpDirs.push(result.buildCtx);
 
     const stagedBytes = readStagedBytes(result.buildCtx);
-    for (const [relativePath, contents] of requiredFiles) {
-      expect(fs.readFileSync(path.join(result.buildCtx, relativePath), "utf8")).toBe(contents);
-    }
+    expect(
+      Array.from(requiredFiles, ([relativePath, contents]) =>
+        Object.is(fs.readFileSync(path.join(result.buildCtx, relativePath), "utf8"), contents),
+      ),
+    ).not.toContain(false);
     for (const [relativePath, contents] of credentialFiles) {
       expect(fs.existsSync(path.join(result.buildCtx, relativePath))).toBe(false);
       expect(stagedBytes).not.toContain(contents);

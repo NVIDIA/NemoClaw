@@ -502,9 +502,11 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "hermes",
     });
-    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
-      expect(hermesOpen).toContain(preset);
-    }
+    expect(
+      Array.from(["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"], (preset) =>
+        hermesOpen.includes(preset),
+      ),
+    ).not.toContain(false);
     expect(hermesOpen).toContain("weather");
     expect(hermesOpen).toContain("public-reference");
     expect(hermesOpen).not.toContain("openclaw-pricing");
@@ -514,9 +516,12 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
       agent: "openclaw",
     });
-    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
-      expect(openclawOpen).not.toContain(preset);
-    }
+    expect(
+      Array.from(
+        ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"],
+        (preset) => !openclawOpen.includes(preset),
+      ),
+    ).not.toContain(false);
     expect(openclawOpen).toContain("openclaw-pricing");
     expect(openclawOpen).toContain("weather");
     expect(openclawOpen).toContain("public-reference");

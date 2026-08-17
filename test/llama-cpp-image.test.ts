@@ -687,12 +687,15 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("--target llama-server");
     expect(dockerfile).toContain('-DGGML_BACKEND_DIR="${GGML_BACKEND_DIR}"');
     expect(dockerfile).toContain('test -f "${GGML_BACKEND_DIR}/libggml-cuda.so"');
-    for (const [packageName, version] of Object.entries({
-      ...manifest.spec?.build?.packages,
-      ...manifest.spec?.runtime?.packages,
-    })) {
-      expect(dockerfile).toContain(`${packageName}=${version}`);
-    }
+    expect(
+      Array.from(
+        Object.entries({
+          ...manifest.spec?.build?.packages,
+          ...manifest.spec?.runtime?.packages,
+        }),
+        ([packageName, version]) => dockerfile.includes(`${packageName}=${version}`),
+      ),
+    ).not.toContain(false);
     expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
     expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
@@ -709,11 +712,14 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("ENV CC=${C_COMPILER}");
     expect(dockerfile).toContain("CXX=${CXX_COMPILER}");
     expect(dockerfile).toContain("CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}");
-    for (const shellPath of manifest.spec?.runtime?.forbiddenPaths?.filter(
-      (forbiddenPath) => forbiddenPath !== "/opt/llama.cpp/ui",
-    ) ?? []) {
-      expect(dockerfile).toContain(shellPath);
-    }
+    expect(
+      Array.from(
+        manifest.spec?.runtime?.forbiddenPaths?.filter(
+          (forbiddenPath) => forbiddenPath !== "/opt/llama.cpp/ui",
+        ) ?? [],
+        (shellPath) => dockerfile.includes(shellPath),
+      ),
+    ).not.toContain(false);
     expect(dockerfile).toContain("sha256sum --check --strict");
     expect(dockerfile).toContain("cp LICENSE AUTHORS");
     expect(dockerfile).toContain("find /opt/llama.cpp/licenses -type d -exec chmod 0555");

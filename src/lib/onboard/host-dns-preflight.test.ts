@@ -269,23 +269,31 @@ describe("assertHostDnsHealthy (#4784)", () => {
     expect(logs.join("\n")).toContain("Host DNS resolution check skipped");
   });
 
-  it("skips silently (no probe, no exit) when a non-NVIDIA provider is selected (codex P2)", () => {
-    const exit = vi.fn();
-    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
-    // A user who picked a local/non-NVIDIA provider must not be blocked by
-    // NVIDIA-domain DNS even if their host cannot resolve it — including in
-    // non-interactive mode where the choice is explicit.
-    for (const provider of ["ollama", "openai", "anthropic", "vllm", "custom"]) {
+  it.each(
+    Array.from(
+      ["ollama", "openai", "anthropic", "vllm", "custom"],
+      (tableRow) => [tableRow] as const,
+    ),
+  )(
+    "skips silently (no probe, no exit) when a non-NVIDIA provider is selected (codex P2) [%s]",
+    (provider) => {
+      const exit = vi.fn();
+      const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
+      // A user who picked a local/non-NVIDIA provider must not be blocked by
+      // NVIDIA-domain DNS even if their host cannot resolve it — including in
+      // non-interactive mode where the choice is explicit.
+
       assertHostDnsHealthy(host, {
         env: { NEMOCLAW_PROVIDER: provider },
         nonInteractive: true,
         exit,
         probeHostDnsImpl: probe,
       });
-    }
-    expect(probe).not.toHaveBeenCalled();
-    expect(exit).not.toHaveBeenCalled();
-  });
+
+      expect(probe).not.toHaveBeenCalled();
+      expect(exit).not.toHaveBeenCalled();
+    },
+  );
 
   it("skips an unset provider in interactive mode (provider not yet chosen — codex P2)", () => {
     const exit = vi.fn();
@@ -316,10 +324,12 @@ describe("assertHostDnsHealthy (#4784)", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it("runs for explicit NVIDIA Endpoints provider keys (build/cloud/routed) in non-interactive mode", () => {
-    const exit = vi.fn();
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    for (const provider of ["build", "cloud", "routed"]) {
+  it.each(Array.from(["build", "cloud", "routed"], (tableRow) => [tableRow] as const))(
+    "runs for explicit NVIDIA Endpoints provider keys (build/cloud/routed) in non-interactive mode [%s]",
+    (provider) => {
+      const exit = vi.fn();
+      vi.spyOn(console, "log").mockImplementation(() => {});
+
       const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
       assertHostDnsHealthy(host, {
         env: { NEMOCLAW_PROVIDER: provider },
@@ -328,9 +338,10 @@ describe("assertHostDnsHealthy (#4784)", () => {
         probeHostDnsImpl: probe,
       });
       expect(probe).toHaveBeenCalledTimes(1);
-    }
-    expect(exit).not.toHaveBeenCalled();
-  });
+
+      expect(exit).not.toHaveBeenCalled();
+    },
+  );
 
   it("ignores NEMOCLAW_PROVIDER in interactive mode (onboard ignores it there too)", () => {
     const exit = vi.fn();

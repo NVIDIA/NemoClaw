@@ -162,15 +162,18 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
         ["top", "new-container-id", "-eo", "user,pid,ppid,stat,comm"],
         expect.objectContaining({ ignoreError: true, timeout: expect.any(Number) }),
       );
-      for (const [, options] of dockerCapture.mock.calls) {
-        expect(Number(options?.timeout)).toBeLessThanOrEqual(2_000);
-      }
-      for (const [, options] of runCaptureOpenshell.mock.calls) {
-        expect(Number(options?.timeout)).toBeLessThanOrEqual(2_000);
-      }
-      for (const [, options] of dockerLogs.mock.calls) {
-        expect(Number(options?.timeout)).toBeLessThanOrEqual(2_000);
-      }
+      expect(
+        Array.from(dockerCapture.mock.calls, ([, options]) => Number(options?.timeout) <= 2_000),
+      ).not.toContain(false);
+      expect(
+        Array.from(
+          runCaptureOpenshell.mock.calls,
+          ([, options]) => Number(options?.timeout) <= 2_000,
+        ),
+      ).not.toContain(false);
+      expect(
+        Array.from(dockerLogs.mock.calls, ([, options]) => Number(options?.timeout) <= 2_000),
+      ).not.toContain(false);
       expect(console.error).toHaveBeenCalledWith(
         expect.stringContaining("Pre-rollback diagnostics saved:"),
       );

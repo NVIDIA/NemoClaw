@@ -366,12 +366,17 @@ describe("PR review advisor workflow boundary", () => {
         const triggers = workflowTriggers(workflow);
         triggers.pull_request = triggers.pull_request_target;
         delete triggers.pull_request_target;
-        for (const job of [workflow.jobs.review, workflow.jobs.publish]) {
-          const checkout = job.steps.find((step: { with?: Record<string, unknown> }) =>
+
+        const reviewCheckout = workflow.jobs.review.steps.find(
+          (step: { with?: Record<string, unknown> }) =>
             JSON.stringify(step.with ?? {}).includes("${{ github.workflow_sha }}"),
-          );
-          checkout.with.ref = "main";
-        }
+        );
+        const publishCheckout = workflow.jobs.publish.steps.find(
+          (step: { with?: Record<string, unknown> }) =>
+            JSON.stringify(step.with ?? {}).includes("${{ github.workflow_sha }}"),
+        );
+        reviewCheckout.with.ref = "main";
+        publishCheckout.with.ref = "main";
       }),
     );
     expect(errors).toEqual(
@@ -440,10 +445,18 @@ describe("PR review advisor workflow boundary", () => {
       "github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null",
     );
     expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
-    for (const jobName of ["review", "publish"]) {
-      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.action != 'edited'");
-      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.changes.base != null");
-    }
+
+    expect(
+      Array.from(["review", "publish"], (jobName) =>
+        workflow.jobs?.[jobName]?.if?.includes("github.event.action != 'edited'"),
+      ),
+    ).not.toContain(false);
+    expect(
+      Array.from(["review", "publish"], (jobName) =>
+        workflow.jobs?.[jobName]?.if?.includes("github.event.changes.base != null"),
+      ),
+    ).not.toContain(false);
+
     expect(noPrimary).toContain("advisor matrix must identify one primary artifact lane");
     expect(twoPrimaries).toContain("advisor matrix must identify one primary artifact lane");
     expect(extraReviewPermission).toContain("review job permissions.id-token is not allowed");

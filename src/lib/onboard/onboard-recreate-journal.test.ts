@@ -175,14 +175,16 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     expect(session.checkpoint?.sandboxRecreate?.gatewayPort).toBe(9090);
   });
 
-  it("queries only the journaled gateway so a sibling gateway is never reached", () => {
-    open();
+  it.each(Array.from(mocks.captureOpenshell.mock.calls, (tableRow) => [tableRow] as const))(
+    "queries only the journaled gateway so a sibling gateway is never reached [case %#]",
+    (call) => {
+      open();
 
-    for (const call of mocks.captureOpenshell.mock.calls) {
       expect(call[0]).toEqual(["sandbox", "get", "-g", "nemoclaw-9090", "alpha"]);
-    }
-    expect(mocks.captureOpenshell).toHaveBeenCalled();
-  });
+
+      expect(mocks.captureOpenshell).toHaveBeenCalled();
+    },
+  );
 
   it("journals a not-ready repair before the delete boundary", () => {
     mocks.captureOpenshell.mockReturnValue(livePresentProbe("Pending"));

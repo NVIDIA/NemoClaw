@@ -137,9 +137,11 @@ const capture = async (operation) => {
       freshManifest?: unknown;
     };
     expect(payload.messages).toHaveLength(4);
-    for (const message of payload.messages) {
-      expect(message).toContain("has shields up or an unreadable shields posture");
-    }
+    expect(
+      Array.from(payload.messages, (message) =>
+        message.includes("has shields up or an unreadable shields posture"),
+      ),
+    ).not.toContain(false);
     expect(payload.mutations).toEqual([]);
     expect(payload.freshManifest).toBeUndefined();
   });

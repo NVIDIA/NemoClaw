@@ -455,12 +455,16 @@ describe("managed startup agent environment", () => {
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
       });
       const unsets = new Set(result.applicationRuntime.unsetEnvironment);
-      for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
-        expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
-      }
-      for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
-        expect(unsets.has(name)).toBe(agent !== "openclaw");
-      }
+      expect(
+        Array.from(MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS, (obligation) =>
+          Object.is(unsets.has(obligation.input), !obligation.supportedFor.includes(agent)),
+        ),
+      ).not.toContain(false);
+      expect(
+        Array.from(OPENCLAW_APPLICATION_RUNTIME_NAMES, (name) =>
+          Object.is(unsets.has(name), agent !== "openclaw"),
+        ),
+      ).not.toContain(false);
     },
   );
 

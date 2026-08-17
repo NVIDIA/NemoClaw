@@ -162,22 +162,30 @@ describe("prepared provider reconfiguration handoff", () => {
     });
   });
 
-  it("authorizes incomplete-session recovery only for the locked rebuild context", () => {
-    const recoveryOptions = { ...authorizedOptions, rebuildProviderReconfigure: undefined };
-    expect(rebuildProviderFlowOptions(recoveryOptions, providerTarget)).toMatchObject({
-      authoritativeResumeConfig: true,
-      forceInferenceSetup: false,
-    });
-    for (const options of [
-      { ...recoveryOptions, resume: false },
-      { ...recoveryOptions, recreateSandbox: false },
-      { ...recoveryOptions, onboardLockAlreadyHeld: false },
-    ]) {
+  it.each([
+    { scenario: "resume disabled" },
+    { scenario: "sandbox recreation disabled" },
+    { scenario: "onboard lock absent" },
+  ])(
+    "authorizes incomplete-session recovery only for the locked rebuild context [$scenario]",
+    ({ scenario }) => {
+      const recoveryOptions = { ...authorizedOptions, rebuildProviderReconfigure: undefined };
+      expect(rebuildProviderFlowOptions(recoveryOptions, providerTarget)).toMatchObject({
+        authoritativeResumeConfig: true,
+        forceInferenceSetup: false,
+      });
+      const options = (
+        {
+          "resume disabled": { ...recoveryOptions, resume: false },
+          "sandbox recreation disabled": { ...recoveryOptions, recreateSandbox: false },
+          "onboard lock absent": { ...recoveryOptions, onboardLockAlreadyHeld: false },
+        } as const
+      )[scenario]!;
       expect(() => rebuildProviderFlowOptions(options, providerTarget)).toThrow(
         "requires a preflighted locked rebuild resume",
       );
-    }
-  });
+    },
+  );
 
   it("activates a matching provider-recovery receipt and binds it to the session", () => {
     const receiptTarget: ProviderRecoveryReceiptTarget = {

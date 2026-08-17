@@ -342,9 +342,11 @@ describe("OpenClaw MCP transient startup recovery patch (#7958)", () => {
         }),
       ],
     ];
-    for (const [label, error] of transient) {
-      expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(true);
-    }
+    expect(
+      Array.from(transient, ([label, error]) =>
+        Object.is(helper.nemoClawIsTransientMcpStartFailure(error), true),
+      ),
+    ).not.toContain(false);
 
     expect(helper.nemoClawIsTransientMcpStartFailure(error), label).toBe(false);
   });

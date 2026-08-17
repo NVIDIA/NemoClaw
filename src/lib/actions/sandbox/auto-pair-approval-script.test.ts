@@ -119,32 +119,37 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
       (value) => [value],
     ),
   )("accepts exactly one terminal fixed receipt [case %#]", (output) => {
-    for (const receipt of [
-      "approved-one",
-      "list-failed",
-      "list-state-path-invalid",
-      "list-platform-unsupported",
-      "list-state-root-failed",
-      "list-devices-directory-failed",
-      "list-pending-unsafe",
-      "list-pending-unstable",
-      "list-pending-invalid-shape",
-      "list-pending-unavailable",
-      "list-timeout",
-      "list-exec-failed",
-      "list-scope-upgrade-pending",
-      "list-device-pairing-required",
-      "list-gateway-connect-failed",
-      "list-command-failed",
-      "list-empty-output",
-      "list-invalid-json",
-      "list-invalid-output",
-      "list-missing-pending",
-    ] as const) {
-      expect(
-        parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
-      ).toBe(receipt);
-    }
+    expect(
+      Array.from(
+        [
+          "approved-one",
+          "list-failed",
+          "list-state-path-invalid",
+          "list-platform-unsupported",
+          "list-state-root-failed",
+          "list-devices-directory-failed",
+          "list-pending-unsafe",
+          "list-pending-unstable",
+          "list-pending-invalid-shape",
+          "list-pending-unavailable",
+          "list-timeout",
+          "list-exec-failed",
+          "list-scope-upgrade-pending",
+          "list-device-pairing-required",
+          "list-gateway-connect-failed",
+          "list-command-failed",
+          "list-empty-output",
+          "list-invalid-json",
+          "list-invalid-output",
+          "list-missing-pending",
+        ] as const,
+        (receipt) =>
+          Object.is(
+            parseAutoPairApprovalReceipt(`ignored setup output\n${RECEIPT_MARKER}=${receipt}\n`),
+            receipt,
+          ),
+      ),
+    ).not.toContain(false);
 
     expect(parseAutoPairApprovalReceipt(output)).toBeNull();
   });

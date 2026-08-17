@@ -124,20 +124,18 @@ describe("verifyWebSearchInsideSandbox", () => {
       }),
       alert: "  ✗ SECURITY: the Brave Search credential is exposed in the sandbox environment.",
     },
-  ])("blocks $label before configuration diagnostics (#7425)", ({
-    agent,
-    provider,
-    config,
-    alert,
-  }) => {
-    const d = deps(["__nemoclaw_wsenv__:raw-secret", config]);
+  ])(
+    "blocks $label before configuration diagnostics (#7425)",
+    ({ agent, provider, config, alert }) => {
+      const d = deps(["__nemoclaw_wsenv__:raw-secret", config]);
 
-    const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", agent, provider, d);
+      const credentialBoundarySafe = verifyWebSearchInsideSandbox("alpha", agent, provider, d);
 
-    expect(credentialBoundarySafe).toBe(false);
-    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
-    expect(d.warn).toHaveBeenCalledWith(alert);
-  });
+      expect(credentialBoundarySafe).toBe(false);
+      expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+      expect(d.warn).toHaveBeenCalledWith(alert);
+    },
+  );
 
   it("does not treat pinned Hermes dump-shaped output as an active Tavily backend", () => {
     const d = deps(["__nemoclaw_wsenv__:absent", "active toolsets: web, shell\n"]);
@@ -369,9 +367,12 @@ describe("verifyWebSearchInsideSandbox", () => {
       "sh",
       "-c",
     ]);
-    for (const call of d.runCaptureOpenshell.mock.calls) {
-      expect(call[0]).not.toContain("literal-secret-do-not-interpolate");
-    }
+    expect(
+      Array.from(
+        d.runCaptureOpenshell.mock.calls,
+        (call) => !call[0].includes("literal-secret-do-not-interpolate"),
+      ),
+    ).not.toContain(false);
     expect(d.warn).toHaveBeenCalledWith(
       "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
     );
@@ -459,9 +460,9 @@ describe("verifyWebSearchInsideSandbox", () => {
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, "brave", d);
 
-    for (const call of d.warn.mock.calls) {
-      expect(String(call[0] ?? "")).not.toContain("SECURITY");
-    }
+    expect(
+      Array.from(d.warn.mock.calls, (call) => !String(call[0] ?? "").includes("SECURITY")),
+    ).not.toContain(false);
     expect(d.log).toHaveBeenCalledWith("  ✓ Brave Search egress verified inside sandbox");
   });
 });
