@@ -64,12 +64,12 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Optional lowercase latest PR commit SHA for manual exact-revision E2E.
+        description: Optional PR commit SHA for manual E2E.
         required: false
         default: ""
         type: string
       checkout_repository:
-        description: Optional PR source repository for manual exact-revision E2E.
+        description: Optional PR source repository for manual E2E.
         required: false
         default: ""
         type: string
@@ -84,7 +84,7 @@ on:
         default: ""
         type: string
       workflow_sha:
-        description: Optional trusted main workflow SHA for manual exact-revision E2E.
+        description: Optional trusted main workflow SHA for manual E2E.
         required: false
         default: ""
         type: string
