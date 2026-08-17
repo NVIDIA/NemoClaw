@@ -396,7 +396,7 @@ describe("policy tier selection", () => {
     assert.deepEqual(tiers.resolveTierPresets("restricted"), []);
   });
 
-  it("balanced tier resolves exactly the five dev presets read-write without weather", () => {
+  it("balanced tier resolves exactly the five dev presets without weather", () => {
     const presets = tiers.resolveTierPresets("balanced");
     const names = presets.map((preset) => preset.name);
     assert.deepEqual(
@@ -404,11 +404,17 @@ describe("policy tier selection", () => {
       ["brave", "brew", "huggingface", "npm", "pypi"],
       "balanced tier must resolve exactly brave, brew, huggingface, npm, pypi",
     );
-    const accessByName = new Map(presets.map((preset) => [preset.name, preset.access]));
-    for (const name of ["npm", "pypi", "huggingface", "brew", "brave"]) {
-      assert.equal(accessByName.get(name), "read-write", `${name} should be read-write`);
-    }
   });
+
+  it.each(["npm", "pypi", "huggingface", "brew", "brave"])(
+    "gives the balanced %s preset read-write access",
+    (name) => {
+      const accessByName = new Map(
+        tiers.resolveTierPresets("balanced").map((preset) => [preset.name, preset.access]),
+      );
+      assert.equal(accessByName.get(name), "read-write", `${name} should be read-write`);
+    },
+  );
 
   it("open tier resolves presets including at least one social or messaging preset", () => {
     const names = tiers.resolveTierPresets("open").map((preset) => preset.name);
@@ -543,7 +549,6 @@ describe("policy tier setup", () => {
       { tierName: "personal" },
       { agent: "hermes", webSearchConfig: null, webSearchSupported: true },
     );
-
     assert.ok(result.applied.includes("personal-open-internet"));
     assert.ok(!result.applied.includes("tavily"), "Personal must not require Tavily Search");
     assert.ok(!result.applied.includes("nous-web"), "optional Hermes tools must remain opt-in");
@@ -860,46 +865,51 @@ describe("policy tier setup", () => {
     ]);
   });
 
-  it("does not re-add OpenClaw OTEL presets for the restricted tier", async () => {
-    const result = await runPolicySetup(
-      {
-        tierName: "restricted",
-        env: {
-          NEMOCLAW_OPENCLAW_OTEL: "1",
-          NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
+  it.each(["openclaw-pricing", "openclaw-diagnostics-otel-local"])(
+    "does not re-add the %s OpenClaw preset for the restricted tier",
+    async (name) => {
+      const result = await runPolicySetup(
+        {
+          tierName: "restricted",
+          env: {
+            NEMOCLAW_OPENCLAW_OTEL: "1",
+            NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
+          },
         },
-      },
-      { agent: "openclaw" },
-    );
+        { agent: "openclaw" },
+      );
 
-    for (const name of ["openclaw-pricing", "openclaw-diagnostics-otel-local"]) {
       assert.ok(!result.applied.includes(name));
       assert.ok(!result.appliedCalls.includes(name));
-    }
-  });
+    },
+  );
 
-  it("reports the final restricted preset suppression in its note", async () => {
-    const result = await runPolicySetup(
-      {
-        tierName: "restricted",
-        env: {
-          NEMOCLAW_OPENCLAW_OTEL: "1",
-          NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
+  it.each(["openclaw-pricing", "openclaw-diagnostics-otel-local"])(
+    "reports suppression of %s in the final restricted note",
+    async (name) => {
+      const result = await runPolicySetup(
+        {
+          tierName: "restricted",
+          env: {
+            NEMOCLAW_OPENCLAW_OTEL: "1",
+            NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
+          },
         },
-      },
-      { agent: "openclaw" },
-    );
-    const noteLine = result.notes.find((line) =>
-      line.includes("Restricted tier suppresses agent-required preset"),
-    );
+        { agent: "openclaw" },
+      );
+      const noteLine = result.notes.find((line) =>
+        line.includes("Restricted tier suppresses agent-required preset"),
+      );
 
-    assert.ok(noteLine, `suppression note must be printed, lines: ${JSON.stringify(result.notes)}`);
-    for (const name of ["openclaw-pricing", "openclaw-diagnostics-otel-local"]) {
+      assert.ok(
+        noteLine,
+        `suppression note must be printed, lines: ${JSON.stringify(result.notes)}`,
+      );
       assert.ok(noteLine.includes(name), `note must mention ${name}, got: ${noteLine}`);
       assert.ok(!result.applied.includes(name));
       assert.ok(!result.appliedCalls.includes(name));
-    }
-  });
+    },
+  );
 
   it("removes previously-applied OpenClaw pricing for the restricted tier", async () => {
     const result = await runPolicySetup(
@@ -911,24 +921,25 @@ describe("policy tier setup", () => {
     assert.ok(result.removedCalls.includes("openclaw-pricing"));
   });
 
-  it("removes previously-applied OpenClaw OTEL diagnostics for the restricted tier", async () => {
-    const result = await runPolicySetup(
-      {
-        tierName: "restricted",
-        currentApplied: ["openclaw-diagnostics-otel-local", "openclaw-pricing"],
-        env: {
-          NEMOCLAW_OPENCLAW_OTEL: "1",
-          NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
+  it.each(["openclaw-pricing", "openclaw-diagnostics-otel-local"])(
+    "removes the previously applied %s preset for the restricted tier",
+    async (name) => {
+      const result = await runPolicySetup(
+        {
+          tierName: "restricted",
+          currentApplied: ["openclaw-diagnostics-otel-local", "openclaw-pricing"],
+          env: {
+            NEMOCLAW_OPENCLAW_OTEL: "1",
+            NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: undefined,
+          },
         },
-      },
-      { agent: "openclaw" },
-    );
+        { agent: "openclaw" },
+      );
 
-    for (const name of ["openclaw-pricing", "openclaw-diagnostics-otel-local"]) {
       assert.ok(!result.applied.includes(name));
       assert.ok(result.removedCalls.includes(name));
-    }
-  });
+    },
+  );
 
   it("keeps an empty restricted resume target empty", async () => {
     const result = await runPolicySetup(
@@ -993,16 +1004,21 @@ describe("selectTierPresetsAndAccess", () => {
     return helpers.selectTierPresetsAndAccess(tierName, policy.listPresets(), initialSelected);
   }
 
-  it("returns tier presets with their default access levels", async () => {
-    const resolved = await resolve("balanced");
-    const names = resolved.map((preset) => preset.name);
-    assert.ok(names.includes("npm"), "npm should be included");
-    assert.ok(names.includes("brave"), "brave should be included");
+  it.each(tiers.resolveTierPresets("balanced"))(
+    "returns the balanced $name preset with $access access",
+    async ({ name, access }) => {
+      const resolved = await resolve("balanced");
+      assert.deepEqual(
+        resolved.find((preset) => preset.name === name),
+        { name, access },
+      );
+    },
+  );
+
+  it("keeps weather and Slack out of balanced defaults", async () => {
+    const names = (await resolve("balanced")).map((preset) => preset.name);
     assert.ok(!names.includes("weather"), "weather should not be a balanced tier default");
     assert.ok(!names.includes("slack"), "slack should not be included in balanced");
-    for (const preset of resolved) {
-      assert.equal(preset.access, "read-write", `${preset.name} should default to read-write`);
-    }
   });
 
   it("returns an empty array for the restricted tier", async () => {
@@ -1027,15 +1043,18 @@ describe("selectTierPresetsAndAccess", () => {
     assert.ok(slackIdx > lastTierIdx, "non-tier preset (slack) should appear after tier presets");
   });
 
-  it("returns name and access fields for every resolved preset", async () => {
-    const resolved = await resolve("open");
-    assert.ok(resolved.length > 0, "open tier should have presets");
-    for (const preset of resolved) {
+  it.each(tiers.resolveTierPresets("open"))(
+    "returns name and access fields for the open $name preset",
+    async ({ name }) => {
+      const resolved = await resolve("open");
+      assert.ok(resolved.length > 0, "open tier should have presets");
+      const preset = resolved.find((candidate) => candidate.name === name);
+      assert.ok(preset, `${name} should resolve`);
       assert.equal(typeof preset.name, "string");
       assert.ok(
         preset.access === "read" || preset.access === "read-write",
         `unexpected access: ${preset.access}`,
       );
-    }
-  });
+    },
+  );
 });

@@ -31,11 +31,12 @@ function workflowFiles(): string[] {
 }
 
 describe("retired shell E2E entrypoints", () => {
-  it("keeps retired standalone Ollama lanes deleted", () => {
-    for (const relativePath of FORBIDDEN_REPO_PATHS) {
+  it.each([...FORBIDDEN_REPO_PATHS])(
+    "keeps retired standalone Ollama lanes deleted [case %#]",
+    (relativePath) => {
       expect(fs.existsSync(path.join(REPO_ROOT, relativePath)), relativePath).toBe(false);
-    }
-  });
+    },
+  );
 
   it("keeps shell E2E entrypoints out of test/e2e recursively", () => {
     const shellEntrypoints = fs

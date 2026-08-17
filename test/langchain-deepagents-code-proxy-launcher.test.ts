@@ -458,8 +458,9 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(combined).not.toContain("all-password");
   });
 
-  it("fails closed when the image-baked dcode proxy contract is missing (#6191)", () => {
-    for (const missingFile of ["trusted-proxy-host", "trusted-proxy-port"]) {
+  it.each(["trusted-proxy-host", "trusted-proxy-port"])(
+    "fails closed when the image-baked dcode proxy contract is missing [case %#] (#6191)",
+    (missingFile) => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-missing-proxy-"));
       const launcherPath = makeLauncherProxyProbeFixture(tempDir);
       const { scriptPath } = makeStartProxyProbeFixture(tempDir);
@@ -482,8 +483,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       const combined = `${launcherResult.stdout}\n${launcherResult.stderr}\n${startResult.stdout}\n${startResult.stderr}`;
       expect(combined).toContain("trusted managed proxy");
       expect(combined).not.toContain("attacker-proxy.internal");
-    }
-  });
+    },
+  );
 
   it("rejects writable image-baked dcode proxy files (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-proxy-mode-"));
@@ -583,12 +584,12 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
         fs.symlinkSync(`${caFile}.missing`, caFile);
       },
     },
-  ])("rejects $condition managed fetch CA bundles in start, connect, and direct dcode paths (#6636)", ({
-    expected,
-    mutate,
-  }) => {
-    expectManagedCaBundleRejection({ expected, mutate });
-  });
+  ])(
+    "rejects $condition managed fetch CA bundles in start, connect, and direct dcode paths (#6636)",
+    ({ expected, mutate }) => {
+      expectManagedCaBundleRejection({ expected, mutate });
+    },
+  );
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "rejects an unreadable managed fetch CA bundle in start, connect, and direct dcode paths (#6636)",

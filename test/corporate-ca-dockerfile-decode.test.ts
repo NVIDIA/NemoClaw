@@ -72,15 +72,16 @@ afterEach(() => {
 });
 
 describe("Deep Agents Code Dockerfile corporate CA validation", () => {
-  it("requires CA:TRUE at every X.509 certificate parser (#8119)", () => {
-    for (const dockerfile of DEEP_AGENTS_DOCKERFILES) {
+  it.each([...DEEP_AGENTS_DOCKERFILES])(
+    "requires CA:TRUE at every X.509 certificate parser [case %#] (#8119)",
+    (dockerfile) => {
       const source = readFileSync(dockerfile, "utf8");
       const parsedCertificates = source.match(/new X509Certificate\(/g) ?? [];
       const caChecks = source.match(/new X509Certificate\([^)]*\)\.ca/g) ?? [];
       expect(parsedCertificates.length).toBeGreaterThan(0);
       expect(caChecks).toHaveLength(parsedCertificates.length);
-    }
-  });
+    },
+  );
 });
 
 describe.skipIf(!canRunDecodeBlock)("Deep Agents Code corporate CA constraint", () => {
