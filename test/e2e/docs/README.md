@@ -286,8 +286,19 @@ test/e2e/
   A maintainer can also dispatch the trusted `main` workflow against the latest
   commit from an open internal or fork PR. The manual path validates the actor,
   PR number, PR source repository, candidate commit SHA, base commit SHA,
-  workflow SHA, review reason, and
-  allowed jobs, targets, and Launchable combination before candidate checkout.
+  workflow SHA, review reason, and allowed jobs, targets, and Launchable
+  combination before candidate checkout.
+  A trusted `main` native runtime producer run requires the executing workflow
+  commit and `workflow_sha` input to equal the exact PR-recorded base commit.
+  The producer accepts only a same-repository PR and the first workflow attempt.
+  The host-side preparation step receives the long-lived `NVIDIA_API_KEY`
+  repository secret in its environment. It creates runner-local registry
+  authentication and pulls pinned GPU images. It then deletes the registry
+  authentication file and unsets the variable before the separate candidate
+  installer or live-test process starts. Cleanup removes runner-local registry
+  authentication but does not revoke the key. The key remains valid in the
+  issuing NVIDIA service until it expires or that service revokes it.
+
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
   E2E except `Publish staging Brev Launchable image`, every catalogue target in the
@@ -300,9 +311,12 @@ test/e2e/
   this default selection. If the DGX Spark flag is `true`, GitHub can pause the
   qualification job for the `approve-dgx-spark-image-qualification` environment.
   An authorized environment reviewer must approve it before qualification starts.
-  Accepted nonempty `jobs` values are `inference-routing` and
-  `managed-image-protected-runtime`. The `jetson-nvmap-gpu` target is also
-  accepted when `allow_jetson_dispatch` is `true`.
+  Accepted nonempty `jobs` values are:
+
+  - `inference-routing`
+  - `managed-image-protected-runtime`
+  - `native-runtime-qualification-producer`
+  The `jetson-nvmap-gpu` target is also accepted when `allow_jetson_dispatch` is `true`.
   Refer to [NemoClaw E2E CI](../README.md).
 
 - [Jetson dispatch controller](jetson-dispatch.md) defines the NemoClaw-owned
@@ -310,10 +324,9 @@ test/e2e/
   evidence for `jetson-nvmap-gpu`. The service behind that contract is
   operator-owned infrastructure.
 
-- `.github/workflows/e2e.yaml` runs selected or all supported
-  live E2E targets and uploads an explicit artifact allowlist with
-  JSON summaries plus action, log, and shell command-evidence directories under
-  14-day retention.
+- `.github/workflows/e2e.yaml` runs selected or all supported live E2E targets and uploads an explicit artifact allowlist.
+  The shared E2E uploader retains per-target JSON summaries and command-evidence directories for 14 days.
+  The native runtime aggregate upload retains `native-runtime-qualification-<candidate-sha>` for 30 days.
   Final OpenShell gateway-auth artifacts pass a fail-closed safety scan after
   cleanup. The scanner copies safe files into a private staging directory,
   scans that copy again, and adds a marker bound to the current Actions run ID

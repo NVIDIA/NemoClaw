@@ -350,15 +350,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         writeFileSync(output, "");
         const result = spawnSync(
           "bash",
-          [
-            "--noprofile",
-            "--norc",
-            "-e",
-            "-o",
-            "pipefail",
-            "-c",
-            credentialAuthorization.run!,
-          ],
+          ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", credentialAuthorization.run!],
           {
             encoding: "utf8",
             env: {
@@ -376,7 +368,9 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(`allowed=${expectedAllowed ? "true" : "false"}\n`);
+        expect(readFileSync(output, "utf8")).toBe(
+          `allowed=${expectedAllowed ? "true" : "false"}\n`,
+        );
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -457,8 +451,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       const workflowSha = "c".repeat(40);
       const prefix = [
         "curl() {",
-        '  case "${@: -1}" in',
-        `    *collaborators*) printf '%s' '{"role_name":"${role}"}' ;;`,
+        '  local url="${@: -1}" output_file="" previous="" argument body',
+        '  for argument in "$@"; do',
+        '    if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi',
+        '    previous="$argument"',
+        "  done",
+        '  case "$url" in',
+        `    *collaborators*) body='{"user":{"login":"maintainer"},"role_name":"${role}"}'; if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi ;;`,
         `    *pulls/42) printf '%s' '{"state":"open","head":{"repo":{"full_name":"contributor/NemoClaw"},"sha":"${headSha}"},"base":{"sha":"${baseSha}"}}' ;;`,
         "    *) return 1 ;;",
         "  esac",
@@ -482,7 +481,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
             INCLUDE_LAUNCHABLE: "false",
             JOBS: jobs,
             PR_NUMBER: "42",
-            REVIEW_REASON: "Reviewed PR head revision",
+            REVIEW_REASON: "Reviewed latest PR commit",
             RUN_ATTEMPT: "1",
             TARGETS: targets,
             TRIGGERING_ACTOR: "maintainer",
@@ -497,6 +496,20 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       expect(result.stderr).toContain(expectedStderr);
     },
   );
+
+  it("rejects candidate-workflow qualification when a downstream job receives a repository secret", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const plan = workflow.jobs["native-runtime-qualification-producer-plan"];
+    const producer = workflow.jobs["native-runtime-qualification-producer"];
+
+    expect(JSON.stringify(producer)).toContain("${{ secrets.NVIDIA_API_KEY }}");
+    plan.if =
+      "${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && (github.ref == 'refs/heads/main' || github.workflow_sha == inputs.checkout_sha) && inputs.checkout_sha != '' && inputs.jobs == 'native-runtime-qualification-producer' && inputs.targets == '' }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Native runtime qualification producer plan must execute only from trusted main",
+    );
+  });
 
   it("uses central maintainer authorization for protected managed-image qualification", () => {
     const workflow = readE2eOperationsWorkflow();

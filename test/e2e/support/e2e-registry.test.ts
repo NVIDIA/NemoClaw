@@ -50,9 +50,7 @@ describe("deterministic target registry", () => {
     expect(result.status).not.toBe(0);
     expect(output).toMatch(/does-not-exist/);
     expect(output).toMatch(/Available targets:/);
-    for (const registered of listTargets()) {
-      expect(output).toContain(registered.id);
-    }
+    expect(listTargets().every((registered) => output.includes(registered.id))).toBe(true);
   });
 
   // source-shape-contract: compatibility -- The target CLI must preserve requested ordering for multiple live selectors

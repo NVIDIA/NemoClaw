@@ -556,22 +556,24 @@ describe("oclif compatibility dispatch", () => {
     );
   });
 
-  it("keeps strict status parser errors in process", async () => {
-    for (const args of [["--bogus"], ["--bogus", "alpha"], ["alpha", "--bogus"]]) {
-      await expect(StatusCommand.run(args, process.cwd())).rejects.toThrow(
-        "Nonexistent flag: --bogus",
-      );
-    }
+  it.each(["status", "help", "sandbox", "internal", "alpha;echo pwned"])(
+    "keeps strict status parser errors in process [%s]",
+    async (token) => {
+      for (const args of [["--bogus"], ["--bogus", "alpha"], ["alpha", "--bogus"]]) {
+        await expect(StatusCommand.run(args, process.cwd())).rejects.toThrow(
+          "Nonexistent flag: --bogus",
+        );
+      }
 
-    await expect(StatusCommand.run(["alpha", "beta"], process.cwd())).rejects.toThrow(
-      "Unexpected arguments: alpha, beta",
-    );
-    for (const token of ["status", "help", "sandbox", "internal", "alpha;echo pwned"]) {
+      await expect(StatusCommand.run(["alpha", "beta"], process.cwd())).rejects.toThrow(
+        "Unexpected arguments: alpha, beta",
+      );
+
       await expect(StatusCommand.run([token], process.cwd())).rejects.toThrow(
         `Unexpected argument: ${token}`,
       );
-    }
-  });
+    },
+  );
 
   it("routes sandbox status help directly and keeps its JSON help metadata", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, runOclifArgv, runOclifCommandById }) => {

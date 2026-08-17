@@ -58,13 +58,16 @@ describe("Ollama runtime context helpers", () => {
     ).toBeNull();
   });
 
-  it("warns and ignores malformed or non-positive Ollama /api/ps context lengths", () => {
-    for (const value of ["bogus", "1.5", 0, -1]) {
+  it.each(["bogus", "1.5", 0, -1])(
+    "warns and ignores malformed Ollama /api/ps context length %#",
+    (value) => {
       const parsed = parseOllamaRuntimeContextLength(value);
       expect(parsed.contextLength).toBeUndefined();
       expect(parsed.warning).toContain("non-positive or malformed context_length");
-    }
+    },
+  );
 
+  it("reports malformed Ollama runtime model context lengths", () => {
     const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
       JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: "bogus" }] }),
     );

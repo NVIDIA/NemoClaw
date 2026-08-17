@@ -660,18 +660,22 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(project).toContain('"deepagents==0.7.0a6"');
   });
 
-  it("keeps language-local managed Ultra model ID allowlists in sync", () => {
+  it.each(
+    Array.from(
+      [
+        path.join(agentDir, "generate-config.ts"),
+        path.join(agentDir, "patch-managed-deepagents-code.py"),
+        validatorPath,
+        pluginSourcePath,
+        e2eProfileCheckPath,
+      ],
+      (value) => [value],
+    ),
+  )("keeps the managed Ultra model ID allowlist in %s in sync", (sourcePath) => {
     const expected = [...MANAGED_MODEL_IDS].sort();
-    for (const sourcePath of [
-      path.join(agentDir, "generate-config.ts"),
-      path.join(agentDir, "patch-managed-deepagents-code.py"),
-      validatorPath,
-      pluginSourcePath,
-      e2eProfileCheckPath,
-    ]) {
-      const source = fs.readFileSync(sourcePath, "utf8");
-      expect(managedUltraModelIdsIn(source), path.relative(repoRoot, sourcePath)).toEqual(expected);
-    }
+
+    const source = fs.readFileSync(sourcePath, "utf8");
+    expect(managedUltraModelIdsIn(source), path.relative(repoRoot, sourcePath)).toEqual(expected);
   });
 
   it("accepts the exact plugin, then rejects source substitution", () => {
@@ -921,20 +925,20 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expectOfficialSourcesUnchanged(fixture);
   });
 
-  it.each([
-    "partial",
-    "conflict",
-  ] as const)("rejects %s managed alias state without further registry changes", (aliasState) => {
-    const fixture = makePluginFixture();
-    const result = runPlugin(fixture, { aliasState });
+  it.each(["partial", "conflict"] as const)(
+    "rejects %s managed alias state without further registry changes",
+    (aliasState) => {
+      const fixture = makePluginFixture();
+      const result = runPlugin(fixture, { aliasState });
 
-    expect(result.status).not.toBe(0);
-    expect(result.probe.error).toMatch(/partial|conflict/i);
-    expect(result.probe.registryKeys).toHaveLength(
-      aliasState === "partial" ? 3 : MANAGED_MODEL_ALIASES.length + 1,
-    );
-    expectOfficialSourcesUnchanged(fixture);
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.probe.error).toMatch(/partial|conflict/i);
+      expect(result.probe.registryKeys).toHaveLength(
+        aliasState === "partial" ? 3 : MANAGED_MODEL_ALIASES.length + 1,
+      );
+      expectOfficialSourcesUnchanged(fixture);
+    },
+  );
 
   it("rolls back the first alias when the second registration fails", () => {
     const fixture = makePluginFixture();

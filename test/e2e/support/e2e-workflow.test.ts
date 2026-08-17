@@ -47,13 +47,21 @@ set -euo pipefail
 url="\${!#}"
 administrator="\${url%/permission}"
 administrator="\${administrator##*/}"
+output_file=""
+previous=""
+for argument in "$@"; do
+  if [[ "$previous" == "--output" ]]; then output_file="$argument"; fi
+  previous="$argument"
+done
 printf '%s\n' "$administrator" >>"$CURL_LOG"
 case "$administrator" in
   maintainer) role=maintain ;;
-  mismatch) printf '%s\n' '{"user":{"login":"different-user"},"role_name":"admin"}'; exit 0 ;;
+  mismatch) login=different-user; role=admin ;;
   *) role=admin ;;
 esac
-printf '{"user":{"login":"%s"},"role_name":"%s"}\n' "$administrator" "$role"
+login="\${login:-$administrator}"
+printf -v body '{"user":{"login":"%s"},"role_name":"%s"}' "$login" "$role"
+if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '200'; else printf '%s' "$body"; fi
 `,
   );
   fs.chmodSync(curlPath, 0o755);
@@ -544,10 +552,15 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  it(
-    "evaluates high-risk dispatch selector behavior before secret-bearing jobs run",
+  it.each(
+    Array.from([["hermes-dashboard", "hermes-e2e"]] as const, ([legacy, canonical]) => ({
+      legacy,
+      canonical,
+    })),
+  )(
+    "evaluates $canonical dispatch selector behavior before secret-bearing jobs run",
     testTimeoutOptions(30_000),
-    () => {
+    ({ legacy, canonical }) => {
       expect(
         evaluateE2eWorkflowDispatchSelectors({
           targets: "brave-search,../escape",
@@ -568,15 +581,14 @@ describe("e2e workflow boundary", () => {
       });
       expect(mixedPlan.catalogueMatrices["brave-nvidia-inference"]).toHaveLength(1);
       expect(mixedPlan.matrix.map(({ id }) => id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
-      for (const [legacy, canonical] of [["hermes-dashboard", "hermes-e2e"]] as const) {
-        for (const selectors of [{ jobs: legacy }, { targets: legacy }]) {
-          expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
-            valid: true,
-            liveTargetsRun: false,
-            selectedFreeStandingJobs: [canonical],
-            registryTargets: [],
-          });
-        }
+
+      for (const selectors of [{ jobs: legacy }, { targets: legacy }]) {
+        expect(evaluateE2eWorkflowDispatchSelectors(selectors)).toMatchObject({
+          valid: true,
+          liveTargetsRun: false,
+          selectedFreeStandingJobs: [canonical],
+          registryTargets: [],
+        });
       }
     },
   );
@@ -605,44 +617,38 @@ describe("e2e workflow boundary", () => {
     });
   });
 
-  it(
-    "rejects malformed free-standing workflow metadata before matrix generation",
+  it.each([
     {
-      timeout: 60_000,
-    },
-    () => {
-      const malformedWorkflows = [
-        {
-          body: `
+      body: `
 jobs:
   fixture-version-check:
     env:
       E2E_JOB: "yes"
       E2E_TARGET_ID: fixture-version-check
 `,
-          error: 'fixture-version-check job E2E_JOB must be "1"',
-        },
-        {
-          body: `
+      error: 'fixture-version-check job E2E_JOB must be "1"',
+    },
+    {
+      body: `
 jobs:
   fixture-version-check:
     env:
       E2E_TARGET_ID: fixture-version-check
 `,
-          error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
-        },
-        {
-          body: `
+      error: "fixture-version-check job E2E_TARGET_ID requires E2E_JOB",
+    },
+    {
+      body: `
 jobs:
   fixture-version-check:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bad:target"
 `,
-          error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
-        },
-        {
-          body: `
+      error: "fixture-version-check job E2E_TARGET_ID must be a selector id",
+    },
+    {
+      body: `
 jobs:
   resource-heavy:
     env:
@@ -650,10 +656,10 @@ jobs:
       E2E_DEFAULT_ENABLED: "yes"
       E2E_TARGET_ID: resource-heavy
 `,
-          error: 'resource-heavy job E2E_DEFAULT_ENABLED must be "0" when set',
-        },
-        {
-          body: `
+      error: 'resource-heavy job E2E_DEFAULT_ENABLED must be "0" when set',
+    },
+    {
+      body: `
 jobs:
   first:
     env:
@@ -664,20 +670,22 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: duplicate-target
 `,
-          error: "free-standing workflow metadata repeats target id: duplicate-target",
-        },
-      ];
-
-      for (const { body, error } of malformedWorkflows) {
-        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bad-workflow-"));
-        const workflowPath = path.join(tmp, "workflow.yaml");
-        try {
-          fs.writeFileSync(workflowPath, body);
-          expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
-          expect(() => readFreeStandingJobsInventory(workflowPath)).toThrow(error);
-        } finally {
-          fs.rmSync(tmp, { recursive: true, force: true });
-        }
+      error: "free-standing workflow metadata repeats target id: duplicate-target",
+    },
+  ])(
+    "rejects malformed free-standing workflow metadata before matrix generation [case %#]",
+    {
+      timeout: 60_000,
+    },
+    ({ body, error }) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bad-workflow-"));
+      const workflowPath = path.join(tmp, "workflow.yaml");
+      try {
+        fs.writeFileSync(workflowPath, body);
+        expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
+        expect(() => readFreeStandingJobsInventory(workflowPath)).toThrow(error);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
       }
     },
   );

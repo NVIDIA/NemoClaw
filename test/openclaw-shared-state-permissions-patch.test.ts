@@ -850,7 +850,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it("fails closed on missing, ambiguous, and partial source shapes", () => {
+  function verifySharedStateSourceShapeFailures() {
     const missing = makeFixture(0, 1, 1);
     try {
       expect(() => patchOpenClawSharedStatePermissions(missing.dist)).toThrow(
@@ -969,5 +969,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         "drifted.js",
       ),
     ).toThrow("expected exactly one chmod helper, found 0");
-  });
+  }
+
+  it("fails closed on missing, ambiguous, and partial source shapes", verifySharedStateSourceShapeFailures);
 });

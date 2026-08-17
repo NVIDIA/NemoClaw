@@ -74,17 +74,20 @@ describe("buildHermesUpstreamHeader parity", () => {
     }
   });
 
-  it("length-caps each header value to keep the comment block bounded", () => {
-    const header = buildHostHeader({
-      _nemoclaw_upstream: {
-        provider: "x".repeat(1024),
-        model: "y".repeat(1024),
-      },
-    });
+  it.each(
+    Array.from(
+      buildHostHeader({
+        _nemoclaw_upstream: {
+          provider: "x".repeat(1024),
+          model: "y".repeat(1024),
+        },
+      }).split("\n"),
+      (value) => [value],
+    ),
+  )("length-caps each header value to keep the comment block bounded [case %#]", (line) => {
     // Worst-case line ≈ "# Upstream provider: " (21 chars) + 128-char value
     // ceiling = ~149 chars; 180 leaves headroom for future prefix tweaks.
-    for (const line of header.split("\n")) {
-      expect(line.length).toBeLessThan(180);
-    }
+
+    expect(line.length).toBeLessThan(180);
   });
 });

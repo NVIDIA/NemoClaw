@@ -38,12 +38,13 @@ function parseResultPayload(stdout: string): any {
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("each preset has name and description", () => {
-      for (const p of policies.listPresets()) {
+    it.each(Array.from(policies.listPresets(), (value) => [value]))(
+      "$name has a name and description",
+      (p) => {
         expect(p.name).toBeTruthy();
         expect(p.description).toBeTruthy();
-      }
-    });
+      },
+    );
 
     it("does not include the WhatsApp preset YAML body in the description", () => {
       const whatsapp = policies.listPresets().find((p) => p.name === "whatsapp");
@@ -998,13 +999,14 @@ exit 1
       ).toThrow(/Cannot merge policy preset: the current policy is not a valid YAML mapping/);
     });
 
-    it("fails closed when preset entries are malformed or not a mapping", () => {
-      for (const invalidEntries of ["  broken: [unterminated", "  - host: example.com"]) {
+    it.each(["  broken: [unterminated", "  - host: example.com"])(
+      "fails closed when preset entries are malformed or not a mapping [case %#]",
+      (invalidEntries) => {
         expect(() => policies.mergePresetIntoPolicy("version: 1", invalidEntries)).toThrow(
           /preset network_policies entries must be a valid YAML mapping/,
         );
-      }
-    });
+      },
+    );
 
     const realisticEntries =
       "  pypi_access:\n" +

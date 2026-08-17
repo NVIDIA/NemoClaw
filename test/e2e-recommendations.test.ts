@@ -212,7 +212,7 @@ describe("E2E recommendation normalizer", () => {
     expect(JSON.stringify(normalized)).not.toMatch(/gh workflow run|--ref attacker/u);
   });
 
-  it("rejects arbitrary executables and shell token tricks without dropping ordinary prose", () => {
+  function verifyE2eRecommendationCommandFiltering() {
     for (const command of COMMAND_SHAPED_E2E_TEXT) {
       expect(isCommandShapedE2eText(command), command).toBe(true);
     }
@@ -256,7 +256,12 @@ describe("E2E recommendation normalizer", () => {
     }
     const normalized = JSON.stringify({ coverage, targets });
     for (const prose of untrustedProse) expect(normalized).not.toContain(prose);
-  });
+  }
+
+  it(
+    "rejects arbitrary executables and shell token tricks without dropping ordinary prose",
+    verifyE2eRecommendationCommandFiltering,
+  );
 
   it("rejects missing and unknown selector types instead of inferring them", () => {
     const normalized = normalizeE2eTargetAdvisorResult(

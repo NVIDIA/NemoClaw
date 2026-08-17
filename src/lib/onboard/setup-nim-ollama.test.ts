@@ -207,9 +207,29 @@ describe("createSetupNimOllamaHandlers", () => {
     await expect(
       handleInstallOllamaSelection(null, "conflict/model", null, state, {
         hasUpgradableOllama: false,
+        binaryNeedsUpgrade: false,
       }),
     ).rejects.toThrow("route conflict");
     expect(install).not.toHaveBeenCalled();
+  });
+
+  it("installs a missing binary while recovering a stale daemon", async () => {
+    const install = vi.fn(() => ({ ok: true }));
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        process: { ...process, platform: "linux" } as NodeJS.Process,
+        installOllamaOnLinux: install,
+      }),
+    );
+
+    await handleInstallOllamaSelection(null, "qwen3:8b", null, makeState(), {
+      hasUpgradableOllama: true,
+      binaryNeedsUpgrade: true,
+    });
+
+    expect(install).toHaveBeenCalledWith(
+      expect.objectContaining({ isUpgrade: true, restartOnly: false }),
+    );
   });
 
   it("does not switch, install, or restart Windows Ollama when preflight rejects", async () => {
@@ -353,6 +373,7 @@ describe("createSetupNimOllamaHandlers", () => {
 
     const result = await handleInstallOllamaSelection(null, "requested", "recovered", state, {
       hasUpgradableOllama: false,
+      binaryNeedsUpgrade: false,
     });
 
     assert.equal(result, "selected");
@@ -381,6 +402,7 @@ describe("createSetupNimOllamaHandlers", () => {
 
     const result = await handleInstallOllamaSelection(null, null, null, state, {
       hasUpgradableOllama: false,
+      binaryNeedsUpgrade: false,
     });
 
     expect(result).toBe("selected");

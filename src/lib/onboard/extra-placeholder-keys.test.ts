@@ -76,12 +76,8 @@ describe("parseExtraPlaceholderKeys", () => {
     );
   });
 
-  it("refuses arbitrary host secret env names that do not extend a canonical channel envKey", () => {
-    // GITHUB_TOKEN, AWS_*, NPM_TOKEN, and the control env itself match the
-    // upper-snake regex but do not extend any canonical channel envKey. The
-    // parser rejects them so an operator cannot accidentally hand a host
-    // secret to the OpenShell generic provider gateway.
-    const result = parseExtraPlaceholderKeys(
+  it.each(
+    Array.from(
       [
         "GITHUB_TOKEN",
         "AWS_SECRET_ACCESS_KEY",
@@ -89,24 +85,35 @@ describe("parseExtraPlaceholderKeys", () => {
         "NPM_TOKEN",
         "KUBECONFIG",
         EXTRA_PLACEHOLDER_KEYS_ENV,
-        "TELEGRAM_BOT_TOKEN_AGENT_A",
-      ].join(" "),
-      CANONICAL_ENVKEYS_FIXTURE,
-    );
-    expect(result.keys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
-    for (const blocked of [
-      "GITHUB_TOKEN",
-      "AWS_SECRET_ACCESS_KEY",
-      "AWS_ACCESS_KEY_ID",
-      "NPM_TOKEN",
-      "KUBECONFIG",
-      EXTRA_PLACEHOLDER_KEYS_ENV,
-    ]) {
+      ],
+      (value) => [value],
+    ),
+  )(
+    "refuses arbitrary host secret env names that do not extend a canonical channel envKey [case %#]",
+    (blocked) => {
+      // GITHUB_TOKEN, AWS_*, NPM_TOKEN, and the control env itself match the
+      // upper-snake regex but do not extend any canonical channel envKey. The
+      // parser rejects them so an operator cannot accidentally hand a host
+      // secret to the OpenShell generic provider gateway.
+      const result = parseExtraPlaceholderKeys(
+        [
+          "GITHUB_TOKEN",
+          "AWS_SECRET_ACCESS_KEY",
+          "AWS_ACCESS_KEY_ID",
+          "NPM_TOKEN",
+          "KUBECONFIG",
+          EXTRA_PLACEHOLDER_KEYS_ENV,
+          "TELEGRAM_BOT_TOKEN_AGENT_A",
+        ].join(" "),
+        CANONICAL_ENVKEYS_FIXTURE,
+      );
+      expect(result.keys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
+
       expect(result.warnings).toContain(
         `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${blocked}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
       );
-    }
-  });
+    },
+  );
 
   it("dedupes repeated tokens without emitting a warning", () => {
     const result = parseExtraPlaceholderKeys(
@@ -140,19 +147,18 @@ describe("extraPlaceholderProviderSlug", () => {
 });
 
 describe("canonicalPlaceholderKeys", () => {
-  it("returns the canonical channel envKeys plus web-search API keys", () => {
+  it.each([
+    "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "WECHAT_BOT_TOKEN",
+    "BRAVE_API_KEY",
+    "TAVILY_API_KEY",
+  ])("returns the canonical channel envKeys plus web-search API keys [case %#]", (expected) => {
     const canonical = canonicalPlaceholderKeys();
-    for (const expected of [
-      "TELEGRAM_BOT_TOKEN",
-      "DISCORD_BOT_TOKEN",
-      "SLACK_BOT_TOKEN",
-      "SLACK_APP_TOKEN",
-      "WECHAT_BOT_TOKEN",
-      "BRAVE_API_KEY",
-      "TAVILY_API_KEY",
-    ]) {
-      expect(canonical.has(expected)).toBe(true);
-    }
+
+    expect(canonical.has(expected)).toBe(true);
   });
 
   it("does not leak the control env or arbitrary host secret env names", () => {

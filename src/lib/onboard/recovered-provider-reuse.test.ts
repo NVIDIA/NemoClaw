@@ -54,34 +54,38 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("requires the exact endpoint-config binding for built-in provider recovery", () => {
-    const builtInOpenAi = {
-      ...completeRecovery,
-      selectedKey: "openai",
-      selectedProvider: "openai-api",
-      recoveredProvider: "openai-api",
-      expectedCredentialEnv: "OPENAI_API_KEY",
-      gatewayProvider: {
-        name: "openai-api",
-        type: "openai",
-        credentialKeys: ["OPENAI_API_KEY"],
-        configKeys: ["OPENAI_BASE_URL"],
-      },
-      endpointIdentity: undefined,
-    };
+  it.each(
+    Array.from([[], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]], (value) => [value]),
+  )(
+    "requires the exact endpoint-config binding for built-in provider recovery [case %#]",
+    (configKeys) => {
+      const builtInOpenAi = {
+        ...completeRecovery,
+        selectedKey: "openai",
+        selectedProvider: "openai-api",
+        recoveredProvider: "openai-api",
+        expectedCredentialEnv: "OPENAI_API_KEY",
+        gatewayProvider: {
+          name: "openai-api",
+          type: "openai",
+          credentialKeys: ["OPENAI_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: undefined,
+      };
 
-    expect(assessRecoveredProviderCredentialReuse(builtInOpenAi)).toMatchObject({
-      kind: "reuse-gateway-credential",
-    });
-    for (const configKeys of [[], ["WRONG_BASE_URL"], ["OPENAI_BASE_URL", "EXTRA_FLAG"]]) {
+      expect(assessRecoveredProviderCredentialReuse(builtInOpenAi)).toMatchObject({
+        kind: "reuse-gateway-credential",
+      });
+
       expect(
         assessRecoveredProviderCredentialReuse({
           ...builtInOpenAi,
           gatewayProvider: { ...builtInOpenAi.gatewayProvider, configKeys },
         }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("reuses OpenRouter when its distinct provider name is registered as OpenAI-compatible (#5826)", () => {
     expect(
@@ -245,16 +249,14 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     ).toMatchObject({ kind: "reject", reason: expect.stringContaining("endpoint identity") });
   });
 
-  it("rejects mismatched recovered provider and model combinations", () => {
-    for (const override of [
-      { recoveredProvider: "another-provider" },
-      { recoveredModel: "another-model" },
-    ]) {
+  it.each([{ recoveredProvider: "another-provider" }, { recoveredModel: "another-model" }])(
+    "rejects mismatched recovered provider and model combinations [case %#]",
+    (override) => {
       expect(
         assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
       ).toMatchObject({ kind: "reject" });
-    }
-  });
+    },
+  );
 
   it("rejects an unsupported API for the recovered provider type", () => {
     expect(

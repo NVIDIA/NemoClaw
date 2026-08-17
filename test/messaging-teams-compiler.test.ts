@@ -58,34 +58,35 @@ async function withEnv<T>(
 }
 
 describe("ManifestCompiler Microsoft Teams channel", () => {
-  it("rejects unsafe Microsoft Teams Hermes env render values", async () => {
-    const cases: Array<readonly [string, string]> = [
-      ["MSTEAMS_APP_ID", "teams-app\nEVIL=1"],
-      ["MSTEAMS_TENANT_ID", "teams-tenant\nEVIL=1"],
-      ["TEAMS_ALLOWED_USERS", "user-one\nEVIL=1"],
-    ];
-
-    for (const [envKey, value] of cases) {
-      await expect(
-        withEnv(
-          {
-            ...TEST_TEAMS_ENV,
-            [envKey]: value,
-          },
-          () =>
-            compiler().compile({
-              sandboxName: "demo",
-              agent: "hermes",
-              workflow: "rebuild",
-              isInteractive: false,
-              configuredChannels: ["teams"],
-              credentialAvailability: {
-                MSTEAMS_APP_PASSWORD: true,
-              },
-            }),
-        ),
-      ).rejects.toThrow(/line breaks/);
-    }
+  it.each(
+    Array.from(
+      [
+        ["MSTEAMS_APP_ID", "teams-app\nEVIL=1"],
+        ["MSTEAMS_TENANT_ID", "teams-tenant\nEVIL=1"],
+        ["TEAMS_ALLOWED_USERS", "user-one\nEVIL=1"],
+      ],
+      ([envKey, value]) => ({ envKey, value }),
+    ),
+  )("rejects an unsafe Microsoft Teams $envKey render value", async ({ envKey, value }) => {
+    await expect(
+      withEnv(
+        {
+          ...TEST_TEAMS_ENV,
+          [envKey]: value,
+        },
+        () =>
+          compiler().compile({
+            sandboxName: "demo",
+            agent: "hermes",
+            workflow: "rebuild",
+            isInteractive: false,
+            configuredChannels: ["teams"],
+            credentialAvailability: {
+              MSTEAMS_APP_PASSWORD: true,
+            },
+          }),
+      ),
+    ).rejects.toThrow(/line breaks/);
   });
 
   it("applies Microsoft Teams manifest defaults when optional env keys are unset", async () => {

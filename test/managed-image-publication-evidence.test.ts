@@ -483,13 +483,14 @@ describe("managed image publication evidence verifier", () => {
     expect(fixture.evidence).toBeNull();
   });
 
-  it("rejects missing or duplicate predicate layers", () => {
-    for (const options of [{ omitSlsa: true }, { omitSpdx: true }, { duplicateSlsaLayer: true }]) {
+  it.each([{ omitSlsa: true }, { omitSpdx: true }, { duplicateSlsaLayer: true }])(
+    "rejects missing or duplicate predicate layers [case %#]",
+    (options) => {
       const fixture = runEvidence(options);
       expect(fixture.result.status).not.toBe(0);
       expect(fixture.evidence).toBeNull();
-    }
-  });
+    },
+  );
 
   it("rejects an attestation layer labeled with the wrong predicate type", () => {
     const fixture = runEvidence({
@@ -508,17 +509,15 @@ describe("managed image publication evidence verifier", () => {
     expect(fixture.evidence).toBeNull();
   });
 
-  it("rejects exact statement blobs mixed with a different workload subject", () => {
-    for (const options of [
-      { slsaSubjectDigest: "9".repeat(64) },
-      { spdxSubjectDigest: "9".repeat(64) },
-    ]) {
+  it.each([{ slsaSubjectDigest: "9".repeat(64) }, { spdxSubjectDigest: "9".repeat(64) }])(
+    "rejects exact statement blobs mixed with a different workload subject [case %#]",
+    (options) => {
       const fixture = runEvidence(options);
       expect(fixture.result.status).not.toBe(0);
       expect(fixture.result.stderr).toMatch(/statement does not bind/);
       expect(fixture.evidence).toBeNull();
-    }
-  });
+    },
+  );
 
   it.each([
     ["agent", { slsaAgent: "hermes" }],
