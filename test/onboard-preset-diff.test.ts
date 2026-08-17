@@ -365,8 +365,11 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // channel→preset registry iteration as Discord/Telegram, so each apply/remove
   // case guards the egress-policy application for every shipped channel — not
   // only the two already covered above (#5967).
-  for (const channel of ["teams", "whatsapp", "wechat"]) {
-    it(`resume selection applies the ${channel} policy required by a configured ${channel} channel (#5967)`, async () => {
+  const optionalChannelPresets = ["teams", "whatsapp", "wechat"].map((channel) => ({ channel }));
+
+  it.each(optionalChannelPresets)(
+    "resume selection applies the $channel policy required by a configured $channel channel (#5967)",
+    async ({ channel }) => {
       const payload = await runPolicyScenario({
         policyMode: "suggested",
         policyPresets: "",
@@ -380,9 +383,12 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
         `${channel} must be applied to the gateway when the channel is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
       );
       assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", channel].sort());
-    });
+    },
+  );
 
-    it(`custom non-interactive selection removes disabled ${channel} while honoring the explicit preset list (#5967)`, async () => {
+  it.each(optionalChannelPresets)(
+    "custom non-interactive selection removes disabled $channel while honoring the explicit preset list (#5967)",
+    async ({ channel }) => {
       const payload = await runPolicyScenario({
         policyMode: "custom",
         policyPresets: "npm",
@@ -393,8 +399,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       assert.deepEqual(payload.chosen, ["npm"]);
       assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", channel].sort());
       assert.deepEqual(payload.finalApplied, ["npm"]);
-    });
-  }
+    },
+  );
 
   it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", async () => {
     const payload = await runPolicyScenario({

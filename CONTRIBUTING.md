@@ -262,6 +262,34 @@ artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
 through unchanged; custom, copied, or no-op progress adapters are rejected at
 audited subprocess boundaries.
 
+Use live E2E only when the behavior needs a real shell, installer, process,
+Docker, OpenShell, `/proc`, sandbox, external service, or GitHub Actions
+boundary. Prefer unit, integration, package-contract, or `e2e-support` tests for
+deterministic code and workflow-planner logic. Select or extend coverage by
+semantic dimension, not by incidental output. Migrated targets such as
+`dashboard-remote-bind`, `credential-sanitization`, `telegram-injection`,
+`messaging-providers`, `messaging-compatible-endpoint`, and `gpu-e2e` show the
+expected shape: each target owns a behavior contract, while the typed registry
+keeps environment, onboarding profile, expected state, lifecycle, and `suiteIds`
+as matrix metadata. Extend that metadata only to select existing behavior; do
+not duplicate behavior logic in workflows, lists, or catalogues. When a
+combination is missing but not ready for a test, record a combinatorial gap with
+the missing dimension, nearest existing coverage, why a new test would duplicate
+or overreach current behavior, the follow-up owner, and the issue or PR that will
+make the gap testable. Do not add speculative coverage or change release judgment.
+
+E2E assertions should check outcomes, state, artifacts, and redacted diagnostics.
+Do not assert incidental terminal output, progress wording, ANSI escape
+sequences, spinner frames, or timing text unless that text is the product
+contract. A retry must have a checked-in bounded policy, a narrow transient
+signature, idempotence or reconciliation evidence, per-attempt artifacts, and a
+matching [`test/e2e/RETRY_INVENTORY.md`](test/e2e/RETRY_INVENTORY.md) entry. Do
+not add unproven retries, ambiguous mutation retries, or broad failed-job
+reruns. Keep operation-level retries separate from complete workflow reruns:
+`E2E / Main Retry` records attempt evidence without requesting a broad rerun,
+and Hosted Runner Recovery owns at most one full rerun only for authenticated
+GitHub-hosted runner-loss evidence.
+
 ### macOS Test Dependencies
 
 Some tests run command-line tools that macOS does not ship.

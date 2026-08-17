@@ -28,11 +28,13 @@ Share redacted diagnostics only.
 
 ## Files
 
+Unless a row says otherwise, full-uninstall removal behavior in this table applies outside portable cleanup.
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/config.json` | Host-level CLI configuration and defaults created by onboarding or config commands. | Only if you want NemoClaw to forget host defaults and rebuild them on the next setup. |
 | `~/.nemoclaw/credentials.json` | Legacy plaintext credential file from earlier releases. Onboarding stages allowlisted values, registers them with the OpenShell gateway, and securely deletes the file only after verifying their migration. Current releases do not create this file. | No; run `$$nemoclaw onboard` to complete migration and cleanup so you do not lose a credential that is not yet registered with the gateway. |
 | `~/.nemoclaw/sandboxes.json` | Current sandbox registry used by `$$nemoclaw list`, default sandbox selection, rebuild, and recovery commands. See [Malformed Registry File](#malformed-registry-file) when a command reports that this file is not valid JSON. | No. Deleting it makes the host forget existing sandboxes and can block state-preserving recovery. |
+| `~/.nemoclaw/portable-uninstall-retirement.json` | Current-user-owned portable cleanup recovery authority, written at mode `0600` under the current-user-owned, mode-`0700` `~/.nemoclaw/` directory. It binds exact cleanup targets and remains after cleanup until a later completed onboarding durably supersedes it. Its hashes are dictionary-testable pseudonymous fingerprints, not secrets. | No while cleanup, retry, or supersession recovery may be needed. Do not remove it manually; later completed onboarding retires it. |
 | `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
 | `~/.nemoclaw/ollama-proxy-token` | Host-global auth token used by the host-side Ollama auth proxy. Every gateway port on the host uses this one file. | Yes, but rerun onboarding for every gateway port that uses Local Ollama afterward, because a new token invalidates the shared proxy for all of them. |
@@ -123,7 +125,7 @@ Listing works on native Windows, but migration snapshot creation and deletion do
 
 ## Uninstall Behavior
 
-`$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
+Outside portable cleanup, `$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
 Preserved entries include `rebuild-backups/`, `backups/`, and `sandboxes.json`.
 Preserved `sandboxes.json` records are not automatically recoverable after reinstall, because uninstall removes the gateway registration, provider registrations, and Docker image they reference; uninstall warns about this at preserve time, and a later reinstall reports such records as not found on their recorded gateway with `$$nemoclaw <name> destroy` / `$$nemoclaw onboard` remediation.
 Interactive uninstall prompts before removing preserved state.
@@ -132,14 +134,16 @@ For non-interactive runs, pass `--destroy-user-data` only when you accept losing
 Uninstall scopes cleanup to one gateway port: it operates on the selected state root and leaves every other `~/.nemoclaw/gateways/<port>/` root and its gateway in place.
 It names the environments it left behind and prints the command that removes one of them.
 Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to remove every gateway port in one run.
-The shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
+Outside portable cleanup, the shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
+
+Portable cleanup instead retires only exact receipt-owned portable resources. It preserves model stores, Podman images, shared OpenShell providers and gateway registrations, the gateway service and process, and shared OpenShell binaries and configuration. It retains `~/.nemoclaw/portable-uninstall-retirement.json` even with `--destroy-user-data` so a retry or later completed onboarding can finish recovery.
 
 Before full uninstall deletes shared state, it removes only an exact authenticated host-local vLLM container and exact NemoClaw-owned llama.cpp container and network.
 Catalog-selected host-local vLLM also requires its exact owner-only runtime receipt; legacy authenticated containers without catalog profile labels retain their existing cleanup behavior.
 It refuses the remaining uninstall steps when Docker is unavailable or persisted ownership cannot be proved.
 Resolve the reported Docker or ownership error and rerun uninstall with the state still present.
 The shared Hugging Face cache used by managed vLLM and managed llama.cpp remains in place by default.
-With `--delete-models`, full uninstall deletes every model in the local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
+Outside portable cleanup, `--delete-models` deletes every model in the local Ollama inventory and all non-credential data in the current user's shared Hugging Face cache.
 The flag can delete cached files that other applications installed or use.
 It preserves the Hugging Face `token` and `stored_tokens` authentication files.
 NemoClaw deletes the non-credential cache data only after managed model runtimes stop and only when no sibling gateway remains.

@@ -89,6 +89,32 @@ describe("growth-guardrails executable entrypoints (#6953)", () => {
     expect(result.stderr).toContain("test/a.test.ts: 1 if statement(s), up from 0");
   });
 
+  it("prints the test-loop guardrail PASS diagnostic", () => {
+    const result = runEntrypoint("tools/growth-guardrails/test-loops.mts", [[]]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "PASS: no changed test file increased its test-loop count (0 total at the latest PR commit vs 0 at base).",
+    );
+  });
+
+  it("prints the test-loop guardrail FAIL heading and file detail", () => {
+    const result = runEntrypoint("tools/growth-guardrails/test-loops.mts", [
+      [{ filename: "test/a.test.ts", status: "modified" }],
+      blobPayload("it('a', () => { expect(1).toBe(1); });"),
+      blobPayload("it('a', () => { for (const row of rows) expect(row).toBeDefined(); });"),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("FAIL: changed test files increase test-loop counts.");
+    expect(result.stderr).toContain(
+      "test/a.test.ts: 1 test loop(s), up from 0",
+    );
+    expect(result.stderr).toContain(
+      "Move iteration needed for one behavior into a named helper outside the test callback. Use it.each or test.each when loop rows are independent cases.",
+    );
+  });
+
   it("prints the size-budget guardrail PASS diagnostic", () => {
     const result = runEntrypoint("tools/growth-guardrails/test-size-budget.mts", [
       [],

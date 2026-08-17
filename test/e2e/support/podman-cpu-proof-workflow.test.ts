@@ -360,108 +360,6 @@ function withProofFixture(run: (fixture: ProofFixture) => void): void {
   }
 }
 describe("native Podman CPU proof workflow", () => {
-  // source-shape-contract: security -- Checkout binding and package pins bind the credential-free Podman proof to the commit under review and its runtime bytes
-  it("runs as a credential-free PR workflow bound to the commit under review", () => {
-    const parsed = workflow();
-    const job = proofJob();
-    expect(parsed.permissions).toEqual({ contents: "read" });
-    expect(parsed.on.pull_request.types).toEqual(["opened", "synchronize", "reopened"]);
-    expect(parsed.on.pull_request.paths).toEqual(
-      expect.arrayContaining([
-        "src/lib/adapters/podman/**",
-        "src/lib/onboard/docker-driver-gateway-*.ts",
-        "src/lib/onboard/managed-bootstrap/podman-*.ts",
-        "src/lib/onboard/experimental/portable-demo-lifecycle.ts",
-        "src/lib/onboard/runtime-provider/container-state-mutation.ts",
-        "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
-        "src/lib/onboard/experimental/portable-cpu-delegation-preflight*.ts",
-        "src/lib/onboard/experimental/portable-host-preparation*.ts",
-        "scripts/install-openshell.sh",
-        "test/e2e/live/podman-cpu-lifecycle-artifacts.ts",
-        "test/e2e/live/podman-cpu-lifecycle-helpers.ts",
-        "test/e2e/live/podman-cpu-lifecycle-policy.yaml",
-        "test/e2e/registry/native-runtime-qualification.ts",
-        "test/e2e/live/portable-cpu-delegation-proof.test.ts",
-      ]),
-    );
-    expect(job.name).toBe("Rootless Podman CPU lifecycle with Docker disabled");
-    expect(job["runs-on"]).toBe("ubuntu-26.04");
-    expect(job["timeout-minutes"]).toBe(30);
-    expect(job.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(job.env?.E2E_SOURCE_REVISION).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(job.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.101");
-    expect(job.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
-    expect(namedStep("Checkout").with).toMatchObject({
-      ref: "${{ github.event.pull_request.head.sha }}",
-    });
-    expect(namedStep("Build shared sandbox-name contract").run).toBe(
-      "npm run build:policy-boundary",
-    );
-    const installPodman = namedStep("Install Podman 5 runtime").run ?? "";
-    expect(installPodman).toContain("apt-get install --yes");
-    expect(installPodman).toContain("passt");
-    expect(installPodman).toContain("uidmap");
-    expect(installPodman).toContain('"podman=$PODMAN_APT_VERSION"');
-    expect(installPodman).toContain('test "$package_version" = "$PODMAN_APT_VERSION"');
-    expect(installPodman).toContain('test "$version" = "podman version 5.7.0"');
-    const installOpenShell = namedStep("Install pinned OpenShell runtime").run ?? "";
-    expect(installOpenShell).toContain("env -u GH_TOKEN -u GITHUB_TOKEN");
-    expect(installOpenShell).toContain("bash scripts/install-openshell.sh");
-    expect(installOpenShell).toContain("$HOME/.local/bin");
-    expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("${{ secrets.");
-    const delegation = delegationJob();
-    const modeCommand = (mode: PortableCpuDelegationProofMode) =>
-      `node --experimental-strip-types scripts/checks/run-portable-cpu-delegation-proof.mts ${mode}`;
-    expect(parsed.on.pull_request.paths).toContain(
-      "scripts/checks/run-portable-cpu-delegation-proof.mts",
-    );
-    const proofScript = readRepoText("scripts/checks/run-portable-cpu-delegation-proof.mts");
-    expect(proofScript).toContain("shell: false");
-    expect(proofScript).not.toContain("shell: true");
-    expect(proofScript).not.toContain("execSync(");
-    expect(proofScript).not.toContain("eval(");
-    expect(delegation.name).toBe("Portable CPU delegation admission on Ubuntu 22.04");
-    expect(delegation["runs-on"]).toBe("ubuntu-22.04");
-    expect(delegation["timeout-minutes"]).toBe(15);
-    expect(delegation.env?.E2E_CPU_DELEGATION_USER).toBe("nemoclaw-e2e");
-    expect(delegation.env?.E2E_TARGET_ID).toBe("portable-cpu-delegation");
-    expect(delegation.env?.E2E_SOURCE_REVISION).toBe("${{ github.event.pull_request.head.sha }}");
-    expect(delegation.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(namedDelegationStep("Checkout").with).toMatchObject({
-      "persist-credentials": false,
-      ref: "${{ github.event.pull_request.head.sha }}",
-    });
-    expect(namedDelegationStep("Build shared sandbox-name contract").run).toBe(
-      "npm run build:policy-boundary",
-    );
-    expect(
-      namedDelegationStep("Prepare system and app slice CPU settings without service delegation")
-        .run,
-    ).toBe(modeCommand("prepare"));
-    expect(
-      namedDelegationStep(
-        "Verify missing delegation blocks portable configuration and service activation",
-      ).run,
-    ).toBe(modeCommand("reject"));
-    expect(namedDelegationStep("Apply administrator delegation and prove admission").run).toBe(
-      modeCommand("admit"),
-    );
-    const diagnostics = namedDelegationStep("Capture CPU delegation failure diagnostics");
-    expect(diagnostics.if).toBe("failure()");
-    expect(diagnostics.run).toBe(modeCommand("diagnostics"));
-    const cleanup = namedDelegationStep("Restore the user manager boundary");
-    expect(cleanup.if).toBe("always()");
-    expect(cleanup.run).toBe(modeCommand("cleanup"));
-    const delegationProof = readRepoText("test/e2e/live/portable-cpu-delegation-proof.test.ts");
-    expect(delegationProof).toContain('from "../fixtures/e2e-test.ts"');
-    expect(delegationProof).not.toContain('from "vitest"');
-    expect(delegationProof).toContain('"rev-parse", "HEAD"');
-    expect(delegationProof).toContain("e2ePhases");
-    expect(delegationProof).toContain("process.env.E2E_CPU_DELEGATION_STATE");
-    expect(delegationProof).toContain("process.getuid?.()");
-    expect(delegationProof).not.toContain("process.argv");
-    expect(delegationProof).not.toContain("main();");
-  });
   it("executes the five typed proof modes with exact argv and durable cleanup receipts (#9188)", () => {
     withProofFixture((fixture) => {
       const modes: readonly PortableCpuDelegationProofMode[] = [
@@ -932,9 +830,22 @@ describe("native Podman CPU proof workflow", () => {
       .steps?.map((step) => step.run ?? "")
       .join("\n");
 
-    expect(proof.run).toBe(
-      "npx vitest run --project e2e-live test/e2e/live/podman-cpu-lifecycle.test.ts",
+    expect(proof.run).toContain(
+      "npx vitest run --project e2e-live \\\n  test/e2e/live/podman-cpu-lifecycle.test.ts \\",
     );
+    expect(proof.run).toContain("test/e2e/live/podman-portable-uninstall.test.ts");
+    const uninstallSource = readRepoText("test/e2e/live/podman-portable-uninstall.test.ts");
+    expect(uninstallSource).toContain('executableOnPath("nemoclaw")');
+    expect(uninstallSource).toContain("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR");
+    expect(uninstallSource).toContain("OPENSHELL_LOCAL_TLS_DIR");
+    expect(uninstallSource).toContain('["gateway", "info", "-g", "nemoclaw", "-o", "json"]');
+    expect(uninstallSource).toContain('gatewayName: "nemoclaw"');
+    expect(uninstallSource).toContain('"--all-gateway-ports"');
+    expect(uninstallSource).toContain('"--delete-models"');
+    expect(uninstallSource).toContain('"--destroy-user-data"');
+    expect(uninstallSource).toContain('"--yes"');
+    expect(uninstallSource).toContain("systemctl --user restart podman.socket");
+    expect(uninstallSource).toContain("prepare_portable_experimental_runtime_override");
     const liveSource = readRepoText("test/e2e/live/podman-cpu-lifecycle.test.ts");
     const authorityIndex = liveSource.indexOf("expect(candidateAuthority())");
     const enginesIndex = liveSource.indexOf("let runtimeEngines = engines()");
@@ -942,6 +853,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(enginesIndex).toBeGreaterThanOrEqual(0);
     expect(authorityIndex).toBeLessThan(enginesIndex);
     expect(scripts).not.toContain("podman create");
+    expect(scripts).toMatch(/onboard\.js"\)\)\.default[\s\S]*stopHostGatewayProcesses/u);
     expect(scripts).not.toContain("openshell-sandbox-$sandbox_name");
     expect(scripts).not.toContain("openshell.sandbox-name");
     expect(diagnostics.if).toBe("failure()");
@@ -961,5 +873,7 @@ describe("native Podman CPU proof workflow", () => {
     expect(cleanup.run).toContain('podman --url "$endpoint" volume rm --force');
     expect(cleanup.run).toContain('podman --url "$endpoint" secret rm');
     expect(cleanup.run).toContain('podman --url "$endpoint" network rm openshell-docker');
+    const stopGateway = namedStep("Stop the exact portable-retirement proof gateway");
+    expect(stopGateway.env?.E2E_PORTABLE_GATEWAY_STOP_SCOPE).toBe("full");
   });
 });

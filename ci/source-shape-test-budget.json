@@ -2,36 +2,6 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
-      "file": "src/lib/actions/sandbox/mcp-bridge-input-validation.test.ts",
-      "test": "rejects host subprocess control and allowlist names as MCP credentials",
-      "category": "compatibility"
-    },
-    {
-      "file": "src/lib/actions/sandbox/mcp-bridge-input-validation.test.ts",
-      "test": "rejects OpenShell child-environment compatibility keys as MCP credentials",
-      "category": "compatibility"
-    },
-    {
-      "file": "src/lib/agent/base-image-hermes.test.ts",
-      "test": "requires the pinned Hermes base image and checks installed dependency versions after messaging package installation (#8328)",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/agent/state-directory-contract.test.ts",
-      "test": "keeps generated image plans equal to their AgentDefinition projections (#8006)",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/onboard/managed-startup-profile.test.ts",
-      "test": "classifies every stock Docker ARG as startup-affordance or deliberate exclusion",
-      "category": "compatibility"
-    },
-    {
-      "file": "src/lib/onboard/managed-startup-profile.test.ts",
-      "test": "classifies every centralized runtime input as profile intent or an explicit deferral",
-      "category": "compatibility"
-    },
-    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -42,48 +12,13 @@
       "category": "compatibility"
     },
     {
-      "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
-      "test": "matches the bundled local-inference host-gateway ports (#5744)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/agent-variant-docs.test.ts",
-      "test": "keeps the OpenClaw workspace inventory aligned with seeded runtime templates",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/code-change-considerations.test.ts",
-      "test": "keeps the stage-neutral questions in one concise owner",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "leaves an installed package manifest that names a credential-shaped dependency",
       "category": "security"
     },
     {
-      "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "uses conditional Node and curl trust in every final-stage registry step",
-      "category": "security"
-    },
-    {
-      "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "accepts the corporate CA build arg in the DCode base image before HTTPS fetches",
-      "category": "security"
-    },
-    {
-      "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "decodes the corporate CA again in the DCode final image",
-      "category": "security"
-    },
-    {
-      "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "copies the reviewed DCode discovery runtime without registry access",
-      "category": "security"
-    },
-    {
-      "file": "test/corporate-ca-build-tls-anchor.test.ts",
-      "test": "uses the corporate CA conditionally for all Hermes registry remediations",
+      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
+      "test": "returns a credential-free JSON manifest byte for byte",
       "category": "security"
     },
     {
@@ -92,108 +27,13 @@
       "category": "security"
     },
     {
-      "file": "test/e2e-fixture-dependency-review.test.ts",
-      "test": "keeps installed fixture dependencies on exact versions",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"
     },
     {
-      "file": "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
-      "test": "retains immutable base contracts for later qualification (#9049)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
-      "test": "binds the cleanup action and helper content to the pinned commit",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
-      "test": "binds the composite action and helper to their immutable reviewed revision (#6961)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
-      "test": "binds the host-dependency action and helper to their immutable reviewed revision (#6961)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/same-commit-reliability.test.ts",
-      "test": "locks the reporter to canonical source and trusted controller identities (#9168)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "compiles absence probes for every preflight failure contract",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "compiles fail-closed absence probes for targets that forbid runtime side effects",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "compiles gateway-health and host-preservation probes for every post-reboot recovery target",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "indexes every registered state by its unique id",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "keeps policy-selection failures limited to the installed CLI",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "omits host gateway probes for targets whose loaded agent runtime is terminal",
-      "category": "compatibility"
-    },
-    {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
       "test": "rejects an unknown state with an actionable inventory",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-expected-state.test.ts",
-      "test": "resolves every state id consumed by the typed target registry",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-live-project-config.test.ts",
-      "test": "keeps the drift-preflight bypass out of live projects (#6692)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
-      "test": "classifies every shipped target as supported or with a concrete reason",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-live-skip-name-contract.test.ts",
-      "test": "matches the workflow's exact `-t \"^${TARGET_ID}$\"` regex for every target",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-live-skip-name-contract.test.ts",
-      "test": "registers every target under a name equal to its id",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-manifests.test.ts",
-      "test": "resolves every typed target manifest path to a validated manifest",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-matrix.test.ts",
-      "test": "builds the default live matrix from every fixture-supported target",
       "category": "compatibility"
     },
     {
@@ -204,11 +44,6 @@
     {
       "file": "test/e2e/support/e2e-registry.test.ts",
       "test": "should return actionable unknown target error",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/e2e/support/e2e-semantic-phase-check.test.ts",
-      "test": "builds the policy boundary before semantic collection and CLI compilation",
       "category": "compatibility"
     },
     {
@@ -227,38 +62,8 @@
       "category": "security"
     },
     {
-      "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
-      "test": "runs as a credential-free PR workflow bound to the commit under review",
-      "category": "security"
-    },
-    {
-      "file": "test/fetch-guard-patch-regression.test.ts",
-      "test": "requires classifier review and integrity evidence when the OpenClaw build pin changes",
-      "category": "security"
-    },
-    {
-      "file": "test/hermes-final-image-layout.test.ts",
-      "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/hermes-final-image-layout.test.ts",
-      "test": "keeps security entrypoint hashes synchronized with the copied files",
-      "category": "security"
-    },
-    {
-      "file": "test/hermes-final-image-layout.test.ts",
-      "test": "verifies CLI adapter integrity before executing its validator",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-final-image-layout.test.ts",
-      "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/hermes-runtime-config-guard-topology.test.ts",
-      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "file": "test/growth-guardrails-workflow-boundary.test.ts",
+      "test": "flags %s",
       "category": "security"
     },
     {
@@ -267,28 +72,8 @@
       "category": "security"
     },
     {
-      "file": "test/hosted-runner-recovery-workflow.test.ts",
-      "test": "locks recovery to the platform workflow name (#7140)",
-      "category": "security"
-    },
-    {
-      "file": "test/inference-options-docs.test.ts",
-      "test": "keeps a per-model task-fit comparison table for curated onboarding models",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/label-merged-pr-release-target-workflow.test.ts",
-      "test": "keeps fork-safe labeling inside the trusted metadata boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/messaging-image-env-contract.test.ts",
-      "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
-      "category": "security"
-    },
-    {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
-      "test": "binds the selected runtime to its reviewed publisher, manifest, platform, and source",
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
       "category": "security"
     },
     {
@@ -297,54 +82,9 @@
       "category": "security"
     },
     {
-      "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins reviewed packages and audits their lock outside image builds (#8253)",
+      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
-    },
-    {
-      "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins dependency-materialization RUN cache identity",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/mcp-openshell-workflow.test.ts",
-      "test": "keeps the setup docs aligned with the stable default",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/openshell-0.0.101-migration-review.test.ts",
-      "test": "binds the newly generated credential manifest to reviewed source identities (#8599)",
-      "category": "security"
-    },
-    {
-      "file": "test/openshell-0.0.99-migration-review.test.ts",
-      "test": "associates every reviewed release identity with the 0.0.99 manifest (#8497)",
-      "category": "security"
-    },
-    {
-      "file": "test/openshell-0.0.99-migration-review.test.ts",
-      "test": "keeps every managed Docker policy identity explicit for workspace compatibility (#8662)",
-      "category": "security"
-    },
-    {
-      "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps baseline budgets derived from the checked-in samples",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps interim cap adjustments tied to functional post-change evidence",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps the authoritative local-build allowance tied to exact PR evidence",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "records five independent successful samples for current main",
-      "category": "compatibility"
     },
     {
       "file": "test/openclaw-2026-6-npm-remediation.test.ts",
@@ -367,16 +107,6 @@
       "category": "security"
     },
     {
-      "file": "test/node-tar-dockerfile-contract.test.ts",
-      "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-dependency-review.test.ts",
-      "test": "copies the legacy OpenClaw remediation helper before the base build invokes it",
-      "category": "security"
-    },
-    {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
       "category": "security"
@@ -385,11 +115,6 @@
       "file": "test/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"
-    },
-    {
-      "file": "test/openclaw-locked-install.test.ts",
-      "test": "invokes the locked installer before exposing OpenClaw in %s",
-      "category": "compatibility"
     },
     {
       "file": "test/openclaw-locked-install.test.ts",
@@ -412,106 +137,6 @@
       "category": "security"
     },
     {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "publishes candidate contracts outside the all-agent activation pattern",
-      "category": "security"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "does not grant package write permission to pull request candidate builds",
-      "category": "security"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "imports the local base into Buildx for digest-only candidate publication",
-      "category": "security"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "qualifies local and published candidates through the declared entrypoint",
-      "category": "security"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "builds and validates the candidate image for linux/amd64 and linux/arm64",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "publishes a Pi base image for linux/amd64 and linux/arm64",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "grants network capability only to the approved image-owned binaries",
-      "category": "security"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "merges a baked corporate CA into the trust bundle Node reads",
-      "category": "security"
-    },
-    {
-      "file": "test/pi-candidate-runtime-artifacts.test.ts",
-      "test": "persists every merged CA variable into the runtime environment file",
-      "category": "security"
-    },
-    {
-      "file": "test/platform-vitest-main-workflow.test.ts",
-      "test": "pins and verifies the Node.js archive in the trusted WSL helper",
-      "category": "security"
-    },
-    {
-      "file": "test/platform-vitest-main-workflow.test.ts",
-      "test": "loads the WSL helper from trusted revisions before candidate execution (#6958)",
-      "category": "security"
-    },
-    {
-      "file": "test/platform-vitest-main-workflow.test.ts",
-      "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
-      "category": "security"
-    },
-    {
-      "file": "test/platform-vitest-main-workflow.test.ts",
-      "test": "provisions the pinned macOS test runtime before running the full suite",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/plugin-vitest-project.test.ts",
-      "test": "defines one canonical plugin project for root and standalone runs",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/plugin-vitest-project.test.ts",
-      "test": "pilots assertion presence only in expect-based plugin tests (#6692)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "binds host-prepared GitHub context to the selected repository and pull request",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "fails closed around the credential-free OpenShell filesystem and network boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "keeps GitHub and upstream model credentials in separate host-only steps",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "pins trusted helper and bind sources to their checkout directories",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "preserves credential-free unavailable artifacts for manual dry runs",
-      "category": "compatibility"
-    },
-    {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "rejects deleting or weakening analysis-workspace symlink removal",
       "category": "security"
@@ -524,46 +149,6 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
-      "category": "security"
-    },
-    {
-      "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps migrated provider identities and implementations behind the one bundle composition",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "activates Docker llama.cpp only through its durable lifecycle controller (#8433)",
-      "category": "security"
-    },
-    {
-      "file": "test/source-architecture.test.ts",
-      "test": "keeps removed step mutation APIs out of production source (#7703)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
-      "category": "security"
-    },
-    {
-      "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps central activation paths disconnected from driver bootstrap adapters",
-      "category": "security"
-    },
-    {
-      "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "composes Docker bootstrap locally while keeping Kubernetes unsupported",
-      "category": "security"
-    },
-    {
-      "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
-      "category": "security"
-    },
-    {
-      "file": "test/release-latest-tag-workflow.test.ts",
-      "test": "binds latest promotion to the exact GitHub-verified tag object",
       "category": "security"
     },
     {
@@ -585,76 +170,6 @@
       "file": "test/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
-    },
-    {
-      "file": "test/runner.test.ts",
-      "test": "walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands",
-      "category": "security"
-    },
-    {
-      "file": "test/starter-prompt-docs.test.ts",
-      "test": "prepares the Starter Prompt in every docs build entry point (#5048)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/validate-blueprint.test.ts",
-      "test": "pins the sandbox image by digest instead of a mutable tag (#1438)",
-      "category": "security"
-    },
-    {
-      "file": "test/validate-blueprint.test.ts",
-      "test": "populates the top-level digest field with the image digest (#1438)",
-      "category": "security"
-    },
-    {
-      "file": "test/vitest-coverage-thresholds.test.ts",
-      "test": "enforces the exact per-file security floors for full and merged coverage (#6692)",
-      "category": "security"
-    },
-    {
-      "file": "test/vitest-developer-feedback.test.ts",
-      "test": "lets Vitest select reporters and preserves failed-test logs in CI (#6692)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/vitest-state-isolation.test.ts",
-      "test": "keeps root and live projects free of unvalidated automatic cleanup",
-      "category": "security"
-    },
-    {
-      "file": "test/vitest-state-isolation.test.ts",
-      "test": "keeps standalone plugin runs aligned without enabling mockReset",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/vitest-temp-root.test.ts",
-      "test": "wires cleanup into root and standalone plugin test runs",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/vitest-temp-root.test.ts",
-      "test": "isolates stateful non-live projects without redirecting live E2E state",
-      "category": "security"
-    },
-    {
-      "file": "test/vitest-watch-triggers.test.ts",
-      "test": "registers the focused mappings at the root configuration boundary (#6692)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/growth-guardrails-workflow-boundary.test.ts",
-      "test": "flags %s",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "returns a credential-free JSON manifest byte for byte",
-      "category": "security"
-    },
-    {
-      "file": "src/lib/state/sandbox-backup-sanitization.test.ts",
-      "test": "leaves an installed package manifest that names a credential-shaped dependency",
-      "category": "security"
     }
   ]
 }

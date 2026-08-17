@@ -4,13 +4,20 @@
 import fs from "node:fs";
 import os from "node:os";
 
-import { defaultUninstallPaths } from "../../domain/uninstall/paths";
+import {
+  defaultUninstallPaths,
+  NEMOCLAW_PROVIDERS,
+  type UninstallPaths,
+} from "../../domain/uninstall/paths";
 import {
   buildUninstallPlan,
   type UninstallPlan,
   type UninstallPlanOptions,
 } from "../../domain/uninstall/plan";
 import { classifyNemoclawShim, type ShimClassification } from "../../domain/uninstall/shims";
+
+export { buildUninstallPlan, defaultUninstallPaths, NEMOCLAW_PROVIDERS };
+export type { UninstallPaths, UninstallPlan };
 
 export interface FileSystemDeps {
   closeSync?: typeof fs.closeSync;

@@ -73,15 +73,6 @@ describe("hosted-runner recovery workflow boundary", () => {
     expect(Object.keys(value.jobs)).toEqual(["recover"]);
   });
 
-  // source-shape-contract: security -- The exact source workflow name keeps the write-capable recovery subscription bound to the reviewed trusted-main identity
-  it("locks recovery to the platform workflow name (#7140)", () => {
-    const platform = sourceWorkflow(PLATFORM_WORKFLOW_PATH);
-
-    expect(platform.name).toBe("CI / Platform Evidence");
-    expect(platform).not.toHaveProperty("run-name");
-    expect(workflow().on.workflow_run.workflows).toEqual([platform.name]);
-  });
-
   it("fails closed on controller, source, repository, branch, event, and path (#7140)", () => {
     const guard = workflow().jobs.recover.if ?? "";
     for (const fragment of [

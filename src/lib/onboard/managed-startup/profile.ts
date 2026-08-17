@@ -426,7 +426,7 @@ const PROFILE_CAPABILITIES = {
     inputModalities: [],
     webSearchProviders: [],
     toolGateways: [],
-    tuningFields: [],
+    tuningFields: ["contextWindow", "maxTokens", "reasoning"],
     supportsMessaging: false,
     supportsInferenceCompatibility: false,
     supportsUpstreamEndpoint: false,
@@ -587,6 +587,9 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
+    affordance("NEMOCLAW_CONTEXT_WINDOW", "tuning.contextWindow"),
+    affordance("NEMOCLAW_MAX_TOKENS", "tuning.maxTokens"),
+    affordance("NEMOCLAW_REASONING", "tuning.reasoning"),
     affordance("NEMOCLAW_TOOL_DISCLOSURE", "tools.disclosure"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
@@ -916,7 +919,13 @@ const HERMES_DASHBOARD_KEYS = new Set([
 const DCODE_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const TOOLS_KEYS = new Set(["disclosure", "enabledGateways"]);
 const MESSAGING_KEYS = new Set(["plan"]);
-const TUNING_KEYS = new Set(["contextWindow", "maxTokens", "reasoning", "reasoningEffort"]);
+const TUNING_FIELD_ORDER = [
+  "contextWindow",
+  "maxTokens",
+  "reasoning",
+  "reasoningEffort",
+] as const satisfies readonly (keyof ManagedStartupTuning)[];
+const TUNING_KEYS = new Set<string>(TUNING_FIELD_ORDER);
 const CORPORATE_CA_KEYS = new Set(["bundleSha256"]);
 const OPENCLAW_CONFIG_KEYS = new Set([
   "agent",
@@ -1748,10 +1757,14 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
           { allowEmpty: false },
         );
 
+  if (
+    upstreamEndpointUrl !== null &&
+    !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsUpstreamEndpoint
+  ) {
+    invalid(`inference.upstreamEndpointUrl must be null for ${agent}`);
+  }
+
   if (agent === "openclaw") {
-    if (upstreamEndpointUrl !== null) {
-      invalid("inference.upstreamEndpointUrl must be null for openclaw");
-    }
     if (primaryModelRef === null || inputModalities === null) {
       invalid("openclaw requires primaryModelRef and inputModalities");
     }
@@ -1761,9 +1774,6 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   } else {
     if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
       invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
-    }
-    if (agent === "hermes" && upstreamEndpointUrl !== null) {
-      invalid("inference.upstreamEndpointUrl must be null for hermes");
     }
     if (
       agent === "langchain-deepagents-code" &&
@@ -1850,30 +1860,27 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
             "tuning.reasoningEffort",
           ),
   };
+  const advertised = new Set<string>(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].tuningFields);
+  const unsupported = TUNING_FIELD_ORDER.filter(
+    (field) => result[field] !== null && !advertised.has(field),
+  );
+  if (unsupported.length > 0) {
+    invalid(`${agent} does not support startup tuning fields: ${unsupported.join(", ")}`);
+  }
   if (agent === "openclaw") {
-    if (
-      result.contextWindow === null ||
-      result.maxTokens === null ||
-      result.reasoning === null ||
-      result.reasoningEffort === null
-    ) {
-      invalid("openclaw requires contextWindow, maxTokens, reasoning, and reasoningEffort tuning");
-    }
-  } else if (agent === "hermes") {
-    if (result.contextWindow !== null && result.contextWindow < MIN_HERMES_CONTEXT_WINDOW) {
-      invalid(`hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`);
-    }
-    if (result.maxTokens !== null || result.reasoning !== null || result.reasoningEffort !== null) {
-      invalid("hermes supports only contextWindow tuning");
-    }
-  } else if (
-    result.contextWindow !== null ||
-    result.maxTokens !== null ||
-    result.reasoning !== null
-  ) {
-    invalid(
-      "langchain-deepagents-code does not support startup tuning fields beyond reasoningEffort",
+    const missing = TUNING_FIELD_ORDER.filter(
+      (field) => advertised.has(field) && result[field] === null,
     );
+    if (missing.length > 0) {
+      invalid(`openclaw requires ${missing.join(", ")} tuning`);
+    }
+  }
+  if (
+    agent === "hermes" &&
+    result.contextWindow !== null &&
+    result.contextWindow < MIN_HERMES_CONTEXT_WINDOW
+  ) {
+    invalid(`hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`);
   }
   return result;
 }
@@ -1901,8 +1908,8 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   const messaging = requireRecord(profile.messaging, "messaging");
   rejectUnknownKeys(messaging, MESSAGING_KEYS, "messaging");
   const messagingPlan = requireJsonObjectOrNull(messaging.plan, "messaging.plan");
-  if (agent === "langchain-deepagents-code" && messagingPlan !== null) {
-    invalid("messaging.plan must be null for langchain-deepagents-code");
+  if (messagingPlan !== null && !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsMessaging) {
+    invalid(`messaging.plan must be null for ${agent}`);
   }
   if (
     messagingPlan !== null &&

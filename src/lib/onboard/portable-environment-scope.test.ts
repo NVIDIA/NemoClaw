@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createDefaultResumeProfileEnvironmentScope,
@@ -9,11 +9,86 @@ import {
   PORTABLE_RUNTIME_ENV_KEYS,
 } from "./session-bootstrap";
 
+const { getNonInteractiveModel } = require("./providers") as {
+  getNonInteractiveModel: (providerKey: string) => string | null;
+};
+
 const CLEARED_PORTABLE_RUNTIME_ENV_KEYS = PORTABLE_RUNTIME_ENV_KEYS.filter(
   (key) => key !== "NEMOCLAW_EXPERIMENTAL_PROFILE",
 );
 
 describe("portable onboarding environment scope", () => {
+  it("preserves an explicit model during fresh portable onboarding (#9200)", () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "qwen3.6:35b" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_PROVIDER).toBe("ollama");
+    expect(env.NEMOCLAW_MODEL).toBe("qwen3.6:35b");
+
+    scope.restore();
+    expect(env).toEqual({ NEMOCLAW_MODEL: "qwen3.6:35b" });
+  });
+
+  it("uses qwen3-vl:4b when fresh portable model intent is absent (#9200)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_PROVIDER).toBe("ollama");
+    expect(env.NEMOCLAW_MODEL).toBe("qwen3-vl:4b");
+
+    scope.restore();
+    expect(env).toEqual({});
+  });
+
+  it("uses qwen3-vl:4b and restores empty fresh portable model intent (#9200)", () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "" };
+    const scope = createPortableOnboardEnvironmentScope(env, null);
+
+    expect(env.NEMOCLAW_PROVIDER).toBe("ollama");
+    expect(env.NEMOCLAW_MODEL).toBe("qwen3-vl:4b");
+
+    scope.restore();
+    expect(env).toEqual({ NEMOCLAW_MODEL: "" });
+  });
+
+  it("uses the activation model instead of ambient fresh model intent (#9200)", () => {
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_MODEL: "ambient/model" };
+    const scope = createPortableOnboardEnvironmentScope(env, {
+      schemaVersion: 1,
+      baseUrl: "https://inference.example.test/v1",
+      model: "activation/model",
+      expiresAt: "2026-08-13T20:00:00.000Z",
+    });
+
+    expect(env.NEMOCLAW_PROVIDER).toBe("custom");
+    expect(env.NEMOCLAW_MODEL).toBe("activation/model");
+
+    scope.restore();
+    expect(env).toEqual({ NEMOCLAW_MODEL: "ambient/model" });
+  });
+
+  it("rejects malformed fresh model intent with the provider validator (#9200)", () => {
+    vi.stubEnv("NEMOCLAW_MODEL", "model;unsupported");
+    const scope = createPortableOnboardEnvironmentScope(process.env, null);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    try {
+      expect(() => getNonInteractiveModel("ollama")).toThrow("process.exit(1)");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Invalid NEMOCLAW_MODEL for provider 'ollama'"),
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      scope.restore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("restores default checkpoint classification over hostile ambient portable intent", () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
     const scope = createDefaultResumeProfileEnvironmentScope(env);
@@ -102,6 +177,7 @@ describe("portable onboarding environment scope", () => {
     const env: NodeJS.ProcessEnv = {
       NEMOCLAW_PROVIDER: "ollama",
       NEMOCLAW_MODEL: "hostile-model",
+      NEMOCLAW_PROVIDER_MODEL: "hostile-fallback-model",
       NEMOCLAW_ENDPOINT_URL: "https://attacker.test/v1",
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_POLICY_MODE: "custom",
@@ -121,6 +197,7 @@ describe("portable onboarding environment scope", () => {
     for (const key of [
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_PROVIDER_MODEL",
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_PREFERRED_API",
       "NEMOCLAW_POLICY_TIER",

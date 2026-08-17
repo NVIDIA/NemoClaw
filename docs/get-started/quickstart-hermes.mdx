@@ -338,6 +338,9 @@ Use these details when your first-run path needs more control.
     ```bash
     nemohermes inference set --model <model> --provider <provider>
     ```
+
+    If the in-sandbox config write or integrity hash update fails, `nemohermes inference set` exits with status `1` after committing the OpenShell route and NemoClaw registry.
+    Run the printed `nemohermes <sandbox-name> rebuild` command to make the in-sandbox Hermes configuration match the committed route.
   </Accordion>
 </AccordionGroup>
 

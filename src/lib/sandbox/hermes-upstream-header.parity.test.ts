@@ -50,13 +50,11 @@ const FIXTURES: Array<{ name: string; config: Record<string, unknown> }> = [
 ];
 
 describe("buildHermesUpstreamHeader parity", () => {
-  for (const fixture of FIXTURES) {
-    it(`agent and host helpers produce identical output for: ${fixture.name}`, () => {
-      const agent = buildAgentHeader(fixture.config);
-      const host = buildHostHeader(fixture.config);
-      expect(host).toBe(agent);
-    });
-  }
+  it.each(FIXTURES)("agent and host helpers produce identical output for: $name", ({ config }) => {
+    const agent = buildAgentHeader(config);
+    const host = buildHostHeader(config);
+    expect(host).toBe(agent);
+  });
 
   it("strips newlines and control characters so the comment cannot escape into YAML", () => {
     const malicious = {

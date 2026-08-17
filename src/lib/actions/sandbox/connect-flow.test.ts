@@ -609,7 +609,7 @@ describe("connectSandbox flow", () => {
     );
   });
 
-  it("probe-only reports failure to create new authority after secure absence is proven (#8942)", async () => {
+  it("probe-only completes recovery after secure absence is proven and reports unpublished evidence (#9280)", async () => {
     const harness = createConnectHarness({
       readinessDecision: {
         kind: "fallback",
@@ -620,22 +620,25 @@ describe("connectSandbox flow", () => {
         fenceFailed: true,
         recoveryBlocked: false,
       },
+      readinessPublicationResult: { kind: "evidence-failed" },
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
       "process.exit(1)",
     );
 
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "no prior launch-readiness evidence can be accepted, but new launch-readiness authority could not be created",
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      "  Probe failed: complete probe and recovery succeeded, but final launch-readiness evidence could not be verified or published.",
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain(
-      "prior launch-readiness evidence could not be fenced",
+      "new launch-readiness authority could not be created",
     );
   });
 
-  it("probe-only completes macOS recovery before reporting unavailable evidence (#8942)", async () => {
+  it("probe-only completes macOS recovery and exits zero when evidence is unavailable (#9278)", async () => {
     const harness = createConnectHarness({
       readinessDecision: {
         kind: "fallback",
@@ -650,16 +653,16 @@ describe("connectSandbox flow", () => {
       readinessPublicationResult: { kind: "evidence-failed" },
     });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledOnce();
     expect(harness.ensureLiveSandboxSpy).toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
-    expect(harness.errorSpy).toHaveBeenCalledWith(
-      "  Probe failed: complete probe and recovery succeeded, but launch-readiness evidence is unavailable on this platform.",
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy).toHaveBeenCalledWith(
+      "  Note: launch-readiness evidence is unavailable on this platform; the next launch runs the complete preflight.",
     );
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain("Probe failed");
   });
 
   it("lets a public lifecycle command continue after recovery when evidence publication is unavailable (#8942)", async () => {
