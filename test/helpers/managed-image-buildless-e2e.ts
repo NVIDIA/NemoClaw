@@ -147,6 +147,7 @@ const registerCalls = [];
 const runnerCommands = [];
 const spawnCalls = [];
 let sandboxCreated = false;
+let managedHermesVolume = null;
 
 // The protected live-E2E job intentionally runs source without build:cli.
 // Route the root CLI's generated shared-boundary import back to its canonical
@@ -402,6 +403,7 @@ replace(managedBootstrap, "createDockerManagedBootstrapAdapter", () => {
 
 const runner = require(${source("src/lib/runner.ts")});
 runner.run = (command, options = {}) => {
+  const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
@@ -411,6 +413,25 @@ runner.run = (command, options = {}) => {
     return sandboxCreated
       ? { status: 0, stdout: "Name: " + sandboxName + "\nId: sbx-managed-fixture\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "sandbox not found" };
+  }
+  if (argv[0] === "docker" && argv[1] === "volume") {
+    const volumeName = argv.at(-1);
+    if (argv[2] === "inspect") {
+      return managedHermesVolume
+        ? { status: 0, stdout: JSON.stringify(managedHermesVolume) + "\n", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error response from daemon: no such volume" };
+    }
+    if (argv[2] === "create") {
+      const labels = {};
+      for (let index = 3; index < argv.length - 1; index += 1) {
+        if (argv[index] !== "--label") continue;
+        const [name, ...value] = argv[index + 1].split("=");
+        labels[name] = value.join("=");
+        index += 1;
+      }
+      managedHermesVolume = { Name: volumeName, Labels: labels };
+      return { status: 0, stdout: volumeName + "\n", stderr: "" };
+    }
   }
   return { status: 0, stdout: "", stderr: "" };
 };
@@ -656,6 +677,25 @@ function assertManagedLaunch(
   const fromIndex = createArgs.indexOf("--from");
   expect(createArgs[fromIndex + 1]).toBe(expectedContract.reference);
   expect(createArgs.join(" ")).not.toContain("Dockerfile");
+  if (agent === "hermes") {
+    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
+    expect(driverConfigIndex).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(createArgs[driverConfigIndex + 1]!) as unknown).toMatchObject({
+      docker: {
+        mounts: [
+          {
+            type: "volume",
+            source: "nemoclaw-hermes-state-v1-managed-hermes",
+            target: "/sandbox/.hermes",
+            read_only: false,
+          },
+        ],
+      },
+    });
+    expect(
+      result.payload.runnerCommands.some((command) => command.startsWith("docker volume create ")),
+    ).toBe(true);
+  }
 
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))).toEqual([]);
   const encodedProfile = bootstrapRequest?.encodedProfile;

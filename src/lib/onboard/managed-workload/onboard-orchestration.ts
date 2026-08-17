@@ -62,6 +62,7 @@ import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import {
   prepareManagedHermesStateVolume,
   type ManagedHermesStateVolumeContext,
+  type ManagedHermesStateVolumeDeps,
 } from "./hermes-state-volume";
 
 type ManagedProfileInput = Omit<
@@ -85,13 +86,17 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
   input: Omit<ManagedHermesStateVolumeContext, "runtimeProviderId"> & {
     readonly runtimeProvider: RuntimeProviderBundle | null;
   },
+  deps: ManagedHermesStateVolumeDeps = {},
 ): ManagedHermesStateVolumeOnboardLifecycle {
-  const scope = prepareManagedHermesStateVolume({
-    agentName: input.agentName,
-    runtimeProviderId: input.runtimeProvider?.identity.id,
-    sandboxName: input.sandboxName,
-    workloadKind: input.workloadKind,
-  });
+  const scope = prepareManagedHermesStateVolume(
+    {
+      agentName: input.agentName,
+      runtimeProviderId: input.runtimeProvider?.identity.id,
+      sandboxName: input.sandboxName,
+      workloadKind: input.workloadKind,
+    },
+    deps,
+  );
   return {
     materializeSandboxCreatePlan(input, materialize) {
       return materialize({ ...input, managedStateMount: scope?.mount });

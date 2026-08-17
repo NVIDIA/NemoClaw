@@ -1899,13 +1899,7 @@ async function createSandboxWithBaseImageResolution(
     extraProviders: resolvedCreateIntent.extraProviders,
     staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
   });
-  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
-  const hermesStateVolumeLifecycle = managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({
-    agentName: requestedAgentName,
-    runtimeProvider: managedWorkloadRuntime.runtimeProvider,
-    sandboxName,
-    workloadKind: preparedSandboxWorkload.source.kind,
-  });
+  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled(), hermesStateVolumeLifecycle = managedWorkloadOnboard.createManagedHermesStateVolumeOnboardLifecycle({ agentName: requestedAgentName, runtimeProvider: managedWorkloadRuntime.runtimeProvider, sandboxName, workloadKind: preparedSandboxWorkload.source.kind });
   const { initialSandboxPolicy, policyTier: resolvedCreatePolicyTier, messagingProviders, gpuRoutePlan, compatibilityPolicyPath, initialGpuRoute, sandboxReadyTimeoutSecs, buildId, dashboardRemoteBindPrepared, legacyBuildContext, launch: { createArgv, effectiveDashboardPort, intendedSandboxStartupCommand, managedBootstrapIdentity, managedStartupRootApplyRequest, prebuild, sandboxEnv, sandboxStartupCommand } } = await managedWorkloadOnboard.prepareOnboardSandboxWorkloadLaunch({
     runtime: managedWorkloadRuntime, workload: preparedSandboxWorkload,
     legacy: { preparedBuildContext, agent, fromDockerfile, createAgentSandbox: (selectedAgent) => baseImageResolutionFlow.createAgentSandboxWithResolution(baseImageResolutionContext, selectedAgent, agentOnboard.createAgentSandbox), resolvePatchInput: () => ({ preparedBuildContext, agent, fromDockerfile, model, chatUiUrl, provider, endpointUrl: createIntent?.endpointUrl ?? null, compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning, preferredInferenceApi, webSearchConfig, toolDisclosure: effectiveToolDisclosure, rebuildPreservedEnv: createIntent?.rebuildPreservedEnv, ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}), hermesToolGateways, sandboxGpuConfig: effectiveSandboxGpuConfig, ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext), gatewayPort: GATEWAY_PORT }) },
@@ -2074,8 +2068,7 @@ async function createSandboxWithBaseImageResolution(
         }),
     },
   );
-  hermesStateVolumeLifecycle.commit();
-  if ("complete" in recreateRuntime) recreateRuntime.complete();
+  hermesStateVolumeLifecycle.commit(); if ("complete" in recreateRuntime) recreateRuntime.complete();
   restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated

@@ -8,6 +8,7 @@ import type {
   SandboxCreateIntent,
   SandboxCreateMessagingProviderRequest,
 } from "./sandbox-create-intent-types";
+import { containerPathsOverlap } from "./host-mount/path-overlap";
 import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 type PrepareInitialSandboxCreatePolicy =
@@ -23,17 +24,6 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   mode: 0o1777,
 } as const;
 
-function pathsOverlap(left: string, right: string): boolean {
-  const normalize = (value: string) => value.replace(/\/+$/u, "") || "/";
-  const normalizedLeft = normalize(left);
-  const normalizedRight = normalize(right);
-  return (
-    normalizedLeft === normalizedRight ||
-    normalizedLeft.startsWith(`${normalizedRight}/`) ||
-    normalizedRight.startsWith(`${normalizedLeft}/`)
-  );
-}
-
 function buildSandboxDriverConfig(
   intent: SandboxCreateIntent,
   managedStateMount: MaterializeSandboxCreatePlanInput["managedStateMount"],
@@ -43,7 +33,7 @@ function buildSandboxDriverConfig(
   );
   if (managedStateMount) {
     const conflictingHostMount = intent.hostMounts?.find(({ target }) =>
-      pathsOverlap(target, managedStateMount.target),
+      containerPathsOverlap(target, managedStateMount.target),
     );
     if (conflictingHostMount) {
       throw new Error(
