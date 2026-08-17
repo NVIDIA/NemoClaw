@@ -13,8 +13,9 @@ import {
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
-  it("rewrites exact HTTP loopback hosts on bundled local-inference ports (#5744)", () => {
-    for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "rewrites exact HTTP loopback hosts on bundled local-inference ports [case %#] (#5744)",
+    (host) => {
       for (const port of COMPATIBLE_ENDPOINT_GATEWAY_PORTS) {
         expect(
           gatewayReachableCompatibleEndpointUrl(
@@ -23,8 +24,8 @@ describe("compatible endpoint gateway routing", () => {
           ),
         ).toBe(`http://host.openshell.internal:${port}/v1`);
       }
-    }
-  });
+    },
+  );
 
   it("leaves a generic compatible-endpoint loopback URL unchanged on port 8081 (#8161)", () => {
     expect(

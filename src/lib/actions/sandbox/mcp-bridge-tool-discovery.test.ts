@@ -168,59 +168,57 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     });
   });
 
-  it("fails closed on malformed, duplicate, unsorted, or unframed results", () => {
-    for (const result of [
-      framedResult({ protocol: 1, ok: true, count: 1, tools: ["bad\nname"], truncated: false }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["bad\ud800name"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["safe\u202eevil"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["safe\u2066evil"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 1,
-        tools: ["safe\u2028evil"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 2,
-        tools: ["same", "same"],
-        truncated: false,
-      }),
-      framedResult({
-        protocol: 1,
-        ok: true,
-        count: 2,
-        tools: ["zeta", "alpha"],
-        truncated: false,
-      }),
-      { status: 0, stdout: JSON.stringify({ protocol: 1 }), stderr: "" },
-    ]) {
-      expect(classifyMcpToolDiscoveryResult(result, entry, marker)).toMatchObject({
-        ok: false,
-        count: 0,
-        tools: [],
-      });
-    }
+  it.each([
+    framedResult({ protocol: 1, ok: true, count: 1, tools: ["bad\nname"], truncated: false }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["bad\ud800name"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["safe\u202eevil"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["safe\u2066evil"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 1,
+      tools: ["safe\u2028evil"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 2,
+      tools: ["same", "same"],
+      truncated: false,
+    }),
+    framedResult({
+      protocol: 1,
+      ok: true,
+      count: 2,
+      tools: ["zeta", "alpha"],
+      truncated: false,
+    }),
+    { status: 0, stdout: JSON.stringify({ protocol: 1 }), stderr: "" },
+  ])("fails closed on malformed, duplicate, unsorted, or unframed results [case %#]", (result) => {
+    expect(classifyMcpToolDiscoveryResult(result, entry, marker)).toMatchObject({
+      ok: false,
+      count: 0,
+      tools: [],
+    });
   });
 
   it("does not surface process output when the image runtime cannot start", () => {

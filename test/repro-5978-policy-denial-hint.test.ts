@@ -175,13 +175,14 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
   });
 
-  it("falls back to <name> when OPENSHELL_SANDBOX is unusable (older OpenShell)", () => {
-    for (const value of ["", "1", "true"]) {
+  it.each(["", "1", "true"])(
+    "falls back to <name> when OPENSHELL_SANDBOX is unusable (older OpenShell) [case %#]",
+    (value) => {
       const { stdout, status } = gate({ OPENSHELL_SANDBOX: value });
       expect(status).toBe(0);
       expect(stdout).toContain("nemoclaw <name> logs --tail 50");
-    }
-  });
+    },
+  );
 
   it("allowlists the name: a crafted OPENSHELL_SANDBOX cannot inject TTY escapes", () => {
     // ESC + newline make the value fail the RFC-1123 allowlist, so it is

@@ -998,13 +998,14 @@ exit 1
       ).toThrow(/Cannot merge policy preset: the current policy is not a valid YAML mapping/);
     });
 
-    it("fails closed when preset entries are malformed or not a mapping", () => {
-      for (const invalidEntries of ["  broken: [unterminated", "  - host: example.com"]) {
+    it.each(["  broken: [unterminated", "  - host: example.com"])(
+      "fails closed when preset entries are malformed or not a mapping [case %#]",
+      (invalidEntries) => {
         expect(() => policies.mergePresetIntoPolicy("version: 1", invalidEntries)).toThrow(
           /preset network_policies entries must be a valid YAML mapping/,
         );
-      }
-    });
+      },
+    );
 
     const realisticEntries =
       "  pypi_access:\n" +

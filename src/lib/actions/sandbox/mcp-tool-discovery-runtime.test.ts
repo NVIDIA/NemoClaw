@@ -111,18 +111,19 @@ describe("shared MCP tool discovery runtime", () => {
     ).rejects.toMatchObject({ code: "invalid-response" });
   });
 
-  it("rejects empty, malformed, control-bearing, and overlong tool names", async () => {
-    for (const name of [
-      "",
-      "bad\nname",
-      "bad\ud800name",
-      "x".repeat(MCP_TOOL_DISCOVERY_LIMITS.maxToolNameBytes + 1),
-    ]) {
+  it.each([
+    "",
+    "bad\nname",
+    "bad\ud800name",
+    "x".repeat(MCP_TOOL_DISCOVERY_LIMITS.maxToolNameBytes + 1),
+  ])(
+    "rejects empty, malformed, control-bearing, and overlong tool names [case %#]",
+    async (name) => {
       await expect(
         enumerateMcpToolNames(async () => ({ tools: [{ name }] })),
       ).rejects.toMatchObject({ code: "invalid-response" });
-    }
-  });
+    },
+  );
 
   it("returns an explicit partial failure at tool and page safety limits", async () => {
     const tools = Array.from({ length: MCP_TOOL_DISCOVERY_LIMITS.maxTools + 1 }, (_, index) => ({
@@ -276,8 +277,9 @@ describe("shared MCP tool discovery runtime", () => {
     expect(sourceCancel).toHaveBeenCalledOnce();
   });
 
-  it("bounds both total-deadline and per-request aborts with a credential-safe timeout", async () => {
-    for (const abortSource of ["deadline", "request"] as const) {
+  it.each(["deadline", "request"] as const)(
+    "bounds both total-deadline and per-request aborts with a credential-safe timeout [case %#]",
+    async (abortSource) => {
       const deadline = new AbortController();
       const request = new AbortController();
       const blockingFetch = vi.fn(
@@ -297,8 +299,8 @@ describe("shared MCP tool discovery runtime", () => {
       expect(error).toMatchObject({ code: "timeout" });
       expect(safeToolDiscoveryErrorDetail(error)).toBe("tool discovery timed out after 10s");
       expect(safeToolDiscoveryErrorDetail(error)).not.toContain("untrusted-timeout-detail");
-    }
-  });
+    },
+  );
 
   it("maps failures to bounded details without echoing untrusted messages", () => {
     expect(safeToolDiscoveryErrorDetail(new ToolDiscoveryRuntimeError("redirect"))).toBe(
