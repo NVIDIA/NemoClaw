@@ -282,6 +282,7 @@ async function expectProvider(
   }
 }
 
+/** Report whether both OpenClaw Telegram activation gates are enabled. */
 async function openClawHasTelegram(sandbox: SandboxClient, artifactName: string): Promise<boolean> {
   const result = await sandbox.exec(
     SANDBOX_NAME,
