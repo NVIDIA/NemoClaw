@@ -102,6 +102,48 @@ describe("parseSshProcesses", () => {
     });
   });
 
+  // Newer OpenShell routes every sandbox through one fixed `sandbox` alias and
+  // names the target only on its proxy command, so the SSH host carries no
+  // sandbox reference at all (#9316).
+  const PROXY = (id: string) =>
+    `ssh -o ProxyCommand=/usr/local/bin/openshell ssh-proxy --gateway 'https://127.0.0.1:8080' --sandbox-id ${id} --token t --gateway-name nemoclaw -o StrictHostKeyChecking=no`;
+  const SANDBOX_ID = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
+  const interactiveLine = `12345 ${PROXY(SANDBOX_ID)} -tt -o RequestTTY=force -o SetEnv=TERM=xterm-256color sandbox`;
+  const forwardLine = `12300 ${PROXY(SANDBOX_ID)} -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18789:127.0.0.1:18789 sandbox`;
+
+  it("detects a proxied interactive session by sandbox ID (#9316)", () => {
+    expect(parseSshProcesses(interactiveLine, "my-sandbox", SANDBOX_ID)).toEqual([
+      {
+        sandboxName: "my-sandbox",
+        pid: 12345,
+        sshHost: "openshell-my-sandbox.default",
+      },
+    ]);
+  });
+
+  it("does not count the dashboard forward as a session (#9316)", () => {
+    // The forward runs through the same proxy and sandbox ID; only the
+    // interactive session requests a TTY. Counting it would report a session
+    // on every Ready sandbox.
+    expect(parseSshProcesses(forwardLine, "my-sandbox", SANDBOX_ID)).toEqual([]);
+    expect(
+      parseSshProcesses(`${forwardLine}\n${interactiveLine}`, "my-sandbox", SANDBOX_ID),
+    ).toHaveLength(1);
+  });
+
+  it("does not attribute a proxied session without a known sandbox ID (#9316)", () => {
+    // The command line carries no sandbox name, so guessing would attribute one
+    // sandbox's session to another.
+    expect(parseSshProcesses(interactiveLine, "my-sandbox")).toEqual([]);
+    expect(parseSshProcesses(interactiveLine, "my-sandbox", "")).toEqual([]);
+  });
+
+  it("does not match another sandbox's ID (#9316)", () => {
+    expect(
+      parseSshProcesses(interactiveLine, "other-sandbox", "aaaaaaaa-0000-0000-0000-000000000000"),
+    ).toEqual([]);
+  });
+
   it("detects a legacy SSH process during the upgrade window", () => {
     const output = `12345 ssh -F /tmp/config openshell-my-sandbox
 67890 ssh -F /tmp/config openshell-other-sandbox`;
