@@ -3,9 +3,51 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { prepareOnboardSandboxWorkloadLaunch } from "./onboard-orchestration";
+import {
+  prepareOnboardSandboxWorkloadLaunch,
+  shouldActivateStockManagedRuntime,
+} from "./onboard-orchestration";
 
 describe("managed workload onboard orchestration", () => {
+  it("activates stock managed images only for shipped agents outside Portable", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        agentName: "hermes",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        agentName: "langchain-deepagents-code",
+      }),
+    ).toBe(true);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: true,
+        agentName: "openclaw",
+      }),
+    ).toBe(false);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        agentName: "nemocua",
+      }),
+    ).toBe(false);
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        agentName: "pi",
+      }),
+    ).toBe(false);
+  });
+
   it("resolves final-image patch metadata after managed build-context staging", async () => {
     const resolutionMetadata = { key: "published-dcode-base" };
     let staged = false;

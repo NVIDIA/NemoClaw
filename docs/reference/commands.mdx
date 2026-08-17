@@ -895,6 +895,11 @@ The poll count is clamped to a minimum of `1` so the health probe always runs at
 
 #### `--from <Dockerfile>`
 
+Without `--from`, onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
+NemoClaw validates the complete three-agent publication cohort before selecting any member and stops before sandbox creation when the cohort is unavailable, incomplete, mixed, mutable, or incompatible.
+The stock path does not build a Dockerfile.
+The portable experimental profile and native Podman are not part of this activation.
+
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.

@@ -20,7 +20,10 @@ import {
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
-import { managedImageRuntimeIdentity } from "../managed-image/contract";
+import {
+  isShippedManagedImageAgent,
+  managedImageRuntimeIdentity,
+} from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
@@ -97,6 +100,13 @@ export interface ManagedWorkloadOnboardRuntime {
   ensurePreparedProfile(
     workload: PreparedSandboxWorkloadSource,
   ): BuiltManagedStartupOnboardProfile | null;
+}
+
+export function shouldActivateStockManagedRuntime(input: {
+  readonly portableLifecycle: boolean;
+  readonly agentName: string;
+}): boolean {
+  return !input.portableLifecycle && isShippedManagedImageAgent(input.agentName);
 }
 
 export function assertPortableManagedBootstrapNotSelected(

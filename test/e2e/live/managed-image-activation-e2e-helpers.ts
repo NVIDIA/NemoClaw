@@ -451,7 +451,6 @@ async function qualifyAgent(
   const onboard = await host.nemoclaw(
     [
       "onboard",
-      "--temp-managed-runtime",
       "--temp-managed-runtime-catalog",
       catalogPath,
       "--fresh",

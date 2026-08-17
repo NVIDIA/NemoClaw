@@ -807,6 +807,7 @@ describe("complete managed-image publication workflow", () => {
     );
 
     expect(source).toContain('"--temp-managed-runtime-catalog"');
+    expect(source).not.toContain('"--temp-managed-runtime",');
     expect(source).toContain("await host.nemoclaw(");
     expect(source).toContain("await lifecycle.restartGatewayRuntime(");
     expect(source).toContain("await runAgentTurn(");

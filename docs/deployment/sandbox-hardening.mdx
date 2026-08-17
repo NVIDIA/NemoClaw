@@ -12,6 +12,12 @@ agent-variants: ["openclaw"]
 ---
 The NemoClaw sandbox image applies several security measures to reduce the attack surface and limit damage from untrusted workloads.
 
+## Immutable Managed Image Selection
+
+Stock onboarding through the OpenShell Docker driver selects an exact managed-image digest and validates the complete OpenClaw, Hermes, and LangChain Deep Agents Code publication cohort before sandbox creation.
+An unavailable, incomplete, mixed, mutable, wrong-platform, or identity-inconsistent cohort stops onboarding without a Dockerfile fallback.
+Passing `--from <Dockerfile>` remains a separate explicit opt-in whose complete custom image must be reviewed independently.
+
 ## Removed Unnecessary Tools
 
 NemoClaw explicitly purges build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image.
