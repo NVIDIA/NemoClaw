@@ -132,7 +132,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
   });
 
   it("keeps the generic error when the helper ran and failed (#8202)", () => {
-    const error = snapshotSanitizerFailure("helper-failed", "generic helper failure");
+    const error = snapshotSanitizerFailure("helper-failed", "generic helper failure", makeRoot());
 
     expect(error).not.toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
     expect(error.message).toBe("generic helper failure");
