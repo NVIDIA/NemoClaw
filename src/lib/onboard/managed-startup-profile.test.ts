@@ -759,6 +759,7 @@ describe("managed startup profile", () => {
                 lines: [
                   "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
                   "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+                  "TELEGRAM_BOT_TOKEN=openshell:resolve:env:v1_TELEGRAM_BOT_TOKEN",
                 ],
                 templateRefs: ["credential.slackBotToken.placeholder"],
               },
@@ -775,6 +776,10 @@ describe("managed startup profile", () => {
     [
       "a placeholder for a different environment key",
       "SLACK_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+    ],
+    [
+      "a versioned placeholder for a different environment key",
+      "SLACK_BOT_TOKEN=openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
     ],
   ])("rejects %s in messaging environment lines (#9355)", (_label, line) => {
     expect(() =>
@@ -819,6 +824,13 @@ describe("managed startup profile", () => {
       {
         ...OPENCLAW_PROFILE.messaging.plan,
         note: "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+    ],
+    [
+      "a direct credential placeholder outside schema-owned fields",
+      {
+        ...OPENCLAW_PROFILE.messaging.plan,
+        note: "openshell:resolve:env:SLACK_BOT_TOKEN",
       },
     ],
   ])("rejects %s (#9355)", (_label, plan) => {

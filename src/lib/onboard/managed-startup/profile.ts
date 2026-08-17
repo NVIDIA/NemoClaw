@@ -994,13 +994,24 @@ function valueLooksLikeSecret(value: string): boolean {
 }
 
 function isMessagingCredentialPlaceholder(path: readonly string[], value: unknown): boolean {
-  return (
-    path.length >= 2 &&
+  if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
+    return false;
+  }
+  const isCredentialBindingPlaceholder =
+    path.length === 5 &&
     path[0] === "messaging" &&
     path[1] === "plan" &&
-    typeof value === "string" &&
-    MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)
-  );
+    path[2] === "credentialBindings" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "placeholder";
+  const isAgentRenderValuePlaceholder =
+    path.length >= 5 &&
+    path[0] === "messaging" &&
+    path[1] === "plan" &&
+    path[2] === "agentRender" &&
+    JSON_ARRAY_INDEX_SEGMENT_RE.test(path[3] ?? "") &&
+    path[4] === "value";
+  return isCredentialBindingPlaceholder || isAgentRenderValuePlaceholder;
 }
 
 function messagingCredentialPlaceholderEnvKey(value: string): string | null {
@@ -1503,7 +1514,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         const child = descriptor.value;
         if (
           isCredentialShapedName(key) &&
-          !isMessagingCredentialPlaceholder(current.path, child) &&
+          !isMessagingCredentialPlaceholder([...current.path, key], child) &&
           !isMessagingPackagePin([...current.path, key], child)
         ) {
           invalid(
