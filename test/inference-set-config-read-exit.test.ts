@@ -16,6 +16,7 @@ describe("inference set sandbox configuration read failures", () => {
   let home: string;
   let openshell: string;
   let openshellLog: string;
+  let registryFile: string;
 
   beforeEach(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-9104-"));
@@ -34,8 +35,9 @@ describe("inference set sandbox configuration read failures", () => {
 
     const registryDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(registryDir, { recursive: true });
+    registryFile = path.join(registryDir, "sandboxes.json");
     fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
+      registryFile,
       JSON.stringify({
         sandboxes: {
           [SANDBOX]: {
@@ -89,6 +91,7 @@ describe("inference set sandbox configuration read failures", () => {
     "%s inference set exits with status 1 when OpenShell cannot read the sandbox configuration (#9104)",
     testTimeoutOptions(30_000),
     (_grammar, argv) => {
+      const registryBefore = fs.readFileSync(registryFile, "utf8");
       const result = spawnSync(process.execPath, [CLI, ...argv], {
         encoding: "utf8",
         env: {
@@ -106,6 +109,8 @@ describe("inference set sandbox configuration read failures", () => {
       expect(result.error).toBeUndefined();
       expect(result.signal).toBeNull();
       expect(output).toContain("Cannot read openclaw config (/sandbox/.openclaw/openclaw.json)");
+      expect(output).not.toContain("Setting OpenShell inference route");
+      expect(fs.readFileSync(registryFile, "utf8")).toBe(registryBefore);
       const openshellCalls = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
       expect(openshellCalls).toHaveLength(1);
       expect(openshellCalls[0]).toContain("sandbox exec");
