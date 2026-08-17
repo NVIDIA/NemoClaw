@@ -14,8 +14,13 @@ import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
 import { getOpenShellGatewayServiceStopCommand } from "./docker-driver-gateway-service";
+import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import { printDockerDaemonRecovery } from "./gateway-start-failure";
-import { noteOnboardResumeHintShown, onboardRecoveryCommand } from "./resume-hint";
+import {
+  noteOnboardResumeHintShown,
+  onboardFreshRecoveryCommand,
+  onboardResumeRecoveryCommand,
+} from "./resume-hint";
 
 export type ReportDockerDriverGatewayStartFailureOpts = {
   exitOnFailure: boolean;
@@ -56,6 +61,9 @@ function printIncompatibleGatewayDatabaseRecovery(
   printError: (message?: string) => void,
 ): void {
   const stateDir = path.dirname(logPath);
+  const recoveryCommand = isPortableExperimentalProfile()
+    ? onboardFreshRecoveryCommand(true)
+    : onboardResumeRecoveryCommand();
   printError("  The installed OpenShell version cannot use the existing gateway database.");
   printError(`  Database: ${path.join(stateDir, "openshell.db")}`);
   printError("  The database records a migration that this OpenShell version does not include.");
@@ -64,7 +72,7 @@ function printIncompatibleGatewayDatabaseRecovery(
   if (!stopCommand && isGatewayStateInUse?.() !== false) {
     printError("  NemoClaw could not confirm that the standalone gateway process stopped.");
     printError("  Stop the gateway, then run onboarding again:");
-    printError(`    ${onboardRecoveryCommand()}`);
+    printError(`    ${recoveryCommand}`);
     printError(
       "  A gateway process that keeps running after the move writes to a path that no longer holds its state.",
     );
@@ -87,7 +95,7 @@ function printIncompatibleGatewayDatabaseRecovery(
     "  The selected gateway state contains credentials and all registrations for this gateway.",
   );
   printError("  Keep the archive owner-only until every required registration is restored.");
-  const move = `mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${onboardRecoveryCommand()}`;
+  const move = `mkdir -m 700 ${archivePathArg} && mv ${stateDirArg} ${archivedStatePathArg} && ${recoveryCommand}`;
   printError(
     stopCommand
       ? "  Stop the gateway, create the archive, move the selected gateway state, then continue onboarding:"

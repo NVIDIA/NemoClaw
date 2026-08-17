@@ -109,6 +109,10 @@ describe("inactive OpenShell MXC runtime provider", () => {
       hostLocalInference: false,
       directLifecycle: false,
       workloadImageCleanup: false,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: expect.stringMatching(/host-directory sharing contract/u),
+      },
     });
     for (const surface of [
       provider.lifecycle,

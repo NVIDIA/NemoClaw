@@ -4,10 +4,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
+import { DCODE_BASE_IMAGE, DCODE_BASE_IMAGE_ENV } from "../fixtures/dcode-base-image.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import type { EnvironmentReady } from "../fixtures/phases/index.ts";
 import { OnboardingPhaseFixture, type OnboardingSecrets } from "../fixtures/phases/index.ts";
@@ -26,6 +27,20 @@ interface RunnerCall {
 interface CleanupCall {
   name: string;
   run: () => Promise<void> | void;
+}
+
+const DCODE_BASE_IMAGE_REF = `${DCODE_BASE_IMAGE}@sha256:${"a".repeat(64)}`;
+
+async function withProcessEnvironment<T>(
+  values: Record<string, string | undefined>,
+  run: () => Promise<T>,
+): Promise<T> {
+  for (const [name, value] of Object.entries(values)) vi.stubEnv(name, value);
+  try {
+    return await run();
+  } finally {
+    vi.unstubAllEnvs();
+  }
 }
 
 function shellResult(exitCode: number, output = ""): ShellProbeResult {
@@ -123,7 +138,10 @@ describe("onboarding phase fixture", () => {
     const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
 
-    const instance = await onboard.from(ready(), { sandboxName: "e2e-cloud-oc" });
+    const instance = await withProcessEnvironment(
+      { [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_REF },
+      () => onboard.from(ready(), { sandboxName: "e2e-cloud-oc" }),
+    );
 
     expect(instance).toMatchObject({
       onboarding: "cloud-openclaw",
@@ -152,17 +170,22 @@ describe("onboarding phase fixture", () => {
         },
       },
     ]);
+    expect(runner.calls[0]?.options?.env?.[DCODE_BASE_IMAGE_ENV]).toBeUndefined();
   });
 
-  it("opts the canonical Deep Agents Code target into composed observability", async () => {
+  it("passes the immutable base reference only to Deep Agents Code onboarding", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
     const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
 
-    const instance = await onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
-      sandboxName: "e2e-dcode-cloud",
-    });
+    const instance = await withProcessEnvironment(
+      { [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_REF },
+      () =>
+        onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
+          sandboxName: "e2e-dcode-cloud",
+        }),
+    );
 
     expect(instance).toMatchObject({
       agent: "langchain-deepagents-code",
@@ -181,11 +204,36 @@ describe("onboarding phase fixture", () => {
         artifactName: "onboard-cloud-langchain-deepagents-code",
         env: expect.objectContaining({
           NEMOCLAW_AGENT: "langchain-deepagents-code",
+          [DCODE_BASE_IMAGE_ENV]: DCODE_BASE_IMAGE_REF,
           NVIDIA_INFERENCE_API_KEY: "secret-token",
         }),
         redactionValues: ["secret-token"],
         timeoutMs: 900_000,
       },
+    });
+  });
+
+  it.each([
+    ["a missing reference", undefined],
+    ["an empty reference", "   "],
+    ["a mutable tag", `${DCODE_BASE_IMAGE}:latest`],
+    ["a different repository", `ghcr.io/example/base@sha256:${"b".repeat(64)}`],
+    ["a noncanonical digest", `${DCODE_BASE_IMAGE}@sha256:${"C".repeat(64)}`],
+  ])("rejects %s before Deep Agents Code onboarding side effects", async (_label, reference) => {
+    await withProcessEnvironment({ [DCODE_BASE_IMAGE_ENV]: reference }, async () => {
+      const runner = new FakeRunner();
+      const cleanup = new FakeCleanup();
+      const secrets = new FakeSecrets({ NVIDIA_INFERENCE_API_KEY: "secret-token" });
+      const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
+
+      await expect(
+        onboard.from(ready({ onboarding: "cloud-langchain-deepagents-code" }), {
+          sandboxName: "e2e-dcode-cloud",
+        }),
+      ).rejects.toThrow(/requires .* to be the immutable official/);
+      expect(secrets.requiredCalls).toEqual([]);
+      expect(cleanup.calls).toEqual([]);
+      expect(runner.calls).toEqual([]);
     });
   });
 

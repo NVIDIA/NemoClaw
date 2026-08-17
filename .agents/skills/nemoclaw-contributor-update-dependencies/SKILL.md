@@ -71,6 +71,16 @@ Pass the reviewed absolute Git and gh executable paths. Preserve its minimal all
 environments and its byte and record ceilings. Keep private report permissions at mode 0600.
 Follow the current collector help when those controls evolve.
 
+## Keep Review Evidence out of Public Documentation
+
+Do not write release ledgers, concern records, reviews, or qualification reports under `docs/`; they are maintainer evidence. Keep temporary evidence outside the repository with private permissions.
+For Fern, do not create a dependency review document or durable review ledger. Keep Fern upgrade
+evidence in the pull request description and executable configuration and publishing tests. Put
+other durable records in `internal/security-reviews/`, by the owning component, or in the pull request description.
+
+For a user-visible change, update the canonical `docs/` page with supported behavior and operator action.
+Do not publish review chronology or concern ledgers, add internal evidence to `docs/index.yml`, or link to it from public documentation.
+
 ## Resolve concerns
 
 Use [Contract audit](references/contract-audit.md) to select the relevant risk surfaces and record

@@ -1163,8 +1163,20 @@ export function runConnectAutoPairApprovalPass(
       return;
     }
   }
-  runApprovalPass(sandboxName, {
-    budget: CONNECT_AUTO_PAIR_BUDGET,
-    gatewayName: owningGatewayName,
-  });
+  const startedAt = performance.now();
+  try {
+    runApprovalPass(sandboxName, {
+      budget: CONNECT_AUTO_PAIR_BUDGET,
+      gatewayName: owningGatewayName,
+    });
+  } finally {
+    try {
+      performance.measure("nemoclaw.openclaw-pairing.complete-fallback", {
+        start: startedAt,
+        end: performance.now(),
+      });
+    } catch {
+      // Performance measurements never control the complete pairing pass.
+    }
+  }
 }

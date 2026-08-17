@@ -138,6 +138,36 @@ describe("Docker operation authority", () => {
     expect(second.engine.authorityId).not.toBe(first.engine.authorityId);
   });
 
+  it("keeps authority stable across SSH session metadata and does not forward it", () => {
+    const executableRoot = fakeDockerScript(
+      `printf '%s\\n' "\${XDG_SESSION_ID-unset}" "\${XDG_SESSION_CLASS-unset}" "\${XDG_SESSION_TYPE-unset}"`,
+    );
+    const common = {
+      HOME: "/tmp/nemoclaw-home",
+      DOCKER_HOST: "unix:///tmp/nemoclaw-docker.sock",
+      PATH: executableRoot,
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    };
+    const first = createDockerOperationAuthority("host-local-inference", {
+      ...common,
+      XDG_SESSION_ID: "101",
+      XDG_SESSION_CLASS: "user",
+      XDG_SESSION_TYPE: "tty",
+    });
+    const second = createDockerOperationAuthority("host-local-inference", {
+      ...common,
+      XDG_SESSION_ID: "102",
+      XDG_SESSION_CLASS: "background",
+      XDG_SESSION_TYPE: "unspecified",
+    });
+
+    expect(second.engine.authorityId).toBe(first.engine.authorityId);
+    expect(dockerOperationBindingSha256(second.engine)).toBe(
+      dockerOperationBindingSha256(first.engine),
+    );
+    expect(second.engine.capture(["version"]).stdout).toBe("unset\nunset\nunset\n");
+  });
+
   it("fails closed when an earlier Docker credential helper appears", () => {
     const executableRoot = fakeDocker("qualified");
     const prefixRoot = fakeExecutableRoot();

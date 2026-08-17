@@ -32,12 +32,17 @@ OpenClaw uses the native Anthropic Messages frontend for this provider.
 NemoClaw validates the endpoint with a non-streaming `/v1/messages` request and then a `stream: true` request to the same path.
 
 The streaming check requires exactly one `message_start`, at least one `content_block_delta`, and one `message_stop` in a well-formed server-sent event sequence.
+It also forces the endpoint to call the `emit_ok` validation tool.
+The stream must contain a native `tool_use` content block named `emit_ok` and finish the request with `stop_reason: tool_use`.
+JSON-shaped assistant text does not satisfy either requirement, even when it names `emit_ok` and contains valid JSON.
+NemoClaw reports `anthropic-streaming-missing-tool-use` when the native block is absent and `anthropic-streaming-missing-tool-use-stop-reason` when the matching stop reason is absent.
 An endpoint whose non-streaming response works but whose streaming response is malformed fails during onboarding.
 
-Set `NEMOCLAW_REASONING=true` to skip the streaming check for a reasoning-only model.
-Agent runs still use streaming, so this setting moves any streaming defect to runtime.
+Set `NEMOCLAW_REASONING=true` to skip both the streaming sequence and forced tool-call checks for a reasoning-only model.
+Agent runs still use streaming and native tool calls, so this setting moves either defect to runtime.
 
 Refer to [Onboarding fails with duplicate Anthropic message_start events](../../reference/troubleshooting#onboarding-fails-with-duplicate-anthropic-message_start-events) when the streaming validation fails with duplicate start events.
+Refer to [Onboarding rejects an Anthropic-compatible tool call](../../reference/troubleshooting#onboarding-rejects-an-anthropic-compatible-tool-call) when the endpoint returns a tool request as assistant text or omits the tool-use stop reason.
 
 </AgentOnly>
 
@@ -48,6 +53,7 @@ Refer to [Onboarding fails with duplicate Anthropic message_start events](../../
 Hermes uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1` for this provider.
 NemoClaw validates `/v1/chat/completions`, verifies the same path during inference setup, and registers it with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
 The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 This path avoids duplicate Anthropic SSE `message_start` events.
 If the endpoint only implements Anthropic Messages, onboarding stops instead of creating a Hermes sandbox with an unusable runtime route.
@@ -63,6 +69,7 @@ AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
 
 Deep Agents Code supports only OpenAI-compatible inference for this provider.
 NemoClaw validates `/v1/chat/completions`, coerces the route to `openai-completions`, and writes `https://inference.local/v1` as the provider base URL in `/sandbox/.deepagents/config.toml`.
+The OpenClaw-only native Anthropic `emit_ok` streaming check does not run on this route.
 
 If the endpoint implements only Anthropic Messages, onboarding stops instead of creating a Deep Agents sandbox with an unusable runtime route.
 

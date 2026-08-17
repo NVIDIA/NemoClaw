@@ -6,8 +6,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  withProvenManagedGatewayProcess,
+  writeManagedGatewayRuntimeProof,
+} from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "../../inference/serving/managed-runtime-receipts";
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../../onboard/docker-driver-gateway-config";
+import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
 
 import {
   type RunResult,
@@ -22,6 +32,7 @@ function ok(stdout = ""): RunResult {
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
   return runUninstallPlanBase(options, {
+    hasPortableRuntimeCleanup: () => false,
     resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
       gatewayName,
       gatewayPort,
@@ -279,7 +290,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       expect(runDocker).not.toHaveBeenCalled();
       expect(rmSync).not.toHaveBeenCalled();
       expect(errors.join("\n")).toContain(
-        "Managed distributed vLLM SSH binding exists without its ownership receipt",
+        "A managed distributed vLLM SSH binding exists without its ownership receipt",
       );
       expect(fs.existsSync(discoveryBindingPath)).toBe(true);
     } finally {
@@ -329,6 +340,13 @@ describe("managed distributed vLLM runtime uninstall", () => {
   it("preserves host-global pair ownership while sibling gateways remain", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-scoped-"));
     const stateDir = path.join(home, ".nemoclaw");
+    const gatewayStateDir = path.join(
+      home,
+      ".local",
+      "state",
+      "nemoclaw",
+      resolveGatewayStateDirName(8080),
+    );
     const apiKeyPath = path.join(stateDir, "dual-station-vllm-api-key");
     const receiptPath = path.join(stateDir, "dual-station-vllm-runtime.json");
     const bindingPath = `${receiptPath}.ssh-binding`;
@@ -337,12 +355,30 @@ describe("managed distributed vLLM runtime uninstall", () => {
     fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
     fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
     fs.writeFileSync(selectedStatePath, "remove me\n");
+    const jwtBundle = ensureDockerDriverGatewayJwtBundle(gatewayStateDir);
+    fs.writeFileSync(
+      path.join(gatewayStateDir, "openshell-gateway.toml"),
+      buildDockerDriverGatewayConfigToml(
+        {
+          OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+          OPENSHELL_LOCAL_TLS_DIR: path.join(gatewayStateDir, "tls"),
+          OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+        },
+        "/usr/bin/openshell-sandbox",
+        jwtBundle,
+        gatewayIdForStateDir(gatewayStateDir),
+      ),
+      { mode: 0o600 },
+    );
+    writeManagedGatewayRuntimeProof(gatewayStateDir, 8080);
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
     try {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
-        {
+        withProvenManagedGatewayProcess({
+          isPortFree: () => true,
           commandExists: (command) => command === "openshell",
           env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
           existsSync: fs.existsSync,
@@ -355,7 +391,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
               : ok(),
           runDocker: () => ok(),
           runDualStationRuntimeCleanup,
-        },
+        }),
       );
 
       expect(result.exitCode).toBe(0);
@@ -489,7 +525,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       expect(runDocker).not.toHaveBeenCalled();
       expect(rmSync).not.toHaveBeenCalled();
       expect(errors.join("\n")).toContain(
-        "Managed distributed vLLM SSH binding exists without its ownership receipt",
+        "A managed distributed vLLM SSH binding exists without its ownership receipt",
       );
       expect(fs.existsSync(bindingPath)).toBe(true);
     } finally {

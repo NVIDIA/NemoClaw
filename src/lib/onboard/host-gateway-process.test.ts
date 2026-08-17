@@ -355,7 +355,7 @@ describe("stopHostGatewayProcesses", () => {
     expect(kill).not.toHaveBeenCalledWith(9999222, expect.anything());
   });
 
-  it("prints sudo remediation when a privileged host gateway cannot be killed", () => {
+  it("requires fresh identity proof when a privileged host gateway cannot be killed", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       [PGREP_KEY, ok("9999042\n")],
       ...psResponses(9999042, { exited: new Set(), owner: "root", uid: 0 }),
@@ -381,7 +381,10 @@ describe("stopHostGatewayProcesses", () => {
     expect(result.failed).toEqual([9999042]);
     expect(result.sudoRemediationPids).toEqual([9999042]);
     expect(warn).toHaveBeenCalledWith(
-      "Cannot stop root-owned host openshell-gateway process 9999042. Run: sudo kill -9 9999042",
+      "Cannot stop root-owned host openshell-gateway process 9999042. " +
+        "Do not signal this saved PID without a fresh identity check. Before any privileged stop, " +
+        "verify that the live process owner and command line identify the intended gateway name and port, " +
+        "and that the PID file, runtime marker, and loaded sandbox namespace still match the selected state directory.",
     );
   });
 

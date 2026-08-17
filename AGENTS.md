@@ -198,6 +198,51 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 6. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
 7. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
 
+### E2E Selection and Authoring
+
+Use live E2E only for behavior that needs a real shell, installer, process,
+Docker, OpenShell, `/proc`, sandbox, external service, or GitHub Actions
+boundary. Put deterministic code, parser, registry, workflow-planner, and
+fixture logic in unit, integration, package-contract, or `e2e-support` tests
+instead. Do not add a live E2E target for a check that can be observed through a
+stable local boundary.
+
+Before adding or extending E2E coverage, name the semantic coverage dimension
+that is missing. Existing migrated examples show the intended granularity:
+catalogue targets pair environment, onboarding profile, expected state, optional
+lifecycle, and `suiteIds`; `dashboard-remote-bind` owns install, onboard,
+artifacts, and terminal cleanup; `credential-sanitization`,
+`telegram-injection`, `messaging-providers`, `messaging-compatible-endpoint`,
+and `gpu-e2e` are separate behavior contracts rather than one broad "full" run.
+Extend matrix metadata only when it selects an already-defined behavior
+dimension. Do not duplicate behavior logic in a second registry, workflow list,
+or hand-maintained catalogue; use the typed registry and shared E2E workflow
+planner documented in [`test/e2e/README.md`](test/e2e/README.md) and
+[`test/e2e/docs/README.md`](test/e2e/docs/README.md).
+
+If a gap is real but not ready for a test, record it as a combinatorial gap
+instead of adding speculative coverage. State the missing dimension, the
+existing nearest coverage, why a new test would duplicate or overreach current
+behavior, and the issue or PR that will make it testable. A gap note must not
+change release judgment by itself.
+
+Assert outcomes, state, artifacts, and redacted diagnostics. Do not assert
+incidental terminal output, progress wording, spinner frames, ANSI escape
+sequences, timing text, or prompt layout unless that text is the product
+contract under review. Terminal traces are evidence; they are not stable
+behavior unless the issue explicitly makes them the behavior.
+
+Retries require a checked-in bounded policy with a narrow transient signature,
+owner, idempotence or reconciliation basis, attempt evidence, and an entry in
+[`test/e2e/RETRY_INVENTORY.md`](test/e2e/RETRY_INVENTORY.md). Do not add
+unproven retries, ambiguous mutation retries, or broad failed-job reruns. A
+mutation retry is allowed only after the test reconciles the external state and
+proves repeating the same desired operation is safe. Keep bounded operation
+retries separate from complete workflow reruns: `E2E / Main Retry` records
+attempts and does not request a broad rerun, while Hosted Runner Recovery owns
+at most one full rerun only for authenticated GitHub-hosted runner-loss
+evidence.
+
 ### Plain Language and Direct Design
 
 - Use existing repository vocabulary and name what a thing does.
@@ -281,27 +326,10 @@ If the command trace contains no reviewer-request write, report the event as an 
 
 ## Documentation
 
-- Treat `docs/` as the source of truth for public-facing documentation.
-  Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow,
-  including DORI routing.
-- Before completing a code change, determine whether it changes a user-visible surface.
-  This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
-- When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
-  Direct it to read `docs/AGENTS.md`, update the affected docs, and run validation.
-  Give it the changed sources and user-visible impact.
-- Reconcile the authoring subagent's documentation changes and validation evidence before completing the implementation.
-  Include the required documentation in the same change.
-- If the host cannot run subagents, read `docs/AGENTS.md` in the primary task, complete the documentation work, and run its documented validation.
-  Do not omit required documentation because parallel execution is unavailable.
-- Before final handoff, a documentation writer subagent must independently review every completed code or documentation change.
-  Give it the changed files, change summary, and test or docs-build evidence.
-  For a documentation-only change, require review of the writing rules and documentation style.
-- If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
-  If no capable host is available, record the review as `blocked` and do not complete final handoff.
-- After the review, follow the
-  [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
-  procedure.
-- During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
+- Treat `docs/` as the source of truth for public-facing documentation. Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow, including DORI routing.
+- Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**` changes to `Docs / Post-Merge Catch-Up`.
+  Keep all other owning repository guidance in the same PR, including active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.
+- Direct documentation-only changes follow `docs/AGENTS.md`, the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract, documented validation, and independent review.
 
 ## PR Requirements
 
@@ -313,7 +341,7 @@ If the command trace contains no reviewer-request write, report the event as an 
 - If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
 - Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
 - Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run validate:pr`
-- Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
+- Direct PRs follow `.github/PULL_REQUEST_TEMPLATE.md`; the managed documentation workflow uses its generated body
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
 - Apply the 10-open-PR limit from `.github/workflows/pr-limit.yaml` only to accounts that the workflow does not exempt

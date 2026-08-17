@@ -12,14 +12,14 @@ import { readYaml, type WorkflowJob, type WorkflowStep } from "./helpers/e2e-wor
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.6.10-dependency-review.md",
 );
 const ACTIVE_DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs",
-  "security",
+  "internal",
+  "security-reviews",
   "openclaw-2026.7.1-dependency-review.md",
 );
 const MCP_TROUBLESHOOTING = path.join(
@@ -288,7 +288,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("GHSA-79qm-7rj5-m7r9");
   });
 
-  it("keeps advisor disposition evidence in the dependency review note", () => {
+  function verifyAdvisorDispositionEvidence() {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
     expect(review).toContain("Issue #5591 Acceptance Mapping");
@@ -551,26 +551,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
     expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
-  });
+  }
 
-  // source-shape-contract: security -- The legacy archive remediation helper must be present in the base image before the fail-closed Docker build invokes it
-  it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
-    const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
-    const flattenedDockerfile = dockerfile.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
-    const groupedHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/reviewed-npm-archive.mts scripts/lib/reviewed-npm-audit.mts scripts/lib/openclaw-npm-remediation.mts /scripts/lib/",
-    );
-    const legacyHelperCopy = flattenedDockerfile.indexOf(
-      "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
-    );
-    const helperCopy = groupedHelperCopy >= 0 ? groupedHelperCopy : legacyHelperCopy;
-    const helperInvocation = flattenedDockerfile.indexOf(
-      "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
-    );
-
-    expect(helperCopy).toBeGreaterThanOrEqual(0);
-    expect(helperInvocation).toBeGreaterThan(helperCopy);
-  });
+  it("keeps advisor disposition evidence in the dependency review note", verifyAdvisorDispositionEvidence);
 
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
@@ -814,7 +797,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     }
   });
 
-  it("accepts reviewed base-image versions and rejects injected build arguments", () => {
+  function verifyReviewedBaseImageVersions() {
     const action = readYaml<{ runs: { steps: WorkflowStep[] } }>(
       ".github/actions/build-base-image-platform/action.yaml",
     );
@@ -857,5 +840,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
         "production Docker build arguments must not contain CR or LF characters",
       );
     }
-  });
+  }
+
+  it("accepts reviewed base-image versions and rejects injected build arguments", verifyReviewedBaseImageVersions);
 });

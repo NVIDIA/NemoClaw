@@ -21,6 +21,8 @@ import { parseVersionFromText } from "./adapters/openshell/client";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
+
+import { retryUntilAsync } from "./core/retry";
 import {
   buildCustomOpenClawRuntimeFailureHints,
   classifyOpenClawRuntimeFailure,
@@ -198,14 +200,11 @@ async function verifyGatewayInSandbox(
   retryDelaysMs: readonly number[],
   sleep: (ms: number) => Promise<void>,
 ): Promise<{ reachable: boolean; httpCode: number; detail: string }> {
-  let last = probeGatewayInSandboxOnce(sandboxName, chain, deps);
-  if (last.reachable) return last;
-  for (const delayMs of retryDelaysMs) {
-    await sleep(delayMs);
-    last = probeGatewayInSandboxOnce(sandboxName, chain, deps);
-    if (last.reachable) return last;
-  }
-  return last;
+  return retryUntilAsync(() => probeGatewayInSandboxOnce(sandboxName, chain, deps), {
+    accept: (result) => result.reachable,
+    retryDelaysMs,
+    sleep,
+  });
 }
 
 /**
@@ -253,14 +252,11 @@ async function verifyInferenceRoute(
   retryDelaysMs: readonly number[],
   sleep: (ms: number) => Promise<void>,
 ): Promise<{ status: InferenceRouteStatus; detail: string }> {
-  let last = probeInferenceRouteOnce(sandboxName, deps);
-  if (last.status === "ok") return last;
-  for (const delayMs of retryDelaysMs) {
-    await sleep(delayMs);
-    last = probeInferenceRouteOnce(sandboxName, deps);
-    if (last.status === "ok") return last;
-  }
-  return last;
+  return retryUntilAsync(() => probeInferenceRouteOnce(sandboxName, deps), {
+    accept: (result) => result.status === "ok",
+    retryDelaysMs,
+    sleep,
+  });
 }
 
 /**
@@ -289,14 +285,11 @@ async function verifyDashboardFromHost(
   retryDelaysMs: readonly number[],
   sleep: (ms: number) => Promise<void>,
 ): Promise<{ reachable: boolean; detail: string }> {
-  let last = probeDashboardFromHostOnce(chain, deps);
-  if (last.reachable) return last;
-  for (const delayMs of retryDelaysMs) {
-    await sleep(delayMs);
-    last = probeDashboardFromHostOnce(chain, deps);
-    if (last.reachable) return last;
-  }
-  return last;
+  return retryUntilAsync(() => probeDashboardFromHostOnce(chain, deps), {
+    accept: (result) => result.reachable,
+    retryDelaysMs,
+    sleep,
+  });
 }
 
 /**

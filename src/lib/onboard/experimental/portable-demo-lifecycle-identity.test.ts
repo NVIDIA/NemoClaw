@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "../../adapters/podman";
+import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
   installPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleDeps,
@@ -14,6 +16,33 @@ import {
 
 const CONTAINER_ID = "a".repeat(64);
 const SANDBOX_ID = "sandbox-id-alpha";
+const SOCKET_PATH = "/run/user/1001/podman/podman.sock";
+const RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
+  schemaVersion: 1,
+  kind: "podman",
+  ownership: "current-user",
+  uid: 1001,
+  homeDir: "/home/tester",
+  configHome: "/home/tester/.config",
+  runtimeDir: "/run/user/1001",
+  socketPath: SOCKET_PATH,
+};
+const SOCKET_AUTHORITY: PodmanSocketAuthority = {
+  directoryChain: [],
+  device: "1",
+  inode: "2",
+  mode: String(0o140600),
+  ownerUid: "1001",
+  socketPath: SOCKET_PATH,
+};
+const READINESS = {
+  uid: 1001,
+  home: RUNTIME_AUTHORITY.homeDir,
+  systemctl: () => ({ status: 0 }),
+  hardenSocketDirectory: vi.fn(),
+  captureSocketAuthority: () => SOCKET_AUTHORITY,
+  assertSocketAuthority: vi.fn(),
+};
 const STARTUP_ARGV = [
   "env",
   "CHAT_UI_URL=http://127.0.0.1:18789",
@@ -25,6 +54,26 @@ const STARTUP_ARGV = [
   "/usr/local/bin/nemoclaw-start",
 ];
 const temporaryDirectories: string[] = [];
+
+function socketAuthorityDeps(): PodmanSocketAuthorityDeps {
+  const directoryInodes = new Map<string, bigint>();
+  return {
+    uid: 1001,
+    lstat: (filePath) => {
+      const socket = filePath === SOCKET_PATH;
+      const directoryInode = directoryInodes.get(filePath) ?? BigInt(7000 + directoryInodes.size);
+      directoryInodes.set(filePath, directoryInode);
+      return {
+        dev: 8n,
+        ino: socket ? 9001n : directoryInode,
+        mode: socket ? 0o660n : filePath === path.dirname(SOCKET_PATH) ? 0o700n : 0o755n,
+        uid: socket ? 1001n : filePath.startsWith("/run/user/1001") ? 1001n : 0n,
+        isDirectory: () => !socket,
+        isSocket: () => socket,
+      };
+    },
+  };
+}
 
 function temporaryStateDir(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-identity-"));
@@ -43,7 +92,9 @@ function createPodman() {
     const command = args[0] === "--url" ? args.slice(2) : args;
     switch (command[0]) {
       case "info":
-        return { status: 0, stdout: "/run/user/1001/podman/podman.sock\n" };
+        return { status: 0, stdout: `${SOCKET_PATH}\n` };
+      case "version":
+        return { status: 0, stdout: JSON.stringify({ Server: { Version: "5.6.1" } }) };
       case "ps":
         return { status: 0, stdout: `${CONTAINER_ID}\n` };
       case "inspect":
@@ -101,7 +152,15 @@ function installReceipt(stateDir: string, podman: ReturnType<typeof createPodman
     "alpha",
     STARTUP_ARGV,
     { HOME: stateDir, NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
-    { platform: "linux", podman, stateDir },
+    {
+      platform: "linux",
+      podman,
+      stateDir,
+      podmanSocketAuthorityDeps: socketAuthorityDeps(),
+      runtimeAuthority: RUNTIME_AUTHORITY,
+      runtimeReadiness: READINESS,
+      log: vi.fn(),
+    },
   );
 }
 
@@ -122,7 +181,11 @@ function recoverPortableDemoSandboxLifecycle(
       platform: "linux",
       stateDir,
       podman: runtime.podman,
+      podmanSocketAuthorityDeps: socketAuthorityDeps(),
+      hardenSocketDirectory: vi.fn(),
       launchOpenshell,
+      runtimeReadiness: READINESS,
+      log: vi.fn(),
     } satisfies PortableDemoLifecycleDeps,
   );
 }

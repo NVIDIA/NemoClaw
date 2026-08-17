@@ -285,7 +285,18 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
       readonly protocol: "openai-completions";
       readonly authentication: "bearer";
       readonly port: 8081;
-      readonly chatTemplate: "nemotron-v3-embedded";
+      readonly chatTemplate:
+        | "nemotron-v3-embedded"
+        | "container-jinja-file"
+        | "model-embedded-jinja";
+      readonly chatTemplateFile?: string;
+      readonly chatTemplateArguments?: {
+        readonly reasoningStrength: "low" | "medium" | "high" | "xhigh";
+      };
+      readonly reasoning?: {
+        readonly format: "deepseek";
+        readonly mode: "auto";
+      };
       readonly contextSize: number;
       readonly slots: 1;
       readonly idleSleepSeconds: -1;

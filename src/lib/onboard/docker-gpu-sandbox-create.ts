@@ -38,6 +38,7 @@ export type {
 export {
   isDockerDesktopWslRuntime,
   resetIsDockerDesktopWslRuntimeCache,
+  resolveAgentPlan,
   resolveDockerGpuSandboxCreatePlan,
 } from "./docker-gpu-sandbox-create-plan";
 
@@ -470,9 +471,32 @@ export function createDockerGpuSandboxCreatePatch(
           ? finalizeBackup({ result, supervisorReady: true }, options.deps)
           : null;
         cutoverFinalized = true;
-        if (!finalizeOutcome || finalizeOutcome.backupRemoved) return;
+        if (!finalizeOutcome) return;
+        if (
+          finalizeOutcome.backupRemoved &&
+          finalizeOutcome.replacementRestarted === undefined
+        ) {
+          return;
+        }
+        if (finalizeOutcome.backupRemoved && finalizeOutcome.replacementRestarted) {
+          const supervisorReconnectTimeoutSecs = getDockerGpuSupervisorReconnectTimeoutSecs(
+            options.timeoutSecs,
+          );
+          console.log(
+            `  Waiting for OpenShell supervisor to confirm the final container handoff (up to ${supervisorReconnectTimeoutSecs}s)...`,
+          );
+          if (
+            waitForSupervisor(options.sandboxName, supervisorReconnectTimeoutSecs, {
+              runOpenshell: options.deps.runOpenshell,
+              runCaptureOpenshell: options.deps.runCaptureOpenshell,
+              sleep: options.deps.sleep,
+            })
+          ) {
+            return;
+          }
+        }
         const failure = new Error(
-          "Managed startup passed Ready, but its rollback backup could not be removed.",
+          "Managed startup passed Ready, but its final runtime handoff did not converge.",
         );
         cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {

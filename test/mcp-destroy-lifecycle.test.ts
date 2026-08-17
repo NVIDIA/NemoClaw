@@ -355,68 +355,64 @@ afterAll(() => {
 });
 
 describe("authenticated MCP sandbox destroy lifecycle", () => {
-  for (const method of [
+  it.each([
     "prepareMcpBridgesForAbsentSandboxDestroy",
     "prepareMcpBridgesForAbsentSandboxRebuild",
-  ] as const) {
-    it(`clears a providerless preflighted add during ${method}`, async () => {
-      testState.providers.delete("alpha-mcp-github");
-      testState.attachedProviders.delete("alpha-mcp-github");
-      const pending: McpBridgeEntry = { ...bridgeEntries.github, addState: "preflighted" };
-      delete pending.providerId;
-      registry.registerSandbox({
-        name: "alpha",
-        agent: "openclaw",
-        mcp: { bridges: { github: pending } },
-      });
-      registry.addCustomPolicy("alpha", ownedPolicy("github"));
-      testState.getPresetContentGatewayState.mockImplementation(() => {
-        throw new Error("absent rebuild queried live policy");
-      });
-
-      const preparation = await bridge[method]("alpha");
-      const sandbox = registry.getSandbox("alpha");
-
-      expect(preparation.entries).toEqual([]);
-      expect(sandbox?.mcp).toBeUndefined();
-      expect(sandbox?.customPolicies).toBeUndefined();
+  ] as const)("clears a providerless preflighted add during %s", async (method) => {
+    testState.providers.delete("alpha-mcp-github");
+    testState.attachedProviders.delete("alpha-mcp-github");
+    const pending: McpBridgeEntry = { ...bridgeEntries.github, addState: "preflighted" };
+    delete pending.providerId;
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      mcp: { bridges: { github: pending } },
     });
-  }
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    testState.getPresetContentGatewayState.mockImplementation(() => {
+      throw new Error("absent rebuild queried live policy");
+    });
 
-  for (const method of [
-    "prepareMcpBridgesForRebuild",
-    "prepareMcpBridgesForAbsentSandboxRebuild",
-  ] as const) {
-    for (const marker of ["destroyPreparedAt", "destroyPendingAt"] as const) {
-      it(`rejects ${method} while ${marker} is durable`, async () => {
-        registry.registerSandbox({
-          name: "alpha",
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          mcp: {
-            bridges: { github: bridgeEntries.github },
-            [marker]: "2026-07-02T22:49:42.000Z",
-          },
-        });
-        registry.addCustomPolicy("alpha", ownedPolicy("github"));
+    const preparation = await bridge[method]("alpha");
+    const sandbox = registry.getSandbox("alpha");
 
-        const message = await captureMessage(() => bridge[method]("alpha"));
-        const sandbox = registry.getSandbox("alpha");
+    expect(preparation.entries).toEqual([]);
+    expect(sandbox?.mcp).toBeUndefined();
+    expect(sandbox?.customPolicies).toBeUndefined();
+  });
 
-        // #6376: the guard message is phase-aware — the pending (phase-two)
-        // marker records confirmed sandbox deletion, so it points at finishing
-        // the destroy rather than the in-place `mcp remove --force` recovery.
-        expect(message).toContain(
-          marker === "destroyPendingAt"
-            ? "past the point of no return"
-            : "incomplete MCP destroy transaction",
-        );
-        expect(sandbox?.mcp).toHaveProperty(marker);
-        expect(testState.calls).toEqual([]);
-        expect(testState.adapterCalls).toEqual([]);
-      });
-    }
-  }
+  it.each([
+    ["prepareMcpBridgesForRebuild", "destroyPreparedAt"],
+    ["prepareMcpBridgesForRebuild", "destroyPendingAt"],
+    ["prepareMcpBridgesForAbsentSandboxRebuild", "destroyPreparedAt"],
+    ["prepareMcpBridgesForAbsentSandboxRebuild", "destroyPendingAt"],
+  ] as const)("rejects %s while %s is durable", async (method, marker) => {
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: {
+        bridges: { github: bridgeEntries.github },
+        [marker]: "2026-07-02T22:49:42.000Z",
+      },
+    });
+    registry.addCustomPolicy("alpha", ownedPolicy("github"));
+
+    const message = await captureMessage(() => bridge[method]("alpha"));
+    const sandbox = registry.getSandbox("alpha");
+
+    // #6376: the guard message is phase-aware — the pending (phase-two)
+    // marker records confirmed sandbox deletion, so it points at finishing
+    // the destroy rather than the in-place `mcp remove --force` recovery.
+    expect(message).toContain(
+      marker === "destroyPendingAt"
+        ? "past the point of no return"
+        : "incomplete MCP destroy transaction",
+    );
+    expect(sandbox?.mcp).toHaveProperty(marker);
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+  });
 
   it("prepares an absent-sandbox rebuild without adapter exec or provider detach", async () => {
     registry.registerSandbox({
@@ -1170,11 +1166,12 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.policyApplyCalls).toBe(1);
   });
 
-  for (const [label, prepareFunction] of [
+  it.each([
     ["destroy", "prepareMcpBridgesForDestroy"],
     ["rebuild", "prepareMcpBridgesForRebuild"],
-  ] as const) {
-    it(`reattaches an already-absent first provider when a later ${label} detach fails`, async () => {
+  ] as const)(
+    "reattaches an already-absent first provider when a later %s detach fails",
+    async (_label, prepareFunction) => {
       registry.registerSandbox({
         name: "alpha",
         agent: "openclaw",
@@ -1199,8 +1196,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
         testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
       ).toBe(true);
       expect(testState.adapterRegistered).toBe(true);
-    });
-  }
+    },
+  );
 
   it("reattaches every desired provider when rebuild deletion aborts after a retry", async () => {
     registry.registerSandbox({

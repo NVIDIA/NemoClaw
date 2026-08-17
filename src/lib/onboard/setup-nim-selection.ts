@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  canonicalEndpoint,
+  endpointUrlHasUserinfoQueryOrFragment,
+  normalizeProviderBaseUrl,
+} from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+import { exitOnboardFromPrompt, getNavigationChoice } from "./prompt-helpers";
 import type { ReasoningEffort } from "./reasoning-mode";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -108,6 +114,70 @@ export async function resolveCompatibleEndpointInput(args: {
           : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
     )) || defaultEndpointUrl
   );
+}
+
+export type CompatibleEndpointSelection =
+  | { action: "retry-selection" }
+  | { action: "selected"; endpointUrl: string };
+
+/**
+ * Resolve and validate the compatible-endpoint base URL: handle back/exit
+ * navigation, reject inputs that carry components NemoClaw cannot forward
+ * (#9106), and require a non-empty normalized base URL.
+ */
+export async function resolveCompatibleEndpointSelection(args: {
+  kind: CompatibleEndpointKind;
+  envUrl: string | null | undefined;
+  recoveredEndpointUrl: string | null | undefined;
+  nonInteractive: boolean;
+  prompt: (message: string) => Promise<string>;
+}): Promise<CompatibleEndpointSelection> {
+  const endpointInput = await resolveCompatibleEndpointInput(args);
+  const navigation = getNavigationChoice(endpointInput);
+  if (navigation === "back") {
+    console.log("  Returning to provider selection.");
+    console.log("");
+    return { action: "retry-selection" };
+  }
+  if (navigation === "exit") {
+    exitOnboardFromPrompt();
+  }
+  // #9106: reject instead of silently stripping components that NemoClaw
+  // cannot forward to the endpoint.
+  if (endpointUrlHasUserinfoQueryOrFragment(endpointInput)) {
+    console.error("  Endpoint URL must not contain userinfo, query, or fragment components.");
+    // canonicalEndpoint returns null unless the stripped base is a
+    // credential-free http(s) URL, so the hint never echoes userinfo or
+    // query values.
+    const strippedBaseUrl = canonicalEndpoint(
+      normalizeProviderBaseUrl(endpointInput, args.kind),
+      args.kind,
+    );
+    if (strippedBaseUrl) {
+      console.error(
+        `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
+      );
+    }
+    if (args.nonInteractive) {
+      process.exit(1);
+    }
+    console.log("");
+    return { action: "retry-selection" };
+  }
+  const endpointUrl = normalizeProviderBaseUrl(endpointInput, args.kind);
+  if (!endpointUrl) {
+    console.error(
+      args.kind === "openai"
+        ? "  Endpoint URL is required for Other OpenAI-compatible endpoint."
+        : "  Endpoint URL is required for Other Anthropic-compatible endpoint.",
+    );
+    if (args.nonInteractive) {
+      process.exit(1);
+    }
+    console.log("");
+    return { action: "retry-selection" };
+  }
+  return { action: "selected", endpointUrl };
 }
 
 type ProviderChoice = {

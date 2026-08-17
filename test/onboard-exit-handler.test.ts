@@ -197,7 +197,7 @@ const { onboard } = require(${onboardPath});
     expect(payload.loaded.machine.state).toBe("failed");
   });
 
-  it("onboard() maps final machine completion to the process exit status (#8987)", () => {
+  it("onboard() preserves a resumable session after a normal incomplete result (#9048)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const scriptPath = path.join(tmpDir, "onboard-exit-completed.cjs");
     const openshellPath = writeSuccessfulOpenShell(tmpDir);

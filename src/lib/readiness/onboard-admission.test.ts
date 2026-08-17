@@ -330,6 +330,37 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
+  it("admits only explicit managed-vLLM intent through the Deferred N1x validation gate (#8574)", () => {
+    const capabilities = [
+      ...withCapabilityState(
+        requiredCapabilities(),
+        ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported,
+        "absent",
+      ),
+      capability("host.platform.n1x", "present"),
+    ];
+    const pending = finding(ONBOARD_READINESS_FINDING_IDS.n1xValidationPending);
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: [pending], status: "incompatible" }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({ admitted: false, findingIds: [pending.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities, findings: [pending], status: "incompatible" }),
+        { ...DEFAULT_OPTIONS, allowDeferredN1xManagedVllm: true },
+      ),
+    ).toEqual({ admitted: true, waivedFindingIds: [pending.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(report({ findings: [pending], status: "incompatible" }), {
+        ...DEFAULT_OPTIONS,
+        allowDeferredN1xManagedVllm: true,
+      }),
+    ).toMatchObject({ admitted: false, findingIds: [pending.id] });
+  });
+
   it("fails closed when a required capability is unknown or missing", () => {
     const capabilities = withCapabilityState(
       requiredCapabilities().filter(

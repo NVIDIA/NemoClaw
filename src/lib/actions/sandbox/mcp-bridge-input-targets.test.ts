@@ -146,12 +146,15 @@ describe("MCP URL target validation", () => {
     }
   });
 
-  it("persists exact normalized pins after successful trusted-private admission (#8267)", {
-    timeout: 40_000,
-  }, () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-mcp-add-success-"));
-    const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
-    const script = `
+  it(
+    "persists exact normalized pins after successful trusted-private admission (#8267)",
+    {
+      timeout: 40_000,
+    },
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-mcp-add-success-"));
+      const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+      const script = `
 process.env.HOME = ${JSON.stringify(home)};
 process.env.LOCAL_MCP_TOKEN = "host-only-secret";
 require("node:dns/promises").lookup = async () => [
@@ -215,38 +218,39 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
   process.stderr.write(error.stack || error.message, () => process.exit(1));
 });
 `;
-    try {
-      const result = spawnSync(process.execPath, ["-e", script], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: home,
-          NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
-            .filter(Boolean)
-            .join(" "),
-        },
-        timeout: 30_000,
-      });
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      const admission = JSON.parse(result.stdout) as {
-        entry: Record<string, unknown>;
-        target: Record<string, unknown>;
-      };
-      expect(admission.entry).toMatchObject({
-        allowedIps: ["10.20.30.40", "10.20.30.41"],
-        trustedPrivateHost: "mcp.corp.example",
-      });
-      expect(admission.target).toEqual({
-        addresses: ["10.20.30.40", "10.20.30.41"],
-        capability: true,
-        capabilityAddresses: ["10.20.30.40", "10.20.30.41"],
-        trustedPrivateHost: "mcp.corp.example",
-      });
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+              .filter(Boolean)
+              .join(" "),
+          },
+          timeout: 30_000,
+        });
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        const admission = JSON.parse(result.stdout) as {
+          entry: Record<string, unknown>;
+          target: Record<string, unknown>;
+        };
+        expect(admission.entry).toMatchObject({
+          allowedIps: ["10.20.30.40", "10.20.30.41"],
+          trustedPrivateHost: "mcp.corp.example",
+        });
+        expect(admission.target).toEqual({
+          addresses: ["10.20.30.40", "10.20.30.41"],
+          capability: true,
+          capabilityAddresses: ["10.20.30.40", "10.20.30.41"],
+          trustedPrivateHost: "mcp.corp.example",
+        });
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects mixed answers and an unused trusted-private option (#8267)", async () => {
     const lookup = vi.spyOn(dns, "lookup");
@@ -322,14 +326,11 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     ).toThrow(/Sandbox loopback is not the host MCP service.*stable routed private address/);
   });
 
-  it("rejects hostile OpenShell alias registrations before sandbox or network side effects", async () => {
-    const lookup = vi.spyOn(dns, "lookup");
-    try {
-      for (const host of [
-        "host.openshell.internal",
-        "host.docker.internal",
-        "host.containers.internal",
-      ]) {
+  it.each(["host.openshell.internal", "host.docker.internal", "host.containers.internal"])(
+    "rejects the hostile %s alias before sandbox or network side effects",
+    async (host) => {
+      const lookup = vi.spyOn(dns, "lookup");
+      try {
         await expect(
           addMcpBridge("missing-sandbox", {
             server: "local",
@@ -337,17 +338,18 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
             env: [{ name: "SAFE_MCP_TOKEN", value: "host-only-secret" }],
           }),
         ).rejects.toThrow(/does not expose an attested driver gateway address/);
+        expect(lookup).not.toHaveBeenCalled();
+      } finally {
+        lookup.mockRestore();
       }
-      expect(lookup).not.toHaveBeenCalled();
-    } finally {
-      lookup.mockRestore();
-    }
-  });
+    },
+  );
 
-  it("rejects malformed percent paths before DNS or sandbox side effects", async () => {
-    const lookup = vi.spyOn(dns, "lookup");
-    try {
-      for (const path of ["%", "%GG", "%2"]) {
+  it.each(["%", "%GG", "%2"])(
+    "rejects the malformed %j path before DNS or sandbox side effects",
+    async (path) => {
+      const lookup = vi.spyOn(dns, "lookup");
+      try {
         await expect(
           addMcpBridge("missing-sandbox", {
             server: "malformed",
@@ -355,12 +357,12 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
             env: [{ name: "SAFE_MCP_TOKEN", value: "host-only-secret" }],
           }),
         ).rejects.toThrow(/percent characters/);
+        expect(lookup).not.toHaveBeenCalled();
+      } finally {
+        lookup.mockRestore();
       }
-      expect(lookup).not.toHaveBeenCalled();
-    } finally {
-      lookup.mockRestore();
-    }
-  });
+    },
+  );
 
   it("rejects local, private, and OpenShell host-alias URL targets", () => {
     expect(() => normalizeMcpServerUrl("https://localhost:31337/mcp")).toThrow(
@@ -369,11 +371,6 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     expect(() => normalizeMcpServerUrl("https://127.0.0.1:31337/mcp")).toThrow(
       /private, local, or special-use IP/,
     );
-    for (const host of ["2130706433", "0177.0.0.1", "0x7f.0.0.1", "localhost."]) {
-      expect(() => normalizeMcpServerUrl(`https://${host}:31337/mcp`)).toThrow(
-        /private, local, or special-use IP/,
-      );
-    }
     expect(() => normalizeMcpServerUrl("https://169.254.169.254/latest")).toThrow(
       /private, local, or special-use IP/,
     );
@@ -397,16 +394,26 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
     expect(() => normalizeMcpServerUrl("http://host.openshell.internal:31337/mcp")).toThrow(
       /must use https/,
     );
-    for (const host of [
-      "host.openshell.internal",
-      "host.openshell.internal.",
-      "host.docker.internal",
-      "host.containers.internal",
-    ]) {
+  });
+
+  it.each(["2130706433", "0177.0.0.1", "0x7f.0.0.1", "localhost."])(
+    "rejects the local host spelling %s",
+    (host) => {
       expect(() => normalizeMcpServerUrl(`https://${host}:31337/mcp`)).toThrow(
-        /does not expose an attested driver gateway address/,
+        /private, local, or special-use IP/,
       );
-    }
+    },
+  );
+
+  it.each([
+    "host.openshell.internal",
+    "host.openshell.internal.",
+    "host.docker.internal",
+    "host.containers.internal",
+  ])("rejects the unattested OpenShell host alias %s", (host) => {
+    expect(() => normalizeMcpServerUrl(`https://${host}:31337/mcp`)).toThrow(
+      /does not expose an attested driver gateway address/,
+    );
   });
 
   it("explains managed-vs-agent-native parity in the https rejection (#6971)", () => {

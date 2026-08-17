@@ -116,6 +116,13 @@ describe("onboard gateway port conflict readiness (#6752)", () => {
       expect(combined).toMatch(
         /The gateway port is held by an incompatible or ambiguous owner|OpenShell gateway needs this port/,
       );
+      expect(combined).not.toMatch(/occupied by unknown/);
+      expect(combined).toMatch(/\(PID \d+\)/);
+      expect(combined).toContain(
+        `sudo lsof -i :${String(gatewayPort)} -sTCP:LISTEN -P -n`,
+      );
+      expect(combined).toContain("signal only the matching PID from that fresh result");
+      expect(combined).not.toMatch(/sudo kill \d+/);
     },
   );
 

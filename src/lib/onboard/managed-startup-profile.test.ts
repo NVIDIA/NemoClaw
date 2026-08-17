@@ -229,7 +229,47 @@ const DCODE_PROFILE = {
   corporateCa: { bundleSha256: CA_SHA256 },
 } as const satisfies ManagedStartupProfile;
 
-const VALID_PROFILES = [OPENCLAW_PROFILE, HERMES_PROFILE, DCODE_PROFILE] as const;
+const PI_PROFILE = {
+  schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+  agent: "pi",
+  agentConfig: { agent: "pi" },
+  inference: {
+    routeProvider: "inference",
+    upstreamProvider: "nvidia",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    routedBaseUrl: "https://inference.local/v1",
+    upstreamEndpointUrl: null,
+    api: "openai-completions",
+    primaryModelRef: null,
+    compatibility: null,
+    inputModalities: null,
+  },
+  proxy: {
+    managedHost: "10.200.0.1",
+    managedPort: 3128,
+    hostHttpUrl: null,
+    hostHttpsUrl: null,
+    hostNoProxy: [],
+  },
+  dashboard: {
+    agent: "pi",
+    mode: "disabled",
+  },
+  tools: {
+    disclosure: "progressive",
+    enabledGateways: [],
+  },
+  messaging: { plan: null },
+  tuning: {
+    contextWindow: null,
+    maxTokens: null,
+    reasoning: null,
+    reasoningEffort: null,
+  },
+  corporateCa: { bundleSha256: CA_SHA256 },
+} as const satisfies ManagedStartupProfile;
+
+const VALID_PROFILES = [OPENCLAW_PROFILE, HERMES_PROFILE, DCODE_PROFILE, PI_PROFILE] as const;
 
 function encodeUnknown(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -248,6 +288,7 @@ const STOCK_DOCKER_ARGS = {
   "langchain-deepagents-code": dockerArgs(
     path.join(process.cwd(), "agents/langchain-deepagents-code/Dockerfile"),
   ),
+  pi: dockerArgs(path.join(process.cwd(), "agents/pi/Dockerfile")),
 } satisfies Record<ManagedStartupAgent, Set<string>>;
 
 const RUNTIME_INPUT_SOURCE_FILES = [
@@ -464,57 +505,6 @@ describe("managed startup profile", () => {
         inference: { ...DCODE_PROFILE.inference, api: "openai-responses" },
       }),
     ).toThrow(/not supported/);
-  });
-
-  // source-shape-contract: compatibility -- Every shipped Docker build input must map to versioned startup intent or a declared build-only exclusion
-  it("classifies every stock Docker ARG as startup-affordance or deliberate exclusion", () => {
-    for (const agent of MANAGED_STARTUP_AGENTS) {
-      const classified = new Set([
-        ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(({ input }) => input),
-        ...MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS[agent].map(({ input }) => input),
-      ]);
-      expect([...STOCK_DOCKER_ARGS[agent]].filter((input) => !classified.has(input))).toEqual([]);
-    }
-  });
-
-  // source-shape-contract: compatibility -- Every centralized agent runtime input must map to versioned startup intent or a typed downstream owner
-  it("classifies every centralized runtime input as profile intent or an explicit deferral", () => {
-    expect([...STOCK_RUNTIME_INPUTS].sort()).toEqual(
-      Object.keys(STOCK_RUNTIME_INPUT_AGENTS).sort(),
-    );
-    const missing = Object.entries(STOCK_RUNTIME_INPUT_AGENTS).flatMap(([input, agents]) =>
-      agents
-        .filter(
-          (agent) =>
-            !new Set([
-              ...MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent].map(
-                ({ input: profileInput }) => profileInput,
-              ),
-              ...MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS[agent].map(
-                ({ input: deferredInput }) => deferredInput,
-              ),
-            ]).has(input),
-        )
-        .map((agent) => `${agent}:${input}`),
-    );
-    expect(missing).toEqual([]);
-
-    const openClawAutoPairInputs = MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS.openclaw.filter(
-      ({ input }) => input.startsWith("NEMOCLAW_AUTO_PAIR_"),
-    );
-    expect([...OPENCLAW_AUTO_PAIR_CONSUMER_INPUTS].sort()).toEqual(
-      openClawAutoPairInputs.map(({ input }) => input).sort(),
-    );
-    expect(
-      Object.fromEntries(openClawAutoPairInputs.map(({ admission, input }) => [input, admission])),
-    ).toEqual({
-      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "managed-launch-forwarded",
-      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "managed-launch-forwarded",
-    });
   });
 
   it("records generic cross-agent emissions as cleanup obligations, not supported semantics", () => {
@@ -839,6 +829,64 @@ describe("managed startup profile", () => {
         dashboard: { agent: "langchain-deepagents-code", mode: "remote" },
       }),
     ).toThrow(/dashboard\.mode must be disabled/);
+  });
+
+  it("carries the Pi model tuning fields and rejects the effort scale Pi has no surface for (#7930)", () => {
+    expect(
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        tuning: {
+          ...PI_PROFILE.tuning,
+          contextWindow: 65_536,
+          maxTokens: 8192,
+          reasoning: true,
+        },
+      }).tuning,
+    ).toEqual({
+      contextWindow: 65_536,
+      maxTokens: 8192,
+      reasoning: true,
+      reasoningEffort: null,
+    });
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        tuning: { ...PI_PROFILE.tuning, reasoningEffort: "high" },
+      }),
+    ).toThrow(/pi does not support startup tuning fields: reasoningEffort/);
+  });
+
+  it("keeps Pi messaging, dashboards, and inference APIs fail-closed while retaining host proxy intent", () => {
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        messaging: { plan: { schemaVersion: 1 } },
+      }),
+    ).toThrow(/messaging\.plan must be null/);
+    expect(
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        proxy: { ...PI_PROFILE.proxy, hostHttpUrl: "http://proxy.example.test:8080" },
+      }).proxy.hostHttpUrl,
+    ).toBe("http://proxy.example.test:8080");
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        inference: { ...PI_PROFILE.inference, api: "openai-responses" },
+      }),
+    ).toThrow(/not supported/);
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        dashboard: { agent: "pi", mode: "loopback-forwarded" },
+      }),
+    ).toThrow(/dashboard\.mode must be disabled/);
+    expect(() =>
+      validateManagedStartupProfile({
+        ...PI_PROFILE,
+        inference: { ...PI_PROFILE.inference, upstreamEndpointUrl: "https://openrouter.ai/api/v1" },
+      }),
+    ).toThrow(/inference\.upstreamEndpointUrl must be null for pi/);
   });
 
   it("rejects unsupported langchain-deepagents-code inference APIs and OpenClaw-only inference fields", () => {

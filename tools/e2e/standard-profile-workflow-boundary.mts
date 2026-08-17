@@ -175,7 +175,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       shard: "${{ matrix.shard }}",
       artifact_layout: "${{ matrix.artifact_layout }}",
       trusted_main:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}",
+        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') }}",
     })) {
       if (withInputs[name] !== expected) {
         errors.push(`${contract.job} must pass ${name} from the catalogue matrix`);
@@ -388,7 +388,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     checkoutWith["persist-credentials"] !== false ||
     workflowSteps.indexOf(checkout ?? {}) !== 2
   ) {
-    errors.push("standard E2E profile must check out the exact candidate without credentials");
+    errors.push("standard E2E profile must check out checkout_sha without credentials");
   }
 
   const auth = requireStep(errors, workflowSteps, "Authenticate to Docker Hub");

@@ -25,6 +25,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the onboarding entry composition check", () => {
+    expect(CHECKS).toContainEqual({
+      name: "onboard-entry-composition",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/onboard-entry-composition.mts"],
+    });
+  });
+
   it("registers the test registration boundary check", () => {
     expect(CHECKS).toContainEqual({
       name: "test-registration-boundary",

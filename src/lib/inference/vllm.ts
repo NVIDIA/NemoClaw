@@ -310,6 +310,19 @@ const SPARK_PROFILE: VllmProfile = {
   loadTimeoutSec: 1800,
 };
 
+const N1X_PROFILE: VllmProfile = {
+  name: "N1x",
+  platform: "n1x",
+  image: SPARK_PROFILE.image,
+  imageDownloadSizeBytes: SPARK_PROFILE.imageDownloadSizeBytes,
+  imageUnpackedSizeBytes: SPARK_PROFILE.imageUnpackedSizeBytes,
+  defaultModel: qwen35bNvfp4Model(),
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
+  dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+  pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
+  loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
+};
+
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
@@ -365,13 +378,14 @@ export function detectVllmProfile(
     | {
         spark?: boolean;
         type?: string;
-        platform?: "spark" | "station" | "linux";
+        platform?: "spark" | "station" | "n1x" | "linux";
       }
     | null
     | undefined,
 ): VllmProfile | null {
   if (gpu?.platform === "spark") return SPARK_PROFILE;
   if (gpu?.platform === "station") return STATION_PROFILE;
+  if (gpu?.platform === "n1x") return N1X_PROFILE;
   if (gpu?.spark) return SPARK_PROFILE;
   if (gpu?.type === "nvidia") return GENERIC_LINUX_PROFILE;
   return null;
@@ -1393,10 +1407,15 @@ async function managedStorageAccepted(
       );
       return false;
     }
+    // Confirmed (not merely inconclusive) shortfalls are a known quantity: the
+    // pull or download would run the target filesystem to its limit, taking
+    // the whole host down with it (#9105). Unlike the "unknown" branch above,
+    // there is nothing advisory about a statfs-confirmed deficit, so
+    // non-interactive setup must stop the same way an interactive "n" would.
     console.error(
-      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
+      "  Non-interactive setup stops because confirmed available storage is insufficient. Free space or expand storage, then retry.",
     );
-    return true;
+    return false;
   }
   if (!isAffirmativeAnswer(await opts.promptFn("  Continue with the download anyway? [y/N]: "))) {
     return false;

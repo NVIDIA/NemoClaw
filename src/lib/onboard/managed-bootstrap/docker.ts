@@ -373,6 +373,15 @@ function isExplicitlyStopped(inspect: DockerContainerInspect): boolean {
   );
 }
 
+function isExactRestartLoop(inspect: DockerContainerInspect): boolean {
+  return (
+    inspect.State?.Running === true &&
+    inspect.State.Paused === false &&
+    inspect.State.Restarting === true &&
+    inspect.State.Dead === false
+  );
+}
+
 function assertExplicitlyStopped(inspect: DockerContainerInspect, label: string): void {
   if (!isExplicitlyStopped(inspect)) {
     throw new Error(`Managed bootstrap Docker ${label} is not explicitly stopped.`);
@@ -2612,7 +2621,9 @@ export function createDockerManagedBootstrapAdapter(
     const replacementAtTargetRecoverable =
       replacementNameNow === journal.originalName &&
       observedReplacement !== null &&
-      (isStableRunning(observedReplacement) || isExplicitlyStopped(observedReplacement));
+      (isStableRunning(observedReplacement) ||
+        isExplicitlyStopped(observedReplacement) ||
+        isExactRestartLoop(observedReplacement));
     const validCutoverState =
       (originalAtTargetRecoverable && replacementAtStagingRecoverable) ||
       (originalAtBackupRecoverable && replacementAtStagingRecoverable) ||

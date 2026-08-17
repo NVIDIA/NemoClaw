@@ -2,11 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { queryOpenShellDockerSandboxRuntimeSnapshot } from "./openshell-docker-sandbox-containers";
+import {
+  queryOpenShellDockerSandboxRuntimeSnapshot,
+  removeExactOpenShellDockerSandboxContainer,
+} from "./openshell-docker-sandbox-containers";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const BOOKKEEPING_IMAGE_REF = "openshell/sandbox-from:alpha";
 const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "runc"];
+const ACTIVATED_CONTAINER_ID = "b".repeat(64);
+const ROLLBACK_CONTAINER_ID = "c".repeat(64);
+
+describe("removeExactOpenShellDockerSandboxContainer", () => {
+  it("fails when Docker cannot confirm the exact container is absent after removal (#9073)", () => {
+    const expectedContainerId = "a".repeat(64);
+    const queryContainers = vi
+      .fn()
+      .mockReturnValueOnce({ ok: true, ids: [expectedContainerId] })
+      .mockReturnValueOnce({ ok: true, ids: [expectedContainerId] });
+    const forceRemove = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      removeExactOpenShellDockerSandboxContainer("alpha", expectedContainerId, vi.fn(), {
+        queryContainers,
+        forceRemove,
+      }),
+    ).toThrow("could not confirm exact Docker container removal");
+
+    expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);
+  });
+});
 
 function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   const dockerRun = vi
@@ -232,6 +257,57 @@ describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
     expect(queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun })).toEqual({
       ok: false,
       error: `expected one labeled sandbox container, found ${ids ? 2 : 0}`,
+    });
+    expect(dockerRun).toHaveBeenCalledOnce();
+  });
+
+  it("inspects the exact activated container while its rollback backup is retained", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `${ACTIVATED_CONTAINER_ID}\n${ROLLBACK_CONTAINER_ID}\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify(EMPTY_RUNTIME_FIELDS),
+        stderr: "",
+      });
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot(
+        "alpha",
+        { dockerRun },
+        { expectedContainerId: ACTIVATED_CONTAINER_ID },
+      ),
+    ).toMatchObject({
+      ok: true,
+      containerId: ACTIVATED_CONTAINER_ID,
+      nativeGpuAttachmentState: "absent",
+    });
+    expect(dockerRun).toHaveBeenLastCalledWith(
+      expect.arrayContaining([ACTIVATED_CONTAINER_ID]),
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it("refuses when the expected activated container ID is absent from the labeled query", () => {
+    const dockerRun = vi.fn(() => ({
+      status: 0,
+      stdout: `${ROLLBACK_CONTAINER_ID}\n`,
+      stderr: "",
+    }));
+
+    expect(
+      queryOpenShellDockerSandboxRuntimeSnapshot(
+        "alpha",
+        { dockerRun },
+        { expectedContainerId: ACTIVATED_CONTAINER_ID },
+      ),
+    ).toEqual({
+      ok: false,
+      error: "expected activated sandbox container was not found among labeled containers",
     });
     expect(dockerRun).toHaveBeenCalledOnce();
   });

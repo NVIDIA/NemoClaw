@@ -16,7 +16,10 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  buildHostedInferenceModelsProbe,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import {
   type ColdOnboardPerformanceBudget,
   evaluateColdOnboardPerformance,
@@ -42,7 +45,7 @@ import {
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
-import { runLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
+import { runOpenClawLaunchReadinessLeaseTurns } from "./launch-agent-turn.ts";
 import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
@@ -141,14 +144,13 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
   );
   expect(recovery.exitCode, resultText(recovery)).toBe(0);
 
-  await runLaunchReadinessLeaseTurns({
+  await runOpenClawLaunchReadinessLeaseTurns({
     artifactName: "phase-4-openclaw-launch-turn",
     cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
     ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
     env: env(PORTABLE_PROFILE ? { DOCKER_HOST: "" } : {}),
     exitCommand: "/exit",
     host: input.host,
-    readyText: "gateway connected | idle",
     redactionValues: input.redactionValues,
     sandboxName: SANDBOX_NAME,
   });
@@ -390,7 +392,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "direct hosted inference and sandbox inference.local both respond",
       ...(process.platform === "linux"
         ? [
-            "a recovered OpenClaw sandbox completes a /exit launch turn through inference.local and restores the mutable config permission contract",
+            "each of two PTY launches records two ordered structured turns and restores the mutable config permission contract",
           ]
         : []),
       "nemoclaw logs produces output and cleanup removes registry state",
@@ -520,23 +522,13 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
   progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
-  const direct = await host.command(
-    "curl",
-    [
-      "-fsS",
-      "--max-time",
-      "60",
-      "-H",
-      `Authorization: Bearer ${hosted.apiKey}`,
-      `${hosted.endpointUrl}/models`,
-    ],
-    {
-      artifactName: "phase-4-direct-hosted-inference-models",
-      env: env(),
-      redactionValues,
-      timeoutMs: 90_000,
-    },
-  );
+  const directProbe = buildHostedInferenceModelsProbe(hosted.apiKey, hosted.endpointUrl);
+  const direct = await host.command(directProbe.command, directProbe.args, {
+    artifactName: "phase-4-direct-hosted-inference-models",
+    env: env(directProbe.env),
+    redactionValues,
+    timeoutMs: 90_000,
+  });
   expect(direct.exitCode, resultText(direct)).toBe(0);
   expect(resultText(direct)).toContain("data");
 

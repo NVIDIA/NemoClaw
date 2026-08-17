@@ -1073,14 +1073,17 @@ function validateFreeStandingJobSelector(
   _explicitOnly = false,
 ): void {
   const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
+  const expectedNeeds =
+    jobName === "mcp-bridge-dev"
+      ? ["generate-matrix", "openshell-dev-artifact"]
+      : "generate-matrix";
+  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
   if (job.if !== selectedJobsCondition(jobName)) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
-
 
 function validateCatalogueOwnedJobs(errors: string[], jobs: WorkflowRecord): void {
   for (const jobName of ["gpu-double-onboard", "gpu-e2e", "llama-cpp-generic-gpu"]) {
@@ -1293,8 +1296,6 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
-
-
 function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
   if (!runScript) return;
   const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
@@ -1385,7 +1386,7 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
   const e2eJobNames = Object.entries(jobs)
     .filter(([jobName, rawJob]) => {
       const env = asRecord(asRecord(rawJob).env);
-      return env.E2E_JOB === "1" || jobName === SHARED_E2E_JOB_ID;
+      return env.E2E_JOB === "1" || NO_IMAGE_E2E_JOBS.has(jobName);
     })
     .map(([jobName]) => jobName);
   for (const exemptJobName of NO_IMAGE_E2E_JOBS) {
@@ -1430,15 +1431,16 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = workflowSteps.findIndex((step) => {
+    const checkoutIndexes = workflowSteps.flatMap((step, index) => {
       if (jobName === "managed-image-protected-runtime") {
-        return step.name === "Checkout exact protected runtime candidate source";
+        return step.name === "Checkout exact protected runtime candidate source" ? [index] : [];
       }
       if (jobName === "llama-cpp-dgx-spark-qualification") {
-        return step.name === "Checkout exact llama.cpp qualification candidate";
+        return step.name === "Checkout exact llama.cpp qualification candidate" ? [index] : [];
       }
-      return stringValue(step.uses).startsWith("actions/checkout@");
+      return stringValue(step.uses).startsWith("actions/checkout@") ? [index] : [];
     });
+    const checkoutIndex = checkoutIndexes[0] ?? -1;
     const protectedCacheDownloadIndex =
       jobName === "managed-image-protected-runtime"
         ? workflowSteps.findIndex(
@@ -1784,6 +1786,9 @@ function validateFullE2eConcurrency(errors: string[], workflow: WorkflowRecord):
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
+  if (job.name !== "Publish staging Brev Launchable image") {
+    errors.push("staging-brev-launchable must identify image publication without claiming E2E");
+  }
   if (Object.hasOwn(job, "environment")) {
     errors.push("staging-brev-launchable must not use a GitHub environment");
   }
@@ -1805,15 +1810,15 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     errors,
     "generate-matrix",
     generateSteps,
-    "Authorize Launchable E2E maintainer dispatch",
+    "Authorize Launchable image publication",
   );
   const expectedAuthorizationSelector =
     "${{ github.event_name == 'workflow_dispatch' && ((inputs.jobs == 'staging-brev-launchable' && inputs.targets == '') || (inputs.include_staging_brev_launchable && inputs.jobs == '' && inputs.targets == '')) }}";
   if (authorization?.if !== expectedAuthorizationSelector) {
-    errors.push("Launchable E2E maintainer authorization must cover exact and full dispatches");
+    errors.push("Launchable image publication authorization must cover exact and full dispatches");
   }
   if (authorization?.shell !== "bash") {
-    errors.push("Launchable E2E maintainer authorization must use bash");
+    errors.push("Launchable image publication authorization must use bash");
   }
   const authorizationEnv = asRecord(authorization?.env);
   for (const [key, expected] of [
@@ -1822,7 +1827,7 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     ["TRIGGERING_ACTOR", "${{ github.triggering_actor }}"],
   ] as const) {
     if (authorizationEnv[key] !== expected) {
-      errors.push(`Launchable E2E maintainer authorization must bind ${key}`);
+      errors.push(`Launchable image publication authorization must bind ${key}`);
     }
   }
   for (const required of [
@@ -1844,7 +1849,9 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     generateCheckout &&
     generateSteps.indexOf(authorization) >= generateSteps.indexOf(generateCheckout)
   ) {
-    errors.push("Launchable E2E maintainer authorization must run before generate-matrix checkout");
+    errors.push(
+      "Launchable image publication authorization must run before generate-matrix checkout",
+    );
   }
   const concurrency = asRecord(job.concurrency);
   if (
@@ -1853,27 +1860,52 @@ function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord
     concurrency["cancel-in-progress"] !== false
   ) {
     errors.push(
-      "staging-brev-launchable concurrency must queue all pending Launchable E2E runs without cancellation",
+      "staging-brev-launchable concurrency must queue all pending image publications without cancellation",
     );
   }
   const steps = asSteps(job.steps);
   const prepare = requireStep(errors, steps, "Prepare the trusted lane");
   const prepareEnv = asRecord(prepare?.env);
-  const run = requireStep(errors, steps, "Build, deploy, verify, test, and clean up");
+  const run = requireStep(errors, steps, "Build and verify the staging Launchable image");
   if (prepare && run && steps.indexOf(prepare) >= steps.indexOf(run)) {
-    errors.push("staging-brev-launchable must prepare the workspace before the Launchable E2E run");
+    errors.push("staging-brev-launchable must prepare the workspace before image publication");
   }
   const runEnv = asRecord(run?.env);
-  for (const [env, key, secret] of [
-    [prepareEnv, "BREV_API_KEY", "BREV_API_KEY"],
-    [prepareEnv, "BREV_ORG_ID", "BREV_ORG_ID"],
-    [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
-    [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
+  const expectedImageToken = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}`;
+  if (runEnv.GH_TOKEN !== expectedImageToken) {
+    errors.push("staging-brev-launchable GH_TOKEN must use the trusted-run secret guard");
+  }
+  if (runEnv.NEMOCLAW_BREV_LAUNCHABLE_IMAGE_ONLY !== "1") {
+    errors.push("staging-brev-launchable must stop after verified image publication");
+  }
+  if (runEnv.WORK_DIR !== "${{ steps.workspace.outputs.work_dir }}") {
+    errors.push("staging-brev-launchable must pass its private evidence directory to the lane");
+  }
+  for (const [env, scope] of [
+    [asRecord(job.env), "job"],
+    [prepareEnv, "preparation step"],
+    [runEnv, "image publication step"],
   ] as const) {
-    const expected = `\${{ ${trustedRun} && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
-    if (env[key] !== expected) {
-      errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
+    for (const key of [
+      "BREV_API_KEY",
+      "BREV_ORG_ID",
+      "BREV_LAUNCHABLE_ID",
+      "NVIDIA_INFERENCE_API_KEY",
+    ]) {
+      if (Object.hasOwn(env, key)) {
+        errors.push(`staging-brev-launchable ${scope} must not receive ${key}`);
+      }
     }
+  }
+  const prepareRun = stringValue(prepare?.run);
+  if (
+    prepareRun.includes("brev login") ||
+    prepareRun.includes("BREV_CLI_VERSION") ||
+    prepareRun.includes("BREV_CLI_SHA256")
+  ) {
+    errors.push(
+      "staging-brev-launchable preparation must not install or authenticate the Brev CLI",
+    );
   }
 }
 
@@ -1889,13 +1921,116 @@ function validateStagingBrevLaunchableInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Exact staging Brev Launchable") ||
+    !description.includes("staging Brev Launchable image publication") ||
     !description.includes("jobs and targets are empty") ||
     !description.includes("full E2E run")
   ) {
     errors.push(
-      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable E2E scope",
+      "workflow_dispatch include_staging_brev_launchable input must document full-run Launchable image publication scope",
     );
+  }
+}
+
+function validateReleaseQualificationWaiverInputs(
+  errors: string[],
+  dispatchInputs: WorkflowRecord,
+): void {
+  const jobsInput = requireInput(errors, dispatchInputs, "release_qualification_waived_jobs");
+  if (jobsInput.type !== "string" || jobsInput.default !== "") {
+    errors.push(
+      "workflow_dispatch release_qualification_waived_jobs input must be a string and default to empty",
+    );
+  }
+  const jobsDescription = stringValue(jobsInput.description);
+  if (
+    !jobsDescription.includes("Admin-only") ||
+    !jobsDescription.includes("release-required E2E job IDs") ||
+    !jobsDescription.includes("Leave empty")
+  ) {
+    errors.push(
+      "workflow_dispatch release_qualification_waived_jobs input must document its admin-only release scope",
+    );
+  }
+  const reasonInput = requireInput(errors, dispatchInputs, "release_qualification_waiver_reason");
+  if (reasonInput.type !== "string" || reasonInput.default !== "") {
+    errors.push(
+      "workflow_dispatch release_qualification_waiver_reason input must be a string and default to empty",
+    );
+  }
+  const reasonDescription = stringValue(reasonInput.description);
+  if (
+    !reasonDescription.includes("Admin-only") ||
+    !reasonDescription.includes("Required when release_qualification_waived_jobs is not empty")
+  ) {
+    errors.push(
+      "workflow_dispatch release_qualification_waiver_reason input must document its paired admin-only scope",
+    );
+  }
+}
+
+function validateReleaseQualificationWaiverAuthorization(
+  errors: string[],
+  generateSteps: readonly WorkflowStep[],
+): void {
+  const authorization = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Authorize release qualification waiver",
+  );
+  if (
+    authorization?.if !==
+    "${{ github.event_name == 'workflow_dispatch' && (inputs.release_qualification_waived_jobs != '' || inputs.release_qualification_waiver_reason != '') }}"
+  ) {
+    errors.push("release qualification waiver authorization must cover either nonempty input");
+  }
+  if (authorization?.shell !== "bash") {
+    errors.push("release qualification waiver authorization must use bash");
+  }
+  const expectedEnv = {
+    ACTOR: "${{ github.actor }}",
+    ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
+    ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    GITHUB_TOKEN: "${{ github.token }}",
+    INCLUDE_LAUNCHABLE: "${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}",
+    JOBS: "${{ inputs.jobs }}",
+    TARGETS: "${{ inputs.targets }}",
+    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
+    WAIVED_JOBS: "${{ inputs.release_qualification_waived_jobs }}",
+    WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
+    WORKFLOW_REF: "${{ github.ref }}",
+  };
+  if (!isDeepStrictEqual(asRecord(authorization?.env), expectedEnv)) {
+    errors.push(
+      "release qualification waiver authorization must bind only trusted identity and release-run inputs",
+    );
+  }
+  for (const required of [
+    "/collaborators/${administrator}/permission",
+    "'.user.login // \"\"'",
+    "'.role_name // \"\"'",
+    '== "admin"',
+    'require_admin "$ACTOR"',
+    'require_admin "$TRIGGERING_ACTOR"',
+    '[[ -z "$CHECKOUT_SHA" && -z "$JOBS" && -z "$TARGETS" ]]',
+    '[[ "$INCLUDE_LAUNCHABLE" == "true"',
+    '[[ "$WAIVED_JOBS" =~ $waived_jobs_pattern ]]',
+    "${#WAIVER_REASON} -ge 10",
+    "${#WAIVER_REASON} -le 500",
+    "requires a repository administrator",
+  ]) {
+    requireRunContains(errors, authorization, required);
+  }
+  const checkout = generateSteps.find((step) =>
+    stringValue(step.uses).startsWith("actions/checkout@"),
+  );
+  if (
+    authorization &&
+    checkout &&
+    generateSteps.indexOf(authorization) >= generateSteps.indexOf(checkout)
+  ) {
+    errors.push("release qualification waiver authorization must run before candidate checkout");
   }
 }
 
@@ -1968,6 +2103,7 @@ function validateTrustedE2eDispatchReceipt(
   }
   const dispatchReceiptEnv = asRecord(dispatchReceipt?.env);
   const expectedDispatchReceiptEnv = {
+    ACTOR: "${{ github.actor }}",
     ALLOW_DGX_SPARK_RUNNER_QUEUE: "${{ inputs.allow_dgx_spark_runner_queue && 'true' || 'false' }}",
     ALLOW_JETSON_DISPATCH: "${{ inputs.allow_jetson_dispatch && 'true' || 'false' }}",
     ALLOW_JETSON_RUNNER_QUEUE: "false",
@@ -1984,6 +2120,9 @@ function validateTrustedE2eDispatchReceipt(
     REPOSITORY: "${{ github.repository }}",
     RUN_ATTEMPT: "${{ github.run_attempt }}",
     RUN_ID: "${{ github.run_id }}",
+    RELEASE_QUALIFICATION_WAIVED_JOBS: "${{ inputs.release_qualification_waived_jobs }}",
+    RELEASE_QUALIFICATION_WAIVER_REASON: "${{ inputs.release_qualification_waiver_reason }}",
+    TRIGGERING_ACTOR: "${{ github.triggering_actor }}",
     WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   if (!isDeepStrictEqual(dispatchReceiptEnv, expectedDispatchReceiptEnv)) {
@@ -1996,6 +2135,7 @@ function validateTrustedE2eDispatchReceipt(
   }
   for (const fragment of [
     'kind: "nemoclaw-e2e-dispatch-v2"',
+    "actor: $actor",
     "repository: $repository",
     'prNumber: (if $prNumber == "" then null else ($prNumber | tonumber) end)',
     "candidateRepository: $candidateRepository",
@@ -2011,6 +2151,9 @@ function validateTrustedE2eDispatchReceipt(
     "allowJetsonDispatch: $allowJetsonDispatch",
     "allowJetsonRunnerQueue: $allowJetsonRunnerQueue",
     "includeStagingBrevLaunchable: $includeStagingBrevLaunchable",
+    'releaseQualificationWaivedJobs: (if $releaseQualificationWaivedJobs == "" then [] else ($releaseQualificationWaivedJobs | split(",")) end)',
+    'releaseQualificationWaiverReason: (if $releaseQualificationWaiverReason == "" then null else $releaseQualificationWaiverReason end)',
+    "triggeringActor: $triggeringActor",
     'emptySelectors: ($jobs == "" and $targets == "")',
     '>"$DISPATCH_RECEIPT_DIR/dispatch.json"',
   ]) {
@@ -2034,10 +2177,14 @@ function validateTrustedE2eDispatchReceipt(
   }
 
   const authentication = namedStep(generateSteps, "Authenticate manual PR dispatch");
+  const waiverAuthorization = namedStep(generateSteps, "Authorize release qualification waiver");
   const candidateCheckout = generateSteps.find((step) =>
     stringValue(step.uses).startsWith("actions/checkout@"),
   );
   const authenticationIndex = authentication ? generateSteps.indexOf(authentication) : -1;
+  const waiverAuthorizationIndex = waiverAuthorization
+    ? generateSteps.indexOf(waiverAuthorization)
+    : -1;
   const receiptIndex = dispatchReceipt ? generateSteps.indexOf(dispatchReceipt) : -1;
   const uploadIndex = dispatchUpload ? generateSteps.indexOf(dispatchUpload) : -1;
   const checkoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
@@ -2045,6 +2192,7 @@ function validateTrustedE2eDispatchReceipt(
     "Build trusted controller target matrix",
     "Build trusted larger-runner routing",
     "Authenticate manual PR dispatch",
+    "Authorize release qualification waiver",
     "Record trusted E2E dispatch receipt",
     "Upload trusted E2E dispatch receipt",
   ];
@@ -2054,7 +2202,8 @@ function validateTrustedE2eDispatchReceipt(
       trustedPrefix,
     ) ||
     authenticationIndex < 0 ||
-    receiptIndex !== authenticationIndex + 1 ||
+    waiverAuthorizationIndex !== authenticationIndex + 1 ||
+    receiptIndex !== waiverAuthorizationIndex + 1 ||
     uploadIndex !== receiptIndex + 1 ||
     checkoutIndex <= uploadIndex
   ) {
@@ -2098,12 +2247,13 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireInput(errors, dispatchInputs, "targets");
   validateFullE2eConcurrency(errors, workflow);
   validateStagingBrevLaunchableInput(errors, dispatchInputs);
+  validateReleaseQualificationWaiverInputs(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
+      "workflow_dispatch jobs input description must identify how to include staging Brev Launchable image publication",
     );
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
@@ -2157,6 +2307,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     generateOutputs.release_required_jobs !== "${{ steps.matrix.outputs.release_required_jobs }}"
   ) {
     errors.push("generate-matrix job must expose release_required_jobs output");
+  }
+  if (
+    generateOutputs.release_qualification_waived_jobs !==
+    "${{ steps.matrix.outputs.release_qualification_waived_jobs }}"
+  ) {
+    errors.push("generate-matrix job must expose release_qualification_waived_jobs output");
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
@@ -2217,7 +2373,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     `matrix='[${defaultMappings}]'`,
     `test_matrix='[${defaultTestMappings}]'`,
     ";;",
-    "inference-routing: | managed-image-protected-runtime: | :jetson-nvmap-gpu)",
+    "inference-routing: | managed-image-protected-runtime: | native-runtime-qualification-producer: | :jetson-nvmap-gpu)",
     "matrix='[]'",
     ";;",
     `:${deepAgentsTarget})`,
@@ -2287,6 +2443,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
+  if (
+    generateEnv.RELEASE_QUALIFICATION_WAIVED_JOBS !==
+    "${{ inputs.release_qualification_waived_jobs }}"
+  ) {
+    errors.push("matrix generation step must pass release qualification waived jobs through env");
+  }
   validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "--ci-output");
@@ -2304,14 +2466,17 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "E2E planner matrix does not match controller-selected targets",
   );
   validateTrustedE2eDispatchReceipt(errors, generateSteps);
+  validateReleaseQualificationWaiverAuthorization(errors, generateSteps);
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
   if (liveTargets["runs-on"] !== "${{ matrix.runner }}") {
     errors.push("live job must run on the matrix runner");
   }
-  if (liveTargets.needs !== "generate-matrix") {
-    errors.push("live job must depend on generate-matrix");
+  if (
+    !isDeepStrictEqual(liveTargets.needs, ["base-image-publication", "generate-matrix"])
+  ) {
+    errors.push("live job must depend on base-image-publication and generate-matrix");
   }
   if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
     errors.push("live job must run whenever the trusted planner emits typed targets");

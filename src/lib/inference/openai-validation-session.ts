@@ -7,6 +7,7 @@ import {
   createValidationSession,
   type ValidationSessionOptions,
 } from "../adapters/http/validation-session";
+import { retryUntilAsync } from "../core/retry";
 import { addTraceEvent, withTraceSpan } from "../trace";
 import type { TrustedPrivateEndpointCapability } from "./endpoint-ssrf-preflight";
 import {
@@ -192,36 +193,31 @@ async function requestWithHttpRetry(
   request: () => Promise<CurlProbeResult>,
   retryTransientHttp = true,
 ): Promise<CurlProbeResult> {
-  let result = await request();
-  let attempt = 1;
-  addTraceEvent("probe_result", {
-    attempt,
-    ok: result.ok,
-    http_status: result.httpStatus,
-    curl_status: result.curlStatus,
-  });
-  for (const delayMs of RETRY_DELAYS_MS) {
-    if (
-      !retryTransientHttp ||
-      result.curlStatus !== 0 ||
-      !RETRIABLE_HTTP_STATUSES.has(result.httpStatus)
-    ) {
-      break;
-    }
-    console.log(
-      `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
-    );
-    await waitForRetry(delayMs);
-    attempt += 1;
-    result = await request();
-    addTraceEvent("probe_result", {
-      attempt,
-      ok: result.ok,
-      http_status: result.httpStatus,
-      curl_status: result.curlStatus,
-    });
-  }
-  return result;
+  return retryUntilAsync(
+    async (attempt) => {
+      const result = await request();
+      addTraceEvent("probe_result", {
+        attempt,
+        ok: result.ok,
+        http_status: result.httpStatus,
+        curl_status: result.curlStatus,
+      });
+      return result;
+    },
+    {
+      accept: (result) =>
+        !retryTransientHttp ||
+        result.curlStatus !== 0 ||
+        !RETRIABLE_HTTP_STATUSES.has(result.httpStatus),
+      retryDelaysMs: RETRY_DELAYS_MS,
+      onRetry: (result, delayMs) => {
+        console.log(
+          `  ${name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+        );
+      },
+      sleep: waitForRetry,
+    },
+  );
 }
 
 function shouldUseLegacyForModel(model: string): boolean {

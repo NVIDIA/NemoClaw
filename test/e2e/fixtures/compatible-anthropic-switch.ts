@@ -7,10 +7,15 @@ import { resultText } from "./clients/index.ts";
 export const COMPATIBLE_ANTHROPIC_PROVIDER = "compatible-anthropic-endpoint";
 export const COMPATIBLE_ANTHROPIC_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const DEFAULT_COMPATIBLE_ANTHROPIC_CREDENTIAL = "test-compatible-anthropic-key";
+const OPENSHELL_HOST_ALIAS = "host.openshell.internal";
 
 export interface CompatibleAnthropicSwitchBinding {
   endpointUrl: string;
   credentialValue: string;
+}
+
+export function compatibleAnthropicMockEndpointUrl(port: number): string {
+  return `http://${OPENSHELL_HOST_ALIAS}:${port}`;
 }
 
 export function compatibleAnthropicSwitchBinding(

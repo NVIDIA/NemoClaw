@@ -16,6 +16,7 @@ import { resolveMessagingPlanAuthority } from "../messaging/plan-authority";
 import * as registry from "../state/registry";
 import {
   detectMessagingChannelsFromEnv,
+  detectUnconfiguredMessagingChannels,
   getRegistrySandboxMessagingAuthority,
   setupMessagingChannels,
   setupSelectedMessagingChannels,
@@ -988,5 +989,56 @@ describe("detectMessagingChannelsFromEnv", () => {
     process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
 
     expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
+  });
+});
+
+describe("detectUnconfiguredMessagingChannels", () => {
+  function clearMessagingEnv(): void {
+    const envKeys = manifestRegistry
+      .listAvailable({ agent: "openclaw", supportedChannelIds: null })
+      .flatMap((manifest) => manifest.inputs)
+      .map((input) => input.envKey)
+      .filter((envKey): envKey is string => Boolean(envKey));
+    for (const envKey of envKeys) delete process.env[envKey];
+  }
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.clearAllMocks();
+    vi.mocked(getCredential).mockReturnValue(null);
+    clearMessagingEnv();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it("reports a plan channel whose inputs are gone from the environment", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram"], [], null)).toEqual(["telegram"]);
+  });
+
+  it("keeps a plan channel whose inputs are still present", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectUnconfiguredMessagingChannels(["telegram"], [], null)).toEqual([]);
+  });
+
+  it("keeps a plan channel that the current selection still requests", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram"], ["telegram"], null)).toEqual([]);
+  });
+
+  it("keeps an in-sandbox QR-paired channel that the host environment cannot rediscover", () => {
+    expect(detectUnconfiguredMessagingChannels(["whatsapp"], [], null)).toEqual([]);
+  });
+
+  it("reports each channel once when the plan repeats it", () => {
+    expect(detectUnconfiguredMessagingChannels(["telegram", "telegram"], [], null)).toEqual([
+      "telegram",
+    ]);
+  });
+
+  it("ignores channel names with no available manifest", () => {
+    expect(detectUnconfiguredMessagingChannels(["not-a-channel"], [], null)).toEqual([]);
   });
 });

@@ -232,7 +232,7 @@ describe("credentials oclif commands", () => {
     );
 
     expect(output.stderr).toContain("Could not query OpenShell gateway");
-    expect(output.stderr).toContain("openshell gateway start --name nemoclaw");
+    expect(output.stderr).toContain("Start the gateway again with `nemoclaw onboard`.");
   });
 
   it("records gateway recovery failures without calling provider list", async () => {

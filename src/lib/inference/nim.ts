@@ -32,6 +32,7 @@ import {
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
 } from "./gpu-trust";
+import { collectN1xIdentity } from "./platform-identity/n1x";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
@@ -44,7 +45,7 @@ export interface NimModel {
   servedModel?: string;
 }
 
-export type NvidiaPlatform = "spark" | "station" | "jetson" | "linux";
+export type NvidiaPlatform = "spark" | "station" | "n1x" | "jetson" | "linux";
 
 export interface NimGpu {
   name: string;
@@ -109,6 +110,11 @@ export interface DetectGpuDeps {
   runCaptureImpl?: typeof runCapture;
   /** Override WSL detection for deterministic tests. */
   isWsl?: boolean;
+  // Receives one sentence naming the check that rejected an nvidia-smi probe
+  // when the trust gate returns no GPU, so preflight can say which check
+  // failed instead of the bare "no GPU detected" (#9000). The reason is built
+  // from fixed text only — never from nvidia-smi output, which is untrusted.
+  onTrustGateRejection?: (reason: string) => void;
 }
 
 // Lazily construct the default ARM64 Linux GPU prover. Keep it behind a require
@@ -305,12 +311,25 @@ function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null
   return { name, platform: "jetson" };
 }
 
-export function detectNvidiaPlatform(): NvidiaPlatform {
+export interface DetectNvidiaPlatformOptions {
+  hostPlatform?: NodeJS.Platform;
+  architecture?: string;
+  collectN1xIdentityImpl?: typeof collectN1xIdentity;
+}
+
+export function detectNvidiaPlatform(options: DetectNvidiaPlatformOptions = {}): NvidiaPlatform {
   const model = readPlatformModel();
   if (/DGX[_\s-]+Spark/i.test(model)) return "spark";
   if (isDgxStationGb300Product(model)) return "station";
   if (/Jetson|Tegra|Thor|Orin|Xavier/i.test(model) || hasTegraDeviceNodeSignal()) {
     return "jetson";
+  }
+  if (
+    (options.hostPlatform ?? process.platform) === "linux" &&
+    (options.architecture ?? process.arch) === "arm64" &&
+    (options.collectN1xIdentityImpl ?? collectN1xIdentity)().qualified
+  ) {
+    return "n1x";
   }
   return "linux";
 }
@@ -453,7 +472,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       }
       if (parsed.length > 0) {
         const platform = detectNvidiaPlatform();
-        // Off Spark/Station/Jetson firmware, layer a denylist check and the
+        // Off qualified NVIDIA platform identity, layer a denylist check and the
         // trust-tier gate before trusting the nvidia-smi probe. The observed
         // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
         // placeholder name AND ships no `/proc/driver/nvidia/` directory. A
@@ -463,20 +482,28 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         // probe — partial filtering would let a mixed-row spoof surface a
         // non-placeholder row as a real GPU.
         const firmwareConfirmsNvidia =
-          platform === "spark" || platform === "station" || platform === "jetson";
+          platform === "spark" ||
+          platform === "station" ||
+          platform === "n1x" ||
+          platform === "jetson";
         // The all-GPU CUDA workload proves that at least one usable device
         // exists. It does not establish which nvidia-smi rows or capacities
         // are genuine, so a multi-row response stays untrusted.
-        const passesBoundedCudaProof = (): boolean => {
+        // Null when the proof passed; otherwise a fixed-text fragment naming
+        // why it did not, composed into the onTrustGateRejection reason.
+        const boundedCudaProofRejection = (): string | null => {
           if (parsed.length !== 1) {
-            return false;
+            return "the bounded CUDA proof was not attempted for multiple GPU rows";
           }
           const prover =
             deps.proveArm64WslDockerDesktopGpu === undefined
               ? defaultArm64WslDockerDesktopGpuProver()
               : deps.proveArm64WslDockerDesktopGpu;
           const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
-          return !!proof && proof.passed;
+          if (!proof) {
+            return "the bounded CUDA proof was not attempted";
+          }
+          return proof.passed ? null : "the bounded CUDA proof failed";
         };
         let trusted: ParsedGpu[];
         let wslDockerDesktopGpuProofPassed = false;
@@ -489,7 +516,11 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // A bounded Docker `--gpus` workload proves that the single reported
           // row has a usable CUDA device. The Snapdragon shim cannot pass it
           // (#4565 without reopening #3988/#4424).
-          if (!passesBoundedCudaProof()) {
+          const proofRejection = boundedCudaProofRejection();
+          if (proofRejection) {
+            deps.onTrustGateRejection?.(
+              `nvidia-smi reported a placeholder GPU name and ${proofRejection}`,
+            );
             return null;
           }
           trusted = parsed;
@@ -504,7 +535,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
             // name the filter below would discard never starts the Docker workload.
             // Without a passing proof this path stays fail-closed as before.
             const plausible = parsed.every((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
-            if (!plausible || !passesBoundedCudaProof()) {
+            if (!plausible) {
+              deps.onTrustGateRejection?.(
+                "nvidia-smi reported a GPU name that is not a recognized NVIDIA product and the bounded CUDA proof was not attempted",
+              );
+              return null;
+            }
+            const proofRejection = boundedCudaProofRejection();
+            if (proofRejection) {
+              deps.onTrustGateRejection?.(`/proc/driver/nvidia is absent and ${proofRejection}`);
               return null;
             }
             wslDockerDesktopGpuProofPassed = true;
@@ -512,6 +551,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
         }
         if (trusted.length === 0) {
+          deps.onTrustGateRejection?.(
+            "nvidia-smi reported no recognized NVIDIA GPU product names",
+          );
           return null;
         }
         const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
@@ -537,12 +579,12 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // The proof-passed ARM64 N1X GPU is memory-shared like Jetson and
           // cannot serve a computeIntensive model in-loop, so tag it
           // computeConstrained to exclude those Ollama bootstrap models (#3707).
-          // This covers the N1X part on WSL2 and on native Linux (#8096), and
-          // conservatively any proof-passed GPU with a plausible,
-          // non-placeholder NVIDIA name (#9000). Such a host lacks firmware
-          // and kernel-driver identity. Mark it compute-constrained to prevent
-          // selection of compute-intensive bootstrap models without device evidence.
-          ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
+          // This covers N1X on WSL2 and native Linux (#8096), plus any
+          // proof-passed GPU with a plausible, non-placeholder NVIDIA name
+          // (#9000). The latter lacks firmware and kernel-driver identity, so
+          // avoid selecting compute-intensive bootstrap models without device
+          // evidence.
+          ...(platform === "jetson" || platform === "n1x" || wslDockerDesktopGpuProofPassed
             ? { computeConstrained: true }
             : {}),
           ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
@@ -569,7 +611,8 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
     // unified-memory one (#3510). When firmware confirms a unified-memory
     // platform, accept whatever name nvidia-smi reports.
     const firmwarePlatform = detectNvidiaPlatform();
-    const firmwareIsUnifiedMemory = firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    const firmwareIsUnifiedMemory =
+      firmwarePlatform === "spark" || firmwarePlatform === "n1x" || firmwarePlatform === "jetson";
     // Reject placeholder names on hosts where firmware does not vouch for an
     // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
     // could in principle emit `JMJWOA-Generic-*` on this fallback too.
@@ -577,6 +620,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       !firmwareIsUnifiedMemory &&
       gpuNames.some((name: string) => isDenylistedNvidiaGpuName(name))
     ) {
+      deps.onTrustGateRejection?.(
+        "nvidia-smi reported a placeholder GPU name and the bounded CUDA proof was not attempted",
+      );
       return null;
     }
     const taggedNames = gpuNames.filter((name: string) =>
@@ -594,6 +640,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         : firmwareIsUnifiedMemory
           ? gpuNames
           : [];
+    if (
+      taggedNames.length > 0 &&
+      !firmwareIsUnifiedMemory &&
+      !allowTaggedOnGenericFirmware
+    ) {
+      deps.onTrustGateRejection?.(
+        "/proc/driver/nvidia is absent for the nvidia-smi names-only unified-memory check",
+      );
+    }
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB(runCaptureImpl);
       const count = unifiedGpuNames.length;
@@ -608,13 +663,15 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       // a GB10; falling through to firmware lets us classify Station too.
       const hasGb10 = unifiedGpuNames.some((name: string) => /GB10/i.test(name));
       const platform: NvidiaPlatform =
-        firmwarePlatform === "spark" || hasGb10
-          ? "spark"
-          : firmwarePlatform === "station"
-            ? "station"
-            : firmwarePlatform === "jetson"
-              ? "jetson"
-              : "linux";
+        firmwarePlatform === "n1x"
+          ? "n1x"
+          : firmwarePlatform === "spark" || hasGb10
+            ? "spark"
+            : firmwarePlatform === "station"
+              ? "station"
+              : firmwarePlatform === "jetson"
+                ? "jetson"
+                : "linux";
       // Memory.total is not available on unified-memory devices, so we split
       // the host RAM evenly across the named GPUs for the per-GPU breakdown.
       // Approximation, but the only number nvidia-smi gives us in this path.
@@ -633,7 +690,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         nimCapable: canRunNimWithMemory(totalMemoryMB),
         unifiedMemory: true,
         spark: platform === "spark",
-        ...(platform === "jetson" ? { computeConstrained: true } : {}),
+        ...(platform === "jetson" || platform === "n1x" ? { computeConstrained: true } : {}),
         platform,
       };
     }

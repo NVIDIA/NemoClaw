@@ -242,6 +242,64 @@ describe("E2E scorecard", () => {
     expect(failureSection?.text?.text).toContain(`<${failureUrl}|live (openclaw-nvidia)>`);
   });
 
+  it("keeps every failed-job section within Slack's 3000-character limit", () => {
+    const failedJobs = Array.from({ length: 61 }, (_, index) => ({
+      name: `failure-${index}-${"x".repeat(80)}`,
+      url: `https://github.com/NVIDIA/NemoClaw/actions/runs/31962084507/job/${95201570000 + index}`,
+    }));
+    const failedJobSections = slack
+      .buildBlocks(scorecardData({ failure: failedJobs.length, perfect: false, failedJobs }))
+      .filter(
+        (block): block is typeof block & { type: "section"; text: { text: string } } =>
+          block.type === "section" && block.text?.text.includes("Failed jobs") === true,
+      );
+
+    expect(failedJobSections.length).toBeGreaterThan(1);
+    expect(failedJobSections.every((block) => block.text.text.length <= 3_000)).toBe(true);
+    const rendered = failedJobSections.map((block) => block.text.text).join("\n");
+    for (const job of failedJobs) expect(rendered).toContain(`<${job.url}|${job.name}>`);
+  });
+
+  it("bounds one oversized failed-job label without dropping its job link", () => {
+    const url = "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/456";
+    const failedJobSections = slack
+      .buildBlocks(
+        scorecardData({
+          failure: 1,
+          perfect: false,
+          failedJobs: [{ name: `failure-${"x".repeat(4_000)}`, url }],
+        }),
+      )
+      .filter(
+        (block): block is typeof block & { type: "section"; text: { text: string } } =>
+          block.type === "section" && block.text?.text.includes("Failed jobs") === true,
+      );
+
+    expect(failedJobSections).toHaveLength(1);
+    expect(failedJobSections[0]?.text.text.length).toBeLessThanOrEqual(3_000);
+    expect(failedJobSections[0]?.text.text).toContain(`<${url}|failure-`);
+    expect(failedJobSections[0]?.text.text).toContain("…>");
+  });
+
+  it("replaces an oversized job URL with the valid run link", () => {
+    const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+    const oversizedUrl = `https://example.test/${"x".repeat(4_000)}`;
+    const failedJobSection = slack
+      .buildBlocks(
+        scorecardData({
+          failure: 1,
+          perfect: false,
+          failedJobs: [{ name: "failure", url: oversizedUrl }],
+          runUrl,
+        }),
+      )
+      .find((block) => block.type === "section" && block.text?.text.includes("Failed jobs"));
+
+    expect(failedJobSection?.text?.text.length).toBeLessThanOrEqual(3_000);
+    expect(failedJobSection?.text?.text).toContain(`<${runUrl}|failure>`);
+    expect(failedJobSection?.text?.text).not.toContain(oversizedUrl);
+  });
+
   it("compares only allowlisted onboard timing phases", () => {
     const rows = trace.buildPhaseRows(
       {

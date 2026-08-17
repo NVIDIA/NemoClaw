@@ -335,6 +335,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "corporate-ca-runtime.sh"),
+    path.join(stagedScriptsDir, "lib", "corporate-ca-runtime.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "entrypoint-env-wrapper.sh"),
     path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
   );
@@ -440,6 +444,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "bundled-npm-package.mts"),
+    path.join(stagedScriptsDir, "lib", "bundled-npm-package.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "seed-reviewed-npm-cache.mts"),

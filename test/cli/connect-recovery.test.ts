@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   LAUNCH_READINESS_FIXTURE_POLICY,
+  LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT,
   launchReadinessRegistryFixture,
 } from "../helpers/launch-readiness-fixture";
 import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
@@ -29,6 +30,13 @@ type GatewayControlDockerStubOptions = {
 };
 
 const launchReadinessObservationStubLines = [
+  'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [[ "$*" == *"-- sh -s"* ]]; then',
+  "  qualification_script=$(cat)",
+  '  if [[ "$qualification_script" == *"NEMOCLAW_OPENCLAW_STATE_DIR_B64="* ]]; then',
+  `    printf '%s\\n' ${JSON.stringify(LAUNCH_READINESS_PAIRING_QUALIFICATION_OUTPUT)}`,
+  "    exit 0",
+  "  fi",
+  "fi",
   'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
   `  printf '%b' ${JSON.stringify(LAUNCH_READINESS_FIXTURE_POLICY)}`,
   "  exit 0",
@@ -39,12 +47,13 @@ const launchReadinessObservationStubLines = [
   "fi",
 ];
 
-const expectedProbeOnlyExitCode = process.platform === "darwin" ? 1 : 0;
 const PLATFORM_EVIDENCE_UNAVAILABLE = "launch-readiness evidence is unavailable on this platform";
 
 function expectProbeOnlyPublicationOutcome(result: { code: number; out: string }): void {
-  expect(result.code, result.out).toBe(expectedProbeOnlyExitCode);
+  // Evidence unavailability on macOS is a note, not a failure (#9278).
+  expect(result.code, result.out).toBe(0);
   expect(result.out.includes(PLATFORM_EVIDENCE_UNAVAILABLE)).toBe(process.platform === "darwin");
+  expect(result.out.includes("Probe failed")).toBe(false);
 }
 
 function writeGatewayControlDockerStub(

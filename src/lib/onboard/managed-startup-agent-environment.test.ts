@@ -225,6 +225,48 @@ function dcodeProfile(): ManagedStartupProfile {
   };
 }
 
+function piProfile(): ManagedStartupProfile {
+  return {
+    schemaVersion: MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
+    agent: "pi",
+    agentConfig: { agent: "pi" },
+    inference: {
+      routeProvider: "inference",
+      upstreamProvider: "nvidia",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      routedBaseUrl: "https://inference.local/v1",
+      upstreamEndpointUrl: null,
+      api: "openai-completions",
+      primaryModelRef: null,
+      compatibility: null,
+      inputModalities: null,
+    },
+    proxy: {
+      managedHost: "10.200.0.1",
+      managedPort: 3128,
+      hostHttpUrl: null,
+      hostHttpsUrl: null,
+      hostNoProxy: [],
+    },
+    dashboard: {
+      agent: "pi",
+      mode: "disabled",
+    },
+    tools: {
+      disclosure: "progressive",
+      enabledGateways: [],
+    },
+    messaging: { plan: null },
+    tuning: {
+      contextWindow: null,
+      maxTokens: null,
+      reasoning: null,
+      reasoningEffort: null,
+    },
+    corporateCa: { bundleSha256: CA_SHA256 },
+  };
+}
+
 function decodeBase64Json(encoded: string): unknown {
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as unknown;
 }
@@ -243,6 +285,7 @@ const PROFILES: Readonly<Record<ManagedStartupAgent, () => ManagedStartupProfile
   openclaw: openClawProfile,
   hermes: hermesProfile,
   "langchain-deepagents-code": dcodeProfile,
+  pi: piProfile,
 };
 
 describe("managed startup agent environment", () => {
@@ -400,25 +443,26 @@ describe("managed startup agent environment", () => {
     ).toThrow(message);
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("derives every unsupported $0 runtime unset from the closed contract", (agent) => {
-    const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent](), {
-      NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
-      NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
-      NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
-      NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
-      NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
-    });
-    const unsets = new Set(result.applicationRuntime.unsetEnvironment);
-    for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
-      expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
-    }
-    for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
-      expect(unsets.has(name)).toBe(agent !== "openclaw");
-    }
-  });
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "derives every unsupported $0 runtime unset from the closed contract",
+    (agent) => {
+      const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent](), {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.25",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+      });
+      const unsets = new Set(result.applicationRuntime.unsetEnvironment);
+      for (const obligation of MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS) {
+        expect(unsets.has(obligation.input)).toBe(!obligation.supportedFor.includes(agent));
+      }
+      for (const name of OPENCLAW_APPLICATION_RUNTIME_NAMES) {
+        expect(unsets.has(name)).toBe(agent !== "openclaw");
+      }
+    },
+  );
 
   it("keeps the profile mapper independent from mutable process-global runtime input", () => {
     const name = "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS";
@@ -514,7 +558,7 @@ describe("managed startup agent environment", () => {
     });
   });
 
-  it("keeps DCode routing and auto-approval in root-owned files instead of ambient runtime env", () => {
+  it("keeps DCode routing, provider identity, and auto-approval in root-owned files", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile(), {
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "not-a-number",
     });
@@ -538,6 +582,7 @@ describe("managed startup agent environment", () => {
     const expectedDcodeRuntime = { ...result.configurationEnvironment };
     delete expectedDcodeRuntime.NEMOCLAW_INFERENCE_BASE_URL;
     delete expectedDcodeRuntime.NEMOCLAW_REASONING_EFFORT;
+    delete expectedDcodeRuntime.NEMOCLAW_UPSTREAM_PROVIDER;
     for (const name of [
       "HTTP_PROXY",
       "HTTPS_PROXY",
@@ -566,6 +611,7 @@ describe("managed startup agent environment", () => {
     expect(result.runtimeEnvironment).not.toHaveProperty("HTTPS_PROXY");
     expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_INFERENCE_BASE_URL");
     expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING_EFFORT");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_UPSTREAM_PROVIDER");
 
     expect(result.materials).toEqual([
       {
@@ -587,6 +633,15 @@ describe("managed startup agent environment", () => {
         legacyInput: "NEMOCLAW_INFERENCE_BASE_URL",
         path: "/usr/local/share/nemoclaw/dcode-inference-base-url",
         contents: "https://inference.local/v1\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_UPSTREAM_PROVIDER",
+        path: "/usr/local/share/nemoclaw/dcode-upstream-provider",
+        contents: "openrouter\n",
         owner: "root",
         group: "root",
         mode: 0o444,
@@ -630,6 +685,127 @@ describe("managed startup agent environment", () => {
         dashboard: { agent: "langchain-deepagents-code", mode: "disabled" },
       },
     ]);
+  });
+
+  it("keeps the Pi managed route credential-free and confined to root-owned proxy files (#7930)", () => {
+    const result = mapManagedStartupProfileToAgentEnvironment(piProfile());
+
+    expect(result.configurationEnvironment).toEqual({
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      NEMOCLAW_CONTEXT_WINDOW: "",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_MAX_TOKENS: "",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_REASONING: "",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+      NO_PROXY: "",
+      http_proxy: "",
+      https_proxy: "",
+      no_proxy: "",
+    });
+    expect(result.runtimeEnvironment).toEqual({
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+    });
+    expect(result.materials).toEqual([
+      {
+        kind: "corporate-ca-handoff",
+        legacyInput: "NEMOCLAW_CORPORATE_CA_B64",
+        expectedSha256: CA_SHA256,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_PROXY_HOST",
+        path: "/usr/local/share/nemoclaw/pi-proxy-host",
+        contents: "10.200.0.1\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_PROXY_PORT",
+        path: "/usr/local/share/nemoclaw/pi-proxy-port",
+        contents: "3128\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+    ]);
+    expect(result.actions).toEqual([
+      { kind: "generate-agent-config", agent: "pi", runAs: "sandbox" },
+      { kind: "configure-dashboard", dashboard: { agent: "pi", mode: "disabled" } },
+    ]);
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("nvapi-");
+    expect(serialized).not.toContain("NVIDIA_API_KEY");
+    expect(serialized).not.toContain("BEGIN CERTIFICATE");
+    expect(serialized).toContain(CA_SHA256);
+  });
+
+  it("hands Pi model tuning to its config generator and keeps it out of the long-running runtime (#7930)", () => {
+    const base = piProfile();
+    const result = mapManagedStartupProfileToAgentEnvironment({
+      ...base,
+      tuning: { contextWindow: 262_144, maxTokens: 32_000, reasoning: true, reasoningEffort: null },
+    });
+
+    expect(result.configurationEnvironment).toMatchObject({
+      NEMOCLAW_CONTEXT_WINDOW: "262144",
+      NEMOCLAW_MAX_TOKENS: "32000",
+      NEMOCLAW_REASONING: "true",
+    });
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_CONTEXT_WINDOW");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_MAX_TOKENS");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING");
+    expect(
+      mapManagedStartupProfileToAgentEnvironment({
+        ...base,
+        tuning: { ...base.tuning, reasoning: false },
+      }).configurationEnvironment.NEMOCLAW_REASONING,
+    ).toBe("false");
+  });
+
+  it("rebuilds the Pi generator inputs from the current route without retaining the previous one (#7930)", () => {
+    const base = piProfile();
+    const before = mapManagedStartupProfileToAgentEnvironment(base);
+    const after = mapManagedStartupProfileToAgentEnvironment({
+      ...base,
+      inference: {
+        ...base.inference,
+        routeProvider: "rebuilt-inference",
+        upstreamProvider: "openrouter",
+        model: "openai/gpt-5.4",
+        routedBaseUrl: "https://rebuilt.inference.local/v1",
+      },
+      proxy: { ...base.proxy, managedHost: "10.200.0.9", managedPort: 3129 },
+    });
+
+    expect(after.configurationEnvironment).toMatchObject({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://rebuilt.inference.local/v1",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "rebuilt-inference",
+      NEMOCLAW_MODEL: "openai/gpt-5.4",
+      NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
+    });
+    expect(after.materials).toEqual([
+      before.materials[0],
+      { ...before.materials[1], contents: "10.200.0.9\n" },
+      { ...before.materials[2], contents: "3129\n" },
+    ]);
+    const serialized = JSON.stringify(after);
+    expect(serialized).not.toContain("https://inference.local/v1");
+    expect(serialized).not.toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(serialized).not.toContain("10.200.0.1");
+    expect(serialized).not.toContain("3128");
+    expect(after.actions).toEqual(before.actions);
   });
 
   it("feeds the existing OpenClaw and Hermes config consumers without translation", () => {
@@ -678,28 +854,42 @@ describe("managed startup agent environment", () => {
     });
   });
 
-  it.each(
-    MANAGED_STARTUP_AGENTS,
-  )("represents the complete $0 Docker/start affordance inventory", (agent) => {
-    const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent]());
-    expect(representedLegacyInputs(result)).toEqual(
-      MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent]
-        .map((affordance) => affordance.input)
-        .sort(),
-    );
-    const messagingActions = result.actions.filter(
-      (action) => action.kind === "apply-messaging-plan",
-    );
-    expect(messagingActions.map(({ phase, runAs }) => [phase, runAs])).toEqual(
-      agent === "langchain-deepagents-code"
-        ? []
-        : [
-            ["runtime-setup", "root"],
-            ["post-agent-install", "sandbox"],
-          ],
-    );
-    expect(messagingActions.map((action) => String(action.phase))).not.toContain("agent-install");
+  it("materializes the longest DCode upstream provider accepted by its runtime (#7112)", () => {
+    const profile = dcodeProfile();
+    const upstreamProvider = "a".repeat(64);
+    const result = mapManagedStartupProfileToAgentEnvironment({
+      ...profile,
+      inference: { ...profile.inference, upstreamProvider },
+    });
+
+    expect(
+      result.materials.find((material) => material.legacyInput === "NEMOCLAW_UPSTREAM_PROVIDER"),
+    ).toMatchObject({ contents: `${upstreamProvider}\n` });
   });
+
+  it.each(MANAGED_STARTUP_AGENTS)(
+    "represents the complete $0 Docker/start affordance inventory",
+    (agent) => {
+      const result = mapManagedStartupProfileToAgentEnvironment(PROFILES[agent]());
+      expect(representedLegacyInputs(result)).toEqual(
+        MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY[agent]
+          .map((affordance) => affordance.input)
+          .sort(),
+      );
+      const messagingActions = result.actions.filter(
+        (action) => action.kind === "apply-messaging-plan",
+      );
+      expect(messagingActions.map(({ phase, runAs }) => [phase, runAs])).toEqual(
+        agent === "langchain-deepagents-code" || agent === "pi"
+          ? []
+          : [
+              ["runtime-setup", "root"],
+              ["post-agent-install", "sandbox"],
+            ],
+      );
+      expect(messagingActions.map((action) => String(action.phase))).not.toContain("agent-install");
+    },
+  );
 
   it("uses explicit clear states without erasing launch-only ambient proxy credentials", () => {
     const openclawBase = openClawProfile();
@@ -870,6 +1060,21 @@ describe("managed startup agent environment", () => {
       /messaging.plan must be null for langchain-deepagents-code/,
     );
   });
+
+  it.each(["provider-π", `p${"x".repeat(64)}`, "-ollama-local"])(
+    "rejects unsupported DCode provider identifier %s before materialization (#7112)",
+    (upstreamProvider) => {
+      const base = dcodeProfile();
+      const profile: ManagedStartupProfile = {
+        ...base,
+        inference: { ...base.inference, upstreamProvider },
+      };
+
+      expect(() => mapManagedStartupProfileToAgentEnvironment(profile)).toThrow(
+        /must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode/u,
+      );
+    },
+  );
 
   it("revalidates typed input while keeping DCode host proxy intent outside its pinned runtime", () => {
     const dcodeBase = dcodeProfile();
