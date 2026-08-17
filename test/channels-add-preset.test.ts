@@ -402,8 +402,9 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     );
   });
 
-  for (const channel of ["telegram", "slack", "discord"]) {
-    it(`applies the '${channel}' preset before triggering rebuild`, async () => {
+  it.each(["telegram", "slack", "discord"])(
+    "applies the '%s' preset before triggering rebuild",
+    async (channel) => {
       await addSandboxChannel("test-sb", { channel });
 
       expect(applyPresetSpy).toHaveBeenCalledOnce();
@@ -414,8 +415,8 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
         callOrder.indexOf("promptAndRebuild"),
       );
-    });
-  }
+    },
+  );
 
   it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", async () => {
     sandboxAgent = "hermes";
