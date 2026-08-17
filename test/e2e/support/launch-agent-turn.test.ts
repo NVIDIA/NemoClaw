@@ -243,13 +243,14 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
   const sessionRoot = join(fixtureRoot, "sessions");
   const tuiPidsPath = join(fixtureRoot, "tui-pids");
   const ttyMarker = join(fixtureRoot, "tty-observed");
-  const openshellCallsPath = join(fixtureRoot, "openshell-calls.jsonl");
+  const openshellCallsRoot = join(fixtureRoot, "openshell-calls");
   const pendingQualificationMarker = join(fixtureRoot, "pending-qualification-observed");
   const ptyRecordReceiptPath = join(fixtureRoot, "pty-record-receipt.json");
   const runId = randomUUID().replaceAll("-", "");
   const baselinePath = `/tmp/nemoclaw-launch-session-${runId}.json`;
   const ptyRecordRoot = `/tmp/nemoclaw-launch-turn-${runId}`;
   mkdirSync(sessionRoot);
+  mkdirSync(openshellCallsRoot, { mode: 0o700 });
   writeFileSync(
     join(fixtureRoot, ".bash_profile"),
     'export PATH="$NEMOCLAW_FIXTURE_BIN_ROOT:$PATH"\n',
@@ -406,7 +407,9 @@ if (process.argv[2] !== "tui") {
       String.raw`#!/usr/bin/env bash
 set -euo pipefail
 node -e '
+const crypto = require("node:crypto");
 const fs = require("node:fs");
+const path = require("node:path");
 const authorityNames = Object.keys(process.env)
   .filter(
     (name) =>
@@ -416,9 +419,13 @@ const authorityNames = Object.keys(process.env)
       name.startsWith("OPENSHELL_NEMOCLAW_LAUNCH_"),
   )
   .sort();
-fs.appendFileSync(
-  process.env.NEMOCLAW_FIXTURE_OPENSHELL_CALLS,
-  JSON.stringify({ argv: process.argv.slice(1), authorityNames }) + "\\n",
+fs.writeFileSync(
+  path.join(
+    process.env.NEMOCLAW_FIXTURE_OPENSHELL_CALLS,
+    process.pid + "-" + crypto.randomUUID() + ".json",
+  ),
+  JSON.stringify({ argv: process.argv.slice(1), authorityNames }),
+  { flag: "wx", mode: 0o600 },
 );
 ' "$@"
 while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
@@ -456,7 +463,7 @@ exec "$@"
         HOME: fixtureRoot,
         NEMOCLAW_FIXTURE_BIN_ROOT: fixtureRoot,
         NEMOCLAW_FIXTURE_MODE: mode,
-        NEMOCLAW_FIXTURE_OPENSHELL_CALLS: openshellCallsPath,
+        NEMOCLAW_FIXTURE_OPENSHELL_CALLS: openshellCallsRoot,
         NEMOCLAW_FIXTURE_PENDING_QUALIFICATION_MARKER: pendingQualificationMarker,
         NEMOCLAW_FIXTURE_PTY_RECORD_ROOT: ptyRecordRoot,
         NEMOCLAW_FIXTURE_SESSION_FILE: join(sessionRoot, "session-a.jsonl"),
@@ -502,13 +509,15 @@ exec "$@"
         name.startsWith("nemoclaw-launch-host."),
       ),
       orphanedTuiProcessIds: tuiProcessIds.filter((pid) => existsSync(`/proc/${pid}`)),
-      openshellCalls: existsSync(openshellCallsPath)
-        ? readFileSync(openshellCallsPath, "utf8")
-            .trim()
-            .split("\n")
-            .filter(Boolean)
-            .map((line) => JSON.parse(line) as { argv: string[]; authorityNames: string[] })
-        : [],
+      openshellCalls: readdirSync(openshellCallsRoot)
+        .sort()
+        .map(
+          (name) =>
+            JSON.parse(readFileSync(join(openshellCallsRoot, name), "utf8")) as {
+              argv: string[];
+              authorityNames: string[];
+            },
+        ),
       pendingQualificationObserved: existsSync(pendingQualificationMarker),
       ptyRecordRemoved: !existsSync(ptyRecordRoot),
       ptyRecordReceipt: existsSync(ptyRecordReceiptPath)
