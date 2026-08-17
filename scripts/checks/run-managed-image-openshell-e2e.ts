@@ -417,7 +417,7 @@ export function managedImageOpenShellProbe(
         ? "Hermes health endpoint"
         : "LangChain Deep Agents Code version command";
   const probeStep = (label: string, command: string) =>
-    `if ! ${command}; then\n  printf '%s\\n' ${JSON.stringify(
+    `if ! {\n${command}\n}; then\n  printf '%s\\n' ${JSON.stringify(
       `managed-image startup probe failed: ${label}`,
     )} >&2\n  exit 1\nfi`;
   return [

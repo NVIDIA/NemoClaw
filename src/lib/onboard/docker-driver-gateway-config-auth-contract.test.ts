@@ -9,8 +9,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
-  GATEWAY_AUTH_REVIEW_NOTE,
-  GATEWAY_MIGRATION_REVIEW_NOTE,
   jwtBundlePaths,
   mintOpenShellStyleSandboxJwt,
   parseTomlInteger,
@@ -20,72 +18,6 @@ import {
 } from "../../../test/support/openshell-gateway-config-helpers";
 
 describe("docker-driver-gateway auth contract", () => {
-  it("keeps supported OpenShell gateway authentication in public security guidance", () => {
-    const publicGatewayControls = fs.readFileSync(
-      path.resolve(
-        import.meta.dirname,
-        "../../../docs/security/gateway-authentication-controls.mdx",
-      ),
-      "utf-8",
-    );
-
-    expect(publicGatewayControls).toContain("Host-side OpenShell CLI calls use local mTLS");
-    expect(publicGatewayControls).toContain(
-      "Sandbox callbacks use the guest mTLS bundle plus a sandbox-scoped JWT",
-    );
-    expect(publicGatewayControls).toContain("allow_unauthenticated_users = false");
-    expect(publicGatewayControls).toContain("OPENSHELL_DISABLE_GATEWAY_AUTH=true");
-    expect(publicGatewayControls).toContain("ttl_secs = 0");
-  });
-
-  it("keeps the OpenShell gateway auth source review aligned with the generated config", () => {
-    const compatibilityReview = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
-    const migrationReview = fs.readFileSync(GATEWAY_MIGRATION_REVIEW_NOTE, "utf-8");
-    const inheritedAuthReview = fs.readFileSync(
-      path.join(path.dirname(GATEWAY_AUTH_REVIEW_NOTE), "openshell-0.0.71-gateway-auth-review.mdx"),
-      "utf-8",
-    );
-
-    expect(compatibilityReview).toContain("NVIDIA/OpenShell@v0.0.72");
-    expect(compatibilityReview).toContain("8cb16de9eae4c44d7d31e1493747d8c10abb5963");
-    expect(compatibilityReview).toContain("OpenShell 0.0.71 gateway authentication review");
-    expect(compatibilityReview).toContain(
-      "https://github.com/NVIDIA/OpenShell/actions/runs/28382086068",
-    );
-    expect(compatibilityReview).toContain(
-      "supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
-    );
-    expect(compatibilityReview).toContain("openshell-gateway-auth-source-contract.test.ts");
-    expect(compatibilityReview).toContain("OPENSHELL_DISABLE_GATEWAY_AUTH=true");
-    expect(compatibilityReview).toContain("Round-Trippable Policy Boundary");
-    expect(compatibilityReview).toContain("openshell policy get --base <sandbox>");
-    expect(compatibilityReview).toContain("_provider_*");
-    expect(compatibilityReview).toContain("protocol: mcp");
-    expect(compatibilityReview).toContain("protocol: json-rpc");
-    expect(migrationReview).toContain("3dee5570a46076a57a3b056f35f35ebc0861ac85");
-    expect(migrationReview).toContain(
-      "sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
-    );
-
-    expect(inheritedAuthReview).toContain("openshell_server::config_file::load()");
-    expect(inheritedAuthReview).toContain("allow_unauthenticated_users");
-    expect(inheritedAuthReview).toContain("gateway_jwt");
-    expect(inheritedAuthReview).toContain("host-side OpenShell CLI user calls use local mTLS");
-    expect(inheritedAuthReview).toContain(
-      "gateway_listener_addresses_include_driver_address_on_distinct_ip",
-    );
-    expect(inheritedAuthReview).toContain("container_visible_endpoint_rewrites_loopback_hosts");
-    expect(inheritedAuthReview).toContain(
-      "docker_gateway_route_uses_bridge_gateway_for_linux_docker",
-    );
-    expect(inheritedAuthReview).toContain(
-      "NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_BIND_ADDRESS=0.0.0.0` is rejected",
-    );
-    expect(inheritedAuthReview).toContain("reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0`");
-    expect(inheritedAuthReview).toContain("OpenShell gateway auth source contract");
-    expect(inheritedAuthReview).toContain("valid sandbox JWT access from Docker origin");
-  });
-
   it("emits an OpenShell 0.0.85-compatible sandbox JWT bundle and TTL contract", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {

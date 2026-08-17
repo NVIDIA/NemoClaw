@@ -17,12 +17,17 @@ function openClawHealthFragment(endpoint: string): string {
   const assignmentOffset = probe.indexOf(assignmentMarker);
   const caseEndMarker = "\nesac";
   const caseEndOffset = probe.indexOf(caseEndMarker, assignmentOffset);
+  const stepStartOffset = probe.lastIndexOf("if ! {", assignmentOffset);
+  const stepEndMarker = "\nfi";
+  const stepEndOffset = probe.indexOf(stepEndMarker, caseEndOffset);
   expect(assignmentOffset).toBeGreaterThanOrEqual(0);
   expect(caseEndOffset).toBeGreaterThan(assignmentOffset);
+  expect(stepStartOffset).toBeGreaterThanOrEqual(0);
+  expect(stepEndOffset).toBeGreaterThan(caseEndOffset);
   expect(probe).toContain(`-w '%{http_code}'`);
   expect(probe).toContain(OPENCLAW_HEALTH_URL);
   return probe
-    .slice(assignmentOffset, caseEndOffset + caseEndMarker.length)
+    .slice(stepStartOffset, stepEndOffset + stepEndMarker.length)
     .replace(OPENCLAW_HEALTH_URL, endpoint);
 }
 

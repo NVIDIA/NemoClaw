@@ -127,20 +127,35 @@ process.execve("/usr/bin/env", ["/usr/bin/env", ...originalArgv], process.env);
 fail("pty_execve_failed");
 `;
 
-// The host shim changes only the exact OpenClaw launch exec. Every other
-// OpenShell call reaches the pinned binary with unchanged argv.
+// The host shim replaces argv only for the matching OpenClaw launch. It removes
+// its private launch variables before every call to the pinned OpenShell binary.
 export const OPENCLAW_LAUNCH_OPENSHELL_SHIM_SCRIPT = String.raw`#!/usr/bin/env node
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const argv = process.argv.slice(2);
-const realOpenShell = process.env.NEMOCLAW_OPENSHELL_COMMAND;
-const sandboxName = process.env.NEMOCLAW_LAUNCH_SANDBOX;
-const runId = process.env.NEMOCLAW_LAUNCH_RUN_ID;
-const interceptPath = process.env.NEMOCLAW_LAUNCH_INTERCEPT_PATH;
-const writerScript = process.env.NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT;
-const runtimeEnvScript = process.env.NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
+// Direct CLI exec paths can inherit source names that filtered helpers omit.
+const authorityNames = [
+  "NEMOCLAW_OPENSHELL_COMMAND",
+  "NEMOCLAW_LAUNCH_SANDBOX",
+  "NEMOCLAW_LAUNCH_RUN_ID",
+  "NEMOCLAW_LAUNCH_INTERCEPT_PATH",
+  "NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
+  "NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
+  "OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND",
+  "OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX",
+  "OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID",
+  "OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH",
+  "OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT",
+  "OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT",
+];
+const realOpenShell = process.env.OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND;
+const sandboxName = process.env.OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX;
+const runId = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID;
+const interceptPath = process.env.OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH;
+const writerScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT;
+const runtimeEnvScript = process.env.OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT;
 
 function fail(reason) {
   process.stderr.write(JSON.stringify({ reason }) + "\n");
@@ -152,7 +167,10 @@ function arraysEqual(left, right) {
 }
 
 function runRealOpenShell(nextArgv) {
+  const env = { ...process.env };
+  for (const name of authorityNames) delete env[name];
   const result = childProcess.spawnSync(realOpenShell, nextArgv, {
+    env,
     stdio: "inherit",
     timeout: 240_000,
     killSignal: "SIGKILL",
@@ -867,9 +885,12 @@ else
 fi
 
 NEMOCLAW_OPENSHELL_BIN="$openshell_shim" \
-NEMOCLAW_LAUNCH_INTERCEPT_PATH="$intercept_path" \
-NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT="$NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT" \
-NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT="$NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT" \
+OPENSHELL_NEMOCLAW_LAUNCH_REAL_COMMAND="$NEMOCLAW_OPENSHELL_COMMAND" \
+OPENSHELL_NEMOCLAW_LAUNCH_SANDBOX="$NEMOCLAW_LAUNCH_SANDBOX" \
+OPENSHELL_NEMOCLAW_LAUNCH_RUN_ID="$NEMOCLAW_LAUNCH_RUN_ID" \
+OPENSHELL_NEMOCLAW_LAUNCH_INTERCEPT_PATH="$intercept_path" \
+OPENSHELL_NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT="$NEMOCLAW_LAUNCH_PTY_RECORD_WRITER_SCRIPT" \
+OPENSHELL_NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT="$NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT" \
 timeout --kill-after=5s 250s \
   script --quiet --return --flush --command "$launch_command" "$capture" \
   <"$input" >/dev/null 2>"$driver_error" &

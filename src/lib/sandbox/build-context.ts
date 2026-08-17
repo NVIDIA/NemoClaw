@@ -331,6 +331,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "corporate-ca-runtime.sh"),
+    path.join(stagedScriptsDir, "lib", "corporate-ca-runtime.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "entrypoint-env-wrapper.sh"),
     path.join(stagedScriptsDir, "lib", "entrypoint-env-wrapper.sh"),
   );
