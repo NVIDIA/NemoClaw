@@ -3,8 +3,8 @@
 
 import {
   canonicalEndpoint,
-  endpointUrlHasUserinfoQueryOrFragment,
   normalizeProviderBaseUrl,
+  unsafeEndpointUrlViolation,
 } from "../core/url-utils";
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
@@ -142,21 +142,24 @@ export async function resolveCompatibleEndpointSelection(args: {
   if (navigation === "exit") {
     exitOnboardFromPrompt();
   }
-  // #9106: reject instead of silently stripping components that NemoClaw
-  // cannot forward to the endpoint.
-  if (endpointUrlHasUserinfoQueryOrFragment(endpointInput)) {
-    console.error("  Endpoint URL must not contain userinfo, query, or fragment components.");
-    // canonicalEndpoint returns null unless the stripped base is a
-    // credential-free http(s) URL, so the hint never echoes userinfo or
-    // query values.
-    const strippedBaseUrl = canonicalEndpoint(
-      normalizeProviderBaseUrl(endpointInput, args.kind),
-      args.kind,
-    );
-    if (strippedBaseUrl) {
-      console.error(
-        `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
+  // #9106/#9301: reject unsafe endpoint input here, before any network
+  // request, provider registration, registry write, or sandbox mutation.
+  const endpointViolation = unsafeEndpointUrlViolation(endpointInput);
+  if (endpointViolation) {
+    console.error(`  Endpoint URL ${endpointViolation.reason}`);
+    if (endpointViolation.kind === "userinfo-query-fragment") {
+      // canonicalEndpoint returns null unless the stripped base is a
+      // credential-free http(s) URL, so the hint never echoes userinfo or
+      // query values.
+      const strippedBaseUrl = canonicalEndpoint(
+        normalizeProviderBaseUrl(endpointInput, args.kind),
+        args.kind,
       );
+      if (strippedBaseUrl) {
+        console.error(
+          `  NemoClaw does not forward these components to the endpoint. Use: ${strippedBaseUrl}`,
+        );
+      }
     }
     if (args.nonInteractive) {
       process.exit(1);

@@ -73,6 +73,71 @@ export function endpointUrlHasUserinfoQueryOrFragment(value: string | null | und
   }
 }
 
+// Endpoint URL inputs feed provider registration, registry writes, Dockerfile
+// ARGs, and container startup commands, so intake accepts only characters that
+// stay inert across every downstream consumer. The set matches the
+// startup-command token allowlist in onboard/docker-startup-command-env.ts
+// plus "~"; the two sets stay separate because command tokens and endpoint
+// URLs are distinct contracts.
+const ENDPOINT_URL_ALLOWED_CHARACTERS = /^[A-Za-z0-9_./:=,@%+\-[\]~]+$/u;
+const PERCENT_ENCODED_CONTROL_CHARACTER = /%(?:[01][0-9a-f]|7f)/i;
+
+export type EndpointUrlViolation = {
+  kind:
+    | "userinfo-query-fragment"
+    | "control-characters"
+    | "encoded-control-characters"
+    | "unsupported-characters"
+    | "invalid-url"
+    | "unsupported-protocol";
+  reason: string;
+};
+
+/**
+ * Classify an endpoint URL input that onboarding must reject before any
+ * network request, provider registration, registry write, or sandbox and
+ * image mutation (#9301). Returns null for an empty input (emptiness is a
+ * separate required-input error) and for a safe absolute HTTP(S) URL. The
+ * reason completes the sentence "Endpoint URL ..." and never echoes the
+ * input value.
+ */
+export function unsafeEndpointUrlViolation(
+  value: string | null | undefined,
+): EndpointUrlViolation | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (endpointUrlHasUserinfoQueryOrFragment(raw)) {
+    return {
+      kind: "userinfo-query-fragment",
+      reason: "must not contain userinfo, query, or fragment components.",
+    };
+  }
+  if (/[\p{Cc}\p{Cf}]/u.test(raw)) {
+    return { kind: "control-characters", reason: "must not contain control characters." };
+  }
+  if (PERCENT_ENCODED_CONTROL_CHARACTER.test(raw)) {
+    return {
+      kind: "encoded-control-characters",
+      reason: "must not contain percent-encoded control characters.",
+    };
+  }
+  if (!ENDPOINT_URL_ALLOWED_CHARACTERS.test(raw)) {
+    return {
+      kind: "unsupported-characters",
+      reason: "must contain only URL-safe ASCII characters.",
+    };
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return { kind: "unsupported-protocol", reason: "must use HTTP or HTTPS." };
+    }
+  } catch {
+    return { kind: "invalid-url", reason: "must be a valid HTTP or HTTPS URL." };
+  }
+  return null;
+}
+
 /** Return the bounded canonical form of a credential-free HTTP(S) provider endpoint. */
 export function canonicalEndpoint(
   value: string | null | undefined,

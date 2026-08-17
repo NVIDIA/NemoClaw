@@ -11,6 +11,7 @@ import {
   type HttpsPinCredentialProviderType,
   isHttpsPinRuntimeEligible,
 } from "../inference/https-pin-runtime";
+import { unsafeEndpointUrlViolation } from "../core/url-utils";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { isAllowedOpenShellSandboxBridgeUrl } from "../private-networks";
 import { ConfigUrlValidationError } from "../sandbox/config";
@@ -136,14 +137,25 @@ function normalizeCustomEndpointUrlWithoutDns(value: string | null | undefined):
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw)
     throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
+  let normalized: string;
   try {
-    return normalizeEndpointUrlShape(raw).normalized;
+    normalized = normalizeEndpointUrlShape(raw).normalized;
   } catch {
     throw new InferenceSetError(
       "endpoint-url must be a valid http(s) URL without userinfo, query, or fragment components.",
       2,
     );
   }
+  // #9301: reject control characters, percent-encoded control characters,
+  // spaces, and shell metacharacters before any provider, registry, or
+  // sandbox mutation, matching onboarding intake. The shape check above owns
+  // the userinfo, query, fragment, scheme, and parse classes and their
+  // established message.
+  const violation = unsafeEndpointUrlViolation(raw);
+  if (violation) {
+    throw new InferenceSetError(`endpoint-url ${violation.reason}`, 2);
+  }
+  return normalized;
 }
 
 export async function normalizeCustomEndpointUrl(
