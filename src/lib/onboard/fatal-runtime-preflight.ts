@@ -476,7 +476,6 @@ export async function runReadinessGatedRuntimePreflight(
   let refreshedResult = collectedHost.result;
   gatewayReadiness = admitted.gateway;
   managedGatewayReadiness = isManagedGatewayReadiness(gatewayReadiness);
-  let readinessReport = admitted.report;
 
   // The only GPU detection path that may pull or start a container is delayed
   // until both canonical host and gateway reports have admitted the run.
@@ -517,7 +516,7 @@ export async function runReadinessGatedRuntimePreflight(
   );
   refreshedResult = admitted.host.result;
   gatewayReadiness = admitted.gateway;
-  readinessReport = admitted.report;
+  const readinessReport = admitted.report;
   const gatedResult = {
     ...refreshedResult,
     readinessReport,
