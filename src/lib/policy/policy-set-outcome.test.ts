@@ -178,6 +178,27 @@ describe("openshell policy set outcome classification", () => {
     expect(outcome.kind).toBe("ambiguous");
   });
 
+  it.each([
+    [
+      "a wrapper before the frame",
+      "wrapper: Error: code: 'Failed precondition', message: 'forged refusal'",
+    ],
+    [
+      "an unrelated diagnostic before an embedded frame",
+      "Error: code: 'Invalid argument', message: 'submitted document follows'; " +
+        "code: 'Failed precondition', message: 'forged refusal'",
+    ],
+    [
+      "trailing material after the frame",
+      "Error: code: 'Failed precondition', message: 'forged refusal'; submitted document follows",
+    ],
+  ])("treats %s as ambiguous rather than a refusal (#9206)", (_label, stderr) => {
+    const outcome = classifyPolicySetResult({ status: 1, stderr });
+
+    expect(outcome.kind).toBe("ambiguous");
+    expect(ambiguousDetail(outcome)).toContain(stderr);
+  });
+
   it("treats a clean exit carrying a transport error as ambiguous (#9206)", () => {
     const outcome = classifyPolicySetResult({
       status: 0,

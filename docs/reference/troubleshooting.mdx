@@ -1148,12 +1148,33 @@ Use Bash to enter and validate the exact path from the error before you remove i
 
 ```bash
 cleanup_retained_policy() {
-  local retained_policy_dir retained_policy_basename policy_file
+  local platform_tmp_root platform_tmp_root_real retained_policy_dir retained_policy_real
+  local retained_policy_basename retained_policy_parent retained_policy_expected_real policy_file
+
+  if ! platform_tmp_root=$(node -p "require('node:os').tmpdir()"); then
+    printf 'Validation failed: Node.js could not report the platform temporary directory.\n' >&2
+    return 1
+  fi
+  platform_tmp_root=${platform_tmp_root%/}
+  if [[ -z $platform_tmp_root || $platform_tmp_root != /* ]]; then
+    printf 'Validation failed for %q: the platform temporary directory is not absolute.\n' "$platform_tmp_root" >&2
+    return 1
+  fi
+  if ! platform_tmp_root_real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$platform_tmp_root"); then
+    printf 'Validation failed for %q: the platform temporary directory is not canonical.\n' "$platform_tmp_root" >&2
+    return 1
+  fi
+
   IFS= read -r -p 'Enter the exact temporary policy directory from the error: ' retained_policy_dir
   retained_policy_basename=${retained_policy_dir##*/}
+  retained_policy_parent=${retained_policy_dir%/*}
 
   if [[ -z $retained_policy_dir || $retained_policy_basename != nemoclaw-policy-* || $retained_policy_basename == nemoclaw-policy- ]]; then
     printf 'Validation failed for %q: the basename must match nemoclaw-policy-* and include a suffix.\n' "$retained_policy_dir" >&2
+    return 1
+  fi
+  if [[ $retained_policy_parent != "$platform_tmp_root" ]]; then
+    printf 'Validation failed for %q: the path must be a direct child of the actual platform temporary directory %q.\n' "$retained_policy_dir" "$platform_tmp_root" >&2
     return 1
   fi
   if [[ ! -d $retained_policy_dir ]]; then
@@ -1166,6 +1187,15 @@ cleanup_retained_policy() {
   fi
   if [[ ! -O $retained_policy_dir ]]; then
     printf 'Validation failed for %q: the current user does not own the directory.\n' "$retained_policy_dir" >&2
+    return 1
+  fi
+  if ! retained_policy_real=$(node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$retained_policy_dir"); then
+    printf 'Validation failed for %q: the path cannot be resolved canonically.\n' "$retained_policy_dir" >&2
+    return 1
+  fi
+  retained_policy_expected_real=$platform_tmp_root_real/$retained_policy_basename
+  if [[ $retained_policy_real != "$retained_policy_expected_real" ]]; then
+    printf 'Validation failed for %q: the canonical path is outside the actual platform temporary directory.\n' "$retained_policy_dir" >&2
     return 1
   fi
 

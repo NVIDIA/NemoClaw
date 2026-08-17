@@ -27,8 +27,8 @@ const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
 ];
 
 /**
- * The one diagnostic shape the classifier accepts as a final refusal: an
- * adjacent failed-precondition status and message on the first line.
+ * The one diagnostic shape the classifier accepts as a final refusal: the
+ * complete synthetic failed-precondition envelope on the first line.
  *
  * Status evidence and message must come from the SAME match. Scanning for
  * them separately let a marker echoed anywhere in the output promote an
@@ -38,7 +38,7 @@ const TRANSPORT_FAILURE_MARKERS: ReadonlyArray<string> = [
  * final, which is the one verdict a deadline can never support.
  */
 const AUTHORITATIVE_REFUSAL_PATTERN =
-  /code:\s*'failed[ _]precondition'[^\n]*?message:\s*'([^']*)'/iu;
+  /^Error:\s+code:\s*'failed[ _]precondition',\s*message:\s*'([^'\r\n]+)'(?:,\s*source:\s*tonic::Status\s*\{\s*code:\s*FailedPrecondition,\s*grpc_status:\s*9\s*\})?\s*$/iu;
 
 function isTransportFailure(detail: string): boolean {
   const haystack = detail.toLowerCase();

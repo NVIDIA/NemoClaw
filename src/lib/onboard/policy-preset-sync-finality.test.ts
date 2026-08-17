@@ -24,7 +24,7 @@ const UNCONFIRMED_ERROR_MESSAGE =
   "Could not confirm the policy update for sandbox 'sb-9206': h2 protocol error. " +
   "The gateway may or may not have applied it; read the current policy back before retrying.";
 
-/** Thrown while a sandbox is still starting; the one condition worth re-polling. */
+/** Thrown while a sandbox is still starting; the one exception worth re-polling. */
 const TRANSIENT_STARTUP_ERROR_MESSAGE = "sandbox not found: sb-9206";
 
 describe("waitForPolicyMutation", () => {
@@ -96,7 +96,7 @@ describe("waitForPolicyMutation", () => {
     expect(sleptMs).toEqual([MUTATION_POLL_INTERVAL_MS, MUTATION_POLL_INTERVAL_MS]);
   });
 
-  it("stops re-polling a mutation that keeps reporting failure once the budget expires (#9206)", () => {
+  it("bounds a readiness poll that keeps returning false (#9206)", () => {
     const startedAtMs = clockMs;
     let attempts = 0;
     const mutate = (): boolean => {
