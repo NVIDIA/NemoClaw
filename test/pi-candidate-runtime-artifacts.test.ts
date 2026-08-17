@@ -284,4 +284,64 @@ describe("Pi managed model catalog generation", () => {
     expect(status).not.toBe(0);
     expect(stderr).toContain("NEMOCLAW_INFERENCE_BASE_URL must not include credentials.");
   });
+
+  function readManagedModel(home: string): Record<string, unknown> {
+    const config = JSON.parse(
+      fs.readFileSync(path.join(home, ".pi", "agent", "models.json"), "utf8"),
+    ) as { providers: Record<string, { models: Record<string, unknown>[] }> };
+    return config.providers.openshell.models[0] as Record<string, unknown>;
+  }
+
+  it("writes the context window, output limit, and reasoning support Pi documents (#7930)", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_CONTEXT_WINDOW: "262144",
+      NEMOCLAW_MAX_TOKENS: "32000",
+      NEMOCLAW_REASONING: "true",
+    });
+    expect(status, stderr).toBe(0);
+    expect(readManagedModel(home)).toEqual({
+      id: "nvidia/nemotron-3-super-120b-a12b",
+      contextWindow: 262_144,
+      maxTokens: 32_000,
+      reasoning: true,
+    });
+  });
+
+  it("omits unset model tuning so Pi keeps its own defaults (#7930)", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_CONTEXT_WINDOW: "",
+      NEMOCLAW_MAX_TOKENS: "",
+      NEMOCLAW_REASONING: "",
+    });
+    expect(status, stderr).toBe(0);
+    expect(readManagedModel(home)).toEqual({ id: "nvidia/nemotron-3-super-120b-a12b" });
+  });
+
+  it("records a disabled reasoning decision instead of dropping it (#7930)", () => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_REASONING: "false",
+    });
+    expect(status, stderr).toBe(0);
+    expect(readManagedModel(home)).toEqual({
+      id: "nvidia/nemotron-3-super-120b-a12b",
+      reasoning: false,
+    });
+  });
+
+  it.each([
+    ["NEMOCLAW_CONTEXT_WINDOW", "128k", "NEMOCLAW_CONTEXT_WINDOW must be a positive integer."],
+    ["NEMOCLAW_MAX_TOKENS", "0", "NEMOCLAW_MAX_TOKENS must be a positive integer."],
+    ["NEMOCLAW_REASONING", "yes", 'NEMOCLAW_REASONING must be "true" or "false".'],
+  ])("rejects %s=%s before writing a catalog (#7930)", (name, value, message) => {
+    const { home, status, stderr } = generate({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      [name]: value,
+    });
+    expect(status).not.toBe(0);
+    expect(stderr).toContain(message);
+    expect(fs.existsSync(path.join(home, ".pi", "agent", "models.json"))).toBe(false);
+  });
 });

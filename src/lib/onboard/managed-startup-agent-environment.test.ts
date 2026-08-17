@@ -687,6 +687,127 @@ describe("managed startup agent environment", () => {
     ]);
   });
 
+  it("keeps the Pi managed route credential-free and confined to root-owned proxy files (#7930)", () => {
+    const result = mapManagedStartupProfileToAgentEnvironment(piProfile());
+
+    expect(result.configurationEnvironment).toEqual({
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      NEMOCLAW_CONTEXT_WINDOW: "",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_MAX_TOKENS: "",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_REASONING: "",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+      NO_PROXY: "",
+      http_proxy: "",
+      https_proxy: "",
+      no_proxy: "",
+    });
+    expect(result.runtimeEnvironment).toEqual({
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "inference",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_TOOL_DISCLOSURE: "progressive",
+      NEMOCLAW_UPSTREAM_PROVIDER: "nvidia",
+    });
+    expect(result.materials).toEqual([
+      {
+        kind: "corporate-ca-handoff",
+        legacyInput: "NEMOCLAW_CORPORATE_CA_B64",
+        expectedSha256: CA_SHA256,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_PROXY_HOST",
+        path: "/usr/local/share/nemoclaw/pi-proxy-host",
+        contents: "10.200.0.1\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+      {
+        kind: "root-owned-file",
+        legacyInput: "NEMOCLAW_PROXY_PORT",
+        path: "/usr/local/share/nemoclaw/pi-proxy-port",
+        contents: "3128\n",
+        owner: "root",
+        group: "root",
+        mode: 0o444,
+      },
+    ]);
+    expect(result.actions).toEqual([
+      { kind: "generate-agent-config", agent: "pi", runAs: "sandbox" },
+      { kind: "configure-dashboard", dashboard: { agent: "pi", mode: "disabled" } },
+    ]);
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("nvapi-");
+    expect(serialized).not.toContain("NVIDIA_API_KEY");
+    expect(serialized).not.toContain("BEGIN CERTIFICATE");
+    expect(serialized).toContain(CA_SHA256);
+  });
+
+  it("hands Pi model tuning to its config generator and keeps it out of the long-running runtime (#7930)", () => {
+    const base = piProfile();
+    const result = mapManagedStartupProfileToAgentEnvironment({
+      ...base,
+      tuning: { contextWindow: 262_144, maxTokens: 32_000, reasoning: true, reasoningEffort: null },
+    });
+
+    expect(result.configurationEnvironment).toMatchObject({
+      NEMOCLAW_CONTEXT_WINDOW: "262144",
+      NEMOCLAW_MAX_TOKENS: "32000",
+      NEMOCLAW_REASONING: "true",
+    });
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_CONTEXT_WINDOW");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_MAX_TOKENS");
+    expect(result.runtimeEnvironment).not.toHaveProperty("NEMOCLAW_REASONING");
+    expect(
+      mapManagedStartupProfileToAgentEnvironment({
+        ...base,
+        tuning: { ...base.tuning, reasoning: false },
+      }).configurationEnvironment.NEMOCLAW_REASONING,
+    ).toBe("false");
+  });
+
+  it("rebuilds the Pi generator inputs from the current route without retaining the previous one (#7930)", () => {
+    const base = piProfile();
+    const before = mapManagedStartupProfileToAgentEnvironment(base);
+    const after = mapManagedStartupProfileToAgentEnvironment({
+      ...base,
+      inference: {
+        ...base.inference,
+        routeProvider: "rebuilt-inference",
+        upstreamProvider: "openrouter",
+        model: "openai/gpt-5.4",
+        routedBaseUrl: "https://rebuilt.inference.local/v1",
+      },
+      proxy: { ...base.proxy, managedHost: "10.200.0.9", managedPort: 3129 },
+    });
+
+    expect(after.configurationEnvironment).toMatchObject({
+      NEMOCLAW_INFERENCE_BASE_URL: "https://rebuilt.inference.local/v1",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "rebuilt-inference",
+      NEMOCLAW_MODEL: "openai/gpt-5.4",
+      NEMOCLAW_UPSTREAM_PROVIDER: "openrouter",
+    });
+    expect(after.materials).toEqual([
+      before.materials[0],
+      { ...before.materials[1], contents: "10.200.0.9\n" },
+      { ...before.materials[2], contents: "3129\n" },
+    ]);
+    const serialized = JSON.stringify(after);
+    expect(serialized).not.toContain("https://inference.local/v1");
+    expect(serialized).not.toContain("nvidia/nemotron-3-super-120b-a12b");
+    expect(serialized).not.toContain("10.200.0.1");
+    expect(serialized).not.toContain("3128");
+    expect(after.actions).toEqual(before.actions);
+  });
+
   it("feeds the existing OpenClaw and Hermes config consumers without translation", () => {
     const openclaw = mapManagedStartupProfileToAgentEnvironment(openClawProfile());
     const openclawConfig = buildOpenClawConfig({
