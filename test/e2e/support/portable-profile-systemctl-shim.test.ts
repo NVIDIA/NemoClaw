@@ -241,6 +241,24 @@ function formatPsStartTime(scope: FixtureScope, startTime: string): ReturnType<t
   );
 }
 
+function readManagedGatewayBinaryPath(scope: FixtureScope): ReturnType<typeof spawnSync> {
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      'source "$1"\nread_managed_gateway_binary_path',
+      "portable-profile-gateway-binary",
+      scope.shim,
+    ],
+    {
+      encoding: "utf8",
+      env: scope.env,
+      killSignal: "SIGKILL",
+      timeout: 15_000,
+    },
+  );
+}
+
 function systemctlAsync(
   scope: FixtureScope,
   args: string[],
@@ -434,6 +452,37 @@ function portableLaunchStep(name: string): WorkflowStep {
 }
 
 describe("portable profile systemctl fixture", () => {
+  it.each(["/usr/local/bin/openshell-gateway", "/usr/bin/openshell-gateway"])(
+    "reads installer-selected OpenShell gateway binary %s from the managed user service (#9208)",
+    (gatewayBinary) => {
+      const scope = createFixture();
+      try {
+        fs.writeFileSync(scope.gatewayUnitPath, gatewayServiceUnit(gatewayBinary), { mode: 0o600 });
+        const result = readManagedGatewayBinaryPath(scope);
+        expect(result.status, String(result.stderr)).toBe(0);
+        expect(result.stdout).toBe(`${gatewayBinary}\n`);
+      } finally {
+        fs.rmSync(scope.directory, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("rejects a managed OpenShell gateway user service that names an untrusted binary path (#9208)", () => {
+    const scope = createFixture();
+    try {
+      fs.writeFileSync(
+        scope.gatewayUnitPath,
+        gatewayServiceUnit("/opt/openshell/bin/openshell-gateway"),
+        { mode: 0o600 },
+      );
+      const result = readManagedGatewayBinaryPath(scope);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+    } finally {
+      fs.rmSync(scope.directory, { force: true, recursive: true });
+    }
+  });
+
   it("normalizes irregular ps fallback spacing to one process-start-time identity (#9006)", () => {
     const scope = createFixture();
     try {

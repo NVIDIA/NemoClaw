@@ -54,10 +54,9 @@ export function prepareGitHubHostedRuntimeAuthority(
       execFileSync(command, args, execOptions);
     });
   install(
-    "sudo",
+    uid === 0 ? "/usr/bin/install" : "sudo",
     [
-      "--non-interactive",
-      "install",
+      ...(uid === 0 ? [] : ["--non-interactive", "install"]),
       "-d",
       "-m",
       "0700",

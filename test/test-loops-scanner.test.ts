@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { scanTextForTestLoops } from "../scripts/growth-guardrails/find-test-loops.mts";
+import {
+  formatReport,
+  scanTextForTestLoops,
+} from "../scripts/growth-guardrails/find-test-loops.mts";
 
 describe("test loop scanner", () => {
   it("detects each for-loop form inside a test callback", () => {
@@ -51,14 +54,28 @@ describe("test loop scanner", () => {
     });
   });
 
-  it("ignores fixture text and loop forms that do not represent table-test candidates", () => {
+  it("allows required iteration in a named helper outside the test callback", () => {
     const occurrences = scanTextForTestLoops(
       "test/virtual-helper-loops.test.ts",
       `
-        const fixture = \`for (const row of rows) { expect(row).toBeDefined(); }\`;
         function collect(values) {
           for (const value of values) consume(value);
         }
+        it("collects values", () => {
+          collect(values);
+          expect(values).toBeDefined();
+        });
+      `,
+    );
+
+    expect(occurrences).toEqual([]);
+  });
+
+  it("ignores fixture text, hooks, and loop forms outside the rule", () => {
+    const occurrences = scanTextForTestLoops(
+      "test/virtual-ignored-loops.test.ts",
+      `
+        const fixture = \`for (const row of rows) { expect(row).toBeDefined(); }\`;
         afterEach(() => {
           for (const resource of resources) resource.close();
         });
@@ -66,7 +83,6 @@ describe("test loop scanner", () => {
           while (pending()) wait();
           do { wait(); } while (pending());
           values.forEach(consume);
-          collect(values);
           expect(fixture).toContain("for");
         });
       `,
@@ -95,5 +111,24 @@ describe("test loop scanner", () => {
       contextKind: "test",
       contextName: "iterates in interpolation",
     });
+  });
+
+  it("reports findings as test loops", () => {
+    const occurrences = scanTextForTestLoops(
+      "test/virtual-report.test.ts",
+      'it("iterates", () => { for (const value of values) consume(value); });',
+    );
+    const report = formatReport(
+      {
+        summary: { scannedFiles: 1, filesWithLoops: 1, loopCount: 1 },
+        files: [{ file: "test/virtual-report.test.ts", count: 1 }],
+        occurrences,
+      },
+      { top: 1 },
+    );
+
+    expect(report).toContain("found 1 test loop(s) in 1 file(s)");
+    expect(report).toContain("\nTest loops:\n");
+    expect(report).not.toContain("table-test candidate");
   });
 });

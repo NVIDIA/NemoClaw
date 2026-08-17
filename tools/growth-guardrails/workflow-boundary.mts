@@ -67,8 +67,8 @@ const APPROVED_STEP_SHAPES = [
     sha256: "991a7036d27aeb45fde2f3178936fba6ac87b90200b79c933015f9d63525d3cf",
   },
   {
-    name: "Require changed test files not to add table-test candidate loops",
-    sha256: "6432b36d3c5ed34c648d782e5fc2302c15e76aea88b0ed319dca080ef6ef9431",
+    name: "Require changed test files not to increase test-loop counts",
+    sha256: "b31484bda2065644a63d1fb5fdd36d4a98f307e9b6514eeb236952e689a64106",
   },
 ] as const;
 

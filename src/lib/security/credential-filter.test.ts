@@ -4,7 +4,24 @@
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const fsControl = vi.hoisted(() => ({
+  noFollowUnavailable: false,
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    constants: {
+      ...original.constants,
+      get O_NOFOLLOW(): number | undefined {
+        return fsControl.noFollowUnavailable ? undefined : original.constants.O_NOFOLLOW;
+      },
+    },
+  };
+});
 
 import {
   isConfigValue,
@@ -382,6 +399,35 @@ describe("sanitizeEnvFile", () => {
       }),
     ).toBe(false);
     expect(readFileSync(envPath, "utf-8")).toBe(source);
+  });
+});
+
+describe("credential filter no-follow boundary", () => {
+  it("fails closed without atomic no-follow support", () => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-credential-filter-failure-"));
+    const jsonPath = join(root, "openclaw.json");
+    const yamlPath = join(root, "config.yaml");
+    const envPath = join(root, ".env");
+    const jsonSource = JSON.stringify({ apiKey: "sk-secret-value" });
+    const yamlSource = "api_key: sk-secret-value\n";
+    const envSource = "API_KEY=sk-secret-value\n";
+
+    try {
+      writeFileSync(jsonPath, jsonSource);
+      writeFileSync(yamlPath, yamlSource);
+      writeFileSync(envPath, envSource);
+      fsControl.noFollowUnavailable = true;
+
+      expect(sanitizeConfigFile(jsonPath)).toBe(false);
+      expect(sanitizeYamlConfigFile(yamlPath)).toBe(false);
+      expect(sanitizeEnvFile(envPath)).toBe(false);
+      expect(readFileSync(jsonPath, "utf-8")).toBe(jsonSource);
+      expect(readFileSync(yamlPath, "utf-8")).toBe(yamlSource);
+      expect(readFileSync(envPath, "utf-8")).toBe(envSource);
+    } finally {
+      fsControl.noFollowUnavailable = false;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

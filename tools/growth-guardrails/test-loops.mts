@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Trusted policy evaluator: a changed test file may not add table-test
-// candidate loops. The workflow reads pull-request blobs as data and parses
-// them with the TypeScript AST. It never executes pull-request code.
+// Trusted policy evaluator: a changed test file must not increase its test-loop
+// count. The workflow reads pull-request blobs as data and parses them with the
+// TypeScript AST. It never executes pull-request code.
 
 import { scanTextForTestLoops } from "../../scripts/growth-guardrails/find-test-loops.mts";
 import {
@@ -54,7 +54,7 @@ export function evaluateLoopViolations(
     headTotal += headCount;
     if (headCount > baseCount) {
       details.push(
-        `${change.headPath ?? change.displayName}: ${headCount} table-test candidate loop(s), up from ${baseCount}`,
+        `${change.headPath ?? change.displayName}: ${headCount} test loop(s), up from ${baseCount}`,
       );
     }
   }
@@ -120,13 +120,13 @@ async function main(): Promise<void> {
   const client = createPrBlobClient({ token: env.GH_TOKEN });
   const result = await runTestLoops(client, env);
   if (!result.ok) {
-    console.error("FAIL: changed test files add table-test candidate loops.");
+    console.error("FAIL: changed test files increase test-loop counts.");
     console.error(
-      `Changed test files contain ${result.headTotal} table-test candidate loop(s) at the latest PR commit vs ${result.baseTotal} at base.`,
+      `Across all changed test files: ${result.headTotal} test loop(s) at the latest PR commit vs ${result.baseTotal} at base.`,
     );
     console.error("");
     console.error(
-      "Test cases should stay linear. Use it.each or test.each for independent cases. Move iteration that represents one behavior into a named helper outside the test callback.",
+      "Keep test callbacks linear. Move iteration needed for one behavior into a named helper outside the test callback. Use it.each or test.each when loop rows are independent cases.",
     );
     console.error("");
     console.error("Files with increased test loop counts:");
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(
-    `PASS: changed test files did not add table-test candidate loops (${result.headTotal} at the latest PR commit vs ${result.baseTotal} at base).`,
+    `PASS: no changed test file increased its test-loop count (${result.headTotal} total at the latest PR commit vs ${result.baseTotal} at base).`,
   );
 }
 

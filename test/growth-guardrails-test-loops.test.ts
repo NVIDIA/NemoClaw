@@ -61,17 +61,17 @@ describe("growth-guardrails test-loops: pure policy", () => {
     displayName: path,
   });
 
-  it("flags a test file that adds a table-test candidate loop", () => {
+  it("flags a test file that adds a test loop", () => {
     const result = evaluateLoopViolations(
       [same("test/a.test.ts")],
       blobs({ "test/a.test.ts": NO_LOOP }),
       blobs({ "test/a.test.ts": ONE_LOOP }),
     );
-    expect(result.details).toEqual(["test/a.test.ts: 1 table-test candidate loop(s), up from 0"]);
+    expect(result.details).toEqual(["test/a.test.ts: 1 test loop(s), up from 0"]);
     expect([result.baseTotal, result.headTotal]).toEqual([0, 1]);
   });
 
-  it("passes a test file that removes table-test candidate loops", () => {
+  it("passes a test file that removes test loops", () => {
     const result = evaluateLoopViolations(
       [same("test/a.test.ts")],
       blobs({ "test/a.test.ts": TWO_LOOPS }),
@@ -103,7 +103,7 @@ describe("growth-guardrails test-loops: pure policy", () => {
       blobs({ "test/adder.test.ts": ONE_LOOP, "test/remover.test.ts": NO_LOOP }),
     );
     expect(result.details).toEqual([
-      "test/adder.test.ts: 1 table-test candidate loop(s), up from 0",
+      "test/adder.test.ts: 1 test loop(s), up from 0",
     ]);
     expect([result.baseTotal, result.headTotal]).toEqual([2, 1]);
   });
@@ -128,14 +128,14 @@ describe("growth-guardrails test-loops: orchestration", () => {
     REPO: "NVIDIA/NemoClaw",
   } as const;
 
-  it("fails a PR whose changed test adds a table-test candidate loop", async () => {
+  it("fails a PR whose changed test adds a test loop", async () => {
     const client = fakeClient([{ filename: "test/a.test.ts", status: "modified" }], {
       "NVIDIA/NemoClaw base test/a.test.ts": NO_LOOP,
       "fork/repo head test/a.test.ts": ONE_LOOP,
     });
     const result = await runTestLoops(client, ENV);
     expect(result.ok).toBe(false);
-    expect(result.details).toEqual(["test/a.test.ts: 1 table-test candidate loop(s), up from 0"]);
+    expect(result.details).toEqual(["test/a.test.ts: 1 test loop(s), up from 0"]);
   });
 
   it("ignores changed source files that are not tests", async () => {
