@@ -144,15 +144,15 @@ describe("native runtime qualification case boundaries", () => {
     );
   });
 
-  it("accepts an exact administrator-authorized candidate workflow row", () => {
-    const candidateSource = { ...SOURCE, workflowSha: SOURCE.candidateSha };
-    const candidateRow = buildNativeRuntimeQualificationProducerPlan({
-      source: candidateSource,
-      installerSha256: "d".repeat(64),
-      arm64GpuRunner: "native-arm64-gpu",
-    } satisfies NativeRuntimeQualificationProducerPlanInput).include[0]!;
+  it("rejects candidate workflow authority in a forged row", () => {
+    const candidateRow = JSON.parse(JSON.stringify(row())) as {
+      source: { candidateSha: string; workflowSha: string };
+    };
+    candidateRow.source.workflowSha = candidateRow.source.candidateSha;
 
-    expect(parseNativeRuntimeQualificationRow(JSON.stringify(candidateRow))).toEqual(candidateRow);
+    expect(() => parseNativeRuntimeQualificationRow(JSON.stringify(candidateRow))).toThrow(
+      "Native runtime qualification source identity is invalid",
+    );
   });
 
   it("accepts only the run-owned rootless Podman executable path for the current uid", () => {
