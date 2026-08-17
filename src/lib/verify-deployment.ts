@@ -319,7 +319,7 @@ function hasSeparateAgentApiPort(chain: DashboardDeliveryChain): boolean {
  * The in-sandbox gateway probe only proves the API listens inside the sandbox;
  * it says nothing about the host forward operators actually connect through.
  * Onboarding advertises that host URL on the success screen, so it has to be
- * probed from the host too — otherwise a failed API forward leaves onboarding
+ * probed from the host too. Otherwise, a failed API forward leaves onboarding
  * reporting a healthy deployment while the documented endpoint refuses every
  * connection (#9290).
  */
