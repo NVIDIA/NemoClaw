@@ -1197,8 +1197,7 @@ For a manual PR run, provide these inputs:
 - The exact SHA of the trusted workflow commit on `main`.
 - A review reason containing 10 to 500 printable characters.
 
-For a native runtime producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
-Leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false` to use this PR revision selection.
+For the default PR revision selection, leave `jobs` and `targets` empty and keep `include_staging_brev_launchable=false`.
 Keep `allow_jetson_dispatch=false` and `allow_dgx_spark_runner_queue=false` for the default PR revision selection.
 If `allow_dgx_spark_runner_queue=true`, GitHub can pause the qualification job for the `approve-dgx-spark-image-qualification` environment.
 An authorized environment reviewer must approve it before qualification starts.
@@ -1206,8 +1205,9 @@ To select the protected managed-image runtime qualification, set `jobs=managed-i
 Leave `targets` empty.
 Keep `include_staging_brev_launchable=false`.
 The exact candidate must contain `ci/protected-managed-image-multiarch-activation-v1.json` and `ci/protected-managed-image-runtime-activation-v1.json`.
-To select native-runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
+To select native runtime qualification evidence production, set `jobs=native-runtime-qualification-producer`.
 Leave `targets` empty and keep `include_staging_brev_launchable=false`.
+For this producer run, the executing workflow SHA, `workflow_sha` input, and PR base SHA must match.
 Confirm that the PR comes from `NVIDIA/NemoClaw`, the required ephemeral runner variables are configured, and the workflow has not been rerun.
 A trusted `main` workflow pre-checkout step requires current `maintain` or `admin` permission. The workflow validates the exact open PR and selected mode before candidate code runs.
 A second validation after checkout rejects a changed candidate commit, base commit, or PR source repository before preparation.
