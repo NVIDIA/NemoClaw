@@ -90,6 +90,36 @@ describe("Vitest temp root", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
+  it("uses /usr/bin/install without sudo when a GitHub-hosted Linux process runs as root (#8942)", () => {
+    const install = vi.fn();
+
+    prepareGitHubHostedRuntimeAuthority({
+      platform: "linux",
+      githubActions: "true",
+      runnerEnvironment: "github-hosted",
+      uid: 0,
+      gid: 0,
+      install,
+    });
+
+    expect(install).toHaveBeenCalledWith(
+      "/usr/bin/install",
+      [
+        "-d",
+        "-m",
+        "0700",
+        "-o",
+        "0",
+        "-g",
+        "0",
+        "/run/user/0",
+        "/run/user/0/nemoclaw",
+        "/run/user/0/nemoclaw/launch-readiness",
+      ],
+      { stdio: "inherit" },
+    );
+  });
+
   it("recognizes the GitHub-hosted image marker exported to test processes (#8942)", () => {
     const install = vi.fn();
 
@@ -277,6 +307,4 @@ describe("Vitest temp root", () => {
       }
     }
   });
-
-
 });
