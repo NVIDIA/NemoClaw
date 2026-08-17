@@ -615,6 +615,7 @@ async function selectionFromRegistryAuthority<Agent>(
       authority.plan,
       false,
     );
+    if (authority.plan && registryPlanRecordsLifecycleSelection(authority.plan)) return selection;
     return filterUnconfiguredHostChannelsFromSelection(selection, options.agent);
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);

@@ -613,6 +613,30 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(result).toEqual({ plan: null, selectedChannels: ["whatsapp"] });
   });
 
+  it("keeps a lifecycle-selected channel in a completed registry resume (#9283)", async () => {
+    const registryPlan = {
+      ...discordPlan(hashCredential("previous-discord-token") ?? ""),
+      workflow: "add-channel" as const,
+    };
+    const deps = reconcileDeps([]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(registryPlan),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["discord"] });
+  });
+
   it("keeps an in-sandbox QR channel in a completed registry resume (#9109)", async () => {
     const registryPlan = whatsappPlan();
     const deps = reconcileDeps([]);
