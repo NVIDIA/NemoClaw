@@ -712,6 +712,11 @@ describe("onboard policy preset suggestions", () => {
       expect(suppressedAgentRequiredPresets("open", "openclaw")).toEqual([]);
     });
 
+    it("reports pricing as superseded by the Personal broad web route", () => {
+      expect(suppressedAgentRequiredPresets("personal", "openclaw")).toEqual(["openclaw-pricing"]);
+      expect(suppressedAgentRequiredPresets("personal", "hermes")).toEqual([]);
+    });
+
     it("returns no suppressed presets for non-OpenClaw agents on restricted", () => {
       expect(suppressedAgentRequiredPresets("restricted", "hermes")).toEqual([]);
     });
@@ -742,6 +747,16 @@ describe("onboard policy preset suggestions", () => {
       expect(
         filterSuppressedAgentRequiredPresets(["openclaw-pricing", "npm"], "open", "openclaw"),
       ).toEqual(["openclaw-pricing", "npm"]);
+    });
+
+    it("removes the exact pricing route from Personal", () => {
+      expect(
+        filterSuppressedAgentRequiredPresets(
+          ["personal-open-internet", "openclaw-pricing"],
+          "personal",
+          "openclaw",
+        ),
+      ).toEqual(["personal-open-internet"]);
     });
 
     it("returns the input unchanged when tierName is null or undefined", () => {
@@ -793,13 +808,19 @@ describe("onboard policy preset suggestions", () => {
       ).toEqual(["npm"]);
     });
 
-    it("suppresses openclaw-pricing only when tierName is restricted", () => {
+    it("suppresses openclaw-pricing when Restricted forbids it or Personal supersedes it", () => {
       expect(
         mergeRequiredSetupPolicyPresets(["npm", "openclaw-pricing"], {
           agent: "openclaw",
           tierName: "restricted",
         }),
       ).toEqual(["npm"]);
+      expect(
+        mergeRequiredSetupPolicyPresets(["personal-open-internet", "openclaw-pricing"], {
+          agent: "openclaw",
+          tierName: "personal",
+        }),
+      ).toEqual(["personal-open-internet"]);
       expect(
         mergeRequiredSetupPolicyPresets(["npm", "openclaw-pricing"], {
           agent: "openclaw",

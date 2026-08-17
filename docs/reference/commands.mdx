@@ -639,7 +639,7 @@ Four tiers are available:
 | Restricted | No tier defaults. Web search or other integrations selected earlier can still add their required presets; deselect them during policy review for baseline-only access. |
 | Balanced (default) | Full dev tooling and a selected, supported web search provider. Package installs, model downloads, and inference. No messaging platform access by default. |
 | Open | Broad access across third-party services including supported messaging and productivity presets. Agent-specific unsupported presets are filtered out. |
-| Personal | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. Unspecified, loopback, and link-local ranges remain blocked. Also selects every maintained preset supported by the active agent. Intended only for trusted personal-use workloads. |
+| Personal | Selects one broad web authority that lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. It replaces overlapping exact web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. Intended only for trusted personal-use workloads. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
 For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers).
@@ -665,7 +665,8 @@ Onboarding removes any preset that is not in the list.
 `skip` leaves the applied set untouched and does not apply tier defaults.
 NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider.
 During automatic suggestion and resume reconciliation, it removes stale web-search selections when they conflict with the active agent or selected provider.
-The Personal tier is the exception: it preserves every applicable maintained web-search preset even when onboarding did not configure that provider.
+The Personal tier instead uses `personal-open-internet` for web transport and does not select Brave Search or Tavily Search merely to enable ordinary web fetches.
+This makes keyless fetches available to any sandbox binary, but it does not add a provider-free `web_search` implementation.
 <AgentOnly variant="hermes">
 For Hermes, this includes replacing stale `nous-web` when Tavily is selected.
 </AgentOnly>

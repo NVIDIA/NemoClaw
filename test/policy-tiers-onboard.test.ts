@@ -457,22 +457,80 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.applied, []);
   });
 
-  it("keeps OpenClaw web search and OpenClaw-only presets in Personal", async () => {
+  it("refuses a resumed selection that removes Personal before recording or syncing it", async () => {
+    const harness = createSetupHarness({
+      currentApplied: ["personal-open-internet"],
+      recordedPolicyTier: "personal",
+    });
+    const onSelection = vi.fn();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await assert.rejects(
+      setupPoliciesWithSelection(harness.deps, "test-sb", {
+        selectedPresets: ["weather"],
+        tierName: "personal",
+        onSelection,
+      }),
+      /process\.exit\(1\)/,
+    );
+    assert.deepEqual(harness.tierUpdates, []);
+    assert.deepEqual(harness.syncCalls, []);
+    assert.equal(onSelection.mock.calls.length, 0);
+  });
+
+  it("refuses Personal removal when preset attribution is missing but the tier is recorded", async () => {
+    const harness = createSetupHarness({
+      currentApplied: [],
+      recordedPolicyTier: "personal",
+    });
+    const onSelection = vi.fn();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await assert.rejects(
+      setupPoliciesWithSelection(harness.deps, "test-sb", {
+        selectedPresets: ["weather"],
+        tierName: "personal",
+        onSelection,
+      }),
+      /process\.exit\(1\)/,
+    );
+    assert.deepEqual(harness.tierUpdates, []);
+    assert.deepEqual(harness.syncCalls, []);
+    assert.equal(onSelection.mock.calls.length, 0);
+  });
+
+  it("refuses a Personal tier transition before changing the recorded tier", async () => {
+    const harness = createSetupHarness({
+      currentApplied: ["personal-open-internet"],
+      tierName: "balanced",
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${String(code)})`);
+    }) as never);
+
+    await assert.rejects(setupPoliciesWithSelection(harness.deps, "test-sb"), /process\.exit\(1\)/);
+    assert.deepEqual(harness.tierUpdates, []);
+    assert.deepEqual(harness.syncCalls, []);
+  });
+
+  it("lets Personal supersede OpenClaw's exact pricing route (#9206)", async () => {
     const result = await runPolicySetup(
       { tierName: "personal" },
       { agent: "openclaw", webSearchConfig: null, webSearchSupported: true },
     );
 
-    for (const name of [
-      "personal-open-internet",
-      "brave",
-      "tavily",
-      "openclaw-pricing",
-      "openclaw-diagnostics-otel-local",
-      "googlechat",
-    ]) {
-      assert.ok(result.applied.includes(name), `${name} should be applied`);
-    }
+    assert.ok(result.applied.includes("personal-open-internet"));
+    assert.ok(!result.applied.includes("openclaw-pricing"));
+    assert.ok(!result.applied.includes("brave"), "Personal must not require Brave Search");
+    assert.ok(!result.applied.includes("tavily"), "Personal must not require Tavily Search");
+    assert.ok(!result.applied.includes("googlechat"), "unselected messaging must remain filtered");
     assert.ok(!result.applied.includes("nous-web"), "Hermes-only presets must remain filtered");
     assert.ok(
       !result.applied.includes("observability-otlp-local"),
@@ -480,15 +538,16 @@ describe("policy tier setup", () => {
     );
   });
 
-  it("keeps supported Hermes web search and Hermes-only presets in Personal", async () => {
+  it("keeps Hermes Personal web access provider-free by default (#9206)", async () => {
     const result = await runPolicySetup(
       { tierName: "personal" },
       { agent: "hermes", webSearchConfig: null, webSearchSupported: true },
     );
 
-    for (const name of ["personal-open-internet", "tavily", "nous-web", "nous-browser"]) {
-      assert.ok(result.applied.includes(name), `${name} should be applied`);
-    }
+    assert.ok(result.applied.includes("personal-open-internet"));
+    assert.ok(!result.applied.includes("tavily"), "Personal must not require Tavily Search");
+    assert.ok(!result.applied.includes("nous-web"), "optional Hermes tools must remain opt-in");
+    assert.ok(!result.applied.includes("nous-browser"), "optional Hermes tools must remain opt-in");
     assert.ok(!result.applied.includes("brave"), "unsupported Brave must remain filtered");
     assert.ok(
       !result.applied.includes("openclaw-pricing"),
@@ -496,14 +555,14 @@ describe("policy tier setup", () => {
     );
   });
 
-  it("keeps open internet access in Personal for Deep Agents Code", async () => {
+  it("keeps Deep Agents Code Personal web access provider-free by default (#9206)", async () => {
     const result = await runPolicySetup(
       { tierName: "personal" },
       { agent: "langchain-deepagents-code", webSearchConfig: null, webSearchSupported: true },
     );
 
     assert.ok(result.applied.includes("personal-open-internet"));
-    assert.ok(result.applied.includes("tavily"));
+    assert.ok(!result.applied.includes("tavily"));
     assert.ok(!result.applied.includes("brave"));
   });
 
@@ -561,21 +620,24 @@ describe("policy tier setup", () => {
       { fetchEnabled: true, provider: "tavily" as const },
       ["tavily"],
     ],
-  ])("preselects only the matching web-search preset for fresh interactive %s onboarding with %s (#7125)", async (_agentLabel, agent, _searchLabel, webSearchConfig, expectedSearchPresets) => {
-    const result = await runPolicySetup(
-      { tierName: "balanced", nonInteractive: false },
-      {
-        agent,
-        webSearchConfig,
-        webSearchSupported: true,
-      },
-    );
+  ])(
+    "preselects only the matching web-search preset for fresh interactive %s onboarding with %s (#7125)",
+    async (_agentLabel, agent, _searchLabel, webSearchConfig, expectedSearchPresets) => {
+      const result = await runPolicySetup(
+        { tierName: "balanced", nonInteractive: false },
+        {
+          agent,
+          webSearchConfig,
+          webSearchSupported: true,
+        },
+      );
 
-    assert.deepEqual(
-      result.applied.filter((name) => name === "brave" || name === "tavily"),
-      expectedSearchPresets,
-    );
-  });
+      assert.deepEqual(
+        result.applied.filter((name) => name === "brave" || name === "tavily"),
+        expectedSearchPresets,
+      );
+    },
+  );
 
   it("keeps explicitly requested built-in Brave when web search is supported", async () => {
     const result = await runPolicySetup(
@@ -591,21 +653,18 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.appliedCalls, ["brave", "npm"]);
   });
 
-  it(
-    "keeps an explicit Personal preset list authoritative before policy mutation (#8991)",
-    async () => {
-      const explicitPresets = ["weather", "public-reference", "github"];
-      const result = await runPolicySetup({
-        tierName: "personal",
-        policyMode: "custom",
-        policyPresets: explicitPresets.join(","),
-      });
+  it("keeps an explicit Personal preset list authoritative before policy mutation (#8991)", async () => {
+    const explicitPresets = ["weather", "public-reference", "github"];
+    const result = await runPolicySetup({
+      tierName: "personal",
+      policyMode: "custom",
+      policyPresets: explicitPresets.join(","),
+    });
 
-      assert.deepEqual(result.applied, explicitPresets);
-      assert.deepEqual(result.appliedCalls, explicitPresets);
-      assert.deepEqual(result.syncCalls[0]?.selected, explicitPresets);
-    },
-  );
+    assert.deepEqual(result.applied, explicitPresets);
+    assert.deepEqual(result.appliedCalls, explicitPresets);
+    assert.deepEqual(result.syncCalls[0]?.selected, explicitPresets);
+  });
 
   it("preserves a recorded Balanced tier default during resumed reapply (#6844)", async () => {
     const result = await runPolicySetup(

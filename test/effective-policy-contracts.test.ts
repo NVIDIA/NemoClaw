@@ -45,7 +45,7 @@ const EXISTING_POLICY = YAML.stringify({
   network_policies: {
     existing: {
       name: "existing",
-      endpoints: [{ host: "existing.example", port: 443, access: "full", tls: "skip" }],
+      endpoints: [{ host: "existing.example", port: 8443, access: "full", tls: "skip" }],
     },
   },
 });
@@ -111,36 +111,36 @@ function expectInspectedWebSocket(endpoint: Endpoint): void {
 }
 
 describe("effective built-in policy contracts", () => {
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("composes every preset advertised for %s without replacing the existing policy", (agent) => {
-    const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
-    const effective = composePresets(presetNames, agent);
+  it.each(["openclaw", "hermes"] as const)(
+    "composes every preset advertised for %s while retaining non-web policy",
+    (agent) => {
+      const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
+      const effective = composePresets(presetNames, agent);
 
-    expect(Object.keys(effective.network_policies ?? {}).length).toBeGreaterThan(
-      presetNames.length,
-    );
-  });
+      expect(Object.keys(effective.network_policies ?? {})).toEqual(
+        expect.arrayContaining(["existing", "personal_open_internet"]),
+      );
+    },
+  );
 
-  it.each([
-    "openclaw",
-    "hermes",
-  ] as const)("keeps %s effective policy methods explicit and avoids deprecated REST TLS mode", (agent) => {
-    const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
-    const effective = composePresets(presetNames, agent);
+  it.each(["openclaw", "hermes"] as const)(
+    "keeps %s effective policy methods explicit and avoids deprecated REST TLS mode",
+    (agent) => {
+      const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
+      const effective = composePresets(presetNames, agent);
 
-    for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
-      expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
-      const endpoints = policy.endpoints ?? [];
-      for (const endpoint of endpoints) {
-        expect(methods(endpoint), `${policyName}:${endpoint.host}`).not.toContain("*");
+      for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
+        expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
+        const endpoints = policy.endpoints ?? [];
+        for (const endpoint of endpoints) {
+          expect(methods(endpoint), `${policyName}:${endpoint.host}`).not.toContain("*");
+        }
+        for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
+          expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
+        }
       }
-      for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
-        expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
-      }
-    }
-  });
+    },
+  );
 
   it("keeps package and public-data access read-only after composition", () => {
     const effective = composePresets(["pypi", "weather", "public-reference"]);
@@ -522,7 +522,10 @@ describe("effective built-in policy contracts", () => {
     expect(discordMutations.some((rule) => rule.path === "/**")).toBe(false);
   }
 
-  it("composes Hermes-specific messaging mutation and runtime identity rules", verifyHermesMessagingPolicyComposition);
+  it(
+    "composes Hermes-specific messaging mutation and runtime identity rules",
+    verifyHermesMessagingPolicyComposition,
+  );
 
   it("keeps tool installers and optional Claude egress on explicit binary and host scopes", () => {
     const effective = composePresets(["brew", "claude-code"]);

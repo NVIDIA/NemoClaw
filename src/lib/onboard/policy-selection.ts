@@ -4,7 +4,7 @@
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as policies from "../policy";
 import * as tiers from "../policy/tiers";
-import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
+import { PERSONAL_OPEN_INTERNET_PRESET_NAME, PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -43,6 +43,7 @@ import * as policyTierEnv from "./policy-tier-env";
 import {
   agentRequiredPresetAdditions,
   emitSuppressedAgentRequiredPresetsNote,
+  filterSuppressedAgentRequiredPresets,
   RESTRICTED_TIER_NAME,
 } from "./policy-tier-suppression";
 import { withPolicyApplicationTrace } from "./tracing";
@@ -323,7 +324,7 @@ export function computeSetupPresetSuggestions(
       if (HERMES_TOOL_GATEWAY_PRESET_NAMES.has(preset)) add(preset);
     }
   }
-  return suggestions;
+  return filterSuppressedAgentRequiredPresets(suggestions, tierName, agent);
 }
 
 export { type PreparedPolicyResumeSelection, preparePolicyPresetResumeSelection };
@@ -352,6 +353,18 @@ function requireSandboxReady(
   if (stage === "after" && !deps.waitForSandboxControlPlaneReady(sandboxName)) {
     console.error(
       `  Sandbox '${sandboxName}' did not re-register with OpenShell after policy application.`,
+    );
+    process.exit(1);
+  }
+}
+
+function refuseInPlacePersonalRemoval(
+  personalAlreadyActive: boolean,
+  target: readonly string[],
+): void {
+  if (personalAlreadyActive && !target.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME)) {
+    console.error(
+      "  Personal open internet cannot be removed in place because it replaces overlapping web routes. Create a new sandbox with another policy tier instead.",
     );
     process.exit(1);
   }
@@ -453,7 +466,12 @@ async function setupPoliciesWithSelectionInner(
   // still get filtered. An interrupted create can reach this fresh-selection
   // branch before presets are recorded, so its persisted tier must also win
   // over a new prompt or non-interactive default.
-  const recordedTierName = options.tierName ?? deps.getRecordedPolicyTier?.(sandboxName) ?? null;
+  const persistedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
+  const recordedTierName = options.tierName ?? persistedTierName;
+  const personalAlreadyActive =
+    currentAppliedPresets.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) ||
+    persistedTierName === PERSONAL_POLICY_TIER_NAME ||
+    (selectedPresets !== null && options.tierName === PERSONAL_POLICY_TIER_NAME);
   if (chosen !== null) {
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
@@ -476,6 +494,7 @@ async function setupPoliciesWithSelectionInner(
 
   if (selectedPresets !== null) {
     const resumeSelection = chosen || [];
+    refuseInPlacePersonalRemoval(personalAlreadyActive, resumeSelection);
     if (onSelection) onSelection(resumeSelection);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
@@ -485,6 +504,9 @@ async function setupPoliciesWithSelectionInner(
   }
 
   const tierName = recordedTierName ?? (await deps.selectPolicyTier());
+  if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {
+    refuseInPlacePersonalRemoval(personalAlreadyActive, []);
+  }
   deps.setPolicyTier?.(sandboxName, tierName);
   const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
   const suggestions = excludePresets(
@@ -516,6 +538,7 @@ async function setupPoliciesWithSelectionInner(
       deps.note("  [non-interactive] Skipping policy presets.");
       const retainedPresets = excludePresets(pruneUnavailablePresets(currentAppliedPresets));
       if (retainedPresets.length < currentAppliedPresets.length) {
+        refuseInPlacePersonalRemoval(personalAlreadyActive, retainedPresets);
         if (onSelection) onSelection(retainedPresets);
         requireSandboxReady(deps, sandboxName, "before");
         deps.note("  [non-interactive] Removing excluded or unavailable policy presets.");
@@ -596,6 +619,7 @@ async function setupPoliciesWithSelectionInner(
       }
     }
 
+    refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
     if (onSelection) onSelection(chosen);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
@@ -635,6 +659,7 @@ async function setupPoliciesWithSelectionInner(
     ),
   );
 
+  refuseInPlacePersonalRemoval(personalAlreadyActive, interactiveChoice);
   if (onSelection) onSelection(interactiveChoice);
   requireSandboxReady(deps, sandboxName, "before");
 

@@ -381,6 +381,31 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflow(workflow)).toContain(
       "catalogue-brave-nvidia-inference must cap matrix concurrency at 2",
     );
+
+    const personal = catalogueTarget("common-egress-agent-openclaw-personal-stock-price");
+    expect(personal).toMatchObject({
+      profile: "nvidia-inference",
+      runnerComparison: false,
+      selector: "^common-egress.+C4.+$",
+      shard: "openclaw-personal-stock-price",
+      environment: {
+        BRAVE_API_KEY: "",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+        TAVILY_API_KEY: "",
+      },
+      owningPaths: expect.arrayContaining([
+        "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
+        "nemoclaw-blueprint/policies/tiers.yaml",
+        "src/lib/onboard/session-bootstrap.ts",
+        "src/lib/policy/index.ts",
+      ]),
+    });
+    expect(
+      buildE2eWorkflowPlan({ targets: personal.id }).catalogueMatrices["nvidia-inference"].map(
+        ({ id }) => id,
+      ),
+    ).toEqual([personal.id]);
   });
 
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {

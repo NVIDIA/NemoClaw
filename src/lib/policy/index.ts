@@ -72,6 +72,10 @@ import {
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
+const PERSONAL_OPEN_INTERNET_PRESET_NAME = "personal-open-internet";
+const PERSONAL_OPEN_INTERNET_POLICY_KEY = "personal_open_internet";
+const PERSONAL_OPEN_INTERNET_PORTS = new Set([80, 443]);
+
 const MAX_PRESET_FILE_BYTES = 10_000_000;
 
 type PresetInfo = {
@@ -622,7 +626,95 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   }
   output.network_policies = mergedNp;
 
-  return YAML.stringify(output);
+  return normalizePersonalOpenInternetPolicy(YAML.stringify(output));
+}
+
+/**
+ * OpenShell 0.0.101 rejects a hostless `allowed_ips` endpoint when any other
+ * endpoint selects the same port with different connection metadata. Personal
+ * deliberately grants every sandbox binary direct L4 access on ports 80/443,
+ * so exact web endpoints add no transport authority while Personal is active.
+ * Keep the reviewed Personal entry as the sole web authority and retain every
+ * non-web endpoint and non-network policy section unchanged. OpenShell handles
+ * `inference.local` before ordinary network-policy evaluation, so removing its
+ * overlapping base-policy endpoint does not remove routed inference.
+ */
+function normalizePersonalOpenInternetPolicy(policyContent: string): string {
+  let document: PolicyDocument;
+  try {
+    const parsed = YAML.parse(policyContent);
+    if (!isPolicyDocument(parsed)) return policyContent;
+    document = parsed;
+  } catch {
+    return policyContent;
+  }
+
+  const networkPolicies = document.network_policies;
+  if (!isPolicyObject(networkPolicies)) return policyContent;
+  if (!Object.prototype.hasOwnProperty.call(networkPolicies, PERSONAL_OPEN_INTERNET_POLICY_KEY)) {
+    return policyContent;
+  }
+  const personalEntry = networkPolicies[PERSONAL_OPEN_INTERNET_POLICY_KEY];
+
+  const reviewedContent = loadCentralPreset(PERSONAL_OPEN_INTERNET_PRESET_NAME, {
+    reportMissing: false,
+  });
+  const reviewedEntry = parseNetworkPolicies(reviewedContent)?.[PERSONAL_OPEN_INTERNET_POLICY_KEY];
+  if (
+    !isPolicyObject(personalEntry) ||
+    !isPolicyObject(reviewedEntry) ||
+    !isDeepStrictEqual(personalEntry, reviewedEntry)
+  ) {
+    throw new Error(
+      `Cannot compose Personal policy: reserved network policy key '${PERSONAL_OPEN_INTERNET_POLICY_KEY}' does not match the reviewed built-in preset.`,
+    );
+  }
+
+  const normalizedPolicies: PolicyObject = {};
+  for (const [policyKey, policyValue] of Object.entries(networkPolicies)) {
+    if (policyKey === PERSONAL_OPEN_INTERNET_POLICY_KEY || !isPolicyObject(policyValue)) {
+      normalizedPolicies[policyKey] = policyValue;
+      continue;
+    }
+
+    if (!Array.isArray(policyValue.endpoints)) {
+      normalizedPolicies[policyKey] = policyValue;
+      continue;
+    }
+
+    const endpoints: PolicyValue[] = [];
+    for (const endpointValue of policyValue.endpoints) {
+      if (!isPolicyObject(endpointValue)) {
+        endpoints.push(endpointValue);
+        continue;
+      }
+
+      const port = endpointValue.port;
+      if (typeof port === "number" && PERSONAL_OPEN_INTERNET_PORTS.has(port)) continue;
+
+      const ports = endpointValue.ports;
+      if (!Array.isArray(ports)) {
+        endpoints.push(endpointValue);
+        continue;
+      }
+      const retainedPorts = ports.filter(
+        (candidate) =>
+          typeof candidate !== "number" || !PERSONAL_OPEN_INTERNET_PORTS.has(candidate),
+      );
+      if (retainedPorts.length === 0) continue;
+      endpoints.push(
+        retainedPorts.length === ports.length
+          ? endpointValue
+          : { ...endpointValue, ports: retainedPorts },
+      );
+    }
+
+    if (endpoints.length > 0) {
+      normalizedPolicies[policyKey] = { ...policyValue, endpoints };
+    }
+  }
+
+  return YAML.stringify({ ...document, network_policies: normalizedPolicies });
 }
 
 export type PresetPolicyState = "absent" | "drift" | "match";
@@ -958,7 +1050,8 @@ function mergePresetNamesIntoPolicy(
   let policy = merged;
   if (
     (options.agent === undefined || options.agent === null || options.agent === "openclaw") &&
-    appliedPresets.includes("npm")
+    appliedPresets.includes("npm") &&
+    !policyHasNetworkPolicy(merged, PERSONAL_OPEN_INTERNET_POLICY_KEY)
   ) {
     const reviewedBaseline = resolveAgentBaselinePolicy("openclaw");
     if (!reviewedBaseline) {
@@ -972,7 +1065,11 @@ function mergePresetNamesIntoPolicy(
       policyHasNetworkPolicy(currentPolicy, OPENCLAW_NPM_PRESET_KEY),
     ).policy;
   }
-  return { policy, appliedPresets, missingPresets };
+  return {
+    policy: normalizePersonalOpenInternetPolicy(policy),
+    appliedPresets,
+    missingPresets,
+  };
 }
 
 /**
@@ -1073,6 +1170,13 @@ function removePreset(
       `Invalid or truncated sandbox name: ${diagnosticPreview(sandboxName)}. ` +
         `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
+  }
+
+  if (presetName === PERSONAL_OPEN_INTERNET_PRESET_NAME) {
+    console.error(
+      "  Personal open internet cannot be removed in place because it replaces overlapping web routes. Create a new sandbox with another policy tier instead.",
+    );
+    return false;
   }
 
   // Resolve preset content: built-in first, then custom presets persisted
@@ -1924,10 +2028,11 @@ function applyPresetContent(
 
   if (options.custom) {
     const np = parseNetworkPolicies(presetContent);
-    if (np && Object.prototype.hasOwnProperty.call(np, OPENCLAW_NPM_PRESET_KEY)) {
-      console.error(
-        `  Custom presets cannot own reserved network policy key '${OPENCLAW_NPM_PRESET_KEY}'.`,
-      );
+    const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find(
+      (key) => np && Object.prototype.hasOwnProperty.call(np, key),
+    );
+    if (reservedKey) {
+      console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
       return false;
     }
     const hasGeneratedPins = np !== null && networkPoliciesHasAllowedIps(np);
@@ -2019,7 +2124,11 @@ function applyPresetContent(
   }
   let merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
   let npmBaselineWidened = false;
-  if (!options.custom && presetName === "npm") {
+  if (
+    !options.custom &&
+    presetName === "npm" &&
+    !policyHasNetworkPolicy(merged, PERSONAL_OPEN_INTERNET_POLICY_KEY)
+  ) {
     try {
       const baseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
       if (baseline) {
@@ -2039,6 +2148,7 @@ function applyPresetContent(
       return false;
     }
   }
+  merged = normalizePersonalOpenInternetPolicy(merged);
 
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
   const disclosedPresetState =
@@ -2222,7 +2332,10 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   let npmBaselineWidened = false;
-  if (uniquePresetNames.includes("npm")) {
+  if (
+    uniquePresetNames.includes("npm") &&
+    !policyHasNetworkPolicy(merged, PERSONAL_OPEN_INTERNET_POLICY_KEY)
+  ) {
     try {
       const baseline = resolveSandboxOpenClawNpmBaseline(sandboxName);
       if (baseline) {
@@ -2242,6 +2355,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       return false;
     }
   }
+  merged = normalizePersonalOpenInternetPolicy(merged);
 
   for (const preset of presetContents) {
     const disclosedPresetState =

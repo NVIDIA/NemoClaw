@@ -1,19 +1,108 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   agentReplyContainsToken,
+  assessPersonalStockToolEvidence,
+  buildOpenClawToolEvidenceReducerScript,
   classifyHermesAgentAssertion,
   classifyOpenClawAgentAssertion,
   classifyPreContractProviderValidationSkip,
   isHermesTransientAgentFailure,
+  nvdaPersonalStockReplyMatchesEvidence,
   parseChatContent,
+  parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
+  parseOpenClawToolEvidence,
+  reduceOpenClawToolEvidence,
   runHermesAgentAssertionRetry,
   runOpenClawAgentAssertionRetry,
+  type NvdaPersonalStockReply,
 } from "../live/common-egress-agent-helpers.ts";
+
+const STOCK_SOURCE_URL =
+  "https://query1.finance.yahoo.com/v8/finance/chart/NVDA?credential=must-not-remain";
+const STOCK_REPLY = {
+  status: "NVDA_PERSONAL_AGENT_OK",
+  symbol: "NVDA",
+  price: 192.38,
+  source_url: STOCK_SOURCE_URL,
+  as_of: "2026-08-17T15:59:00Z",
+} satisfies NvdaPersonalStockReply;
+
+function stockPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    url: STOCK_SOURCE_URL,
+    finalUrl: STOCK_SOURCE_URL,
+    status: 200,
+    contentType: "application/json",
+    extractor: "json",
+    externalContent: { untrusted: true, source: "web_fetch", wrapped: true },
+    fetchedAt: "2026-08-17T16:00:00Z",
+    text: '{"symbol":"NVDA","regularMarketPrice":192.38,"regularMarketTime":1786982340}',
+    ...overrides,
+  };
+}
+
+function stockSessionJsonLines(
+  options: {
+    callId?: string;
+    details?: Record<string, unknown>;
+    extraToolName?: string;
+    isError?: boolean;
+    payload?: Record<string, unknown>;
+    resultCallId?: string;
+    resultToolName?: string;
+  } = {},
+): string {
+  const callId = options.callId ?? "call-web-fetch-1";
+  const payload = options.payload ?? stockPayload();
+  const content = [
+    {
+      type: "toolCall",
+      id: callId,
+      name: "web_fetch",
+      arguments: { url: STOCK_SOURCE_URL, maxChars: 8_000 },
+    },
+    ...(options.extraToolName
+      ? [{ type: "toolCall", id: "call-extra-1", name: options.extraToolName, arguments: {} }]
+      : []),
+  ];
+  return [
+    JSON.stringify({ type: "message", message: { role: "assistant", content } }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: options.resultCallId ?? callId,
+        toolName: options.resultToolName ?? "web_fetch",
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+        details: options.details ?? payload,
+        isError: options.isError ?? false,
+      },
+    }),
+  ].join("\n");
+}
+
+function stockTrajectory(extraToolName?: string): string {
+  return JSON.stringify({
+    type: "trace.artifacts",
+    data: {
+      finalStatus: "success",
+      toolMetas: [
+        { toolName: "web_fetch", meta: STOCK_SOURCE_URL },
+        ...(extraToolName ? [{ toolName: extraToolName, meta: {} }] : []),
+      ],
+    },
+  });
+}
 
 describe("common-egress agent parsing and classification helpers", () => {
   it("OpenClaw JSON parser accepts framed agent payloads", () => {
@@ -34,6 +123,269 @@ describe("common-egress agent parsing and classification helpers", () => {
         })}\n`,
       ),
     ).toContain("HERMES_REFERENCE_AGENT_OK");
+  });
+
+  it("reduces OpenClaw stock-fetch traces without retaining fetched content or URL queries", () => {
+    const source = "query1.finance.yahoo.com";
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines(),
+      stockTrajectory(),
+      STOCK_REPLY,
+    );
+
+    expect(evidence).toEqual({
+      schemaVersion: 1,
+      errors: [],
+      expectedStockFingerprint: expect.stringMatching(/^[0-9a-f]{8}$/u),
+      finalStatuses: ["success"],
+      providerMentions: [],
+      toolCalls: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
+      toolExecutions: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
+      toolResults: [{ name: "web_fetch", target: { hostname: source, protocol: "https:" } }],
+      webFetchResults: [
+        {
+          asOfMatches: true,
+          directFetch: true,
+          httpSuccess: true,
+          paired: true,
+          priceMatches: true,
+          resultSuccess: true,
+          sourceUrlMatches: true,
+          symbolMatches: true,
+          target: { hostname: source, protocol: "https:" },
+        },
+      ],
+    });
+    expect(JSON.stringify(evidence)).not.toContain("credential");
+    expect(JSON.stringify(evidence)).not.toContain("regularMarketPrice");
+    expect(JSON.stringify(evidence)).not.toContain("192.38");
+    expect(JSON.stringify(evidence)).not.toContain("/v8/finance/chart");
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      forbiddenProviderMentions: [],
+      forbiddenToolNames: [],
+      matches: true,
+      qualifyingWebFetchResults: 1,
+      webFetchCalls: 1,
+      webFetchExecutions: 1,
+    });
+    expect(
+      parseOpenClawToolEvidence(
+        `log line\n__NEMOCLAW_TOOL_EVIDENCE__=${JSON.stringify(evidence)}\n`,
+      ),
+    ).toEqual(evidence);
+    expect(buildOpenClawToolEvidenceReducerScript(STOCK_REPLY)).toContain(
+      "__NEMOCLAW_TOOL_EVIDENCE__=",
+    );
+  });
+
+  it("executes the generated reducer script against OpenClaw JSONL artifacts", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-reducer-"));
+    try {
+      const sessionPath = join(directory, "session.jsonl");
+      const trajectoryPath = join(directory, "trajectory.jsonl");
+      writeFileSync(sessionPath, `${stockSessionJsonLines()}\n`);
+      writeFileSync(trajectoryPath, `${stockTrajectory()}\n`);
+
+      const result = spawnSync(
+        process.execPath,
+        ["-e", buildOpenClawToolEvidenceReducerScript(STOCK_REPLY), sessionPath, trajectoryPath],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseOpenClawToolEvidence(result.stdout)).toMatchObject({
+        errors: [],
+        finalStatuses: ["success"],
+        toolCalls: [{ name: "web_fetch", target: { hostname: "query1.finance.yahoo.com" } }],
+        toolExecutions: [{ name: "web_fetch", target: { hostname: "query1.finance.yahoo.com" } }],
+        toolResults: [{ name: "web_fetch", target: { hostname: "query1.finance.yahoo.com" } }],
+        webFetchResults: [
+          expect.objectContaining({
+            directFetch: true,
+            paired: true,
+            priceMatches: true,
+            resultSuccess: true,
+            sourceUrlMatches: true,
+          }),
+        ],
+      });
+      expect(result.stdout).not.toContain("credential");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("uses parseable tool-result text when persisted OpenClaw details are capped", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines({ details: { persistedDetailsTruncated: true } }),
+      stockTrajectory(),
+      STOCK_REPLY,
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      matches: true,
+      qualifyingWebFetchResults: 1,
+    });
+  });
+
+  it("rejects search-provider and non-public stock-fetch trajectories", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                name: "web_search",
+                arguments: { provider: "brave", query: "NVDA price" },
+              },
+              {
+                type: "toolCall",
+                name: "web_fetch",
+                arguments: { url: "http://169.254.169.254/latest/meta-data/" },
+              },
+            ],
+          },
+        }),
+        "not-json",
+      ].join("\n"),
+      JSON.stringify({
+        type: "trace.artifacts",
+        data: {
+          finalStatus: "success",
+          toolMetas: [
+            { toolName: "web_search", meta: { provider: "tavily" } },
+            { toolName: "web_fetch", meta: "http://169.254.169.254/latest/meta-data/" },
+          ],
+        },
+      }),
+    );
+
+    expect(assessPersonalStockToolEvidence(evidence)).toMatchObject({
+      forbiddenProviderMentions: ["brave", "tavily"],
+      forbiddenToolNames: ["web_search"],
+      matches: false,
+      publicHttpsTargets: [],
+    });
+    expect(evidence.errors).toEqual(["session line 2 is not JSON"]);
+  });
+
+  it("accepts a recent numeric NVDA reply only when one paired fetch result supports it", () => {
+    const evidence = reduceOpenClawToolEvidence(
+      stockSessionJsonLines(),
+      stockTrajectory(),
+      STOCK_REPLY,
+    );
+    const reply = JSON.stringify(STOCK_REPLY);
+
+    expect(parseNvdaPersonalStockReply(`\`\`\`json\n${reply}\n\`\`\``)).toMatchObject({
+      price: 192.38,
+      source_url: STOCK_SOURCE_URL,
+      symbol: "NVDA",
+    });
+    expect(
+      parseNvdaPersonalStockReply(
+        JSON.stringify({ ...STOCK_REPLY, source_url: "https://10.0.0.1/quote/NVDA" }),
+      ),
+    ).toBeNull();
+    expect(
+      parseNvdaPersonalStockReply(
+        JSON.stringify({ ...STOCK_REPLY, source_url: "https://[fd00::1]/quote/NVDA" }),
+      ),
+    ).toBeNull();
+    expect(
+      nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse("2026-08-18T12:00:00Z")),
+    ).toBe(true);
+    expect(
+      nvdaPersonalStockReplyMatchesEvidence(
+        reply.replace("/v8/finance/chart/NVDA", "/v8/finance/chart/AMD"),
+        evidence,
+        Date.parse("2026-08-18T12:00:00Z"),
+      ),
+    ).toBe(false);
+    expect(
+      nvdaPersonalStockReplyMatchesEvidence(reply, evidence, Date.parse("2026-09-01T12:00:00Z")),
+    ).toBe(false);
+    expect(
+      nvdaPersonalStockReplyMatchesEvidence(
+        reply.replace('"NVDA"', '"AMD"'),
+        evidence,
+        Date.parse("2026-08-18T12:00:00Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "https://[::ffff:127.0.0.1]/quote/NVDA",
+    "https://[::ffff:169.254.169.254]/quote/NVDA",
+    "https://[::ffff:10.0.0.1]/quote/NVDA",
+    "https://[::ffff:192.168.1.2]/quote/NVDA",
+  ])("rejects an IPv4-mapped internal stock source: %s", (source_url) => {
+    expect(parseNvdaPersonalStockReply(JSON.stringify({ ...STOCK_REPLY, source_url }))).toBeNull();
+  });
+
+  it.each([
+    {
+      name: "failed tool result followed by a fabricated reply",
+      session: stockSessionJsonLines({ isError: true }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "unrelated content fetched from the claimed host",
+      session: stockSessionJsonLines({
+        payload: stockPayload({ text: "Public finance landing page, updated 2026-08-17." }),
+      }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "provider fallback result",
+      session: stockSessionJsonLines({
+        payload: stockPayload({
+          extractor: "firecrawl",
+          externalContent: {
+            untrusted: true,
+            source: "web_fetch",
+            provider: "firecrawl",
+            wrapped: true,
+          },
+        }),
+      }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "mismatched tool call id",
+      session: stockSessionJsonLines({ resultCallId: "call-web-fetch-other" }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "dummy fetch plus another tool",
+      session: stockSessionJsonLines({ extraToolName: "exec" }),
+      trajectory: stockTrajectory("exec"),
+      expected: STOCK_REPLY,
+    },
+    {
+      name: "fetch content without the claimed price or date",
+      session: stockSessionJsonLines({ payload: stockPayload({ text: "NVDA quote unavailable" }) }),
+      trajectory: stockTrajectory(),
+      expected: STOCK_REPLY,
+    },
+  ])("rejects $name", ({ expected, session, trajectory }) => {
+    const evidence = reduceOpenClawToolEvidence(session, trajectory, expected);
+
+    expect(assessPersonalStockToolEvidence(evidence).matches).toBe(false);
+    expect(
+      nvdaPersonalStockReplyMatchesEvidence(
+        JSON.stringify(expected),
+        evidence,
+        Date.parse("2026-08-18T12:00:00Z"),
+      ),
+    ).toBe(false);
   });
 
   it("Hermes response parser reads message content", () => {
