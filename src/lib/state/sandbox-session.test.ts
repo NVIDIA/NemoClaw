@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   classifySessionState,
   type ForwardEntry,
@@ -327,6 +327,45 @@ describe("getActiveSandboxSessions", () => {
     expect(result.detected).toBe(true);
     expect(result.sessions).toHaveLength(1);
     expect(result.sessions[0].pid).toBe(12345);
+  });
+
+  it("resolves a durable ID for a proxied interactive session (#9316)", () => {
+    const sandboxId = "de7eab7a-002f-41e9-acad-5fd4749e07bb";
+    const resolveSandboxId = vi.fn(() => sandboxId);
+    const deps: SessionDetectionDeps = {
+      getForwardList: () => "",
+      getSshProcesses: () =>
+        `12345 ssh -o ProxyCommand=/usr/local/bin/openshell ssh-proxy --sandbox-id ${sandboxId} --token t -tt -o RequestTTY=force sandbox`,
+      resolveSandboxId,
+    };
+
+    const result = getActiveSandboxSessions("my-sandbox", deps);
+
+    expect(resolveSandboxId).toHaveBeenCalledExactlyOnceWith("my-sandbox");
+    expect(result).toEqual({
+      detected: true,
+      sessions: [
+        {
+          sandboxName: "my-sandbox",
+          pid: 12345,
+          sshHost: "openshell-my-sandbox.default",
+        },
+      ],
+    });
+  });
+
+  it("does not resolve a durable ID for a host-alias session (#9316)", () => {
+    const resolveSandboxId = vi.fn(() => "unused-id");
+    const deps: SessionDetectionDeps = {
+      getForwardList: () => "",
+      getSshProcesses: () => "12345 ssh -F /tmp/cfg openshell-my-sandbox.default\n",
+      resolveSandboxId,
+    };
+
+    const result = getActiveSandboxSessions("my-sandbox", deps);
+
+    expect(resolveSandboxId).not.toHaveBeenCalled();
+    expect(result.sessions).toHaveLength(1);
   });
 
   it("returns detected=false when pgrep unavailable (forward list alone insufficient)", () => {
