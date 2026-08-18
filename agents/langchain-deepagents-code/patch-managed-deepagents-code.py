@@ -137,6 +137,8 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         parser.error("--interpreter is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "auto_approve", False) and not nemoclaw_auto_approval_enabled:
         parser.error("--auto-approve is disabled in NemoClaw-managed Deep Agents Code sandboxes")
+    if getattr(args, "yolo", False):
+        parser.error("--yolo is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if getattr(args, "acp", False):
         parser.error("--acp is disabled in NemoClaw-managed Deep Agents Code sandboxes")
 

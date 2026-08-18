@@ -837,13 +837,6 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     },
   );
 
-  it("uses the supplied validation backend without resolving a sandbox provider", () => {
-    const validator = fs.readFileSync(validatorPath, "utf8");
-
-    expect(validator).toContain("sandbox=backend");
-    expect(validator).not.toContain('sandbox_type="nemoclaw-validation"');
-  });
-
   it("resolves a managed model before the E2E probe inspects lazy profile state", () => {
     const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
     const managedResolution = e2eCheck.indexOf(

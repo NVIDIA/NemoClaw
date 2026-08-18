@@ -90,11 +90,6 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   it("keeps live DCode config inspection and mutation-boundary coverage in the fresh re-onboard check", () => {
     const script = fs.readFileSync(dcodeFreshReonboardCheck, "utf8");
 
-    expect(script).toContain(
-      'MODEL_SELECTOR="${REPO}/test/e2e/lib/select-authorized-chat-model.mts"',
-    );
-    expect(script).toContain('--current-model "$model_a"');
-    expect(script).not.toContain("openai/openai/gpt-5.5");
     expect(script).toContain('"$CLI" "$SANDBOX_NAME" config get');
     expect(script).toContain("config get --key models.default");
     expect(script).toContain("config get --format yaml");

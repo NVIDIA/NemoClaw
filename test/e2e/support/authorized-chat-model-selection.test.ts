@@ -9,36 +9,64 @@ const endpoint = "https://inference.example.test/v1";
 const currentModel = "nvidia/nvidia/nemotron-3-ultra";
 
 describe("authorized alternate chat model selection", () => {
-  it("tries preferred catalog models through the shared Chat Completions probe", async () => {
-    const fetchModels = vi.fn(() => ({
-      ok: true as const,
-      ids: [
-        currentModel,
-        "nvidia/nemotron-3-super-120b-a12b",
-        "nvidia/nemotron-3-ultra-550b-a55b",
-        "nvidia/nv-embedqa-e5-v5",
-      ],
-    }));
-    const probeModel = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false })
-      .mockResolvedValueOnce({ ok: true });
+  it.each([endpoint, "http://127.0.0.1:8000/v1"])(
+    "tries preferred catalog models through the shared Chat Completions probe at %s",
+    async (permittedEndpoint) => {
+      const fetchModels = vi.fn(() => ({
+        ok: true as const,
+        ids: [
+          currentModel,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia/nemotron-3-ultra-550b-a55b",
+          "nvidia/nv-embedqa-e5-v5",
+        ],
+      }));
+      const probeModel = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false })
+        .mockResolvedValueOnce({ ok: true });
+
+      await expect(
+        selectAuthorizedChatModel({
+          apiKey: "test-key",
+          currentModel,
+          endpoint: permittedEndpoint,
+          fetchModels,
+          probeModel,
+        }),
+      ).resolves.toBe("nvidia/nemotron-3-super-120b-a12b");
+
+      expect(fetchModels).toHaveBeenCalledWith(permittedEndpoint, "test-key");
+      expect(probeModel.mock.calls).toEqual([
+        [
+          permittedEndpoint,
+          "nvidia/nemotron-3-ultra-550b-a55b",
+          "test-key",
+          { skipResponsesProbe: true },
+        ],
+        [
+          permittedEndpoint,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "test-key",
+          { skipResponsesProbe: true },
+        ],
+      ]);
+    },
+  );
+
+  it("rejects bearer credential transport to a non-loopback HTTP endpoint", async () => {
+    const fetchModels = vi.fn();
 
     await expect(
       selectAuthorizedChatModel({
         apiKey: "test-key",
         currentModel,
-        endpoint,
+        endpoint: "http://inference.example.test/v1",
         fetchModels,
-        probeModel,
+        probeModel: vi.fn(),
       }),
-    ).resolves.toBe("nvidia/nemotron-3-super-120b-a12b");
-
-    expect(fetchModels).toHaveBeenCalledWith(endpoint, "test-key");
-    expect(probeModel.mock.calls).toEqual([
-      [endpoint, "nvidia/nemotron-3-ultra-550b-a55b", "test-key", { skipResponsesProbe: true }],
-      [endpoint, "nvidia/nemotron-3-super-120b-a12b", "test-key", { skipResponsesProbe: true }],
-    ]);
+    ).rejects.toThrow("the endpoint must use HTTPS unless it targets loopback");
+    expect(fetchModels).not.toHaveBeenCalled();
   });
 
   it("does not probe when the catalog has no alternate chat model", async () => {

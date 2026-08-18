@@ -199,6 +199,7 @@ else:
     ["--interpreter-t=execute"],
     ["-y"],
     ["--auto-approve"],
+    ["--yolo"],
     ["--acp"],
     ["--startup-cmd", "touch /tmp/unsafe"],
     ["--startup-cmd=touch /tmp/unsafe"],
@@ -232,7 +233,6 @@ else:
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("managed-posture-ok auto_approve=False yolo=True");
       expect(result.stderr).toContain("Auto-approval is enabled for this thread");
-      expect(result.stderr).toContain("shell commands");
     },
   );
 

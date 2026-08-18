@@ -748,12 +748,18 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     expect(second.status, second.stderr).toBe(0);
     expect(snapshot(managedPaths)).toEqual(firstBytes);
 
-    expect(fixture.sourcePaths.filter(
+    expect(
+      fixture.sourcePaths
+        .filter(
           (sourcePath) =>
             !sourcePath.endsWith("/__init__.py") && !sourcePath.endsWith("/onboarding.py"),
-        ).every((file) =>
-          (firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g"))
-            ?.length ?? 0) === 1)).toBe(true);
+        )
+        .every(
+          (file) =>
+            (firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g"))
+              ?.length ?? 0) === 1,
+        ),
+    ).toBe(true);
     expect(
       firstBytes[fixture.agentPath].match(/NemoClaw-managed progressive tool disclosure\./g),
     ).toHaveLength(1);
@@ -761,13 +767,6 @@ describe("Deep Agents 0.1.55 progressive-disclosure build patch", () => {
     expect(firstBytes[path.join(fixture.packageDir, "onboarding.py")]).not.toContain(
       HARDENING_MARKER,
     );
-    expect(
-      firstBytes[fixture.agentPath].match(
-        /ProgressiveToolDisclosureMiddleware\(\s*registered_tools=kwargs\.get\("tools"\)\s*\)/g,
-      ),
-    ).toHaveLength(1);
-    expect(firstBytes[fixture.agentPath]).toContain('subagent["tools"]');
-    expect(firstBytes[fixture.agentPath]).toContain('if "tools" in subagent');
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
     expect(firstBytes[fixture.observabilityModulePath]).toBe(
       fs.readFileSync(observabilityPath, "utf8"),

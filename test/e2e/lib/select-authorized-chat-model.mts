@@ -3,6 +3,7 @@
 
 import { probeOpenAiLikeEndpointOptimized } from "../../../src/lib/inference/onboard-probes.ts";
 import { fetchOpenAiLikeModels } from "../../../src/lib/inference/provider-models.ts";
+import { isLoopbackHostname } from "../../../src/lib/core/url-utils.ts";
 import type { ModelCatalogFetchResult } from "../../../src/lib/onboard/types.ts";
 
 const CHAT_MODEL_HINT = /(?:claude|deepseek|gemma|gpt|kimi|llama|mistral|nemotron|phi|qwen)/iu;
@@ -36,6 +37,21 @@ function fail(message: string): never {
   throw new Error(`authorized model selection failed: ${message}`);
 }
 
+function assertCredentialSafeEndpoint(endpoint: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    fail("the endpoint must be an absolute HTTPS URL");
+  }
+  if (
+    parsed.protocol !== "https:" &&
+    !(parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname))
+  ) {
+    fail("the endpoint must use HTTPS unless it targets loopback");
+  }
+}
+
 function orderedChatCandidates(ids: string[], currentModel: string): string[] {
   const preference = new Map(PREFERRED_MODELS.map((id, index) => [id, index]));
   return [...new Set(ids)]
@@ -60,6 +76,7 @@ export async function selectAuthorizedChatModel({
   if (!apiKey) fail("COMPATIBLE_API_KEY is required");
   if (!currentModel) fail("the current model is required");
   if (!endpoint) fail("the endpoint is required");
+  assertCredentialSafeEndpoint(endpoint);
   if (!Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > MAX_CANDIDATES) {
     fail(`maxCandidates must be an integer from 1 to ${MAX_CANDIDATES}`);
   }

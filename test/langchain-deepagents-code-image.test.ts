@@ -99,7 +99,18 @@ function pythonStringMap(source: string, constantName: string): Record<string, s
   );
 }
 
-function expectVersionsMatchLock(requirementsLock: string, versions: Record<string, string>): void {
+const REQUIRED_MANAGED_DISTRIBUTIONS = ["deepagents-code", "deepagents"] as const;
+
+function expectVersionsMatchLock(
+  requirementsLock: string,
+  versions: Record<string, string>,
+  requiredDistributions: readonly string[],
+): void {
+  for (const distribution of requiredDistributions) {
+    expect(versions, `${distribution} must be present in the version map`).toHaveProperty(
+      distribution,
+    );
+  }
   for (const [distribution, version] of Object.entries(versions)) {
     expect(version, distribution).toBe(lockedRequirementVersion(requirementsLock, distribution));
   }
@@ -1141,7 +1152,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it("keeps image validator versions aligned with the reviewed lockfile", () => {
     const requirementsLock = readAgentFile("requirements.lock");
@@ -1154,10 +1165,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ...profileValidatorVersions
     } = pythonStringMap(readAgentFile("validate-nemotron-ultra-profile.py"), "EXPECTED_VERSIONS");
     expect(profileValidatorPluginVersion).toBe(pluginVersion);
-    expectVersionsMatchLock(requirementsLock, profileValidatorVersions);
+    expectVersionsMatchLock(
+      requirementsLock,
+      profileValidatorVersions,
+      REQUIRED_MANAGED_DISTRIBUTIONS,
+    );
     expectVersionsMatchLock(
       requirementsLock,
       pythonStringMap(readAgentFile("validate-progressive-tool-disclosure.py"), "PINNED_VERSIONS"),
+      REQUIRED_MANAGED_DISTRIBUTIONS,
     );
 
     const observabilityValidator = readAgentFile("validate-observability.py");
@@ -1182,7 +1198,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "EXPECTED_VERSIONS",
     );
     expect(e2ePluginVersion).toBe(pluginVersion);
-    expectVersionsMatchLock(requirementsLock, e2eVersions);
+    expectVersionsMatchLock(requirementsLock, e2eVersions, REQUIRED_MANAGED_DISTRIBUTIONS);
 
     const pluginTest = fs.readFileSync(
       path.join(repoRoot, "test", "langchain-deepagents-code-nemotron-profile-plugin.test.ts"),

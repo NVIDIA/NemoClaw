@@ -228,7 +228,7 @@ class Parser:
             ),
             interpreter=(True if "--interpreter" in argv else None),
             auto_approve=any(arg in {"-y", "--auto-approve"} for arg in argv),
-            yolo=False,
+            yolo="--yolo" in argv,
             startup_mode="auto",
             approval_mode="auto",
             acp="--acp" in argv,

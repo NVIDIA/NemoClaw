@@ -23,7 +23,7 @@ class ServerProcess:
         self._process = None
         self._persistent_env_overrides = {}
         self._env_overrides = {}
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
 
     async def start(self):
         with self._state_lock:
@@ -41,13 +41,16 @@ class ServerProcess:
                 stderr=subprocess.STDOUT,
                 start_new_session=(sys.platform != "win32"),
             )
-        output, _ = self._process.communicate(timeout=10)
-        if self._process.returncode != 0:
-            raise RuntimeError(output.decode())
-        self.outputs.append(output.decode())
+            process = self._process
+            output, _ = process.communicate(timeout=10)
+            if process.returncode != 0:
+                raise RuntimeError(output.decode())
+            self.outputs.append(output.decode())
 
     async def restart(self):
-        if self._process is not None and self._process.poll() is None:
-            self._process.terminate()
-            self._process.wait(timeout=10)
-        await self.start()
+        with self._state_lock:
+            process = self._process
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=10)
+            await self.start()
