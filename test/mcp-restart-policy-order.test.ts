@@ -11,9 +11,11 @@ import { describe, expect, it } from "vitest";
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.101");
 
 describe("MCP restart policy ordering", () => {
-  it("rejects a later foreign attached credential key before any policy or provider mutation", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-order-"));
-    const script = String.raw`
+  it.each(["restart", "restore"] as const)(
+    "rejects a later foreign attached credential key before any policy or provider mutation during %s (#9388)",
+    (operation) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-order-"));
+      const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.FIRST_MCP_TOKEN = "first-host-only-secret";
 process.env.SECOND_MCP_TOKEN = "second-host-only-secret";
@@ -26,6 +28,7 @@ const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
 const providerCalls = [];
 let policyApplyCalls = 0;
+const operation = ${JSON.stringify(operation)};
 const entries = {
   first: {
     server: "first",
@@ -97,7 +100,14 @@ policies.applyPresetContent = () => {
   policyApplyCalls += 1;
   return true;
 };
-processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
+processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
+  const entry = Object.values(entries).find((candidate) => command.includes(candidate.env[0]));
+  return {
+    status: entry ? 0 : 1,
+    stdout: entry ? (updatedProviders.has(entry.providerName) ? "v2\n" : "v1\n") : "",
+    stderr: "",
+  };
+};
 processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   status: 0,
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
@@ -121,7 +131,12 @@ for (const entry of Object.values(entries)) {
 }
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-bridge.restartMcpBridge("alpha").then(
+const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
+const operationPromise =
+  operation === "restart"
+    ? bridge.restartMcpBridge("alpha")
+    : restart.restoreExistingMcpBridgeRuntime("alpha", Object.values(entries));
+operationPromise.then(
   () => process.exit(9),
   (error) => {
     process.stdout.write(JSON.stringify({
@@ -132,26 +147,27 @@ bridge.restartMcpBridge("alpha").then(
   },
 );
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
-      timeout: 30_000,
-    });
-    fs.rmSync(home, { recursive: true, force: true });
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
+        timeout: 30_000,
+      });
+      fs.rmSync(home, { recursive: true, force: true });
 
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    const payload = JSON.parse(result.stdout) as {
-      message: string;
-      policyApplyCalls: number;
-      providerCalls: string[];
-    };
-    expect(payload.message).toContain(
-      "Credential key 'SECOND_MCP_TOKEN' is already supplied by attached provider 'foreign-attached'",
-    );
-    expect(payload.policyApplyCalls).toBe(0);
-    expect(payload.providerCalls).toEqual([]);
-  });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        message: string;
+        policyApplyCalls: number;
+        providerCalls: string[];
+      };
+      expect(payload.message).toContain(
+        "Credential key 'SECOND_MCP_TOKEN' is already supplied by attached provider 'foreign-attached'",
+      );
+      expect(payload.policyApplyCalls).toBe(0);
+      expect(payload.providerCalls).toEqual([]);
+    },
+  );
 
   it("compares bounded provider revision observations on the host during restart", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-revision-"));

@@ -217,6 +217,12 @@ export async function restoreExistingMcpBridgeRuntime(
         `OpenShell provider '${entry.providerName}' is missing. Runtime restoration refuses to create or rotate credentials; run explicit MCP restart after exporting '${entry.env[0]}'.`,
       );
     }
+  }
+  // Prove every restored entry is collision-free before the first mutation.
+  // The singleton check in the mutation loop still closes the race for each
+  // entry immediately before its policy and attachment are restored.
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
+  for (const entry of entries) {
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
     attachProvider(sandboxName, entry);
