@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 
-import { BEDROCK_RUNTIME_ADAPTER_PORT } from "../core/ports";
+import { BEDROCK_RUNTIME_ADAPTER_PORT, validateRuntimeAdapterPort } from "../core/ports";
 import { compactText, isLoopbackRemoteAddress } from "../core/url-utils";
 import { run, runCapture, SCRIPTS } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
@@ -379,6 +379,7 @@ export async function ensureBedrockRuntimeAdapter(options: {
   token: string;
   region: string;
 }> {
+  validateRuntimeAdapterPort("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT", BEDROCK_RUNTIME_ADAPTER_PORT);
   const region = resolveBedrockRuntimeRegion(options.classification);
   const endpointUrl = options.classification.endpointUrl;
   const compatibleCredential = options.compatibleCredential || null;
