@@ -556,7 +556,7 @@ describe("MessagingWorkflowPlanner", () => {
     ]);
   });
 
-  it("does not trust credential availability from mismatched sandbox entry plans", async () => {
+  it("does not trust credential availability across sandbox or channel boundaries", async () => {
     const registry = createChannelManifestRegistry([CREDENTIAL_ONLY_MANIFEST]);
     const localPlanner = new MessagingWorkflowPlanner(
       registry,
@@ -599,6 +599,30 @@ describe("MessagingWorkflowPlanner", () => {
       channelId: "matrix",
       credentialAvailable: false,
     });
+
+    // `botToken` is the input id of telegram, discord, slack and wechat, so a Telegram token
+    // must not satisfy the WeChat host-QR secret.
+    const crossChannel = await withEnv(
+      { WECHAT_ACCOUNT_ID: "wechat-account-1", WECHAT_BOT_TOKEN: undefined },
+      () =>
+        planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["telegram", "wechat"],
+          credentialAvailability: { botToken: true, TELEGRAM_BOT_TOKEN: true },
+        }),
+    );
+
+    expect(crossChannel.channels.find((channel) => channel.channelId === "wechat")).toMatchObject({
+      active: false,
+      configured: false,
+    });
+    expect(
+      crossChannel.credentialBindings.find((binding) => binding.channelId === "wechat"),
+    ).toMatchObject({ credentialAvailable: false });
+    expect(crossChannel.agentRender.map((entry) => entry.channelId)).not.toContain("wechat");
   });
 
   it("mutates disabled channel state in an existing sandbox entry plan", async () => {

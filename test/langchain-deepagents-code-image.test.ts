@@ -99,18 +99,14 @@ function pythonStringMap(source: string, constantName: string): Record<string, s
   );
 }
 
-const REQUIRED_MANAGED_DISTRIBUTIONS = ["deepagents-code", "deepagents"] as const;
-
 function expectVersionsMatchLock(
   requirementsLock: string,
   versions: Record<string, string>,
-  requiredDistributions: readonly string[],
 ): void {
-  for (const distribution of requiredDistributions) {
-    expect(versions, `${distribution} must be present in the version map`).toHaveProperty(
-      distribution,
-    );
-  }
+  expect(versions, "deepagents-code must be present in the version map").toHaveProperty(
+    "deepagents-code",
+  );
+  expect(versions, "deepagents must be present in the version map").toHaveProperty("deepagents");
   for (const [distribution, version] of Object.entries(versions)) {
     expect(version, distribution).toBe(lockedRequirementVersion(requirementsLock, distribution));
   }
@@ -126,13 +122,15 @@ const TARGETED_ADVISORY_VERSIONS = [
   ["pyasn1", "0.6.4"],
 ] as const;
 
-function expectReviewListsTargetedAdvisories(review: string): void {
-  for (const [distribution, version] of TARGETED_ADVISORY_VERSIONS) {
+describe("targeted dependency advisory review", () => {
+  it.each(TARGETED_ADVISORY_VERSIONS)("documents the reviewed %s %s pin", (distribution, version) => {
     const normalizedDistribution = distribution.replaceAll("-", "[-_]");
     const normalizedVersion = version.replaceAll(".", "\\.");
-    expect(review).toMatch(new RegExp(`${normalizedDistribution}\\s+${normalizedVersion}`, "i"));
-  }
-}
+    expect(readAgentFile("dependency-review.md")).toMatch(
+      new RegExp(`${normalizedDistribution}\\s+${normalizedVersion}`, "i"),
+    );
+  });
+});
 
 function writeMinimalWheel(directory: string): string {
   const wheelPath = path.join(directory, "nemoclaw_hash_contract-1.0-py3-none-any.whl");
@@ -1165,15 +1163,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ...profileValidatorVersions
     } = pythonStringMap(readAgentFile("validate-nemotron-ultra-profile.py"), "EXPECTED_VERSIONS");
     expect(profileValidatorPluginVersion).toBe(pluginVersion);
-    expectVersionsMatchLock(
-      requirementsLock,
-      profileValidatorVersions,
-      REQUIRED_MANAGED_DISTRIBUTIONS,
-    );
+    expectVersionsMatchLock(requirementsLock, profileValidatorVersions);
     expectVersionsMatchLock(
       requirementsLock,
       pythonStringMap(readAgentFile("validate-progressive-tool-disclosure.py"), "PINNED_VERSIONS"),
-      REQUIRED_MANAGED_DISTRIBUTIONS,
     );
 
     const observabilityValidator = readAgentFile("validate-observability.py");
@@ -1198,8 +1191,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "EXPECTED_VERSIONS",
     );
     expect(e2ePluginVersion).toBe(pluginVersion);
-    expectVersionsMatchLock(requirementsLock, e2eVersions, REQUIRED_MANAGED_DISTRIBUTIONS);
-
+    expectVersionsMatchLock(requirementsLock, e2eVersions);
   });
 
   it.each([
@@ -1224,7 +1216,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
       );
       expect(review).toMatch(/Targeted audit result:.*no known vulnerabilities/is);
-      expectReviewListsTargetedAdvisories(review);
       expect(review).toMatch(
         /Complete-lock audit result:.*2 duplicate records.*1 unrelated package/is,
       );
