@@ -27,11 +27,16 @@ export type SandboxExecOptions = {
   stdin?: boolean;
 };
 
+export type SandboxExecChildOptions = SandboxExecOptions & {
+  hostCwd?: string;
+  hostEnv?: NodeJS.ProcessEnv;
+};
+
 export type SandboxExecGatewayRestart = (sandboxName: string) => { ok: boolean };
 
 export type SandboxExecAgentResolver = (sandboxName: string) => string | null;
 
-type SpawnLikeResult = {
+export type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
   error?: Error;
@@ -59,7 +64,7 @@ export type SandboxExecChild = {
 export type SandboxExecSpawner = (
   binary: string,
   args: readonly string[],
-  options: SandboxExecOptions,
+  options: SandboxExecChildOptions,
 ) => SandboxExecChild;
 
 export type SandboxExecSignalSource = {
@@ -238,7 +243,11 @@ export function cleanupOpenClawAfterExec(
 }
 
 const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args, options) =>
-  spawn(binary, [...args], { stdio: buildSandboxExecStdio(options) });
+  spawn(binary, [...args], {
+    stdio: buildSandboxExecStdio(options),
+    ...(options.hostCwd ? { cwd: options.hostCwd } : {}),
+    ...(options.hostEnv ? { env: options.hostEnv } : {}),
+  });
 
 const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
   add: (signal, listener) => process.on(signal, listener),
@@ -248,7 +257,7 @@ const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
 export async function runSandboxExecChild(
   binary: string,
   args: readonly string[],
-  options: SandboxExecOptions = {},
+  options: SandboxExecChildOptions = {},
   spawnChild: SandboxExecSpawner = defaultSandboxExecSpawner,
   signalSource: SandboxExecSignalSource = defaultSandboxExecSignalSource,
 ): Promise<SpawnLikeResult> {
@@ -402,10 +411,7 @@ function defaultResolveSandboxAgent(sandboxName: string): string | null {
   return entry.agent ?? "openclaw";
 }
 
-function googleChatPairingActivationFailureMessage(
-  cliName: string,
-  sandboxName: string,
-): string {
+function googleChatPairingActivationFailureMessage(cliName: string, sandboxName: string): string {
   return (
     `  Google Chat pairing approval committed for '${sandboxName}', but managed gateway activation failed. ` +
     `The approval was not rolled back. Run '${cliName} ${sandboxName} gateway restart' before testing the next message.`

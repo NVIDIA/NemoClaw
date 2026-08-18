@@ -1171,6 +1171,12 @@ async function runInferenceSetWithoutHostLock(
           {
             probe: deps.probeSandboxRoute,
             sleep: deps.sleep,
+            onRetry: (result, delayMs, attempt) => {
+              if (result.ok) return;
+              deps.log(
+                `  Waiting ${delayMs / 1_000}s for OpenShell route convergence after HTTP ${result.httpStatus} (probe ${attempt}/3)...`,
+              );
+            },
           },
         );
       } catch (probeError) {

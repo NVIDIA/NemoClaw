@@ -265,6 +265,40 @@ afterEach(() => {
 });
 
 describe("portable demo sandbox stop reconciliation", () => {
+  it("returns already-stopped for an exited container without another mutation (#9200)", () => {
+    const harness = createStopHarness();
+    harness.runtime.setState(false, "exited");
+    const beforeStop = vi.fn();
+
+    expect(stopSandbox(harness, {}, beforeStop)).toEqual({ kind: "already-stopped" });
+
+    expect(beforeStop).not.toHaveBeenCalled();
+    expectReceiptUnchanged(harness);
+    expect(
+      harness.runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "stop";
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a non-running container with no Podman status (#9200)", () => {
+    const harness = createStopHarness();
+    harness.runtime.setState(false, null);
+    const beforeStop = vi.fn();
+
+    expect(() => stopSandbox(harness, {}, beforeStop)).toThrow("is not in the exited state");
+
+    expect(beforeStop).not.toHaveBeenCalled();
+    expectReceiptUnchanged(harness);
+    expect(
+      harness.runtime.podman.mock.calls.some(([args]) => {
+        const command = args[0] === "--url" ? args.slice(2) : args;
+        return command[0] === "stop";
+      }),
+    ).toBe(false);
+  });
+
   it("waits for an already-stopping container to settle without another mutation (#9200)", () => {
     const harness = createStopHarness();
     let now = 0;

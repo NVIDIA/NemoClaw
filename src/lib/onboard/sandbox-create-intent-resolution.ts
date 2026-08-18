@@ -45,7 +45,7 @@ export interface SandboxCreateIntentResolverDeps<Agent, ResourceProfile> {
   filterEnabledChannelsByAgent(enabledChannels: string[] | null, agent: Agent): string[] | null;
   defaultPolicyPath: string;
   getAgentPolicyPath(agent: Agent): string | null;
-  resolveGpuPlan(config: SandboxGpuCreateConfig, agent: Agent): {
+  resolveGpuPlan(config: SandboxGpuCreateConfig): {
     gpuRoutePlan: DockerGpuRoutePlan;
     logMessage: string | null;
   };
@@ -116,7 +116,6 @@ export function createSandboxCreateIntentResolver<
     const messaging = await prepareMessagingCapabilities(input);
     const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } = deps.resolveGpuPlan(
       input.sandboxGpuConfig,
-      input.agent,
     );
     const resourceCreateArgs: string[] = [];
     deps.appendResourceCreateArgs(resourceCreateArgs, input.resourceProfile);
