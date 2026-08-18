@@ -110,22 +110,6 @@ async function requestJson(options: {
   });
 }
 
-async function expectAdmissionsRejected(
-  port: number,
-  bodies: readonly object[],
-): Promise<void> {
-  for (const body of bodies) {
-    const response = await requestJson({
-      port,
-      method: "POST",
-      path: "/v1/voice/sessions",
-      bearer: DEPLOYMENT_BEARER,
-      body,
-    });
-    expect(response).toEqual({ status: 400, body: '{"error":"invalid_request"}' });
-  }
-}
-
 afterEach(async () => {
   await Promise.all(
     [...servers].map(
@@ -407,7 +391,7 @@ describe("experimental voice gateway composed boundary", () => {
       body: '{"error":"authentication_failed"}',
     });
 
-    await expectAdmissionsRejected(port, [
+    const invalidAdmissions = [
       { runtimeConversationId: "../namespace-escape" },
       { runtimeConversationId: "x".repeat(129) },
       {
@@ -419,6 +403,23 @@ describe("experimental voice gateway composed boundary", () => {
         agent: "runtime-selected",
         gatewayUrl: "ws://attacker.invalid/ws",
       },
+    ];
+    const rejectedAdmissions = await Promise.all(
+      invalidAdmissions.map((body) =>
+        requestJson({
+          port,
+          method: "POST",
+          path: "/v1/voice/sessions",
+          bearer: DEPLOYMENT_BEARER,
+          body,
+        }),
+      ),
+    );
+    expect(rejectedAdmissions).toEqual([
+      { status: 400, body: '{"error":"invalid_request"}' },
+      { status: 400, body: '{"error":"invalid_request"}' },
+      { status: 400, body: '{"error":"invalid_request"}' },
+      { status: 400, body: '{"error":"invalid_request"}' },
     ]);
     expect(clientsCreated).toBe(0);
 
