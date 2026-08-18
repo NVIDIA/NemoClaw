@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { authorizeMessagingManagedStartupPlaceholders } from "../../messaging/managed-startup-placeholders.ts";
+import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
 
 /**
@@ -45,7 +46,8 @@ const CREDENTIAL_COMPOUND_NAME_PATTERN =
   /^(?:access|refresh|client|bearer|auth|api|private|signing|session|bot|app|resolved)(?:token|key|secret|password)$/iu;
 const CREDENTIAL_CAMEL_SUFFIX_PATTERN =
   /(?:apiKey|accessKey|secretKey|authToken|refreshToken|accessToken|clientSecret|privateKey|passcode|password|passwd|passphrase|bearerToken|botToken|appToken|sessionToken|signingKey|secretPublicKey|personalAccessToken|connectionString|webhookUrl)$/iu;
-const CREDENTIAL_CAMEL_BOUNDARY_PATTERN = /[a-z0-9](?:Token|Key|Secret|Password|Passphrase|Pat)$/u;
+const CREDENTIAL_CAMEL_BOUNDARY_PATTERN =
+  /[a-z0-9](?:Token|Key|Secret|Password|Passphrase|Pat)$/u;
 const CREDENTIAL_ENV_NAME_PATTERN =
   /^(?:[A-Z0-9]+_)*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|PASSPHRASE|CREDENTIAL)S?$/u;
 const CREDENTIAL_HEADER_NAME_PATTERN =
@@ -60,6 +62,14 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
+const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
+  listMessagingCredentialEnvAssignments()
+    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+    .map(
+      ({ agent, sourceEnvKey, targetEnvKey }) =>
+        `${agent}\0${sourceEnvKey}\0${targetEnvKey}`,
+    ),
+);
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /nvapi-[A-Za-z0-9_-]{10,}/u,
@@ -88,11 +98,21 @@ export const MANAGED_STARTUP_INFERENCE_APIS = [
   "openai-responses",
   "anthropic-messages",
 ] as const;
-export type ManagedStartupInferenceApi = (typeof MANAGED_STARTUP_INFERENCE_APIS)[number];
+export type ManagedStartupInferenceApi =
+  (typeof MANAGED_STARTUP_INFERENCE_APIS)[number];
 export type ManagedStartupToolDisclosure = "progressive" | "direct";
-export const MANAGED_STARTUP_REASONING_EFFORTS = ["default", "low", "medium", "high"] as const;
-export type ManagedStartupReasoningEffort = (typeof MANAGED_STARTUP_REASONING_EFFORTS)[number];
-export const MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES = ["disabled", "thread-opt-in"] as const;
+export const MANAGED_STARTUP_REASONING_EFFORTS = [
+  "default",
+  "low",
+  "medium",
+  "high",
+] as const;
+export type ManagedStartupReasoningEffort =
+  (typeof MANAGED_STARTUP_REASONING_EFFORTS)[number];
+export const MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES = [
+  "disabled",
+  "thread-opt-in",
+] as const;
 export type ManagedStartupDcodeAutoApprovalMode =
   (typeof MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES)[number];
 
@@ -103,10 +123,12 @@ export const MANAGED_STARTUP_HERMES_TOOL_GATEWAYS = [
   "nous-browser",
   "nous-code",
 ] as const;
-export type ManagedStartupHermesToolGateway = (typeof MANAGED_STARTUP_HERMES_TOOL_GATEWAYS)[number];
+export type ManagedStartupHermesToolGateway =
+  (typeof MANAGED_STARTUP_HERMES_TOOL_GATEWAYS)[number];
 export type ManagedStartupInputModality = "text" | "image";
 export type ManagedStartupWebSearchProvider = "brave" | "tavily";
-export type ManagedStartupDeviceAuthOptOutSource = "operator" | "managed-onboard";
+export type ManagedStartupDeviceAuthOptOutSource =
+  "operator" | "managed-onboard";
 
 export const MANAGED_STARTUP_AGENTS = [
   "openclaw",
@@ -117,7 +139,8 @@ export const MANAGED_STARTUP_AGENTS = [
 
 export type ManagedStartupAgent = (typeof MANAGED_STARTUP_AGENTS)[number];
 export const MANAGED_STARTUP_MESSAGING_AGENTS = ["openclaw", "hermes"] as const;
-export type ManagedStartupMessagingAgent = (typeof MANAGED_STARTUP_MESSAGING_AGENTS)[number];
+export type ManagedStartupMessagingAgent =
+  (typeof MANAGED_STARTUP_MESSAGING_AGENTS)[number];
 
 export type ManagedStartupJsonScalar = string | number | boolean | null;
 export type ManagedStartupJsonValue =
@@ -318,7 +341,8 @@ export interface ManagedStartupProfile {
   readonly corporateCa: ManagedStartupCorporateCa;
 }
 
-export type ManagedStartupDashboardMode = "disabled" | "loopback" | "remote" | "loopback-forwarded";
+export type ManagedStartupDashboardMode =
+  "disabled" | "loopback" | "remote" | "loopback-forwarded";
 
 export interface ManagedStartupAgentCapabilities {
   readonly inferenceApis: readonly ManagedStartupInferenceApi[];
@@ -327,10 +351,7 @@ export interface ManagedStartupAgentCapabilities {
   readonly webSearchProviders: readonly ManagedStartupWebSearchProvider[];
   readonly toolGateways: readonly ManagedStartupHermesToolGateway[];
   readonly tuningFields: readonly (
-    | "contextWindow"
-    | "maxTokens"
-    | "reasoning"
-    | "reasoningEffort"
+    "contextWindow" | "maxTokens" | "reasoning" | "reasoningEffort"
   )[];
   readonly supportsMessaging: boolean;
   readonly supportsInferenceCompatibility: boolean;
@@ -371,7 +392,12 @@ const PROFILE_CAPABILITIES = {
     inputModalities: ["text", "image"],
     webSearchProviders: ["brave", "tavily"],
     toolGateways: [],
-    tuningFields: ["contextWindow", "maxTokens", "reasoning", "reasoningEffort"],
+    tuningFields: [
+      "contextWindow",
+      "maxTokens",
+      "reasoning",
+      "reasoningEffort",
+    ],
     supportsMessaging: true,
     supportsInferenceCompatibility: true,
     supportsUpstreamEndpoint: false,
@@ -452,10 +478,13 @@ for (const agent of MANAGED_STARTUP_AGENTS) {
   });
 }
 
-export const MANAGED_STARTUP_PROFILE_CAPABILITIES = Object.freeze(PROFILE_CAPABILITIES);
+export const MANAGED_STARTUP_PROFILE_CAPABILITIES =
+  Object.freeze(PROFILE_CAPABILITIES);
 
-export type ManagedStartupAffordanceSource = "docker-arg" | "runtime-env" | "host-material";
-export type ManagedStartupAffordanceRepresentation = "value" | "derived" | "digest-handoff";
+export type ManagedStartupAffordanceSource =
+  "docker-arg" | "runtime-env" | "host-material";
+export type ManagedStartupAffordanceRepresentation =
+  "value" | "derived" | "digest-handoff";
 
 export interface ManagedStartupAffordance {
   readonly input: string;
@@ -504,14 +533,32 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_AGENT_TIMEOUT", "agentConfig.agentTimeoutSeconds"),
     affordance("NEMOCLAW_AGENT_HEARTBEAT_EVERY", "agentConfig.heartbeatEvery"),
     affordance("NEMOCLAW_EXTRA_AGENTS_JSON_B64", "agentConfig.extraAgents"),
-    affordance("NEMOCLAW_DISABLE_DEVICE_AUTH", "agentConfig.deviceAuth.disabled"),
-    affordance("NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE", "agentConfig.deviceAuth.optOutSource"),
+    affordance(
+      "NEMOCLAW_DISABLE_DEVICE_AUTH",
+      "agentConfig.deviceAuth.disabled",
+    ),
+    affordance(
+      "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE",
+      "agentConfig.deviceAuth.optOutSource",
+    ),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
-    affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
+    affordance(
+      "NEMOCLAW_WEB_SEARCH_PROVIDER",
+      "agentConfig.webSearch.provider",
+    ),
     affordance("NEMOCLAW_OPENCLAW_OTEL", "agentConfig.otel.enabled"),
-    affordance("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT", "agentConfig.otel.endpointUrl"),
-    affordance("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME", "agentConfig.otel.serviceName"),
-    affordance("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE", "agentConfig.otel.sampleRate"),
+    affordance(
+      "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+      "agentConfig.otel.endpointUrl",
+    ),
+    affordance(
+      "NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME",
+      "agentConfig.otel.serviceName",
+    ),
+    affordance(
+      "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
+      "agentConfig.otel.sampleRate",
+    ),
     affordance("CHAT_UI_URL", "dashboard.url"),
     affordance("NEMOCLAW_DASHBOARD_BIND", "dashboard.bindAddress"),
     affordance("NEMOCLAW_WSL_DASHBOARD_EXPOSURE", "dashboard.wslExposure"),
@@ -519,7 +566,11 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
-    affordance("NEMOCLAW_MINIMAL_BOOTSTRAP", "agentConfig.minimalBootstrap", "runtime-env"),
+    affordance(
+      "NEMOCLAW_MINIMAL_BOOTSTRAP",
+      "agentConfig.minimalBootstrap",
+      "runtime-env",
+    ),
     affordance(
       "NEMOCLAW_CORPORATE_CA_B64",
       "corporateCa.bundleSha256",
@@ -542,16 +593,38 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
       "docker-arg",
       "derived",
     ),
-    affordance("NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "tools.enabledGateways"),
+    affordance(
+      "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64",
+      "tools.enabledGateways",
+    ),
     affordance("NEMOCLAW_WEB_SEARCH_ENABLED", "agentConfig.webSearch.enabled"),
-    affordance("NEMOCLAW_WEB_SEARCH_PROVIDER", "agentConfig.webSearch.provider"),
+    affordance(
+      "NEMOCLAW_WEB_SEARCH_PROVIDER",
+      "agentConfig.webSearch.provider",
+    ),
     affordance("NEMOCLAW_MESSAGING_PLAN_B64", "messaging.plan"),
     affordance("CHAT_UI_URL", "dashboard.url"),
-    affordance("NEMOCLAW_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
+    affordance(
+      "NEMOCLAW_DASHBOARD_PORT",
+      "dashboard.publicPort",
+      "runtime-env",
+    ),
     affordance("NEMOCLAW_HERMES_DASHBOARD", "dashboard.mode", "runtime-env"),
-    affordance("NEMOCLAW_HERMES_DASHBOARD_PORT", "dashboard.publicPort", "runtime-env"),
-    affordance("NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT", "dashboard.internalPort", "runtime-env"),
-    affordance("NEMOCLAW_HERMES_DASHBOARD_TUI", "dashboard.tuiEnabled", "runtime-env"),
+    affordance(
+      "NEMOCLAW_HERMES_DASHBOARD_PORT",
+      "dashboard.publicPort",
+      "runtime-env",
+    ),
+    affordance(
+      "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT",
+      "dashboard.internalPort",
+      "runtime-env",
+    ),
+    affordance(
+      "NEMOCLAW_HERMES_DASHBOARD_TUI",
+      "dashboard.tuiEnabled",
+      "runtime-env",
+    ),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost", "runtime-env"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort", "runtime-env"),
     affordance(
@@ -566,7 +639,10 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_MODEL", "inference.model"),
     affordance("NEMOCLAW_INFERENCE_PROVIDER_ID", "inference.routeProvider"),
     affordance("NEMOCLAW_UPSTREAM_PROVIDER", "inference.upstreamProvider"),
-    affordance("NEMOCLAW_UPSTREAM_ENDPOINT_URL", "inference.upstreamEndpointUrl"),
+    affordance(
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
+      "inference.upstreamEndpointUrl",
+    ),
     affordance("NEMOCLAW_INFERENCE_BASE_URL", "inference.routedBaseUrl"),
     affordance("NEMOCLAW_INFERENCE_API", "inference.api"),
     affordance("NEMOCLAW_REASONING_EFFORT", "tuning.reasoningEffort"),
@@ -574,7 +650,11 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     affordance("NEMOCLAW_DCODE_AUTO_APPROVAL", "agentConfig.autoApprovalMode"),
     affordance("NEMOCLAW_PROXY_HOST", "proxy.managedHost"),
     affordance("NEMOCLAW_PROXY_PORT", "proxy.managedPort"),
-    affordance("NEMOCLAW_OBSERVABILITY", "agentConfig.observabilityEnabled", "runtime-env"),
+    affordance(
+      "NEMOCLAW_OBSERVABILITY",
+      "agentConfig.observabilityEnabled",
+      "runtime-env",
+    ),
     affordance(
       "NEMOCLAW_CORPORATE_CA_B64",
       "corporateCa.bundleSha256",
@@ -603,7 +683,10 @@ export const MANAGED_STARTUP_PROFILE_AFFORDANCE_INVENTORY = {
     ),
     ...HOST_PROXY_AFFORDANCES,
   ],
-} as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupAffordance[]>;
+} as const satisfies Record<
+  ManagedStartupAgent,
+  readonly ManagedStartupAffordance[]
+>;
 
 export type ManagedStartupDeferredRuntimeOwner =
   | "application-environment"
@@ -612,8 +695,7 @@ export type ManagedStartupDeferredRuntimeOwner =
   | "fixed-image-contract";
 
 export type ManagedStartupDeferredRuntimeAdmission =
-  | "managed-launch-forwarded"
-  | "image-consumed-not-forwarded";
+  "managed-launch-forwarded" | "image-consumed-not-forwarded";
 
 export interface ManagedStartupDeferredRuntimeInput {
   readonly input: string;
@@ -727,7 +809,9 @@ export const MANAGED_STARTUP_PROFILE_DEFERRED_RUNTIME_INPUTS = Object.freeze({
       "credential provider construction owns key metadata outside the secret-free profile",
     ),
   ]),
-}) satisfies Readonly<Record<ManagedStartupAgent, readonly ManagedStartupDeferredRuntimeInput[]>>;
+}) satisfies Readonly<
+  Record<ManagedStartupAgent, readonly ManagedStartupDeferredRuntimeInput[]>
+>;
 
 export interface ManagedStartupRuntimeCleanupObligation {
   readonly input: string;
@@ -794,76 +878,178 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "OPENCLAW_VERSION", reason: "release-composition" },
     { input: "OPENCLAW_2026_7_1_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_7_1_TARBALL", reason: "release-composition" },
-    { input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "OPENCLAW_DIAGNOSTICS_OTEL_2026_7_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "OPENCLAW_BRAVE_PLUGIN_2026_7_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW",
+      reason: "release-composition",
+    },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "OPENCLAW_2026_3_11_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_3_11_TARBALL", reason: "release-composition" },
     { input: "OPENCLAW_2026_4_24_INTEGRITY", reason: "integrity-pin" },
     { input: "OPENCLAW_2026_4_24_TARBALL", reason: "release-composition" },
     { input: "CODEX_ACP_0_11_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY", reason: "integrity-pin" },
-    { input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY", reason: "integrity-pin" },
+    {
+      input: "CODEX_ACP_LINUX_AMD64_0_11_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
+    {
+      input: "CODEX_ACP_LINUX_ARM64_0_11_1_INTEGRITY",
+      reason: "integrity-pin",
+    },
     { input: "MCPORTER_VERSION", reason: "release-composition" },
     { input: "MCPORTER_0_7_3_INTEGRITY", reason: "integrity-pin" },
     { input: "MCPORTER_0_7_3_TARBALL", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   hermes: [
     { input: "BASE_IMAGE", reason: "release-composition" },
     { input: "SSL_CERT_FILE", reason: "fixed-image-contract" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
-    { input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
+    {
+      input: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_WRAPPER_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_HERMES_VALIDATOR_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256", reason: "integrity-pin" },
-    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256", reason: "integrity-pin" },
+    {
+      input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256",
+      reason: "integrity-pin",
+    },
+    {
+      input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256",
+      reason: "integrity-pin",
+    },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   "langchain-deepagents-code": [
     { input: "BASE_IMAGE", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
   pi: [
     { input: "BASE_IMAGE", reason: "release-composition" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+      reason: "release-composition",
+    },
     { input: "PI_VERSION", reason: "integrity-pin" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
     { input: "TARGETARCH", reason: "platform-build" },
-    { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
+    {
+      input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER",
+      reason: "fixed-image-contract",
+    },
   ],
-} as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupExcludedDockerInput[]>;
+} as const satisfies Record<
+  ManagedStartupAgent,
+  readonly ManagedStartupExcludedDockerInput[]
+>;
 
 export class ManagedStartupProfileError extends Error {
   constructor(message: string) {
@@ -940,15 +1126,26 @@ const OPENCLAW_CONFIG_KEYS = new Set([
   "minimalBootstrap",
 ]);
 const HERMES_CONFIG_KEYS = new Set(["agent", "webSearch"]);
-const DCODE_CONFIG_KEYS = new Set(["agent", "autoApprovalMode", "observabilityEnabled"]);
+const DCODE_CONFIG_KEYS = new Set([
+  "agent",
+  "autoApprovalMode",
+  "observabilityEnabled",
+]);
 const PI_CONFIG_KEYS = new Set(["agent"]);
 const PI_DASHBOARD_KEYS = new Set(["agent", "mode"]);
 const WEB_SEARCH_KEYS = new Set(["enabled", "provider"]);
-const OTEL_KEYS = new Set(["enabled", "endpointUrl", "serviceName", "sampleRate"]);
+const OTEL_KEYS = new Set([
+  "enabled",
+  "endpointUrl",
+  "serviceName",
+  "sampleRate",
+]);
 const DEVICE_AUTH_KEYS = new Set(["disabled", "optOutSource"]);
 const EXTRA_AGENTS_KEYS = new Set(["agents", "defaults", "main"]);
 const MANAGED_STARTUP_AGENT_SET = new Set<string>(MANAGED_STARTUP_AGENTS);
-const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES);
+const DCODE_AUTO_APPROVAL_MODE_SET = new Set<string>(
+  MANAGED_STARTUP_DCODE_AUTO_APPROVAL_MODES,
+);
 const REASONING_EFFORT_SET = new Set<string>(MANAGED_STARTUP_REASONING_EFFORTS);
 const HERMES_INTERNAL_API_PORT = 18_642;
 
@@ -956,7 +1153,9 @@ const HERMES_API_PORT_RANGE_START = 8642;
 const HERMES_API_PORT_RANGE_END = 8652;
 
 function isHermesApiPort(port: number): boolean {
-  return port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END;
+  return (
+    port >= HERMES_API_PORT_RANGE_START && port <= HERMES_API_PORT_RANGE_END
+  );
 }
 
 // A dashboard must not use the internal API port, and must not use any port in
@@ -968,13 +1167,18 @@ function isHermesReservedApiPort(port: number): boolean {
 const HERMES_RESERVED_API_PORT_LABEL = `${HERMES_API_PORT_RANGE_START}-${HERMES_API_PORT_RANGE_END} or ${HERMES_INTERNAL_API_PORT}`;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
 function isCredentialShapedName(name: string): boolean {
-  if (PUBLIC_KEY_NAME_PATTERN.test(name) || NON_SECRET_KEY_METADATA_NAMES.has(name)) return false;
+  if (
+    PUBLIC_KEY_NAME_PATTERN.test(name) ||
+    NON_SECRET_KEY_METADATA_NAMES.has(name)
+  )
+    return false;
   return (
     CREDENTIAL_SHAPED_NAME_PATTERN.test(name) ||
     CREDENTIAL_COMPOUND_NAME_PATTERN.test(name) ||
@@ -988,8 +1192,12 @@ function isCredentialShapedName(name: string): boolean {
 
 function valueLooksLikeSecret(value: string): boolean {
   for (let index = 0; index < SECRET_VALUE_PATTERNS.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(SECRET_VALUE_PATTERNS, String(index));
-    if (descriptor && "value" in descriptor && descriptor.value.test(value)) return true;
+    const descriptor = Object.getOwnPropertyDescriptor(
+      SECRET_VALUE_PATTERNS,
+      String(index),
+    );
+    if (descriptor && "value" in descriptor && descriptor.value.test(value))
+      return true;
   }
   return false;
 }
@@ -999,7 +1207,10 @@ function isMessagingCredentialPlaceholder(
   value: unknown,
   allowedBuildStepPlaceholders: ReadonlySet<string>,
 ): boolean {
-  if (typeof value !== "string" || !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)) {
+  if (
+    typeof value !== "string" ||
+    !MESSAGING_CREDENTIAL_PLACEHOLDER_RE.test(value)
+  ) {
     return false;
   }
   const isCredentialBindingPlaceholder =
@@ -1026,7 +1237,10 @@ function isMessagingCredentialPlaceholder(
   );
 }
 
-function buildStepPlaceholderKey(path: readonly string[], value: string): string {
+function buildStepPlaceholderKey(
+  path: readonly string[],
+  value: string,
+): string {
   return JSON.stringify([path, value]);
 }
 
@@ -1040,10 +1254,14 @@ function messagingCredentialPlaceholderEnvKey(value: string): string | null {
 }
 
 function containsMessagingCredentialPlaceholder(value: string): boolean {
-  return value.includes("openshell:resolve:env:") || value.includes("-OPENSHELL-RESOLVE-ENV-");
+  return (
+    value.includes("openshell:resolve:env:") ||
+    value.includes("-OPENSHELL-RESOLVE-ENV-")
+  );
 }
 
 function isMessagingCredentialPlaceholderAssignment(
+  selectedAgent: unknown,
   path: readonly string[],
   value: string,
 ): boolean {
@@ -1061,8 +1279,17 @@ function isMessagingCredentialPlaceholderAssignment(
   const separator = value.indexOf("=");
   if (separator <= 0 || value.indexOf("=", separator + 1) !== -1) return false;
   const envKey = value.slice(0, separator);
-  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(value.slice(separator + 1));
-  return CREDENTIAL_ENV_NAME_PATTERN.test(envKey) && envKey === placeholderEnvKey;
+  const placeholder = value.slice(separator + 1);
+  const placeholderEnvKey = messagingCredentialPlaceholderEnvKey(placeholder);
+  return (
+    CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
+    placeholderEnvKey !== null &&
+    (envKey === placeholderEnvKey ||
+      (typeof selectedAgent === "string" &&
+        MESSAGING_CREDENTIAL_ENV_ALIASES.has(
+          `${selectedAgent}\0${placeholderEnvKey}\0${envKey}`,
+        )))
+  );
 }
 
 function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
@@ -1076,7 +1303,10 @@ function isMessagingRuntimeEnvAliasPath(path: readonly string[]): boolean {
   );
 }
 
-function ownDataPropertyValue(value: Record<string, unknown>, key: string): unknown {
+function ownDataPropertyValue(
+  value: Record<string, unknown>,
+  key: string,
+): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
@@ -1113,7 +1343,10 @@ function isAllowedMessagingRuntimeAliasStringPath(
   );
 }
 
-function isMessagingPackagePin(path: readonly string[], value: unknown): boolean {
+function isMessagingPackagePin(
+  path: readonly string[],
+  value: unknown,
+): boolean {
   return (
     path.length === 6 &&
     path[0] === "messaging" &&
@@ -1129,7 +1362,10 @@ function isMessagingPackagePin(path: readonly string[], value: unknown): boolean
 function containsUrlWithCredentialMaterial(value: string): boolean {
   const candidates = value.match(URL_CANDIDATE_RE) ?? [];
   for (let index = 0; index < candidates.length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(candidates, String(index));
+    const descriptor = Object.getOwnPropertyDescriptor(
+      candidates,
+      String(index),
+    );
     if (!descriptor || !("value" in descriptor)) continue;
     try {
       const url = new URL(descriptor.value);
@@ -1146,7 +1382,8 @@ function containsUrlWithCredentialMaterial(value: string): boolean {
       fragmentParameters.forEach((_fragmentValue, key) => {
         if (isCredentialShapedName(key)) credentialFragment = true;
       });
-      if (url.username || url.password || credentialQuery || credentialFragment) return true;
+      if (url.username || url.password || credentialQuery || credentialFragment)
+        return true;
     } catch {
       // A field-level URL validator owns malformed strings where a URL is expected.
     }
@@ -1161,12 +1398,17 @@ function invalid(reason: string): never {
 function payloadPath(path: readonly string[]): string {
   return path.reduce(
     (result, segment) =>
-      segment.startsWith("[") ? `${result}${segment}` : `${result}${result ? "." : ""}${segment}`,
+      segment.startsWith("[")
+        ? `${result}${segment}`
+        : `${result}${result ? "." : ""}${segment}`,
     "",
   );
 }
 
-function mapArrayByIndex<T, U>(values: readonly T[], mapper: (value: T, index: number) => U): U[] {
+function mapArrayByIndex<T, U>(
+  values: readonly T[],
+  mapper: (value: T, index: number) => U,
+): U[] {
   const mapped: U[] = [];
   for (let index = 0; index < values.length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(values, String(index));
@@ -1246,7 +1488,9 @@ function requireBoundedString(
     Buffer.byteLength(value, "utf8") > maxBytes ||
     CONTROL_CHARACTER_RE.test(value)
   ) {
-    invalid(`${where} must be a bounded, non-empty string without control characters`);
+    invalid(
+      `${where} must be a bounded, non-empty string without control characters`,
+    );
   }
   return value;
 }
@@ -1261,7 +1505,10 @@ function requireStringEnum<T extends string>(
   return normalized as T;
 }
 
-function requireNullablePositiveInteger(value: unknown, where: string): number | null {
+function requireNullablePositiveInteger(
+  value: unknown,
+  where: string,
+): number | null {
   if (value === null) return null;
   if (
     typeof value !== "number" ||
@@ -1279,14 +1526,24 @@ function requirePositiveInteger(
   where: string,
   maximum = MAX_TUNING_INTEGER,
 ): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > maximum) {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > maximum
+  ) {
     invalid(`${where} must be a bounded positive integer`);
   }
   return value;
 }
 
 function requirePort(value: unknown, where: string, minimum = 1): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65_535) {
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > 65_535
+  ) {
     invalid(`${where} must be a valid TCP port`);
   }
   if (value < minimum) invalid(`${where} must be at least ${String(minimum)}`);
@@ -1297,12 +1554,15 @@ function requireStringList(value: unknown, where: string): readonly string[] {
   if (!Array.isArray(value) || value.length > MAX_LIST_ITEMS) {
     invalid(`${where} must be a bounded string list`);
   }
-  const items = mapArrayByIndex(value, (item) => requireBoundedString(item, `${where} item`));
+  const items = mapArrayByIndex(value, (item) =>
+    requireBoundedString(item, `${where} item`),
+  );
   const unique = new Set<string>();
   for (let index = 0; index < items.length; index += 1) {
     unique.add(items[index] as string);
   }
-  if (unique.size !== items.length) invalid(`${where} must not contain duplicates`);
+  if (unique.size !== items.length)
+    invalid(`${where} must not contain duplicates`);
   return sortStrings(items);
 }
 
@@ -1313,7 +1573,8 @@ function requireEnumList<T extends string>(
   options: { readonly allowEmpty: boolean },
 ): readonly T[] {
   const items = requireStringList(value, where);
-  if (!options.allowEmpty && items.length === 0) invalid(`${where} must not be empty`);
+  if (!options.allowEmpty && items.length === 0)
+    invalid(`${where} must not be empty`);
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index] as string;
     if (!allowed.has(item)) invalid(`${where} contains an unsupported value`);
@@ -1327,12 +1588,18 @@ function cloneJsonValue(
   options: { readonly nullPrototypeObjects?: boolean } = {},
 ): ManagedStartupJsonValue {
   const clone = (current: unknown, depth: number): ManagedStartupJsonValue => {
-    if (depth > MAX_JSON_DEPTH) invalid(`${where} exceeds the JSON depth limit`);
-    if (current === null || typeof current === "string" || typeof current === "boolean") {
+    if (depth > MAX_JSON_DEPTH)
+      invalid(`${where} exceeds the JSON depth limit`);
+    if (
+      current === null ||
+      typeof current === "string" ||
+      typeof current === "boolean"
+    ) {
       return current;
     }
     if (typeof current === "number") {
-      if (!Number.isFinite(current)) invalid(`${where} contains a non-finite number`);
+      if (!Number.isFinite(current))
+        invalid(`${where} contains a non-finite number`);
       return current;
     }
     if (Array.isArray(current)) {
@@ -1368,13 +1635,22 @@ function cloneJsonValue(
   return clone(value, 0);
 }
 
-function requireJsonObjectOrNull(value: unknown, where: string): ManagedStartupJsonObject | null {
+function requireJsonObjectOrNull(
+  value: unknown,
+  where: string,
+): ManagedStartupJsonObject | null {
   if (value === null) return null;
-  if (!isPlainObject(value)) invalid(`${where} must be null or a plain JSON object`);
-  return cloneJsonValue(value, where, { nullPrototypeObjects: true }) as ManagedStartupJsonObject;
+  if (!isPlainObject(value))
+    invalid(`${where} must be null or a plain JSON object`);
+  return cloneJsonValue(value, where, {
+    nullPrototypeObjects: true,
+  }) as ManagedStartupJsonObject;
 }
 
-function requireJsonObject(value: unknown, where: string): ManagedStartupJsonObject {
+function requireJsonObject(
+  value: unknown,
+  where: string,
+): ManagedStartupJsonObject {
   const object = requireJsonObjectOrNull(value, where);
   if (object === null) invalid(`${where} must be a plain JSON object`);
   return object;
@@ -1395,7 +1671,9 @@ function requireHttpUrl(value: unknown, where: string): string {
     parsed.search ||
     parsed.hash
   ) {
-    invalid(`${where} must be a credential-free HTTP(S) URL without query or fragment data`);
+    invalid(
+      `${where} must be a credential-free HTTP(S) URL without query or fragment data`,
+    );
   }
   const pathname = parsed.pathname.replace(/\/+$/u, "");
   return pathname === "" ? parsed.origin : `${parsed.origin}${pathname}`;
@@ -1430,7 +1708,9 @@ function requireProxyUrl(
 function requireManagedProxyHost(value: unknown, where: string): string {
   const host = requireBoundedString(value, where);
   if (!/^[A-Za-z0-9._-]+$/u.test(host)) {
-    invalid(`${where} must be a hostname or IPv4 address without a scheme or separators`);
+    invalid(
+      `${where} must be a hostname or IPv4 address without a scheme or separators`,
+    );
   }
   return host;
 }
@@ -1451,7 +1731,12 @@ function configuredDashboardPort(value: string): number {
 }
 
 function requireSampleRate(value: unknown, where: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 1
+  ) {
     invalid(`${where} must be a number between 0 and 1`);
   }
   return value;
@@ -1465,13 +1750,18 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
   }> = [{ value: root, depth: 0, path: [] }];
   const allowedRuntimeAliasIndexes = new Set<string>();
   const allowedBuildStepPlaceholders = new Set<string>();
+  const selectedAgent = isPlainObject(root)
+    ? ownDataPropertyValue(root, "agent")
+    : undefined;
   let discoveredNodes = 1;
   let observedBytes = 0;
 
   const observeText = (value: string): void => {
     observedBytes += Buffer.byteLength(value, "utf8");
     if (observedBytes > MANAGED_STARTUP_PROFILE_MAX_BYTES) {
-      invalid(`payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`);
+      invalid(
+        `payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`,
+      );
     }
   };
   const reserveNode = (depth: number): void => {
@@ -1492,13 +1782,20 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
     if (typeof current.value === "string") {
       observeText(current.value);
       if (
-        !isAllowedMessagingRuntimeAliasStringPath(current.path, allowedRuntimeAliasIndexes) &&
+        !isAllowedMessagingRuntimeAliasStringPath(
+          current.path,
+          allowedRuntimeAliasIndexes,
+        ) &&
         !isMessagingCredentialPlaceholder(
           current.path,
           current.value,
           allowedBuildStepPlaceholders,
         ) &&
-        !isMessagingCredentialPlaceholderAssignment(current.path, current.value) &&
+        !isMessagingCredentialPlaceholderAssignment(
+          selectedAgent,
+          current.path,
+          current.value,
+        ) &&
         (valueLooksLikeSecret(current.value) ||
           containsMessagingCredentialPlaceholder(current.value))
       ) {
@@ -1532,14 +1829,18 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       }
       if (
         Object.getOwnPropertySymbols(current.value).length > 0 ||
-        Object.getOwnPropertyNames(current.value).length !== current.value.length + 1
+        Object.getOwnPropertyNames(current.value).length !==
+          current.value.length + 1
       ) {
         invalid("payload arrays must contain only indexed JSON values");
       }
       for (let index = 0; index < current.value.length; index += 1) {
         const depth = current.depth + 1;
         reserveNode(depth);
-        const descriptor = Object.getOwnPropertyDescriptor(current.value, String(index));
+        const descriptor = Object.getOwnPropertyDescriptor(
+          current.value,
+          String(index),
+        );
         if (descriptor && !("value" in descriptor)) {
           invalid("payload must contain only JSON data properties");
         }
@@ -1552,7 +1853,8 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       continue;
     }
     if (current.value !== null && typeof current.value === "object") {
-      if (!isPlainObject(current.value)) invalid("payload must contain only plain JSON objects");
+      if (!isPlainObject(current.value))
+        invalid("payload must contain only plain JSON objects");
       if ("toJSON" in current.value) {
         invalid("payload must not define a custom JSON serializer");
       }
@@ -1566,9 +1868,14 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
         current.path[2] === "buildSteps" &&
         JSON_ARRAY_INDEX_SEGMENT_RE.test(current.path[3] ?? "")
       ) {
-        for (const authorization of authorizeMessagingManagedStartupPlaceholders(current.value)) {
+        for (const authorization of authorizeMessagingManagedStartupPlaceholders(
+          current.value,
+        )) {
           allowedBuildStepPlaceholders.add(
-            buildStepPlaceholderKey([...current.path, ...authorization.path], authorization.value),
+            buildStepPlaceholderKey(
+              [...current.path, ...authorization.path],
+              authorization.value,
+            ),
           );
         }
       }
@@ -1641,11 +1948,16 @@ function assertPayloadWithinByteLimit(value: unknown): void {
     serialized === undefined ||
     Buffer.byteLength(serialized, "utf8") > MANAGED_STARTUP_PROFILE_MAX_BYTES
   ) {
-    invalid(`payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`);
+    invalid(
+      `payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`,
+    );
   }
 }
 
-function validateWebSearch(value: unknown, agent: "openclaw" | "hermes"): ManagedStartupWebSearch {
+function validateWebSearch(
+  value: unknown,
+  agent: "openclaw" | "hermes",
+): ManagedStartupWebSearch {
   const webSearch = requireRecord(value, "agentConfig.webSearch");
   rejectUnknownKeys(webSearch, WEB_SEARCH_KEYS, "agentConfig.webSearch");
   const provider = requireStringEnum<ManagedStartupWebSearchProvider>(
@@ -1664,27 +1976,44 @@ function validateOpenClawOtel(value: unknown): ManagedStartupOpenClawOtel {
   rejectUnknownKeys(otel, OTEL_KEYS, "agentConfig.otel");
   return {
     enabled: requireBoolean(otel.enabled, "agentConfig.otel.enabled"),
-    endpointUrl: requireHttpUrl(otel.endpointUrl, "agentConfig.otel.endpointUrl"),
+    endpointUrl: requireHttpUrl(
+      otel.endpointUrl,
+      "agentConfig.otel.endpointUrl",
+    ),
     serviceName: requireBoundedString(
       otel.serviceName,
       "agentConfig.otel.serviceName",
       MAX_IDENTIFIER_BYTES,
     ),
-    sampleRate: requireSampleRate(otel.sampleRate, "agentConfig.otel.sampleRate"),
+    sampleRate: requireSampleRate(
+      otel.sampleRate,
+      "agentConfig.otel.sampleRate",
+    ),
   };
 }
 
 function validateExtraAgents(value: unknown): ManagedStartupExtraAgents {
   const extraAgents = requireRecord(value, "agentConfig.extraAgents");
   rejectUnknownKeys(extraAgents, EXTRA_AGENTS_KEYS, "agentConfig.extraAgents");
-  if (!Array.isArray(extraAgents.agents) || extraAgents.agents.length > MAX_LIST_ITEMS) {
-    invalid("agentConfig.extraAgents.agents must be a bounded JSON object list");
+  if (
+    !Array.isArray(extraAgents.agents) ||
+    extraAgents.agents.length > MAX_LIST_ITEMS
+  ) {
+    invalid(
+      "agentConfig.extraAgents.agents must be a bounded JSON object list",
+    );
   }
   return {
     agents: mapArrayByIndex(extraAgents.agents, (agent, index) =>
-      requireJsonObject(agent, `agentConfig.extraAgents.agents[${String(index)}]`),
+      requireJsonObject(
+        agent,
+        `agentConfig.extraAgents.agents[${String(index)}]`,
+      ),
     ),
-    defaults: requireJsonObject(extraAgents.defaults, "agentConfig.extraAgents.defaults"),
+    defaults: requireJsonObject(
+      extraAgents.defaults,
+      "agentConfig.extraAgents.defaults",
+    ),
     main: requireJsonObject(extraAgents.main, "agentConfig.extraAgents.main"),
   };
 }
@@ -1693,7 +2022,10 @@ function validateDeviceAuth(value: unknown): ManagedStartupDeviceAuth {
   const deviceAuth = requireRecord(value, "agentConfig.deviceAuth");
   rejectUnknownKeys(deviceAuth, DEVICE_AUTH_KEYS, "agentConfig.deviceAuth");
   return {
-    disabled: requireBoolean(deviceAuth.disabled, "agentConfig.deviceAuth.disabled"),
+    disabled: requireBoolean(
+      deviceAuth.disabled,
+      "agentConfig.deviceAuth.disabled",
+    ),
     optOutSource: requireStringEnum<ManagedStartupDeviceAuthOptOutSource>(
       deviceAuth.optOutSource,
       new Set(["operator", "managed-onboard"]),
@@ -1725,7 +2057,9 @@ function validateAgentConfig(
             MAX_IDENTIFIER_BYTES,
           );
     if (heartbeatEvery !== null && !/^\d+(?:s|m|h)$/u.test(heartbeatEvery)) {
-      invalid("agentConfig.heartbeatEvery must be null or a duration ending in s, m, or h");
+      invalid(
+        "agentConfig.heartbeatEvery must be null or a duration ending in s, m, or h",
+      );
     }
     return {
       agent,
@@ -1738,7 +2072,10 @@ function validateAgentConfig(
       heartbeatEvery,
       extraAgents: validateExtraAgents(config.extraAgents),
       deviceAuth: validateDeviceAuth(config.deviceAuth),
-      minimalBootstrap: requireBoolean(config.minimalBootstrap, "agentConfig.minimalBootstrap"),
+      minimalBootstrap: requireBoolean(
+        config.minimalBootstrap,
+        "agentConfig.minimalBootstrap",
+      ),
     };
   }
   if (agent === "hermes") {
@@ -1791,10 +2128,16 @@ function validateDashboard(
       new Set(["127.0.0.1", "0.0.0.0"]),
       "dashboard.bindAddress",
     );
-    const wslExposure = requireBoolean(dashboard.wslExposure, "dashboard.wslExposure");
-    const hasRemoteExposure = !isLoopbackUrl(url) || bindAddress === "0.0.0.0" || wslExposure;
+    const wslExposure = requireBoolean(
+      dashboard.wslExposure,
+      "dashboard.wslExposure",
+    );
+    const hasRemoteExposure =
+      !isLoopbackUrl(url) || bindAddress === "0.0.0.0" || wslExposure;
     if ((mode === "remote") !== hasRemoteExposure) {
-      invalid("OpenClaw dashboard.mode must reflect its URL, bind address, and WSL exposure");
+      invalid(
+        "OpenClaw dashboard.mode must reflect its URL, bind address, and WSL exposure",
+      );
     }
     const port = requirePort(dashboard.port, "dashboard.port", 1024);
     if (isHermesApiPort(port))
@@ -1822,7 +2165,9 @@ function validateDashboard(
     );
     const url = requireHttpUrl(dashboard.url, "dashboard.url");
     if (!isLoopbackUrl(url)) {
-      invalid("Hermes dashboard.url must remain loopback; OpenShell owns the host forward");
+      invalid(
+        "Hermes dashboard.url must remain loopback; OpenShell owns the host forward",
+      );
     }
     if (mode === "disabled") {
       if (
@@ -1841,12 +2186,23 @@ function validateDashboard(
         tuiEnabled: false,
       };
     }
-    const publicPort = requirePort(dashboard.publicPort, "dashboard.publicPort", 1024);
-    const internalPort = requirePort(dashboard.internalPort, "dashboard.internalPort", 1024);
+    const publicPort = requirePort(
+      dashboard.publicPort,
+      "dashboard.publicPort",
+      1024,
+    );
+    const internalPort = requirePort(
+      dashboard.internalPort,
+      "dashboard.internalPort",
+      1024,
+    );
     if (publicPort === internalPort) {
       invalid("Hermes dashboard publicPort and internalPort must differ");
     }
-    if (isHermesReservedApiPort(publicPort) || isHermesReservedApiPort(internalPort)) {
+    if (
+      isHermesReservedApiPort(publicPort) ||
+      isHermesReservedApiPort(internalPort)
+    ) {
       invalid(
         `Hermes dashboard ports must not use reserved API ports ${HERMES_RESERVED_API_PORT_LABEL}`,
       );
@@ -1866,7 +2222,8 @@ function validateDashboard(
 
   if (agent === "pi") {
     rejectUnknownKeys(dashboard, PI_DASHBOARD_KEYS, "dashboard");
-    if (dashboard.mode !== "disabled") invalid("pi dashboard.mode must be disabled");
+    if (dashboard.mode !== "disabled")
+      invalid("pi dashboard.mode must be disabled");
     return { agent, mode: "disabled" };
   }
 
@@ -1877,15 +2234,25 @@ function validateDashboard(
   return { agent, mode: "disabled" };
 }
 
-function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedStartupInference {
+function validateInference(
+  value: unknown,
+  agent: ManagedStartupAgent,
+): ManagedStartupInference {
   const inference = requireRecord(value, "inference");
   rejectUnknownKeys(inference, INFERENCE_KEYS, "inference");
-  const routeProvider = requireBoundedString(inference.routeProvider, "inference.routeProvider");
+  const routeProvider = requireBoundedString(
+    inference.routeProvider,
+    "inference.routeProvider",
+  );
   const upstreamProvider = requireBoundedString(
     inference.upstreamProvider,
     "inference.upstreamProvider",
   );
-  const model = requireBoundedString(inference.model, "inference.model", MAX_MODEL_BYTES);
+  const model = requireBoundedString(
+    inference.model,
+    "inference.model",
+    MAX_MODEL_BYTES,
+  );
   const api = requireStringEnum<ManagedStartupInferenceApi>(
     inference.api,
     new Set(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].inferenceApis),
@@ -1894,7 +2261,10 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   const upstreamEndpointUrl =
     inference.upstreamEndpointUrl === null
       ? null
-      : requireHttpUrl(inference.upstreamEndpointUrl, "inference.upstreamEndpointUrl");
+      : requireHttpUrl(
+          inference.upstreamEndpointUrl,
+          "inference.upstreamEndpointUrl",
+        );
   const primaryModelRef =
     inference.primaryModelRef === null
       ? null
@@ -1903,7 +2273,10 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
           "inference.primaryModelRef",
           MAX_MODEL_BYTES,
         );
-  const compatibility = requireJsonObjectOrNull(inference.compatibility, "inference.compatibility");
+  const compatibility = requireJsonObjectOrNull(
+    inference.compatibility,
+    "inference.compatibility",
+  );
   const inputModalities =
     inference.inputModalities === null
       ? null
@@ -1929,10 +2302,19 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
       invalid("openclaw primaryModelRef must match routeProvider and model");
     }
   } else {
-    if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
-      invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
+    if (
+      primaryModelRef !== null ||
+      compatibility !== null ||
+      inputModalities !== null
+    ) {
+      invalid(
+        `${agent} does not support primaryModelRef, compatibility, or inputModalities`,
+      );
     }
-    if (agent === "langchain-deepagents-code" && !isValidDcodeUpstreamProvider(upstreamProvider)) {
+    if (
+      agent === "langchain-deepagents-code" &&
+      !isValidDcodeUpstreamProvider(upstreamProvider)
+    ) {
       invalid(
         "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
       );
@@ -1943,7 +2325,10 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     routeProvider,
     upstreamProvider,
     model,
-    routedBaseUrl: requireHttpUrl(inference.routedBaseUrl, "inference.routedBaseUrl"),
+    routedBaseUrl: requireHttpUrl(
+      inference.routedBaseUrl,
+      "inference.routedBaseUrl",
+    ),
     upstreamEndpointUrl,
     api,
     primaryModelRef,
@@ -1952,10 +2337,17 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
   };
 }
 
-function validateProxy(value: unknown, agent: ManagedStartupAgent): ManagedStartupProxy {
+function validateProxy(
+  value: unknown,
+  agent: ManagedStartupAgent,
+): ManagedStartupProxy {
   const proxy = requireRecord(value, "proxy");
   rejectUnknownKeys(proxy, PROXY_KEYS, "proxy");
-  const hostHttpUrl = requireProxyUrl(proxy.hostHttpUrl, new Set(["http:"]), "proxy.hostHttpUrl");
+  const hostHttpUrl = requireProxyUrl(
+    proxy.hostHttpUrl,
+    new Set(["http:"]),
+    "proxy.hostHttpUrl",
+  );
   // HTTPS_PROXY conventionally names an HTTP CONNECT proxy, so either scheme
   // is valid while credentials and non-origin paths remain forbidden.
   const hostHttpsUrl = requireProxyUrl(
@@ -1968,10 +2360,15 @@ function validateProxy(value: unknown, agent: ManagedStartupAgent): ManagedStart
     !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsHostProxyIntent &&
     (hostHttpUrl !== null || hostHttpsUrl !== null || hostNoProxy.length > 0)
   ) {
-    invalid(`${agent} rejects host proxy intent and accepts only its root-owned managed route`);
+    invalid(
+      `${agent} rejects host proxy intent and accepts only its root-owned managed route`,
+    );
   }
   return {
-    managedHost: requireManagedProxyHost(proxy.managedHost, "proxy.managedHost"),
+    managedHost: requireManagedProxyHost(
+      proxy.managedHost,
+      "proxy.managedHost",
+    ),
     managedPort: requirePort(proxy.managedPort, "proxy.managedPort"),
     hostHttpUrl,
     hostHttpsUrl,
@@ -1979,7 +2376,10 @@ function validateProxy(value: unknown, agent: ManagedStartupAgent): ManagedStart
   };
 }
 
-function validateTools(value: unknown, agent: ManagedStartupAgent): ManagedStartupTools {
+function validateTools(
+  value: unknown,
+  agent: ManagedStartupAgent,
+): ManagedStartupTools {
   const tools = requireRecord(value, "tools");
   rejectUnknownKeys(tools, TOOLS_KEYS, "tools");
   const enabledGateways = requireEnumList<ManagedStartupHermesToolGateway>(
@@ -1998,12 +2398,21 @@ function validateTools(value: unknown, agent: ManagedStartupAgent): ManagedStart
   };
 }
 
-function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStartupTuning {
+function validateTuning(
+  value: unknown,
+  agent: ManagedStartupAgent,
+): ManagedStartupTuning {
   const tuning = requireRecord(value, "tuning");
   rejectUnknownKeys(tuning, TUNING_KEYS, "tuning");
   const result: ManagedStartupTuning = {
-    contextWindow: requireNullablePositiveInteger(tuning.contextWindow, "tuning.contextWindow"),
-    maxTokens: requireNullablePositiveInteger(tuning.maxTokens, "tuning.maxTokens"),
+    contextWindow: requireNullablePositiveInteger(
+      tuning.contextWindow,
+      "tuning.contextWindow",
+    ),
+    maxTokens: requireNullablePositiveInteger(
+      tuning.maxTokens,
+      "tuning.maxTokens",
+    ),
     reasoning: requireNullableBoolean(tuning.reasoning, "tuning.reasoning"),
     reasoningEffort:
       tuning.reasoningEffort === null
@@ -2014,12 +2423,16 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
             "tuning.reasoningEffort",
           ),
   };
-  const advertised = new Set<string>(MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].tuningFields);
+  const advertised = new Set<string>(
+    MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].tuningFields,
+  );
   const unsupported = TUNING_FIELD_ORDER.filter(
     (field) => result[field] !== null && !advertised.has(field),
   );
   if (unsupported.length > 0) {
-    invalid(`${agent} does not support startup tuning fields: ${unsupported.join(", ")}`);
+    invalid(
+      `${agent} does not support startup tuning fields: ${unsupported.join(", ")}`,
+    );
   }
   if (agent === "openclaw") {
     const missing = TUNING_FIELD_ORDER.filter(
@@ -2034,7 +2447,9 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
     result.contextWindow !== null &&
     result.contextWindow < MIN_HERMES_CONTEXT_WINDOW
   ) {
-    invalid(`hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`);
+    invalid(
+      `hermes contextWindow must be at least ${String(MIN_HERMES_CONTEXT_WINDOW)} tokens`,
+    );
   }
   return result;
 }
@@ -2044,14 +2459,20 @@ function validateTuning(value: unknown, agent: ManagedStartupAgent): ManagedStar
  * Unknown keys are rejected at every object boundary, and unordered set-like
  * lists are sorted so all producers fingerprint the same resolved intent.
  */
-export function validateManagedStartupProfile(value: unknown): ManagedStartupProfile {
+export function validateManagedStartupProfile(
+  value: unknown,
+): ManagedStartupProfile {
   assertPayloadStructureAndCredentialShapes(value);
-  const ownedValue = cloneJsonValue(value, "profile", { nullPrototypeObjects: true });
+  const ownedValue = cloneJsonValue(value, "profile", {
+    nullPrototypeObjects: true,
+  });
   assertPayloadWithinByteLimit(ownedValue);
   const profile = requireRecord(ownedValue, "profile");
   rejectUnknownKeys(profile, PROFILE_KEYS, "profile");
   if (profile.schemaVersion !== MANAGED_STARTUP_PROFILE_SCHEMA_VERSION) {
-    invalid(`schemaVersion must be ${String(MANAGED_STARTUP_PROFILE_SCHEMA_VERSION)}`);
+    invalid(
+      `schemaVersion must be ${String(MANAGED_STARTUP_PROFILE_SCHEMA_VERSION)}`,
+    );
   }
   const agent = requireStringEnum<ManagedStartupAgent>(
     profile.agent,
@@ -2061,8 +2482,14 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
 
   const messaging = requireRecord(profile.messaging, "messaging");
   rejectUnknownKeys(messaging, MESSAGING_KEYS, "messaging");
-  const messagingPlan = requireJsonObjectOrNull(messaging.plan, "messaging.plan");
-  if (messagingPlan !== null && !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsMessaging) {
+  const messagingPlan = requireJsonObjectOrNull(
+    messaging.plan,
+    "messaging.plan",
+  );
+  if (
+    messagingPlan !== null &&
+    !MANAGED_STARTUP_PROFILE_CAPABILITIES[agent].supportsMessaging
+  ) {
     invalid(`messaging.plan must be null for ${agent}`);
   }
   if (
@@ -2074,7 +2501,6 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
   ) {
     invalid("messaging.plan must be a version 1 plan for the selected agent");
   }
-
   const corporateCa = requireRecord(profile.corporateCa, "corporateCa");
   rejectUnknownKeys(corporateCa, CORPORATE_CA_KEYS, "corporateCa");
   const bundleSha256 = corporateCa.bundleSha256;
@@ -2082,7 +2508,9 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
     bundleSha256 !== null &&
     (typeof bundleSha256 !== "string" || !SHA256_RE.test(bundleSha256))
   ) {
-    invalid("corporateCa.bundleSha256 must be null or a lowercase SHA-256 digest");
+    invalid(
+      "corporateCa.bundleSha256 must be null or a lowercase SHA-256 digest",
+    );
   }
 
   const agentConfig = validateAgentConfig(profile.agentConfig, agent);
@@ -2093,7 +2521,9 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
     dashboard.mode === "remote" &&
     !agentConfig.deviceAuth.disabled
   ) {
-    invalid("remote OpenClaw dashboard exposure requires device auth to be disabled");
+    invalid(
+      "remote OpenClaw dashboard exposure requires device auth to be disabled",
+    );
   }
 
   return {
@@ -2113,7 +2543,8 @@ export function validateManagedStartupProfile(value: unknown): ManagedStartupPro
 }
 
 function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return mapArrayByIndex(value, (item) => canonicalizeJson(item));
+  if (Array.isArray(value))
+    return mapArrayByIndex(value, (item) => canonicalizeJson(item));
   if (!isPlainObject(value)) return value;
   const result: Record<string, unknown> = {};
   const keys = sortStrings(Object.keys(value));
@@ -2130,26 +2561,39 @@ function canonicalizeJson(value: unknown): unknown {
 }
 
 /** Canonical JSON used by both the transport and fingerprint. */
-export function serializeManagedStartupProfile(profile: ManagedStartupProfile): string {
+export function serializeManagedStartupProfile(
+  profile: ManagedStartupProfile,
+): string {
   const validated = validateManagedStartupProfile(profile);
   const serialized = JSON.stringify(canonicalizeJson(validated));
-  if (Buffer.byteLength(serialized, "utf8") > MANAGED_STARTUP_PROFILE_MAX_BYTES) {
-    invalid(`canonical payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`);
+  if (
+    Buffer.byteLength(serialized, "utf8") > MANAGED_STARTUP_PROFILE_MAX_BYTES
+  ) {
+    invalid(
+      `canonical payload exceeds ${String(MANAGED_STARTUP_PROFILE_MAX_BYTES)} bytes`,
+    );
   }
   return serialized;
 }
 
 /** Encode canonical JSON as unpadded base64url for transport through argv or an environment variable. */
-export function encodeManagedStartupProfile(profile: ManagedStartupProfile): string {
-  return Buffer.from(serializeManagedStartupProfile(profile), "utf8").toString("base64url");
+export function encodeManagedStartupProfile(
+  profile: ManagedStartupProfile,
+): string {
+  return Buffer.from(serializeManagedStartupProfile(profile), "utf8").toString(
+    "base64url",
+  );
 }
 
 /** Decode only the canonical representation produced by encodeManagedStartupProfile. */
-export function decodeManagedStartupProfile(encoded: string): ManagedStartupProfile {
+export function decodeManagedStartupProfile(
+  encoded: string,
+): ManagedStartupProfile {
   if (
     typeof encoded !== "string" ||
     encoded.length === 0 ||
-    Buffer.byteLength(encoded, "ascii") > MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES ||
+    Buffer.byteLength(encoded, "ascii") >
+      MANAGED_STARTUP_PROFILE_MAX_ENCODED_BYTES ||
     !BASE64URL_RE.test(encoded) ||
     encoded.length % 4 === 1
   ) {
@@ -2184,6 +2628,10 @@ export function decodeManagedStartupProfile(encoded: string): ManagedStartupProf
 }
 
 /** SHA-256 over canonical decoded JSON, independent of object key insertion order. */
-export function fingerprintManagedStartupProfile(profile: ManagedStartupProfile): string {
-  return createHash("sha256").update(serializeManagedStartupProfile(profile), "utf8").digest("hex");
+export function fingerprintManagedStartupProfile(
+  profile: ManagedStartupProfile,
+): string {
+  return createHash("sha256")
+    .update(serializeManagedStartupProfile(profile), "utf8")
+    .digest("hex");
 }

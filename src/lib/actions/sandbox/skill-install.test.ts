@@ -439,32 +439,47 @@ describe("sandbox skill action orchestration", () => {
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
   });
 
-  it("adds shields recovery guidance when skill upload fails (#6859)", async () => {
+  it("adds shields recovery guidance when skill upload fails and deletes the temp SSH config (#6859)", async () => {
     const skillDir = makeSkillDir();
-    skillInstall.uploadDirectory.mockReturnValue({
-      uploaded: 0,
-      failed: ["SKILL.md"],
-      skippedDotfiles: [],
-      unsafePaths: [],
+    let tempConfig = "";
+    skillInstall.uploadDirectory.mockImplementation((ctx) => {
+      tempConfig = ctx.configFile;
+      return { uploaded: 0, failed: ["SKILL.md"], skippedDotfiles: [], unsafePaths: [] };
     });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
-      throw new Error(`process.exit ${code}`);
-    }) as typeof process.exit);
 
     try {
-      await expect(
-        installSandboxSkill("alpha", { command: "install", path: skillDir }),
-      ).rejects.toThrow("process.exit 1");
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
     } finally {
       fs.rmSync(skillDir, { recursive: true, force: true });
     }
 
     const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(process.exitCode).toBe(1);
     expect(output).toContain("Failed to upload 1 file(s): SKILL.md");
     expect(output).toContain("locked while shields are up");
     expect(output).toContain("nemoclaw alpha shields down");
     expect(skillInstall.postInstall).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
+    expectTempSshConfigCleanedUp(tempConfig);
+  });
+
+  it("fails skill install when the upload cannot be verified and deletes the temp SSH config", async () => {
+    const skillDir = makeSkillDir();
+    let tempConfig = "";
+    skillInstall.verifyInstall.mockImplementation((ctx) => {
+      tempConfig = ctx.configFile;
+      return false;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("verification failed"));
+    expectTempSshConfigCleanedUp(tempConfig);
   });
 });

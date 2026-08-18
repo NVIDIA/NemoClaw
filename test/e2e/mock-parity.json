@@ -286,6 +286,7 @@
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
+        "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

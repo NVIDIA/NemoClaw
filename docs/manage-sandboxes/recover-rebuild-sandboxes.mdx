@@ -349,6 +349,12 @@ The rerun takes one of these actions:
 - It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
 - It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
 
+A mount-free journal written before NemoClaw bound host-mount identity remains resumable.
+An older journal for a rebuild with one or more host mounts stops as incompatible, even when the visible mount settings are unchanged, because it cannot prove the original host source identity.
+Preserve the live sandbox, onboarding session, printed backup, exact error, and the sandbox name, gateway, and journal phase from the `Journaled replacement` diagnostic.
+Do not change the target settings, edit the session, or delete the same-name sandbox.
+Ask a NemoClaw maintainer to review that retained recovery state before taking another recovery action.
+
 An accepted replacement is not deleted again.
 <AgentOnly variant="hermes">
 A rerun that accepts a journaled Hermes replacement checks for any retained NemoClaw gate before it retires the replacement journal.
@@ -369,6 +375,7 @@ NemoClaw fails closed when the selected gateway, replacement settings, durable s
 The error names the sandbox and the mismatch that stopped recovery.
 Do not delete a same-name sandbox to bypass this check.
 Inspect the named OpenShell gateway and sandbox, correct the reported drift, and rerun the original command.
+Visible settings cannot correct the legacy host-mount journal case described above.
 
 A same-name recreation started by `$$nemoclaw onboard` uses the same replacement journal.
 If that recreation is interrupted after the `Journaled replacement` message, rerun the original onboarding command with the same target settings.
