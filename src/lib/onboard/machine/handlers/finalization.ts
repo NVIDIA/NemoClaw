@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../../cli/branding";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
+import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -25,6 +26,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
+  portableProfileSelected?: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
@@ -60,6 +62,18 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      * gateway is live. Never throws; idempotent once operator.write is paired.
      */
     warmupScopeUpgrade(sandboxName: string): void;
+    readRegistryAgent(sandboxName: string): string | null;
+    settlePortablePairing(
+      sandboxName: string,
+      options: { readonly portableRequired: true },
+    ): Promise<PortableOpenClawPairingSettlementResult>;
+    portablePairingIncompleteMessage(
+      sandboxName: string,
+      reason: Extract<
+        PortableOpenClawPairingSettlementResult,
+        { kind: "incomplete" }
+      >["reason"],
+    ): string;
     getChatUiUrl(): string;
     /**
      * `sandboxName` lets the chain target the API port this sandbox actually
@@ -115,6 +129,28 @@ type TerminalReadyAgent = {
   } | null;
 };
 
+type PortableAgentDisposition = "invalid" | "ordinary" | "strict-openclaw";
+
+function portableAgentDisposition(
+  sandboxName: string,
+  agent: unknown,
+  portableProfileSelected: boolean | undefined,
+  readRegistryAgent: (sandboxName: string) => string | null,
+): PortableAgentDisposition {
+  if (portableProfileSelected !== true) return "ordinary";
+  const selectedAgent = (agent as { readonly name?: unknown } | null)?.name;
+  if (selectedAgent === "openclaw") return "strict-openclaw";
+  if (
+    typeof selectedAgent === "string" &&
+    selectedAgent.length > 0 &&
+    selectedAgent === selectedAgent.trim() &&
+    readRegistryAgent(sandboxName) === selectedAgent
+  ) {
+    return "ordinary";
+  }
+  return "invalid";
+}
+
 function logTerminalReadyBlock(
   sandboxName: string,
   agent: unknown,
@@ -144,6 +180,7 @@ function logTerminalReadyBlock(
 export async function handleFinalizationState<Agent, VerifyChain, VerificationResult>({
   sandboxName,
   agent,
+  portableProfileSelected,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -153,6 +190,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   VerificationResult
 >): Promise<FinalizationStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  const portableAgent = portableAgentDisposition(
+    sandboxName,
+    agent,
+    portableProfileSelected,
+    deps.readRegistryAgent,
+  );
 
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
@@ -181,11 +224,11 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     // run) so the request is PENDING when the approval pass below clears it, and
     // the user's first real run connects without an embedded fallback.
     // Best-effort; never blocks. No-op/idempotent once operator.write is paired.
-    deps.warmupScopeUpgrade(sandboxName);
+    if (portableAgent === "ordinary") deps.warmupScopeUpgrade(sandboxName);
     // Clear any pending allowlisted scope upgrade against the freshly-recovered
     // gateway before verification, so onboard hands off without a stuck pairing
     // request (#4504 / #4263). Best-effort; never blocks.
-    deps.autoPairScopeApproval(sandboxName);
+    if (portableAgent === "ordinary") deps.autoPairScopeApproval(sandboxName);
   }
 
   if (manageDashboard) {
@@ -216,6 +259,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   hermesToolGateways,
   webSearchEnabled,
   webSearchProvider,
+  portableProfileSelected,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -223,9 +267,48 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   VerificationResult
 >): Promise<PostVerifyStateResult> {
   const manageDashboard = shouldManageDashboardForAgent(agent as DashboardRuntimeAgent);
+  const portableAgent = portableAgentDisposition(
+    sandboxName,
+    agent,
+    portableProfileSelected,
+    deps.readRegistryAgent,
+  );
 
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
+  if (portableAgent !== "ordinary") {
+    const pairing =
+      portableAgent === "strict-openclaw"
+        ? await deps.settlePortablePairing(sandboxName, { portableRequired: true })
+        : ({
+            kind: "incomplete",
+            reason: "portable-runtime-identity-invalid",
+          } as const);
+    if (pairing.kind !== "settled") {
+      const reason =
+        pairing.kind === "incomplete"
+          ? pairing.reason
+          : "portable-runtime-identity-invalid";
+      const message = deps.portablePairingIncompleteMessage(sandboxName, reason);
+      deps.error(`  ${message}`);
+      deps.reportDeploymentReadiness(false);
+      const sessionUpdates = deps.toSessionUpdates({
+        sandboxName,
+        provider,
+        model,
+        hermesAuthMethod,
+        hermesToolGateways,
+      });
+      return {
+        stateResult: pauseOnboardMachine(sessionUpdates, {
+          state: "post_verify",
+          reason: "portable_pairing_incomplete",
+        }),
+        verificationDiagnostics: [message],
+        deploymentHealthy: false,
+      };
+    }
+  }
   if (manageDashboard) {
     // Probe web-search credential isolation and egress now that the final
     // policy, provider, process, and forwarding state are live. Egress

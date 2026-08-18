@@ -36,6 +36,11 @@ function createDeps(
     recoverProcesses: vi.fn(),
     warmupScopeUpgrade: vi.fn(),
     autoPairScopeApproval: vi.fn(),
+    readRegistryAgent: vi.fn(() => "openclaw"),
+    settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
+    portablePairingIncompleteMessage: vi.fn(
+      () => "Portable onboarding is incomplete; resume onboarding.",
+    ),
     getChatUiUrl: vi.fn(() => "http://127.0.0.1:18789"),
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
@@ -59,6 +64,9 @@ function createDeps(
       checkAndRecoverSandboxProcesses: calls.recoverProcesses,
       warmupScopeUpgrade: calls.warmupScopeUpgrade,
       autoPairScopeApproval: calls.autoPairScopeApproval,
+      readRegistryAgent: calls.readRegistryAgent,
+      settlePortablePairing: calls.settlePortablePairing,
+      portablePairingIncompleteMessage: calls.portablePairingIncompleteMessage,
       getChatUiUrl: calls.getChatUiUrl,
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
@@ -158,6 +166,97 @@ describe("finalization handlers", () => {
       metadata: { state: "post_verify" },
     });
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  it("uses strict Portable settlement instead of ordinary warm-up and approval (#9207)", async () => {
+    const { deps, calls } = createDeps();
+    const options = {
+      ...baseOptions(deps),
+      agent: { name: "openclaw" },
+      portableProfileSelected: true,
+    };
+
+    const result = await runFinalizationHandlers(options);
+
+    expect(result.stateResult.type).toBe("complete");
+    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
+      portableRequired: true,
+    });
+  });
+
+  it("fails selected Portable OpenClaw closed before ordinary writers when registry identity is invalid (#9207)", async () => {
+    const { deps, calls } = createDeps({
+      settlePortablePairing: vi.fn(async () => ({
+        kind: "incomplete" as const,
+        reason: "portable-runtime-identity-invalid" as const,
+      })),
+    });
+    const options = {
+      ...baseOptions(deps),
+      agent: { name: "openclaw" },
+      portableProfileSelected: true,
+    };
+
+    await handleFinalizationPhase(options);
+    const result = await handlePostVerifyState(options);
+
+    expect(result).toMatchObject({
+      deploymentHealthy: false,
+      stateResult: {
+        type: "pause",
+        metadata: { state: "post_verify", reason: "portable_pairing_incomplete" },
+      },
+    });
+    expect(calls.verify).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
+    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.reportReadiness).toHaveBeenCalledWith(false);
+    expect(calls.error).toHaveBeenCalledWith(
+      "  Portable onboarding is incomplete; resume onboarding.",
+    );
+  });
+
+  it("keeps Portable Hermes on its prior finalization path (#9207)", async () => {
+    const { deps, calls } = createDeps({ readRegistryAgent: vi.fn(() => "hermes") });
+    const options = {
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+      portableProfileSelected: true,
+    };
+
+    const result = await runFinalizationHandlers(options);
+
+    expect(result.stateResult.type).toBe("complete");
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
+    expect(calls.settlePortablePairing).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Portable non-OpenClaw session and registry mismatch before pairing writes (#9207)", async () => {
+    const { deps, calls } = createDeps({ readRegistryAgent: vi.fn(() => "openclaw") });
+    const options = {
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+      portableProfileSelected: true,
+    };
+
+    await handleFinalizationPhase(options);
+    const result = await handlePostVerifyState(options);
+
+    expect(result).toMatchObject({
+      deploymentHealthy: false,
+      stateResult: {
+        type: "pause",
+        metadata: { state: "post_verify", reason: "portable_pairing_incomplete" },
+      },
+    });
+    expect(calls.warmupScopeUpgrade).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.settlePortablePairing).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
   });
 
   it("prints a not-ready dashboard and returns a resumable failure when verification is unhealthy", async () => {
