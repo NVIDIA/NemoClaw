@@ -678,10 +678,10 @@ describe("declarative llama.cpp server image", () => {
       llamaSubprocess: "-DLLAMA_SUBPROCESS=OFF",
       llamaUsePrebuiltUi: "-DLLAMA_USE_PREBUILT_UI=OFF",
     };
-    for (const [field, marker] of Object.entries(cmakeMarkers)) {
+    Object.entries(cmakeMarkers).forEach(([field, marker]) => {
       expect(manifest.spec?.build?.cmake?.[field]).toBe(marker.endsWith("=ON"));
       expect(dockerfile).toContain(marker);
-    }
+    });
 
     expect(manifest.spec?.build?.target).toBe("llama-server");
     expect(dockerfile).toContain("--target llama-server");

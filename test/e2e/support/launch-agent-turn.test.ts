@@ -1197,7 +1197,7 @@ it.runIf(process.platform === "linux")(
       "/usr/bin/openshell",
       "/usr/bin/openshell",
     ]);
-    for (const call of calls.slice(1)) {
+    calls.slice(1).forEach((call) => {
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_EXPECTED_REPLY");
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_POST_REPLY_READY_TEXT");
       expect(call.env).not.toHaveProperty("NEMOCLAW_LAUNCH_PROMPT");
@@ -1217,6 +1217,6 @@ it.runIf(process.platform === "linux")(
         OPENCLAW_PTY_RECORD_WRITER_SCRIPT,
       );
       expect(call.env?.NEMOCLAW_LAUNCH_RUNTIME_ENV_SCRIPT).toBe(OPENCLAW_LAUNCH_RUNTIME_ENV_SCRIPT);
-    }
+    });
   },
 );

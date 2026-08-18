@@ -74,11 +74,11 @@ function namedStage(source: string, name: string): string {
 describe("node-tar image remediation contract", () => {
   it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
     const observedBases = new Set<string>();
-    for (const file of pinnedBaseDockerfiles) {
+    pinnedBaseDockerfiles.forEach((file) => {
       const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
       assertReviewedNodeBases(file, source);
       for (const base of nodeBaseReferences(source)) observedBases.add(base);
-    }
+    });
     expect([...observedBases].sort()).toEqual(
       [...NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH].sort(),
     );

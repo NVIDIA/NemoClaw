@@ -106,9 +106,9 @@ describe("Deep Agents Code secret-pattern parity", () => {
   it.each(Array.from(CANONICAL_SECRET_POSITIVE_VECTORS, (value) => [value]))(
     "matches every shared positive vector with its designated canonical regex [case %#] (#6195)",
     (vector) => {
-      for (const [group, patterns] of Object.entries(canonicalPatterns) as Array<
+      (Object.entries(canonicalPatterns) as Array<
         [CanonicalSecretPatternGroup, readonly RegExp[]]
-      >) {
+      >).forEach(([group, patterns]) => {
         const coveredIndices = new Set(
           CANONICAL_SECRET_POSITIVE_VECTORS.filter((vector) => vector.patternGroup === group).map(
             (vector) => vector.patternIndex,
@@ -117,7 +117,7 @@ describe("Deep Agents Code secret-pattern parity", () => {
         expect(coveredIndices, `${group} patterns must all have a positive vector`).toEqual(
           new Set(patterns.map((_pattern, index) => index)),
         );
-      }
+      });
 
       const pattern = canonicalPatterns[vector.patternGroup][vector.patternIndex];
       expect(pattern, `${vector.label} designates an existing canonical regex`).toBeDefined();
@@ -282,14 +282,14 @@ json.dump({
       reply_token: string;
     };
 
-    for (const [index, value] of values.entries()) {
+    [...values.entries()].forEach(([index, value]) => {
       expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).toContain(
         "<redacted-secret>",
       );
       expect(scrubbed.values[index], CANONICAL_SECRET_POSITIVE_VECTORS[index].label).not.toContain(
         value,
       );
-    }
+    });
     expect(scrubbed.boundary).toContain("<redacted-secret>");
     expect(scrubbed.boundary).not.toContain("Api_Key=ABCDEFG");
     expect(scrubbed.reply_token).toBe('replyToken="<redacted-secret>"');

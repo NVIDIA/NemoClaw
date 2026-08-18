@@ -431,12 +431,12 @@ test "$DOCKER_HOST" = "unix://$2"
           operation: "sandbox-lifecycle",
           socketAuthority: cleanupAuthority,
         });
-        for (const containerId of createdContainerIds.reverse()) {
+        createdContainerIds.reverse().forEach((containerId) => {
           cleanupEngine.capture(["rm", "--force", containerId]);
-        }
-        for (const [image, existed] of imageWasPresent) {
+        });
+        [...imageWasPresent].forEach(([image, existed]) => {
           existed || cleanupEngine.capture(["image", "rm", image]);
-        }
+        });
       } catch {
         // The workflow's always-run cleanup owns any resources left after a socket failure.
       }

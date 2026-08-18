@@ -130,7 +130,7 @@ describe("effective built-in policy contracts", () => {
       const presetNames = policies.listPresets({ agent }).map((preset) => preset.name);
       const effective = composePresets(presetNames, agent);
 
-      for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
+      Object.entries(effective.network_policies ?? {}).forEach(([policyName, policy]) => {
         expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
         const endpoints = policy.endpoints ?? [];
         expect(endpoints.every((endpoint) => !methods(endpoint).includes("*"))).toBe(true);
@@ -139,7 +139,7 @@ describe("effective built-in policy contracts", () => {
             .filter(({ protocol }) => protocol === "rest")
             .every((endpoint) => !Object.is(endpoint.tls, "terminate")),
         ).toBe(true);
-      }
+      });
     },
   );
 
@@ -149,13 +149,13 @@ describe("effective built-in policy contracts", () => {
     const weather = requireNetworkPolicy(effective, "weather");
     const publicReference = requireNetworkPolicy(effective, "public_reference");
 
-    for (const policy of [pypi, weather, publicReference]) {
+    [pypi, weather, publicReference].forEach((policy) => {
       for (const endpoint of policy.endpoints ?? []) {
         expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
         expect(endpoint).not.toHaveProperty("access");
         expect(new Set(methods(endpoint))).toEqual(new Set(["GET", "HEAD"]));
       }
-    }
+    });
 
     expect((pypi.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "files.pythonhosted.org",
@@ -175,7 +175,7 @@ describe("effective built-in policy contracts", () => {
       { method: "GET", path: "/**" },
       { method: "HEAD", path: "/**" },
     ]);
-    for (const policy of [weather, publicReference]) {
+    [weather, publicReference].forEach((policy) => {
       expect(binaries(policy)).toEqual(
         expect.arrayContaining([
           "/usr/local/bin/node",
@@ -183,7 +183,7 @@ describe("effective built-in policy contracts", () => {
           "/usr/bin/curl",
         ]),
       );
-    }
+    });
 
     expect(
       loadAgent("openclaw").expectedVersion,
@@ -197,11 +197,11 @@ describe("effective built-in policy contracts", () => {
     const gmail = requireNetworkPolicy(effective, "gmail_mail");
     const whatsapp = requireNetworkPolicy(effective, "whatsapp");
 
-    for (const endpoint of npm.endpoints ?? []) {
+    (npm.endpoints ?? []).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ port: 443, access: "full", tls: "skip" });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("rules");
-    }
+    });
     expect(binaries(npm)).toEqual(
       expect.arrayContaining(["/usr/local/bin/npm*", "/usr/local/bin/node*", "/usr/bin/node*"]),
     );
@@ -212,17 +212,17 @@ describe("effective built-in policy contracts", () => {
     ]);
     expect(binaries(gmail)).toEqual(["/usr/bin/python3"]);
 
-    for (const host of ["web.whatsapp.com", "*.web.whatsapp.com"]) {
+    ["web.whatsapp.com", "*.web.whatsapp.com"].forEach((host) => {
       const endpoint = requireEndpoint(whatsapp, host);
       expect(endpoint).toMatchObject({ port: 443, access: "full", tls: "skip" });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("rules");
-    }
-    for (const host of ["whatsapp.net", "*.whatsapp.net"]) {
+    });
+    ["whatsapp.net", "*.whatsapp.net"].forEach((host) => {
       const endpoint = requireEndpoint(whatsapp, host);
       expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
-    }
+    });
     expect(rules(requireEndpoint(whatsapp, "raw.githubusercontent.com"))).toEqual([
       {
         method: "GET",
@@ -278,19 +278,19 @@ describe("effective built-in policy contracts", () => {
       "outlook.office365.com",
     ]);
     expect(methods(graph)).toEqual(["GET", "PATCH", "POST"]);
-    for (const host of ["graph.microsoft.com", "login.microsoftonline.com"]) {
+    ["graph.microsoft.com", "login.microsoftonline.com"].forEach((host) => {
       expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(true);
       expect(requireEndpoint(outlook, host).request_body_credential_rewrite).toBe(
         requireEndpoint(teams, host).request_body_credential_rewrite,
       );
-    }
-    for (const host of [
+    });
+    [
       "login.microsoftonline.com",
       "outlook.office365.com",
       "outlook.office.com",
-    ]) {
+    ].forEach((host) => {
       expect(methods(requireEndpoint(outlook, host))).toEqual(["GET", "POST"]);
-    }
+    });
 
     expect((pricing.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "openrouter.ai",
@@ -376,7 +376,7 @@ describe("effective built-in policy contracts", () => {
     const localInference = requireNetworkPolicy(effective, "local_inference");
     const privateRanges = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
 
-    for (const port of [8000, 11434, 11435]) {
+    [8000, 11434, 11435].forEach((port) => {
       const endpoint = (localInference.endpoints ?? []).find(
         (candidate) => candidate.host === "host.openshell.internal" && candidate.port === port,
       );
@@ -386,7 +386,7 @@ describe("effective built-in policy contracts", () => {
         allowed_ips: privateRanges,
       });
       expect(methods(endpoint ?? {})).toEqual(["GET", "POST"]);
-    }
+    });
     const llamaCpp = (localInference.endpoints ?? []).find(
       (candidate) => candidate.host === "host.openshell.internal" && candidate.port === 8081,
     );
@@ -409,7 +409,7 @@ describe("effective built-in policy contracts", () => {
       "browser-use-gateway.nousresearch.com",
       "modal-gateway.nousresearch.com",
     ];
-    for (const [presetName, entry] of Object.entries(matrix)) {
+    Object.entries(matrix).forEach(([presetName, entry]) => {
       const policyName = presetName.replace("-", "_");
       const policy = requireNetworkPolicy(effective, policyName);
       const broker = (policy.endpoints ?? []).find(
@@ -428,7 +428,7 @@ describe("effective built-in policy contracts", () => {
         endpoint.host?.endsWith(".browser-use.com"),
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
-    }
+    });
   });
 
   function verifyOpenClawMessagingPolicyBoundaries() {
@@ -547,28 +547,28 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
-    for (const host of ["github.com", "raw.githubusercontent.com"]) {
+    ["github.com", "raw.githubusercontent.com"].forEach((host) => {
       const endpoint = requireEndpoint(brew, host);
       expect(endpoint).toMatchObject({ port: 443, access: "full" });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("tls");
-    }
-    for (const endpoint of (brew.endpoints ?? []).filter(
+    });
+    (brew.endpoints ?? []).filter(
       (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
-    )) {
+    ).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
-    }
+    });
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",
       "sentry.io",
       "statsig.anthropic.com",
     ]);
-    for (const endpoint of claude.endpoints ?? []) {
+    (claude.endpoints ?? []).forEach((endpoint) => {
       expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
       expect(endpoint).not.toHaveProperty("access");
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
-    }
+    });
     expect(binaries(claude)).not.toContain("/**");
     // OpenShell enforces on the resolved /proc/<pid>/exe, so the npm-installed
     // launcher (not just the bin/claude shim) must be allowlisted or egress is

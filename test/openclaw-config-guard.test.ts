@@ -826,7 +826,7 @@ describe("openclaw-config-guard", () => {
     // Simulate container recreation: /etc-style secondary state is gone while
     // the persistent /sandbox tree and its root-frozen discriminator survive.
     fs.rmSync(journalPath, { force: true });
-    for (const _ambiguousReplacement of failure === "kill-after-first-replace" ? [true] : []) {
+    (failure === "kill-after-first-replace" ? [true] : []).forEach((_ambiguousReplacement) => {
       const refused = runGuard("preflight", configDir);
       expect(refused.status).toBe(1);
       expect(refused.lines).toEqual(
@@ -834,7 +834,7 @@ describe("openclaw-config-guard", () => {
           expect.objectContaining({ type: "issue", code: "recovery-required" }),
         ]),
       );
-    }
+    });
 
     const recovered = runGuard("recover", configDir);
     expect(recovered.status).toBe(0);
@@ -1185,7 +1185,7 @@ describe("openclaw-config-guard", () => {
   });
 
   it("quarantines planted journal entry types and a last-moment swap without vetoing lock", () => {
-    for (const attack of ["symlink", "file", "directory"] as const) {
+    (["symlink", "file", "directory"] as const).forEach((attack) => {
       const current = fixture();
       const reserved = path.join(current.configDir, ".nemoclaw-config-transaction.json");
       const outside = path.join(current.root, `outside-${attack}`);
@@ -1209,7 +1209,7 @@ describe("openclaw-config-guard", () => {
         fs.renameSync(path.join(current.configDir, retained!), reserved);
         expect(runGuard("lock", current.configDir).status).toBe(0);
       }
-    }
+    });
 
     const swapped = fixture();
     fs.writeFileSync(path.join(swapped.root, "outside"), "outside\n");

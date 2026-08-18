@@ -112,9 +112,9 @@ describe("managed distributed vLLM receipt preflight", () => {
       "managed-cluster-managed-serving.json.node-a.ssh-binding",
       "managed-cluster-managed-serving.json.node-b.ssh-binding",
     ].map((entry) => path.join(stateRoot, entry));
-    for (const bindingPath of [...runtimeBindings, ...discoveryBindings]) {
+    [...runtimeBindings, ...discoveryBindings].forEach((bindingPath) => {
       fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
-    }
+    });
 
     const receipts = findManagedDistributedVllmRuntimeReceipts({ homeDir });
     expect(receipts.managedClusterBindingPaths).toEqual(runtimeBindings);
