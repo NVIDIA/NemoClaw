@@ -313,6 +313,22 @@ describe("inference health", () => {
       expect(result?.detail).toContain("not a Chat Completions result");
     });
 
+    it("accepts a null content field with a valid tool call", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "gpt-4o-mini",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () =>
+          httpOk(
+            '{"choices":[{"message":{"content":null,"tool_calls":[{"id":"call_probe","type":"function","function":{"name":"probe","arguments":"{}"}}]}}]}',
+          ),
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBeUndefined();
+      expect(result?.detail).toContain("succeeded");
+    });
+
     it.each([
       ["an empty tool call list", []],
       ["a null tool call list", null],
