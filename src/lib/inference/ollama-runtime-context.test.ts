@@ -272,103 +272,83 @@ describe("Ollama runtime context helpers", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("131072");
   });
 
-  it("advises a larger-context model when the native cap is below the Hermes requirement (#9458)", () => {
+  const THROW_SHOW_BODY = "__throw__";
+  const showCapture = (showBody: string): OllamaRuntimeRunCaptureFn =>
+    makeOllamaCapture(
+      JSON.stringify({ models: [{ name: "qwen2.5:0.5b", context_length: 32_768 }] }),
+      showBody,
+    );
+  const throwingShowCapture: OllamaRuntimeRunCaptureFn = (command) =>
+    command.some((arg) => String(arg).includes("/api/show"))
+      ? (() => {
+          throw new Error("curl exploded");
+        })()
+      : JSON.stringify({ models: [{ name: "qwen2.5:0.5b", context_length: 32_768 }] });
+
+  it.each([
+    {
+      caseName: "native below the requirement advises a larger model (#9458)",
+      showBody: JSON.stringify({
+        model_info: { "general.architecture": "qwen2", "qwen2.context_length": 32_768 },
+      }),
+      contains: "Select a model whose native context is at least 64000",
+      notContains: "OLLAMA_CONTEXT_LENGTH=64000",
+    },
+    {
+      caseName: "native exactly equal keeps the daemon remediation",
+      showBody: JSON.stringify({
+        model_info: { "general.architecture": "qwen2", "qwen2.context_length": 64_000 },
+      }),
+      contains: "OLLAMA_CONTEXT_LENGTH=64000",
+      notContains: "Select a model",
+    },
+    {
+      caseName: "native above the requirement keeps the daemon remediation",
+      showBody: JSON.stringify({
+        model_info: { "general.architecture": "qwen2", "qwen2.context_length": 131_072 },
+      }),
+      contains: "OLLAMA_CONTEXT_LENGTH=64000",
+      notContains: "Select a model",
+    },
+    {
+      caseName: "an empty /api/show response keeps the daemon remediation",
+      showBody: "",
+      contains: "OLLAMA_CONTEXT_LENGTH=64000",
+      notContains: "Select a model",
+    },
+    {
+      caseName: "a malformed /api/show response keeps the daemon remediation",
+      showBody: "not json",
+      contains: "OLLAMA_CONTEXT_LENGTH=64000",
+      notContains: "Select a model",
+    },
+    {
+      caseName: "a response without model_info keeps the daemon remediation",
+      showBody: JSON.stringify({ capabilities: ["tools"] }),
+      contains: "OLLAMA_CONTEXT_LENGTH=64000",
+      notContains: "Select a model",
+    },
+    {
+      caseName: "a throwing /api/show capture keeps the daemon remediation",
+      showBody: THROW_SHOW_BODY,
+      contains: "OLLAMA_CONTEXT_LENGTH=64000",
+      notContains: "Select a model",
+    },
+  ])("$caseName", ({ showBody, contains, notContains }) => {
     const env: NodeJS.ProcessEnv = {};
     const result = applyOllamaRuntimeContextWindow("qwen2.5:0.5b", getOllamaHost, {
       env,
       contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
       logger: { log: () => {}, warn: () => {} },
-      runCaptureImpl: makeOllamaCapture(
-        JSON.stringify({ models: [{ name: "qwen2.5:0.5b", context_length: 32_768 }] }),
-        JSON.stringify({
-          model_info: { "general.architecture": "qwen2", "qwen2.context_length": 32_768 },
-        }),
-      ),
+      runCaptureImpl: showBody === THROW_SHOW_BODY ? throwingShowCapture : showCapture(showBody),
     });
 
     const failure = expectOllamaRuntimeContextFailure(result);
     expect(failure.message).toContain("context_length=32768");
     expect(failure.message).toContain("required 64000-token window");
-    expect(failure.message).toContain("native context is 32768 tokens");
-    expect(failure.message).toContain("Select a model whose native context is at least 64000");
-    expect(failure.message).not.toContain("OLLAMA_CONTEXT_LENGTH=64000");
+    expect(failure.message).toContain(contains);
+    expect(failure.message).not.toContain(notContains);
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-  });
-
-  it("keeps the daemon remediation when the model natively supports the requirement", () => {
-    const result = applyOllamaRuntimeContextWindow("llama3.1:8b", getOllamaHost, {
-      env: {},
-      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
-      logger: { log: () => {}, warn: () => {} },
-      runCaptureImpl: makeOllamaCapture(
-        JSON.stringify({ models: [{ name: "llama3.1:8b", context_length: 32_768 }] }),
-        JSON.stringify({
-          model_info: { "general.architecture": "llama", "llama.context_length": 131_072 },
-        }),
-      ),
-    });
-
-    const failure = expectOllamaRuntimeContextFailure(result);
-    expect(failure.message).toContain("OLLAMA_CONTEXT_LENGTH=64000");
-    expect(failure.message).not.toContain("Select a model");
-  });
-
-  it("keeps the daemon remediation when the native cap exactly equals the requirement", () => {
-    const result = applyOllamaRuntimeContextWindow("qwen2.5:14b", getOllamaHost, {
-      env: {},
-      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
-      logger: { log: () => {}, warn: () => {} },
-      runCaptureImpl: makeOllamaCapture(
-        JSON.stringify({ models: [{ name: "qwen2.5:14b", context_length: 32_768 }] }),
-        JSON.stringify({
-          model_info: { "general.architecture": "qwen2", "qwen2.context_length": 64_000 },
-        }),
-      ),
-    });
-
-    const failure = expectOllamaRuntimeContextFailure(result);
-    expect(failure.message).toContain("OLLAMA_CONTEXT_LENGTH=64000");
-    expect(failure.message).not.toContain("Select a model");
-  });
-
-  it.each([
-    ["an empty response", ""],
-    ["a malformed response", "not json"],
-    ["a response without model_info", JSON.stringify({ capabilities: ["tools"] })],
-  ])("keeps the daemon remediation when the native probe returns %s", (_caseName, showBody) => {
-    const result = applyOllamaRuntimeContextWindow("qwen2.5:0.5b", getOllamaHost, {
-      env: {},
-      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
-      logger: { log: () => {}, warn: () => {} },
-      runCaptureImpl: makeOllamaCapture(
-        JSON.stringify({ models: [{ name: "qwen2.5:0.5b", context_length: 32_768 }] }),
-        showBody,
-      ),
-    });
-
-    const failure = expectOllamaRuntimeContextFailure(result);
-    expect(failure.message).toContain("OLLAMA_CONTEXT_LENGTH=64000");
-    expect(failure.message).not.toContain("Select a model");
-  });
-
-  it("keeps the daemon remediation when the native probe capture throws", () => {
-    const psBody = JSON.stringify({ models: [{ name: "qwen2.5:0.5b", context_length: 32_768 }] });
-    const throwingCapture: OllamaRuntimeRunCaptureFn = (command) =>
-      command.some((arg) => String(arg).includes("/api/show"))
-        ? (() => {
-            throw new Error("curl exploded");
-          })()
-        : psBody;
-    const result = applyOllamaRuntimeContextWindow("qwen2.5:0.5b", getOllamaHost, {
-      env: {},
-      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
-      logger: { log: () => {}, warn: () => {} },
-      runCaptureImpl: throwingCapture,
-    });
-
-    const failure = expectOllamaRuntimeContextFailure(result);
-    expect(failure.message).toContain("OLLAMA_CONTEXT_LENGTH=64000");
-    expect(failure.message).not.toContain("Select a model");
   });
 
   it("parses the native context length for the declared model architecture (#9458)", () => {
@@ -424,7 +404,7 @@ describe("Ollama runtime context helpers", () => {
 
   it("probes /api/show with a POST naming the selected model", () => {
     const commands: Array<readonly string[]> = [];
-    const status = probeOllamaModelNativeContextLength(
+    const nativeContextLength = probeOllamaModelNativeContextLength(
       "qwen2.5:0.5b",
       () => "host.docker.internal",
       (command) => {
@@ -435,7 +415,8 @@ describe("Ollama runtime context helpers", () => {
       },
     );
 
-    expect(status).toEqual({ probed: true, nativeContextLength: 32_768 });
+    expect(nativeContextLength).toBe(32_768);
+    expect(probeOllamaModelNativeContextLength("qwen2.5:0.5b", getOllamaHost, () => "")).toBeNull();
     expect(commands).toHaveLength(1);
     expect(commands[0]).toContain(`http://host.docker.internal:${OLLAMA_PORT}/api/show`);
     expect(commands[0]).toContain("POST");

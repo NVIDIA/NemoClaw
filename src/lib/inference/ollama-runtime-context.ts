@@ -197,9 +197,61 @@ export function probeOllamaRuntimeModelStatus(
   }
 }
 
-export interface OllamaNativeContextStatus {
-  probed: boolean;
-  nativeContextLength?: number;
+export type OllamaShowMetadataResult =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; error: string };
+
+/**
+ * The one Ollama `/api/show` metadata boundary. Owns request construction,
+ * timeout and capture behavior, JSON parsing, and the best-effort failure
+ * result. Consumers map `error` to their own fallback policy; none of them
+ * block on a probe failure.
+ */
+export function fetchOllamaModelShowMetadata(
+  model: string,
+  getOllamaHost: () => string,
+  runCaptureImpl?: OllamaRuntimeRunCaptureFn,
+): OllamaShowMetadataResult {
+  const capture = runCaptureImpl ?? runCapture;
+  const host = getOllamaHost();
+  let output: string;
+  try {
+    output = capture(
+      [
+        "curl",
+        ...buildValidatedCurlCommandArgs([
+          "-sS",
+          "--connect-timeout",
+          "3",
+          "--max-time",
+          "5",
+          "-X",
+          "POST",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          JSON.stringify({ model }),
+          `http://${host}:${OLLAMA_PORT}/api/show`,
+        ]),
+      ],
+      { ignoreError: true },
+    );
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!output || !String(output).trim()) {
+    return { ok: false, error: "empty response from /api/show" };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(output));
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "JSON parse error" };
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { ok: false, error: "unexpected /api/show payload shape" };
+  }
+  return { ok: true, payload: parsed as Record<string, unknown> };
 }
 
 /**
@@ -224,48 +276,16 @@ export function parseOllamaNativeContextLength(payload: unknown): number | null 
 
 /**
  * Probe `/api/show` for the loaded model's native (architectural) context
- * length. Best-effort: any transport or shape failure reports an unprobed
- * status, never an error, because this only refines remediation wording.
+ * length. Best-effort: any transport or shape failure yields `null`, never an
+ * error, because this only refines remediation wording.
  */
 export function probeOllamaModelNativeContextLength(
   model: string,
   getOllamaHost: () => string,
   runCaptureImpl?: OllamaRuntimeRunCaptureFn,
-): OllamaNativeContextStatus {
-  const capture = runCaptureImpl ?? runCapture;
-  const host = getOllamaHost();
-  let output: string;
-  try {
-    output = capture(
-      [
-        "curl",
-        ...buildValidatedCurlCommandArgs([
-          "-sf",
-          "--connect-timeout",
-          "3",
-          "--max-time",
-          "5",
-          "-X",
-          "POST",
-          "-H",
-          "Content-Type: application/json",
-          "-d",
-          JSON.stringify({ model }),
-          `http://${host}:${OLLAMA_PORT}/api/show`,
-        ]),
-      ],
-      { ignoreError: true },
-    );
-  } catch {
-    return { probed: false };
-  }
-  if (!output || !String(output).trim()) return { probed: false };
-  try {
-    const nativeContextLength = parseOllamaNativeContextLength(JSON.parse(String(output)));
-    return nativeContextLength ? { probed: true, nativeContextLength } : { probed: true };
-  } catch {
-    return { probed: false };
-  }
+): number | null {
+  const metadata = fetchOllamaModelShowMetadata(model, getOllamaHost, runCaptureImpl);
+  return metadata.ok ? parseOllamaNativeContextLength(metadata.payload) : null;
 }
 
 export function resolveOllamaRuntimeContextWindow(
@@ -372,14 +392,13 @@ export function applyOllamaRuntimeContextWindow(
       // native cap itself is below the requirement, telling the user to
       // raise OLLAMA_CONTEXT_LENGTH sends them through a rerun that must
       // fail. Advise a larger-context model instead (#9458).
-      const nativeStatus = probeOllamaModelNativeContextLength(
+      const nativeContextLength = probeOllamaModelNativeContextLength(
         selectedModel,
         getOllamaHost,
         options.runCaptureImpl,
       );
-      const nativeContextLength = nativeStatus.nativeContextLength;
       const modelLimited =
-        nativeContextLength !== undefined && nativeContextLength < requiredContextWindow;
+        nativeContextLength !== null && nativeContextLength < requiredContextWindow;
       const reported =
         `Ollama reports context_length=${runtimeStatus.contextLength} for loaded model ` +
         `'${selectedModel}', below the required ${requiredContextWindow}-token window. `;

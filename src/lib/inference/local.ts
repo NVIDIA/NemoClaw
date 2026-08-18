@@ -41,6 +41,7 @@ import type {
 } from "./ollama-runtime-context";
 import {
   applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  fetchOllamaModelShowMetadata,
   getOllamaContextWindowFloorForAgent,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
@@ -1753,76 +1754,22 @@ export function probeOllamaModelCapabilities(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaCapabilities {
-  const capture = runCaptureImpl ?? runCapture;
-  const host = getResolvedOllamaHost();
-  const body = JSON.stringify({ model });
-  let output: string;
-  try {
-    output = capture(
-      [
-        "curl",
-        "-sS",
-        "--connect-timeout",
-        "3",
-        "--max-time",
-        "5",
-        "-X",
-        "POST",
-        "-H",
-        "Content-Type: application/json",
-        "-d",
-        body,
-        `http://${host}:${OLLAMA_PORT}/api/show`,
-      ],
-      { ignoreError: true },
-    );
-  } catch (err) {
+  const metadata = fetchOllamaModelShowMetadata(model, getResolvedOllamaHost, runCaptureImpl);
+  if (!metadata.ok) {
     return {
       source: "unknown",
       capabilities: [],
       supportsTools: null,
-      rawError: err instanceof Error ? err.message : String(err),
+      rawError: metadata.error,
     };
   }
 
-  if (!output || !String(output).trim()) {
-    return {
-      source: "unknown",
-      capabilities: [],
-      supportsTools: null,
-      rawError: "empty response from /api/show",
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(output));
-  } catch (err) {
-    return {
-      source: "unknown",
-      capabilities: [],
-      supportsTools: null,
-      rawError: err instanceof Error ? err.message : "JSON parse error",
-    };
-  }
-
-  if (!parsed || typeof parsed !== "object") {
-    return {
-      source: "unknown",
-      capabilities: [],
-      supportsTools: null,
-      rawError: "unexpected /api/show payload shape",
-    };
-  }
-
-  const capsRaw = (parsed as { capabilities?: unknown }).capabilities;
+  const capsRaw = metadata.payload.capabilities;
   if (!Array.isArray(capsRaw)) {
     // Ollama returned a body but no capabilities array (older version,
     // custom registry, or shape change). Degrade to unknown.
     const errText =
-      typeof (parsed as { error?: unknown }).error === "string"
-        ? String((parsed as { error?: unknown }).error)
-        : "missing capabilities field";
+      typeof metadata.payload.error === "string" ? metadata.payload.error : "missing capabilities field";
     return {
       source: "unknown",
       capabilities: [],
