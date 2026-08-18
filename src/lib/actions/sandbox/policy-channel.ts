@@ -856,27 +856,18 @@ async function applyChannelAddToGatewayAndRegistry(
   // nothing for them. Their provider must be created HERE (same seam onboarding
   // uses): the pasted secret is env-only and gone once this process exits, so a
   // deferred rebuild cannot configure it.
-  // Mirror toMessagingAgentId: an unrecorded agent is OpenClaw, but a recorded
-  // agent no manifest supports configures no bridge rather than borrowing
-  // OpenClaw's credential.
-  const recordedAgent = registry.getSandbox(sandboxName)?.agent?.trim().toLowerCase();
-  const bridgeAgent = recordedAgent
-    ? tryGetMessagingAgentId({ name: recordedAgent }, messagingManifestRegistry.list())
-    : "openclaw";
-  const bridgeDefs =
-    bridgeAgent === null
-      ? []
-      : collectMessagingBridgeTokenDefs({
-          sandboxName,
-          agent: bridgeAgent,
-          enabledChannels: [channelName],
-          disabledChannelNames: new Set<string>(),
-          getCredential,
-          env: process.env,
-          // Env-map values (string | undefined) fit the store helper's input union.
-          normalizeCredentialValue: (value) =>
-            normalizeCredentialValue(value as string | undefined),
-        });
+  const bridgeDefs = collectMessagingBridgeTokenDefs({
+    sandboxName,
+    // Unnormalized: the bridge profile filter owns the unset default and rejects
+    // an agent no profile declares.
+    agent: registry.getSandbox(sandboxName)?.agent,
+    enabledChannels: [channelName],
+    disabledChannelNames: new Set<string>(),
+    getCredential,
+    env: process.env,
+    // Env-map values (string | undefined) fit the store helper's input union.
+    normalizeCredentialValue: (value) => normalizeCredentialValue(value as string | undefined),
+  });
   if (
     bridgeDefs.length === 0 &&
     bridgeProviderNamesForChannel(sandboxName, channelName).length > 0

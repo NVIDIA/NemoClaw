@@ -3,13 +3,13 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import * as webSearch from "../inference/web-search";
-import { BUILT_IN_CHANNEL_MANIFESTS, listMessagingCredentialMetadata } from "../messaging/channels";
-import { tryGetMessagingAgentId } from "../messaging/utils";
+import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
+  messagingBridgeProfilesForAgent,
 } from "./messaging-bridge-provider";
 
 export type NamedMessagingChannel = { name: string } & ChannelDef;
@@ -141,25 +141,18 @@ export function prepareCreateSandboxMessaging(
   // upsertMessagingProviders wrapper). Today only Google Chat uses this.
   // Resolve the agent instead of defaulting it: an agent no manifest supports
   // must configure no bridge, not the OpenClaw one.
-  // Mirror toMessagingAgentId: an unset agent is OpenClaw, but a named agent no
-  // manifest supports configures no bridge rather than borrowing OpenClaw's.
-  const agentName = input.agentName?.trim().toLowerCase();
-  const bridgeAgent = agentName
-    ? tryGetMessagingAgentId({ name: agentName }, BUILT_IN_CHANNEL_MANIFESTS)
-    : "openclaw";
-  if (bridgeAgent !== null) {
-    messagingTokenDefs.push(
-      ...collectMessagingBridgeTokenDefs({
-        sandboxName: input.sandboxName,
-        agent: bridgeAgent,
-        getCredential: input.getCredential,
-        env: input.env,
-        normalizeCredentialValue: input.normalizeCredentialValue,
-        enabledChannels: input.enabledChannels,
-        disabledChannelNames,
-      }),
-    );
-  }
+  const bridgeProfiles = messagingBridgeProfilesForAgent(input.agentName);
+  messagingTokenDefs.push(
+    ...collectMessagingBridgeTokenDefs({
+      sandboxName: input.sandboxName,
+      agent: input.agentName,
+      getCredential: input.getCredential,
+      env: input.env,
+      normalizeCredentialValue: input.normalizeCredentialValue,
+      enabledChannels: input.enabledChannels,
+      disabledChannelNames,
+    }),
+  );
 
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
     input.sandboxName,
@@ -190,10 +183,16 @@ export function prepareCreateSandboxMessaging(
   // Bridge channels have no token def at all when their env-only secret is
   // gone (fresh process), so the envKey loop above misses them. The gateway
   // still holds the refresh material — reuse the provider by name instead.
+  // Same profile selection as the mint above: the provider name derives from the
+  // channel alone, so an agent with no profile must reuse nothing either.
   if (input.enabledChannels != null) {
     for (const channel of input.enabledChannels) {
       if (disabledChannelNames.has(channel)) continue;
-      for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel)) {
+      for (const name of bridgeProviderNamesForChannel(
+        input.sandboxName,
+        channel,
+        bridgeProfiles,
+      )) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;
         if (reusableMessagingProviders.includes(name)) continue;
         if (!input.providerExistsInGateway(name)) continue;

@@ -134,6 +134,10 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.messagingTokenDefs.map((def) => def.name)).not.toContain(
       "demo-googlechat-bridge",
     );
+    // The provider name derives from the channel alone, so reuse has to be gated
+    // as well; otherwise the sandbox adopts whichever bridge already exists.
+    expect(result.reusableMessagingProviders).not.toContain("demo-googlechat-bridge");
+    expect(result.reusableMessagingChannels).not.toContain("googlechat");
   });
 
   it("does not reuse a bridge provider that is absent from the gateway", () => {

@@ -168,7 +168,6 @@ def _sandbox_adapter_class():
         """Bundled adapter with the sandbox transport and credential delta."""
 
         _sandbox_subscription = None
-        _sandbox_pull_task = None
 
         def _validate_config(self):
             """Report no subscription so the bundled ``connect()`` skips its gRPC
@@ -194,39 +193,15 @@ def _sandbox_adapter_class():
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             """Run the bundled connect(), then start the REST pull it skipped."""
             connected = await super().connect(is_reconnect=is_reconnect)
+            # Hermes v2026.7.20 builds a fresh adapter for every reconnect, so this
+            # never runs twice on one instance; a release that reuses the instance
+            # would need the running pull replaced here.
             if connected and self._sandbox_subscription:
-                await self._stop_rest_pull()
-                task = asyncio.create_task(self._rest_pull())
-                # Own handle survives the next connect(); the bundled one keeps
-                # the bundled disconnect() able to cancel the pull.
-                self._sandbox_pull_task = task
-                self._supervisor_task = task
+                self._supervisor_task = asyncio.create_task(self._rest_pull())
                 _GC_LOG.info(
                     "[GoogleChat][NemoClaw] keyless REST pull active (no gRPC subscriber)"
                 )
             return connected
-
-        async def _stop_rest_pull(self):
-            """Drop a running pull before starting another.
-
-            The loop below exits only on shutdown, so a second ``connect()`` on
-            this adapter without an intervening ``disconnect()`` would leave two
-            consumers pulling one subscription and every message handled twice.
-            Hermes v2026.7.20 builds a fresh adapter for each reconnect, so this
-            holds the invariant rather than fixing a reachable path.
-
-            Read the subclass handle: the bundled ``connect()`` sets
-            ``_supervisor_task`` to ``None`` on the no-subscription branch this
-            override takes, which would hide a task still running.
-            """
-            task = self._sandbox_pull_task
-            if task is None or task.done():
-                return
-            task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
 
         async def _rest_pull(self):
             """Pull the subscription over the Pub/Sub REST unary API, in place of the

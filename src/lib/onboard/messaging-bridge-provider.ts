@@ -88,10 +88,11 @@ export interface MessagingBridgeSecretResolveDeps {
 export interface CollectMessagingBridgeTokenDefsInput extends MessagingBridgeSecretResolveDeps {
   readonly sandboxName: string;
   /**
-   * Sandbox agent. Bridge profiles are per-agent, and a channel may ship both
-   * (Google Chat does), so only the matching profile may produce a bridge.
+   * Recorded sandbox agent, unnormalized. Bridge profiles are per-agent and a
+   * channel may ship both (Google Chat does), so the profile filter selects the
+   * matching one and rejects an agent no profile declares.
    */
-  readonly agent: MessagingAgentId;
+  readonly agent: string | null | undefined;
   readonly enabledChannels: readonly string[] | null;
   readonly disabledChannelNames: ReadonlySet<string>;
   /** Injected for tests; defaults to convention discovery. */
@@ -260,10 +261,9 @@ function bridgeProviderNameFor(sandboxName: string, channelId: string): string {
 export function collectMessagingBridgeTokenDefs(
   input: CollectMessagingBridgeTokenDefsInput,
 ): { name: string; envKey: string; token: string; providerType: string }[] {
-  const profiles = input.profiles ?? listMessagingBridgeProfiles();
+  const profiles = messagingBridgeProfilesForAgent(input.agent, input.profiles);
   const defs: { name: string; envKey: string; token: string; providerType: string }[] = [];
   for (const profile of profiles) {
-    if (profile.agent !== input.agent) continue;
     if (input.disabledChannelNames.has(profile.channelId)) continue;
     if (input.enabledChannels != null && !input.enabledChannels.includes(profile.channelId))
       continue;
@@ -277,6 +277,19 @@ export function collectMessagingBridgeTokenDefs(
     });
   }
   return defs;
+}
+
+/**
+ * Single authority for which bridge profiles an agent may use. An unset agent is
+ * OpenClaw, matching `toMessagingAgentId`; a recorded agent no profile declares
+ * selects nothing, so it mints and reuses no bridge.
+ */
+export function messagingBridgeProfilesForAgent(
+  agent: string | null | undefined,
+  profiles: readonly MessagingBridgeProfile[] = listMessagingBridgeProfiles(),
+): MessagingBridgeProfile[] {
+  const name = agent?.trim().toLowerCase() || "openclaw";
+  return profiles.filter((profile) => profile.agent === name);
 }
 
 /**
