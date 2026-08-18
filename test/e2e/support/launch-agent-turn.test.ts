@@ -930,35 +930,21 @@ it.each([[], ["-g", "fixture-gateway"]].map((gatewayArgs) => [gatewayArgs] as co
     expect(fixture.duplicate.status).toBe(73);
     expect(fixture.duplicate.stderr).toContain('"reason":"openshell_launch_intercept_duplicate"');
     expect(fixture.interceptMode).toBe(0o600);
-    expect(fixture.calls).toHaveLength(4);
-    expect(fixture.authorityNames).toEqual([[], [], [], []]);
+    expect(fixture.calls).toHaveLength(3);
+    expect(fixture.authorityNames).toEqual([[], [], []]);
     expect(fixture.calls[0]).toEqual(fixture.passThroughArgv);
     expect(fixture.calls[1]).toEqual(fixture.ttyPassThroughArgv);
-    const optionIndex = fixture.exactArgv.indexOf("--tty");
-    expect(fixture.calls[2]).toEqual([
-      ...fixture.exactArgv.slice(0, optionIndex),
-      "--",
-      "node",
-      "-e",
-      OPENCLAW_PTY_MONITOR_KEY_WRITER_SCRIPT,
-      fixture.runId,
-      fixture.monitorRoot,
-      fixture.publicKey,
-    ]);
-    expect(fixture.calls[3]?.slice(0, separator + 1)).toEqual(
+    expect(fixture.calls[2]?.slice(0, separator + 1)).toEqual(
       fixture.exactArgv.slice(0, separator + 1),
     );
-    expect(fixture.calls[3]?.slice(separator + 1)).toEqual([
+    expect(fixture.calls[2]?.slice(separator + 1)).toEqual([
       "node",
       "-e",
       OPENCLAW_PTY_MONITOR_STARTER_SCRIPT,
       fixture.runId,
       fixture.monitorRoot,
-      fixture.publicKey,
-      `${fixture.monitorRoot}/pty-monitor-private-key`,
       ...expectedRemote,
     ]);
-    expect(fixture.calls.flat()).not.toContain(fixture.privateKey);
   },
 );
 
