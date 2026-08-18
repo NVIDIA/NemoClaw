@@ -138,9 +138,10 @@ describe("sandbox registry metadata", () => {
       runCaptureOpenshell: () => "openshell 0.0.44",
     });
 
+    // A different derived identity proves the recorded null is explicit rather than absent.
     helpers.updateReusedSandboxMetadata(
       "alpha",
-      openclawAgent("2026.5.22"),
+      { name: "hermes", expectedVersion: "1.0.0" } as AgentDefinition,
       "new-model",
       "nvidia-prod",
       18789,
