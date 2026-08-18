@@ -27,7 +27,7 @@ If Docker no longer has the container, follow the printed `rebuild --yes` guidan
 
 <AgentOnly variant="openclaw,hermes">
 The `start` command returns success only after it authenticates the recovered agent runtime, OpenShell reports the sandbox ready, and host-side port forwards pass their checks.
-If any check fails, the command keeps the existing container, exits nonzero, identifies the failure, and tells you to run `recover` before retrying `start`.
+If a check fails, the command exits nonzero, identifies the failure, and prints recovery guidance before you retry `start`.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
@@ -135,6 +135,7 @@ After a transactional recreation, NemoClaw waits 120 seconds for OpenShell to re
 Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before the recovery command to change this budget.
 A definitive managed-health failure still stops immediately.
 If re-registration, state restoration, or a later gateway check fails, NemoClaw attempts to roll back the replacement and leaves the primary dashboard or API host forward stopped.
+If NemoClaw cannot confirm rollback to the previous container, inspect Docker state before you retry recovery.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
 If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.

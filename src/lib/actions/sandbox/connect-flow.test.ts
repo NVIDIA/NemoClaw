@@ -976,7 +976,7 @@ describe("connectSandbox flow", () => {
         .map((call) => String(call[0] ?? ""))
         .join("\n");
       expect(errorOutput).toContain(
-        "Connect failed: NemoClaw could not recover the OpenClaw gateway in 'alpha'",
+        "Recovery failed: NemoClaw could not recover the OpenClaw gateway in 'alpha'",
       );
       expect(errorOutput).toContain(expectedDetail);
       expect(errorOutput).not.toContain("opaque-connect-recovery-token");

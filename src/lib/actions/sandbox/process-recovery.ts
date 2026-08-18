@@ -610,7 +610,7 @@ function recoveryDetailAfterRelaunchRollback(
     // Report only the fixed rollback classification below. Finalizer errors can
     // contain Docker paths, container IDs, or other untrusted runtime detail.
   }
-  return `The previous sandbox container could not be restored automatically; inspect Docker state before retrying. Recovery failure before rollback: ${recoveryFailureDetail}`;
+  return `NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: ${recoveryFailureDetail}`;
 }
 
 export function confirmRecoveredSandboxGatewayManaged(

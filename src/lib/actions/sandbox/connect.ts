@@ -264,7 +264,7 @@ function exitOnGatewayRecoveryFailure(
   sandboxName: string,
   agentName: string,
   detail: string,
-  operation: "Connect" | "Probe" = "Probe",
+  operation: "Probe" | "Recovery" = "Probe",
 ): never {
   const safeDetail = sanitizeSandboxStartupRecoveryDetail(detail);
   const terminalPunctuation = /[.!?]$/u.test(safeDetail) ? "" : ".";
@@ -1303,7 +1303,7 @@ export async function prepareInteractiveSession(
       sandboxName,
       agentName,
       String(processCheck.recoveryFailureDetail),
-      "Connect",
+      "Recovery",
     );
   }
   // Ensure Ollama auth proxy is running (recovers from host reboots)

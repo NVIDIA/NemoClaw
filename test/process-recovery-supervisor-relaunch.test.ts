@@ -1039,7 +1039,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         throw new Error("opaque-finalizer-sentinel");
       },
     },
-  ])("reports an unsafe container state when readiness fails and $condition (#9364)", ({
+  ])("reports the readiness failure and unconfirmed rollback when $condition (#9364)", ({
     finalizeOutcome,
   }) => {
     mockOpenClawSandbox("rollback-box");
@@ -1074,7 +1074,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       recovered: false,
       forwardRecovered: false,
       recoveryFailureDetail: expect.stringContaining(
-        "The previous sandbox container could not be restored automatically",
+        "NemoClaw could not confirm rollback to the previous sandbox container",
       ),
     });
     expect("recoveryFailureDetail" in result ? result.recoveryFailureDetail : "").toContain(
@@ -1307,7 +1307,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     });
   });
 
-  it("reports the current health refusal after a transient identity refusal clears (#9364)", () => {
+  it("reports GATEWAY_UNSAFE_CONFIG_PATH after a transient identity refusal clears (#9364)", () => {
     mockOpenClawSandbox("current-probe-box");
     setImmediateRecoveryPolling();
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
