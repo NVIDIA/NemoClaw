@@ -308,14 +308,17 @@ describe("executeGatewaySupervisorAction", () => {
   it("keeps other privileged-control refusals terminal and classified", () => {
     const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
-      throw new Error("container identity changed");
+      throw new Error(
+        "OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
+      );
     });
     vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(false);
 
     expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
       status: 1,
       stdout: "",
-      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
+      stderr:
+        "PRIVILEGED_CONTROL_UNAVAILABLE: OpenShell container identity changed for sandbox 'new-clone'; refusing privileged execution against a different container.",
     });
   });
 
@@ -327,6 +330,7 @@ describe("executeGatewaySupervisorAction", () => {
       );
     });
     vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(false);
+    vi.spyOn(privilegedExec, "isPinnedSandboxContainerIdentityChangedError").mockReturnValue(true);
 
     expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
       status: 1,

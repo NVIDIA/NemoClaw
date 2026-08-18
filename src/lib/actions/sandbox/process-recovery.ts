@@ -26,6 +26,7 @@ import { sleepSeconds, waitUntil } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
+  isPinnedSandboxContainerIdentityChangedError,
   privilegedSandboxExecArgv,
   withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
@@ -251,13 +252,10 @@ function executeGatewaySupervisorActionPinned(
       };
     }
     const detail = error instanceof Error ? error.message : "privileged container unavailable";
-    const identityChanged = detail.startsWith(
-      `OpenShell container identity changed for sandbox '${sandboxName}';`,
-    );
     return {
       status: 1,
       stdout: "",
-      stderr: identityChanged
+      stderr: isPinnedSandboxContainerIdentityChangedError(error)
         ? `${MANAGED_CONTROL_IDENTITY_CHANGED_MARKER}\n${detail}`
         : `PRIVILEGED_CONTROL_UNAVAILABLE: ${detail}`,
     };

@@ -91,6 +91,25 @@ describe("gateway restart failure classification precedence", () => {
       layer: "supervisor not running",
     });
   });
+
+  it("does not classify an embedded identity marker as a protocol marker", () => {
+    expect(classify("failure mentions MANAGED_CONTROL_IDENTITY_CHANGED inline")).toMatchObject({
+      layer: "launch failure",
+    });
+  });
+
+  it("removes every complete identity marker line from the failure detail", () => {
+    const output = [
+      " MANAGED_CONTROL_IDENTITY_CHANGED ",
+      "container changed once",
+      "MANAGED_CONTROL_IDENTITY_CHANGED",
+      "container changed again",
+    ].join("\n");
+    expect(classify(output)).toEqual({
+      layer: "container identity changed",
+      detail: "container changed once\ncontainer changed again",
+    });
+  });
 });
 
 describe("restartSandboxGateway — host-mediated gateway restart", () => {

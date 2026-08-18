@@ -188,6 +188,10 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
   }
 
   const output = gatewayRestartOutput(result);
+  const outputLines = output.split(/\r?\n/);
+  const isIdentityChangedMarkerLine = (line: string) =>
+    line.trim() === MANAGED_CONTROL_IDENTITY_CHANGED_MARKER;
+  const hasIdentityChangedMarker = outputLines.some(isIdentityChangedMarkerLine);
   const detail = sanitizeGatewayRestartFailureDetail(output.trim());
   if (output.includes("SUPERVISOR_NOT_RUNNING")) {
     return {
@@ -201,12 +205,12 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
       detail: detail || "the managed gateway supervisor became unavailable",
     };
   }
-  if (output.includes(MANAGED_CONTROL_IDENTITY_CHANGED_MARKER)) {
+  if (hasIdentityChangedMarker) {
     return {
       layer: "container identity changed",
       detail:
         sanitizeGatewayRestartFailureDetail(
-          output.replace(MANAGED_CONTROL_IDENTITY_CHANGED_MARKER, "").trim(),
+          outputLines.filter((line) => !isIdentityChangedMarkerLine(line)).join("\n").trim(),
         ) || "the selected container identity changed",
     };
   }
