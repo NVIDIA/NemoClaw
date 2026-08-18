@@ -538,21 +538,64 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("preserves redacted replacement evidence before reconnect rollback", async () => {
-    const fake = fixture();
-    const secret = "diagnostic-secret-canary";
-    fake.deps.errorPhaseDebouncePolls = 1;
-    fake.deps.runOpenshell = vi.fn(() => {
+  it("preserves redacted evidence when the replacement exits at the pre-reconnect fence", async () => {
+    const fake = fixture({ agent: "openclaw" });
+    const secret = "pre-reconnect-diagnostic-secret-canary";
+    fake.deps.dockerLogs = vi.fn(() => `startup failed with DISCORD_BOT_TOKEN=${secret}`);
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority("openclaw");
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    const dockerCapture = fake.deps.dockerCapture!;
+    const exitReplacementOnInspect: typeof dockerCapture = (args) => {
       assert(fake.replacement?.State);
       Object.assign(fake.replacement.State, {
         Status: "exited",
         Running: false,
-        ExitCode: 137,
-        OOMKilled: true,
+        ExitCode: 1,
         Error: "startup terminated",
       });
-      return { status: 1 };
-    });
+      return dockerCapture(args);
+    };
+    fake.deps.dockerCapture = vi
+      .fn(dockerCapture)
+      .mockImplementationOnce(dockerCapture)
+      .mockImplementationOnce(dockerCapture)
+      .mockImplementationOnce(exitReplacementOnInspect);
+    const awaitAdapter = createDockerManagedBootstrapAdapter(fake.deps);
+
+    const failure = await awaitAdapter
+      .awaitBootstrap({ handle, snapshot, replacement, timeoutSecs: 1 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "Managed bootstrap Docker replacement is not stably running.",
+    );
+    expect((failure as Error).message).toContain(
+      "Replacement state: status=exited running=false exit_code=1 error=startup terminated",
+    );
+    expect((failure as Error).message).toContain("DISCORD_BOT_TOKEN=<REDACTED>");
+    expect((failure as Error).message).not.toContain(secret);
+    expect(fake.deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("preserves redacted replacement evidence before reconnect rollback", async () => {
+    const fake = fixture();
+    const secret = "diagnostic-secret-canary";
+    fake.deps.errorPhaseDebouncePolls = 1;
+    fake.deps.runOpenshell = vi.fn(() => ({ status: 1 }));
     fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
     fake.deps.dockerLogs = vi.fn(() => `managed startup failed with NVIDIA_API_KEY=${secret}`);
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
@@ -576,12 +619,16 @@ describe("Docker managed bootstrap adapter", () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain(
-      "Replacement state: status=exited running=false exit_code=137 oom_killed=true error=startup terminated",
+      "Managed bootstrap Docker supervisor did not reconnect.",
+    );
+    expect((failure as Error).message).toContain(
+      "Replacement state: running=true",
     );
     expect((failure as Error).message).toContain(
       "managed startup failed with NVIDIA_API_KEY=<REDACTED>",
     );
     expect((failure as Error).message).not.toContain(secret);
+    expect(fake.deps.runOpenshell).toHaveBeenCalled();
   });
 
   it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {
