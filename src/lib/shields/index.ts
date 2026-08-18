@@ -1386,6 +1386,21 @@ type LoadedShieldsState = ShieldsState & {
   _corruptError?: string;
 };
 
+export interface ShieldsPolicySnapshotRecovery {
+  readonly sandboxName: string;
+}
+
+type ShieldsPolicySnapshotRecoveryData = {
+  readonly content: string;
+  readonly sha256: string;
+  readonly snapshotPath: string;
+};
+
+const backupPolicySnapshotRecoveries = new WeakMap<
+  ShieldsPolicySnapshotRecovery,
+  ShieldsPolicySnapshotRecoveryData
+>();
+
 interface ShieldsPosture {
   mode: ShieldsPostureMode;
   detail: string;
@@ -1625,6 +1640,117 @@ function loadShieldsState(sandboxName: string): LoadedShieldsState {
       _isCorrupt: true,
       _corruptError: message,
     };
+  }
+}
+
+function assertGeneratedPolicySnapshotPath(sandboxName: string, snapshotPath: string): void {
+  const basename = path.basename(snapshotPath);
+  const prefix = `policy-snapshot-${sandboxName}-`;
+  const suffix = basename.slice(prefix.length);
+  if (
+    path.dirname(snapshotPath) !== STATE_DIR ||
+    !basename.startsWith(prefix) ||
+    !/^[0-9a-f]{32}-[0-9a-f]{16}[.]yaml$/u.test(suffix)
+  ) {
+    throw new Error("Shields state does not authorize a generated restrictive policy snapshot");
+  }
+}
+
+function readAuthorizedPolicySnapshot(
+  sandboxName: string,
+  snapshotPath: string,
+): ShieldsPolicySnapshotRecoveryData {
+  assertGeneratedPolicySnapshotPath(sandboxName, snapshotPath);
+  const fd = fs.openSync(
+    snapshotPath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const before = fs.fstatSync(fd);
+    const currentUid = process.geteuid?.();
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      (before.mode & 0o777) !== 0o600 ||
+      (currentUid !== undefined && before.uid !== currentUid) ||
+      before.size < 1 ||
+      before.size > MAX_SHIELDS_FORWARD_POLICY_BYTES
+    ) {
+      throw new Error("Restrictive policy snapshot has unsafe metadata");
+    }
+    const contentBuffer = fs.readFileSync(fd);
+    const after = fs.fstatSync(fd);
+    if (
+      contentBuffer.length !== before.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    ) {
+      throw new Error("Restrictive policy snapshot changed while it was being preserved");
+    }
+    const content = contentBuffer.toString("utf-8");
+    if (!parseCurrentPolicy(content)) {
+      throw new Error("Restrictive policy snapshot is not a valid policy document");
+    }
+    return {
+      content,
+      sha256: createHash("sha256").update(contentBuffer).digest("hex"),
+      snapshotPath,
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Preserve the exact restrictive policy that a host-owned backup window must restore. */
+function captureShieldsPolicySnapshotRecovery(
+  sandboxName: string,
+): ShieldsPolicySnapshotRecovery {
+  validateName(sandboxName, "sandbox name");
+  return withShieldsTransitionLock(sandboxName, "preserve backup Shields policy", () => {
+    const state = loadShieldsState(sandboxName);
+    if (state._isCorrupt || state.shieldsDown !== true || !state.shieldsPolicySnapshotPath) {
+      throw new Error("Cannot preserve restrictive policy recovery outside Shields DOWN state");
+    }
+    const recovery = Object.freeze({ sandboxName });
+    backupPolicySnapshotRecoveries.set(
+      recovery,
+      readAuthorizedPolicySnapshot(sandboxName, state.shieldsPolicySnapshotPath),
+    );
+    return recovery;
+  });
+}
+
+function restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
+  sandboxName: string,
+  recovery: ShieldsPolicySnapshotRecovery,
+): boolean {
+  const preserved = backupPolicySnapshotRecoveries.get(recovery);
+  if (!preserved || recovery.sandboxName !== sandboxName) {
+    throw new Error("Backup Shields policy recovery authority is invalid");
+  }
+  try {
+    const state = loadShieldsState(sandboxName);
+    if (
+      state._isCorrupt ||
+      state.shieldsDown !== true ||
+      state.shieldsPolicySnapshotPath !== preserved.snapshotPath
+    ) {
+      throw new Error("Shields state no longer authorizes the preserved restrictive policy");
+    }
+    assertGeneratedPolicySnapshotPath(sandboxName, preserved.snapshotPath);
+    if (!fs.existsSync(preserved.snapshotPath)) {
+      writeShieldsFileAtomicDurable(preserved.snapshotPath, preserved.content, 0o600, false);
+    }
+    const restored = readAuthorizedPolicySnapshot(sandboxName, preserved.snapshotPath);
+    if (restored.sha256 !== preserved.sha256) {
+      throw new Error("Restrictive policy snapshot no longer matches the preserved policy");
+    }
+    return true;
+  } finally {
+    backupPolicySnapshotRecoveries.delete(recovery);
   }
 }
 
@@ -5304,9 +5430,15 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
 // hardening step that restricts the sandbox beyond its default state.
 // ---------------------------------------------------------------------------
 
+type ShieldsUpOpts = {
+  throwOnError?: boolean;
+  allowLegacyHermesProtocol?: boolean;
+  policySnapshotRecovery?: ShieldsPolicySnapshotRecovery;
+};
+
 function shieldsUpWithoutHostLock(
   sandboxName: string,
-  opts: { throwOnError?: boolean; allowLegacyHermesProtocol?: boolean } = {},
+  opts: ShieldsUpOpts = {},
 ): void {
   validateName(sandboxName, "sandbox name");
 
@@ -5321,6 +5453,21 @@ function shieldsUpWithoutHostLock(
       `Cannot raise shields while persisted shields state is corrupt for ${sandboxName}`,
       opts.throwOnError,
     );
+  }
+  if (opts.policySnapshotRecovery) {
+    try {
+      restoreShieldsPolicySnapshotRecoveryWithoutHostLock(
+        sandboxName,
+        opts.policySnapshotRecovery,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Cannot recover the restrictive policy snapshot: ${message}`);
+      return failShieldsCommand(
+        `Backup Shields policy recovery failed: ${message}`,
+        opts.throwOnError,
+      );
+    }
   }
   // shieldsDown === false means explicitly locked by a previous shields-up.
   // undefined (no state file) means fresh sandbox — mutable default, allow shields-up.
@@ -5592,7 +5739,7 @@ function shieldsUpWithoutHostLock(
 
 function shieldsUp(
   sandboxName: string,
-  opts: { throwOnError?: boolean; allowLegacyHermesProtocol?: boolean } = {},
+  opts: ShieldsUpOpts = {},
 ): void {
   validateName(sandboxName, "sandbox name");
   try {
@@ -5907,6 +6054,7 @@ function clearShieldsState(sandboxName: string): void {
 
 export {
   applyShieldsPolicySnapshot,
+  captureShieldsPolicySnapshotRecovery,
   clearShieldsState,
   completeAutoRestoreTransition,
   DEFAULT_TIMEOUT_SECONDS,

@@ -759,6 +759,48 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     );
   });
 
+  it("restores the exact preserved restrictive snapshot before backup relock (#9452)", () => {
+    const harness = createHarness({ confirmOpenClawInodeFlags: true });
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "backup-all",
+      throwOnError: true,
+    });
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as {
+      shieldsPolicySnapshotPath: string;
+    };
+    const expectedPolicy = fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8");
+    const recovery = harness.captureShieldsPolicySnapshotRecovery("openclaw");
+    fs.rmSync(state.shieldsPolicySnapshotPath);
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).not.toThrow();
+    expect(fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8")).toBe(expectedPolicy);
+  });
+
+  it("refuses to overwrite a changed restrictive snapshot during backup recovery (#9452)", () => {
+    const harness = createHarness();
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "backup-all",
+      throwOnError: true,
+    });
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const state = JSON.parse(fs.readFileSync(statePath, "utf-8")) as {
+      shieldsPolicySnapshotPath: string;
+    };
+    const recovery = harness.captureShieldsPolicySnapshotRecovery("openclaw");
+    const changedPolicy = "version: 1\nnetwork_policies:\n  changed: {}\n";
+    fs.writeFileSync(state.shieldsPolicySnapshotPath, changedPolicy, { mode: 0o600 });
+
+    expect(() =>
+      harness.shieldsUp("openclaw", { policySnapshotRecovery: recovery, throwOnError: true }),
+    ).toThrow(/Backup Shields policy recovery failed.*no longer matches the preserved policy/u);
+    expect(fs.readFileSync(state.shieldsPolicySnapshotPath, "utf-8")).toBe(changedPolicy);
+  });
+
   it("reports staged driver-neutral recovery when shields-down rollback cannot re-lock (#6126)", () => {
     const harness = createHarness({ failOpenClawGuardActions: ["unlock", "lock"] });
 

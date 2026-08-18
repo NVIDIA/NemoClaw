@@ -15,6 +15,7 @@ const shieldsModulePath = "./index.js";
 export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
+  captureShieldsPolicySnapshotRecovery: typeof import("../../src/lib/shields/index.js").captureShieldsPolicySnapshotRecovery;
   cleanupTempDirSpy: MockInstance;
   dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }>;
   errorSpy: MockInstance;
@@ -571,6 +572,7 @@ export function createShieldsFlowHarness(
   return {
     applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
+    captureShieldsPolicySnapshotRecovery: shields.captureShieldsPolicySnapshotRecovery,
     cleanupTempDirSpy,
     dockerSpawnCalls,
     errorSpy,
