@@ -36,6 +36,7 @@ import {
 export type { ManagedWorkloadReceipt } from "./authority";
 
 import {
+  liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
   SandboxWorkloadPreparationError,
@@ -172,6 +173,15 @@ export async function prepareManagedWorkloadRebuildHandoff(
       );
     }
   } else {
+    const qualificationRevision = liveE2eManagedImageRevision(process.env);
+    if (
+      qualificationRevision !== null &&
+      qualificationRevision !== authority.receipt.sourceRevision
+    ) {
+      throw new ManagedWorkloadRebuildError(
+        "the live qualification revision does not match the durable workload receipt",
+      );
+    }
     try {
       replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
         agentName: authority.agent,
@@ -179,6 +189,9 @@ export async function prepareManagedWorkloadRebuildHandoff(
         runtime: options.runtime,
         version: options.version ?? getVersion(),
         policy: "require-managed",
+        ...(qualificationRevision
+          ? { catalogRevision: authority.receipt.sourceRevision }
+          : {}),
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(

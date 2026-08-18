@@ -107,6 +107,21 @@ describe("sandbox workload preparation", () => {
     });
   });
 
+  it("passes an immutable qualification revision to catalog resolution (#9385)", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    await prepareSandboxWorkloadSource(
+      { ...input("openclaw"), catalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).toHaveBeenCalledExactlyOnceWith({
+      release: RELEASE,
+      platform: MANAGED_IMAGE_PLATFORM,
+      revision: REVISION,
+    });
+  });
+
   it("loads an exact local all-agent catalog without using the registry resolver (#7744)", async () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
