@@ -36,6 +36,7 @@ import {
 export type { ManagedWorkloadReceipt } from "./authority";
 
 import {
+  liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
   prepareSandboxWorkloadSource,
   SandboxWorkloadPreparationError,
@@ -173,12 +174,14 @@ export async function prepareManagedWorkloadRebuildHandoff(
     }
   } else {
     try {
+      const catalogRevision = liveE2eManagedImageRevision(process.env);
       replacement = await managedWorkloadRebuildDependencies.prepareSandboxWorkloadSource({
         agentName: authority.agent,
         legacyDockerfilePath: "managed-rebuild-must-not-stage-this-dockerfile",
         runtime: options.runtime,
         version: options.version ?? getVersion(),
         policy: "require-managed",
+        ...(catalogRevision ? { catalogRevision } : {}),
       });
     } catch (error) {
       throw new ManagedWorkloadRebuildError(
