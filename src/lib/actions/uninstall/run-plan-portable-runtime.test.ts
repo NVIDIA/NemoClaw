@@ -389,9 +389,15 @@ describe("portable runtime cleanup in the uninstall run plan", () => {
       ],
       ["openshell sandbox get -g nemoclaw alpha", () => sandboxAbsent("alpha")],
       ["openshell status -g nemoclaw", () => ok("Status: Connected\nGateway: nemoclaw\n")],
+      [
+        "npm",
+        () => {
+          order.push("cli");
+          return ok();
+        },
+      ],
     ]);
     const run = vi.fn((command: string, args: string[]) => {
-      new Map<string, () => void>([["npm", () => order.push("cli")]]).get(command)?.();
       return (
         runHandlers.get(`${command} ${args.join(" ")}`) ??
         runHandlers.get(command) ??

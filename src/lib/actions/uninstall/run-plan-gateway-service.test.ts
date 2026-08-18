@@ -698,18 +698,21 @@ describe("uninstall OpenShell gateway user service", () => {
     const test = fixture();
     const servicePath = writeManagedService(test);
     const errors: string[] = [];
+    const run = vi.fn((command: string, args: string[]) =>
+      command === "systemctl" && args.includes("disable")
+        ? { status: 1, stdout: "", stderr: "failed" }
+        : ok(),
+    );
 
     const result = uninstall(test, false, {
-      commandExists: (command) => command === "systemctl",
+      commandExists: (command) => ["systemctl", "npm"].includes(command),
       error: (line) => errors.push(line),
-      run: (command, args) =>
-        command === "systemctl" && args.includes("disable")
-          ? { status: 1, stdout: "", stderr: "failed" }
-          : ok(),
+      run,
     });
 
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
+    expect(run.mock.calls.some(([command]) => command === "npm")).toBe(true);
     expect(errors).toContain(
       "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
     );

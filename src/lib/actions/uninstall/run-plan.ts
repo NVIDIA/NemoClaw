@@ -2721,7 +2721,6 @@ function executePlan(
     portable: "Keeping shared OpenShell configuration for unrelated sandboxes.",
     requested: "Keeping OpenShell gateway configuration as requested.",
   }[sharedOpenShellReason];
-  let portableCleanupComplete = false;
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     const portableStepMessage = PORTABLE_DEFERRED_STEP_MESSAGES[step.name];
@@ -2814,7 +2813,7 @@ function executePlan(
         return { ok: false };
       }
     } else if (step.name === "NemoClaw CLI") {
-      portableCleanupComplete = completePortableCleanupBeforeCliRemoval(
+      const completion = completePortablePlan(
         ok,
         portableRuntimeCleanup,
         paths,
@@ -2824,6 +2823,7 @@ function executePlan(
         sandboxNames,
         teardownAuthority,
       );
+      if (!completion.ok) return completion;
       runNemoclawCliUninstallStep(
         paths,
         options,
@@ -2950,16 +2950,7 @@ function executePlan(
       }
     }
   }
-  return completePortablePlan(
-    ok,
-    portableRuntimeCleanup && !portableCleanupComplete,
-    paths,
-    options,
-    runtime,
-    scopedToSelectedGateway,
-    sandboxNames,
-    teardownAuthority,
-  );
+  return { ok };
 }
 
 function completePortablePlan(
@@ -2972,7 +2963,8 @@ function completePortablePlan(
   sandboxNames: readonly string[],
   authority: GatewayOwner,
 ): { ok: boolean } {
-  if (!ok || !portable) return { ok };
+  if (!portable) return { ok: true };
+  if (!ok) return { ok };
   if (
     !executeOpenShellResourceCleanup(paths, options, runtime, scoped, sandboxNames, authority, true)
   )
@@ -2984,33 +2976,6 @@ function completePortablePlan(
 }
 
 class IncompleteHostGatewayCleanupError extends Error {}
-
-class IncompletePortableCleanupError extends Error {}
-
-function completePortableCleanupBeforeCliRemoval(
-  ok: boolean,
-  portable: boolean,
-  paths: UninstallPaths,
-  options: UninstallRunOptions,
-  runtime: UninstallRuntime,
-  scoped: boolean,
-  sandboxNames: readonly string[],
-  authority: GatewayOwner,
-): boolean {
-  if (!portable) return false;
-  const completion = completePortablePlan(
-    ok,
-    true,
-    paths,
-    options,
-    runtime,
-    scoped,
-    sandboxNames,
-    authority,
-  );
-  if (!completion.ok) throw new IncompletePortableCleanupError();
-  return true;
-}
 
 function stopHostGatewayProcessesForUninstall(
   runtime: UninstallRuntime,
@@ -3171,11 +3136,7 @@ export function runUninstallPlan(
       portableRetirementEntries,
     ));
   } catch (error) {
-    if (
-      !(error instanceof IncompleteHostGatewayCleanupError) &&
-      !(error instanceof IncompletePortableCleanupError)
-    )
-      throw error;
+    if (!(error instanceof IncompleteHostGatewayCleanupError)) throw error;
   }
   if (ok) {
     printBye(runtime);
