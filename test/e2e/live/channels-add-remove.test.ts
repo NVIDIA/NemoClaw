@@ -296,10 +296,11 @@ async function readOpenClawTelegramState(
         "import json",
         "data=json.load(open('/sandbox/.openclaw/openclaw.json'))",
         "channels=data.get('channels', {})",
+        "plugins=data.get('plugins', {}).get('entries', {})",
         "channel=channels.get('telegram', {})",
-        "plugin=data.get('plugins', {}).get('entries', {}).get('telegram', {})",
+        "plugin=plugins.get('telegram', {})",
         "accounts=channel.get('accounts', {})",
-        "state={'channelPresent': 'telegram' in channels, 'channelEnabled': channel.get('enabled') is True, 'pluginEnabled': plugin.get('enabled') is True, 'accountEnabled': any(isinstance(account, dict) and account.get('enabled') is True for account in accounts.values())}",
+        "state={'channelPresent': 'telegram' in channels, 'pluginPresent': 'telegram' in plugins, 'channelEnabled': channel.get('enabled') is True, 'pluginEnabled': plugin.get('enabled') is True, 'accountEnabled': any(isinstance(account, dict) and account.get('enabled') is True for account in accounts.values())}",
         "print(json.dumps(state))",
       ].join("; "),
     ],
@@ -473,6 +474,7 @@ test(
       channelEnabled: false,
       channelPresent: true,
       pluginEnabled: false,
+      pluginPresent: false,
     });
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
 
@@ -524,6 +526,7 @@ test(
       channelEnabled: true,
       channelPresent: true,
       pluginEnabled: true,
+      pluginPresent: true,
     });
     await expectProvider(host, "present", "phase-4-provider-get-after-add");
     expectHostTelegramConfig("after add+rebuild");
@@ -577,6 +580,7 @@ test(
       channelEnabled: false,
       channelPresent: false,
       pluginEnabled: false,
+      pluginPresent: false,
     });
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
