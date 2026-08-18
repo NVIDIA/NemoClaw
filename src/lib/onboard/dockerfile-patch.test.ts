@@ -643,6 +643,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
       ].join("\n"),
     );
+
     try {
       patchStagedDockerfile(
         dockerfilePath,
@@ -706,12 +707,7 @@ describe("dockerfile patch helpers", () => {
         { channelId: "telegram", active: true },
       ],
       agentRender: [
-        {
-          channelId: "discord",
-          agent: "openclaw",
-          target: "openclaw.json",
-          path: ["channels", "discord"],
-        },
+        { agent: "openclaw", channelId: "discord", target: "config", path: ["discord"] },
       ],
     });
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-plan-"));
