@@ -802,6 +802,20 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
   };
 }
 
+export function isValidIncompleteStationExpressProviderState(
+  intentValue: unknown,
+  provider: unknown,
+  model: unknown,
+): boolean {
+  const intent = parseStationExpressResumeIntent(intentValue);
+  if (!intent) return false;
+  if (provider == null && model == null) return true;
+  if (provider !== "vllm-local" || typeof model !== "string" || model.trim().length === 0) {
+    return false;
+  }
+  return intent.kind === "spark" || isSafeModelId(model);
+}
+
 export function bindStationExpressProviderSelection(
   intentValue: unknown,
   provider: unknown,
@@ -1054,11 +1068,16 @@ function matchesRecordedStationExpressSelection(
 
   const providerComplete = session.steps?.provider_selection?.status === "complete";
   if (intent.kind === "spark") {
-    return !providerComplete && session.provider == null && session.model == null;
+    return (
+      !providerComplete &&
+      isValidIncompleteStationExpressProviderState(intent, session.provider, session.model)
+    );
   }
   const providerBound = Boolean(intent.servedModel && intent.checkpointModel);
   if (providerComplete !== providerBound) return false;
-  if (!providerComplete) return session.provider == null && session.model == null;
+  if (!providerComplete) {
+    return isValidIncompleteStationExpressProviderState(intent, session.provider, session.model);
+  }
 
   return Boolean(
     intent.servedModel && session.provider === "vllm-local" && session.model === intent.servedModel,
