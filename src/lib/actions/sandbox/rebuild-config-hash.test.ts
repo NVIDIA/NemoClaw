@@ -47,6 +47,33 @@ describe.skipIf(process.platform !== "linux")("OpenClaw rebuild config hash refr
     }
   });
 
+  it("rejects a stale hash when the config directory is root-owned (#9530)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-root-hash-"));
+    const configDir = path.join(tmpDir, ".openclaw");
+    const binDir = path.join(tmpDir, "bin");
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    const statCommand = path.join(binDir, "stat");
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(configPath, '{"gateway":{"auth":{"token":"fresh"}}}\n');
+      fs.writeFileSync(hashPath, `${"0".repeat(64)}  openclaw.json\n`);
+      fs.writeFileSync(statCommand, "#!/bin/sh\nprintf '%s\\n' root\n");
+      fs.chmodSync(statCommand, 0o755);
+
+      const result = runRefresh(configDir, {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe(`${"0".repeat(64)}  openclaw.json\n`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to refresh through a symlinked config file", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-hash-symlink-"));
     const configDir = path.join(tmpDir, ".openclaw");
