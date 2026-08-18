@@ -85,7 +85,8 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     ["Launchable", "${{ inputs.checkout_sha != '' && !inputs.allow_jetson_dispatch }}"],
   ])("rejects concurrency that cancels active %s dispatches", (_dispatch, cancellation) => {
     const workflow = readWorkflow();
-    workflow.concurrency!["cancel-in-progress"] = cancellation;
+    const concurrency = workflow.concurrency as Record<string, unknown>;
+    concurrency["cancel-in-progress"] = cancellation;
 
     expect(validateE2eWorkflow(workflow)).toContain(
       "workflow concurrency must not cancel an active Jetson or Launchable dispatch",
