@@ -14,6 +14,7 @@ import { parseServingProfileProvenance } from "../../inference/serving/profile-p
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import {
   classifyPortableLifecycleReceipt,
+  portableLifecycleReceiptMatchesGeneration,
   type PortableLifecycleReceiptClassification,
 } from "../../onboard/experimental/portable-runtime-receipt-readiness";
 import {
@@ -104,6 +105,7 @@ export type LaunchReadinessDecision =
 export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   checkMutationAuthority?: typeof checkLaunchReadinessMutationAuthority;
   getSandbox?: typeof registry.getSandbox;
+  updateSandbox?: typeof registry.updateSandbox;
   observeSandbox?: SandboxRecreateObserver;
   readLease?: typeof readLaunchReadinessLease;
   fenceLease?: typeof fenceLaunchReadinessLease;
@@ -931,11 +933,14 @@ function resolvePortablePairingTarget(
  */
 export async function settlePortableOpenClawPairing(
   sandboxName: string,
-  options: { readonly portableRequired?: boolean } = {},
+  options: {
+    readonly portableRequired?: boolean;
+  } = {},
   deps: LaunchReadinessDeps = {},
 ): Promise<PortableOpenClawPairingSettlementResult> {
   const classifyReceipt = deps.classifyPortableLifecycleReceipt ?? classifyPortableLifecycleReceipt;
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const updateSandbox = deps.updateSandbox ?? registry.updateSandbox;
   const withSandboxLock = deps.withSandboxLock ?? withSandboxMutationLock;
   const withGatewayLock = deps.withGatewayLock ?? withGatewayRouteMutationLock;
   const observePairing = deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
@@ -943,7 +948,7 @@ export async function settlePortableOpenClawPairing(
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
 
   return withSandboxLock(sandboxName, async () => {
-    const firstEntry = getSandbox(sandboxName);
+    let firstEntry = getSandbox(sandboxName);
     if (
       firstEntry?.agent !== "openclaw" &&
       typeof firstEntry?.agent === "string" &&
@@ -954,6 +959,20 @@ export async function settlePortableOpenClawPairing(
     }
 
     const firstReceipt = classifyReceipt(sandboxName);
+    if (
+      firstEntry?.agent === null &&
+      options.portableRequired === true &&
+      firstEntry.policyPresetsFinalized === true &&
+      portableLifecycleReceiptMatchesGeneration(firstReceipt, firstEntry.lifecycleGeneration)
+    ) {
+      if (!updateSandbox(sandboxName, { agent: "openclaw" })) {
+        return incompletePortablePairing("portable-runtime-identity-invalid");
+      }
+      firstEntry = getSandbox(sandboxName);
+      if (firstEntry?.agent !== "openclaw") {
+        return incompletePortablePairing("portable-runtime-identity-invalid");
+      }
+    }
     if (firstEntry?.agent !== "openclaw") {
       if (firstReceipt.kind === "absent" && !options.portableRequired) {
         return { kind: "not-portable" };

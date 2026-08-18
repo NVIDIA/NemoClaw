@@ -50,6 +50,18 @@ export type PortableLifecycleReceiptClassification =
     }
   | { readonly kind: "invalid-or-legacy" };
 
+/** Prove that a current Portable receipt owns the selected registry generation. */
+export function portableLifecycleReceiptMatchesGeneration(
+  receipt: PortableLifecycleReceiptClassification,
+  lifecycleGeneration: string | undefined,
+): receipt is Extract<PortableLifecycleReceiptClassification, { readonly kind: "current" }> {
+  return (
+    receipt.kind === "current" &&
+    typeof lifecycleGeneration === "string" &&
+    lifecycleGeneration === receipt.registryGeneration
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -2042,7 +2042,7 @@ async function createSandboxWithBaseImageResolution(
           inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
           agent,
-          agentVersionKnown: !fromDockerfile,
+          agentVersionKnown: !fromDockerfile, portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent, process.env),
           imageTag: resolvedImageTag,
           workload: workloadReceipt,
           openclawImagePluginInstalls,
