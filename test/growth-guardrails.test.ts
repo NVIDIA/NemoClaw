@@ -61,7 +61,7 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it("does not add loops to changed test callbacks or test definitions", async () => {
+  it("does not add test loops directly or behind local helper indirection", async () => {
     const violations = await loopGrowthViolations(diff);
     expect(violations, diagnostics.loops(violations)).toEqual([]);
   });
@@ -217,6 +217,31 @@ describe("codebase growth guardrail test support", () => {
       "table definition loop",
       "for (const row of rows) it(row.name, () => expect(row).toBe(1));",
       1,
+    ],
+    [
+      "named test callback loop",
+      "function verifyRows() { for (const row of rows) expect(row).toBe(1); } it('works', verifyRows);",
+      1,
+    ],
+    [
+      "one-use loop helper",
+      "function collect(rows) { for (const row of rows) consume(row); } it('works', () => collect(rows));",
+      1,
+    ],
+    [
+      "thin callback-forwarding helper",
+      "function repeat(rows, action) { for (const row of rows) action(row); } it('works', () => repeat(rows, (row) => expect(row).toBe(1)));",
+      1,
+    ],
+    [
+      "callback-forwarding helper declared inside a test",
+      "it('works', () => { function repeat(rows, action) { for (const row of rows) action(row); } repeat(rows, (row) => expect(row).toBe(1)); });",
+      1,
+    ],
+    [
+      "reused setup helper",
+      "function collect(rows) { for (const row of rows) consume(row); } it('works', () => collect(rows)); it('also works', () => collect(moreRows));",
+      0,
     ],
     ["support helper loop", "function collect(rows) { for (const row of rows) consume(row); }", 0],
   ])("counts test loops in %s", (_name, source, expected) => {

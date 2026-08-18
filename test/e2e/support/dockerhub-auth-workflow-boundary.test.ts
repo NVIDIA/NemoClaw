@@ -150,7 +150,9 @@ function validateCleanupArtifactMutation(options: {
 }
 
 describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
-  function verifyPinnedPreRestoreCleanupAction() {
+  it(
+    "accepts only the pinned pre-restore cleanup action in the complete workflow",
+    () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
 
     const jobNames = [
@@ -207,11 +209,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
       );
     }
-  }
-
-  it(
-    "accepts only the pinned pre-restore cleanup action in the complete workflow",
-    verifyPinnedPreRestoreCleanupAction,
+  },
     testTimeout(15_000),
   );
 
