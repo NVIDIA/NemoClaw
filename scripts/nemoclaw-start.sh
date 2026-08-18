@@ -5344,8 +5344,9 @@ run_openclaw_config_guard() {
     # child. A `timeout` wrapper or command substitution would become Python's
     # parent and invalidate that identity, so capture through a root-private
     # file while invoking Python directly.
-    install -d -o root -g root -m 700 /run/nemoclaw || return 1
-    output_file="/run/nemoclaw/.openclaw-config-guard.$$.output"
+    install -d -o root -g root -m 755 /run/nemoclaw || return 1
+    install -d -o root -g root -m 700 /run/nemoclaw/openclaw-config-guard || return 1
+    output_file="/run/nemoclaw/openclaw-config-guard/.$$.output"
     : >"$output_file"
     chmod 600 "$output_file"
     rc=0
