@@ -95,6 +95,12 @@ function runReleaseEntry(
   });
 }
 
+function expectGitHubReadsToStopOnFailure(source: string): void {
+  for (const line of source.split("\n").filter((value) => /\bgh (?:api|pr|run) /u.test(value))) {
+    expect(line.trimStart()).toMatch(/^run_or_stop /u);
+  }
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -108,8 +114,10 @@ describe("release candidate evidence commands", () => {
       "## Owner",
     );
 
+    expect(block).toContain("echo before");
     expect(block).toContain("## shell comment");
     expect(block).toContain("echo after");
+    expect(block).not.toContain("## Next");
   });
 
   it("extracts only the exact release H2 section from a multi-entry changelog", () => {
@@ -178,11 +186,7 @@ describe("release candidate evidence commands", () => {
     expect(evidence).toContain('git grep -n -E "^## ${VERSION_PATTERN}$"');
     expect(evidence).toContain("'docs/changelog/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].mdx'");
     expect(evidence).not.toMatch(/\$\((?:gh |git ls-remote)/u);
-    for (const line of evidence
-      .split("\n")
-      .filter((value) => /\bgh (?:api|pr|run) /u.test(value))) {
-      expect(line.trimStart()).toMatch(/^run_or_stop /u);
-    }
+    expectGitHubReadsToStopOnFailure(evidence);
     expect(
       evidence
         .split("\n")
