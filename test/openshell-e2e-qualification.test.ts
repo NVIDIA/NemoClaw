@@ -276,25 +276,23 @@ function apiWithWorkflowRuns(runs: ReturnType<typeof workflowRun>[]): GitHubRead
 }
 
 describe("OpenShell qualification-sensitive path detection", () => {
-  it.each(
-    [
-        "nemoclaw-blueprint/blueprint.yaml",
-        "scripts/install-openshell.sh",
-        "scripts/checks/extract-installer-pins.mts",
-        "agents/hermes/manifest.yaml",
-        "agents/langchain-deepagents-code/managed-dcode-runtime.py",
-        "src/lib/onboard/docker-driver-gateway-runtime.ts",
-        "src/lib/actions/sandbox/supervisor-relaunch.ts",
-        "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
-        "nemoclaw/src/blueprint/runner.ts",
-        "src/lib/sandbox/version.ts",
-        "src/lib/onboard/openshell-version.ts",
-        "src/lib/adapters/sandbox/command-transport.ts",
-        ".github/workflows/podman-cpu-proof.yaml",
-        ".github/actions/ci-installer-hash-check/action.yaml",
-        "scripts/checks/verify-openshell-e2e-qualification.mts",
-      ],
-  )(
+  it.each([
+    "nemoclaw-blueprint/blueprint.yaml",
+    "scripts/install-openshell.sh",
+    "scripts/checks/extract-installer-pins.mts",
+    "agents/hermes/manifest.yaml",
+    "agents/langchain-deepagents-code/managed-dcode-runtime.py",
+    "src/lib/onboard/docker-driver-gateway-runtime.ts",
+    "src/lib/actions/sandbox/supervisor-relaunch.ts",
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.101.json",
+    "nemoclaw/src/blueprint/runner.ts",
+    "src/lib/sandbox/version.ts",
+    "src/lib/onboard/openshell-version.ts",
+    "src/lib/adapters/sandbox/command-transport.ts",
+    ".github/workflows/podman-cpu-proof.yaml",
+    ".github/actions/ci-installer-hash-check/action.yaml",
+    "scripts/checks/verify-openshell-e2e-qualification.mts",
+  ])(
     "covers selectors, trust inputs, runtime artifacts, manifests, proofs, and gate surfaces [%s]",
     (candidatePath) => {
       expect(isOpenShellQualificationSensitivePath(candidatePath), candidatePath).toBe(true);
