@@ -310,6 +310,19 @@ function relativeTarget(target: string, options: ResolvedOptions): string {
   return safeRelativePath(path.relative(options.sandboxRoot, target));
 }
 
+/**
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: the authorized Hermes named-volume root appears on another filesystem and is
+ *   rejected as a nested mount, while a broader exception could hide an unsafe descendant mount.
+ * sourceBoundary: the managed Hermes volume lifecycle authorizes only the exact `.hermes` root;
+ *   these transaction validators remain authoritative for every descendant device boundary.
+ * whyNotSourceFix: a Docker named volume necessarily changes the root device, so the transaction
+ *   must adopt that device at the exact Hermes root and continue rejecting later device changes.
+ * regressionTest: managed-startup-shared-state-transaction.test.ts proves exact-root prepare and
+ *   rollback acceptance, descendant-mount rejection in both paths, and rejection for other agents.
+ * removalCondition: remove the Hermes exception when its durable state root no longer arrives as
+ *   a distinct filesystem mount, or when transaction storage moves wholly inside that mount.
+ */
 function validateExistingAncestors(
   target: string,
   expectedAgent: ManagedStartupAgent,

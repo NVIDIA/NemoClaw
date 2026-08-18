@@ -3,6 +3,20 @@
 
 import type { DockerRunOptions, DockerRunResult } from "../../adapters/docker/run";
 
+/**
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: a managed-image Hermes sandbox starts without durable writable state, or a
+ *   same-named foreign Docker volume is mistaken for NemoClaw-owned state during cleanup.
+ * sourceBoundary: the managed image does not declare a provider volume and OpenShell keeps
+ *   state-mutation validation strict; this module is the sole owner of the Docker volume name,
+ *   exact four-label ownership contract, create/reuse verification, and removal decision.
+ * whyNotSourceFix: the provider-neutral image cannot name a sandbox-scoped Docker volume, while
+ *   weakening provider validation would accept absent, ambiguous, or read-only state mounts.
+ * regressionTest: hermes-state-volume.test.ts covers create, reuse, ownership refusal, and
+ *   removal; sandbox-create-plan.test.ts and destroy-flow.test.ts cover lifecycle integration.
+ * removalCondition: remove when the managed-image or runtime-provider contract creates,
+ *   reconciles, and ownership-gates an equivalent durable Hermes state volume end to end.
+ */
 export const MANAGED_HERMES_STATE_ROOT = "/sandbox/.hermes" as const;
 
 const VOLUME_NAME_PREFIX = "nemoclaw-hermes-state-v1";
