@@ -63,7 +63,11 @@ function agentBaseImageBuildArgs(agent: AgentDefinition): Record<string, string>
   if (agent.name === "nemocua") {
     return { NEMOCUA_RUNTIME_IMAGE: getCuaSandboxImageRef() };
   }
-  return agent.name === "langchain-deepagents-code" ? corporateCaBuildArgs() : undefined;
+  // Only these base Dockerfiles declare ARG NEMOCLAW_CORPORATE_CA_B64 and anchor
+  // the decoded certificates before their HTTPS package fetches (#8119).
+  return agent.name === "langchain-deepagents-code" || agent.name === "pi"
+    ? corporateCaBuildArgs()
+    : undefined;
 }
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
