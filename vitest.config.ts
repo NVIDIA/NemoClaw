@@ -27,6 +27,9 @@ const canonicalCredentialFilterBoundary = path.resolve(
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
+const canonicalPrivateNetworksBoundary = path.resolve(
+  "nemoclaw/src/shared/private-networks-boundary.cts",
+);
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
 const canonicalSnapshotSanitizerBoundary = path.resolve(
   "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
@@ -46,6 +49,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
     replacement: canonicalOpenShellPolicyBoundary,
+  },
+  {
+    find: /^.*private-networks-boundary\.cjs$/,
+    replacement: canonicalPrivateNetworksBoundary,
   },
   {
     find: /^.*sandbox-name\.cjs$/,
