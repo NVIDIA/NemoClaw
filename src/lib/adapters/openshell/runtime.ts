@@ -12,10 +12,12 @@ import {
   getInstalledOpenshellVersion,
   runOpenshellCommand,
 } from "./client";
-import { resolveOpenshellBinaryOrNull } from "./resolve-shared";
+import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
+
+export { buildOpenShellSubprocessEnv };
 
 type RunnerOptions = {
   /** Exact canonical executable selected by a CUA authority snapshot. */

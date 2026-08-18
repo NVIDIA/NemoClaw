@@ -126,6 +126,7 @@ export interface HermesPortableReceiptPublicationHooks {
   readonly afterStageCreate?: () => void;
   readonly afterStageWrite?: (written: number, total: number) => void;
   readonly afterStageFsync?: () => void;
+  readonly beforeStageDurabilityReopen?: () => void;
   readonly afterCanonicalLink?: () => void;
   readonly afterDirectoryFsync?: () => void;
   readonly afterCleanupLink?: () => void;
@@ -456,17 +457,18 @@ function sameDirectoryIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boo
   );
 }
 
-function validDirectoryLinkCount(identity: fs.BigIntStats): boolean {
-  return identity.nlink >= 1n && identity.nlink <= BigInt(MAX_DIRECTORY_ENTRIES + 2);
+function validDirectoryLinkCount(identity: fs.BigIntStats, bounded: boolean): boolean {
+  return identity.nlink >= 1n && (!bounded || identity.nlink <= BigInt(MAX_DIRECTORY_ENTRIES + 2));
 }
 
 interface OpenReceiptDirectory {
   readonly path: string;
   readonly descriptor: number;
   readonly identity: fs.BigIntStats;
+  readonly boundedLinks: boolean;
 }
 
-function validateDirectory(directory: string): OpenReceiptDirectory {
+function validateDirectory(directory: string, boundedLinks = true): OpenReceiptDirectory {
   const noFollow = fs.constants.O_NOFOLLOW;
   const directoryFlag = fs.constants.O_DIRECTORY;
   if (typeof noFollow !== "number" || typeof directoryFlag !== "number") {
@@ -482,12 +484,12 @@ function validateDirectory(directory: string): OpenReceiptDirectory {
       !sameDirectoryIdentity(identity, named) ||
       identity.uid !== BigInt(currentUid()) ||
       (identity.mode & 0o777n) !== BigInt(DIRECTORY_MODE) ||
-      !validDirectoryLinkCount(identity) ||
-      !validDirectoryLinkCount(named)
+      !validDirectoryLinkCount(identity, boundedLinks) ||
+      !validDirectoryLinkCount(named, boundedLinks)
     ) {
       fail(`directory is unsafe: ${directory}`);
     }
-    return { path: directory, descriptor, identity };
+    return { path: directory, descriptor, identity, boundedLinks };
   } catch (error) {
     fs.closeSync(descriptor);
     throw error;
@@ -500,25 +502,25 @@ function revalidateDirectory(directory: OpenReceiptDirectory): void {
   if (
     !sameDirectoryIdentity(directory.identity, descriptor) ||
     !sameDirectoryIdentity(directory.identity, named) ||
-    !validDirectoryLinkCount(descriptor) ||
-    !validDirectoryLinkCount(named)
+    !validDirectoryLinkCount(descriptor, directory.boundedLinks) ||
+    !validDirectoryLinkCount(named, directory.boundedLinks)
   ) {
     fail(`directory changed while in use: ${directory.path}`);
   }
 }
 
-function ensurePrivateDirectory(directory: string): OpenReceiptDirectory {
+function ensurePrivateDirectory(directory: string, boundedLinks = true): OpenReceiptDirectory {
   try {
     fs.mkdirSync(directory, { mode: DIRECTORY_MODE });
   } catch (error) {
     if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
   }
-  return validateDirectory(directory);
+  return validateDirectory(directory, boundedLinks);
 }
 
 function ensureReceiptDirectory(sandboxName: string, stateDir: string): OpenReceiptDirectory {
   const root = hermesPortableReceiptRoot(stateDir);
-  const rootDirectory = ensurePrivateDirectory(root);
+  const rootDirectory = ensurePrivateDirectory(root, false);
   try {
     revalidateDirectory(rootDirectory);
     return ensurePrivateDirectory(hermesPortableReceiptDirectory(sandboxName, stateDir));
@@ -708,6 +710,40 @@ function writeStage(
   }
 }
 
+function fsyncExactStage(
+  target: string,
+  expectedBytes: Buffer,
+  hooks: HermesPortableReceiptPublicationHooks,
+  maximumBytes = MAX_RECEIPT_BYTES,
+): void {
+  const expected = readExactFile(target, 1n, maximumBytes);
+  if (!expected || !expected.bytes.equals(expectedBytes)) {
+    fail("staged authority changed before durability recheck");
+  }
+  hooks.beforeStageDurabilityReopen?.();
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") fail("requires O_NOFOLLOW");
+  const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  const descriptor = fs.openSync(target, fs.constants.O_RDONLY | noFollow | nonblock);
+  try {
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(target, { bigint: true });
+    if (!sameFileIdentity(expected.identity, opened) || !sameFileIdentity(opened, named)) {
+      fail("staged authority changed before durability recheck");
+    }
+    fs.fsyncSync(descriptor);
+    if (!sameFileIdentity(opened, fs.fstatSync(descriptor, { bigint: true }))) {
+      fail("staged authority changed during durability recheck");
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const durable = readExactFile(target, 1n, maximumBytes);
+  if (!durable || !sameArtifact(expected, durable) || !durable.bytes.equals(expectedBytes)) {
+    fail("staged authority changed after durability recheck");
+  }
+}
+
 function retireInterruptedEmptyStage(
   canonical: string,
   staged: string,
@@ -817,9 +853,7 @@ function reconcilePublicationArtifacts(
     (artifact): artifact is ExactFile => artifact !== null,
   );
   if (artifacts.some((artifact) => !artifact.bytes.equals(expectedBytes))) {
-    if (canonicalFile || artifacts.length > 1) fail("publication artifacts disagree");
-    unlinkExactArtifact(stagedFile ? staged : cleanup, artifacts[0]!, undefined, maximumBytes);
-    return "absent";
+    fail("publication artifacts disagree");
   }
   if (
     artifacts.length > 1 &&
@@ -940,6 +974,9 @@ export function publishHermesPortableDurablePolicySource(input: {
     if (disposition === "absent") writeStage(staged, input.source.bytes, hooks);
     revalidateDirectory(directory);
     assertHermesPortablePolicySourceSnapshot(input.source);
+    assertLifecycleLock();
+    fsyncExactStage(staged, input.source.bytes, hooks, MAX_POLICY_BYTES);
+    revalidateDirectory(directory);
     try {
       fs.linkSync(staged, target);
     } catch (error) {
@@ -1207,6 +1244,9 @@ export function publishHermesPortableLifecycleReceipt(
     if (disposition === "absent") {
       writeStage(staged, bytes, hooks);
     }
+    revalidateDirectory(directory);
+    assertLifecycleLock();
+    fsyncExactStage(staged, bytes, hooks);
     revalidateDirectory(directory);
     try {
       fs.linkSync(staged, target);

@@ -49,6 +49,7 @@ describe("connectSandbox flow", () => {
   });
 
   it("runs readiness checks, recovery probes, auto-pair approval, and opens the OpenShell shell", async () => {
+    vi.stubEnv("NEMOCLAW_ORDINARY_CONNECT_MARKER", "preserved");
     const harness = createConnectHarness();
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
@@ -63,7 +64,10 @@ describe("connectSandbox flow", () => {
     expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
-      expect.objectContaining({ stdio: "inherit" }),
+      expect.objectContaining({
+        stdio: "inherit",
+        env: expect.objectContaining({ NEMOCLAW_ORDINARY_CONNECT_MARKER: "preserved" }),
+      }),
     );
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("existing SSH sessions");
@@ -149,7 +153,9 @@ describe("connectSandbox flow", () => {
   it.each([
     ["SIGHUP", 129],
     ["SIGPIPE", 141],
-  ] as const)("restores the terminal and preserves the exit code when SSH ends with %s", async (signal, exitCode) => {
+  ] as const)(
+    "restores the terminal and preserves the exit code when SSH ends with %s",
+    async (signal, exitCode) => {
     const setRawModeSpy = vi.fn();
     Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
     Object.defineProperty(process.stdin, "setRawMode", {
@@ -174,12 +180,15 @@ describe("connectSandbox flow", () => {
       ["sane"],
       expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
     );
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+      const errorOutput = harness.errorSpy.mock.calls
+        .map((call) => String(call[0] ?? ""))
+        .join("\n");
     expect(errorOutput).toContain(
       "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
     );
     expect(exitSpy).toHaveBeenCalledWith(exitCode);
-  });
+    },
+  );
 
   it("prints reconnect guidance without terminal cleanup when stdin is not a TTY", async () => {
     const setRawModeSpy = vi.fn();
@@ -340,9 +349,9 @@ describe("connectSandbox flow", () => {
     );
   });
 
-  it.each([
-    401, 403, 404,
-  ])("rejects HTTP %i from inference.local for an Ollama recovery path (#8502)", async (httpStatus) => {
+  it.each([401, 403, 404])(
+    "rejects HTTP %i from inference.local for an Ollama recovery path (#8502)",
+    async (httpStatus) => {
     const response = `OK ${String(httpStatus)}`;
     const harness = createConnectHarness({
       inferenceGetOutput: "Provider: ollama-local\nModel: qwen3-vl:4b\n",
@@ -362,7 +371,8 @@ describe("connectSandbox flow", () => {
     });
     expect(harness.probeOllamaAuthProxyHealthSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(1);
-  });
+    },
+  );
 
   it("rechecks HTTP 2xx after repairing an Ollama inference route (#8502)", async () => {
     const harness = createConnectHarness({
@@ -931,6 +941,14 @@ describe("connectSandbox flow", () => {
   });
 
   it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
+    vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "do-not-forward");
+    vi.stubEnv("DOCKER_HOST", "unix:///run/docker.sock");
+    vi.stubEnv("KUBECONFIG", "/home/test/.kube/config");
+    vi.stubEnv("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock");
+    vi.stubEnv("HTTPS_PROXY", "https://user:token@proxy.example");
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient");
     const harness = createConnectHarness({
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
@@ -949,6 +967,26 @@ describe("connectSandbox flow", () => {
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
+    expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
+    const connectCall = harness.spawnSyncSpy.mock.calls.find(
+      ([command, args]) =>
+        command === "openshell" &&
+        Array.isArray(args) &&
+        args.join("\0") === ["sandbox", "connect", "alpha"].join("\0"),
+    );
+    expect(connectCall?.[2]).toMatchObject({
+      env: expect.not.objectContaining({
+        NVIDIA_INFERENCE_API_KEY: expect.anything(),
+        GITHUB_TOKEN: expect.anything(),
+        AWS_SECRET_ACCESS_KEY: expect.anything(),
+        DOCKER_HOST: expect.anything(),
+        KUBECONFIG: expect.anything(),
+        SSH_AUTH_SOCK: expect.anything(),
+        HTTPS_PROXY: expect.anything(),
+        OPENSHELL_GATEWAY: expect.anything(),
+      }),
+    });
   });
 
   it("fails before Docker when Hermes receipt authority disappears during probe (#9203)", async () => {

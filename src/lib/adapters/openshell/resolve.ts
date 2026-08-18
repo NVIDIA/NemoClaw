@@ -15,6 +15,34 @@ export interface ResolveOpenshellOptions {
   home?: string;
 }
 
+/** Build the allowlisted environment for a receipt-owned direct OpenShell child. */
+export function buildOpenShellSubprocessEnv(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const names = new Set([
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "PATH",
+    "TERM",
+    "LANG",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "CURL_CA_BUNDLE",
+  ]);
+  return Object.fromEntries(
+    Object.entries(source).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined &&
+        (names.has(entry[0]) || entry[0].startsWith("LC_") || entry[0].startsWith("XDG_")),
+    ),
+  );
+}
+
 /**
  * Resolve the openshell binary path.
  *

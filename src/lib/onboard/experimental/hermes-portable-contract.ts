@@ -3,10 +3,13 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import type { AgentDefinition } from "../../agent/definition-types";
+import {
+  buildCurrentHermesPortableRuntimeEnvArgs,
+  currentHermesPortableAgentDefinition,
+} from "../docker-startup-command-env";
 import type { HermesPortableStartupContract } from "./hermes-portable-receipt";
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
@@ -16,7 +19,6 @@ const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/u;
 const PORT = /^(?:[1-9][0-9]{0,4})$/u;
 const PLACEHOLDER_KEYS = /^[A-Z_][A-Z0-9_]*(?:,[A-Z_][A-Z0-9_]*)*$/u;
 const SHELL_PAYLOAD = /(?:[`;|]|&&|\$\()/u;
-const HERMES_MANIFEST_PATH = path.resolve(__dirname, "../../../../agents/hermes/manifest.yaml");
 const ALLOWED_ENV = new Set([
   "CHAT_UI_URL",
   "HTTP_PROXY",
@@ -116,6 +118,12 @@ function validateUrl(value: string, label: string): void {
     fail(`${label} is not a URL`);
   }
   if (parsed.username || parsed.password) fail(`${label} contains credentials`);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    fail(`${label} uses an unsupported URL scheme`);
+  }
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    fail(`${label} contains a path, query, or fragment that cannot enter durable authority`);
+  }
 }
 
 function validateAssignment(key: string, value: string, sandboxName: string): void {
@@ -134,7 +142,13 @@ function validateAssignment(key: string, value: string, sandboxName: string): vo
   if (key === "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS" && !PLACEHOLDER_KEYS.test(value)) {
     fail("argv placeholder names are invalid");
   }
-  if (key === "CHAT_UI_URL" || key.toLowerCase().endsWith("_proxy")) {
+  if (
+    key === "CHAT_UI_URL" ||
+    key === "HTTP_PROXY" ||
+    key === "HTTPS_PROXY" ||
+    key === "http_proxy" ||
+    key === "https_proxy"
+  ) {
     validateUrl(value, `argv env '${key}'`);
   }
 }
@@ -162,6 +176,63 @@ function validateStartupArgv(argv: readonly string[], sandboxName: string): read
     fail("argv is missing the sandbox name or Hermes API port");
   }
   return [...argv];
+}
+
+function startupAssignments(argv: readonly string[]): Map<string, string> {
+  const assignments = new Map<string, string>();
+  for (const assignment of argv.slice(1, -1)) {
+    const separator = assignment.indexOf("=");
+    assignments.set(assignment.slice(0, separator), assignment.slice(separator + 1));
+  }
+  return assignments;
+}
+
+function requiredAssignment(assignments: ReadonlyMap<string, string>, name: string): string {
+  const value = assignments.get(name);
+  if (!value) fail(`stored argv is missing renderer input '${name}'`);
+  return value;
+}
+
+function rerenderCurrentStartupArgv(
+  storedArgv: readonly string[],
+  sandboxName: string,
+): readonly string[] {
+  const argv = validateStartupArgv(storedArgv, sandboxName);
+  const assignments = startupAssignments(argv);
+  const chatUiUrl = assignments.get("CHAT_UI_URL");
+  const manageDashboard = chatUiUrl !== undefined;
+  const effectiveDashboardPort = manageDashboard
+    ? requiredAssignment(assignments, "NEMOCLAW_DASHBOARD_PORT")
+    : "0";
+  const hermesDashboardEnabled = assignments.get("NEMOCLAW_HERMES_DASHBOARD") === "1";
+  const hermesDashboardState = hermesDashboardEnabled
+    ? {
+        enabled: true,
+        config: {
+          enabled: true,
+          port: Number(requiredAssignment(assignments, "NEMOCLAW_HERMES_DASHBOARD_PORT")),
+          internalPort: Number(
+            requiredAssignment(assignments, "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT"),
+          ),
+          tuiEnabled: assignments.get("NEMOCLAW_HERMES_DASHBOARD_TUI") === "1",
+        },
+      }
+    : { enabled: false, config: null };
+  const environment = Object.fromEntries(assignments);
+  const extraPlaceholderKeys = (assignments.get("NEMOCLAW_EXTRA_PLACEHOLDER_KEYS") ?? "")
+    .split(",")
+    .filter(Boolean);
+  const rendered = buildCurrentHermesPortableRuntimeEnvArgs({
+    chatUiUrl: chatUiUrl ?? "http://127.0.0.1:8642/",
+    manageDashboard,
+    getDashboardForwardPort: () => effectiveDashboardPort,
+    hermesDashboardState,
+    hermesApiPort: Number(requiredAssignment(assignments, "NEMOCLAW_HERMES_API_PORT")),
+    extraPlaceholderKeys,
+    sandboxName,
+    env: environment,
+  });
+  return ["env", ...rendered.envArgs, STARTUP_EXECUTABLE];
 }
 
 function stateIdentity(agent: AgentDefinition): string {
@@ -238,30 +309,13 @@ export function assertCurrentHermesPortableStoredStartupContract(
   actual: HermesPortableStartupContract,
   sandboxName: string,
 ): void {
-  const manifestSha256 = sha256(readExactManifestPath(HERMES_MANIFEST_PATH));
-  if (manifestSha256 !== actual.manifestSha256) fail("current Hermes manifest source changed");
-  const argv = validateStartupArgv(actual.argv, sandboxName);
-  const startupDescriptorSha256 = sha256(
-    JSON.stringify(
-      canonical({
-        argv,
-        configDir: actual.configDir,
-        devicePairing: actual.devicePairing,
-        gatewayCommand: actual.gatewayCommand,
-        health: {
-          url: actual.health.url,
-          port: actual.health.port,
-          timeout_seconds: 90,
-        },
-        interactiveCommand: actual.interactiveCommand,
-        stateIdentitySha256: actual.stateIdentitySha256,
-        webAuth: { method: actual.health.auth, env: actual.health.credentialEnv },
-      }),
-    ),
-  );
-  if (startupDescriptorSha256 !== actual.startupDescriptorSha256) {
-    fail("stored startup descriptor digest changed");
-  }
+  const currentArgv = rerenderCurrentStartupArgv(actual.argv, sandboxName);
+  const current = resolveHermesPortableStartupContract({
+    agent: currentHermesPortableAgentDefinition(),
+    sandboxName,
+    startupArgv: currentArgv,
+  });
+  if (!isDeepStrictEqual(current, actual)) fail("current startup authority disagrees");
 }
 
 /** Re-render from current manifest, profile, and launch inputs before lifecycle mutation. */

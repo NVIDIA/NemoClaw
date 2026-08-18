@@ -190,7 +190,13 @@ function startDockerSandboxUnlocked(
         readRegistry: (sandboxName) => (sandboxName === input.sandboxName ? input.sandbox : null),
       },
     );
-    if (portable.kind !== "not-installed") return { exitCode: 0 };
+    if (portable.kind !== "not-installed") {
+      return input.sandbox.agent === "hermes"
+        ? ({ exitCode: 0, hermesPortableVerified: true } as RuntimeProviderLifecycleResult & {
+            readonly hermesPortableVerified: true;
+          })
+        : { exitCode: 0 };
+    }
   } catch (error) {
     return { exitCode: 1, message: error instanceof Error ? error.message : String(error) };
   }

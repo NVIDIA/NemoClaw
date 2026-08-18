@@ -99,6 +99,22 @@ const tails = new Map<string, Promise<void>>();
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
 
+/** Reject host-wide legacy work while schema-5 receipt authority exists. */
+export function assertNoHermesPortableHostAuthority(
+  stateDir: string,
+  commandId: string,
+): void {
+  const authority = readPortableAuthorityDirectory(
+    path.join(stateDir, "hermes-portable-lifecycle"),
+    false,
+  );
+  if (authority.entries.length > 0) {
+    throw new Error(
+      `Command '${commandId}' is not supported while an experimental Hermes portable lifecycle receipt exists. No legacy Docker or OpenShell action was attempted.`,
+    );
+  }
+}
+
 function releaseFenceReference(owner: FenceOwner): void {
   owner.references -= 1;
   if (owner.references === 0) owner.resolveDrained();

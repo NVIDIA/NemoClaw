@@ -66,9 +66,7 @@ type HermesPortableStatusAuthority = HermesPortableReceiptDisposition & {
   readonly entry: registry.SandboxEntry | null;
 };
 
-function inspectHermesPortableStatus(
-  sandboxName: string,
-): HermesPortableStatusAuthority | null {
+function inspectHermesPortableStatus(sandboxName: string): HermesPortableStatusAuthority | null {
   const disposition = inspectPortableAgentReceiptDisposition(sandboxName);
   if (disposition.kind !== "hermes") return null;
   const entry = registry.getSandbox(sandboxName);
@@ -79,7 +77,11 @@ function inspectHermesPortableStatus(
   if (
     entry.name !== sandboxName ||
     entry.agent !== "hermes" ||
-    entry.openshellDriver !== "docker"
+    entry.openshellDriver !== "docker" ||
+    entry.gatewayName !== disposition.gatewayName ||
+    entry.lifecycleGeneration !== disposition.lifecycleGeneration ||
+    (disposition.phase !== "pending" &&
+      entry.lifecycleLiveIdentityFingerprint !== disposition.liveIdentityFingerprint)
   ) {
     throw new Error("Hermes portable receipt and registry authority disagree.");
   }
@@ -107,7 +109,8 @@ function hermesPortableStatusReport(
     model,
     provider,
     servingProfileProvenance: entry?.servingProfileProvenance ?? null,
-    recordedRoute: entry?.provider && entry.model ? { provider: entry.provider, model: entry.model } : null,
+    recordedRoute:
+      entry?.provider && entry.model ? { provider: entry.provider, model: entry.model } : null,
     liveRoute: null,
     routeDrift: null,
     phase: null,
@@ -123,7 +126,8 @@ function hermesPortableStatusReport(
     hostMounts: normalizeSandboxStatusHostMounts(entry?.hostMounts),
     openshellDriver: entry?.openshellDriver ?? "unknown",
     openshellVersion: entry?.openshellVersion ?? "unknown",
-    policies: entry?.policies?.filter((policy): policy is string => typeof policy === "string") ?? [],
+    policies:
+      entry?.policies?.filter((policy): policy is string => typeof policy === "string") ?? [],
     baselineExclusions: entry?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [],
     baselineExclusionStates: [],
     baselineExclusionTransition: entry?.baselineExclusionTransition

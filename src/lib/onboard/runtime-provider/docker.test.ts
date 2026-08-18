@@ -109,7 +109,10 @@ describe("Docker provider portable lifecycle dispatch", () => {
     });
     const lifecycle = supportedLifecycle(provider);
 
-    expect(lifecycle.start(lifecycleInput())).toEqual({ exitCode: 0 });
+    expect(lifecycle.start(lifecycleInput())).toEqual({
+      exitCode: 0,
+      hermesPortableVerified: true,
+    });
     expect(recoverPortableSandbox).toHaveBeenCalledOnce();
   });
 

@@ -43,6 +43,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
@@ -104,6 +106,15 @@ const SAFE_TOKEN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 
 export async function exportSandboxSessions(
+  opts: SessionsExportOptions,
+): Promise<SessionsExportResult> {
+  return withMcpLifecycleLock(opts.sandboxName, () => {
+    assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
+    return exportSandboxSessionsUnlocked(opts);
+  });
+}
+
+async function exportSandboxSessionsUnlocked(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
   if (registry.getSandbox(opts.sandboxName)?.agent === "hermes") {

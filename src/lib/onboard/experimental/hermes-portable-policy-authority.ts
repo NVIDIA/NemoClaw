@@ -58,9 +58,8 @@ function parseOnePolicyDocument(raw: string, label: string): Record<string, unkn
   let parsed: ReturnType<typeof parseOpenShellPolicy>;
   try {
     parsed = parseOpenShellPolicy(raw);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    fail(`${label} is invalid: ${detail}`);
+  } catch {
+    fail(`${label} is invalid`);
   }
   const separators = [...raw.matchAll(/(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/gu)];
   if (separators.length > 1) fail(`${label} is duplicate or ambiguous`);
@@ -115,9 +114,9 @@ function capturePolicy(
   label: string,
 ): Record<string, unknown> {
   const result = capture(args);
-  const stderr = decode(result.stderr, `${label} stderr`);
+  decode(result.stderr, `${label} stderr`);
   if (result.status !== 0 || result.error) {
-    fail(`${label} failed with status ${String(result.status)}${stderr ? `: ${stderr}` : ""}`);
+    fail(`${label} failed with status ${String(result.status)}`);
   }
   return parseOnePolicyDocument(decode(result.stdout, label), label);
 }

@@ -38,7 +38,28 @@ const context = {
 };
 
 function hermes(phase: "pending" | "configuring" | "active") {
-  return { kind: "hermes", snapshot: { receipt: { phase } } };
+  return {
+    kind: "hermes",
+    snapshot: {
+      receipt: {
+        phase,
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+        ...(phase === "pending" ? {} : { container: { sandboxId: "sandbox-id" } }),
+      },
+    },
+  };
+}
+
+function hermesDisposition(phase: "pending" | "configuring" | "active") {
+  return {
+    kind: "hermes",
+    phase,
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    liveIdentityFingerprint:
+      phase === "pending" ? null : createHash("sha256").update("sandbox-id").digest("hex"),
+  };
 }
 
 describe("portable agent lifecycle dispatch", () => {
@@ -51,9 +72,9 @@ describe("portable agent lifecycle dispatch", () => {
   it.each([
     [{ kind: "none" }, { kind: "absent" }],
     [{ kind: "openclaw" }, { kind: "openclaw" }],
-    [hermes("pending"), { kind: "hermes", phase: "pending" }],
-    [hermes("configuring"), { kind: "hermes", phase: "configuring" }],
-    [hermes("active"), { kind: "hermes", phase: "active" }],
+    [hermes("pending"), hermesDisposition("pending")],
+    [hermes("configuring"), hermesDisposition("configuring")],
+    [hermes("active"), hermesDisposition("active")],
   ])("strictly classifies receipt authority %# (#9203)", (authority, expected) => {
     mocks.inspect.mockReturnValue(authority);
     expect(inspectPortableAgentReceiptDisposition("alpha")).toEqual(expected);
@@ -110,3 +131,4 @@ describe("portable agent lifecycle dispatch", () => {
     expect(mocks.stopHermes).not.toHaveBeenCalled();
   });
 });
+import { createHash } from "node:crypto";

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PodmanSocketAuthority, PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
@@ -64,8 +65,8 @@ function inspect(restartPolicy: string) {
 function startupArgv() {
   return [
     "env",
-    "NEMOCLAW_SANDBOX_NAME=alpha",
     "NEMOCLAW_HERMES_API_PORT=8642",
+    "NEMOCLAW_SANDBOX_NAME=alpha",
     "/usr/local/bin/nemoclaw-start",
   ];
 }
@@ -117,6 +118,10 @@ function deps(
     updateFails?: boolean;
     failAfterRegistry?: boolean;
     cleanupFails?: boolean;
+    assertSocketAuthority?: (
+      expected: PodmanSocketAuthority,
+      deps?: PodmanSocketAuthorityDeps,
+    ) => void;
     afterRegistryCommit?: () => void | Promise<void>;
     observeSandbox?: HermesPortableOnboardingDeps<{ ready: true }>["observeSandbox"];
   } = {},
@@ -177,7 +182,10 @@ function deps(
         })),
       };
     },
-    container: { podman, assertSocketAuthority: vi.fn() },
+    container: {
+      podman,
+      assertSocketAuthority: options.assertSocketAuthority ?? vi.fn(),
+    },
     capturePolicy: (args) => {
       events.push(args.includes("--base") ? "policy-base" : "policy-full");
       return result(POLICY);
@@ -371,6 +379,20 @@ describe("Hermes portable onboarding transaction", () => {
       "temporary policy cleanup did not complete",
     );
     expect(fs.existsSync(policyPath)).toBe(true);
+    expect(fixture.events).not.toContain("create");
+  });
+
+  it("revalidates the current-user Podman socket immediately before create (#9203)", async () => {
+    const assertSocketAuthority = vi.fn(() => {
+      throw new Error("socket generation changed");
+    });
+    const fixture = deps({ assertSocketAuthority });
+
+    await expect(runHermesPortableOnboardingTransaction(input(), fixture.value)).rejects.toThrow(
+      "socket generation changed",
+    );
+
+    expect(assertSocketAuthority).toHaveBeenCalledOnce();
     expect(fixture.events).not.toContain("create");
   });
 

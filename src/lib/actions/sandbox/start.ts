@@ -176,6 +176,9 @@ export async function startSandbox(
   if (preflight) return preflight;
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
+  if ("hermesPortableVerified" in result && result.hermesPortableVerified === true) {
+    return { exitCode: 0 };
+  }
 
   const readiness: { inference: SandboxInferenceInvocationResult | null } = { inference: null };
   await resolved.lifecycle.verifyStarted(input, async (name) => {

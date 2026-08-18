@@ -3,6 +3,8 @@
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../../state/registry";
 import { buildOpenshellExecArgs, computeExitCode, execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
@@ -210,6 +212,16 @@ export function filterWarmupSessionsListText(output: string): string {
 }
 
 export async function runSessionsPassthrough(
+  sandboxName: string,
+  { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
+): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
+    return runSessionsPassthroughUnlocked(sandboxName, { verb, extraArgs });
+  });
+}
+
+async function runSessionsPassthroughUnlocked(
   sandboxName: string,
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {

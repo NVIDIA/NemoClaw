@@ -444,7 +444,8 @@ describe("startSandbox", () => {
   });
 
   it("keeps active Hermes start out of every Docker path (#9203)", async () => {
-    const h = harness();
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
         agent: "hermes",
@@ -463,6 +464,9 @@ describe("startSandbox", () => {
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
     expect(h.dockerUnpause).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+    expect(probeInferenceInvocation).not.toHaveBeenCalled();
   });
 
   it("still probes when the container was already running (#6026)", async () => {

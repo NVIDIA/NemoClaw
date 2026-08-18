@@ -15,14 +15,15 @@ import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
 import type { BaselineExclusionTransition, SandboxHostMount } from "../../src/lib/state/registry";
 
-type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
+type ShowSandboxStatus =
+  (typeof import("../../src/lib/actions/sandbox/status"))["showSandboxStatus"];
 type GetSandboxStatusReport =
-  typeof import("../../src/lib/actions/sandbox/status")["getSandboxStatusReport"];
+  (typeof import("../../src/lib/actions/sandbox/status"))["getSandboxStatusReport"];
 type PortableAgentReceiptDisposition = ReturnType<
-  typeof import("../../src/lib/onboard/experimental/portable-agent-lifecycle")["inspectPortableAgentReceiptDisposition"]
+  (typeof import("../../src/lib/onboard/experimental/portable-agent-lifecycle"))["inspectPortableAgentReceiptDisposition"]
 >;
 type WithMcpLifecycleLock =
-  typeof import("../../src/lib/state/mcp-lifecycle-lock-acquisition")["withMcpLifecycleLock"];
+  (typeof import("../../src/lib/state/mcp-lifecycle-lock-acquisition"))["withMcpLifecycleLock"];
 
 const requireDist = createRequire(import.meta.url);
 const statusModulePath = "../../src/lib/actions/sandbox/status.js";
@@ -63,6 +64,9 @@ const baseSandboxEntry = {
   },
   openshellDriver: "docker",
   openshellVersion: "0.1.2",
+  gatewayName: "nemoclaw",
+  lifecycleGeneration: "generation-1",
+  lifecycleLiveIdentityFingerprint: "fingerprint-1",
   dashboardPort: 18789,
   agentVersion: "0.1.0",
 };
@@ -129,9 +133,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const portableAgentLifecycle = requireDist(
     "../../src/lib/onboard/experimental/portable-agent-lifecycle.js",
   );
-  const lifecycleLock = requireDist(
-    "../../src/lib/state/mcp-lifecycle-lock-acquisition.js",
-  );
+  const lifecycleLock = requireDist("../../src/lib/state/mcp-lifecycle-lock-acquisition.js");
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const nim = requireDist("../../src/lib/inference/nim.js");

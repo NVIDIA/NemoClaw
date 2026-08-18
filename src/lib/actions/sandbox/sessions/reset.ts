@@ -60,6 +60,8 @@
 //     comment exists to keep the NemoClaw/OpenClaw responsibility split
 //     explicit while the contract is still informal.
 
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway } from "./gateway-rpc";
 import {
@@ -94,6 +96,16 @@ export interface SessionsResetResult {
 }
 
 export async function resetSandboxSession(
+  sandboxName: string,
+  opts: SessionsResetOptions,
+): Promise<SessionsResetResult> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:sessions:reset");
+    return resetSandboxSessionUnlocked(sandboxName, opts);
+  });
+}
+
+async function resetSandboxSessionUnlocked(
   sandboxName: string,
   opts: SessionsResetOptions,
 ): Promise<SessionsResetResult> {

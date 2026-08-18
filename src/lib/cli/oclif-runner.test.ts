@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { flushMock, handleMock, loadMock, runCommandMock, runMock } = vi.hoisted(() => ({
@@ -67,7 +71,11 @@ function useHermesPortableAuthority(): void {
 }
 
 describe("Hermes portable command admission through both oclif runners", () => {
+  let stateDir: string;
+
   beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oclif-runner-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
     flushMock.mockReset();
     handleMock.mockReset();
     loadMock.mockReset();
@@ -79,7 +87,9 @@ describe("Hermes portable command admission through both oclif runners", () => {
   });
 
   afterEach(() => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     process.exitCode = undefined;
   });
 

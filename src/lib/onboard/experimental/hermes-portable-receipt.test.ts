@@ -16,6 +16,7 @@ import {
   hermesPortablePolicySourcePath,
   hermesPortableReceiptDirectory,
   hermesPortableReceiptInternals,
+  hermesPortableReceiptRoot,
   inspectPortableAgentReceiptAuthority,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
@@ -50,6 +51,12 @@ function uid(): number {
 function directoryChain(directory: string): string[] {
   const parent = path.dirname(directory);
   return parent === directory ? [directory] : [directory, ...directoryChain(parent)];
+}
+
+function createExistingHermesReceiptDirectories(count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    fs.mkdirSync(hermesPortableReceiptDirectory(`existing-${index}`, stateDir), { mode: 0o700 });
+  }
 }
 
 function requireConfiguringReceipt(
@@ -246,6 +253,17 @@ describe("Hermes portable receipt authority", () => {
     });
   });
 
+  it("keeps the receipt root usable beyond eight independent Hermes sandboxes (#9203)", () => {
+    const root = hermesPortableReceiptRoot(stateDir);
+    fs.mkdirSync(root, { mode: 0o700 });
+    createExistingHermesReceiptDirectories(9);
+
+    const published = publish(pending());
+
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toEqual(published);
+    expect(fs.statSync(root).nlink).toBeGreaterThan(10);
+  });
+
   it("keeps a schema-4 OpenClaw receipt byte-for-byte and does not reinterpret it (#9203)", () => {
     const legacyBytes = Buffer.from(
       `${JSON.stringify({
@@ -390,7 +408,7 @@ describe("Hermes portable receipt authority", () => {
     },
   );
 
-  it("retires a short private stage and resumes only the identical publication (#9203)", () => {
+  it("preserves a short private stage as ambiguous crash evidence (#9203)", () => {
     const receipt = pending();
     const originalWrite = fs.writeSync;
     const writeSpy = vi.spyOn(fs, "writeSync") as unknown as {
@@ -419,7 +437,18 @@ describe("Hermes portable receipt authority", () => {
     expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
       "incomplete or unknown publication evidence",
     );
-    expect(publish(receipt).receipt).toEqual(receipt);
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const staged = hermesPortableReceiptInternals.stagePath(
+      directory,
+      "pending",
+      receipt.transactionId,
+    );
+    const prior = fs.readFileSync(staged);
+    const priorIdentity = fs.statSync(staged).ino;
+    expect(() => publish(receipt)).toThrow("publication artifacts disagree");
+    expect(fs.readFileSync(staged)).toEqual(prior);
+    expect(fs.statSync(staged).ino).toBe(priorIdentity);
+    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
   });
 
   it("does not unlink a replacement injected at the final cleanup boundary (#9203)", () => {
@@ -465,6 +494,53 @@ describe("Hermes portable receipt authority", () => {
     expect(() =>
       publish({ ...receipt, transactionId: randomUUID(), lifecycleGeneration: "generation-2" }),
     ).toThrow("directory contains other publication evidence");
+    expect(publish(receipt).receipt).toEqual(receipt);
+  });
+
+  it("preserves a staged receipt when the retry presents different authority (#9203)", () => {
+    const receipt = pending();
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const staged = hermesPortableReceiptInternals.stagePath(
+      directory,
+      "pending",
+      receipt.transactionId,
+    );
+    expect(() =>
+      publish(receipt, {
+        afterStageFsync: () => {
+          throw new Error("simulated pre-link exit");
+        },
+      }),
+    ).toThrow("simulated pre-link exit");
+    const prior = fs.readFileSync(staged);
+    const priorIdentity = fs.statSync(staged).ino;
+
+    expect(() => publish({ ...receipt, lifecycleGeneration: "generation-2" })).toThrow(
+      "publication artifacts disagree",
+    );
+    expect(fs.readFileSync(staged)).toEqual(prior);
+    expect(fs.statSync(staged).ino).toBe(priorIdentity);
+    expect(fs.existsSync(path.join(directory, "pending.json"))).toBe(false);
+  });
+
+  it("requires a successful phase-stage fsync and reopen before publication (#9203)", () => {
+    const receipt = pending();
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw new Error("simulated phase stage fsync failure");
+    });
+    expect(() => publish(receipt)).toThrow("simulated phase stage fsync failure");
+    vi.restoreAllMocks();
+
+    expect(() =>
+      publish(receipt, {
+        beforeStageDurabilityReopen: () => {
+          throw new Error("simulated phase stage reopen failure");
+        },
+      }),
+    ).toThrow("simulated phase stage reopen failure");
+    expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
+      "incomplete or unknown publication evidence",
+    );
     expect(publish(receipt).receipt).toEqual(receipt);
   });
 
@@ -553,6 +629,49 @@ describe("Hermes portable receipt authority", () => {
     expect(fs.statSync(authority.sourcePath).nlink).toBe(1);
   });
 
+  it("preserves a staged durable policy when retry bytes disagree (#9203)", () => {
+    const transactionId = randomUUID();
+    const source = captureHermesPortablePolicySource(policyPath);
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const staged = path.join(directory, `.policy.${transactionId}.next`);
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        sandboxName: SANDBOX,
+        transactionId,
+        stateDir,
+        intendedSemanticSha256: "f".repeat(64),
+        source,
+        hooks: {
+          assertLifecycleLock: () => {},
+          afterStageFsync: () => {
+            throw new Error("simulated policy pre-link exit");
+          },
+        },
+      }),
+    ).toThrow("simulated policy pre-link exit");
+    const prior = fs.readFileSync(staged);
+    const priorIdentity = fs.statSync(staged).ino;
+    fs.writeFileSync(policyPath, "version: 1\nnetwork_policies:\n  changed: {}\n", {
+      mode: 0o600,
+    });
+
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        sandboxName: SANDBOX,
+        transactionId,
+        stateDir,
+        intendedSemanticSha256: "f".repeat(64),
+        source: captureHermesPortablePolicySource(policyPath),
+        hooks: { assertLifecycleLock: () => {} },
+      }),
+    ).toThrow("publication artifacts disagree");
+    expect(fs.readFileSync(staged)).toEqual(prior);
+    expect(fs.statSync(staged).ino).toBe(priorIdentity);
+    expect(fs.existsSync(hermesPortablePolicySourcePath(SANDBOX, transactionId, stateDir))).toBe(
+      false,
+    );
+  });
+
   it("retires an exact empty durable-policy stage left before the first write (#9203)", () => {
     const transactionId = randomUUID();
     const source = captureHermesPortablePolicySource(policyPath);
@@ -582,6 +701,48 @@ describe("Hermes portable receipt authority", () => {
     });
     expect(fs.readFileSync(authority.sourcePath)).toEqual(source.bytes);
     expect(fs.statSync(authority.sourcePath).nlink).toBe(1);
+  });
+
+  it("requires a successful durable-policy stage fsync and reopen before publication (#9203)", () => {
+    const transactionId = randomUUID();
+    const source = captureHermesPortablePolicySource(policyPath);
+    const input = {
+      sandboxName: SANDBOX,
+      transactionId,
+      stateDir,
+      intendedSemanticSha256: "f".repeat(64),
+      source,
+    } as const;
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw new Error("simulated policy stage fsync failure");
+    });
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: { assertLifecycleLock: () => {} },
+      }),
+    ).toThrow("simulated policy stage fsync failure");
+    vi.restoreAllMocks();
+
+    expect(() =>
+      publishHermesPortableDurablePolicySource({
+        ...input,
+        hooks: {
+          assertLifecycleLock: () => {},
+          beforeStageDurabilityReopen: () => {
+            throw new Error("simulated policy stage reopen failure");
+          },
+        },
+      }),
+    ).toThrow("simulated policy stage reopen failure");
+    expect(fs.existsSync(hermesPortablePolicySourcePath(SANDBOX, transactionId, stateDir))).toBe(
+      false,
+    );
+    const authority = publishHermesPortableDurablePolicySource({
+      ...input,
+      hooks: { assertLifecycleLock: () => {} },
+    });
+    expect(fs.readFileSync(authority.sourcePath)).toEqual(source.bytes);
   });
 
   it("rejects malformed UTF-8 policy bytes without modifying the source (#9203)", () => {

@@ -1,15 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentDefinition } from "../agent/defs";
-import { formatEnvAssignment } from "../core/url-utils";
+import type { AgentDefinition } from "../agent/definition-types";
 import { buildSubprocessEnv } from "../subprocess-env";
-import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
-import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
-import { HERMES_API_PORT_ENV, resolveOnboardHermesApiPort } from "./hermes-api-port";
+import {
+  buildSandboxRuntimeEnvArgs,
+  type SandboxRuntimeEnvArgsInput,
+} from "./docker-startup-command-env";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
-import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
-import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import {
   createManagedBootstrapIdentity,
   MANAGED_BOOTSTRAP_IDENTITY_ENV,
@@ -17,7 +15,6 @@ import {
 } from "./managed-bootstrap/adapter";
 import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
-import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
@@ -32,78 +29,6 @@ export const OPENSHELL_SANDBOX_SUPERVISOR_ARGV = Object.freeze([
   "--workdir",
   "/sandbox",
 ] as const);
-
-// These non-secret scheduler controls are intentionally forwarded for bounded
-// live-test and operator tuning. Keep this as an exact allowlist: the host's
-// broader NEMOCLAW_* environment must not become sandbox runtime input.
-const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
-  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
-  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
-  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
-  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
-] as const;
-
-// This opt-in emits MCP success timing events from the reviewed OpenClaw
-// dist patch. Accept only the literal enabled value, and only for OpenClaw, so
-// the broader host environment never becomes sandbox runtime input.
-const OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS = ["NEMOCLAW_MCP_SHADOW_DIAGNOSTICS"] as const;
-const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV = "NEMOCLAW_MCP_TOOLS_LIST_TIMEOUT_MS";
-const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS = 1500;
-const OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS = 10_000;
-
-function appendOpenClawAutoPairRuntimeEnvArgs(
-  envArgs: string[],
-  agent: AgentDefinition | null,
-  env: NodeJS.ProcessEnv,
-): void {
-  // A null definition is the legacy OpenClaw path; keep this aligned with
-  // appendOpenClawRuntimeEnvArgs and the auto-pair compatibility settings.
-  if (agent && agent.name !== "openclaw") return;
-  for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
-    const value = env[key]?.trim();
-    if (value) envArgs.push(formatEnvAssignment(key, value));
-  }
-}
-
-function appendOpenClawDiagnosticRuntimeEnvArgs(
-  envArgs: string[],
-  agent: AgentDefinition | null,
-  env: NodeJS.ProcessEnv,
-): void {
-  if (agent && agent.name !== "openclaw") return;
-  for (const key of OPENCLAW_DIAGNOSTIC_RUNTIME_ENV_KEYS) {
-    if (env[key]?.trim() === "1") envArgs.push(formatEnvAssignment(key, "1"));
-  }
-}
-
-function appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(
-  envArgs: string[],
-  agent: AgentDefinition | null,
-  env: NodeJS.ProcessEnv,
-): void {
-  if (agent && agent.name !== "openclaw") return;
-  const raw = env[OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV];
-  if (raw === undefined || raw.trim() === "") return;
-  const value = raw.trim();
-  if (!/^(?:0|[1-9][0-9]*)$/u.test(value)) {
-    throw new Error(
-      `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
-    );
-  }
-  const timeoutMs = Number(value);
-  if (
-    !Number.isSafeInteger(timeoutMs) ||
-    timeoutMs < OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS ||
-    timeoutMs > OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS
-  ) {
-    throw new Error(
-      `${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV} must be an integer from ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MIN_MS} to ${OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_MAX_MS} milliseconds.`,
-    );
-  }
-  envArgs.push(formatEnvAssignment(OPENCLAW_MCP_TOOLS_LIST_TIMEOUT_ENV, String(timeoutMs)));
-}
 
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
@@ -189,110 +114,7 @@ function managedBootstrapCreateArgs(
   return [...createArgs, "--env", `${assignmentPrefix}${bootstrapIdentity}`];
 }
 
-export interface SandboxRuntimeEnvArgsInput {
-  agent: AgentDefinition | null;
-  chatUiUrl: string;
-  manageDashboard: boolean;
-  getDashboardForwardPort(chatUiUrl: string): string;
-  hermesDashboardState: HermesDashboardOnboardState;
-  /** Host port this sandbox exposes its OpenAI-compatible API on. */
-  hermesApiPort?: number | null;
-  extraPlaceholderKeys: readonly string[];
-  /** Allow a create/recreate launch to replace a registered Hermes API port. */
-  allowHermesApiPortOverride?: boolean;
-  observabilityEnabled?: boolean;
-  sandboxName?: string;
-  env: NodeJS.ProcessEnv;
-  omitCredentialEnv?: boolean;
-}
-
-export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
-  envArgs: string[];
-  effectiveDashboardPort: string;
-} {
-  const { agent, env, manageDashboard } = input;
-  const envArgs = manageDashboard ? [formatEnvAssignment("CHAT_UI_URL", input.chatUiUrl)] : [];
-
-  // When manageDashboard is enabled, pass the effective dashboard port into
-  // the sandbox so nemoclaw-start.sh starts the gateway on the correct port.
-  // If CHAT_UI_URL has a custom port (e.g. :18790), that port must reach the
-  // container; otherwise _DASHBOARD_PORT defaults to 18789 and the gateway
-  // listens on the wrong port. With manageDashboard disabled, CHAT_UI_URL and
-  // _DASHBOARD_PORT are intentionally not injected. (#2267, #1925)
-  const effectiveDashboardPort = manageDashboard
-    ? input.getDashboardForwardPort(input.chatUiUrl)
-    : "0";
-  if (manageDashboard) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
-    if (env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0") {
-      envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0"));
-    }
-  }
-
-  appendOpenClawRuntimeEnvArgs(envArgs, agent);
-  appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
-  appendOpenClawDiagnosticRuntimeEnvArgs(envArgs, agent, env);
-  appendOpenClawMcpToolsListTimeoutRuntimeEnvArg(envArgs, agent, env);
-  appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
-  // The sandbox and its host forward share the API port number, so the
-  // allocated value has to reach start.sh before the socat relay binds.
-  if (agent?.name === "hermes" && input.sandboxName) {
-    const apiPort =
-      input.hermesApiPort ??
-      resolveOnboardHermesApiPort(input.sandboxName, {
-        env,
-        warn: console.warn,
-        allowRegisteredOverride: input.allowHermesApiPortOverride,
-      });
-    envArgs.push(formatEnvAssignment(HERMES_API_PORT_ENV, String(apiPort)));
-  }
-  appendHostProxyEnvArgs(envArgs, env, {
-    dropCredentialBearingProxyUrls:
-      agent?.name === "langchain-deepagents-code" || input.omitCredentialEnv === true,
-  });
-
-  // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to runtime containers
-  // that consume them from sandbox-create env. patchStagedDockerfile() also
-  // substitutes the validated build args; dcode pins that build-time source in
-  // root-owned image files instead of trusting this runtime copy. Keep both
-  // paths in sync for the other agent images that still consume runtime env.
-  // Fixes #2424. Uses the shared isValidProxyHost / isValidProxyPort
-  // helpers so build-time and runtime validation stay aligned.
-  const sandboxProxyHost = env.NEMOCLAW_PROXY_HOST;
-  if (sandboxProxyHost && isValidProxyHost(sandboxProxyHost)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_HOST", sandboxProxyHost));
-  }
-  const sandboxProxyPort = env.NEMOCLAW_PROXY_PORT;
-  if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
-
-  // Every sandbox needs to know its own name at runtime, not only the LangChain
-  // Deep Agents Code image. OpenShell exports OPENSHELL_SANDBOX as the boolean
-  // "1" to the processes it spawns inside the sandbox, so this injection is the
-  // only in-container source of the name. nemoclaw-start.sh bakes it into the
-  // connect-shell env so the in-sandbox hints can print a copyable host-side
-  // `nemoclaw <name> …` command instead of a `<name>` placeholder. (#7795)
-  const sandboxName = input.sandboxName;
-  if (sandboxName) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
-  }
-
-  if (agent?.name === "langchain-deepagents-code") {
-    envArgs.push(
-      formatEnvAssignment(
-        "NEMOCLAW_OBSERVABILITY",
-        input.observabilityEnabled === true ? "1" : "0",
-      ),
-    );
-  }
-
-  if (!input.omitCredentialEnv) {
-    appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);
-  }
-
-  return { envArgs, effectiveDashboardPort };
-}
+export { buildSandboxRuntimeEnvArgs, type SandboxRuntimeEnvArgsInput };
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
   const env = input.env ?? process.env;

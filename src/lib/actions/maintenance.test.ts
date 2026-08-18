@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   openBackupShieldsWindow: vi.fn(),
   relockBackupShieldsWindow: vi.fn(),
   withSandboxMutationLock: vi.fn(),
+  assertNoHermesPortableHostAuthority: vi.fn(),
+  withPortableHostFence: vi.fn(),
 }));
 
 async function runSandboxMutationAction(
@@ -42,6 +44,10 @@ vi.mock("../state/sandbox", () => ({
 }));
 vi.mock("../state/mcp-lifecycle-lock", () => ({
   withSandboxMutationLock: mocks.withSandboxMutationLock,
+}));
+vi.mock("../state/portable-uninstall-retirement", () => ({
+  assertNoHermesPortableHostAuthority: mocks.assertNoHermesPortableHostAuthority,
+  withPortableHostFence: mocks.withPortableHostFence,
 }));
 vi.mock("./sandbox/snapshot/backup-authority", () => ({
   backupSandboxStateWithManagedAuthority: (name: string) => mocks.backupSandboxState(name),
@@ -118,6 +124,20 @@ describe("backupAll", () => {
     }));
     mocks.relockBackupShieldsWindow.mockReturnValue(true);
     mocks.withSandboxMutationLock.mockImplementation(runSandboxMutationAction);
+    mocks.assertNoHermesPortableHostAuthority.mockReset();
+    mocks.withPortableHostFence.mockImplementation(async (_home, operation) => operation());
+  });
+
+  it("rejects schema-5 authority before OpenShell or backup effects (#9203)", async () => {
+    mocks.assertNoHermesPortableHostAuthority.mockImplementation(() => {
+      throw new Error("Command 'backup-all' is not supported");
+    });
+
+    await expect(backupAll()).rejects.toThrow("Command 'backup-all' is not supported");
+    expect(mocks.listSandboxes).not.toHaveBeenCalled();
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.withSandboxMutationLock).not.toHaveBeenCalled();
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
   });
 
   afterEach(() => {
@@ -1355,6 +1375,20 @@ describe("shouldSkipUnreachableSandboxBackup", () => {
 describe("garbageCollectImages", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.assertNoHermesPortableHostAuthority.mockReset();
+    mocks.withPortableHostFence.mockImplementation(async (_home, operation) => operation());
+  });
+
+  it("rejects schema-5 authority before scanning Docker images (#9203)", async () => {
+    mocks.assertNoHermesPortableHostAuthority.mockImplementation(() => {
+      throw new Error("Command 'gc' is not supported");
+    });
+
+    await expect(garbageCollectImages({ dryRun: true })).rejects.toThrow(
+      "Command 'gc' is not supported",
+    );
+    expect(mocks.dockerListImagesFormat).not.toHaveBeenCalled();
+    expect(mocks.dockerRmi).not.toHaveBeenCalled();
   });
 
   it("surfaces a local-repo orphan while preserving a registered local image (#6301)", async () => {

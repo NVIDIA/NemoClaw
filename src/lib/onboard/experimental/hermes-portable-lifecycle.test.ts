@@ -15,6 +15,7 @@ import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshel
 import { hermesPortableContainerInternals } from "./hermes-portable-container";
 import { resolveHermesPortableStartupContract } from "./hermes-portable-contract";
 import {
+  hermesPortableLifecycleInternals,
   recoverHermesPortableSandboxLifecycle,
   stopHermesPortableSandboxLifecycle,
 } from "./hermes-portable-lifecycle";
@@ -49,8 +50,8 @@ let policyPath: string;
 function startupArgv() {
   return [
     "env",
-    `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
     "NEMOCLAW_HERMES_API_PORT=8642",
+    `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
     "/usr/local/bin/nemoclaw-start",
   ];
 }
@@ -237,6 +238,44 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
+  it("passes only private state, terminal, locale, and TLS variables to child commands (#9203)", () => {
+    const env = hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv({
+      HOME: "/home/test",
+      PATH: "/usr/bin",
+      TERM: "xterm-256color",
+      LANG: "C.UTF-8",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      HTTPS_PROXY: "http://127.0.0.1:8118",
+      SSL_CERT_FILE: "/etc/ssl/cert.pem",
+      DOCKER_HOST: "unix:///run/docker.sock",
+      KUBECONFIG: "/home/test/.kube/config",
+      SSH_AUTH_SOCK: "/run/user/1000/ssh-agent.sock",
+      OPENSHELL_GATEWAY: "ambient",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.example",
+      NVIDIA_INFERENCE_API_KEY: "do-not-forward",
+      GITHUB_TOKEN: "do-not-forward",
+      AWS_SECRET_ACCESS_KEY: "do-not-forward",
+    });
+
+    expect(env).toMatchObject({
+      HOME: "/home/test",
+      PATH: "/usr/bin",
+      TERM: "xterm-256color",
+      LANG: "C.UTF-8",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      SSL_CERT_FILE: "/etc/ssl/cert.pem",
+    });
+    expect(env).not.toHaveProperty("HTTPS_PROXY");
+    expect(env).not.toHaveProperty("DOCKER_HOST");
+    expect(env).not.toHaveProperty("KUBECONFIG");
+    expect(env).not.toHaveProperty("SSH_AUTH_SOCK");
+    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY");
+    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
+  });
+
   it("starts and proves exact receipt-owned authenticated health without Docker (#9203)", () => {
     const receipt = activeReceipt();
     const { deps, podman } = lifecycleDeps(receipt, false);
@@ -250,6 +289,25 @@ describe("Hermes portable lifecycle", () => {
     expect(result).toEqual({ kind: "recovered" });
     expect(podman.mock.calls.some(([args]) => args[1] === "start")).toBe(true);
     expect(podman.mock.calls.every(([args]) => !String(args[0]).includes("docker"))).toBe(true);
+  });
+
+  it("rejects an ambient OpenShell endpoint before Podman or OpenShell effects (#9203)", () => {
+    const receipt = activeReceipt();
+    const { deps, podman, captureOpenShell } = lifecycleDeps(receipt, false);
+    const endpointDeps = {
+      ...deps,
+      env: { OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.example" },
+    };
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), endpointDeps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OPENSHELL_GATEWAY_ENDPOINT is set");
+    expect(podman).not.toHaveBeenCalled();
+    expect(captureOpenShell).not.toHaveBeenCalled();
   });
 
   it("revalidates identity after the stop callback and stops one full ID (#9203)", () => {

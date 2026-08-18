@@ -3,6 +3,8 @@
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
+import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import { resolveHostPathFromCwd } from "./host-path";
 
@@ -19,6 +21,15 @@ export interface SandboxUploadResult {
 }
 
 export async function uploadToSandbox(opts: SandboxUploadOptions): Promise<SandboxUploadResult> {
+  return withMcpLifecycleLock(opts.sandboxName, () => {
+    assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:upload");
+    return uploadToSandboxUnlocked(opts);
+  });
+}
+
+async function uploadToSandboxUnlocked(
+  opts: SandboxUploadOptions,
+): Promise<SandboxUploadResult> {
   const trimmedHostPath = (opts.hostPath ?? "").trim();
   if (!trimmedHostPath) {
     throw new Error(

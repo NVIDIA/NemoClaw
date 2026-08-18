@@ -85,6 +85,11 @@ type DoctorIntent = {
   wantsFix: boolean;
 };
 
+type HermesPortableDoctorDisposition = Extract<
+  ReturnType<typeof inspectSandboxDoctorPortableDisposition>,
+  { readonly kind: "hermes" }
+>;
+
 type GatewayProbe = {
   checks: DoctorCheck[];
   connected: boolean;
@@ -106,17 +111,16 @@ function hermesPortableDoctorReport(
       label: "Portable lifecycle",
       status: active ? "ok" : "warn",
       detail: `agent=Hermes; phase=${phase}`,
-      ...(active
-        ? {}
-        : { hint: "resume the existing Hermes portable onboarding transaction" }),
+      ...(active ? {} : { hint: "resume the existing Hermes portable onboarding transaction" }),
     },
   ]);
 }
 
 function assertHermesPortableDoctorRegistry(
   sandboxName: string,
-  phase: "pending" | "configuring" | "active",
+  receipt: HermesPortableDoctorDisposition,
 ): void {
+  const { phase } = receipt;
   const entry = registry.getSandbox(sandboxName);
   if (!entry) {
     if (phase !== "active") return;
@@ -125,7 +129,11 @@ function assertHermesPortableDoctorRegistry(
   if (
     entry.name !== sandboxName ||
     entry.agent !== "hermes" ||
-    entry.openshellDriver !== "docker"
+    entry.openshellDriver !== "docker" ||
+    entry.gatewayName !== receipt.gatewayName ||
+    entry.lifecycleGeneration !== receipt.lifecycleGeneration ||
+    (phase !== "pending" &&
+      entry.lifecycleLiveIdentityFingerprint !== receipt.liveIdentityFingerprint)
   ) {
     throw new Error("Hermes portable receipt and registry authority disagree.");
   }
@@ -659,7 +667,7 @@ export async function runSandboxDoctor(
   return withSandboxDoctorLifecycleLock(sandboxName, async () => {
     const portable = inspectSandboxDoctorPortableDisposition(sandboxName);
     if (portable.kind === "hermes") {
-      assertHermesPortableDoctorRegistry(sandboxName, portable.phase);
+      assertHermesPortableDoctorRegistry(sandboxName, portable);
       const report = hermesPortableDoctorReport(sandboxName, portable.phase);
       if (intent.asJson && options.quietJson) return report;
       const exitCode = renderDoctorReport(report, intent.asJson);

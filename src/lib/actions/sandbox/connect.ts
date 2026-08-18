@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
+  buildOpenShellSubprocessEnv,
   captureOpenshell,
   getOpenshellBinary,
   runOpenshell,
@@ -1301,11 +1302,17 @@ export function completeReadinessQualifiedInteractiveSessionSetup(
  * process recovery, readiness polling, inference-route repair, and session
  * setup. Any `process.exit(...)` ends the process as it does on `connect`.
  */
-export async function prepareInteractiveSession(
-  sandboxName: string,
-): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
+export async function prepareInteractiveSession(sandboxName: string): Promise<{
+  agent: AgentDefinition | null;
+  sb: SandboxEntry | null;
+  hermesPortable: boolean;
+}> {
   const prepared: {
-    value: { agent: AgentDefinition | null; sb: SandboxEntry | null } | null;
+    value: {
+      agent: AgentDefinition | null;
+      sb: SandboxEntry | null;
+      hermesPortable: boolean;
+    } | null;
   } = { value: null };
   await runConnectEntryPreflight(sandboxName, {
     probeOnly: false,
@@ -1342,7 +1349,7 @@ export async function prepareInteractiveSession(
       } else if (!(await settlePortablePairingOrExit(sandboxName))) {
         completeInteractiveSessionSetup(sandboxName, sb);
       }
-      prepared.value = { agent, sb };
+      prepared.value = { agent, sb, hermesPortable };
     },
   });
   if (!prepared.value) throw new Error("interactive connect lifecycle did not complete");
@@ -1351,7 +1358,17 @@ export async function prepareInteractiveSession(
 
 export async function connectSandbox(
   sandboxName: string,
-  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions = {},
+  options: SandboxConnectOptions = {},
+): Promise<void> {
+  if (options.probeOnly === true) return connectSandboxWithinLifecycleFence(sandboxName, options);
+  return withConnectSandboxLifecycleLock(sandboxName, async () => {
+    await connectSandboxWithinLifecycleFence(sandboxName, options);
+  });
+}
+
+async function connectSandboxWithinLifecycleFence(
+  sandboxName: string,
+  { probeOnly = false, requireLaunchReadinessPublication = true }: SandboxConnectOptions,
 ): Promise<void> {
   if (probeOnly) {
     let readiness = await inspectLaunchReadiness(sandboxName);
@@ -1445,7 +1462,7 @@ export async function connectSandbox(
     return;
   }
 
-  const { agent, sb } = await prepareInteractiveSession(sandboxName);
+  const { agent, sb, hermesPortable } = await prepareInteractiveSession(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
@@ -1475,11 +1492,25 @@ export async function connectSandbox(
     // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
-  prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  const requalifyPortableDisposition = () => {
+    const current = inspectPortableAgentReceiptDisposition(sandboxName);
+    if (hermesPortable) {
+      if (current.kind !== "hermes" || current.phase !== "active") {
+        throw new Error("Hermes portable lifecycle authority changed during interactive connect");
+      }
+      return;
+    }
+    if (current.kind === "hermes") {
+      throw new Error("Hermes portable lifecycle authority appeared during interactive connect");
+    }
+  };
+  requalifyPortableDisposition();
+  if (!hermesPortable) prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+  requalifyPortableDisposition();
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
-    env: { ...process.env },
+    env: hermesPortable ? buildOpenShellSubprocessEnv() : { ...process.env },
   });
   exitWithConnectSpawnResult(sandboxName, result);
 }

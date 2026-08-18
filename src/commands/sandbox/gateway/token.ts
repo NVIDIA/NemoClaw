@@ -4,9 +4,11 @@
 import { Args } from "@oclif/core";
 import type { AgentDefinition } from "../../../lib/agent/defs";
 import { quietFlag } from "../../../lib/cli/common-flags";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-import { assertHermesPortableCommandUnavailable } from "../../../lib/onboard/experimental/portable-agent-lifecycle";
-import { withMcpLifecycleLock as withSandboxMutationLock } from "../../../lib/state/mcp-lifecycle-lock-acquisition";
+import {
+  assertHermesPortableCommandUnavailable,
+  NemoClawCommand,
+  withSandboxCommandLifecycleLock,
+} from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
   GatewayTokenCommandError,
@@ -132,7 +134,7 @@ export default class GatewayTokenCliCommand extends NemoClawCommand {
     });
 
     try {
-      await withSandboxMutationLock(args.sandboxName, () => {
+      await withSandboxCommandLifecycleLock(args.sandboxName, () => {
         assertHermesPortableCommandUnavailable(args.sandboxName, "sandbox:gateway:token");
         const runtime = getRuntimeBridge();
         runGatewayTokenCommand(

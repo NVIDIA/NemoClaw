@@ -132,7 +132,11 @@ export async function launchSandbox(
     if (decision.kind === "accepted") {
       printInteractiveSessionHints(sandboxName);
       completeReadinessQualifiedInteractiveSessionSetup(sandboxName, decision.agent, decision.sb);
-      session = { agent: decision.agent, sb: decision.sb };
+      session = {
+        agent: decision.agent,
+        sb: decision.sb,
+        hermesPortable: inspectPortableAgentReceiptDisposition(sandboxName).kind === "hermes",
+      };
       break;
     }
     if (

@@ -9,10 +9,14 @@ import {
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
-import { resolveOpenshellBinaryOrNull } from "../../adapters/openshell/resolve-shared";
+import {
+  buildOpenShellSubprocessEnv,
+  resolveOpenshellBinaryOrNull,
+} from "../../adapters/openshell/resolve-shared";
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { SandboxEntry } from "../../state/registry/types";
 import { createPodmanContainerEngine } from "../../adapters/podman";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   assertCurrentHermesPortableContainer,
   observeHermesPortableAuthenticatedHealth,
@@ -102,9 +106,10 @@ function defaultCaptureOpenShell(
 ): NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> {
   const binary = resolveOpenshellBinaryOrNull();
   if (!binary) fail("cannot resolve the OpenShell executable");
+  const env = buildHermesPortableOpenShellEnv(commandEnv);
   return (args, timeoutMs) => {
     const result = spawnSync(binary, [...args], {
-      env: commandEnv,
+      env,
       maxBuffer: 512 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: timeoutMs,
@@ -121,10 +126,11 @@ function defaultCaptureOpenShell(
 function defaultLaunchOpenShell(commandEnv: NodeJS.ProcessEnv): (args: readonly string[]) => void {
   const binary = resolveOpenshellBinaryOrNull();
   if (!binary) fail("cannot resolve the OpenShell executable");
+  const env = buildHermesPortableOpenShellEnv(commandEnv);
   return (args) => {
     const child = spawn(binary, [...args], {
       detached: true,
-      env: commandEnv,
+      env,
       shell: false,
       stdio: "ignore",
     });
@@ -133,11 +139,15 @@ function defaultLaunchOpenShell(commandEnv: NodeJS.ProcessEnv): (args: readonly 
   };
 }
 
+function buildHermesPortableOpenShellEnv(commandEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return buildOpenShellSubprocessEnv(commandEnv);
+}
+
 function createContainerDeps(
   receipt: HermesPortableConfiguredReceipt,
 ): HermesPortableContainerDeps {
   const engine = createPodmanContainerEngine({
-    operation: "sandbox-lifecycle",
+    operation: "state-mutation",
     socketAuthority: receipt.socketAuthority,
   });
   return {
@@ -231,6 +241,7 @@ function qualify(
   expected?: HermesPortableReceiptSnapshot,
 ): QualifiedHermesPortableLifecycle {
   const commandEnv = deps.env ?? process.env;
+  assertNoOpenShellGatewayEndpointOverride(commandEnv);
   const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(commandEnv);
   const lockStateDir = path.join(stateDir, "state");
   if (!isMcpLifecycleLockHeld(sandboxName, lockStateDir)) {
@@ -372,4 +383,4 @@ export function stopHermesPortableSandboxLifecycle(
   return { kind: result };
 }
 
-export const hermesPortableLifecycleInternals = { qualify };
+export const hermesPortableLifecycleInternals = { buildHermesPortableOpenShellEnv, qualify };

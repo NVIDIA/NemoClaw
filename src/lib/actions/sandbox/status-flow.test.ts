@@ -11,6 +11,16 @@ import {
   resetStatusFlowModuleCache,
 } from "../../../../test/support/status-flow-test-harness";
 
+function hermesPortableDisposition(phase: "pending" | "configuring" | "active") {
+  return {
+    kind: "hermes" as const,
+    phase,
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    liveIdentityFingerprint: phase === "pending" ? null : "fingerprint-1",
+  };
+}
+
 describe("showSandboxStatus flow", () => {
   let exitSpy: MockInstance;
 
@@ -31,7 +41,7 @@ describe("showSandboxStatus flow", () => {
     "reports Hermes portable receipt phase %s without Docker or OpenClaw status work (#9203)",
     async (phase) => {
       const harness = createStatusFlowHarness({
-        portableDisposition: { kind: "hermes", phase },
+        portableDisposition: hermesPortableDisposition(phase),
         registryEntry: phase === "pending" ? "missing" : "present",
         sandboxEntry: { agent: "hermes" },
       });
@@ -68,25 +78,58 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { field: "gatewayName", value: "other-gateway" },
+    { field: "lifecycleGeneration", value: "other-generation" },
+    { field: "lifecycleLiveIdentityFingerprint", value: "other-fingerprint" },
+  ] as const)("rejects Hermes portable registry disagreement in $field (#9203)", async (drift) => {
+    const harness = createStatusFlowHarness({
+      portableDisposition: hermesPortableDisposition("active"),
+      sandboxEntry: { agent: "hermes", [drift.field]: drift.value },
+    });
+
+    await expect(harness.getSandboxStatusReport("alpha")).rejects.toThrow(
+      "receipt and registry authority disagree",
+    );
+    expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an active Hermes receipt with no registry row (#9203)", async () => {
+    const harness = createStatusFlowHarness({
+      portableDisposition: hermesPortableDisposition("active"),
+      registryEntry: "missing",
+    });
+
+    await expect(harness.getSandboxStatusReport("alpha")).rejects.toThrow(
+      "missing its registry authority",
+    );
+    expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
+    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+  });
+
   it("preserves schema-4 OpenClaw status behavior (#9203)", async () => {
     const harness = createStatusFlowHarness({ portableDisposition: { kind: "openclaw" } });
 
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
-    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith("alpha", expect.anything());
+    expect(harness.collectSandboxStatusSnapshotSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.anything(),
+    );
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(harness.withMcpLifecycleLockSpy).toHaveBeenCalledWith("alpha", expect.any(Function));
   });
 
   it("classifies publication while waiting for the status lifecycle fence (#9203)", async () => {
-    let disposition:
-      | { readonly kind: "absent" }
-      | { readonly kind: "hermes"; readonly phase: "active" } = { kind: "absent" };
+    let disposition: { readonly kind: "absent" } | ReturnType<typeof hermesPortableDisposition> = {
+      kind: "absent",
+    };
     const harness = createStatusFlowHarness({
       portableDisposition: () => disposition,
       sandboxEntry: { agent: "hermes" },
       withMcpLifecycleLock: async (_sandboxName, operation) => {
-        disposition = { kind: "hermes", phase: "active" };
+        disposition = hermesPortableDisposition("active");
         return await operation();
       },
     });
@@ -177,7 +220,9 @@ describe("showSandboxStatus flow", () => {
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],
-  ] as const)("reports the effective compatible-endpoint reasoning effort (%s) (#7659)", async (stored, expected) => {
+  ] as const)(
+    "reports the effective compatible-endpoint reasoning effort (%s) (#7659)",
+    async (stored, expected) => {
     const harness = createStatusFlowHarness({
       currentProvider: "compatible-endpoint",
       sandboxEntry: {
@@ -191,7 +236,8 @@ describe("showSandboxStatus flow", () => {
 
     const output = harness.logSpy.mock.calls.flat().join("\n");
     expect(output).toContain(`Reasoning effort: ${expected}`);
-  });
+    },
+  );
 
   it("prints the live sandbox, inference, runtime, session, version, and recovery signals", async () => {
     const harness = createStatusFlowHarness();

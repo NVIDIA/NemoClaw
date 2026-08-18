@@ -155,6 +155,34 @@ network_policies:
         createPolicyBytes: CREATE,
         capture: () => result(Buffer.alloc(0), 1, Buffer.from("gateway unavailable")),
       }),
-    ).toThrow("scoped base policy failed with status 1: gateway unavailable");
+    ).toThrow("scoped base policy failed with status 1");
+  });
+
+  it("does not expose malformed policy content or capture stderr in errors (#9203)", () => {
+    const secret = "DO_NOT_LOG_POLICY_SECRET";
+    let malformedError: Error | null = null;
+    try {
+      hermesPortableCreatePolicySemanticDigest(
+        Buffer.from(`version: 1\nnetwork_policies:\n  secret: [${secret}\n`),
+      );
+    } catch (error) {
+      malformedError = error as Error;
+    }
+    expect(malformedError?.message).toContain("create input is invalid");
+    expect(malformedError?.message).not.toContain(secret);
+
+    let captureError: Error | null = null;
+    try {
+      proveHermesPortableLivePolicy({
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+        createPolicyBytes: CREATE,
+        capture: () => result(Buffer.alloc(0), 1, Buffer.from(secret)),
+      });
+    } catch (error) {
+      captureError = error as Error;
+    }
+    expect(captureError?.message).toContain("scoped base policy failed with status 1");
+    expect(captureError?.message).not.toContain(secret);
   });
 });

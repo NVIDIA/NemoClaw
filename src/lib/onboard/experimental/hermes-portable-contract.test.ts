@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadAgent } from "../../agent/defs";
 import type { AgentDefinition } from "../../agent/definition-types";
 import {
+  assertCurrentHermesPortableStoredStartupContract,
   assertCurrentHermesPortableStartupContract,
   resolveHermesPortableStartupContract,
 } from "./hermes-portable-contract";
@@ -20,8 +21,8 @@ const temporaryDirectories: string[] = [];
 function startupArgv(...extra: string[]): string[] {
   return [
     "env",
-    `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
     "NEMOCLAW_HERMES_API_PORT=8642",
+    `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
     ...extra,
     "/usr/local/bin/nemoclaw-start",
   ];
@@ -113,6 +114,37 @@ describe("Hermes portable startup contract", () => {
     ]);
   });
 
+  it("accepts the complete current stored startup contract during lifecycle recovery (#9203)", () => {
+    const contract = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+    expect(() => assertCurrentHermesPortableStoredStartupContract(contract, SANDBOX)).not.toThrow();
+  });
+
+  it.each([
+    {
+      argv: [
+        "env",
+        `NEMOCLAW_SANDBOX_NAME=${SANDBOX}`,
+        "NEMOCLAW_HERMES_API_PORT=8642",
+        "/usr/local/bin/nemoclaw-start",
+      ],
+    },
+    { argv: startupArgv("NEMOCLAW_PROXY_HOST=proxy.internal") },
+  ])("rejects stored startup renderer drift %# during lifecycle recovery (#9203)", ({ argv }) => {
+    const contract = resolveHermesPortableStartupContract({
+      agent: loadAgent("hermes"),
+      sandboxName: SANDBOX,
+      startupArgv: startupArgv(),
+    });
+
+    expect(() =>
+      assertCurrentHermesPortableStoredStartupContract({ ...contract, argv }, SANDBOX),
+    ).toThrow("current startup authority disagrees");
+  });
+
   it.each([
     "API_SERVER_KEY=secret-value",
     "NEMOCLAW_SANDBOX_NAME=other",
@@ -137,5 +169,25 @@ describe("Hermes portable startup contract", () => {
         startupArgv: startupArgv("HTTPS_PROXY=https://user:secret@proxy.example:8443"),
       }),
     ).toThrow("contains credentials");
+  });
+
+  it.each([
+    "HTTPS_PROXY=https://proxy.example/?token=do-not-store",
+    "HTTPS_PROXY=https://proxy.example/path/do-not-store",
+    "CHAT_UI_URL=https://dashboard.example/#do-not-store",
+    "HTTP_PROXY=file:///tmp/do-not-store",
+  ])("rejects durable URL components that could carry credentials: %s (#9203)", (assignment) => {
+    let error: unknown;
+    try {
+      resolveHermesPortableStartupContract({
+        agent: copyAgent(),
+        sandboxName: SANDBOX,
+        startupArgv: startupArgv(assignment),
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).not.toContain("do-not-store");
   });
 });

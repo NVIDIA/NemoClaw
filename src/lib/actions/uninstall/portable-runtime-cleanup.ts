@@ -12,6 +12,7 @@ import { hasPortableUninstallAuthority } from "../../onboard/portable-retirement
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
   inspectPortableRetirementRecovery,
+  assertNoHermesPortableHostAuthority,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   preparePortableRetirement,
   publishAndRetirePortableEvidence,
@@ -52,6 +53,11 @@ const PORTABLE_SELECTOR_NAMES = [
   "CONTAINER_SSHKEY",
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/** Refuse legacy uninstall while the host fence keeps schema-5 authority stable. */
+export function assertHermesPortableUninstallAvailable(stateDir: string): void {
+  assertNoHermesPortableHostAuthority(stateDir, "uninstall");
+}
 
 interface PortableRegistryRemoval {
   readonly present: boolean;

@@ -9,6 +9,7 @@ import {
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
 import {
+  assertPodmanSocketAuthority,
   capturePodmanSocketAuthority,
   createPodmanContainerEngine,
   type PodmanSocketAuthority,
@@ -529,6 +530,10 @@ export async function runHermesPortableOnboardingTransaction<T>(
           input,
           socketAuthority,
           currentIntendedSemanticSha256,
+        );
+        (containerDeps.assertSocketAuthority ?? assertPodmanSocketAuthority)(
+          snapshot.receipt.socketAuthority,
+          containerDeps.socketAuthority,
         );
         createResult = await deps.createSandbox(createArgv);
         created = true;

@@ -85,6 +85,7 @@ import {
   type UninstallPlan,
 } from "./plan";
 import {
+  assertHermesPortableUninstallAvailable,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
@@ -3129,9 +3130,12 @@ export async function runUninstallPlanProduction(
   const env = { ...process.env, ...(deps.env ?? {}) };
   const home = env.HOME || os.homedir();
   try {
-    return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () =>
-      runUninstallPlan(options, { ...deps, env }),
-    );
+    return await (deps.withPortableHostFence ?? withPortableHostFence)(home, () => {
+      assertHermesPortableUninstallAvailable(
+        env.NEMOCLAW_TEST_STATE_DIR || path.join(home, ".nemoclaw"),
+      );
+      return runUninstallPlan(options, { ...deps, env });
+    });
   } catch (error) {
     (deps.error ?? ((message: string) => console.error(message)))(
       `Uninstall could not acquire or release portable host authority: ${formatError(error)}`,

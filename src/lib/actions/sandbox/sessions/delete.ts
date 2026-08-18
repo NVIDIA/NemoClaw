@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
+import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway, sandboxUsesHermesAgent } from "./gateway-rpc";
@@ -35,6 +37,16 @@ export interface SessionsDeleteResult {
 }
 
 export async function deleteSandboxSession(
+  sandboxName: string,
+  opts: SessionsDeleteOptions,
+): Promise<SessionsDeleteResult> {
+  return withMcpLifecycleLock(sandboxName, () => {
+    assertHermesPortableCommandUnavailable(sandboxName, "sandbox:sessions:delete");
+    return deleteSandboxSessionUnlocked(sandboxName, opts);
+  });
+}
+
+async function deleteSandboxSessionUnlocked(
   sandboxName: string,
   opts: SessionsDeleteOptions,
 ): Promise<SessionsDeleteResult> {

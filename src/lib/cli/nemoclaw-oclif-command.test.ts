@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { Args } from "@oclif/core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
+import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
@@ -102,6 +107,18 @@ class ParsedUnsupportedSandboxCommand extends NemoClawCommand {
   }
 }
 
+class ParsedSupportedSandboxCommand extends NemoClawCommand {
+  static id = "sandbox:status";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static operation: () => Promise<void> = async () => undefined;
+
+  public async run(): Promise<void> {
+    await this.parse(ParsedSupportedSandboxCommand);
+    await ParsedSupportedSandboxCommand.operation();
+  }
+}
+
 function useHermesPortableAuthority(): void {
   vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
     kind: "hermes",
@@ -114,7 +131,15 @@ function makeCommand(): TestCommand {
 }
 
 describe("NemoClawCommand", () => {
+  let stateDir: string;
+
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oclif-command-"));
+    vi.stubEnv("NEMOCLAW_TEST_STATE_DIR", stateDir);
+  });
+
   afterEach(() => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     log.configure();
@@ -122,6 +147,7 @@ describe("NemoClawCommand", () => {
     RawUnsupportedSandboxCommand.ran = false;
     RawSandboxDoctorCommand.ran = false;
     ParsedUnsupportedSandboxCommand.ran = false;
+    ParsedSupportedSandboxCommand.operation = async () => undefined;
   });
 
   it("records status-like command results without throwing", () => {
@@ -202,6 +228,79 @@ describe("NemoClawCommand", () => {
     useHermesPortableAuthority();
 
     await expect(ParsedUnsupportedSandboxCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "not supported for an experimental Hermes portable sandbox",
+    );
+    expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);
+  });
+
+  it("resolves a flag-first parsed sandbox before acquiring the lifecycle fence (#9203)", async () => {
+    useHermesPortableAuthority();
+
+    await expect(
+      ParsedUnsupportedSandboxCommand.run(["--debug", "alpha"], process.cwd()),
+    ).rejects.toThrow("not supported for an experimental Hermes portable sandbox");
+    expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);
+  });
+
+  it("holds the lifecycle fence through the ordinary action before schema-5 publication (#9203)", async () => {
+    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+      kind: "none",
+    });
+    let releaseAction!: () => void;
+    const actionWaiting = new Promise<void>((resolve) => {
+      releaseAction = resolve;
+    });
+    let actionEntered!: () => void;
+    const actionStarted = new Promise<void>((resolve) => {
+      actionEntered = resolve;
+    });
+    ParsedSupportedSandboxCommand.operation = async () => {
+      actionEntered();
+      await actionWaiting;
+    };
+    let contenderEntered = false;
+    const command = ParsedSupportedSandboxCommand.run(["alpha"], process.cwd());
+    await actionStarted;
+    const contender = withMcpLifecycleLock("alpha", () => {
+      contenderEntered = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(contenderEntered).toBe(false);
+    releaseAction();
+    await command;
+    await contender;
+    expect(contenderEntered).toBe(true);
+  });
+
+  it("classifies schema-5 publication that wins the lifecycle fence before dispatch (#9203)", async () => {
+    const inspect = vi
+      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority")
+      .mockReturnValue({ kind: "none" });
+    let releasePublisher!: () => void;
+    const publisherWaiting = new Promise<void>((resolve) => {
+      releasePublisher = resolve;
+    });
+    let publisherEntered!: () => void;
+    const publisherStarted = new Promise<void>((resolve) => {
+      publisherEntered = resolve;
+    });
+    const publisher = withMcpLifecycleLock("alpha", async () => {
+      inspect.mockReturnValue({
+        kind: "hermes",
+        snapshot: { receipt: { phase: "active" } } as never,
+      });
+      publisherEntered();
+      await publisherWaiting;
+    });
+    await publisherStarted;
+    const command = ParsedUnsupportedSandboxCommand.run(["alpha"], process.cwd());
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);
+    releasePublisher();
+    await publisher;
+    await expect(command).rejects.toThrow(
       "not supported for an experimental Hermes portable sandbox",
     );
     expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);

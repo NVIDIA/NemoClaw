@@ -28,6 +28,9 @@ export type PortableAgentReceiptDisposition =
   | {
       readonly kind: "hermes";
       readonly phase: "pending" | "configuring" | "active";
+      readonly gatewayName: string;
+      readonly lifecycleGeneration: string;
+      readonly liveIdentityFingerprint: string | null;
     };
 
 /** Strictly distinguish absent, schema-4 OpenClaw, and schema-5 Hermes authority. */
@@ -39,7 +42,17 @@ export function inspectPortableAgentReceiptDisposition(
   const authority = inspectPortableAgentReceiptAuthority(sandboxName, stateDir);
   if (authority.kind === "none") return { kind: "absent" };
   if (authority.kind === "openclaw") return { kind: "openclaw" };
-  return { kind: "hermes", phase: authority.snapshot.receipt.phase };
+  const { receipt } = authority.snapshot;
+  return {
+    kind: "hermes",
+    phase: receipt.phase,
+    gatewayName: receipt.gatewayName,
+    lifecycleGeneration: receipt.lifecycleGeneration,
+    liveIdentityFingerprint:
+      receipt.phase === "pending"
+        ? null
+        : createHash("sha256").update(receipt.container.sandboxId).digest("hex"),
+  };
 }
 
 /** Whether recognized portable authority must bypass Docker preflight. */
@@ -123,3 +136,4 @@ export function stopPortableAgentSandboxLifecycle(
   // portable stop authority.
   return stopHermesPortableSandboxLifecycle(sandboxName, context, () => undefined, deps);
 }
+import { createHash } from "node:crypto";
