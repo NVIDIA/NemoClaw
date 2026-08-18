@@ -88,7 +88,7 @@ class LocalGuardChainRunner implements CommandRunner {
   ) {
     this.progress = startTestProgress(
       "Guard-chain extraction support",
-      ["run guard-chain proof", "verify guard-chain proof"],
+      ["run guard-chain marker check", "verify guard-chain sentinel"],
       { logLine: () => undefined },
     );
     this.probe = new ShellProbe({
@@ -116,7 +116,7 @@ class LocalGuardChainRunner implements CommandRunner {
       trustedShellCommand({
         command: innerCommand!,
         args: localArgs,
-        reason: "exercise the generated guard-chain proof command",
+        reason: "exercise the generated guard-chain marker check",
       }),
       options,
     );
@@ -150,7 +150,7 @@ function fakeInstance(sandboxName = "e2e-2701"): NemoClawInstance {
   };
 }
 
-function buildGateway(runner: ScriptedRunner): GatewayClient {
+function buildGateway(runner: CommandRunner): GatewayClient {
   const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
   const sandbox = new SandboxClient(runner);
   return new GatewayClient(host, sandbox);
@@ -297,7 +297,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
   });
 
   describe("expectGuardChainActive", () => {
-    it("exports only a fixed proof while keeping opaque proxy values out of evidence", async () => {
+    it("returns only the fixed sentinel and excludes an opaque credential from results and artifacts", async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-chain-proof-"));
       const proxyEnvPath = path.join(tmp, "proxy-env.sh");
       const opaqueValue = "opaqueMintedGatewayMaterial_7qR2v9XcL4n8";
@@ -333,16 +333,20 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         expect(innerArgs.slice(0, 2)).toEqual(["sh", "-c"]);
         expect(innerArgs[2]).toContain("grep -Fq --");
         expect(innerArgs[2]).not.toMatch(/\bcat\b/u);
-        expect(innerArgs.slice(4)).toEqual(["/tmp/nemoclaw-proxy-env.sh", ...expectedMarkers]);
+        expect(innerArgs.slice(4)).toEqual([
+          "/tmp/nemoclaw-proxy-env.sh",
+          "NEMOCLAW_GUARD_CHAIN_ACTIVE",
+          ...expectedMarkers,
+        ]);
         expect(JSON.stringify(result)).not.toContain(opaqueValue);
-        expect(JSON.stringify(result)).not.toContain("<REDACTED>");
+        expect(JSON.stringify(result)).not.toMatch(/<REDACTED>|\[REDACTED\]/u);
         const artifacts = result!.artifacts;
         const artifactContents =
           fs.readFileSync(artifacts.stdout, "utf8") +
           fs.readFileSync(artifacts.stderr, "utf8") +
           fs.readFileSync(artifacts.result, "utf8");
         expect(artifactContents).not.toContain(opaqueValue);
-        expect(artifactContents).not.toContain("<REDACTED>");
+        expect(artifactContents).not.toMatch(/<REDACTED>|\[REDACTED\]/u);
 
         fs.writeFileSync(
           proxyEnvPath,
@@ -350,7 +354,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
         );
         await expect(
           gateway.expectGuardChainActive(fakeInstance(), { expectedMarkers }),
-        ).rejects.toThrow(/guard-chain proof/);
+        ).rejects.toThrow(/missing an expected marker/);
         const failedResult = runner.results.at(-1);
         expect(failedResult).toMatchObject({ stdout: "", stderr: "" });
         expect(JSON.stringify(failedResult)).not.toContain(opaqueValue);
@@ -368,52 +372,73 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       }
     });
 
-    it("passes when proxy-env.sh contains the default safety-net + ciao markers", async () => {
+    it("passes only when the sandbox returns the fixed guard-chain sentinel", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({
-        stdout:
-          'export NODE_OPTIONS="--require /tmp/nemoclaw-sandbox-safety-net.js ' +
-          '--require /tmp/nemoclaw-ciao-network-guard.js"\n',
-      });
+      runner.queue({ stdout: "NEMOCLAW_GUARD_CHAIN_ACTIVE\n" });
       const gateway = buildGateway(runner);
 
       await gateway.expectGuardChainActive(fakeInstance());
 
-      expect(runner.calls[0]?.args.slice(-1)[0]).toContain("cat /tmp/nemoclaw-proxy-env.sh");
+      const separator = runner.calls[0]?.args.indexOf("--") ?? -1;
+      expect(runner.calls[0]?.args.slice(separator + 4)).toEqual([
+        "nemoclaw-guard-chain-proof",
+        "/tmp/nemoclaw-proxy-env.sh",
+        "NEMOCLAW_GUARD_CHAIN_ACTIVE",
+        "nemoclaw-sandbox-safety-net",
+        "nemoclaw-ciao-network-guard",
+      ]);
     });
 
     it("fails when proxy-env.sh is empty (post pod-recreate target)", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "" });
+      runner.queue({ exitCode: 20 });
       const gateway = buildGateway(runner);
 
       await expect(gateway.expectGuardChainActive(fakeInstance())).rejects.toThrow(
-        /missing or empty/,
+        /missing, unreadable, or empty/,
       );
     });
 
     it("fails when proxy-env.sh exists but a marker is absent", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({
-        stdout: 'export NODE_OPTIONS="--require /tmp/nemoclaw-sandbox-safety-net.js"\n',
-      });
+      runner.queue({ exitCode: 21 });
       const gateway = buildGateway(runner);
 
       await expect(gateway.expectGuardChainActive(fakeInstance())).rejects.toThrow(
-        /missing markers.*nemoclaw-ciao-network-guard/,
+        /missing an expected marker/,
       );
     });
 
     it("honors a caller-supplied marker list", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({
-        stdout: 'export NODE_OPTIONS="--require /tmp/nemoclaw-slack-channel-guard.js"\n',
-      });
+      runner.queue({ stdout: "NEMOCLAW_GUARD_CHAIN_ACTIVE\n" });
       const gateway = buildGateway(runner);
 
       await gateway.expectGuardChainActive(fakeInstance(), {
         expectedMarkers: ["nemoclaw-slack-channel-guard"],
       });
+
+      expect(runner.calls[0]?.args.at(-1)).toBe("nemoclaw-slack-channel-guard");
+    });
+
+    it.each([
+      { condition: "returns a nonzero exit", reply: { exitCode: 1 } },
+      { condition: "times out", reply: { timedOut: true } },
+      { condition: "is terminated", reply: { signal: "SIGTERM" as const } },
+      { condition: "omits stdout", reply: { stdout: "" } },
+      { condition: "adds stdout", reply: { stdout: "NEMOCLAW_GUARD_CHAIN_ACTIVE\nextra\n" } },
+      {
+        condition: "adds stderr",
+        reply: { stdout: "NEMOCLAW_GUARD_CHAIN_ACTIVE\n", stderr: "unexpected\n" },
+      },
+    ])("rejects a guard-chain check that $condition", async ({ reply }) => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "NEMOCLAW_GUARD_CHAIN_ACTIVE\n", ...reply });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.expectGuardChainActive(fakeInstance())).rejects.toThrow(
+        /guard-chain check was invalid/,
+      );
     });
   });
 
