@@ -16,7 +16,10 @@ import {
 } from "../../adapters/docker/run";
 import { parseOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
-import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
+import {
+  captureDockerContainerFailureEvidence,
+  formatDockerContainerState,
+} from "./docker-container-failure-evidence";
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
@@ -28,7 +31,6 @@ import {
 } from "../docker-gpu-patch-constants";
 import type {
   DockerContainerInspect,
-  DockerContainerState,
   DockerGpuPatchDeps,
   DockerGpuPatchMode,
   DockerGpuPatchModeKind,
@@ -250,36 +252,13 @@ function commandDetail(result: DockerCommandResult): string {
     .slice(-1200);
 }
 
-function supervisorReconnectFailureDetail(
-  replacement: DockerContainerInspect,
-  runtimeId: string,
-  deps: ResolvedDeps,
-): string {
-  const redactor = createDockerGpuDiagnosticRedactor();
-  redactor.rememberInspect(replacement);
-  const state: DockerContainerState | null = replacement.State ?? null;
-  const stateDetail = [
-    `status=${state?.Status ?? "unknown"}`,
-    typeof state?.Running === "boolean" ? `running=${String(state.Running)}` : null,
-    typeof state?.ExitCode === "number" ? `exit_code=${String(state.ExitCode)}` : null,
-    state?.OOMKilled === true ? "oom_killed=true" : null,
-    state?.Health?.Status ? `health=${state.Health.Status}` : null,
-    state?.Error ? `error=${state.Error}` : null,
-  ]
-    .filter((value): value is string => value !== null)
-    .join(" ");
-  let logTail = "";
-  try {
-    logTail = deps.dockerLogs(runtimeId, { tail: 120, timeout: 2_000 });
-  } catch {
-    // Rollback must remain available when best-effort diagnostics fail.
-  }
-  const redactedState = redactor.redactText(stateDetail);
-  const redactedLogTail = redactor.redactText(logTail).trim().slice(-1_200);
+function supervisorReconnectFailureDetail(runtimeId: string, deps: ResolvedDeps): string {
+  const evidence = captureDockerContainerFailureEvidence(runtimeId, deps);
+  const stateDetail = formatDockerContainerState(evidence.state).join(" ");
   return [
     "Managed bootstrap Docker supervisor did not reconnect.",
-    redactedState ? `Replacement state: ${redactedState}.` : "",
-    redactedLogTail ? `Redacted replacement log tail:\n${redactedLogTail}` : "",
+    stateDetail ? `Replacement state: ${stateDetail}.` : "",
+    evidence.redactedLogTail ? `Redacted replacement log tail:\n${evidence.redactedLogTail}` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -3684,9 +3663,7 @@ export function createDockerManagedBootstrapAdapter(
           deps,
         )
       ) {
-        throw new Error(
-          supervisorReconnectFailureDetail(before, replacement.replacementRuntimeId, deps),
-        );
+        throw new Error(supervisorReconnectFailureDetail(replacement.replacementRuntimeId, deps));
       }
       const afterWaitJournal = deps.journalStore.load(journal.bootstrapIdentity);
       if (!afterWaitJournal || !sameDockerBootstrapJournal(afterWaitJournal, journal)) {

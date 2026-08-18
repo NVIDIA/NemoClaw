@@ -499,7 +499,17 @@ describe("Docker managed bootstrap adapter", () => {
     const fake = fixture();
     const secret = "diagnostic-secret-canary";
     fake.deps.errorPhaseDebouncePolls = 1;
-    fake.deps.runOpenshell = vi.fn(() => ({ status: 1 }));
+    fake.deps.runOpenshell = vi.fn(() => {
+      assert(fake.replacement?.State);
+      Object.assign(fake.replacement.State, {
+        Status: "exited",
+        Running: false,
+        ExitCode: 137,
+        OOMKilled: true,
+        Error: "startup terminated",
+      });
+      return { status: 1 };
+    });
     fake.deps.runCaptureOpenshell = vi.fn(() => "alpha Error");
     fake.deps.dockerLogs = vi.fn(() => `managed startup failed with NVIDIA_API_KEY=${secret}`);
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
@@ -522,7 +532,9 @@ describe("Docker managed bootstrap adapter", () => {
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain("Replacement state: status=unknown running=true");
+    expect((failure as Error).message).toContain(
+      "Replacement state: status=exited running=false exit_code=137 oom_killed=true error=startup terminated",
+    );
     expect((failure as Error).message).toContain(
       "managed startup failed with NVIDIA_API_KEY=<REDACTED>",
     );
