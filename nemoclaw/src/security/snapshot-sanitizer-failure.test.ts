@@ -17,7 +17,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyDescriptorSnapshotActions,
-  applyDescriptorSnapshotActionsResult,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
   installDescriptorSnapshotFile,
@@ -25,9 +24,7 @@ import {
   SnapshotSanitizerPrerequisiteError,
   type SnapshotFileIdentity,
   scanDescriptorSnapshot,
-  scanDescriptorSnapshotResult,
   setSnapshotSanitizerPythonPathForTest,
-  snapshotSanitizerFailure,
 } from "../shared/snapshot-sanitizer-boundary.cjs";
 import { sanitizeMigrationDirectory, sanitizeOpenClawConfigFile } from "./snapshot-sanitizer.js";
 
@@ -70,13 +67,6 @@ function requireTrustedPython(): string {
   const python = resolveTrustedSnapshotSanitizerPythonPath();
   expect(python).toEqual(expect.any(String));
   return python as string;
-}
-
-function requireApplyFailure(
-  result: ReturnType<typeof applyDescriptorSnapshotActionsResult>,
-): Extract<typeof result, { ok: false }> {
-  expect(result.ok).toBe(false);
-  return result as Extract<typeof result, { ok: false }>;
 }
 
 afterEach(() => {
@@ -139,64 +129,27 @@ describe("migration snapshot sanitizer fallbacks", () => {
     },
   ];
 
-  it("fails closed when the descriptor helper is unavailable", () => {
+  it("reports when the descriptor helper has no trusted interpreter (#8202)", () => {
     const configPath = path.join(makeRoot(), "openclaw.json");
     const original = JSON.stringify({ apiKey: "sk-secret-value" });
     writeFileSync(configPath, original);
     setSnapshotSanitizerPythonPathForTest(null);
 
-    expect(sanitizeOpenClawConfigFile(configPath)).toBe(false);
+    expect(() => sanitizeOpenClawConfigFile(configPath)).toThrow(
+      SnapshotSanitizerPrerequisiteError,
+    );
     expect(readFileSync(configPath, "utf-8")).toBe(original);
   });
 
-  it("fails closed when the descriptor apply helper is unavailable", () => {
+  it("reports the validated root when the apply helper has no trusted interpreter (#8202)", () => {
     const root = { canonicalPath: makeRoot(), identity };
     setSnapshotSanitizerPythonPathForTest(null);
 
-    expect(
+    expect(() =>
       applyDescriptorSnapshotActions(root, { root: identity, directories: {}, files: [] }, [
         { kind: "remove", path: "config.json", metadata: identity },
       ]),
-    ).toBe(false);
-  });
-
-  it("reports the interpreter state recorded by the apply attempt (#8202)", () => {
-    const rootPath = makeRoot();
-    const configPath = path.join(rootPath, "config.json");
-    writeFileSync(configPath, "original");
-    const root = inspectDescriptorSnapshotRoot(rootPath)!;
-    const python = requireTrustedPython();
-    const scan = scanDescriptorSnapshot(root, new Set())!;
-    const config = scan.files.find((file) => file.path === "config.json")!;
-    setSnapshotSanitizerPythonPathForTest(null);
-
-    const result = applyDescriptorSnapshotActionsResult(root, scan, [
-      { kind: "remove", path: config.path, metadata: config.metadata },
-    ]);
-    expect(result).toEqual({ ok: false, reason: "python-unavailable" });
-
-    setSnapshotSanitizerPythonPathForTest(python);
-    const failure = requireApplyFailure(result);
-    expect(
-      snapshotSanitizerFailure(failure.reason, "generic helper failure", root.canonicalPath),
-    ).toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
-  });
-
-  it("keeps the generic error when the helper ran and failed (#8202)", () => {
-    const error = snapshotSanitizerFailure("helper-failed", "generic helper failure", makeRoot());
-
-    expect(error).not.toBeInstanceOf(SnapshotSanitizerPrerequisiteError);
-    expect(error.message).toBe("generic helper failure");
-  });
-
-  it("classifies a running helper failure separately from a missing interpreter (#8202)", () => {
-    const root = inspectDescriptorSnapshotRoot(makeRoot())!;
-    writePythonWrapper(["exit 1"]);
-
-    expect(scanDescriptorSnapshotResult(root, new Set())).toEqual({
-      ok: false,
-      reason: "helper-failed",
-    });
+    ).toThrow(expect.objectContaining({ snapshotPath: root.canonicalPath }));
   });
 
   it("fails closed when the descriptor install helper is unavailable", () => {

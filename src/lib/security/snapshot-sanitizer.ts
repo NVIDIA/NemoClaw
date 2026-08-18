@@ -5,13 +5,12 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import {
-  applyDescriptorSnapshotActionsResult,
+  applyDescriptorSnapshotActions,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
   type SnapshotSanitizationAction,
   type SnapshotScannedFile,
-  scanDescriptorSnapshotResult,
-  snapshotSanitizerFailure,
+  scanDescriptorSnapshot,
 } from "../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 
 import {
@@ -188,26 +187,16 @@ export function sanitizeSnapshotDirectory(rootPath: string): void {
       throw new Error(`Failed to inspect snapshot artifacts safely: ${rootPath}`);
     }
 
-    const scanResult = scanDescriptorSnapshotResult(root, CREDENTIAL_SENSITIVE_BASENAMES);
-    if (!scanResult.ok) {
-      throw snapshotSanitizerFailure(
-        scanResult.reason,
-        `Failed to inspect snapshot artifacts safely: ${rootPath}`,
-        root.canonicalPath,
-      );
+    const scan = scanDescriptorSnapshot(root, CREDENTIAL_SENSITIVE_BASENAMES);
+    if (scan === null) {
+      throw new Error(`Failed to inspect snapshot artifacts safely: ${rootPath}`);
     }
-    const scan = scanResult.value;
     const actions = scan.files
       .map((file) => actionForScannedFile(file))
       .filter((action): action is SnapshotSanitizationAction => action !== null);
     if (actions.length === 0) return;
-    const applyResult = applyDescriptorSnapshotActionsResult(root, scan, actions);
-    if (!applyResult.ok) {
-      throw snapshotSanitizerFailure(
-        applyResult.reason,
-        `Failed to sanitize snapshot artifacts safely: ${rootPath}`,
-        root.canonicalPath,
-      );
+    if (!applyDescriptorSnapshotActions(root, scan, actions)) {
+      throw new Error(`Failed to sanitize snapshot artifacts safely: ${rootPath}`);
     }
   }
   throw new Error(`Snapshot artifacts did not reach a stable sanitized state: ${rootPath}`);

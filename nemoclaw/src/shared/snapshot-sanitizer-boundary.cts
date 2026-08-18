@@ -84,23 +84,6 @@ export class SnapshotSanitizerPrerequisiteError extends Error {
   }
 }
 
-export type SnapshotSanitizerHelperFailure = "python-unavailable" | "helper-failed";
-
-export type SnapshotSanitizerHelperResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly reason: SnapshotSanitizerHelperFailure };
-
-/** Map the helper attempt's recorded failure without probing the host again. */
-export function snapshotSanitizerFailure(
-  reason: SnapshotSanitizerHelperFailure,
-  message: string,
-  validatedSnapshotPath: string,
-): Error {
-  return reason === "python-unavailable"
-    ? new SnapshotSanitizerPrerequisiteError(validatedSnapshotPath)
-    : new Error(message);
-}
-
 export interface SnapshotFileIdentity {
   readonly dev: string;
   readonly ino: string;
@@ -739,15 +722,15 @@ export function inspectDescriptorSnapshotRoot(rootPath: string): DescriptorSnaps
   };
 }
 
-/** Read a bounded snapshot tree and retain why the helper could not run. */
-export function scanDescriptorSnapshotResult(
+/** Read a bounded snapshot tree through pinned directory descriptors. */
+export function scanDescriptorSnapshot(
   root: DescriptorSnapshotRoot,
   sensitiveNames: ReadonlySet<string>,
   targetName?: string,
-): SnapshotSanitizerHelperResult<DescriptorSnapshotScan> {
+): DescriptorSnapshotScan | null {
   const mode = targetName === undefined ? "scan-tree" : "scan-file";
   const pythonPath = snapshotSanitizerPythonPath();
-  if (pythonPath === null) return { ok: false, reason: "python-unavailable" };
+  if (pythonPath === null) throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
   const result = spawnSync(
     pythonPath,
     [
@@ -767,30 +750,19 @@ export function scanDescriptorSnapshotResult(
       timeout: HELPER_TIMEOUT_MS,
     },
   );
-  if (result.status !== 0 || result.error) return { ok: false, reason: "helper-failed" };
-  const scan = parseScanResult(result.stdout);
-  return scan === null ? { ok: false, reason: "helper-failed" } : { ok: true, value: scan };
+  if (result.status !== 0 || result.error) return null;
+  return parseScanResult(result.stdout);
 }
 
-/** Read a bounded snapshot tree through pinned directory descriptors. */
-export function scanDescriptorSnapshot(
-  root: DescriptorSnapshotRoot,
-  sensitiveNames: ReadonlySet<string>,
-  targetName?: string,
-): DescriptorSnapshotScan | null {
-  const result = scanDescriptorSnapshotResult(root, sensitiveNames, targetName);
-  return result.ok ? result.value : null;
-}
-
-/** Apply sanitized artifacts and retain why the helper could not run. */
-export function applyDescriptorSnapshotActionsResult(
+/** Install or remove sanitized artifacts through their pinned parent descriptors. */
+export function applyDescriptorSnapshotActions(
   root: DescriptorSnapshotRoot,
   scan: DescriptorSnapshotScan,
   actions: readonly SnapshotSanitizationAction[],
-): SnapshotSanitizerHelperResult<void> {
-  if (actions.length === 0) return { ok: true, value: undefined };
+): boolean {
+  if (actions.length === 0) return true;
   const pythonPath = snapshotSanitizerPythonPath();
-  if (pythonPath === null) return { ok: false, reason: "python-unavailable" };
+  if (pythonPath === null) throw new SnapshotSanitizerPrerequisiteError(root.canonicalPath);
   const result = spawnSync(
     pythonPath,
     ["-I", "-c", SNAPSHOT_SANITIZER_PYTHON, "apply", root.canonicalPath],
@@ -802,18 +774,7 @@ export function applyDescriptorSnapshotActionsResult(
       timeout: HELPER_TIMEOUT_MS,
     },
   );
-  return result.status === 0 && !result.error
-    ? { ok: true, value: undefined }
-    : { ok: false, reason: "helper-failed" };
-}
-
-/** Install or remove sanitized artifacts through their pinned parent descriptors. */
-export function applyDescriptorSnapshotActions(
-  root: DescriptorSnapshotRoot,
-  scan: DescriptorSnapshotScan,
-  actions: readonly SnapshotSanitizationAction[],
-): boolean {
-  return applyDescriptorSnapshotActionsResult(root, scan, actions).ok;
+  return result.status === 0 && !result.error;
 }
 
 /** Create one direct child through a pinned directory descriptor without replacing an entry. */
