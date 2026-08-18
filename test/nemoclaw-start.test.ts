@@ -2463,16 +2463,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
     try {
       const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
       expect(result.status).toBe(0);
-      for (const name of [
-        "AGENTS.md",
-        "SOUL.md",
-        "IDENTITY.md",
-        "USER.md",
-        "TOOLS.md",
-        "HEARTBEAT.md",
-      ]) {
-        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(true);
-      }
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
       expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
       expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
         "# SOUL.md template content\n",
@@ -2588,16 +2579,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
         env: { PATH: `${fakeBin}:${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
       });
       expect(result.status).toBe(0);
-      for (const name of [
-        "AGENTS.md",
-        "SOUL.md",
-        "IDENTITY.md",
-        "USER.md",
-        "TOOLS.md",
-        "HEARTBEAT.md",
-      ]) {
-        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
-      }
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
       expect(result.stderr).toContain("openclaw workspace templates dir not found");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -2725,16 +2707,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
       expect(result.stderr).toContain("skipping default workspace template seed");
-      for (const name of [
-        "AGENTS.md",
-        "SOUL.md",
-        "IDENTITY.md",
-        "USER.md",
-        "TOOLS.md",
-        "HEARTBEAT.md",
-      ]) {
-        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
-      }
+      expect(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"].every((name) => !fs.existsSync(path.join(workspaceDir, name)))).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -183,9 +183,8 @@ describe("managed startup shared-state transaction", () => {
       "langchain-deepagents-code": [".state", "skills"],
       pi: ["agent", path.join("agent", "models.json")],
     };
-    for (const relativePath of absentManagedPaths[agent]) {
-      expect(fs.existsSync(path.join(root, relativePath))).toBe(false);
-    }
+    expect(absentManagedPaths[agent].every((relativePath) =>
+        Object.is(fs.existsSync(path.join(root, relativePath)), false))).toBe(true);
     expect(fs.existsSync(transactionDirectory)).toBe(false);
   });
 

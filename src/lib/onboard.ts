@@ -944,8 +944,6 @@ const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawRea
 
 const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox, webSearchProviderForConfig } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
-// getSandboxInferenceConfig — moved to onboard-providers.ts
-// Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
   hasChatCompletionsToolCall,
