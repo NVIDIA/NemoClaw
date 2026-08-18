@@ -114,4 +114,73 @@ describe("full E2E cold workload evidence", () => {
       }),
     ).toThrow("managed-image workload reference must match the registered sandbox image tag");
   });
+
+  it.each([
+    {
+      name: "unsupported schema",
+      receipt: {
+        schemaVersion: 2,
+        kind: "managed-image",
+        reference: MANAGED_REFERENCE,
+        sourceCohort: "all-agents-2026-08-17",
+        sourceRevision: SOURCE_REVISION,
+        shared: true,
+      },
+      message: "sandbox workload receipt must use schema version 1",
+    },
+    {
+      name: "unsupported kind",
+      receipt: {
+        schemaVersion: 1,
+        kind: "native-artifact",
+        reference: MANAGED_REFERENCE,
+        shared: true,
+      },
+      message: "unsupported cold onboarding workload kind: native-artifact",
+    },
+    {
+      name: "mutable image reference",
+      receipt: {
+        schemaVersion: 1,
+        kind: "managed-image",
+        reference: "ghcr.io/nvidia/nemoclaw/openclaw:latest",
+        sourceCohort: "all-agents-2026-08-17",
+        sourceRevision: SOURCE_REVISION,
+        shared: true,
+      },
+      message: "managed-image workload receipt must select an exact digest reference",
+    },
+    {
+      name: "blank publication cohort",
+      receipt: {
+        schemaVersion: 1,
+        kind: "managed-image",
+        reference: MANAGED_REFERENCE,
+        sourceCohort: " ",
+        sourceRevision: SOURCE_REVISION,
+        shared: true,
+      },
+      message: "managed-image workload receipt must identify its publication cohort",
+    },
+    {
+      name: "inexact source revision",
+      receipt: {
+        schemaVersion: 1,
+        kind: "managed-image",
+        reference: MANAGED_REFERENCE,
+        sourceCohort: "all-agents-2026-08-17",
+        sourceRevision: "b".repeat(39),
+        shared: true,
+      },
+      message: "managed-image workload receipt must identify its exact source revision",
+    },
+  ])("rejects $name receipts (#9362)", ({ message, receipt }) => {
+    expect(() =>
+      resolveFullE2eColdWorkloadEvidence({
+        registry: registry(receipt),
+        sandboxName: "e2e-full",
+        usedBuildKitPrebuild: false,
+      }),
+    ).toThrow(message);
+  });
 });
