@@ -5,7 +5,7 @@ import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
 import {
   deferSandboxLifecycleExit,
-  isSandboxLifecycleDeferredExit,
+  runWithDeferredSandboxLifecycleExit,
 } from "../../../core/process-exit";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
@@ -219,17 +219,12 @@ export async function runSessionsPassthrough(
   sandboxName: string,
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {
-  let deferredExitCode: number | null = null;
-  try {
+  return runWithDeferredSandboxLifecycleExit(async () => {
     await withMcpLifecycleLock(sandboxName, () => {
       assertHermesPortableCommandUnavailable(sandboxName, `sandbox:sessions:${verb ?? "list"}`);
       return runSessionsPassthroughUnlocked(sandboxName, { verb, extraArgs });
     });
-  } catch (error) {
-    if (!isSandboxLifecycleDeferredExit(error)) throw error;
-    deferredExitCode = error.exitCode;
-  }
-  if (deferredExitCode !== null) process.exit(deferredExitCode);
+  });
 }
 
 async function runSessionsPassthroughUnlocked(

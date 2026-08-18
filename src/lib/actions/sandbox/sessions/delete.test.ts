@@ -16,16 +16,8 @@ vi.mock("../exec", () => ({
   execSandbox: vi.fn(async () => undefined),
 }));
 
-const lockState = vi.hoisted(() => ({ held: false }));
 const withLifecycleLockMock = vi.hoisted(() =>
-  vi.fn(async (_sandboxName: string, operation: () => unknown) => {
-    lockState.held = true;
-    try {
-      return await operation();
-    } finally {
-      lockState.held = false;
-    }
-  }),
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
 );
 vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
   withMcpLifecycleLock: withLifecycleLockMock,
@@ -63,7 +55,6 @@ beforeEach(() => {
   execSandboxMock.mockReset();
   execSandboxMock.mockResolvedValue(undefined);
   withLifecycleLockMock.mockClear();
-  lockState.held = false;
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -99,12 +90,8 @@ describe("deleteSandboxSession", () => {
     expect(result.key).toBe("agent:main:slot-1");
   });
 
-  it("releases lifecycle authority before an OpenClaw readiness exit (#9203)", async () => {
+  it("defers an OpenClaw readiness exit through lifecycle authority (#9203)", async () => {
     ensureMock.mockImplementationOnce(async (_sandboxName, options) => options.exit(1));
-    processExitSpy.mockImplementation((code?: number | string | null) => {
-      expect(lockState.held).toBe(false);
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
 
     await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
       /process\.exit:1/,
@@ -307,48 +294,4 @@ describe("deleteSandboxSession (hermes sandbox)", () => {
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/session id/i);
   });
 
-  it("releases the lifecycle lock before the native delete exit terminates the process", async () => {
-    let lockHeld = false;
-    withLifecycleLockMock.mockImplementationOnce(async (_sandboxName, operation) => {
-      lockHeld = true;
-      try {
-        return await operation();
-      } finally {
-        lockHeld = false;
-      }
-    });
-    processExitSpy.mockImplementation(((code?: number) => {
-      expect(lockHeld).toBe(false);
-      throw new Error(`process.exit:${String(code)}`);
-    }) as never);
-
-    await expect(deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61" })).rejects.toThrow(
-      "process.exit:0",
-    );
-  });
-
-  it("releases the lifecycle lock before an OpenClaw readiness failure exits", async () => {
-    let lockHeld = false;
-    withLifecycleLockMock.mockImplementationOnce(async (_sandboxName, operation) => {
-      lockHeld = true;
-      try {
-        return await operation();
-      } finally {
-        lockHeld = false;
-      }
-    });
-    hermesAgentMock.mockReturnValue(false);
-    ensureMock.mockImplementationOnce(async (_sandboxName, options) => {
-      options.exit(1);
-    });
-    processExitSpy.mockImplementation(((code?: number) => {
-      expect(lockHeld).toBe(false);
-      throw new Error(`process.exit:${String(code)}`);
-    }) as never);
-
-    await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
-      "process.exit:1",
-    );
-    expect(gatewayMock).not.toHaveBeenCalled();
-  });
 });

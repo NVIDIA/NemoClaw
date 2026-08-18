@@ -63,7 +63,7 @@
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import {
   deferSandboxLifecycleExit,
-  isSandboxLifecycleDeferredExit,
+  runWithDeferredSandboxLifecycleExit,
 } from "../../../core/process-exit";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
@@ -103,17 +103,12 @@ export async function resetSandboxSession(
   sandboxName: string,
   opts: SessionsResetOptions,
 ): Promise<SessionsResetResult> {
-  let deferredExitCode: number | null = null;
-  try {
-    return await withMcpLifecycleLock(sandboxName, () => {
+  return runWithDeferredSandboxLifecycleExit(() =>
+    withMcpLifecycleLock(sandboxName, () => {
       assertHermesPortableCommandUnavailable(sandboxName, "sandbox:sessions:reset");
       return resetSandboxSessionUnlocked(sandboxName, opts);
-    });
-  } catch (error) {
-    if (!isSandboxLifecycleDeferredExit(error)) throw error;
-    deferredExitCode = error.exitCode;
-  }
-  process.exit(deferredExitCode ?? 1);
+    }),
+  );
 }
 
 async function resetSandboxSessionUnlocked(

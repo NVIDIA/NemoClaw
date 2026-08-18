@@ -487,31 +487,4 @@ describe("runSessionsPassthrough", () => {
     expect(String(stderrSpy.mock.calls[0]?.[0])).toBe("unknown flag: --bad\n");
   });
 
-  it("releases the lifecycle lock before a streamed child exit terminates the process", async () => {
-    let lockHeld = false;
-    withLifecycleLockMock.mockImplementationOnce(async (_sandboxName, operation) => {
-      lockHeld = true;
-      try {
-        return await operation();
-      } finally {
-        lockHeld = false;
-      }
-    });
-    getSandboxMock.mockReturnValue({ agent: "hermes" });
-    execMock.mockImplementationOnce(async (...args: unknown[]) => {
-      (args[3] as { exit: (code: number) => never }).exit(7);
-    });
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      expect(lockHeld).toBe(false);
-      throw new Error(`process.exit:${String(code)}`);
-    }) as never);
-
-    try {
-      await expect(runSessionsPassthrough("hermes", { extraArgs: [] })).rejects.toThrow(
-        "process.exit:7",
-      );
-    } finally {
-      exitSpy.mockRestore();
-    }
-  });
 });

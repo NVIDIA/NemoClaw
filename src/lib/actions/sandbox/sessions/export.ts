@@ -45,7 +45,7 @@ import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runt
 import { CLI_NAME } from "../../../cli/branding";
 import {
   deferSandboxLifecycleExit,
-  isSandboxLifecycleDeferredExit,
+  runWithDeferredSandboxLifecycleExit,
 } from "../../../core/process-exit";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
 import { withMcpLifecycleLock } from "../../../state/mcp-lifecycle-lock-acquisition";
@@ -112,17 +112,12 @@ const STAGING_DIR_IN_SANDBOX = "/sandbox/.nemoclaw-staging";
 export async function exportSandboxSessions(
   opts: SessionsExportOptions,
 ): Promise<SessionsExportResult> {
-  let deferredExitCode: number | null = null;
-  try {
-    return await withMcpLifecycleLock(opts.sandboxName, () => {
+  return runWithDeferredSandboxLifecycleExit(() =>
+    withMcpLifecycleLock(opts.sandboxName, () => {
       assertHermesPortableCommandUnavailable(opts.sandboxName, "sandbox:sessions:export");
       return exportSandboxSessionsUnlocked(opts);
-    });
-  } catch (error) {
-    if (!isSandboxLifecycleDeferredExit(error)) throw error;
-    deferredExitCode = error.exitCode;
-  }
-  process.exit(deferredExitCode ?? 1);
+    }),
+  );
 }
 
 async function exportSandboxSessionsUnlocked(

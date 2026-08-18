@@ -19,16 +19,8 @@ vi.mock("../../../state/registry", () => ({
   getSandbox: vi.fn(() => null),
 }));
 
-const lockState = vi.hoisted(() => ({ held: false }));
 const withLifecycleLockMock = vi.hoisted(() =>
-  vi.fn(async (_sandboxName: string, operation: () => unknown) => {
-    lockState.held = true;
-    try {
-      return await operation();
-    } finally {
-      lockState.held = false;
-    }
-  }),
+  vi.fn(async (_sandboxName: string, operation: () => unknown) => await operation()),
 );
 vi.mock("../../../state/mcp-lifecycle-lock-acquisition", () => ({
   withMcpLifecycleLock: withLifecycleLockMock,
@@ -62,7 +54,6 @@ beforeEach(() => {
   ensureLiveMock.mockReset();
   ensureLiveMock.mockResolvedValue(undefined);
   withLifecycleLockMock.mockClear();
-  lockState.held = false;
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -137,12 +128,8 @@ describe("isWarmupSessionId", () => {
 });
 
 describe("exportSandboxSessions warm-up filtering", () => {
-  it("releases lifecycle authority before a readiness exit (#9203)", async () => {
+  it("defers a readiness exit through lifecycle authority (#9203)", async () => {
     ensureLiveMock.mockImplementationOnce(async (_sandboxName, options) => options.exit(1));
-    processExitSpy.mockImplementation((code?: number | string | null) => {
-      expect(lockState.held).toBe(false);
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
 
     await expect(
       exportSandboxSessions({

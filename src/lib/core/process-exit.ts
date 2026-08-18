@@ -39,6 +39,19 @@ export function isSandboxLifecycleDeferredExit(
   );
 }
 
+/** Complete an async cleanup boundary before honoring a deferred CLI exit. */
+export async function runWithDeferredSandboxLifecycleExit<T>(
+  operation: () => Promise<T>,
+  exit: (exitCode: number) => never = process.exit,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!isSandboxLifecycleDeferredExit(error)) throw error;
+    return exit(error.exitCode);
+  }
+}
+
 export function spawnExitCode(result: {
   status: number | null;
   signal?: NodeJS.Signals | null;
