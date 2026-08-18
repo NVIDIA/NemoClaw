@@ -975,16 +975,14 @@ function parseStagedAuthority(bytes: Buffer): StagedAuthority {
       "relativePath",
       ...(entry.kind === "file" ? ["sha256", "size"] : []),
     ].sort();
+    if (typeof entry.relativePath === "string" && entry.relativePath !== ".") {
+      requireSafeRelativePath(entry.relativePath);
+    }
     if (
       JSON.stringify(keys) !== JSON.stringify(expectedKeys) ||
       (entry.kind !== "directory" && entry.kind !== "file") ||
       typeof entry.relativePath !== "string" ||
       seen.has(entry.relativePath) ||
-      (entry.relativePath !== "." &&
-        (() => {
-          requireSafeRelativePath(entry.relativePath!);
-          return false;
-        })()) ||
       !Number.isInteger(entry.mode) ||
       entry.mode! < 0 ||
       entry.mode! > 0o777 ||

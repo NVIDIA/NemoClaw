@@ -17,7 +17,6 @@ import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   buildOpenshellExecArgs,
   execSandbox,
-  resolveSandboxExecBinary,
   runSandboxExecChild,
   wrapExecCommandWithRuntimeEnv,
 } from "./exec";
