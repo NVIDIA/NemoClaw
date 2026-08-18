@@ -780,7 +780,7 @@ describe("dependency release ledger collector", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const result = runCollector(
         repo,
         "v1.0.0",
@@ -790,7 +790,7 @@ describe("dependency release ledger collector", () => {
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
-    }
+    });
   }, 45_000);
 
   it("binds github.com explicitly instead of inheriting GH_HOST", () => {
@@ -825,11 +825,11 @@ describe("dependency release ledger collector", () => {
       .split("\n")
       .map((line) => JSON.parse(line) as string[]);
     expect(invocations.length).toBeGreaterThan(0);
-    for (const invocation of invocations) {
+    invocations.forEach((invocation) => {
       expect(invocation).toEqual(expect.arrayContaining(["--hostname", apiHost]));
       expect(invocation).toEqual(expect.arrayContaining(["--method", "GET"]));
       expect(invocation).not.toContain("attacker.invalid");
-    }
+    });
     expect(invocations[0]).toContain("repos/acme/dependency");
     expect(invocations.slice(1).every((invocation) => {
         const repositoryPath = invocation.find((argument) => argument.startsWith("repos/"));
@@ -845,9 +845,9 @@ describe("dependency release ledger collector", () => {
       ),
     );
     expect(paginatedInvocations).toHaveLength(4);
-    for (const invocation of paginatedInvocations) {
+    paginatedInvocations.forEach((invocation) => {
       expect(invocation).toEqual(expect.arrayContaining(["--paginate", "--slurp"]));
-    }
+    });
   });
 
   it("fails when any remote identity changes during collection", () => {
@@ -918,7 +918,7 @@ describe("dependency release ledger collector", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const result = runCollector(
         repo,
         "v1.0.0",
@@ -928,7 +928,7 @@ describe("dependency release ledger collector", () => {
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
-    }
+    });
   }, 60_000);
 
   it("fails closed for API errors, missing gh, and timeouts", () => {
@@ -1085,7 +1085,7 @@ describe("dependency release ledger collector", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const result = runCollector(
         repo,
         "v1.0.0",
@@ -1095,7 +1095,7 @@ describe("dependency release ledger collector", () => {
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
-    }
+    });
   }, 60_000);
 
   it("rejects draft visibility contradictions", () => {
@@ -1206,9 +1206,9 @@ describe("dependency release ledger collector", () => {
   it("ignores malformed SemVer tags and rejects them as explicit endpoints", () => {
     const { repo } = createTaggedRepository();
     const invalidTags = ["v1.0.3-01", "v1.0.3-rc.01"];
-    for (const tag of invalidTags) {
+    invalidTags.forEach((tag) => {
       git(repo, "tag", tag);
-    }
+    });
 
     const ordinary = runCollector(repo, "v1.0.0", "HEAD");
     expect(ordinary.status, ordinary.stderr).toBe(0);
@@ -1216,11 +1216,11 @@ describe("dependency release ledger collector", () => {
       (JSON.parse(ordinary.stdout) as Ledger).releaseEndpoints.map(({ ref }) => ref),
     ).not.toEqual(expect.arrayContaining(invalidTags));
 
-    for (const tag of invalidTags) {
+    invalidTags.forEach((tag) => {
       const explicit = runCollector(repo, "v1.0.0", `refs/tags/${tag}`);
       expect(explicit.status).toBe(1);
       expect(explicit.stderr).toContain("semantic-version tag");
-    }
+    });
   });
 
   it("rejects empty prerelease and build identifiers before Git collection", () => {

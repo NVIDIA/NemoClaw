@@ -925,11 +925,11 @@ describe("portable runtime uninstall cleanup", () => {
     );
     expect(fs.existsSync(portableDemoReceiptPath("alpha", test.stateDir))).toBe(true);
     expect(test.podmanEnvironments).not.toEqual([]);
-    for (const env of test.podmanEnvironments) {
+    test.podmanEnvironments.forEach((env) => {
       expect(env.CONTAINER_HOST).toBeUndefined();
       expect(env.CONTAINER_CONNECTION).toBeUndefined();
       expect(env.CONTAINER_SSHKEY).toBeUndefined();
-    }
+    });
     expect(fs.existsSync(`${test.registryFile}.lock`)).toBe(false);
   });
 

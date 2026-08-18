@@ -1347,11 +1347,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "start", "podman.socket", "trailing"],
         ["--user", "enable", "podman.socket"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }
@@ -1367,11 +1367,11 @@ describe("portable profile systemctl fixture", () => {
         ["--user", "enable", "--now", "nemoclaw-openshell-gateway"],
         ["--user", "is-active", "nemoclaw-openshell-gateway", "--quiet"],
       ];
-      for (const args of driftedCommands) {
+      driftedCommands.forEach((args) => {
         const result = systemctl(scope, args);
         expect(result.status, args.join(" ")).toBe(64);
         expect(result.stderr).toContain("unexpected user-service command:");
-      }
+      });
     } finally {
       fs.rmSync(scope.directory, { force: true, recursive: true });
     }

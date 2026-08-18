@@ -174,11 +174,11 @@ describe("Hermes 0.19 durable state ledgers", () => {
     const readText = (filePath: string) => fs.readFileSync(filePath, "utf8");
     try {
       fs.mkdirSync(binDir, { recursive: true });
-      for (const [relativePath, content] of ledgers) {
+      ledgers.forEach(([relativePath, content]) => {
         const target = path.join(hermesHome, relativePath);
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, content);
-      }
+      });
       fs.writeFileSync(path.join(hermesHome, "SOUL.md"), "original soul\n");
       fs.writeFileSync(path.join(hermesHome, ".hermes_history"), "original history\n");
       fs.writeFileSync(path.join(hermesHome, "config.yaml"), "token: should-not-copy\n");
@@ -275,10 +275,10 @@ for (const name of ["SOUL.md", ".hermes_history"]) {
         ...ledgers.map(([relativePath]) => relativePath),
       ]);
       expect(backup.failedFiles).toEqual([]);
-      for (const [relativePath, content] of ledgers) {
+      ledgers.forEach(([relativePath, content]) => {
         expect(readText(path.join(backupPath, relativePath))).toBe(content);
         fs.writeFileSync(path.join(hermesHome, relativePath), "changed\n");
-      }
+      });
       expect(fs.existsSync(path.join(backupPath, "config.yaml"))).toBe(false);
       expect(fs.existsSync(path.join(backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backupPath, "auth.json"))).toBe(false);

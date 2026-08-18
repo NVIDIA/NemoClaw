@@ -128,7 +128,7 @@ describe("portable uninstall retirement state", () => {
             ),
             vector,
           ))).toBe(true);
-    for (const input of [
+    ([
       ["", "config", "containers.conf", Buffer.from("x")],
       [new String("a".repeat(64)), "config", "containers.conf", Buffer.from("x")],
       ["A".repeat(64), "config", "containers.conf", Buffer.from("x")],
@@ -139,13 +139,13 @@ describe("portable uninstall retirement state", () => {
       ["a".repeat(64), "receipt", `${"b".repeat(64)}.json`, Buffer.alloc(4_097)],
       ["a".repeat(64), "config", "containers.conf", Buffer.alloc(65_537)],
       ["a".repeat(64), "registry", "sandboxes.json", Buffer.alloc(1_048_577)],
-    ] as const) {
+    ] as const).forEach((input) => {
       expect(() =>
         portableRetirementFingerprint(
           ...(input as unknown as Parameters<typeof portableRetirementFingerprint>),
         ),
       ).toThrow(/invalid/);
-    }
+    });
     expect(JSON.stringify(parsed)).not.toContain("alpha");
     expect(JSON.stringify(parsed)).not.toContain(test.homeDir);
     expect(JSON.stringify(parsed)).not.toContain("helper_binaries_dir");
@@ -499,7 +499,9 @@ describe("portable uninstall retirement state", () => {
     const prepared = prepareFixture(test);
     const first = path.join(test.stateDir, names[0]!);
     fs.writeFileSync(first, prepared.recordBytes, { mode: 0o600 });
-    for (const name of names.slice(1)) fs.linkSync(first, path.join(test.stateDir, name));
+    names.slice(1).forEach((name) => {
+      fs.linkSync(first, path.join(test.stateDir, name));
+    });
     fs.linkSync(first, path.join(test.stateDir, "unexpected-record-link"));
     expect(() => hasPortableRetirementRecord(test.homeDir)).toThrow();
   });

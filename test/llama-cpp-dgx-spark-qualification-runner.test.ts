@@ -132,11 +132,11 @@ function qualificationPlanForModel(content: Buffer): QualificationPlan {
 
 describe("trusted llama.cpp DGX Spark qualification runner", () => {
   it("requires a patched live Docker server before loopback publication (#8260)", () => {
-    for (const version of ["27.5.1", "28.0.0", "28.3.2", "28.3.3-rc.1", "", "client 29.0.0"]) {
+    ["27.5.1", "28.0.0", "28.3.2", "28.3.3-rc.1", "", "client 29.0.0"].forEach((version) => {
       expect(() => qualifyDockerLoopbackPublishAuthority(version)).toThrow(
         /Docker Engine 28\.3\.3 or newer/u,
       );
-    }
+    });
     expect(qualifyDockerLoopbackPublishAuthority("28.3.3\n").serverVersion).toBe("28.3.3");
     expect(qualifyDockerLoopbackPublishAuthority("28.3.3+ubuntu.1").serverVersion).toBe(
       "28.3.3+ubuntu.1",
@@ -144,14 +144,14 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(qualifyDockerLoopbackPublishAuthority("29.0.0").serverVersion).toBe("29.0.0");
 
     const singleUseAuthority = qualifyDockerLoopbackPublishAuthority("28.3.3");
-    for (const clonedAuthority of [
+    ([
       Object.create(singleUseAuthority),
       Object.assign({}, singleUseAuthority),
-    ] as DockerLoopbackPublishAuthority[]) {
+    ] as DockerLoopbackPublishAuthority[]).forEach((clonedAuthority) => {
       expect(() => consumeDockerLoopbackPublishAuthority(clonedAuthority)).toThrow(
         /authority is invalid/u,
       );
-    }
+    });
     expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).not.toThrow();
     expect(() => consumeDockerLoopbackPublishAuthority(singleUseAuthority)).toThrow(
       /already consumed/u,
@@ -651,11 +651,11 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(validateRuntimeLogRedaction("server request complete\n", forbidden)).toEqual({
       ok: true,
     });
-    for (const value of forbidden) {
+    forbidden.forEach((value) => {
       expect(() => validateRuntimeLogRedaction(`server log: ${value}\n`, forbidden)).toThrow(
         /credential, path, prompt, or response/u,
       );
-    }
+    });
   });
 
   it.each([

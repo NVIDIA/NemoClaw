@@ -321,10 +321,10 @@ describe("injected managed transport wrapper", () => {
       shadow_p95_ms: "6000",
       shadow_recommended_timeout_ms: "9000",
     });
-    for (const event of events.slice(0, 4)) {
+    events.slice(0, 4).forEach((event) => {
       expect(event.shadow_p95_ms).toBeUndefined();
       expect(event.shadow_recommended_timeout_ms).toBeUndefined();
-    }
+    });
   });
 
   it("recommends a bounded larger catalog budget for an observed tools/list abort (#7957)", async () => {

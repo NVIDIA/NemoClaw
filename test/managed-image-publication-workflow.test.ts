@@ -715,9 +715,9 @@ describe("complete managed-image publication workflow", () => {
       path: "staging-qa-base-source",
       "persist-credentials": false,
     });
-    for (const action of steps.filter((candidate) => candidate.uses)) {
+    steps.filter((candidate) => candidate.uses).forEach((action) => {
       expect(action.uses, action.name).toMatch(fullShaAction);
-    }
+    });
     expect(drift.run).toBe(
       step(managedPrBuilder(workflow), "Reproduce reviewed discovery permission drift").run,
     );
@@ -1026,11 +1026,11 @@ fi
     const promoter = managedPromoter(workflow);
     const steps = publisher.steps ?? [];
 
-    for (const action of [...steps, ...(promoter.steps ?? [])].filter(
+    [...steps, ...(promoter.steps ?? [])].filter(
       (candidate) => candidate.uses,
-    )) {
+    ).forEach((action) => {
       expect(action.uses, action.name).toMatch(fullShaAction);
-    }
+    });
     expect(step(publisher, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(publisher, "Download exact base image contract").with).toMatchObject({
       name: "managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}",
@@ -1176,10 +1176,10 @@ fi
     expect(steps.indexOf(barrier)).toBeLessThan(steps.indexOf(promotion));
     expect(steps.indexOf(revalidate)).toBeLessThan(steps.indexOf(promotion));
     expect(durableUploads).toHaveLength(7);
-    for (const upload of durableUploads) {
+    durableUploads.forEach((upload) => {
       expect(steps.indexOf(promotion)).toBeLessThan(steps.indexOf(upload));
       expect(steps.indexOf(upload)).toBeLessThan(steps.indexOf(pointer));
-    }
+    });
 
     expect(promotion.run).toContain("for agent in openclaw hermes langchain-deepagents-code");
     expect(promotion.run).toContain('--metadata-file "$cohort_metadata"');
@@ -1391,13 +1391,13 @@ fi
     expect(accepted.calls.filter((call) => call.startsWith("pull ")).sort()).toEqual(
       expectedPullCalls.sort(),
     );
-    for (const pull of expectedPullCalls) {
+    expectedPullCalls.forEach((pull) => {
       const index = accepted.calls.indexOf(pull);
       const reference = pull.match(/^pull --platform linux\/(?:amd64|arm64) (.+)$/u)?.[1];
       expect(reference).toBeDefined();
       expect(index).toBeGreaterThanOrEqual(0);
       expect(accepted.calls[index + 1]).toBe(`image rm ${reference}`);
-    }
+    });
     expect(lastCohortStage).toBeGreaterThanOrEqual(0);
     expect(rootPointer).toBeGreaterThan(lastCohortStage);
     expect(acceptedCalls).not.toContain(`hermes-sandbox:${revision}`);

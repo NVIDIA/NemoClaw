@@ -375,9 +375,9 @@ describe("shields — unit logic", () => {
         },
       ];
 
-      for (const entry of entries) {
+      entries.forEach((entry) => {
         fs.appendFileSync(auditPath, JSON.stringify(entry) + "\n");
-      }
+      });
 
       const lines = fs.readFileSync(auditPath, "utf-8").trim().split("\n");
       expect(lines).toHaveLength(2);
@@ -979,9 +979,9 @@ describe("shields — unit logic", () => {
         "  Shields: UP (DRIFTED — declared locked but sandbox filesystem differs)",
       );
       expect(errorSpy).toHaveBeenCalledWith("  Drift:");
-      for (const issue of driftIssues) {
+      driftIssues.forEach((issue) => {
         expect(errorSpy).toHaveBeenCalledWith(`    - ${issue}`);
-      }
+      });
       expect(errorSpy).toHaveBeenCalledWith(
         `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
       );

@@ -504,11 +504,11 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
         shrinkwrap: { ...good.shrinkwrap, hasNestedFsSafeTar: true },
       }),
     ).toThrow();
-    for (const compromisedJszip of [
+    [
       { integrity: "sha512-unreviewed" },
       { resolved: "https://registry.npmjs.org/jszip/-/jszip-3.10.0.tgz" },
       { version: "3.10.0" },
-    ]) {
+    ].forEach((compromisedJszip) => {
       expect(() =>
         requireExactRemediation({
           ...good,
@@ -518,8 +518,8 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
           },
         }),
       ).toThrow();
-    }
-    for (const packageName of ["tar", "braceExpansion", "jszip"] as const) {
+    });
+    (["tar", "braceExpansion", "jszip"] as const).forEach((packageName) => {
       for (const optionalDependencyState of [
         { hasOptionalDependencies: true },
         { optionalDependencies: { unreviewed: "1.0.0" } },
@@ -537,7 +537,7 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
           }),
         ).toThrow();
       }
-    }
+    });
     expect(() =>
       requireExactRemediation({
         ...good,

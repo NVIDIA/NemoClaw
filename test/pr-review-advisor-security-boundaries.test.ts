@@ -420,7 +420,7 @@ describe("PR review advisor security boundaries", () => {
       },
     ];
 
-    for (const testCase of cases) {
+    cases.forEach((testCase) => {
       const comment = buildComment({
         summary: "unused",
         result: {
@@ -444,7 +444,7 @@ describe("PR review advisor security boundaries", () => {
       });
       expect(comment, testCase.name).not.toContain(id);
       expect(comment, testCase.name).not.toContain("artifact-authored reason");
-    }
+    });
   });
 
   it.each([

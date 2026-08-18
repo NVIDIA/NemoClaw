@@ -140,11 +140,11 @@ describe("OpenShell gateway upgrade boundary", () => {
       },
     ];
 
-    for (const mutation of mutations) {
+    mutations.forEach((mutation) => {
       expect(() => validateE2eTargetCatalogue([{ ...fixture, ...mutation }])).toThrow(
         /exact reviewed gateway-upgrade fixture/,
       );
-    }
+    });
   });
 
   it("freshens only the retryable old fixture install", () => {

@@ -79,10 +79,10 @@ describe("managed image contract v1", () => {
         ...SHIPPED_MANAGED_IMAGE_AGENTS,
         ...CANDIDATE_MANAGED_IMAGE_AGENTS,
       ]);
-      for (const agent of CANDIDATE_MANAGED_IMAGE_AGENTS) {
+      CANDIDATE_MANAGED_IMAGE_AGENTS.forEach((agent) => {
         expect(isShippedManagedImageAgent(agent)).toBe(false);
         expect(isCandidateManagedImageAgent(agent)).toBe(true);
-      }
+      });
 
       expect(isCandidateManagedImageAgent(agent)).toBe(false);
     },

@@ -228,7 +228,9 @@ describe("runtime provider snapshot surface", () => {
   ])("rejects current-runtime changes $label", ({ observations, expectedRestoreCalls }) => {
     const restoreManagedProfile = vi.fn(() => "provider-restore-proof");
     const observe = vi.fn<() => RuntimeProviderSnapshotObservation>();
-    for (const value of observations) observe.mockReturnValueOnce(value);
+    observations.forEach((value) => {
+      observe.mockReturnValueOnce(value);
+    });
     const surface = requireSupportedSurface(
       createRuntimeProviderSnapshotSurface("mxc", surfaceDriver(observe, restoreManagedProfile)),
     );
