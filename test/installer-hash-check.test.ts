@@ -150,6 +150,8 @@ type FixtureMode =
   | "pr-parser-bypass"
   | "brev-stable-version-drift"
   | "runtime-consumers-newer-than-tables"
+  | "reviewed-release-cohorts"
+  | "reviewed-release-cohorts-url-drift"
   | "secondary-installer-version-mismatch"
   | "symlink-installer-input"
   | "symlink-scripts-parent"
@@ -385,6 +387,32 @@ function addInstallerReleaseTable(
   }).join("\n");
   return `${source.slice(0, fallbackStart)}${cases}\n${source.slice(fallbackStart)}`;
 }
+
+function applyReviewedReleaseCohorts(source: string): string {
+  const currentComment = `# regressionTest: test/install-openshell-version-check.test.ts exercises all
+# nine mappings, and scripts/check-installer-hash.sh compares them with the
+# GitHub release API on every PR, main push, weekly run, and manual dispatch.
+# removalCondition: remove these entries only when NemoClaw drops that
+# supported release or replaces them with independently verified newer pins.`;
+  const reviewedComment = `# OpenShell 0.0.101 is the supported product cohort. OpenShell 0.0.106 is the
+# qualification-only cohort. The base-trusted verifier validates each complete
+# nine-asset release cohort independently against GitHub release metadata.
+# removalCondition: remove a cohort when its product support or qualification
+# ends, or replace it with an independently verified release cohort.`;
+  expect(source).toContain(currentComment);
+  return addInstallerReleaseTable(
+    source.replace(currentComment, reviewedComment),
+    "0.0.106",
+    V00106_ASSET_DIGESTS,
+  );
+}
+
+INSTALLER_MUTATIONS["reviewed-release-cohorts"] = applyReviewedReleaseCohorts;
+INSTALLER_MUTATIONS["reviewed-release-cohorts-url-drift"] = (source) =>
+  applyReviewedReleaseCohorts(source).replace(
+    "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name",
+    "https://attacker.invalid/openshell/${RELEASE_TAG}/$name",
+  );
 
 for (const mode of [
   "complete-multiple-installer-versions",
@@ -943,6 +971,23 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
     expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("accepts the reviewed product and qualification release cohorts", () => {
+    const result = runFixture("reviewed-release-cohorts", "0.0.101", true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.101 release assets");
+    expect(result.stdout).toContain("Checking OpenShell v0.0.106 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("rejects download drift from the reviewed release cohorts", () => {
+    const result = runFixture("reviewed-release-cohorts-url-drift", "0.0.101", true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installer operational template is not base-trusted");
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it("fails closed when a secondary installer release pin differs from its manifest", () => {
