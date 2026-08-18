@@ -117,6 +117,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     waitForDetachedMcpCredential(sandboxName, entry);
   }
+  // Reject a collision on any target before the first policy/provider/adapter
+  // mutation. The per-entry checks below still close races at each mutation
+  // edge without allowing a later target to fail after an earlier update.
+  assertNoAttachedProviderCredentialCollisions(sandboxName, targetEntries);
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
