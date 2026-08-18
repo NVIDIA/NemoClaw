@@ -88,7 +88,7 @@ function preparePortableExperimentalHost(
         docker && simulateExistingPortableNetwork
           ? (args, childEnv) =>
               args[0] === "network" && args[1] === "inspect"
-                ? result(0, `${PORTABLE_DOCKER_NETWORK_SUBNET}\n`)
+                ? result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }]))
                 : docker(args, childEnv)
           : docker,
       // Tests run on hosts without the /sys/fs/cgroup hierarchy the portable
@@ -361,7 +361,7 @@ describe("preparePortableExperimentalHost", () => {
       "network",
       "inspect",
       "--format",
-      "{{range .IPAM.Config}}{{println .Subnet}}{{end}}",
+      "{{json .IPAM.Config}}",
       PORTABLE_DOCKER_NETWORK_NAME,
     ]);
     expect(docker.mock.calls[2]?.[0]).toEqual([
@@ -387,7 +387,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, `${PORTABLE_DOCKER_NETWORK_SUBNET}\n`))
+      .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: PORTABLE_DOCKER_NETWORK_SUBNET }])))
       .mockReturnValueOnce(result(0, `1 true ${PORTABLE_HOST_GATEWAY_IP}`));
 
     preparePortableExperimentalHost(
@@ -415,7 +415,7 @@ describe("preparePortableExperimentalHost", () => {
     const docker = vi
       .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
       .mockReturnValueOnce(result())
-      .mockReturnValueOnce(result(0, "10.88.0.0/16\n"));
+      .mockReturnValueOnce(result(0, JSON.stringify([{ Subnet: "10.88.0.0/16" }])));
 
     expect(() =>
       preparePortableExperimentalHost(
@@ -435,6 +435,43 @@ describe("preparePortableExperimentalHost", () => {
       ),
     ).toThrow(/unexpected subnet '10\.88\.0\.0\/16'/u);
     expect(docker).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses one configured network for portable host preparation (#9461)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const networkName = "openshell-portable-proof";
+    const docker = vi
+      .fn<(args: readonly string[], env: NodeJS.ProcessEnv) => SpawnResult>()
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result(1))
+      .mockReturnValueOnce(result());
+
+    preparePortableExperimentalHost(
+      {
+        NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+        OPENSHELL_DOCKER_NETWORK_NAME: networkName,
+      },
+      {
+        platform: "linux",
+        home,
+        uid: 1001,
+        systemctl: () => result(),
+        podman: () => result(0, "/run/user/1001/podman/podman.sock"),
+        docker,
+        hardenSocketDirectory: vi.fn(),
+        validateConfigAuthority: vi.fn(),
+      },
+      undefined,
+      { simulateExistingPortableNetwork: false },
+    );
+
+    expect(docker.mock.calls[1]?.[0].at(-1)).toBe(networkName);
+    expect(docker.mock.calls[2]?.[0].at(-1)).toBe(networkName);
+    expect(docker.mock.calls[3]?.[0][2]).toContain(networkName);
+    expect(docker.mock.calls[4]?.[0]).toEqual(expect.arrayContaining(["--network", networkName]));
   });
 
   it("forwards readiness deadlines to injected host command adapters (#9070)", () => {
@@ -662,11 +699,7 @@ describe("preparePortableExperimentalHost", () => {
       },
     );
 
-    expect(docker.mock.calls.map(([args]) => args[0])).toEqual([
-      "--version",
-      "inspect",
-      "network",
-    ]);
+    expect(docker.mock.calls.map(([args]) => args[0])).toEqual(["--version", "inspect", "network"]);
     expect(docker.mock.calls[2]?.[0]).toEqual([
       "network",
       "connect",

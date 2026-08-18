@@ -17,11 +17,13 @@ import {
 import { ensureConfigDir } from "../../state/config-io";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
   isPortableExperimentalProfile,
-  PORTABLE_DOCKER_NETWORK_NAME,
+  parseDockerNetworkIpamEntries,
   PORTABLE_DOCKER_NETWORK_SUBNET,
   PORTABLE_HOST_GATEWAY_IP,
   PORTABLE_LOCAL_REGISTRY,
+  resolveDockerDriverNetworkName,
 } from "../docker-driver-platform";
 import {
   inspectPortablePodmanReadiness,
@@ -297,42 +299,27 @@ function validateOwnedConfigAuthority(input: {
 function ensureRegistryContainer(
   env: NodeJS.ProcessEnv,
   docker: NonNullable<PortableHostPreparationDeps["docker"]>,
+  networkName: string,
 ): void {
   const networkInspection = docker(
-    [
-      "network",
-      "inspect",
-      "--format",
-      "{{range .IPAM.Config}}{{println .Subnet}}{{end}}",
-      PORTABLE_DOCKER_NETWORK_NAME,
-    ],
+    ["network", "inspect", "--format", DOCKER_NETWORK_IPAM_INSPECT_FORMAT, networkName],
     env,
   );
   if (networkInspection.error) {
     requireCommand(networkInspection, "Inspecting the portable sandbox network");
   }
   if (networkInspection.status === 0) {
-    const subnets = String(networkInspection.stdout ?? "")
-      .trim()
-      .split(/\s+/u)
-      .filter(Boolean);
+    const subnets = (parseDockerNetworkIpamEntries(String(networkInspection.stdout ?? "")) ?? [])
+      .map((entry) => entry.subnet)
+      .filter((subnet): subnet is string => Boolean(subnet));
     if (subnets.length !== 1 || subnets[0] !== PORTABLE_DOCKER_NETWORK_SUBNET) {
       throw new Error(
-        `Refusing to reuse network '${PORTABLE_DOCKER_NETWORK_NAME}' with unexpected subnet '${subnets.join(", ") || "none"}'. Expected ${PORTABLE_DOCKER_NETWORK_SUBNET}.`,
+        `Refusing to reuse network '${networkName}' with unexpected subnet '${subnets.join(", ") || "none"}'. Expected ${PORTABLE_DOCKER_NETWORK_SUBNET}.`,
       );
     }
   } else {
     requireCommand(
-      docker(
-        [
-          "network",
-          "create",
-          "--subnet",
-          PORTABLE_DOCKER_NETWORK_SUBNET,
-          PORTABLE_DOCKER_NETWORK_NAME,
-        ],
-        env,
-      ),
+      docker(["network", "create", "--subnet", PORTABLE_DOCKER_NETWORK_SUBNET, networkName], env),
       "Creating the portable sandbox network",
     );
   }
@@ -341,7 +328,7 @@ function ensureRegistryContainer(
     [
       "inspect",
       "--format",
-      `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks "${PORTABLE_DOCKER_NETWORK_NAME}"}}{{.IPAddress}}{{end}}`,
+      `{{ index .Config.Labels "com.nvidia.nemoclaw.portable" }} {{.State.Running}} {{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
       REGISTRY_CONTAINER,
     ],
     env,
@@ -367,14 +354,7 @@ function ensureRegistryContainer(
   if (exists && running === "true") {
     requireCommand(
       docker(
-        [
-          "network",
-          "connect",
-          "--ip",
-          PORTABLE_HOST_GATEWAY_IP,
-          PORTABLE_DOCKER_NETWORK_NAME,
-          REGISTRY_CONTAINER,
-        ],
+        ["network", "connect", "--ip", PORTABLE_HOST_GATEWAY_IP, networkName, REGISTRY_CONTAINER],
         env,
       ),
       "Connecting the managed portable registry to the sandbox network",
@@ -397,7 +377,7 @@ function ensureRegistryContainer(
         "--label",
         REGISTRY_LABEL,
         "--network",
-        PORTABLE_DOCKER_NETWORK_NAME,
+        networkName,
         "--ip",
         PORTABLE_HOST_GATEWAY_IP,
         "-p",
@@ -418,6 +398,7 @@ export function preparePortableExperimentalHost(
   expectedAuthority?: CheckpointPortableRuntimeAuthority | null,
 ): PortableHostPreparationResult | null {
   if (!isPortableExperimentalProfile(env)) return null;
+  const dockerNetworkName = resolveDockerDriverNetworkName(env);
   if ((deps.platform ?? process.platform) !== "linux") {
     throw new Error("The portable experimental profile requires Linux.");
   }
@@ -596,7 +577,7 @@ export function preparePortableExperimentalHost(
         timeout: REGISTRY_COMMAND_TIMEOUT_MS,
       }));
   requireDockerCompatibleCli(docker, podmanEnv);
-  ensureRegistryContainer(podmanEnv, docker);
+  ensureRegistryContainer(podmanEnv, docker, dockerNetworkName);
   if (socketAuthority) {
     (
       deps.assertSocketAuthority ??

@@ -28,7 +28,10 @@ import {
 } from "./docker-driver-gateway-process-identity";
 import { HOST_GATEWAY_PGREP_PATTERN } from "./host-gateway-process";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
-import { isPortableExperimentalProfile } from "./docker-driver-platform";
+import {
+  isPortableExperimentalProfile,
+  resolveDockerDriverNetworkName,
+} from "./docker-driver-platform";
 import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
@@ -260,7 +263,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
-      dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
+      dockerNetworkName: resolveDockerDriverNetworkName(),
       podmanSocketPath,
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,

@@ -6,6 +6,14 @@ import { resolveCurrentOpenShellComputePlan, usesManagedDockerGateway } from "./
 export { resolveCurrentOpenShellComputePlan } from "./compute/plan";
 
 export {
+  DEFAULT_DOCKER_DRIVER_NETWORK_NAME,
+  type DockerNetworkIpamEntry,
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+  resolveDockerDriverNetworkName,
+} from "./experimental/docker-network-authority";
+
+export {
   type ExperimentalOnboardProfile,
   EXPERIMENTAL_PROFILE_ENV,
   isPortableExperimentalProfile,

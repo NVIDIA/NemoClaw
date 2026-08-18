@@ -119,10 +119,11 @@ function proveAdmission(
   const home = fs.mkdtempSync(path.join(artifactRoot, "admitted-home-"));
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const authority = socketAuthority(uid, socketPath);
-  const dockerResults: Record<string, SpawnResult> = {
-    "--version": commandResult(),
-    inspect: commandResult(0, "1 true"),
-  };
+  const dockerResults: ReadonlyMap<string, SpawnResult> = new Map([
+    ["--version", commandResult()],
+    ["network inspect", commandResult(0, JSON.stringify([{ Subnet: "169.254.1.0/24" }]))],
+    ["inspect --format", commandResult(0, "1 true 169.254.1.2")],
+  ]);
   try {
     const prepared = preparePortableExperimentalHost(
       { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
@@ -154,7 +155,7 @@ function proveAdmission(
         },
         docker: (args) => {
           effects.push(`docker-compatible ${args.join(" ")}`);
-          const result = dockerResults[args[0] ?? ""];
+          const result = dockerResults.get(args.slice(0, 2).join(" "));
           assert.ok(result, `Unexpected Docker-compatible proof command: ${args.join(" ")}`);
           return result;
         },

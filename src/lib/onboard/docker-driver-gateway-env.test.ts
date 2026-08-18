@@ -37,6 +37,20 @@ function trustedPackageServiceOptions(home: string) {
 }
 
 describe("buildDockerDriverGatewayEnv", () => {
+  it("uses the shared configured Docker network authority (#9461)", () => {
+    vi.stubEnv("OPENSHELL_DOCKER_NETWORK_NAME", "openshell-portable-proof");
+
+    const env = buildDockerDriverGatewayEnv({
+      platform: "linux",
+      stateDir: "/tmp/nemoclaw-gateway-network-authority",
+      getDockerSupervisorImage: () => "supervisor:test",
+      resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+    });
+
+    expect(env.OPENSHELL_DOCKER_NETWORK_NAME).toBe("openshell-portable-proof");
+    vi.unstubAllEnvs();
+  });
+
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
     const env = buildDockerDriverGatewayEnv({
       platform: "linux",
@@ -98,9 +112,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       });
 
       expect(fs.existsSync(env.OPENSHELL_GATEWAY_CONFIG)).toBe(true);
-      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
-        "legacy-database",
-      );
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(stateDir, { recursive: true, force: true });
