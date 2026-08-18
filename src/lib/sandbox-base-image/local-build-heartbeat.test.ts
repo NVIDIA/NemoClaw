@@ -17,7 +17,7 @@ function heartbeatChild() {
   };
 }
 
-describe("local sandbox base-image build heartbeat", () => {
+describe("sandbox base-image Docker operation heartbeat", () => {
   it("runs independently of the synchronous build and stops afterward", () => {
     const fixture = heartbeatChild();
     fixture.spawnImpl.mockReturnValue(fixture.child);
