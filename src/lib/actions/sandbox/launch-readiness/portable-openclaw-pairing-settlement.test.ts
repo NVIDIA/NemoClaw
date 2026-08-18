@@ -94,6 +94,30 @@ function settlementDeps(overrides: Parameters<typeof settlePortableOpenClawPairi
   };
 }
 
+function expectApprovalScriptRejectsRequests(
+  rejectedRequests: readonly unknown[],
+  root: string,
+  approvalLog: string,
+  script: string,
+): void {
+  for (const rejected of rejectedRequests) {
+    fs.rmSync(approvalLog, { force: true });
+    const rejectedResult = spawnSync("sh", ["-s"], {
+      encoding: "utf8",
+      input: script,
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        APPROVAL_LOG: approvalLog,
+        PENDING_JSON: JSON.stringify(rejected),
+      },
+    });
+    expect(rejectedResult.status).toBe(0);
+    expect(parsePortableOpenClawPairingApprovalReceipt(rejectedResult.stdout)).toBe("rejected");
+    expect(fs.existsSync(approvalLog)).toBe(false);
+  }
+}
+
 describe("Portable OpenClaw pairing settlement", () => {
   const temporaryDirectories: string[] = [];
 
@@ -320,39 +344,29 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(script).toContain(buildTrustedProxyEnvSourceShell());
     expect(script).not.toContain('[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"');
 
-    for (const rejected of [
-      [{ ...request, scopes: ["operator.pairing"] }],
-      [{ ...request, scopes: [...request.scopes, "operator.admin"] }],
-      [{ ...request, scopes: [...request.scopes, "operator.write"] }],
-      [{ ...request, requestedScopes: request.scopes }],
-      [{ ...request, clientId: "unknown-client" }],
-      [{ ...request, clientMode: "webchat" }],
-      [{ ...request, roles: ["operator", "operator"] }],
-      [{ ...request, role: "admin" }],
-      [{ ...requestWithoutRoleFields, roles: ["operator"] }],
-      [{ ...requestWithoutRoleFields, role: "operator" }],
-      [{ ...request, deviceId: "different-device" }],
-      [{ ...request, publicKey: "different-public-key" }],
-      [{ ...request, publicKeyPem: "conflicting-public-key" }],
-      [{ ...request, publicKeyPem: null }],
-      [{ ...request, isRepair: "true" }],
-      [{ ...request }, { ...request, requestId: "request-2" }],
-    ]) {
-      fs.rmSync(approvalLog, { force: true });
-      const rejectedResult = spawnSync("sh", ["-s"], {
-        encoding: "utf8",
-        input: script,
-        env: {
-          ...process.env,
-          PATH: `${root}:${process.env.PATH}`,
-          APPROVAL_LOG: approvalLog,
-          PENDING_JSON: JSON.stringify(rejected),
-        },
-      });
-      expect(rejectedResult.status).toBe(0);
-      expect(parsePortableOpenClawPairingApprovalReceipt(rejectedResult.stdout)).toBe("rejected");
-      expect(fs.existsSync(approvalLog)).toBe(false);
-    }
+    expectApprovalScriptRejectsRequests(
+      [
+        [{ ...request, scopes: ["operator.pairing"] }],
+        [{ ...request, scopes: [...request.scopes, "operator.admin"] }],
+        [{ ...request, scopes: [...request.scopes, "operator.write"] }],
+        [{ ...request, requestedScopes: request.scopes }],
+        [{ ...request, clientId: "unknown-client" }],
+        [{ ...request, clientMode: "webchat" }],
+        [{ ...request, roles: ["operator", "operator"] }],
+        [{ ...request, role: "admin" }],
+        [{ ...requestWithoutRoleFields, roles: ["operator"] }],
+        [{ ...requestWithoutRoleFields, role: "operator" }],
+        [{ ...request, deviceId: "different-device" }],
+        [{ ...request, publicKey: "different-public-key" }],
+        [{ ...request, publicKeyPem: "conflicting-public-key" }],
+        [{ ...request, publicKeyPem: null }],
+        [{ ...request, isRepair: "true" }],
+        [{ ...request }, { ...request, requestId: "request-2" }],
+      ],
+      root,
+      approvalLog,
+      script,
+    );
   });
 
   it("pins the canonical request producer to the owning gateway and discards output (#9207)", () => {
