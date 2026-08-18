@@ -20,12 +20,14 @@ import {
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import {
   catalogueTarget,
+  E2E_TARGET_CATALOGUE,
   validateE2eTargetCatalogue,
 } from "../../../tools/e2e/target-catalogue.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
 import { COMMON_EGRESS_TEST_TIMEOUT_MS } from "../live/common-egress-agent-helpers.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import { requireFixture } from "./require-fixture";
 
 function runReleaseWaiverAuthorization(
@@ -92,6 +94,14 @@ if [[ -n "$output_file" ]]; then printf '%s' "$body" >"$output_file"; printf '20
     : [];
   fs.rmSync(fixture, { force: true, recursive: true });
   return Object.assign(result, { permissionChecks });
+}
+
+function expectCatalogueOwningPathsToExist(): void {
+  for (const target of E2E_TARGET_CATALOGUE) {
+    for (const owner of target.owningPaths) {
+      expect(fs.existsSync(path.join(REPO_ROOT, owner)), `${target.id}: ${owner}`).toBe(true);
+    }
+  }
 }
 
 describe("e2e workflow boundary", () => {
@@ -394,6 +404,34 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflow(workflow)).toContain(
       "catalogue-brave-nvidia-inference must cap matrix concurrency at 2",
     );
+
+    const personal = catalogueTarget("common-egress-agent-openclaw-personal-stock-price");
+    expect(personal).toMatchObject({
+      profile: "nvidia-inference",
+      runnerComparison: false,
+      selector: "^common-egress.+C4.+$",
+      shard: "openclaw-personal-stock-price",
+      environment: {
+        BRAVE_API_KEY: "",
+        NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+        TAVILY_API_KEY: "",
+      },
+      owningPaths: expect.arrayContaining([
+        "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml",
+        "nemoclaw-blueprint/policies/tiers.yaml",
+        "src/lib/onboard/policy-selection.ts",
+        "src/lib/onboard/policy-tier-suppression.ts",
+        "src/lib/policy/index.ts",
+        "test/e2e/live/openclaw-agent-assertion.ts",
+        "test/e2e/live/personal-egress-live-proof.ts",
+      ]),
+    });
+    expect(
+      buildE2eWorkflowPlan({ targets: personal.id }).catalogueMatrices["nvidia-inference"].map(
+        ({ id }) => id,
+      ),
+    ).toEqual([personal.id]);
   });
 
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
@@ -567,6 +605,10 @@ describe("e2e workflow boundary", () => {
       );
     },
   );
+
+  it("keeps every catalogue owning path bound to a repository file or directory", () => {
+    expectCatalogueOwningPathsToExist();
+  });
 
   it.each(
     Array.from([["hermes-dashboard", "hermes-e2e"]] as const, ([legacy, canonical]) => ({

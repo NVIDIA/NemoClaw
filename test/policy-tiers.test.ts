@@ -214,16 +214,16 @@ describe("tiers", () => {
   });
 
   describe("tier: personal", () => {
-    it("includes every maintained preset", () => {
-      const available = policies.listPresets().map((preset: Preset) => preset.name);
-      const personal = mustGetTier("personal").presets.map((preset: TierPreset) => preset.name);
-
-      expect(new Set(personal)).toEqual(new Set(available));
-      expect(personal).toHaveLength(available.length);
+    it("uses one broad web authority instead of overlapping endpoint presets (#9206)", () => {
+      expect(mustGetTier("personal").presets).toEqual([
+        { name: "personal-open-internet", access: "read-write" },
+      ]);
     });
 
-    it.each(mustGetTier("personal").presets)("defaults $name to read-write", (preset) => {
-      expect(preset.access).toBe("read-write");
+    it("describes the trusted Personal boundary", () => {
+      expect(mustGetTier("personal").description).toMatch(
+        /every sandbox binary.*public and private.*80 and 443/i,
+      );
     });
   });
 

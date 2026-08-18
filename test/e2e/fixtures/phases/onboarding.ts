@@ -212,9 +212,24 @@ export class OnboardingPhaseFixture {
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
     this.registerSandboxCleanup(sandboxName);
+    const policyEnv: NodeJS.ProcessEnv = environment.policyTier
+      ? {
+          NEMOCLAW_POLICY_MODE: "suggested",
+          NEMOCLAW_POLICY_TIER: environment.policyTier,
+          ...(environment.policyTier === "personal"
+            ? {
+                BRAVE_API_KEY: "",
+                NEMOCLAW_POLICY_PRESETS: "",
+                NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+                NEMOCLAW_WEB_SEARCH_PROVIDER: "none",
+                TAVILY_API_KEY: "",
+              }
+            : {}),
+        }
+      : {};
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
       artifactName: "onboard-cloud-openclaw",
-      env: commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey }),
+      env: commandEnv(sandboxName, { NVIDIA_INFERENCE_API_KEY: apiKey, ...policyEnv }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });

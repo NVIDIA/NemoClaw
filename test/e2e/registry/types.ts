@@ -184,6 +184,7 @@ export interface TargetEnvironment {
   install: string;
   runtime: string;
   onboarding: string;
+  policyTier?: "balanced" | "open" | "personal";
   // Optional lifecycle profile id. When set to a profile supported by
   // LifecyclePhaseFixture, the live registry test runs that fixture between
   // onboarding and state-validation. Targets that do not need a post-onboard

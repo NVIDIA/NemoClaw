@@ -251,8 +251,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   // runs syncPresetSelection (signalled by onSelection firing) qualifies:
   //   - the ordinary skip path (NEMOCLAW_POLICY_MODE=skip/none/no) returns []
   //     without touching the live set, so persisting [] would wipe real
-  //     policies. A skip with excluded presets instead reconciles and persists
-  //     the retained live set;
+  //     policies. A skip with exclusions or a missing tier-defining preset
+  //     instead reconciles and persists the retained live set;
   //   - the resume path only checks recorded presets are a *subset* of what's
   //     applied (arePolicyPresetsApplied), not that the live set matches — an
   //     interrupted prior run may still have extra applied presets (e.g. an
@@ -319,8 +319,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // interruption can't leave a completed-resumable session without the
     // finalized marker (--resume would then skip the persist permanently).
     // Skipped only when no reconciliation occurred (including ordinary skip
-    // without exclusions), which leaves the live applied set untouched and
-    // would otherwise be clobbered with []. See #4621.
+    // without exclusions or a missing tier requirement), which leaves the live
+    // applied set untouched and would otherwise be clobbered with []. See
+    // #4621.
     if (reflectsLiveAppliedSet) {
       deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
     }
