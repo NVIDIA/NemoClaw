@@ -19,7 +19,10 @@ import {
   portableHostPreparationInternals,
   preparePortableExperimentalHost,
 } from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
-import { PORTABLE_REGISTRY_IP } from "../../../src/lib/onboard/experimental/portable-profile.ts";
+import {
+  PORTABLE_HOST_GATEWAY_IP,
+  PORTABLE_REGISTRY_IP,
+} from "../../../src/lib/onboard/experimental/portable-profile.ts";
 import { test } from "../fixtures/e2e-test.ts";
 
 type ExpectedState = "missing" | "delegated";
@@ -186,6 +189,12 @@ function proveAdmission(
           assert.ok(result, `Unexpected Docker-compatible proof command: ${args.join(" ")}`);
           return result;
         },
+        ip: (args) => {
+          assert.deepEqual(args, ["-o", "-4", "address", "show"]);
+          effects.push("portable host gateway address inspection");
+          return commandResult(0, `1: lo    inet ${PORTABLE_HOST_GATEWAY_IP}/32 scope global lo\n`);
+        },
+        sudo: () => assert.fail("Existing portable host gateway address must not require sudo."),
       },
     );
     assert.ok(prepared, "Delegated CPU hierarchy must complete portable host admission.");
