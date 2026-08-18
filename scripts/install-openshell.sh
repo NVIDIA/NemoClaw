@@ -254,33 +254,6 @@ openshell_pinned_sha256() {
     v0.0.101:openshell.rb)
       printf '%s\n' "87fadc7b0c854aa44f71d5b3a206865070117cd27825d59c61da252a99f402a2"
       ;;
-    v0.0.106:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0"
-      ;;
-    v0.0.106:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55"
-      ;;
-    v0.0.106:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905"
-      ;;
-    v0.0.106:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c"
-      ;;
-    v0.0.106:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "22b7781249e3487085694d0f0f3797a0e549018b81144cd24b2f1118c730d1c7"
-      ;;
-    v0.0.106:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "de8f90db9dd0d3b47855b2b6d2542660730917bd1249e53140300990a8690b94"
-      ;;
-    v0.0.106:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355"
-      ;;
-    v0.0.106:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "5e5d758d53c6abc6d7a936be907dafa9dfce10423289536f39b50abe294dfafd"
-      ;;
-    v0.0.106:openshell.rb)
-      printf '%s\n' "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642"
-      ;;
     *)
       return 1
       ;;
@@ -411,11 +384,6 @@ pinned_sandbox_build_version() {
     a2704babbb468fd0a359bfdd9844de71095b730758541b4ca8cbab77d4018920 | \
       88300e35f153123e4dc3021c537834dd6c0a09665a4a6d3974cd285d512345c4)
       printf '%s\n' "0.0.101"
-      ;;
-    # OpenShell v0.0.106 standalone sandbox binaries.
-    0031c6b257a23ecc1a2333153918324f3af0005e68abde388858d682ec646c55 | \
-      019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8)
-      printf '%s\n' "0.0.106"
       ;;
     *)
       return 1

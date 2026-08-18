@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,8 +60,7 @@ export const OPENSHELL_QUALIFICATION_INSTALL_ENV = Object.freeze({
   NEMOCLAW_OPENSHELL_PIN_VERSION: "${{ steps.openshell_qualification.outputs.version }}",
 });
 
-export const OPENSHELL_QUALIFICATION_INSTALL_RUN =
-  "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh";
+export const OPENSHELL_QUALIFICATION_INSTALL_RUN = `env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN ${TOOL_COMMAND} install`;
 
 export const OPENSHELL_QUALIFICATION_SUPERVISOR_OUTPUT =
   "${{ steps.openshell_qualification.outputs.supervisor_image }}";
@@ -69,20 +69,48 @@ export function openShellQualificationProvenanceCommand(outputPath: string): str
   return `${TOOL_COMMAND} provenance "${outputPath}"`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+export function materializeOpenShellQualificationInstaller(
+  installerPath: string = INSTALLER_PATH,
+): string {
+  let source = fs.readFileSync(installerPath, "utf8");
+  for (const [asset, sha256] of Object.entries(OPENSHELL_QUALIFICATION.archiveSha256)) {
+    const pattern = new RegExp(
+      `    v${escapeRegExp(OPENSHELL_QUALIFICATION.supportedProductVersion)}:${escapeRegExp(asset)}\\)\\n` +
+        `      printf '%s\\\\n' "[a-f0-9]{64}"`,
+      "gu",
+    );
+    const replacement =
+      `    ${OPENSHELL_QUALIFICATION.releaseTag}:${asset})\n` + `      printf '%s\\n' "${sha256}"`;
+    if ([...source.matchAll(pattern)].length !== 1) {
+      throw new Error(`canonical installer has no unique pin owner for ${asset}`);
+    }
+    source = source.replace(pattern, replacement);
+  }
+  const fallbackPattern =
+    /(pinned_sandbox_build_version\(\) \{[\s\S]*?)(    \*\)\n      return 1)/u;
+  const fallback = fallbackPattern.exec(source);
+  if (!fallback) throw new Error("canonical installer has no sandbox identity fallback");
+  const sandboxIdentity =
+    `    # OpenShell ${OPENSHELL_QUALIFICATION.releaseTag} qualification sandbox.\n` +
+    `    ${OPENSHELL_QUALIFICATION.binarySha256.standaloneSandbox})\n` +
+    `      printf '%s\\n' "${OPENSHELL_QUALIFICATION.version}"\n` +
+    `      ;;\n`;
+  return source.replace(fallbackPattern, `$1${sandboxIdentity}$2`);
+}
+
 export function validateOpenShellQualificationInstaller(
   installerPath: string = INSTALLER_PATH,
 ): string[] {
-  const source = fs.readFileSync(installerPath, "utf8");
-  const failures: string[] = [];
-  for (const [asset, sha256] of Object.entries(OPENSHELL_QUALIFICATION.archiveSha256)) {
-    const pin =
-      `${OPENSHELL_QUALIFICATION.releaseTag}:${asset})\n` + `      printf '%s\\n' "${sha256}"`;
-    if (!source.includes(pin)) failures.push(`installer pin is missing for ${asset}`);
+  try {
+    materializeOpenShellQualificationInstaller(installerPath);
+    return [];
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
   }
-  if (!source.includes(OPENSHELL_QUALIFICATION.binarySha256.standaloneSandbox)) {
-    failures.push("installer identity is missing for the Linux x64 sandbox binary");
-  }
-  return failures;
 }
 
 export function writeOpenShellQualificationOutputs(outputPath: string): void {
@@ -96,6 +124,18 @@ export function writeOpenShellQualificationOutputs(outputPath: string): void {
     `version=${OPENSHELL_QUALIFICATION.version}\nsupervisor_image=${supervisorImage}\n`,
     "utf8",
   );
+}
+
+export function installOpenShellQualification(): number {
+  const installer = materializeOpenShellQualificationInstaller();
+  const result = spawnSync("bash", ["-s", "--"], {
+    env: process.env,
+    input: installer,
+    stdio: ["pipe", "inherit", "inherit"],
+  });
+  if (result.error) throw result.error;
+  if (result.signal) throw new Error(`OpenShell qualification installer received ${result.signal}`);
+  return result.status ?? 1;
 }
 
 export function writeOpenShellQualificationProvenance(outputPath: string): void {
@@ -121,8 +161,14 @@ export function writeOpenShellQualificationProvenance(outputPath: string): void 
 
 function runCli(): void {
   const [command, outputPath, ...extra] = process.argv.slice(2);
+  if (command === "install" && !outputPath && extra.length === 0) {
+    process.exitCode = installOpenShellQualification();
+    return;
+  }
   if (!outputPath || extra.length > 0 || (command !== "select" && command !== "provenance")) {
-    throw new Error("usage: openshell-qualification.mts select OUTPUT | provenance OUTPUT");
+    throw new Error(
+      "usage: openshell-qualification.mts install | select OUTPUT | provenance OUTPUT",
+    );
   }
   if (command === "select") writeOpenShellQualificationOutputs(outputPath);
   else writeOpenShellQualificationProvenance(outputPath);

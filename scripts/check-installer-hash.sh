@@ -119,11 +119,10 @@ check_openshell_release_assets() {
   local supervisor_runtime="${REPO_ROOT}/src/lib/onboard/docker-driver-gateway-runtime.ts"
   local release_base workspace manifests spec manifest expected actual source asset pinned upstream formula_asset
   local matches required_manifest required_matches formula_expected="" formula_matches=0 formula_url=""
-  local pin_records parser_error parser_errors parsed_version release_version record_extra selected_release_version=""
-  local release_versions="" version_pin_records
+  local pin_records parser_error parser_errors parsed_version release_version="" record_extra
   local allowlist_entry allowlist_version allowlist_extra
   local formula_allowlist_entry formula_allowlist_version formula_allowlist_asset formula_allowlist_url formula_allowlist_digest formula_allowlist_extra
-  local count brev_count published_count expected_published_count failures=0
+  local count=0 brev_count=0 published_count=0 expected_published_count=0 failures=0
   local -a manifest_specs=()
   workspace=$(mktemp -d)
   manifests="${workspace}/published-sha256.txt"
@@ -163,20 +162,15 @@ check_openshell_release_assets() {
       echo "  STALE: trusted parser returned an invalid installer pin record."
       return 1
     fi
-    case " ${release_versions} " in
-      *" ${parsed_version} "*) ;;
-      *) release_versions="${release_versions:+${release_versions} }${parsed_version}" ;;
-    esac
+    if [[ -z "$release_version" ]]; then
+      release_version="$parsed_version"
+    elif [[ "$parsed_version" != "$release_version" ]]; then
+      echo "  STALE: trusted parser returned multiple OpenShell release versions."
+      return 1
+    fi
     case "$source" in
-      installer) ;;
-      "Brev launchable")
-        if [[ -z "$selected_release_version" ]]; then
-          selected_release_version="$parsed_version"
-        elif [[ "$selected_release_version" != "$parsed_version" ]]; then
-          echo "  STALE: trusted parser returned multiple Brev OpenShell release versions."
-          return 1
-        fi
-        ;;
+      installer) count=$((count + 1)) ;;
+      "Brev launchable") brev_count=$((brev_count + 1)) ;;
       *)
         echo "  STALE: trusted parser returned an unknown pin source."
         return 1
@@ -184,172 +178,148 @@ check_openshell_release_assets() {
     esac
   done <<<"$pin_records"
 
-  [[ -n "$selected_release_version" ]] || {
-    echo "  STALE: trusted parser returned no selected Brev OpenShell release."
+  if [[ "$count" -ne 9 ]]; then
+    echo "  STALE: expected 9 pinned OpenShell v${release_version:-unknown} assets, found ${count}."
+    failures=$((failures + 1))
+  fi
+  if [[ "$brev_count" -ne 2 ]]; then
+    echo "  STALE: expected 2 pinned Brev OpenShell v${release_version:-unknown} CLI assets, found ${brev_count}."
+    failures=$((failures + 1))
+  fi
+  if [[ "$failures" -ne 0 ]]; then
+    return "$failures"
+  fi
+
+  for allowlist_entry in "${OPENSHELL_RELEASE_MANIFEST_ALLOWLIST[@]}"; do
+    IFS='|' read -r allowlist_version manifest expected allowlist_extra <<<"$allowlist_entry"
+    if [[ ! "$allowlist_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$expected" =~ ^[a-f0-9]{64}$ || -z "$manifest" || -n "$allowlist_extra" ]]; then
+      echo "  STALE: trusted OpenShell release-manifest allowlist is invalid."
+      return 1
+    fi
+    if [[ "$allowlist_version" == "$release_version" ]]; then
+      manifest_specs+=("${manifest}:${expected}")
+    fi
+  done
+
+  if [[ "${#manifest_specs[@]}" -eq 0 ]]; then
+    echo "  STALE: OpenShell v${release_version} is not in the trusted release-manifest allowlist."
     return 1
-  }
-
-  for release_version in $release_versions; do
-    manifests="${workspace}/published-sha256-${release_version}.txt"
-    : >"$manifests"
-    manifest_specs=()
-    formula_expected=""
-    formula_matches=0
-    formula_url=""
-    count=0
-    brev_count=0
-    published_count=0
-    version_pin_records=""
-
-    while IFS=$'\t' read -r parsed_version source asset pinned record_extra; do
-      [[ "$parsed_version" == "$release_version" ]] || continue
-      version_pin_records+="${parsed_version}"$'\t'"${source}"$'\t'"${asset}"$'\t'"${pinned}"$'\n'
-      case "$source" in
-        installer) count=$((count + 1)) ;;
-        "Brev launchable") brev_count=$((brev_count + 1)) ;;
-      esac
-    done <<<"$pin_records"
-
-    if [[ "$count" -ne 9 ]]; then
-      echo "  STALE: expected 9 pinned OpenShell v${release_version} assets, found ${count}."
-      failures=$((failures + 1))
-    fi
-    if [[ "$release_version" == "$selected_release_version" && "$brev_count" -ne 2 ]]; then
-      echo "  STALE: expected 2 pinned Brev OpenShell v${release_version} CLI assets, found ${brev_count}."
-      failures=$((failures + 1))
-    elif [[ "$release_version" != "$selected_release_version" && "$brev_count" -ne 0 ]]; then
-      echo "  STALE: unselected OpenShell v${release_version} must not have Brev pins."
-      failures=$((failures + 1))
-    fi
-    [[ "$failures" -eq 0 ]] || return "$failures"
-
-    for allowlist_entry in "${OPENSHELL_RELEASE_MANIFEST_ALLOWLIST[@]}"; do
-      IFS='|' read -r allowlist_version manifest expected allowlist_extra <<<"$allowlist_entry"
-      if [[ ! "$allowlist_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! "$expected" =~ ^[a-f0-9]{64}$ || -z "$manifest" || -n "$allowlist_extra" ]]; then
-        echo "  STALE: trusted OpenShell release-manifest allowlist is invalid."
-        return 1
-      fi
-      if [[ "$allowlist_version" == "$release_version" ]]; then
-        manifest_specs+=("${manifest}:${expected}")
-      fi
-    done
-
-    if [[ "${#manifest_specs[@]}" -eq 0 ]]; then
-      echo "  STALE: OpenShell v${release_version} is not in the trusted release-manifest allowlist."
-      return 1
-    fi
-    if [[ "${#manifest_specs[@]}" -ne 3 ]]; then
-      echo "  STALE: OpenShell v${release_version} does not have exactly three trusted release-manifest digests."
-      return 1
-    fi
-    for required_manifest in \
-      openshell-checksums-sha256.txt \
-      openshell-gateway-checksums-sha256.txt \
-      openshell-sandbox-checksums-sha256.txt; do
-      required_matches=0
-      for spec in "${manifest_specs[@]}"; do
-        [[ "${spec%%:*}" == "$required_manifest" ]] && required_matches=$((required_matches + 1))
-      done
-      if [[ "$required_matches" -ne 1 ]]; then
-        echo "  STALE: OpenShell v${release_version} does not have exactly one trusted ${required_manifest} digest."
-        failures=$((failures + 1))
-      fi
-    done
-    [[ "$failures" -eq 0 ]] || return "$failures"
-
-    for formula_allowlist_entry in "${OPENSHELL_RELEASE_FORMULA_ALLOWLIST[@]}"; do
-      IFS='|' read -r formula_allowlist_version formula_allowlist_asset formula_allowlist_url formula_allowlist_digest formula_allowlist_extra <<<"$formula_allowlist_entry"
-      if [[ ! "$formula_allowlist_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$formula_allowlist_asset" != "openshell.rb" || "$formula_allowlist_url" != "https://github.com/NVIDIA/OpenShell/releases/download/v${formula_allowlist_version}/${formula_allowlist_asset}" || ! "$formula_allowlist_digest" =~ ^[a-f0-9]{64}$ || -n "$formula_allowlist_extra" ]]; then
-        echo "  STALE: trusted OpenShell formula allowlist is invalid."
-        return 1
-      fi
-      if [[ "$formula_allowlist_version" == "$release_version" ]]; then
-        formula_matches=$((formula_matches + 1))
-        formula_url="$formula_allowlist_url"
-        formula_expected="$formula_allowlist_digest"
-      fi
-    done
-    if [[ "$formula_matches" -ne 1 ]]; then
-      echo "  STALE: OpenShell v${release_version} does not have exactly one trusted openshell.rb digest."
-      return 1
-    fi
-
-    release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
-    echo "Checking OpenShell v${release_version} release assets..."
+  fi
+  if [[ "${#manifest_specs[@]}" -ne 3 ]]; then
+    echo "  STALE: OpenShell v${release_version} does not have exactly three trusted release-manifest digests."
+    return 1
+  fi
+  for required_manifest in \
+    openshell-checksums-sha256.txt \
+    openshell-gateway-checksums-sha256.txt \
+    openshell-sandbox-checksums-sha256.txt; do
+    required_matches=0
     for spec in "${manifest_specs[@]}"; do
-      manifest="${spec%%:*}"
-      expected="${spec#*:}"
-      if ! fetch_file "${release_base}/${manifest}" "${workspace}/${release_version}-${manifest}"; then
-        echo "  STALE: unable to download ${manifest}."
-        failures=$((failures + 1))
-        continue
+      if [[ "${spec%%:*}" == "$required_manifest" ]]; then
+        required_matches=$((required_matches + 1))
       fi
-      if ! actual=$(sha256_file "${workspace}/${release_version}-${manifest}"); then
-        echo "  STALE: unable to hash ${manifest}."
-        failures=$((failures + 1))
-        continue
-      fi
-      if [[ "$actual" != "$expected" ]]; then
-        echo "  STALE: ${manifest} digest does not match the pinned v${release_version} release asset."
-        echo "    pinned:   ${expected}"
-        echo "    upstream: ${actual}"
-        failures=$((failures + 1))
-        continue
-      fi
-      echo "  OK: ${manifest} (${actual})"
-      cat "${workspace}/${release_version}-${manifest}" >>"$manifests"
     done
-
-    while IFS=$'\t' read -r parsed_version source asset pinned record_extra; do
-      [[ -n "$parsed_version" ]] || continue
-      if [[ "$asset" == "openshell.rb" ]]; then
-        formula_asset="${workspace}/${asset}"
-        if ! fetch_file "$formula_url" "$formula_asset"; then
-          echo "  STALE: unable to download ${source} ${asset}."
-          failures=$((failures + 1))
-          continue
-        fi
-        if ! actual=$(sha256_file "$formula_asset"); then
-          echo "  STALE: unable to hash ${source} ${asset}."
-          failures=$((failures + 1))
-          continue
-        fi
-        if [[ "$actual" != "$formula_expected" ]]; then
-          echo "  STALE: ${source} ${asset} does not match the base-trusted v${release_version} formula digest."
-          echo "    trusted:  ${formula_expected}"
-          echo "    upstream: ${actual}"
-          failures=$((failures + 1))
-        elif [[ "$pinned" == "$formula_expected" ]]; then
-          published_count=$((published_count + 1))
-          echo "  OK: ${source} ${asset} (${pinned})"
-        else
-          echo "  STALE: ${source} ${asset} pin does not match the base-trusted v${release_version} formula digest."
-          echo "    pinned:   ${pinned}"
-          echo "    trusted:  ${formula_expected}"
-          failures=$((failures + 1))
-        fi
-        continue
-      fi
-      matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
-      upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
-      if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
-        published_count=$((published_count + 1))
-        echo "  OK: ${source} ${asset} (${pinned})"
-      else
-        echo "  STALE: ${source} ${asset} does not match exactly one v${release_version} checksum entry."
-        echo "    pinned:   ${pinned}"
-        echo "    upstream: ${upstream:-missing}"
-        echo "    matches:  ${matches}"
-        failures=$((failures + 1))
-      fi
-    done <<<"$version_pin_records"
-
-    expected_published_count=$((count + brev_count))
-    if [[ "$published_count" -ne "$expected_published_count" ]]; then
-      echo "  STALE: expected all ${expected_published_count} pinned asset references for v${release_version}, matched ${published_count}."
+    if [[ "$required_matches" -ne 1 ]]; then
+      echo "  STALE: OpenShell v${release_version} does not have exactly one trusted ${required_manifest} digest."
       failures=$((failures + 1))
     fi
   done
+  if [[ "$failures" -ne 0 ]]; then
+    return "$failures"
+  fi
+
+  for formula_allowlist_entry in "${OPENSHELL_RELEASE_FORMULA_ALLOWLIST[@]}"; do
+    IFS='|' read -r formula_allowlist_version formula_allowlist_asset formula_allowlist_url formula_allowlist_digest formula_allowlist_extra <<<"$formula_allowlist_entry"
+    if [[ ! "$formula_allowlist_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$formula_allowlist_asset" != "openshell.rb" || "$formula_allowlist_url" != "https://github.com/NVIDIA/OpenShell/releases/download/v${formula_allowlist_version}/${formula_allowlist_asset}" || ! "$formula_allowlist_digest" =~ ^[a-f0-9]{64}$ || -n "$formula_allowlist_extra" ]]; then
+      echo "  STALE: trusted OpenShell formula allowlist is invalid."
+      return 1
+    fi
+    if [[ "$formula_allowlist_version" == "$release_version" ]]; then
+      formula_matches=$((formula_matches + 1))
+      formula_url="$formula_allowlist_url"
+      formula_expected="$formula_allowlist_digest"
+    fi
+  done
+
+  if [[ "$formula_matches" -ne 1 ]]; then
+    echo "  STALE: OpenShell v${release_version} does not have exactly one trusted openshell.rb digest."
+    return 1
+  fi
+
+  release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${release_version}"
+  echo "Checking OpenShell v${release_version} release assets..."
+  for spec in "${manifest_specs[@]}"; do
+    manifest="${spec%%:*}"
+    expected="${spec#*:}"
+    if ! fetch_file "${release_base}/${manifest}" "${workspace}/${manifest}"; then
+      echo "  STALE: unable to download ${manifest}."
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! actual=$(sha256_file "${workspace}/${manifest}"); then
+      echo "  STALE: unable to hash ${manifest}."
+      failures=$((failures + 1))
+      continue
+    fi
+    if [[ "$actual" != "$expected" ]]; then
+      echo "  STALE: ${manifest} digest does not match the pinned v${release_version} release asset."
+      echo "    pinned:   ${expected}"
+      echo "    upstream: ${actual}"
+      failures=$((failures + 1))
+      continue
+    fi
+    echo "  OK: ${manifest} (${actual})"
+    cat "${workspace}/${manifest}" >>"$manifests"
+  done
+
+  while IFS=$'\t' read -r parsed_version source asset pinned record_extra; do
+    if [[ "$asset" == "openshell.rb" ]]; then
+      formula_asset="${workspace}/${asset}"
+      if ! fetch_file "$formula_url" "$formula_asset"; then
+        echo "  STALE: unable to download ${source} ${asset}."
+        failures=$((failures + 1))
+        continue
+      fi
+      if ! actual=$(sha256_file "$formula_asset"); then
+        echo "  STALE: unable to hash ${source} ${asset}."
+        failures=$((failures + 1))
+        continue
+      fi
+      if [[ "$actual" != "$formula_expected" ]]; then
+        echo "  STALE: ${source} ${asset} does not match the base-trusted v${release_version} formula digest."
+        echo "    trusted:  ${formula_expected}"
+        echo "    upstream: ${actual}"
+        failures=$((failures + 1))
+      elif [[ "$pinned" == "$formula_expected" ]]; then
+        published_count=$((published_count + 1))
+        echo "  OK: ${source} ${asset} (${pinned})"
+      else
+        echo "  STALE: ${source} ${asset} pin does not match the base-trusted v${release_version} formula digest."
+        echo "    pinned:   ${pinned}"
+        echo "    trusted:  ${formula_expected}"
+        failures=$((failures + 1))
+      fi
+      continue
+    fi
+    matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
+    upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
+    if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
+      published_count=$((published_count + 1))
+      echo "  OK: ${source} ${asset} (${pinned})"
+    else
+      echo "  STALE: ${source} ${asset} does not match exactly one v${release_version} checksum entry."
+      echo "    pinned:   ${pinned}"
+      echo "    upstream: ${upstream:-missing}"
+      echo "    matches:  ${matches}"
+      failures=$((failures + 1))
+    fi
+  done <<<"$pin_records"
+
+  expected_published_count=$((count + brev_count))
+  if [[ "$published_count" -ne "$expected_published_count" ]]; then
+    echo "  STALE: expected all ${expected_published_count} pinned asset references for v${release_version}, matched ${published_count}."
+    failures=$((failures + 1))
+  fi
   return "$failures"
 }
 
