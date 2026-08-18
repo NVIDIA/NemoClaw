@@ -78,6 +78,19 @@ describe("OpenClaw privileged config capture script", () => {
     expect(result).toEqual({ status: 0, stdout: expected, stderr: "" });
   });
 
+  it("returns all bytes for a stable file at the 16 MiB limit", () => {
+    const directory = fixtureDirectory();
+    const expected = Buffer.alloc(MAX_CONFIG_BYTES, 0xa5);
+    fs.writeFileSync(path.join(directory, CONFIG_NAME), expected);
+
+    const result = runCapture(directory);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toHaveLength(expected.length);
+    expect(result.stdout.equals(expected)).toBe(true);
+  });
+
   it.each([
     {
       kind: "symbolic link",
