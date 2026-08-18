@@ -2549,7 +2549,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       state.skipHostInferenceSmoke = reuseGatewayCredential;
       state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
     } else {
-      await ensureApiKey();
+      if (credentialPrompt.returningToProviderSelection(await ensureApiKey())) return "retry-selection";
     }
     state.model = await state.nvidiaFeaturedModels!.select(
       requestedModel || (typeof state.model === "string" ? state.model : null),
