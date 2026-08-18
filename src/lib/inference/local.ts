@@ -357,18 +357,20 @@ export function probeVllmModels(
   }
 }
 
-// A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
-// a captive HTTP_PROXY, a stale listener, or a stub on the loopback port can
-// all answer with arbitrary 2xx bodies that look healthy at the curl-status
-// level. The authoritative signal is the Ollama wire format itself:
-// `{ "models": [...] }`. An empty array is fine — that just means no models
-// pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
-// not come from Ollama and the probe should not call it healthy. (#4275)
+// A successful `/api/tags` response proves Ollama health only when its body
+// contains a `models` array of objects. An empty array is valid. (#4275)
 export function isValidOllamaTagsResponseBody(body: string): boolean {
   if (!body) return false;
   try {
     const parsed = JSON.parse(body);
-    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
+    return (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      Array.isArray(parsed.models) &&
+      parsed.models.every(
+        (model: unknown) => model !== null && typeof model === "object" && !Array.isArray(model),
+      )
+    );
   } catch {
     return false;
   }

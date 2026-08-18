@@ -284,6 +284,27 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
   });
 
+  it.each(['{"models":[null]}', '{"models":[1]}', '{"models":[[]]}'])(
+    "does not treat malformed model entries as a live Windows daemon %# (#9348)",
+    (body) => {
+      const deps = buildDeps({
+        isWsl: vi.fn(() => true),
+        detectWindowsHostOllama: vi.fn(() => ({
+          installed: true,
+          installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+          loopbackOnly: false,
+        })),
+        dockerCapture: vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => body),
+      });
+
+      const state = detectWithDeps(deps);
+
+      expect(state.hasWindowsOllama).toBe(true);
+      expect(state.windowsOllamaReachable).toBe(false);
+      expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    },
+  );
+
   it("does not run the Windows-host probe without Docker Desktop WSL integration (#8127)", () => {
     const dockerCapture = vi.fn<DetectInferenceProviderHostStateDeps["dockerCapture"]>(() => "{}");
     const deps = buildDeps({
