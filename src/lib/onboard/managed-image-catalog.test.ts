@@ -411,6 +411,66 @@ describe("managed image GHCR catalog", () => {
     },
   );
 
+  it("resolves an immutable qualification revision as one exact cohort (#9385)", async () => {
+    const fixture = catalogFixture({ openclaw: { rootReference: REVISION } });
+
+    const catalog = await resolveManagedImageCatalogFromGhcr({
+      release: RELEASE,
+      revision: REVISION,
+      fetchImpl: fixture.fetchImpl,
+    });
+
+    expect(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map(
+        (agent) =>
+          (catalog[agent] as { source: { cohort: string; release: string; revision: string } })
+            .source,
+      ),
+    ).toEqual(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map(() => ({
+        cohort: COHORT,
+        release: RELEASE,
+        repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
+        revision: REVISION,
+      })),
+    );
+    const rootManifestRequests = fixture.fetchMock.mock.calls
+      .map(([input]) => new URL(String(input)).pathname)
+      .filter((pathname) => pathname.includes("/manifests/"));
+    expect(rootManifestRequests).toContain(
+      `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${REVISION}`,
+    );
+    expect(rootManifestRequests).not.toContain(
+      `/v2/nvidia/nemoclaw/openclaw-sandbox/manifests/${RELEASE}`,
+    );
+  });
+
+  it("rejects a malformed qualification revision before registry access (#9385)", async () => {
+    const fetchImpl = vi.fn();
+
+    await expect(
+      resolveManagedImageCatalogFromGhcr({
+        release: RELEASE,
+        revision: "main",
+        fetchImpl: fetchImpl as typeof fetch,
+      }),
+    ).rejects.toThrow(/managed image revision 'main' is not a full lowercase SHA/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects an image that does not match the qualification revision (#9385)", async () => {
+    const requestedRevision = "c".repeat(40);
+    const fixture = catalogFixture({ openclaw: { rootReference: requestedRevision } });
+
+    await expect(
+      resolveManagedImageCatalogFromGhcr({
+        release: RELEASE,
+        revision: requestedRevision,
+        fetchImpl: fixture.fetchImpl,
+      }),
+    ).rejects.toThrow(/source revision does not match the expected revision/);
+  });
+
   it("fails closed when a dependent cohort alias is torn or absent", async () => {
     const fixture = catalogFixture({ hermes: { missingRoot: true } });
 
@@ -483,7 +543,7 @@ describe("managed image GHCR catalog", () => {
         release: RELEASE,
         fetchImpl: fixture.fetchImpl,
       }),
-    ).rejects.toThrow(/source revision does not match the OpenClaw revision/);
+    ).rejects.toThrow(/source revision does not match the expected revision/);
   });
 
   it.each([

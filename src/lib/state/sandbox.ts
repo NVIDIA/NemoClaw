@@ -50,7 +50,10 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
+import {
+  SnapshotSanitizerPrerequisiteError,
+  sanitizeSnapshotDirectory,
+} from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -752,21 +755,42 @@ export function sanitizeBackupDirectory(
   try {
     operations.sanitizeDirectory(dirPath);
   } catch (error) {
+    // sanitizeBackupDirectory replaces the message, so an unmet prerequisite
+    // would otherwise survive only as `cause` and never reach the operator. (#8202)
+    const prerequisite =
+      error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message}. ` : "";
+    const validatedSnapshotPath =
+      error instanceof SnapshotSanitizerPrerequisiteError ? error.snapshotPath : null;
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error("Credential sanitization failed and backup cleanup failed", {
-        cause: cleanupError,
-      });
+      const retainedPath =
+        validatedSnapshotPath === null
+          ? ""
+          : `; the incomplete backup may remain at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and backup cleanup failed${retainedPath}`,
+        {
+          cause: new AggregateError(
+            [error, cleanupError],
+            "Snapshot sanitization and backup cleanup both failed",
+          ),
+        },
+      );
     }
     if (operations.backupExists(dirPath)) {
-      throw new Error("Credential sanitization failed and the incomplete backup remains", {
-        cause: error,
-      });
+      const retainedPath = validatedSnapshotPath === null ? "" : ` at ${validatedSnapshotPath}`;
+      throw new Error(
+        `${prerequisite}Credential sanitization failed and the incomplete backup remains${retainedPath}`,
+        { cause: error },
+      );
     }
-    throw new Error("Credential sanitization failed; removed the incomplete backup", {
-      cause: error,
-    });
+    throw new Error(
+      `${prerequisite}Credential sanitization failed; removed the incomplete backup`,
+      {
+        cause: error,
+      },
+    );
   }
 }
 

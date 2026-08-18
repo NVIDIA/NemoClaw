@@ -4,10 +4,61 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+
+const prepareSandboxWorkloadSource = vi.hoisted(() => vi.fn());
+
+vi.mock("../workload/preparation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../workload/preparation")>()),
+  prepareSandboxWorkloadSource,
+}));
+
+vi.mock("../../core/version", () => ({ getVersion: () => "v0.0.0" }));
+
 import {
   createManagedHermesStateVolumeOnboardLifecycle,
+  createManagedWorkloadOnboardRuntime,
   prepareOnboardSandboxWorkloadLaunch,
 } from "./onboard-orchestration";
+
+function createFreshOnboardingRuntime(environment: Readonly<Record<string, string>>) {
+  const prepared = {
+    source: {
+      kind: "legacy-dockerfile",
+      dockerfilePath: "agents/openclaw/Dockerfile",
+      reason: "managed-image-unavailable",
+    },
+    release: "v0.0.0",
+    fallbackDiagnostic: null,
+  };
+  prepareSandboxWorkloadSource.mockClear();
+  prepareSandboxWorkloadSource.mockResolvedValueOnce(prepared);
+
+  const runtime = createManagedWorkloadOnboardRuntime(
+    {
+      computePlan: { driverName: "docker" },
+      managedWorkloadRebuild: null,
+      tempManagedRuntime: false,
+      tempManagedRuntimeCatalog: null,
+      agentName: "openclaw",
+      legacyDockerfilePath: "agents/openclaw/Dockerfile",
+      customDockerfilePath: null,
+      rootDir: "/tmp/nemoclaw",
+      model: "model",
+      provider: "provider",
+      preferredInferenceApi: null,
+      endpointUrl: null,
+      startupProfile: { environment },
+      note: vi.fn(),
+      fallbackBuildEstimate: () => null,
+    } as unknown as Parameters<typeof createManagedWorkloadOnboardRuntime>[0],
+    {
+      resolveAgentInferenceApi: vi.fn(),
+      getSandboxInferenceConfig: vi.fn(),
+    },
+  );
+
+  return { prepared, runtime };
+}
 
 describe("managed workload onboard orchestration", () => {
   it("keeps failure cleanup armed until the caller commits registration", () => {
@@ -38,6 +89,29 @@ describe("managed workload onboard orchestration", () => {
 
     expect(docker.volume).toBeNull();
     expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
+  });
+
+  it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
+    const catalogRevision = "a".repeat(40);
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      GITHUB_ACTIONS: "true",
+      E2E_MANAGED_IMAGE_REVISION: catalogRevision,
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ catalogRevision }),
+    );
+  });
+
+  it("omits the qualification catalog revision outside GitHub Actions (#9385)", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledOnce();
+    expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty("catalogRevision");
   });
 
   it("resolves final-image patch metadata after managed build-context staging", async () => {
