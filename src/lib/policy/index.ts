@@ -2078,13 +2078,13 @@ function applyPresetContent(
       return false;
     }
     const reservedKey = [OPENCLAW_NPM_PRESET_KEY, PERSONAL_OPEN_INTERNET_POLICY_KEY].find(
-      (key) => np && Object.prototype.hasOwnProperty.call(np, key),
+      (key) => Object.prototype.hasOwnProperty.call(np, key),
     );
     if (reservedKey) {
       console.error(`  Custom presets cannot own reserved network policy key '${reservedKey}'.`);
       return false;
     }
-    const hasGeneratedPins = np !== null && networkPoliciesHasAllowedIps(np);
+    const hasGeneratedPins = networkPoliciesHasAllowedIps(np);
     const trustedPrivatePinsValid = isTrustedPrivatePolicyPinCapability(
       presetContent,
       options.custom.trustedPrivatePinCapability,
