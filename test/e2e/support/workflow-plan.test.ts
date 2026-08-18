@@ -413,43 +413,48 @@ describe("E2E workflow plan", () => {
     expect(plan.selectedJobs).not.toContain(selector);
   });
 
-  it("rejects malformed, implementation-derived, and duplicate display names", () => {
-    const networkPolicy = catalogueTarget("network-policy");
-    const cloudInference = catalogueTarget("cloud-inference");
+  it.each(
+    [
+        "Network: enforces network-policy rules",
+        "Network: runs on ubuntu-latest",
+        "Network: validates issue-2478 recovery",
+      ],
+  )(
+    "rejects malformed, implementation-derived, and duplicate display names [%s]",
+    (displayName) => {
+      const networkPolicy = catalogueTarget("network-policy");
+      const cloudInference = catalogueTarget("cloud-inference");
 
-    expect(() =>
-      validateE2eTargetCatalogue([{ ...networkPolicy, displayName: "network-policy" }]),
-    ).toThrow("invalid or duplicate display name");
-    expect(() =>
-      validateE2eTargetCatalogue([
-        { ...networkPolicy, displayName: "E2E: validates issue #7912 live" },
-      ]),
-    ).toThrow("invalid or duplicate display name");
-    for (const displayName of [
-      "Network: enforces network-policy rules",
-      "Network: runs on ubuntu-latest",
-      "Network: validates issue-2478 recovery",
-    ]) {
+      expect(() =>
+        validateE2eTargetCatalogue([{ ...networkPolicy, displayName: "network-policy" }]),
+      ).toThrow("invalid or duplicate display name");
+      expect(() =>
+        validateE2eTargetCatalogue([
+          { ...networkPolicy, displayName: "E2E: validates issue #7912 live" },
+        ]),
+      ).toThrow("invalid or duplicate display name");
+
       expect(() => validateE2eTargetCatalogue([{ ...networkPolicy, displayName }])).toThrow(
         "invalid or duplicate display name",
       );
-    }
-    expect(() =>
-      validateE2eTargetCatalogue([
-        {
-          ...networkPolicy,
-          displayName: "Network: uses isolated-sandbox for policy checks",
-          environment: { NEMOCLAW_SANDBOX_NAME: "isolated-sandbox" },
-        },
-      ]),
-    ).toThrow("invalid or duplicate display name");
-    expect(() =>
-      validateE2eTargetCatalogue([
-        networkPolicy,
-        { ...cloudInference, displayName: networkPolicy.displayName },
-      ]),
-    ).toThrow("invalid or duplicate display name");
-  });
+
+      expect(() =>
+        validateE2eTargetCatalogue([
+          {
+            ...networkPolicy,
+            displayName: "Network: uses isolated-sandbox for policy checks",
+            environment: { NEMOCLAW_SANDBOX_NAME: "isolated-sandbox" },
+          },
+        ]),
+      ).toThrow("invalid or duplicate display name");
+      expect(() =>
+        validateE2eTargetCatalogue([
+          networkPolicy,
+          { ...cloudInference, displayName: networkPolicy.displayName },
+        ]),
+      ).toThrow("invalid or duplicate display name");
+    },
+  );
 
   it("omits credentialed catalogue profiles when checkout_sha is set", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-pr-"));

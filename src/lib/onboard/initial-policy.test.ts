@@ -119,6 +119,18 @@ afterEach(() => {
   else process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = originalOtelEnv.sampleRate;
 });
 
+function createStationGb300SysfsDirectories(sysfsRoot: string): void {
+  for (const relativePath of [
+    "devices/system/cpu",
+    "devices/system/memory",
+    "devices/system/node",
+    "module/nvidia/initstate",
+    "module/nvidia_uvm/initstate",
+  ]) {
+    fs.mkdirSync(path.join(sysfsRoot, relativePath), { recursive: true });
+  }
+}
+
 describe("initial sandbox policy helpers", () => {
   it.each([
     ["Dell Pro Max with Station GB300", true],
@@ -140,15 +152,8 @@ describe("initial sandbox policy helpers", () => {
     addPciDevice(sysfsRoot, "0000:02:00.0", "0x1002\n", "0x030000\n");
     addPciDevice(sysfsRoot, "0000:03:00.8", "0x10de\n", "0x030000\n");
     addPciDevice(sysfsRoot, "0000:04:00.0", "0x10de\n", "0x030000\n", "0xffff\n");
-    for (const relativePath of [
-      "devices/system/cpu",
-      "devices/system/memory",
-      "devices/system/node",
-      "module/nvidia/initstate",
-      "module/nvidia_uvm/initstate",
-    ]) {
-      fs.mkdirSync(path.join(sysfsRoot, relativePath), { recursive: true });
-    }
+
+    createStationGb300SysfsDirectories(sysfsRoot);
 
     expect(discoverStationGb300SysfsReadOnlyPaths("NVIDIA DGX Station GB300", sysfsRoot)).toEqual(
       STATION_GB300_SYSFS_READ_ONLY_PATHS,
@@ -199,34 +204,39 @@ describe("initial sandbox policy helpers", () => {
     ).toThrow("an available GB300 GPU");
   });
 
-  it("scopes sysfs read access and lets OpenShell own /proc GPU enrichment (#7103)", () => {
-    const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, {
-      sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS,
-    });
-    const baseDoc = YAML.parse(BASE_POLICY_FIXTURE);
-    const gpuDoc = YAML.parse(gpuPolicy);
+  it.each(
+    [
+        "/sys/class",
+        "/sys/class/net",
+        "/sys/bus/pci/devices",
+        "/sys/firmware",
+        "/sys/fs",
+        "/sys/kernel",
+      ],
+  )(
+    "scopes sysfs read access and lets OpenShell own /proc GPU enrichment [%s] (#7103)",
+    (unrelatedPath) => {
+      const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, {
+        sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS,
+      });
+      const baseDoc = YAML.parse(BASE_POLICY_FIXTURE);
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    // /proc is added at runtime by OpenShell's GPU enrichment;
-    // create-time must not pre-declare it.
-    expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
-    expect(gpuDoc.filesystem_policy.read_only).toEqual(
-      expect.arrayContaining(STATION_GB300_SYSFS_READ_ONLY_PATHS),
-    );
-    for (const unrelatedPath of [
-      "/sys/class",
-      "/sys/class/net",
-      "/sys/bus/pci/devices",
-      "/sys/firmware",
-      "/sys/fs",
-      "/sys/kernel",
-    ]) {
+      // /proc is added at runtime by OpenShell's GPU enrichment;
+      // create-time must not pre-declare it.
+      expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
+      expect(gpuDoc.filesystem_policy.read_only).toEqual(
+        expect.arrayContaining(STATION_GB300_SYSFS_READ_ONLY_PATHS),
+      );
+
       expect(gpuDoc.filesystem_policy.read_only).not.toContain(unrelatedPath);
-    }
-    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
-  });
+
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
+    },
+  );
 
   it("adds /proc read-write when Docker GPU patch must own GPU enrichment (#7103)", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, {
@@ -244,9 +254,11 @@ describe("initial sandbox policy helpers", () => {
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
   });
 
-  it("removes stale proc entries from GPU policy input (#7103)", () => {
-    const gpuPolicy = buildDirectGpuPolicyYaml(
-      `
+  it.each(STATION_GB300_SYSFS_READ_ONLY_PATHS)(
+    "removes stale proc entries from GPU policy input [case %#] (#7103)",
+    (sysfsPath) => {
+      const gpuPolicy = buildDirectGpuPolicyYaml(
+        `
 version: 1
 filesystem_policy:
   include_workdir: true
@@ -265,21 +277,22 @@ network_policies:
       - host: integrate.api.nvidia.com
         port: 443
 `,
-      { sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS },
-    );
-    const gpuDoc = YAML.parse(gpuPolicy);
+        { sysfsReadOnlyPaths: STATION_GB300_SYSFS_READ_ONLY_PATHS },
+      );
+      const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toContain("/usr");
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc/self/task/*/comm");
-    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
-    for (const sysfsPath of STATION_GB300_SYSFS_READ_ONLY_PATHS) {
+      expect(gpuDoc.filesystem_policy.read_only).toContain("/usr");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc/self/task/*/comm");
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
+
       expectSingleOccurrence(gpuDoc.filesystem_policy.read_only, sysfsPath);
-    }
-    expect(gpuDoc.filesystem_policy.read_write).toContain("/tmp");
-    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
-    expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
-  });
+
+      expect(gpuDoc.filesystem_policy.read_write).toContain("/tmp");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
+    },
+  );
 
   it.each(Array.from(STATION_GB300_SYSFS_READ_ONLY_PATHS, (value) => [value]))(
     "preserves an existing broad read-only sysfs policy without expanding %s (#7103)",
@@ -452,9 +465,7 @@ network_policies: {}
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
     for (const command of commands) {
-      for (const arg of command.args) {
-        expect(arg).not.toMatch(/[\r\n]/);
-      }
+      expect(command.args.every((arg) => !/[\r\n]/.test(arg))).toBe(true);
     }
   });
 
@@ -590,7 +601,7 @@ network_policies: {}
     }
 
     expect(createdDirs).toHaveLength(2);
-    for (const dir of createdDirs) expect(fs.existsSync(dir)).toBe(false);
+    expect(createdDirs.every((dir) => Object.is(fs.existsSync(dir), false))).toBe(true);
   });
 
   it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled and the tier is known non-restricted", () => {

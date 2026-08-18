@@ -312,9 +312,7 @@ describe("appendExtraPlaceholderKeysEnvArg", () => {
     // value. Operators who set the credential see openshell:resolve:env:<KEY>
     // inside the sandbox; the secret itself never travels through env-arg
     // propagation.
-    for (const arg of envArgs) {
-      expect(arg).not.toContain("token");
-    }
+    expect(envArgs.every((arg) => !arg.includes("token"))).toBe(true);
   });
 
   it("survives the OpenShell split_whitespace command round trip", () => {

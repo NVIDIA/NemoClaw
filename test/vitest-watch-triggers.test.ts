@@ -86,7 +86,14 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+  it.each(
+    [
+        ".github/actions/docker-auth-setup/action.yaml",
+        ".github/actions/docker-auth-cleanup/action.yaml",
+        ".github/scripts/docker-auth-setup.sh",
+        ".github/scripts/docker-auth-cleanup.sh",
+      ],
+  )("maps current opaque inputs to their direct contract tests [%s] (#6692)", (authPath) => {
     expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
       "src/lib/inference/serving/catalog.test.ts",
       "src/lib/inference/serving/resolver.test.ts",
@@ -171,16 +178,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("test/e2e/fixtures/portable-profile-systemctl-shim.sh")).toEqual([
       "test/e2e/support/portable-profile-systemctl-shim.test.ts",
     ]);
-    for (const authPath of [
-      ".github/actions/docker-auth-setup/action.yaml",
-      ".github/actions/docker-auth-cleanup/action.yaml",
-      ".github/scripts/docker-auth-setup.sh",
-      ".github/scripts/docker-auth-cleanup.sh",
-    ]) {
-      expect(triggeredBy(authPath)).toEqual([
-        "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
-      ]);
-    }
+
+    expect(triggeredBy(authPath)).toEqual([
+      "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+    ]);
+
     expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);

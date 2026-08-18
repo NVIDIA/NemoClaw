@@ -819,21 +819,23 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expectOfficialSourcesUnchanged(fixture);
   });
 
-  it("pins guard validators to the ToolMessage string-content API", () => {
-    const requirements = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
-    const validator = fs.readFileSync(validatorPath, "utf8");
-    const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
+  it.each([{ scenario: "validator" }, { scenario: "E2E check" }])(
+    "pins guard validators to the ToolMessage string-content API [$scenario]",
+    ({ scenario }) => {
+      const requirements = fs.readFileSync(path.join(agentDir, "requirements.lock"), "utf8");
+      const validator = fs.readFileSync(validatorPath, "utf8");
+      const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
 
-    expect(requirements).toMatch(/^langchain-core==1\.4\.8 /m);
-    for (const source of [validator, e2eCheck]) {
+      expect(requirements).toMatch(/^langchain-core==1\.4\.8 /m);
+      const source = ({ validator: validator, "E2E check": e2eCheck } as const)[scenario]!;
       expect(source).toContain("isinstance(sync_result.content, str)");
       expect(source).toContain("isinstance(async_result.content, str)");
       expect(source).toContain('"complete command" in sync_result.content');
       expect(source).toContain('"complete command" in async_result.content');
       expect(source).not.toContain("sync_result.text");
       expect(source).not.toContain("async_result.text");
-    }
-  });
+    },
+  );
 
   it("resolves a managed model before the E2E probe inspects lazy profile state", () => {
     const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");

@@ -628,29 +628,33 @@ raise SystemExit(0 if not ok and dashboard_fd is None else 2)
     expect(fs.existsSync(envDst)).toBe(false);
   });
 
-  it("applies requested dashboard seed owner and mode before the atomic rename", () => {
-    const uid = process.getuid?.() ?? Number.NaN;
-    const gid = process.getgid?.() ?? Number.NaN;
-    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
-    const dst = path.join(tmpDir, "dash.yaml");
-    const envSrc = path.join(tmpDir, "gw.env");
-    const envDst = path.join(tmpDir, "dash.env");
-    fs.writeFileSync(envSrc, `API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
+  it.each([{ scenario: "dashboard config" }, { scenario: "dashboard environment" }])(
+    "applies requested dashboard seed owner and mode before the atomic rename [$scenario]",
+    ({ scenario }) => {
+      const uid = process.getuid?.() ?? Number.NaN;
+      const gid = process.getgid?.() ?? Number.NaN;
+      const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+      const dst = path.join(tmpDir, "dash.yaml");
+      const envSrc = path.join(tmpDir, "gw.env");
+      const envDst = path.join(tmpDir, "dash.env");
+      fs.writeFileSync(envSrc, `API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
 
-    const res = runSeed(src, dst, envSrc, envDst, {
-      NEMOCLAW_DASHBOARD_SEED_OWNER: `${uid}:${gid}`,
-    });
+      const res = runSeed(src, dst, envSrc, envDst, {
+        NEMOCLAW_DASHBOARD_SEED_OWNER: `${uid}:${gid}`,
+      });
 
-    expect(res.status).toBe(0);
-    expect(Number.isInteger(uid)).toBe(true);
-    expect(Number.isInteger(gid)).toBe(true);
-    for (const seededPath of [dst, envDst]) {
+      expect(res.status).toBe(0);
+      expect(Number.isInteger(uid)).toBe(true);
+      expect(Number.isInteger(gid)).toBe(true);
+      const seededPath = ({ "dashboard config": dst, "dashboard environment": envDst } as const)[
+        scenario
+      ]!;
       const stat = fs.statSync(seededPath);
       expect(stat.uid).toBe(uid);
       expect(stat.gid).toBe(gid);
       expect(stat.mode & 0o777).toBe(0o600);
-    }
-  });
+    },
+  );
 
   it("keeps custom_providers dynamic via discover_models (no static model list)", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
