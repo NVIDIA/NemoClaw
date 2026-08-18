@@ -443,6 +443,8 @@ if (process.argv[2] !== "tui") {
   if (terminalCopy === "reordered") process.stdout.write("idle | gateway connected\n");
 
   const first = await ask();
+  process.kill(Number(monitorPid), "SIGTERM");
+  await new Promise((resolve) => setTimeout(resolve, 50));
   const monitorStat = fs.readFileSync("/proc/" + monitorPid + "/stat", "utf8");
   const monitorState = monitorStat ? monitorStat.slice(monitorStat.lastIndexOf(") ") + 2)[0] : null;
   if (!monitorState || monitorState === "Z") process.exit(71);
@@ -930,7 +932,7 @@ it.runIf(process.platform === "linux")(
 );
 
 it.runIf(process.platform === "linux").each(["absent", "ansi", "reordered"] as const)(
-  "sends two inputs and /exit through a real PTY, strips launch authority from OpenShell calls, and ignores terminal copy evidence [%s] (#9160)",
+  "keeps the monitor alive through SIGTERM, sends two PTY inputs and /exit, strips launch authority, and ignores terminal copy evidence [%s] (#9160)",
   (terminalCopy) => {
     const {
       baselineRemoved,

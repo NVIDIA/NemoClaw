@@ -224,9 +224,7 @@ const parentWatcher = setInterval(() => {
   server.close(() => process.exit(0));
 }, 25);
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    if (process.ppid !== parentPid) process.exit(0);
-  });
+  process.on(signal, () => {});
 }
 `;
 
