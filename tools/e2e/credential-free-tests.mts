@@ -55,12 +55,12 @@ const CREDENTIAL_FREE_TEST_COVERAGE = {
 } as const satisfies Readonly<Record<string, E2eExecutionMetadata>>;
 
 export function credentialFreeTestCoverage(id: string): E2eExecutionMetadata {
+  if (!Object.hasOwn(CREDENTIAL_FREE_TEST_COVERAGE, id)) {
+    throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
+  }
   const metadata = (
     CREDENTIAL_FREE_TEST_COVERAGE as Readonly<Record<string, E2eExecutionMetadata>>
   )[id];
-  if (!metadata) {
-    throw new Error(`Credential-free test ${id} requires execution coverage metadata`);
-  }
   return validateE2eExecutionMetadata(metadata, `Credential-free test ${id}`);
 }
 

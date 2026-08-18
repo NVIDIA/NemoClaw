@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
-import { listTargets } from "../../test/e2e/registry/registry.ts";
 import { buildRiskPlan } from "../advisors/risk-plan.mts";
 import {
   type CredentialFreeTestMatrixRow,
@@ -335,7 +334,7 @@ function isCatalogueMatrixRowForProfile(
     target.targetId === value.target_id &&
     target.displayName === value.display_name &&
     target.agentRuntime === value.agent_runtime &&
-    target.observableOutcome === value.observable_outcome &&
+    target.displayName === value.observable_outcome &&
     target.environmentOrInferenceEndpoint === value.environment_or_inference_endpoint &&
     target.unresolvedReason === value.unresolved_reason &&
     target.runner === value.runner &&
@@ -807,7 +806,7 @@ function expectedHermesSelection(
   return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
-function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
+export function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflowPlan {
   const eligibleRows = (rows: E2eCatalogueMatrixRow[]) =>
     rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id)));
   const catalogueMatrices = Object.fromEntries(
@@ -828,7 +827,10 @@ function withoutCredentialedCatalogueProfiles(plan: E2eWorkflowPlan): E2eWorkflo
   };
 }
 
-export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
+export function renderE2eWorkflowPlanSummary(
+  plan: E2eWorkflowPlan,
+  options: { includeCoverageAudit?: boolean } = {},
+): string {
   const lines = [
     "## E2E Execution Plan",
     "",
@@ -840,16 +842,14 @@ export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
       `| \`${e2eExecutionLabel(row)}\` | ${row.agentRuntime} | ${row.observableOutcome} | ${row.environmentOrInferenceEndpoint} | ${row.source} | ${row.unresolvedReason} |`,
     );
   }
-  if (!plan.coverageMatrix.some((row) => row.source === "staging")) {
+  if (options.includeCoverageAudit === false) {
     return `${lines.join("\n")}\n`;
   }
   const inventory = readFreeStandingJobsInventory();
   const explicitOnlyRows = inventory.coverageRows.filter((row) =>
     plan.explicitOnlyJobs.includes(row.id),
   );
-  const unsupportedDeclarations = buildLiveTargetMatrix(
-    listTargets().map((target) => target.id),
-  ).filter((row) => !row.supported);
+  const unsupportedDeclarations = plan.matrix.filter((row) => !row.supported);
   const outcomeRows = new Map<string, E2eExecutionRow[]>();
   for (const row of plan.coverageMatrix) {
     const rows = outcomeRows.get(row.observableOutcome) ?? [];
@@ -963,7 +963,12 @@ export function writeE2eWorkflowPlanCiOutput(
       "",
     ].join("\n"),
   );
-  appendFileSync(summary, renderE2eWorkflowPlanSummary(plan));
+  appendFileSync(
+    summary,
+    renderE2eWorkflowPlanSummary(plan, {
+      includeCoverageAudit: !hasPlannerSelectors && changedFiles === undefined,
+    }),
+  );
 }
 
 function parseArgs(argv: readonly string[]): WorkflowPlanCliOptions {
@@ -1004,7 +1009,11 @@ export function runE2eWorkflowPlanCli(argv = process.argv.slice(2)): void {
   }
   const plan = buildE2eWorkflowPlan(options);
   process.stdout.write(
-    options.summary ? renderE2eWorkflowPlanSummary(plan) : `${JSON.stringify(plan)}\n`,
+    options.summary
+      ? renderE2eWorkflowPlanSummary(plan, {
+          includeCoverageAudit: !options.jobs && !options.targets,
+        })
+      : `${JSON.stringify(plan)}\n`,
   );
 }
 

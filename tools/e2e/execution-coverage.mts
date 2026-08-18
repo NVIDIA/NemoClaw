@@ -38,7 +38,7 @@ export interface E2eExecutionRow extends E2eExecutionMetadata {
 }
 
 const SELECTOR_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const COVERAGE_TEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 .,+()/:;_-]{0,199}$/u;
+const COVERAGE_TEXT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 .,'+()/:;_-]{0,199}$/u;
 
 export function validateE2eExecutionMetadata(
   metadata: E2eExecutionMetadata,

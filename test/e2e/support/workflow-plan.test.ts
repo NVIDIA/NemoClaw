@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { discoverCredentialFreeTests } from "../../../tools/e2e/credential-free-tests.mts";
+import {
+  credentialFreeTestCoverage,
+  discoverCredentialFreeTests,
+} from "../../../tools/e2e/credential-free-tests.mts";
+import { E2E_AGENT_RUNTIMES } from "../../../tools/e2e/execution-coverage.mts";
 import { RETIRED_CONTROLLER_SELECTOR_IDS } from "../../../tools/e2e/retired-selector-compatibility.mts";
 import {
   catalogueTarget,
@@ -26,6 +30,7 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
+  withoutCredentialedCatalogueProfiles,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -68,31 +73,13 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
 function prCandidatePlan(
   plan: ReturnType<typeof buildE2eWorkflowPlan>,
 ): ReturnType<typeof buildE2eWorkflowPlan> {
-  const catalogueMatrices = Object.fromEntries(
-    Object.entries(plan.catalogueMatrices).map(([profile, rows]) => [
-      profile,
-      rows.filter((row) => isPrCandidateCatalogueTarget(catalogueTarget(row.id))),
-    ]),
-  ) as ReturnType<typeof buildE2eWorkflowPlan>["catalogueMatrices"];
-  const catalogueIds = new Set(
-    Object.values(catalogueMatrices)
-      .flat()
-      .map((row) => row.id),
-  );
-  return {
-    ...plan,
-    catalogueMatrices,
-    coverageMatrix: plan.coverageMatrix.filter(
-      (row) => row.source !== "catalogue" || catalogueIds.has(row.id),
-    ),
-  };
+  return withoutCredentialedCatalogueProfiles(plan);
 }
 
 function expectExplicitCatalogueCoverage(): void {
   for (const target of E2E_TARGET_CATALOGUE) {
-    expect(target.observableOutcome).toBe(target.displayName);
-    expect(target.agentRuntime).not.toBe("");
-    expect(target.environmentOrInferenceEndpoint).not.toBe("");
+    expect(E2E_AGENT_RUNTIMES).toContain(target.agentRuntime);
+    expect(target.agentRuntime === "unresolved").toBe(target.unresolvedReason !== "");
   }
 }
 
@@ -472,11 +459,19 @@ describe("E2E workflow plan", () => {
 
     const target = catalogueTarget("cloud-inference");
     expect(() =>
-      validateE2eTargetCatalogue([{ ...target, observableOutcome: "Injected | Markdown row" }]),
-    ).toThrow("invalid observable outcome");
-    expect(() =>
       validateE2eTargetCatalogue([{ ...target, agentRuntime: "unresolved", unresolvedReason: "" }]),
     ).toThrow("must declare an unresolved reason");
+    expect(() =>
+      validateE2eTargetCatalogue([
+        { ...target, displayName: "Inference: preserves the operator's selected route" },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("rejects inherited properties as credential-free coverage IDs (#9167)", () => {
+    expect(() => credentialFreeTestCoverage("constructor")).toThrow(
+      "Credential-free test constructor requires execution coverage metadata",
+    );
   });
 
   it.each([
@@ -786,7 +781,9 @@ describe("E2E workflow plan", () => {
       expect(result.status, result.stderr).toBe(0);
       const expectedPlan = prCandidatePlan(plan);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(expectedPlan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(expectedPlan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -817,7 +814,9 @@ describe("E2E workflow plan", () => {
       expect(result.status, result.stderr).toBe(0);
       const expectedPlan = prCandidatePlan(plan);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(expectedPlan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(expectedPlan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(expectedPlan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -862,7 +861,9 @@ describe("E2E workflow plan", () => {
 
         expect(result.status, result.stderr).toBe(0);
         expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-        expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+        expect(readFileSync(summary, "utf8")).toBe(
+          renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+        );
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
@@ -927,7 +928,9 @@ describe("E2E workflow plan", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -1046,7 +1049,9 @@ describe("E2E workflow plan", () => {
       );
 
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -1212,7 +1217,9 @@ describe("E2E workflow plan", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -1241,7 +1248,9 @@ describe("E2E workflow plan", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
-      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+      expect(readFileSync(summary, "utf8")).toBe(
+        renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
+      );
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

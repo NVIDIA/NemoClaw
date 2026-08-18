@@ -46,7 +46,6 @@ export interface E2eCatalogueTarget {
   targetId: string;
   displayName: string;
   agentRuntime: E2eAgentRuntime;
-  observableOutcome: string;
   environmentOrInferenceEndpoint: string;
   unresolvedReason: string;
   testFile: string;
@@ -105,7 +104,6 @@ type TargetOptions = Omit<
   | "owningPaths"
   | "releaseRequired"
   | "agentRuntime"
-  | "observableOutcome"
   | "environmentOrInferenceEndpoint"
   | "unresolvedReason"
   | "environment"
@@ -172,7 +170,6 @@ function target(id: string, options: TargetOptions): E2eCatalogueTarget {
     id,
     displayName,
     agentRuntime,
-    observableOutcome: displayName,
     environmentOrInferenceEndpoint,
     unresolvedReason,
     testFile,
@@ -1613,10 +1610,15 @@ export function validateE2eTargetCatalogue(
         throw new Error(`E2E target ${entry.id} has an invalid environment entry`);
       }
     }
-    validateE2eExecutionMetadata(entry, `E2E target ${entry.id}`);
-    if (entry.observableOutcome !== entry.displayName) {
-      throw new Error(`E2E target ${entry.id} must use its display name as its observable outcome`);
-    }
+    validateE2eExecutionMetadata(
+      {
+        agentRuntime: entry.agentRuntime,
+        environmentOrInferenceEndpoint: entry.environmentOrInferenceEndpoint,
+        observableOutcome: entry.displayName,
+        unresolvedReason: entry.unresolvedReason,
+      },
+      `E2E target ${entry.id}`,
+    );
   }
   return targets;
 }
@@ -1670,7 +1672,7 @@ export function catalogueMatrix(
       target_id: entry.targetId,
       display_name: entry.displayName,
       agent_runtime: entry.agentRuntime,
-      observable_outcome: entry.observableOutcome,
+      observable_outcome: entry.displayName,
       environment_or_inference_endpoint: entry.environmentOrInferenceEndpoint,
       unresolved_reason: entry.unresolvedReason,
       runner: entry.runner,
