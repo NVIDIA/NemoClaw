@@ -138,7 +138,10 @@ Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and
 
 When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes the verified runtime value as `model.context_length` in `/sandbox/.hermes/config.yaml`.
 An explicit `NEMOCLAW_CONTEXT_WINDOW` must be at least `64000`; NemoClaw writes that value only when the loaded model reports at least the same context length.
-If an existing or unmanaged daemon reports less, omits the value, or returns a malformed value, onboarding stops before building the sandbox and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+If an existing or unmanaged daemon reports less than the requirement, NemoClaw queries `/api/show` for the selected model's native context window.
+If the model's native context window is below the requirement, onboarding stops and tells you to select a model that meets the reported requirement.
+If the model can meet the requirement, or NemoClaw cannot read its native context window, onboarding instead shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+A missing or malformed runtime value also produces the daemon restart guidance.
 </AgentOnly>
 
 ## Use Windows-Host Ollama from WSL
@@ -302,7 +305,8 @@ When Ollama reports a context length below `16384` and `NEMOCLAW_CONTEXT_WINDOW`
 <AgentOnly variant="hermes">
 When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes a valid loaded-model context length of at least `64000` as `model.context_length`.
 When you set a larger value explicitly, the loaded model must report at least that value before NemoClaw writes the explicit value.
-When the runtime value is lower or cannot be verified, onboarding stops and tells you which `OLLAMA_CONTEXT_LENGTH` value to use when restarting the host daemon before retrying.
+When the runtime value is lower, onboarding checks `/api/show` and either asks you to select a model that meets the reported requirement or gives daemon restart guidance.
+When the runtime value cannot be verified, onboarding shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting the host daemon before retrying.
 </AgentOnly>
 
 If the initial validation times out during a cold load, NemoClaw retries once with a 300-second probe budget.

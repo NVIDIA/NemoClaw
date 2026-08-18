@@ -8,7 +8,7 @@ import type {
   ChannelPolicyPresetSpec,
   MessagingAgentId,
 } from "../manifest";
-import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
+import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins.ts";
 
 const CONFIG_ENV_ALIASES_BY_ENV_KEY: Readonly<Record<string, readonly string[]>> = {
   DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
@@ -33,6 +33,14 @@ export interface MessagingCredentialMetadata {
   readonly providerEnvKey: string;
   readonly placeholder: string;
   readonly primary: boolean;
+}
+
+export interface MessagingCredentialEnvAssignmentMetadata {
+  readonly channelId: string;
+  readonly agent: MessagingAgentId;
+  readonly sourceEnvKey: string;
+  readonly targetEnvKey: string;
+  readonly placeholder: string;
 }
 
 export interface MessagingConfigEnvMetadata {
@@ -94,6 +102,38 @@ export function listMessagingCredentialMetadata(
       primary: credential.primary === true,
     })),
   );
+}
+
+export function listMessagingCredentialEnvAssignments(
+  options: MessagingManifestMetadataOptions = {},
+): MessagingCredentialEnvAssignmentMetadata[] {
+  return selectManifests(options).flatMap((manifest) => {
+    const credentialsByTemplate = new Map(
+      manifest.credentials.map((credential) => [
+        `{{credential.${credential.id}.placeholder}}`,
+        credential,
+      ]),
+    );
+    return manifest.render.flatMap((render) => {
+      if (options.agent && render.agent !== options.agent) return [];
+      if (render.kind !== "env-lines") return [];
+      return render.lines.flatMap((line) => {
+        const separator = line.indexOf("=");
+        if (separator <= 0) return [];
+        const credential = credentialsByTemplate.get(line.slice(separator + 1));
+        if (!credential) return [];
+        return [
+          {
+            channelId: manifest.id,
+            agent: render.agent,
+            sourceEnvKey: credential.providerEnvKey,
+            targetEnvKey: line.slice(0, separator),
+            placeholder: credential.placeholder,
+          },
+        ];
+      });
+    });
+  });
 }
 
 export function getMessagingCredentialEnvKeysByChannel(

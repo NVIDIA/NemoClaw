@@ -3623,6 +3623,9 @@ If OpenShell does not confirm absence within the bounded wait, including when ga
 Restore OpenShell connectivity and confirm the sandbox's live state before you retry, and keep the printed backup path for recovery.
 Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
 Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+A mount-free journal written before host-mount identity binding remains resumable.
+An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged.
+Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic, then follow the legacy journal guidance in [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
 Use `--verbose` to print the replacement identifier, gateway, and journal phase.
 Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the recovery procedure and fail-closed conditions.
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
