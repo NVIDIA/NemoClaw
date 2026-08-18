@@ -242,6 +242,49 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("preserves an exact override when Docker reports a different repository digest (#9386)", () => {
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === PLATFORM_REF ? 0 : 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (
+        new Map([
+          [`{{json .RepoDigests}}\0${PLATFORM_REF}`, JSON.stringify([REF])],
+          [
+            `{{json .}}\0${PLATFORM_REF}`,
+            JSON.stringify({
+              Id: IMAGE_ID,
+              RepoDigests: [REF],
+              Os: "linux",
+              Architecture: "amd64",
+            }),
+          ],
+        ]).get(`${format}\0${ref}`) ?? ""
+      ).trim(),
+    );
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_IMAGE_REF: PLATFORM_REF,
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: PLATFORM_REF,
+      digest: PLATFORM_DIGEST,
+      source: "override",
+      metadata: {
+        ref: PLATFORM_REF,
+        digest: PLATFORM_DIGEST,
+        imageId: IMAGE_ID,
+      },
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("rejects a pinned resolution hint from a stale Dockerfile pin", () => {
     const options = resolutionOptions();
     const stalePin = `${IMAGE_NAME}@sha256:${"c".repeat(64)}`;
