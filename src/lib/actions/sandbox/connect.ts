@@ -1296,14 +1296,15 @@ export async function prepareInteractiveSession(
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
   }
-  if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
+  const recoveryFailureDetail =
+    "recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail
+      ? String(processCheck.recoveryFailureDetail)
+      : processCheck.checked && processCheck.wasRunning === false && processCheck.recovered === false
+        ? "the gateway recovery attempt did not complete"
+        : null;
+  if (recoveryFailureDetail) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
-    exitOnGatewayRecoveryFailure(
-      sandboxName,
-      agentName,
-      String(processCheck.recoveryFailureDetail),
-      "Recovery",
-    );
+    exitOnGatewayRecoveryFailure(sandboxName, agentName, recoveryFailureDetail, "Recovery");
   }
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();

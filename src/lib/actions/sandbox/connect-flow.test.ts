@@ -999,6 +999,11 @@ describe("connectSandbox flow", () => {
       recoveryFailureDetail:
         "NemoClaw could not confirm rollback to the previous sandbox container. Inspect Docker state before retrying. Recovery failure before rollback: the recovered gateway did not become responsive before the recovery timeout",
     },
+    {
+      condition: "a detail-free recovery failure",
+      expectedDetail: "the gateway recovery attempt did not complete",
+      recoveryFailureDetail: undefined,
+    },
   ])(
     "stops non-probe connect before route repair, pairing, or SSH after $condition (#9364)",
     async ({ expectedDetail, recoveryFailureDetail }) => {
