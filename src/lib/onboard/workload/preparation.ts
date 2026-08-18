@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -66,7 +67,11 @@ export function liveE2eManagedImageCatalog(
   if (environment.GITHUB_ACTIONS !== "true" || environment.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     return null;
   }
-  const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  const configuredPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  const workspace = environment.GITHUB_WORKSPACE?.trim();
+  const catalogPath =
+    configuredPath ||
+    (workspace ? path.join(workspace, "dist", "e2e-managed-image-catalog.json") : "");
   if (!catalogPath) return null;
   try {
     fs.lstatSync(catalogPath);

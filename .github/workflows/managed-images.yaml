@@ -1037,7 +1037,9 @@ jobs:
             echo "ERROR: MCP discovery checkout does not match the exact PR head" >&2
             exit 1
           }
-          [[ "$(jq -r '[.[].source.revision] | unique | join(\"\n\")' "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG")" == "$CANDIDATE_SHA" ]] || {
+          jq -e --arg revision "$CANDIDATE_SHA" \
+            '([.[].source.revision] | unique) == [$revision]' \
+            "$NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG" >/dev/null || {
             echo "ERROR: MCP discovery catalog does not match the exact PR head" >&2
             exit 1
           }

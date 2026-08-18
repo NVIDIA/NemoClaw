@@ -806,7 +806,6 @@ describe("complete managed-image publication workflow", () => {
   it("passes the reported OpenClaw trusted-private MCP discovery twice on one exact PR cohort (#8746)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const discovery = managedPrOpenClawMcpDiscovery(workflow);
-
     expect(discovery.needs).toBe("pr-build-and-entrypoint");
     expect(discovery.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
@@ -818,12 +817,12 @@ describe("complete managed-image publication workflow", () => {
     expect(discovery.env?.NEMOCLAW_E2E_EXPECTED_SHA).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
-    expect(discovery.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG).toContain(
-      "managed-pr-catalog.json",
-    );
+    expect(discovery.env?.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG).toContain("managed-pr-catalog.json");
     expect(discovery.env?.NEMOCLAW_MCP_BRIDGE_AGENT).toBe("openclaw");
     expect(discovery.env?.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST).toBe("1");
     expect(discovery.env?.NEMOCLAW_E2E_SHARD).toBe("openclaw");
+    expect(discovery.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(discovery.env).not.toHaveProperty("E2E_MANAGED_IMAGE_REVISION");
     expect(JSON.stringify(discovery)).not.toContain("secrets.");
     expect(JSON.stringify(discovery)).not.toContain("github.token");
     expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
@@ -835,6 +834,7 @@ describe("complete managed-image publication workflow", () => {
     expect(assemble).toContain('([.[].source.cohort] | unique | length) == 1');
     const run = step(discovery, "Run exact OpenClaw trusted-private MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');
+    expect(run).toContain('jq -e --arg revision "$CANDIDATE_SHA"');
     expect(run).toContain("test/e2e/live/mcp-bridge.test.ts");
     expect(run).not.toContain("--selector");
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");

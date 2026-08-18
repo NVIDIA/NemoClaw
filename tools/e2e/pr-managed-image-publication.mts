@@ -74,7 +74,7 @@ function compileManagedImagePath(pattern: string): RegExp {
     return new RegExp(`^${prefix}/.+$`, "u");
   }
   if (stars.length === 1) {
-    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replace("*", "[^/]*");
+    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replaceAll("*", "[^/]*");
     return new RegExp(`^${escaped}$`, "u");
   }
   throw new Error(`managed-image PR path '${pattern}' uses an unsupported glob`);

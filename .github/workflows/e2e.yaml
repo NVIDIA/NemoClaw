@@ -91,7 +91,6 @@ concurrency:
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
-  NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: ${{ inputs.checkout_sha != '' && format('{0}/dist/e2e-managed-image-catalog.json', github.workspace) || '' }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
 

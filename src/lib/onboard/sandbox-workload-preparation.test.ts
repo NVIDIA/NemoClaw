@@ -89,7 +89,10 @@ describe("sandbox workload preparation", () => {
   it("selects an exact embedded catalog only for live PR E2E (#9464)", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
+    const packagedCatalogPath = path.join(fixtureRoot, "dist", "e2e-managed-image-catalog.json");
+    fs.mkdirSync(path.dirname(packagedCatalogPath));
     fs.writeFileSync(catalogPath, "{}\n", { mode: 0o600 });
+    fs.writeFileSync(packagedCatalogPath, "{}\n", { mode: 0o600 });
     try {
       expect(
         liveE2eManagedImageCatalog({
@@ -99,6 +102,14 @@ describe("sandbox workload preparation", () => {
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
         }),
       ).toEqual({ path: catalogPath, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: fixtureRoot,
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+        }),
+      ).toEqual({ path: packagedCatalogPath, revision: REVISION });
       expect(
         liveE2eManagedImageCatalog({
           NEMOCLAW_RUN_LIVE_E2E: "1",
