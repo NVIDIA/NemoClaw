@@ -1032,6 +1032,12 @@ function qualifyTuiInputMode() {
   client.on("error", () => finish(1, "pty_socket_unavailable"));
 }
 
+function qualifyPtyMonitorReady() {
+  readPtyMonitorRoot(true);
+  readPtyMonitorSocket(true);
+  finish(0);
+}
+
 function readCompleteSession(fileName) {
   let raw;
   try {
@@ -1292,6 +1298,7 @@ function qualifyTurns() {
 try {
   validateRunContext();
   if (mode === "baseline") recordBaseline();
+  else if (mode === "monitor-ready") qualifyPtyMonitorReady();
   else if (mode === "input-mode") qualifyTuiInputMode();
   else if (mode === "qualify") qualifyTurns();
   else if (mode === "cleanup-baseline") removeBaseline();
@@ -1486,6 +1493,25 @@ wait_for_pty_input_mode() {
   fail_launch_session "launch did not observe noncanonical PTY input mode before the session deadline or before the PTY child process exited"
 }
 
+wait_for_pty_monitor_ready() {
+  local evidence_status
+  while (( SECONDS < session_deadline )); do
+    if session_evidence monitor-ready >/dev/null 2>"$evidence_error"; then
+      return 0
+    else
+      evidence_status=$?
+    fi
+    if [[ "$evidence_status" != 1 ]]; then
+      fail_launch_session "OpenClaw PTY monitor evidence was invalid or unavailable (status $evidence_status)"
+    fi
+    if ! kill -0 "$session_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  fail_launch_session "launch did not observe the PTY monitor socket before the session deadline or before the PTY child process exited"
+}
+
 if ! session_evidence baseline >/dev/null 2>"$evidence_error"; then
   fail_launch_session "launch could not record the structured session baseline"
 fi
@@ -1535,10 +1561,10 @@ if [[ "$capture_ready" != 1 ]]; then
   fail_launch_session "launch did not create a PTY diagnostic capture"
 fi
 
-# Establish monitor and PTY identity availability without sending input. A
-# fresh noncanonical observation is still required after OpenClaw records its
+# Establish monitor availability without consuming its single noncanonical
+# observation. A fresh input-mode proof is required after OpenClaw records its
 # startup-aware first turn.
-wait_for_pty_input_mode
+wait_for_pty_monitor_ready
 wait_for_turn_count 1
 wait_for_pty_input_mode
 if ! printf '%s\r' "$NEMOCLAW_LAUNCH_SECOND_INPUT" >&3; then
