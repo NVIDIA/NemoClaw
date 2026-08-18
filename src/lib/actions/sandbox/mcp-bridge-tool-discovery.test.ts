@@ -68,6 +68,15 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     },
   );
 
+  it("restores the root-owned managed-startup CA for private-TLS discovery", () => {
+    const command = buildMcpToolDiscoveryCommand(entry, "mcporter")?.command ?? "";
+
+    expect(command).toContain("/run/nemoclaw/managed-startup-ca-bundle.pem");
+    expect(command).toContain('export NODE_EXTRA_CA_CERTS="$managed_startup_ca"');
+    expect(command).toContain('export SSL_CERT_FILE="$managed_startup_ca"');
+    expect(command).toContain("expected regular root-owned mode 444 file");
+  });
+
   it("isolates Python adapter wrappers from a sandbox-controlled subprocess module", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-python-isolation-"));
     const importedMarker = path.join(tmpDir, "shadow-imported");
