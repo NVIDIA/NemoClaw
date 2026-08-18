@@ -2118,6 +2118,79 @@ function validateTrustedE2eDispatchReceipt(
   }
 }
 
+function validateTrustedE2ePlannerBoundary(
+  errors: string[],
+  generateSteps: WorkflowRecord[],
+  generate: WorkflowRecord | undefined,
+  candidateCheckout: WorkflowRecord | undefined,
+): void {
+  const trustedPlannerCheckout = requireStep(
+    errors,
+    generateSteps,
+    "Check out trusted E2E planner",
+  );
+  const trustedPlannerSetup = requireStep(
+    errors,
+    generateSteps,
+    "Set up Node for trusted E2E planning",
+  );
+  const trustedPlannerInstall = requireStep(
+    errors,
+    generateSteps,
+    "Install trusted E2E planner dependencies",
+  );
+  requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
+  if (
+    !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
+      ref: "${{ github.workflow_sha }}",
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    })
+  ) {
+    errors.push("trusted E2E planner checkout must use the workflow commit without credentials");
+  }
+  requireFullShaAction(errors, trustedPlannerSetup, "trusted E2E planner Node setup");
+  if (
+    !isDeepStrictEqual(asRecord(trustedPlannerSetup?.with), {
+      "node-version": 22,
+    })
+  ) {
+    errors.push("trusted E2E planner must use Node 22");
+  }
+  if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
+    errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
+  }
+  const trustedPlannerIndex = trustedPlannerCheckout
+    ? generateSteps.indexOf(trustedPlannerCheckout)
+    : -1;
+  const trustedSetupIndex = trustedPlannerSetup ? generateSteps.indexOf(trustedPlannerSetup) : -1;
+  const trustedInstallIndex = trustedPlannerInstall
+    ? generateSteps.indexOf(trustedPlannerInstall)
+    : -1;
+  const generateIndex = generate ? generateSteps.indexOf(generate) : -1;
+  const candidateCheckoutIndex = candidateCheckout ? generateSteps.indexOf(candidateCheckout) : -1;
+  if (
+    trustedPlannerIndex < 0 ||
+    trustedSetupIndex <= trustedPlannerIndex ||
+    trustedInstallIndex <= trustedSetupIndex ||
+    generateIndex <= trustedInstallIndex ||
+    candidateCheckoutIndex <= generateIndex
+  ) {
+    errors.push("trusted E2E planning must finish before candidate checkout and execution");
+  }
+
+  const generateEnv = asRecord(generate?.env);
+  if (
+    generateEnv.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !==
+    "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
+  ) {
+    errors.push("matrix generation step must bind NVIDIA-owned candidate authorization");
+  }
+  if (generateEnv.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}") {
+    errors.push("matrix generation step must bind the authenticated PR repository owner");
+  }
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -2311,21 +2384,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     controllerMatrix,
     `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
   );
-  const trustedPlannerCheckout = requireStep(
-    errors,
-    generateSteps,
-    "Check out trusted E2E planner",
-  );
-  const trustedPlannerSetup = requireStep(
-    errors,
-    generateSteps,
-    "Set up Node for trusted E2E planning",
-  );
-  const trustedPlannerInstall = requireStep(
-    errors,
-    generateSteps,
-    "Install trusted E2E planner dependencies",
-  );
   const generateCheckout = requireStep(errors, generateSteps, "Check out E2E candidate");
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
   const candidateAuthorization = generateSteps.find(
@@ -2351,45 +2409,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
-  requireFullShaAction(errors, trustedPlannerCheckout, "trusted E2E planner checkout");
-  if (
-    !isDeepStrictEqual(asRecord(trustedPlannerCheckout?.with), {
-      ref: "${{ github.workflow_sha }}",
-      "fetch-depth": 0,
-      "persist-credentials": false,
-    })
-  ) {
-    errors.push("trusted E2E planner checkout must use the workflow commit without credentials");
-  }
-  requireFullShaAction(errors, trustedPlannerSetup, "trusted E2E planner Node setup");
-  if (
-    !isDeepStrictEqual(asRecord(trustedPlannerSetup?.with), {
-      "node-version": 22,
-    })
-  ) {
-    errors.push("trusted E2E planner must use Node 22");
-  }
-  if (trustedPlannerInstall?.run !== "npm ci --ignore-scripts --no-audit --no-fund") {
-    errors.push("trusted E2E planner dependencies must install without lifecycle scripts");
-  }
-  const trustedPlannerIndex = trustedPlannerCheckout
-    ? generateSteps.indexOf(trustedPlannerCheckout)
-    : -1;
-  const trustedSetupIndex = trustedPlannerSetup ? generateSteps.indexOf(trustedPlannerSetup) : -1;
-  const trustedInstallIndex = trustedPlannerInstall
-    ? generateSteps.indexOf(trustedPlannerInstall)
-    : -1;
-  const generateIndex = generate ? generateSteps.indexOf(generate) : -1;
-  const candidateCheckoutIndex = generateCheckout ? generateSteps.indexOf(generateCheckout) : -1;
-  if (
-    trustedPlannerIndex < 0 ||
-    trustedSetupIndex <= trustedPlannerIndex ||
-    trustedInstallIndex <= trustedSetupIndex ||
-    generateIndex <= trustedInstallIndex ||
-    candidateCheckoutIndex <= generateIndex
-  ) {
-    errors.push("trusted E2E planning must finish before candidate checkout and execution");
-  }
+  validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
@@ -2405,17 +2425,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
-  }
-  if (
-    generateEnv.NEMOCLAW_E2E_CREDENTIALS_ALLOWED !==
-    "${{ (inputs.checkout_sha == '' || steps.candidate_authorization.outputs.nvidia_owned == 'true') && 'true' || 'false' }}"
-  ) {
-    errors.push("matrix generation step must bind NVIDIA-owned candidate authorization");
-  }
-  if (
-    generateEnv.NVIDIA_OWNED !== "${{ steps.candidate_authorization.outputs.nvidia_owned }}"
-  ) {
-    errors.push("matrix generation step must bind the authenticated PR repository owner");
   }
   validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx --no-install tsx tools/e2e/workflow-plan.mts");
