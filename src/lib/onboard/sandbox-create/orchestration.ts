@@ -11,6 +11,7 @@ import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
+import type { InferenceRouteReservationAuthority } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 
 type SandboxRecreateReasonInput = {
@@ -98,6 +99,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     resourceProfile: import("../../resources-cmd").ResourceProfile | null = null,
     hermesToolGateways: string[] = [],
     hermesAuthMethod: HermesAuthMethod | null = null,
+    inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null = null,
     createIntent: import("../types").SandboxCreateIntent | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
   ) {
@@ -1075,19 +1077,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           "Hermes portable onboarding cannot use managed bootstrap or Docker GPU compatibility.",
         );
       }
-      const routeReservationSession = onboardSession.loadSession();
-      if (
-        !routeReservationSession?.sessionId ||
-        routeReservationSession.sandboxName !== sandboxName ||
-        routeReservationSession.provider !== provider ||
-        routeReservationSession.model !== model
-      ) {
+      if (!inferenceRouteReservationAuthority?.sessionId) {
         throw new Error(
           "Hermes portable onboarding is missing current inference route reservation authority.",
         );
       }
       const inferenceRouteReservation = {
-        sessionId: routeReservationSession.sessionId,
+        sessionId: inferenceRouteReservationAuthority.sessionId,
         selection: sandboxRegistration.selection(
           sandboxName,
           provider,

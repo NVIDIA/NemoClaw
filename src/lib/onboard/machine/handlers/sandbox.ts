@@ -102,7 +102,7 @@ import {
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
-import type { SandboxCreateIntent } from "../../types";
+import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
@@ -348,6 +348,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
+      inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
@@ -1898,6 +1899,7 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
+              this.options.session ? { sessionId: this.options.session.sessionId } : null,
               effectiveCreateIntent,
             ),
         );
