@@ -614,9 +614,87 @@ describe("selection", () => {
 });
 
 describe("registerCreatedSandbox", () => {
+  const runtimeAuthority = {
+    schemaVersion: 1 as const,
+    kind: "podman" as const,
+    ownership: "current-user" as const,
+    uid: 1001,
+    homeDir: "/home/test",
+    configHome: "/home/test/.config",
+    runtimeDir: "/run/user/1001",
+    socketPath: "/run/user/1001/podman/podman.sock",
+  };
+
+  it("persists explicit OpenClaw identity for a matching Portable lifecycle receipt (#9207)", () => {
+    const registerSandbox = vi.fn();
+    const env = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };
+    const classifyPortableLifecycleReceipt = vi.fn(() => ({
+      kind: "current" as const,
+      registryGeneration: "generation-1",
+      runtimeAuthority,
+    }));
+
+    const entry = registerCreatedSandbox({
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      portableLifecycle: true,
+      environment: env,
+      classifyPortableLifecycleReceipt,
+      registerSandbox,
+    });
+
+    expect(entry.agent).toBe("openclaw");
+    expect(classifyPortableLifecycleReceipt).toHaveBeenCalledExactlyOnceWith("demo", { env });
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
+  it.each([
+    ["missing", { kind: "absent" as const }, "generation-1"],
+    ["legacy", { kind: "invalid-or-legacy" as const }, "generation-1"],
+    [
+      "different generation",
+      {
+        kind: "current" as const,
+        registryGeneration: "generation-2",
+        runtimeAuthority,
+      },
+      "generation-1",
+    ],
+  ])(
+    "rejects a Portable OpenClaw %s receipt before registry mutation (#9207)",
+    (_label, receipt, lifecycleGeneration) => {
+      const registerSandbox = vi.fn();
+
+      expect(() =>
+        registerCreatedSandbox({
+          ...createdRegistryEntryInput({ lifecycleGeneration }),
+          portableLifecycle: true,
+          environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+          classifyPortableLifecycleReceipt: () => receipt,
+          registerSandbox,
+        }),
+      ).toThrow(/requires a current lifecycle receipt that matches the registry generation/u);
+      expect(registerSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps ordinary OpenClaw registration agent-neutral (#9207)", () => {
+    const classifyPortableLifecycleReceipt = vi.fn();
+
+    const entry = registerCreatedSandbox({
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      environment: {},
+      classifyPortableLifecycleReceipt,
+      registerSandbox: vi.fn(),
+    });
+
+    expect(entry.agent).toBeNull();
+    expect(classifyPortableLifecycleReceipt).not.toHaveBeenCalled();
+  });
+
   it("persists lifecycle identity for a non-OpenClaw agent", () => {
     const agentDefs = requireDist("../agent/defs.js") as typeof import("../agent/defs");
     const registerSandbox = vi.fn();
+    const classifyPortableLifecycleReceipt = vi.fn();
 
     const entry = registerCreatedSandbox({
       sandboxName: "hermes-box",
@@ -643,6 +721,8 @@ describe("registerCreatedSandbox", () => {
       lifecycleGeneration: "22222222-2222-4222-8222-222222222222",
       lifecycleLiveIdentityFingerprint: "d".repeat(64),
       gatewayName: "owner-gateway",
+      environment: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      classifyPortableLifecycleReceipt,
       gatewayPort: 8080,
       registerSandbox,
     });
@@ -654,6 +734,8 @@ describe("registerCreatedSandbox", () => {
       gatewayName: "owner-gateway",
     });
     expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
+    expect(entry.agent).toBe("hermes");
+    expect(classifyPortableLifecycleReceipt).not.toHaveBeenCalled();
   });
 
   it("passes the built entry to the supplied registry writer", () => {
