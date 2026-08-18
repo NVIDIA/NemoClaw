@@ -32,7 +32,7 @@ import {
   parseCloudChatResponse,
   type PreContractExternalProviderFailure,
 } from "./cloud-inference-provider-skip.ts";
-import { SANDBOX_SECRET_TOKEN_PATTERN } from "./cloud-inference-secret-pattern.ts";
+import { HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE } from "../../../nemoclaw/src/security/secret-scanner.ts";
 
 const REPO_SKILL_VALIDATOR = path.join(
   REPO_ROOT,
@@ -306,7 +306,7 @@ async function expectSandboxCredentialBoundary(
   const secretScanCommand = [
     "for dir in /sandbox/.openclaw /sandbox/.nemoclaw; do",
     '  [ -d "$dir" ] || continue',
-    `  matches=$(grep -rIlE '${SANDBOX_SECRET_TOKEN_PATTERN}' "$dir")`,
+    `  matches=$(grep -rIlE '${HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE}' "$dir")`,
     "  scan_status=$?",
     '  case "$scan_status" in',
     `    0) filtered=$(printf '%s\\n' "$matches" | grep -Ev '/policies/|/plugin-runtime-deps/|/extensions/[^/]+/(dist|node_modules)/')`,
@@ -320,7 +320,7 @@ async function expectSandboxCredentialBoundary(
     "            write_status=$?",
     '            case "$write_status" in 0) ;; *) exit "$write_status" ;; esac',
     "            while IFS= read -r file; do",
-    `              matching_lines=$(grep -IE '${SANDBOX_SECRET_TOKEN_PATTERN}' "$file")`,
+    `              matching_lines=$(grep -IE '${HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE}' "$file")`,
     "              match_status=$?",
     '              case "$match_status" in',
     `                0) printf '%s' "$matching_lines" | grep -qv 'STRIPPED'`,

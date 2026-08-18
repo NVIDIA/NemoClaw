@@ -3,9 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { SANDBOX_SECRET_TOKEN_PATTERN } from "../live/cloud-inference-secret-pattern.ts";
+import { HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE } from "../../../nemoclaw/src/security/secret-scanner.ts";
 
-const credentialPattern = new RegExp(SANDBOX_SECRET_TOKEN_PATTERN, "u");
+const credentialPattern = new RegExp(HIGH_CONFIDENCE_PREFIXED_TOKEN_ERE, "u");
 
 describe("cloud inference credential scan", () => {
   it.each([
@@ -24,17 +24,19 @@ describe("cloud inference credential scan", () => {
     expect(value).toMatch(credentialPattern);
   });
 
-  it.each(["nvapi-", "ghp_", "npm_"])(
-    "rejects a nine-character payload for %s",
-    (prefix) => {
-      expect(`${prefix}${"a".repeat(9)}`).not.toMatch(credentialPattern);
-    },
-  );
+  it.each([
+    ["nvapi-", 20],
+    ["ghp_", 36],
+    ["npm_", 36],
+  ])("enforces the minimum payload for %s", (prefix, minimumPayloadLength) => {
+    expect(`${prefix}${"a".repeat(minimumPayloadLength - 1)}`).not.toMatch(credentialPattern);
+    expect(`${prefix}${"a".repeat(minimumPayloadLength)}`).toMatch(credentialPattern);
+  });
 
-  it.each(["nvapi-", "ghp_", "npm_"])(
-    "detects a ten-character payload for %s",
+  it.each(["gho_", "ghu_", "ghs_", "ghr_", "github_pat_"])(
+    "detects a supported GitHub token prefix: %s",
     (prefix) => {
-      expect(`${prefix}${"a".repeat(10)}`).toMatch(credentialPattern);
+      expect(`${prefix}${"a".repeat(36)}`).toMatch(credentialPattern);
     },
   );
 });
