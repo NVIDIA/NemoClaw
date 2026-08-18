@@ -194,13 +194,18 @@ describe("Hermes base-image resolver integration", () => {
       dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
         (missingDigestInspection.get(`${format}\0${ref}`) ?? "").trim(),
       );
-      expect(() => ensureAgentBaseImage(makeAgent())).toThrow(
-        "Hermes Agent sandbox base image trust lease no longer matches its resolution metadata",
-      );
+      const sparse = ensureAgentBaseImage(makeAgent());
+      expect(sparse.imageTag).toBe(trackedRef);
+      expect(sparse.resolutionMetadata).toBe(resolutionMetadata);
       expect(dockerMocks.pull).not.toHaveBeenCalled();
     } finally {
       restore();
     }
+
+    const afterRestore = ensureAgentBaseImage(makeAgent());
+    expect(afterRestore.imageTag).toBe(trackedRef);
+    expect(afterRestore.resolutionMetadata).not.toBe(resolutionMetadata);
+    expect(afterRestore.resolutionMetadata).toMatchObject({ ref: trackedRef, source: "override" });
   }, 30_000);
 
   it("reuses an outer resolver's pinned platform digest only during its rebuild lease (#7144)", () => {
