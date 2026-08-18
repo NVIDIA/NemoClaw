@@ -1,15 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CommandRunner } from "../fixtures/clients/index.ts";
 import { GatewayClient, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
+import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
+import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 interface RunnerCall {
   command: string;
@@ -64,6 +73,59 @@ class ScriptedRunner implements CommandRunner {
         result: "/tmp/result.json",
       },
     };
+  }
+}
+
+class LocalGuardChainRunner implements CommandRunner {
+  readonly calls: RunnerCall[] = [];
+  readonly results: ShellProbeResult[] = [];
+  private readonly probe: ShellProbe;
+  private readonly progress: TestProgress;
+
+  constructor(
+    private readonly proxyEnvPath: string,
+    artifactRoot: string,
+  ) {
+    this.progress = startTestProgress(
+      "Guard-chain extraction support",
+      ["run guard-chain proof", "verify guard-chain proof"],
+      { logLine: () => undefined },
+    );
+    this.probe = new ShellProbe({
+      artifacts: new ArtifactSink(artifactRoot),
+      progress: this.progress,
+      redact: redactString,
+      signal: new AbortController().signal,
+    });
+  }
+
+  async run(
+    command: TrustedShellCommand,
+    options?: ShellProbeRunOptions,
+  ): Promise<ShellProbeResult> {
+    const call = { command: command.command, args: [...command.args], options };
+    this.calls.push(call);
+    const separator = command.args.indexOf("--");
+    expect(separator).toBeGreaterThanOrEqual(0);
+    const [innerCommand, ...innerArgs] = command.args.slice(separator + 1);
+    expect(innerCommand).toBeTruthy();
+    const localArgs = innerArgs.map((argument) =>
+      argument.replaceAll("/tmp/nemoclaw-proxy-env.sh", this.proxyEnvPath),
+    );
+    const result = await this.probe.run(
+      trustedShellCommand({
+        command: innerCommand!,
+        args: localArgs,
+        reason: "exercise the generated guard-chain proof command",
+      }),
+      options,
+    );
+    this.results.push(result);
+    return result;
+  }
+
+  stop(): void {
+    this.progress.stop();
   }
 }
 
@@ -235,6 +297,77 @@ describe("GatewayClient recovery helpers (#2701)", () => {
   });
 
   describe("expectGuardChainActive", () => {
+    it("exports only a fixed proof while keeping opaque proxy values out of evidence", async () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-chain-proof-"));
+      const proxyEnvPath = path.join(tmp, "proxy-env.sh");
+      const opaqueValue = "opaqueMintedGatewayMaterial_7qR2v9XcL4n8";
+      const expectedMarkers = [
+        "nemoclaw-sandbox-safety-net",
+        "nemoclaw-ciao-network-guard",
+        "-leading",
+        "literal;$(false)",
+      ];
+      const proxyEnv =
+        'export NODE_OPTIONS="--require /tmp/nemoclaw-sandbox-safety-net.js ' +
+        '--require /tmp/nemoclaw-ciao-network-guard.js -leading literal;$(false)"\n' +
+        `export HTTPS_PROXY="http://gateway-user:${opaqueValue}@127.0.0.1:3128"\n`;
+      expect(redactString(proxyEnv)).toBe(proxyEnv);
+      fs.writeFileSync(proxyEnvPath, proxyEnv, { mode: 0o600 });
+      const runner = new LocalGuardChainRunner(proxyEnvPath, path.join(tmp, "artifacts"));
+      const gateway = buildGateway(runner);
+
+      try {
+        await gateway.expectGuardChainActive(fakeInstance(), { expectedMarkers });
+
+        const result = runner.results.at(-1);
+        expect(result).toMatchObject({
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: "NEMOCLAW_GUARD_CHAIN_ACTIVE\n",
+          stderr: "",
+        });
+        const call = runner.calls.at(-1);
+        const separator = call?.args.indexOf("--") ?? -1;
+        const innerArgs = call?.args.slice(separator + 1) ?? [];
+        expect(innerArgs.slice(0, 2)).toEqual(["sh", "-c"]);
+        expect(innerArgs[2]).toContain("grep -Fq --");
+        expect(innerArgs[2]).not.toMatch(/\bcat\b/u);
+        expect(innerArgs.slice(4)).toEqual(["/tmp/nemoclaw-proxy-env.sh", ...expectedMarkers]);
+        expect(JSON.stringify(result)).not.toContain(opaqueValue);
+        expect(JSON.stringify(result)).not.toContain("<REDACTED>");
+        const artifacts = result!.artifacts;
+        const artifactContents =
+          fs.readFileSync(artifacts.stdout, "utf8") +
+          fs.readFileSync(artifacts.stderr, "utf8") +
+          fs.readFileSync(artifacts.result, "utf8");
+        expect(artifactContents).not.toContain(opaqueValue);
+        expect(artifactContents).not.toContain("<REDACTED>");
+
+        fs.writeFileSync(
+          proxyEnvPath,
+          proxyEnv.replace("literal;$(false)", "missing-custom-marker"),
+        );
+        await expect(
+          gateway.expectGuardChainActive(fakeInstance(), { expectedMarkers }),
+        ).rejects.toThrow(/guard-chain proof/);
+        const failedResult = runner.results.at(-1);
+        expect(failedResult).toMatchObject({ stdout: "", stderr: "" });
+        expect(JSON.stringify(failedResult)).not.toContain(opaqueValue);
+        expect(JSON.stringify(failedResult)).not.toMatch(/<REDACTED>|\[REDACTED\]/u);
+        const failedArtifacts = failedResult!.artifacts;
+        const failedArtifactContents =
+          fs.readFileSync(failedArtifacts.stdout, "utf8") +
+          fs.readFileSync(failedArtifacts.stderr, "utf8") +
+          fs.readFileSync(failedArtifacts.result, "utf8");
+        expect(failedArtifactContents).not.toContain(opaqueValue);
+        expect(failedArtifactContents).not.toMatch(/<REDACTED>|\[REDACTED\]/u);
+      } finally {
+        runner.stop();
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
     it("passes when proxy-env.sh contains the default safety-net + ciao markers", async () => {
       const runner = new ScriptedRunner();
       runner.queue({
