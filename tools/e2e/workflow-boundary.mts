@@ -608,6 +608,10 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
+  [
+    "tools/e2e/install-openshell-v00106-qualification.sh",
+    ["openshell-gateway-auth-contract", "mcp-bridge"],
+  ],
 ]);
 
 export function focusedE2eJobsForChangedFiles(
